@@ -28,10 +28,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-dotnet-
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore --runtime win-x64
 
       - name: Build for Windows
-        run: dotnet publish --no-restore --configuration Release --self-contained true -p:PublishSingleFile=true
+        run: dotnet publish --no-restore --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true
 
       - name: Test
         run: dotnet test --no-build --verbosity normal
