@@ -19,11 +19,12 @@ namespace Horizon.Core;
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
     public bool Enabled { get; set; }
-    public string Name { get; protected set; }
+    public string Name { get; protected set; } = string.Empty;
 
     public Entity Parent { get; set; }
     public List<IGameComponent> Components { get; init; }
     public List<Entity> Children { get; init; }
+
 
     private readonly Queue<IInstantiable> _uninitialized = new();
 

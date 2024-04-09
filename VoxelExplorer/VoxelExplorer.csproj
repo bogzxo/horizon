@@ -8,7 +8,10 @@
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<OutputType>Exe</OutputType>
 	</PropertyGroup>
-
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<DebugSymbols>False</DebugSymbols>
+		<DebugType>None</DebugType>
+	</PropertyGroup>
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
 		<IsAotCompatible>True</IsAotCompatible>
 	</PropertyGroup>

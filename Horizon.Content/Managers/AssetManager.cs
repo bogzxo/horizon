@@ -1,6 +1,8 @@
 ﻿using System.Collections.Concurrent;
 using System.Xml.Linq;
+
 using Bogz.Logging;
+
 using Horizon.Content.Descriptions;
 using Horizon.Content.Disposers;
 using Horizon.Core.Primitives;
@@ -21,6 +23,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     protected readonly string assetName,
         name;
 
+
     /// <summary>
     /// All keyed assets.
     /// </summary>
@@ -29,12 +32,12 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// <summary>
     /// All unnamed but managed assets.
     /// </summary>
-    public List<AssetType> UnnamedAssets { get; init; }
+    public List<AssetType> OwnedAssets { get; init; }
 
     public AssetManager()
     {
         NamedAssets = new();
-        UnnamedAssets = new();
+        OwnedAssets = new();
 
         assetName = typeof(AssetType).Name;
         name = $"{assetName}Manager";
@@ -77,7 +80,9 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             $"[{name}] Successfully created {assetName} '{name}'!"
         );
 
-        if (!NamedAssets.TryAdd(name, result.Asset))
+        OwnedAssets.Add(result.Asset);
+
+        if (!NamedAssets.TryAdd(name, OwnedAssets[OwnedAssets.Count - 1]))
             MessageCallback?.Invoke(LogLevel.Error, $"[{name}] Failed to add {assetName}!");
 
         if (result.Status > 0 && result.Message?.CompareTo(string.Empty) != 0)
@@ -102,7 +107,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
 
         MessageCallback?.Invoke(LogLevel.Info, $"[{name}] Successfully created a new {assetName}!");
 
-        UnnamedAssets.Add(result.Asset);
+        OwnedAssets.Add(result.Asset);
         return result;
     }
 
@@ -111,7 +116,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// </summary>
     public AssetType Add(AssetType asset)
     {
-        UnnamedAssets.Add(asset);
+        OwnedAssets.Add(asset);
         return asset;
     }
 
@@ -121,7 +126,22 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     public bool Remove(AssetType asset)
     {
         AssetDisposerType.Dispose(asset);
-        return UnnamedAssets.Remove(asset);
+        var named = NamedAssets.Where((item) => item.Value.Handle == asset.Handle).ToArray();
+        if (named.Length == 1)
+            _ = NamedAssets.TryRemove(named.FirstOrDefault().Key, out _);
+
+        return OwnedAssets.Remove(asset);
+    }
+
+    /// <summary>
+    /// Removes an object via finding its reference through a handle.
+    /// </summary>
+    public bool Remove(uint handle)
+    {
+        var asset = OwnedAssets.Find((item) => item.Handle == handle);
+        if (asset is null) return false;
+
+        return Remove(asset);
     }
 
     /// <summary>
@@ -131,6 +151,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         if (NamedAssets.TryRemove(name, out var asset))
         {
+            OwnedAssets.Remove(asset);
             AssetDisposerType.Dispose(asset);
             return true;
         }
@@ -151,12 +172,12 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// </summary>
     public void Dispose()
     {
-        int count = UnnamedAssets.Count + NamedAssets.Count + DisposeOther();
+        int count = OwnedAssets.Count + NamedAssets.Count + DisposeOther();
 
-        AssetDisposerType.DisposeAll(UnnamedAssets);
+        AssetDisposerType.DisposeAll(OwnedAssets);
         AssetDisposerType.DisposeAll(NamedAssets.Values);
 
-        UnnamedAssets.Clear();
+        OwnedAssets.Clear();
         NamedAssets.Clear();
 
         MessageCallback?.Invoke(

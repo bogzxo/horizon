@@ -8,7 +8,10 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<DebugSymbols>False</DebugSymbols>
+		<DebugType>None</DebugType>
+	</PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
