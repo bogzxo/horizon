@@ -24,6 +24,6 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
     - name: Build
-      run: dotnet publish --configuration Release --no-restore --output ./publish --self-contained true --runtime win-x64
+      run: dotnet publish --configuration Release --no-restore --output ./publish --self-contained true
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v4.3.1
