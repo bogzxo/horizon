@@ -8,7 +8,10 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+	    <DebugSymbols>False</DebugSymbols>
+	    <DebugType>None</DebugType>
+    </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Silk.NET.OpenGL" Version="2.20.0" />
   </ItemGroup>

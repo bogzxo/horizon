@@ -1,12 +1,15 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 using Horizon.Engine.Components;
+using Horizon.Engine.Debugging;
 using Horizon.Engine.Framework;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
@@ -49,6 +52,7 @@ public class GameEngine : Entity
     public WindowManager WindowManager { get; init; }
     public SceneManager SceneManager { get; init; }
     public InputManager InputManager { get; init; }
+    public SkylineDebugger Debugger { get; init; }
 
     private CustomImguiController imguiController;
 
@@ -67,6 +71,9 @@ public class GameEngine : Entity
         ObjectManager = AddComponent<ObjectManager>();
         InputManager = AddComponent<InputManager>();
         SceneManager = AddComponent<SceneManager>();
+        
+        // Engine children
+        Debugger = AddEntity<SkylineDebugger>();
     }
 
     public override void Initialize()

@@ -9,7 +9,10 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
+	<PropertyGroup Condition="'$(Configuration)'=='Release'">
+		<DebugSymbols>False</DebugSymbols>
+		<DebugType>None</DebugType>
+	</PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
     <ProjectReference Include="..\Horizon.Rendering\Horizon.Rendering.csproj" />
