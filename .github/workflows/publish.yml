@@ -9,21 +9,35 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
-
 jobs:
-  build:
-
+  build-windows:
     runs-on: windows-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 8.0.x
-    - name: Restore dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet publish --configuration Release --no-restore --output ./publish --self-contained true
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v4.3.1
+      - uses: actions/checkout@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache dependencies
+        uses: actions/cache@v2
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-dotnet-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-dotnet-
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build for Windows
+        run: dotnet publish --no-restore --configuration Release --self-contained true -p:PublishSingleFile=true
+
+      - name: Test
+        run: dotnet test --no-build --verbosity normal
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: build-artifacts-windows
+          path: ./ # Modify the path as per your project's artifacts on Windows
