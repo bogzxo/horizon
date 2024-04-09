@@ -45,10 +45,10 @@ internal class VoxelWorldRenderer : Entity
         SetupBaseQuadBuffer();
 
         GameEngine.Instance.GL.BindVertexArray(QuadBuffer.Handle);
-        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.InstanceBuffer].Bind();
-        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.InstanceBuffer].VertexAttributeIPointer(2, 1, VertexAttribIType.Int, 4, 0);
+        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.AdditionalBuffer0].Bind();
+        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.AdditionalBuffer0].VertexAttributeIPointer(2, 1, VertexAttribIType.Int, 4, 0);
         GameEngine.Instance.GL.VertexAttribDivisor(2, 1);
-        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.InstanceBuffer].Unbind();
+        QuadBuffer.Buffers[VertexArrayBufferAttachmentType.AdditionalBuffer0].Unbind();
         GameEngine.Instance.GL.BindVertexArray(0);
 
         for (int i = 0; i < World.Chunks.Length; i++)
@@ -114,7 +114,7 @@ internal class VoxelWorldRenderer : Entity
             {
                 { VertexArrayBufferAttachmentType.ArrayBuffer, BufferObjectDescription.ArrayBuffer },
                 { VertexArrayBufferAttachmentType.ElementBuffer, BufferObjectDescription.ElementArrayBuffer},
-                { VertexArrayBufferAttachmentType.InstanceBuffer, BufferObjectDescription.ArrayBuffer }
+                { VertexArrayBufferAttachmentType.AdditionalBuffer0, BufferObjectDescription.ArrayBuffer }
             }
         }).Asset;
 
