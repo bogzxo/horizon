@@ -28,10 +28,11 @@ public class SkylineDebugger : Entity
     public PerformanceProfilerDebugger PerformanceDebugger { get; private set; }
     public GeneralDebugger GeneralDebugger { get; private set; }
 
-    public bool RenderToConatiner { get; private set; }
+    public bool RenderToContainer { get; private set; }
 
     public SkylineDebugger()
     {
+        Name = "Debugger";
         CreateDebugComponents();
     }
 
@@ -62,7 +63,7 @@ public class SkylineDebugger : Entity
 
     public override void Render(float dt, object? obj = null)
     {
-        RenderToConatiner = Enabled && GameContainerDebugger.Visible;
+        RenderToContainer = Enabled && GameContainerDebugger.Visible && GameContainerDebugger.FrameBuffer.Handle > 0;
 
         if (!Enabled)
         {

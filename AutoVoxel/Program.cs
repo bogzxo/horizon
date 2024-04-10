@@ -47,8 +47,9 @@ internal class Program : Scene
             ImGui.End();
         }
         
-        Engine.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit);
-        Engine.GL.Viewport(0, 0, (uint)Engine.WindowManager.ViewportSize.X, (uint)Engine.WindowManager.ViewportSize.Y);
+        Engine.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit); 
+        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
+
 
         base.Render(dt, obj);
     }
