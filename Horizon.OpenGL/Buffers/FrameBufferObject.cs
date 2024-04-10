@@ -8,7 +8,7 @@ namespace Horizon.OpenGL.Buffers;
 public class FrameBufferObject : IGLObject
 {
     public Dictionary<FramebufferAttachment, Texture> Attachments { get; init; }
-    public DrawBufferMode[] DrawBuffers { get; init; }
+    public ColorBuffer[] DrawBuffers { get; init; }
 
     /// <summary>
     /// Binds a specified attachment to a texture unit.
@@ -22,10 +22,10 @@ public class FrameBufferObject : IGLObject
     public void Bind()
     {
         ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
-        ObjectManager.GL.DrawBuffers((uint)DrawBuffers.Length, in DrawBuffers[0]);
-        //ObjectManager
-        //    .GL
-        //    .NamedFramebufferDrawBuffers(Handle, (uint)DrawBuffers.Length, (GLEnum)DrawBuffers[0]);
+        //ObjectManager.GL.DrawBuffers((uint)DrawBuffers.Length, in DrawBuffers[0]);
+        ObjectManager
+            .GL
+            .NamedFramebufferDrawBuffers(Handle, DrawBuffers);
     }
 
     /// <summary>

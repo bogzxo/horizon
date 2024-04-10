@@ -22,9 +22,9 @@ public class FrameBufferObjectFactory
             description.Attachments
         );
 
-        var drawBuffers = new DrawBufferMode[attachments.Count];
+        var drawBuffers = new ColorBuffer[attachments.Count];
         for (int i = 0; i < drawBuffers.Length; i++)
-            drawBuffers[i] = (DrawBufferMode)description.Attachments[i];
+            drawBuffers[i] = (ColorBuffer)description.Attachments[i];
 
         var buffer = new FrameBufferObject
         {
