@@ -1,31 +1,47 @@
-﻿using Horizon.Core;
+﻿using System.Net;
+using System.Net.Sockets;
+
+using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Webhost.Providers;
+using Horizon.Webhost.Server;
 
 namespace Horizon.Webhost;
 
-public class WebhostComponent : IGameComponent
+using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
+
+/// <summary>
+/// An engine utility providing a seamlessly integrating webhost.
+/// </summary>
+public class WebHost : Entity, IDisposable
 {
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Webost Component";
-    public Entity Parent { get; set; }
+    protected HttpServerComponent Server { get; init; }
+    public Dictionary<string, IWebHostContentProvider> ContentProviders { get; init; }
 
-    public void Initialize()
+    public WebHost()
     {
-        
+        Name = "WebHost";
+        ContentProviders = [];
+
+
+        Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Initializing WebHost.");
+        Server = AddComponent<HttpServerComponent>();
     }
 
-    public void Render(float dt, object? obj = null)
+    internal void ContentRequest(ref HttpListenerRequest request, ref HttpListenerResponse response)
     {
-        
-    }
 
-    public void UpdatePhysics(float dt)
-    {
-        
-    }
+        // TODO: error checking
+        var orgl = request.Url.LocalPath.Trim('/').Split('/').FirstOrDefault().Split('.').FirstOrDefault() ?? string.Empty;
+        var path = orgl;
+        if (path.CompareTo(string.Empty) == 0) path = "index";
 
-    public void UpdateState(float dt)
-    {
-        
+        if (ContentProviders.TryGetValue(path, out var provider))
+        {
+            // extract url
+            string url = request.Url.LocalPath[(orgl.Length + 1)..];
+
+            provider.HandleRequest(url, ref request, ref response);
+        }
     }
 }
