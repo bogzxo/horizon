@@ -58,6 +58,8 @@ public class GameEngine : Entity
 
     public GameEngine(in GameEngineConfiguration engineConfiguration)
     {
+        Name = "Engine";
+
         Instance = GameObject.Engine = this;
         Configuration = engineConfiguration;
 
@@ -71,7 +73,7 @@ public class GameEngine : Entity
         ObjectManager = AddComponent<ObjectManager>();
         InputManager = AddComponent<InputManager>();
         SceneManager = AddComponent<SceneManager>();
-        
+
         // Engine children
         Debugger = AddEntity<SkylineDebugger>();
     }
@@ -178,12 +180,24 @@ public class GameEngine : Entity
         // Make sure ImGui is up-to-date before rendering.
         imguiController.Update(dt);
 
+        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
 
+        if (Debugger.RenderToContainer)
+        {
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            Debugger.GameContainerDebugger.FrameBuffer.Bind();
+            Debugger.GameContainerDebugger.FrameBuffer.Viewport();
+        }
+
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
         base.Render(dt);
         EventManager.PostRender?.Invoke(dt);
 
+        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+
+        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         imguiController.Render();
     }
 

@@ -50,9 +50,15 @@ public class LoadedContentDebugger : DebuggerComponent
 
             ImGui.Columns(imagesPerRow, "TextureColumns", false);
 
-            foreach (var texture in GameEngine.Instance.ObjectManager.Textures.OwnedAssets)
+
+            int collectionSize = GameEngine.Instance.ObjectManager.Textures.OwnedAssets.Count;
+
+            for (int i = 0; i < collectionSize; i++)
             {
-                //if (texture.Name is null) continue;
+                if (GameEngine.Instance.ObjectManager.Textures.OwnedAssets.Count != collectionSize)
+                    break; // detect collection modification
+
+                var texture = GameEngine.Instance.ObjectManager.Textures.OwnedAssets[i];
 
                 ImGui.BeginGroup();
 
