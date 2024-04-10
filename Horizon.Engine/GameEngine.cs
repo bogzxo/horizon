@@ -11,8 +11,10 @@ using Horizon.Core.Primitives;
 using Horizon.Engine.Components;
 using Horizon.Engine.Debugging;
 using Horizon.Engine.Framework;
+using Horizon.Engine.Webhost;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
+using Horizon.Webhost;
 
 using ImGuiNET;
 
@@ -52,6 +54,8 @@ public class GameEngine : Entity
     public WindowManager WindowManager { get; init; }
     public SceneManager SceneManager { get; init; }
     public InputManager InputManager { get; init; }
+
+    public WebHost WebHost { get; init; }
     public SkylineDebugger Debugger { get; init; }
 
     private CustomImguiController imguiController;
@@ -76,6 +80,8 @@ public class GameEngine : Entity
 
         // Engine children
         Debugger = AddEntity<SkylineDebugger>();
+        WebHost = AddEntity<WebHost>(); // initialize default content provider
+        WebHost.ContentProviders.Add("index", new DashboardContentProvider());
     }
 
     public override void Initialize()
