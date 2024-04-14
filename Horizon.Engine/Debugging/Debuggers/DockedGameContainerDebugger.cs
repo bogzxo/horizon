@@ -13,7 +13,10 @@ public class DockedGameContainerDebugger : DebuggerComponent
     {
         FrameBuffer = GameEngine.Instance.ObjectManager.FrameBuffers.CreateOrGet("container", new OpenGL.Descriptions.FrameBufferObjectDescription
         {
-            Attachments = [Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0],
+            Attachments = [
+                Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0,
+                Silk.NET.OpenGL.FramebufferAttachment.DepthAttachment
+                ],
             Width = 800,
             Height = 600
         });

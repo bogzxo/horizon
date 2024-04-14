@@ -69,11 +69,14 @@ public class Renderer2D : GameObject
         base.Render(dt);
 
         Engine.GL.Enable(EnableCap.Blend);
+
         // set to window frame buffer
-        FrameBufferObject.Unbind();
+        if (Engine.Debugger.RenderToContainer) Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
+        else FrameBufferObject.Unbind();
 
         // restore window viewport
-        Engine.GL.Viewport(0, 0, (uint)GameEngine.Instance.WindowManager.WindowSize.X, (uint)GameEngine.Instance.WindowManager.WindowSize.Y);
+        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
+        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
 
         // draw framebuffer to window
         RenderRectangle.Render(dt);

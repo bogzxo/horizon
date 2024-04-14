@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System;
+using System.Net;
 using System.Net.Sockets;
 
 using Horizon.Core;
@@ -28,20 +29,24 @@ public class WebHost : Entity, IDisposable
         Server = AddComponent<HttpServerComponent>();
     }
 
+    static string GetProvider(in Uri url)
+    {
+        string value = url.AbsolutePath.Trim('/');
+
+        if (value.Contains('/')) value = value.Split('/')[0];
+        if (value.Contains('.')) value = value.Split('.')[0];
+
+        return value;
+    }
+
     internal void ContentRequest(ref HttpListenerRequest request, ref HttpListenerResponse response)
     {
+        // TODO: something
+        string key = GetProvider(request.Url ?? new Uri("http://127.0.0.1:8080/index.html"));
 
-        // TODO: error checking
-        var orgl = request.Url.LocalPath.Trim('/').Split('/').FirstOrDefault().Split('.').FirstOrDefault() ?? string.Empty;
-        var path = orgl;
-        if (path.CompareTo(string.Empty) == 0) path = "index";
+        string url = (request.Url.AbsolutePath.StartsWith('/') && request.Url.AbsolutePath.Length > 1) ? request.Url.AbsolutePath.TrimStart('/') : request.Url.AbsolutePath;
 
-        if (ContentProviders.TryGetValue(path, out var provider))
-        {
-            // extract url
-            string url = request.Url.LocalPath[(orgl.Length + 1)..];
-
+        if (ContentProviders.TryGetValue(key, out var provider))
             provider.HandleRequest(url, ref request, ref response);
-        }
     }
 }
