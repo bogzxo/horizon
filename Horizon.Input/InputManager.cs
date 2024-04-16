@@ -16,7 +16,7 @@ namespace Horizon.Input
         /// <summary>
         /// The window's native input context.
         /// </summary>
-        public IInputContext NativeInputContext { get; private set; }
+        public IInputContext? NativeInputContext { get; private set; }
 
         /// <summary>
         /// All attached PeripheralInputManagers.
@@ -78,9 +78,8 @@ namespace Horizon.Input
         public void Initialize()
         {
             // TODO: fix assumptions
-            eventHandler = Parent.GetComponent<EngineEventHandler>();
-
             NativeInputContext = Parent.GetComponent<WindowManager>().Input;
+            eventHandler = Parent.GetComponent<EngineEventHandler>();
 
             // attach events
             eventHandler.PreState += AggregateInputs;

@@ -11,6 +11,9 @@ public class EngineEventHandler : IGameComponent
     public Action<float>? PreState;
     public Action<float>? PostState;
 
+    public Action<float>? PrePhysics;
+    public Action<float>? PostPhysics;
+
     public Action<float>? PreRender;
     public Action<float>? PostRender;
 

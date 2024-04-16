@@ -37,6 +37,7 @@
          background-color: #121236;
          border-radius: 5px;
          margin-bottom: 5px;
+         transition: background-color 0.1s ease-in-out;
       }
 
       .sidebar-menuitem a {
@@ -46,6 +47,7 @@
 
       .sidebar-menuitem:hover {
          background-color: #121254;
+         transition: background-color 0.1s ease-in-out;
       }
 
       .sidebar-menuitem:active {
@@ -70,6 +72,12 @@
          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
          padding: 20px;
          color: white;
+         transition: background-color 0.1s ease-in-out;
+      }
+
+      .card:hover {
+         background-color: #1B0D41;
+         transition: background-color 0.1s ease-in-out;
       }
 
       .card h1 {
@@ -80,7 +88,7 @@
          font-family: 'Space Mono';
          margin: 0 !important;
          padding: 0 !important;
-         overflow: scroll;
+         overflow: hidden;
          background-color: #0D1826;
          display: flex;
          flex-direction: row;
@@ -117,18 +125,59 @@
       </ul>
    </div>
    <div class="card-container">
-      <div class="card">
+      <div class="card" id="card-render">
          <h1>Render</h1>
          <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
       </div>
-      <div class="card">
+      <div class="card" id="card-state">
          <h1>State</h1>
          <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
       </div>
-      <div class="card">
+      <div class="card" id="card-physics">
          <h1>Physics</h1>
          <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
       </div>
    </div>
+
+   <script>
+      const dataUrl = 'http://127.0.0.1:8080/data';
+      var getJSON = function(callback) {
+         var xhr = new XMLHttpRequest();
+         xhr.open('GET', dataUrl, true);
+         xhr.responseType = 'json';
+         xhr.onload = function() {
+            var status = xhr.status;
+            if (status === 200) {
+            callback(null, xhr.response);
+            } else {
+            callback(status, xhr.response);
+            }
+         };
+         xhr.send();
+      };
+
+      function updateAll() {
+         getJSON(function(err, data) {
+            if (err !== null) {
+               console.log('Something went wrong: ' + err);
+            } else {
+               updateCards(data);   
+            }
+         });
+         setTimeout(updateAll, 1000);
+      } updateAll();
+
+      const CARD_RENDER_TITLE = 'Render';
+      const CARD_STATE_TITLE = 'State';
+      const CARD_PHYSICS_TITLE = 'Physics';
+
+      function updateCards(data) {
+         document.querySelector('#card-render').childNodes[1].textContent = CARD_RENDER_TITLE + ' ' + Math.round(1.0 / data.RenderRate);         
+         document.querySelector('#card-state').childNodes[1].textContent = CARD_STATE_TITLE + ' ' + Math.round(1.0 / data.LogicRate);         
+         document.querySelector('#card-physics').childNodes[1].textContent = CARD_PHYSICS_TITLE + ' ' + Math.round(1.0 / data.PhysicsRate);         
+      }
+      
+   </script>
+
 </body>
 </html>

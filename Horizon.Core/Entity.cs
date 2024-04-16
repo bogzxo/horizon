@@ -60,7 +60,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
     }
 
-    private void InitializeAll()
+    public void InitializeAll()
     {
         while (_uninitialized.Count > 0)
         {

@@ -71,14 +71,13 @@ public class GeneralDebugger : DebuggerComponent
     }
 
     private readonly object _catagoriesLock = new();
-    private Dictionary<string, GeneralDebuggerCatagory> _catagories;
+    private readonly Dictionary<string, GeneralDebuggerCatagory> _catagories = new();
 
     private float _updateCachedValuesTimer = 0.0f;
     private int watchedCount = 0;
 
     public override void Initialize()
     {
-        _catagories = new();
         _catagories["Misc"] = new GeneralDebuggerCatagory(this);
 
         Name = "General Information";

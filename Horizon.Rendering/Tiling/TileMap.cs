@@ -286,18 +286,18 @@ public abstract partial class Tiling<TTextureID>
             World = Parent!.GetComponent<Box2DWorldComponent>();
             ChunkManager = AddComponent<TileMapChunkManager>(new(this));
 
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Chunk Maximum", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Total Tiles", "Tilemap", () => TileUpdateCount);
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("Chunk Maximum", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("Total Tiles", "Tilemap", () => TileUpdateCount);
         }
 
         public override void Render(float dt, object? obj = null)

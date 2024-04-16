@@ -1,12 +1,14 @@
 ﻿using Horizon.GameEntity;
+
 using System.Numerics;
+
 using TileBash.Player;
 
 namespace TileBash.Animals.Behaviors;
 
 internal class GenericWanderState : AnimalState
 {
-    public float Speed { get; set; } = 2.0f;
+    public float Speed { get; set; } = 20.0f;
 
     public GenericWanderState(Animal parent, AnimalBehaviorStateMachineComponent stateMachine)
         : base(parent, stateMachine) { }
@@ -37,11 +39,13 @@ internal class GenericWanderState : AnimalState
         Parent.Flipped = _targetDir.X < 0;
 
         _wanderingTimer += dt;
-        Parent.Transform.Position += _targetDir * dt * Speed;
 
         if (_wanderingTimer > _targetWanderTime)
             StateMachine.Transition(AnimalBehavior.Idle);
     }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    {
+        Parent.Transform.Position += _targetDir * dt * Speed;
+    }
 }

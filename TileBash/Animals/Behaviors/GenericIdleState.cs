@@ -28,7 +28,7 @@ internal class GenericIdleState : AnimalState
 
     public override void UpdateState(float dt)
     {
-        if (Vector2.DistanceSquared(Player2D.Current.Position, Parent.Transform.Position) < 25.0f)
+        if (Vector2.DistanceSquared(Player2D.Current.Position, Parent.Transform.Position) < 60.0f)
             StateMachine.Transition(AnimalBehavior.Wander);
 
         _idleTimer += dt;
