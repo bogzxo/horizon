@@ -6,38 +6,44 @@
    <link href='https://fonts.googleapis.com/css?family=Space Mono' rel='stylesheet'>
    <title>Horizon WebHost</title>
    <style>
+      /* Sidebar */
+      .sidebar-top>h1 {
+         color: white;
+         text-align: center;
+      }
       .sidebar-container {
          width: 15%;
          height: 100vh;
-         background-color: #1B0D26;
+         background: linear-gradient(#e66465, #9198e5);
          display: flex;
          flex-direction: column;
+         justify-content: center; /* Center items vertically */
          align-items: center;
       }
-
       .sidebar-top {
-         padding: 20px;
-      }
-      .sidebar-top>h1 {
-         color: white;
+         width: 100%;
+         height: 15vh;
       }
 
       .sidebar-list {
          list-style-type: none;
          padding: 0;
-         margin: 20px 0;
+         margin: auto 0; /* Center items vertically */
          width: 100%;
+         display: flex;
+         flex-direction: column;
+         align-items: center; /* Center items horizontally */
       }
-
       .sidebar-menuitem {
          color: white;
          font-size: 20px;
-         padding: 10px;
+         padding: 10px 0 10px 0;
+         width: 100%;
          text-align: center;
-         background-color: #121236;
-         border-radius: 5px;
-         margin-bottom: 5px;
-         transition: background-color 0.1s ease-in-out;
+         background-color: #9e91d36d;
+         transition: background-color 0.3s ease-out;
+         backdrop-filter: blur(32px); /* Adjust the blur radius for frosty effect */
+
       }
 
       .sidebar-menuitem a {
@@ -46,29 +52,33 @@
       }
 
       .sidebar-menuitem:hover {
-         background-color: #121254;
-         transition: background-color 0.1s ease-in-out;
+         background-color: #ff00ff2b;
+         transition: background-color 0.2s ease-in;
       }
 
       .sidebar-menuitem:active {
          background-color: #121399;
       }
 
+      /* Card Container */
       .card-container {
          margin: 2vh 0 0 0;
          display: flex;
          flex-wrap: wrap;
-         align-items: flex-start;
-         justify-content: flex-start;
+         justify-content: space-between;
          padding: 20px;
          width: 80%;
+         height: 20vh;
       }
 
-      .card {
-         width: calc(30%);
-         margin: 15px 10px 15px 10px;
-         background-color: #1B0D26;
+      /* Status Cards */
+      .card {  
+         flex: 1; /* Each div takes equal space */
+         padding: 20px;
+         margin: 5px;
+         box-sizing: border-box; /* Ensure padding is included in width */
          border-radius: 10px;
+         background-color: #fac074;
          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
          padding: 20px;
          color: white;
@@ -76,20 +86,32 @@
       }
 
       .card:hover {
-         background-color: #1B0D41;
+         background-color: #fece8f;
          transition: background-color 0.1s ease-in-out;
       }
 
+      /* Card Components */
       .card h1 {
          margin-top: 0;
       }
 
+      .card h3 {
+         color: #313131;
+      }
+
+      .card p {
+         font-size: 0.8rem;
+      }
+
+      /* Card status styles are configured in JS */
+
+      /* Body styles and animations */
       html, body {
          font-family: 'Space Mono';
          margin: 0 !important;
          padding: 0 !important;
          overflow: hidden;
-         background-color: #0D1826;
+         background-color: #858ffe;
          display: flex;
          flex-direction: row;
       }
@@ -127,15 +149,24 @@
    <div class="card-container">
       <div class="card" id="card-render">
          <h1>Render</h1>
-         <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
+         <div>
+            <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div></h3>
+            <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using the ECS.</p>
+         </div>
       </div>
       <div class="card" id="card-state">
          <h1>State</h1>
-         <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
+         <div>
+            <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div></h3>
+            <p>The state thread governs all core game logic irrelivent from rendering, currently it is tied to the render thread.</p>
+         </div>
       </div>
       <div class="card" id="card-physics">
          <h1>Physics</h1>
-         <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Quisquam, quod, quaerat, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam, quasi, repellendus, quidem, repudiandae, doloremque, quibusdam</p>
+         <div>
+            <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div></h3>
+            <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as more of a general use 3rd thread.</p>
+         </div>
       </div>
    </div>
 
@@ -161,19 +192,38 @@
             if (err !== null) {
                console.log('Something went wrong: ' + err);
             } else {
-               updateCards(data);   
+
+               // update card displays
+               updateCardInfo(data);   
+               // update card statuses
+               updateCardStatus(data);
             }
          });
          setTimeout(updateAll, 1000);
       } updateAll();
 
-      const CARD_RENDER_TITLE = 'Render';
-      const CARD_STATE_TITLE = 'State';
-      const CARD_PHYSICS_TITLE = 'Physics';
 
-      function updateCards(data) {
+      const COLOUR_UNHEALTHY = "red";
+      const COLOUR_HEALTHY = "green";
+      function setStatusLabelColour(name, state){
+         document.querySelector('#' + name + '-status-label').style = "display: inline; color: " + state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY + ";";
+      }
+      
+      const RENDER_TARGET = 1 / 60.0;
+      const LOGIC_TARGET = 1 / 120.0;
+      const PHYSICS_TARGET = 1 / 120.0;
+      function updateCardStatus(data) {
+         setStatusLabelColour("render", data.RenderRate < RENDER_TARGET);
+         setStatusLabelColour("state", data.LogicRate < LOGIC_TARGET);
+         setStatusLabelColour("physics", data.PhysicsRate < PhysicsRate);
+      }
+
+      const CARD_RENDER_TITLE = 'Render';
+      const CARD_LOGIC_TITLE = 'State';
+      const CARD_PHYSICS_TITLE = 'Physics';
+      function updateCardInfo(data) {
          document.querySelector('#card-render').childNodes[1].textContent = CARD_RENDER_TITLE + ' ' + Math.round(1.0 / data.RenderRate);         
-         document.querySelector('#card-state').childNodes[1].textContent = CARD_STATE_TITLE + ' ' + Math.round(1.0 / data.LogicRate);         
+         document.querySelector('#card-state').childNodes[1].textContent = CARD_LOGIC_TITLE + ' ' + Math.round(1.0 / data.LogicRate);         
          document.querySelector('#card-physics').childNodes[1].textContent = CARD_PHYSICS_TITLE + ' ' + Math.round(1.0 / data.PhysicsRate);         
       }
       
