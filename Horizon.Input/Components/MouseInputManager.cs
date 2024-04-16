@@ -15,7 +15,7 @@ namespace Horizon.Input.Components
         /// Gets the first connected mouse, or null if none is connected.
         /// </summary>
         public static IMouse? Mouse =>
-            Manager.NativeInputContext.Mice.Count > 0 ? Manager.NativeInputContext.Mice[0] : null;
+            Manager.NativeInputContext?.Mice.Count > 0 ? Manager.NativeInputContext.Mice[0] : null;
 
         /// <summary>
         /// Gets the MouseBindings representing the button-to-action mappings for the mouse.

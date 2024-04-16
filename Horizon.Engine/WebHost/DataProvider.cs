@@ -12,9 +12,11 @@ using Newtonsoft.Json;
 
 namespace Horizon.Engine.WebHost;
 
-file readonly struct TelemetryData
+internal readonly struct TelemetryData
 {
-    public Vector2 Test { get; init; }
+    public readonly double LogicRate { get; init; }
+    public readonly double RenderRate { get; init; }
+    public readonly double PhysicsRate { get; init; }
 }
 
 internal class DataProvider : IWebHostContentProvider
@@ -23,10 +25,7 @@ internal class DataProvider : IWebHostContentProvider
     {
         if (url.CompareTo("favicon.ico") == 0) return;
 
-        TelemetryData data = new()
-        {
-            Test = GameEngine.Instance.InputManager.GetVirtualController().MovementAxis
-        };
+        var data = GameEngine.Instance.CollectTelemetry();
 
         Stream stream = response.OutputStream;
 

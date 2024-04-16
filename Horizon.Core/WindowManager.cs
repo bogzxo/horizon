@@ -185,9 +185,9 @@ public class WindowManager : IGameComponent
         double elapsedTime;
         while (!_window.IsClosing)
         {
-            ticks = Environment.TickCount64;
-            elapsedTime = ((previousTicks - ticks) / (double)Stopwatch.Frequency);
-
+            ticks = Stopwatch.GetTimestamp();
+            elapsedTime = ((ticks - previousTicks) / (double)Stopwatch.Frequency);
+            System.Threading.Thread.Sleep(1);
             if (_window.IsInitialized)
                 Parent.UpdatePhysics((float)elapsedTime);
 
@@ -195,6 +195,7 @@ public class WindowManager : IGameComponent
         }
     }
 
+    private bool needsDispatching = true;
     private void OnFrame()
     {
         _window.DoEvents();
@@ -204,12 +205,17 @@ public class WindowManager : IGameComponent
         if (!_window.IsClosing)
             Window.DoUpdate();
 
+
         /* it is important to ensure that atleast one Render pass has happened, before
          * we dispatch all the threads, as lazy initialization of unmanaged object is done in the render thread. */
 
         // Dispatch threads.
         //logicTask ??= Task.Run(OnLogicFrame);
-        //physicsTask ??= Task.Run(OnPhysicsFrame);
+        if (needsDispatching)
+        {
+            needsDispatching = false;
+            physicsTask ??= Task.Run(OnPhysicsFrame);
+        }
     }
 
     public void Dispose()
@@ -220,9 +226,7 @@ public class WindowManager : IGameComponent
         Parent.Dispose();
 
         _window.Dispose();
-        //Parent.Logger.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
-
-        GC.SuppressFinalize(this);
+        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
     }
 
     /// <summary>
