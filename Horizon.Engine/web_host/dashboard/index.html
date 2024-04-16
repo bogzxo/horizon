@@ -93,6 +93,7 @@
       /* Card Components */
       .card h1 {
          margin-top: 0;
+         font-size: 1.5rem;
       }
 
       .card h3 {
@@ -192,39 +193,50 @@
             if (err !== null) {
                console.log('Something went wrong: ' + err);
             } else {
-
                // update card displays
-               updateCardInfo(data);   
-               // update card statuses
-               updateCardStatus(data);
+               updateCardInfo(data);
             }
          });
          setTimeout(updateAll, 1000);
       } updateAll();
 
+      const LABEL_HEALTHY = "Healthy";
+      const LABEL_UNHEALTHY = "Unhealthy";
 
       const COLOUR_UNHEALTHY = "red";
+      const COLOUR_WARNING = "yellow";
       const COLOUR_HEALTHY = "green";
-      function setStatusLabelColour(name, state){
-         document.querySelector('#' + name + '-status-label').style = "display: inline; color: " + state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY + ";";
-      }
       
       const RENDER_TARGET = 1 / 60.0;
       const LOGIC_TARGET = 1 / 120.0;
-      const PHYSICS_TARGET = 1 / 120.0;
-      function updateCardStatus(data) {
-         setStatusLabelColour("render", data.RenderRate < RENDER_TARGET);
-         setStatusLabelColour("state", data.LogicRate < LOGIC_TARGET);
-         setStatusLabelColour("physics", data.PhysicsRate < PhysicsRate);
+      const PHYSICS_TARGET = 1 / 60.0;
+
+      const SECOND_US_MULT = 1000000.0;
+      const SAFE_MARGIN = 5.0 / 8.0; // warning margin as a multiplier
+
+      function updateCard(title, card, targetRate, realRate) {
+         // Updates the card title
+         document.querySelector('#' + "card-" + card).childNodes[1].textContent = 
+            title + " " +  // Title
+            Math.round(1.0 / realRate) + "hz (" + // FPS
+            Math.round(realRate * SECOND_US_MULT) + "us/" + // Real FPS
+            Math.round(targetRate * SECOND_US_MULT) + "us)"; // Target FPS
+
+         // Updates the cards status
+         const state = realRate < targetRate;
+         const diff = targetRate - realRate;
+          
+         document.querySelector("#" + card + "-status-label").style.color = (diff < (targetRate  * SAFE_MARGIN)) ? COLOUR_WARNING : (state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY);
+         document.querySelector("#" + card + "-status-label").textContent = state ? LABEL_HEALTHY : LABEL_UNHEALTHY;
       }
 
       const CARD_RENDER_TITLE = 'Render';
       const CARD_LOGIC_TITLE = 'State';
       const CARD_PHYSICS_TITLE = 'Physics';
       function updateCardInfo(data) {
-         document.querySelector('#card-render').childNodes[1].textContent = CARD_RENDER_TITLE + ' ' + Math.round(1.0 / data.RenderRate);         
-         document.querySelector('#card-state').childNodes[1].textContent = CARD_LOGIC_TITLE + ' ' + Math.round(1.0 / data.LogicRate);         
-         document.querySelector('#card-physics').childNodes[1].textContent = CARD_PHYSICS_TITLE + ' ' + Math.round(1.0 / data.PhysicsRate);         
+         updateCard(CARD_RENDER_TITLE, "render", RENDER_TARGET, data.RenderRate);
+         updateCard(CARD_LOGIC_TITLE, "state", LOGIC_TARGET, data.LogicRate);
+         updateCard(CARD_PHYSICS_TITLE, "physics", PHYSICS_TARGET, data.PhysicsRate);       
       }
       
    </script>
