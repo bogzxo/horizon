@@ -62,13 +62,14 @@
 
       /* Card Container */
       .card-container {
-         margin: 2vh 0 0 0;
+         margin: 0;
          display: flex;
          flex-wrap: wrap;
          justify-content: space-between;
-         padding: 20px;
-         width: 80%;
-         height: 20vh;
+         background-color: #e66465;
+         width: 100%;
+         height: 30vh;
+         padding: 40px 0 20px 0;
       }
 
       /* Status Cards */
@@ -82,6 +83,7 @@
          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
          padding: 20px;
          color: white;
+         height: 100%;
          transition: background-color 0.1s ease-in-out;
       }
 
@@ -120,6 +122,7 @@
       @media (max-width: 900px) {
          html, body {
             flex-direction: column;
+            font-size: 0.9rem;
          }
 
          .sidebar-container {
@@ -159,7 +162,7 @@
          <h1>State</h1>
          <div>
             <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div></h3>
-            <p>The state thread governs all core game logic irrelivent from rendering, currently it is tied to the render thread.</p>
+            <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the render thread.</p>
          </div>
       </div>
       <div class="card" id="card-physics">
@@ -206,7 +209,7 @@
       const COLOUR_UNHEALTHY = "red";
       const COLOUR_WARNING = "yellow";
       const COLOUR_HEALTHY = "green";
-      
+
       const RENDER_TARGET = 1 / 60.0;
       const LOGIC_TARGET = 1 / 120.0;
       const PHYSICS_TARGET = 1 / 60.0;
