@@ -6,6 +6,17 @@
    <link href='https://fonts.googleapis.com/css?family=Space Mono' rel='stylesheet'>
    <title>Horizon WebHost</title>
    <style>
+      /*
+         f55c7a
+         f57c73
+         f68c70
+         f6ac69
+         f6bc66
+      */
+
+      #container {
+         width: 83.5%;
+      }
       /* Sidebar */
       .sidebar-top>h1 {
          color: white;
@@ -14,7 +25,7 @@
       .sidebar-container {
          width: 15%;
          height: 100vh;
-         background: linear-gradient(#e66465, #9198e5);
+         background: linear-gradient(#f57c73, #f6bc66);
          display: flex;
          flex-direction: column;
          justify-content: center; /* Center items vertically */
@@ -23,6 +34,7 @@
       .sidebar-top {
          width: 100%;
          height: 15vh;
+         /* background-color: red; */
       }
 
       .sidebar-list {
@@ -40,7 +52,7 @@
          padding: 10px 0 10px 0;
          width: 100%;
          text-align: center;
-         background-color: #9e91d36d;
+         background-color: #f55c7a;
          transition: background-color 0.3s ease-out;
          backdrop-filter: blur(32px); /* Adjust the blur radius for frosty effect */
 
@@ -62,11 +74,11 @@
 
       /* Card Container */
       .card-container {
-         margin: 0;
          display: flex;
+         margin: 0 1% 0 1%;
          flex-wrap: wrap;
          justify-content: space-between;
-         background-color: #e66465;
+         background-color: linear-gradient(#f55c7a, #f57c73);
          width: 100%;
          height: 30vh;
          padding: 40px 0 20px 0;
@@ -79,7 +91,7 @@
          margin: 5px;
          box-sizing: border-box; /* Ensure padding is included in width */
          border-radius: 10px;
-         background-color: #fac074;
+         background-color: #f6ac69;
          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
          padding: 20px;
          color: white;
@@ -108,13 +120,18 @@
 
       /* Card status styles are configured in JS */
 
+      /* VarDrop */
+      #vardrop {
+
+      }
+
       /* Body styles and animations */
       html, body {
          font-family: 'Space Mono';
          margin: 0 !important;
          padding: 0 !important;
          overflow: hidden;
-         background-color: #858ffe;
+         background-color: #f57c73;
          display: flex;
          flex-direction: row;
       }
@@ -122,9 +139,11 @@
       @media (max-width: 900px) {
          html, body {
             flex-direction: column;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
          }
-
+         #container {
+            width: 98%;
+         }
          .sidebar-container {
             width: 100%;
             height: auto;
@@ -132,6 +151,7 @@
 
          .card-container {
             width: 100%;
+            height: 40vh;
          }
 
          .card {
@@ -150,27 +170,32 @@
          <li class="sidebar-menuitem"><a href="#">Settings</a></li>
       </ul>
    </div>
-   <div class="card-container">
-      <div class="card" id="card-render">
-         <h1>Render</h1>
-         <div>
-            <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div></h3>
-            <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using the ECS.</p>
+   <div id="container">
+      <div class="card-container">
+         <div class="card" id="card-render">
+            <h1>Render</h1>
+            <div>
+               <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div></h3>
+               <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using the ECS.</p>
+            </div>
+         </div>
+         <div class="card" id="card-state">
+            <h1>State</h1>
+            <div>
+               <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div></h3>
+               <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the render thread.</p>
+            </div>
+         </div>
+         <div class="card" id="card-physics">
+            <h1>Physics</h1>
+            <div>
+               <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div></h3>
+               <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as more of a general use 3rd thread.</p>
+            </div>
          </div>
       </div>
-      <div class="card" id="card-state">
-         <h1>State</h1>
-         <div>
-            <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div></h3>
-            <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the render thread.</p>
-         </div>
-      </div>
-      <div class="card" id="card-physics">
-         <h1>Physics</h1>
-         <div>
-            <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div></h3>
-            <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as more of a general use 3rd thread.</p>
-         </div>
+      <div id="vardrop">
+   
       </div>
    </div>
 
