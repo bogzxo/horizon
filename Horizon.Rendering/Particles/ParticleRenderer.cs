@@ -194,6 +194,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
                         | MapBufferAccessMask.PersistentBit
                 );
 
+
         base.Initialize();
     }
 

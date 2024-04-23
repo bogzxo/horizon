@@ -29,7 +29,7 @@ public class WebHost : Entity, IDisposable
         Server = AddComponent<HttpServerComponent>();
     }
 
-    static string GetProvider(in Uri url)
+    static string GetProviderKey(in Uri url)
     {
         string value = url.AbsolutePath.Trim('/');
 
@@ -39,14 +39,39 @@ public class WebHost : Entity, IDisposable
         return value;
     }
 
-    internal void ContentRequest(ref HttpListenerRequest request, ref HttpListenerResponse response)
+    private (IWebHostContentProvider? provider, string url) GetProvider(in HttpListenerContext context)
     {
         // TODO: something
-        string key = GetProvider(request.Url ?? new Uri("http://127.0.0.1:8080/index.html"));
+        string key = GetProviderKey(context.Request.Url ?? new Uri("http://127.0.0.1:8080/index.html"));
 
-        string url = (request.Url.AbsolutePath.StartsWith('/') && request.Url.AbsolutePath.Length > 1) ? request.Url.AbsolutePath.TrimStart('/') : request.Url.AbsolutePath;
+        string url = (context.Request.Url.AbsolutePath.StartsWith('/') && context.Request.Url.AbsolutePath.Length > 1) ? context.Request.Url.AbsolutePath.TrimStart('/') : context.Request.Url.AbsolutePath;
 
-        if (ContentProviders.TryGetValue(key, out var provider))
-            provider.HandleRequest(url, ref request, ref response);
+        if (ContentProviders.TryGetValue(key, out var provider)) return (provider, url);
+        return (null, string.Empty); // TODO: FIX
+    }
+
+    internal async Task ContentRequest(HttpListenerContext context)
+    {
+        var (provider, url) = GetProvider(context);
+        if (provider is null) return;
+
+        await provider.HandleRequest(url, context.Request, context.Response);
+    }
+
+    internal async Task SocketRequest(HttpListenerContext context)
+    {
+        var (provider, url) = GetProvider(context);
+        if (provider is null) return;
+
+        var socketContext = await context.AcceptWebSocketAsync(null);
+
+
+        if (socketContext.WebSocket.State == System.Net.WebSockets.WebSocketState.Open)
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Established WS connection.");
+            await Task.Run(() => provider.HandleSocket(url, context, socketContext));
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Closed WS connection.");
+        }
+
     }
 }

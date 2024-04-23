@@ -222,7 +222,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
                 ImGui.Text(valueEntry.Key);
                 ImGui.NextColumn();
-                ImGui.Text((GetAverage(valueEntry.Value) * 1000.0).ToString("0.00"));
+                ImGui.Text((GetAverage(valueEntry.Value) * 1000000.0).ToString("0.00") + "us");
 
                 ImGui.Columns(1);
             }

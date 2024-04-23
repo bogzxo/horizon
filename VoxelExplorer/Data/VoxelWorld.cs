@@ -12,8 +12,8 @@ namespace VoxelExplorer.Data;
 
 internal class VoxelWorld
 {
-    public const int WIDTH = 4;
-    public const int DEPTH = 4;
+    public const int WIDTH = 2;
+    public const int DEPTH = 2;
 
     internal Chunk[] Chunks;
 

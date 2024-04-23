@@ -27,6 +27,7 @@ public class SkylineDebugger : Entity
     public DockedGameContainerDebugger GameContainerDebugger { get; private set; }
     public PerformanceProfilerDebugger PerformanceDebugger { get; private set; }
     public GeneralDebugger GeneralDebugger { get; private set; }
+    public DeveloperConsole Console { get; private set; }
 
     public bool RenderToContainer { get; private set; }
 
@@ -46,7 +47,8 @@ public class SkylineDebugger : Entity
                 (LoadedContentDebugger = AddComponent<LoadedContentDebugger>()),
                 (GameContainerDebugger = AddComponent<DockedGameContainerDebugger>()),
                 (PerformanceDebugger = AddComponent<PerformanceProfilerDebugger>()),
-                (GeneralDebugger = AddComponent<GeneralDebugger>())
+                (GeneralDebugger = AddComponent<GeneralDebugger>()),
+                (Console = AddComponent<DeveloperConsole>())
             }
         );
     }
@@ -81,6 +83,7 @@ public class SkylineDebugger : Entity
                 if (ImGui.MenuItem("Close"))
                     GameEngine.Instance.WindowManager.Window.Close();
 
+                ImGui.MenuItem(Console.Name, "", ref Console.Visible);
                 ImGui.EndMenu();
             }
             if (ImGui.BeginMenu(DebuggerCatagoryNames.Graphics))
