@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
    <meta charset="UTF-8">
    <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,20 +18,24 @@
       #container {
          width: 83.5%;
       }
+
       /* Sidebar */
       .sidebar-top>h1 {
          color: white;
          text-align: center;
       }
+
       .sidebar-container {
          width: 15%;
          height: 100vh;
          background: linear-gradient(#f57c73, #f6bc66);
          display: flex;
          flex-direction: column;
-         justify-content: center; /* Center items vertically */
+         justify-content: center;
+         /* Center items vertically */
          align-items: center;
       }
+
       .sidebar-top {
          width: 100%;
          height: 15vh;
@@ -40,12 +45,15 @@
       .sidebar-list {
          list-style-type: none;
          padding: 0;
-         margin: auto 0; /* Center items vertically */
+         margin: auto 0;
+         /* Center items vertically */
          width: 100%;
          display: flex;
          flex-direction: column;
-         align-items: center; /* Center items horizontally */
+         align-items: center;
+         /* Center items horizontally */
       }
+
       .sidebar-menuitem {
          color: white;
          font-size: 20px;
@@ -54,7 +62,8 @@
          text-align: center;
          background-color: #f55c7a;
          transition: background-color 0.3s ease-out;
-         backdrop-filter: blur(32px); /* Adjust the blur radius for frosty effect */
+         backdrop-filter: blur(32px);
+         /* Adjust the blur radius for frosty effect */
 
       }
 
@@ -85,11 +94,13 @@
       }
 
       /* Status Cards */
-      .card {  
-         flex: 1; /* Each div takes equal space */
+      .card {
+         flex: 1;
+         /* Each div takes equal space */
          padding: 20px;
          margin: 5px;
-         box-sizing: border-box; /* Ensure padding is included in width */
+         box-sizing: border-box;
+         /* Ensure padding is included in width */
          border-radius: 10px;
          background-color: #f6ac69;
          box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
@@ -121,12 +132,11 @@
       /* Card status styles are configured in JS */
 
       /* VarDrop */
-      #vardrop {
-
-      }
+      #vardrop {}
 
       /* Body styles and animations */
-      html, body {
+      html,
+      body {
          font-family: 'Space Mono';
          margin: 0 !important;
          padding: 0 !important;
@@ -137,13 +147,17 @@
       }
 
       @media (max-width: 900px) {
-         html, body {
+
+         html,
+         body {
             flex-direction: column;
             font-size: 0.8rem;
          }
+
          #container {
             width: 98%;
          }
+
          .sidebar-container {
             width: 100%;
             height: auto;
@@ -160,6 +174,7 @@
       }
    </style>
 </head>
+
 <body>
    <div class="sidebar-container">
       <div class="sidebar-top">
@@ -170,63 +185,60 @@
          <li class="sidebar-menuitem"><a href="#">Settings</a></li>
       </ul>
    </div>
-   <div id="container">
+   <div>
       <div class="card-container">
          <div class="card" id="card-render">
             <h1>Render</h1>
             <div>
-               <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div></h3>
-               <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using the ECS.</p>
+               <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div>
+               </h3>
+               <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using
+                  the ECS.</p>
             </div>
          </div>
          <div class="card" id="card-state">
             <h1>State</h1>
             <div>
-               <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div></h3>
-               <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the render thread.</p>
+               <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div>
+               </h3>
+               <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the
+                  render thread.</p>
             </div>
          </div>
          <div class="card" id="card-physics">
             <h1>Physics</h1>
             <div>
-               <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div></h3>
-               <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as more of a general use 3rd thread.</p>
+               <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div>
+               </h3>
+               <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as
+                  more of a general use 3rd thread.</p>
             </div>
          </div>
       </div>
-      <div id="vardrop">
-   
-      </div>
+      <input type="text" id="command">
    </div>
 
    <script>
-      const dataUrl = 'http://127.0.0.1:8080/data';
-      var getJSON = function(callback) {
-         var xhr = new XMLHttpRequest();
-         xhr.open('GET', dataUrl, true);
-         xhr.responseType = 'json';
-         xhr.onload = function() {
-            var status = xhr.status;
-            if (status === 200) {
-            callback(null, xhr.response);
-            } else {
-            callback(status, xhr.response);
-            }
-         };
-         xhr.send();
+      
+      var textInput = document.getElementById("command");
+
+      const socket = new WebSocket("ws://127.0.0.1:8080/index");
+     
+      window.onbeforeunload = function() {
+         socket.onclose = function () {}; // disable onclose handler first
+         socket.close();
+      };
+      
+      socket.onmessage = function(event) {
+         updateCardInfo(JSON.parse(event.data));
       };
 
-      function updateAll() {
-         getJSON(function(err, data) {
-            if (err !== null) {
-               console.log('Something went wrong: ' + err);
-            } else {
-               // update card displays
-               updateCardInfo(data);
-            }
-         });
-         setTimeout(updateAll, 1000);
-      } updateAll();
+      textInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+         socket.send(textInput.value);
+         textInput.value = "";
+      }
+    });
 
       const LABEL_HEALTHY = "Healthy";
       const LABEL_UNHEALTHY = "Unhealthy";
@@ -237,14 +249,14 @@
 
       const RENDER_TARGET = 1 / 60.0;
       const LOGIC_TARGET = 1 / 120.0;
-      const PHYSICS_TARGET = 1 / 60.0;
+      const PHYSICS_TARGET = 1 / 40.0;
 
       const SECOND_US_MULT = 1000000.0;
-      const SAFE_MARGIN = 5.0 / 8.0; // warning margin as a multiplier
+      const SAFE_MARGIN = 3.0 / 8.0; // warning margin as a multiplier
 
       function updateCard(title, card, targetRate, realRate) {
          // Updates the card title
-         document.querySelector('#' + "card-" + card).childNodes[1].textContent = 
+         document.querySelector('#' + "card-" + card).childNodes[1].textContent =
             title + " " +  // Title
             Math.round(1.0 / realRate) + "hz (" + // FPS
             Math.round(realRate * SECOND_US_MULT) + "us/" + // Real FPS
@@ -253,8 +265,8 @@
          // Updates the cards status
          const state = realRate < targetRate;
          const diff = targetRate - realRate;
-          
-         document.querySelector("#" + card + "-status-label").style.color = (diff < (targetRate  * SAFE_MARGIN)) ? COLOUR_WARNING : (state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY);
+
+         document.querySelector("#" + card + "-status-label").style.color = ((diff < (targetRate * SAFE_MARGIN) && state)) ? COLOUR_WARNING : (state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY);
          document.querySelector("#" + card + "-status-label").textContent = state ? LABEL_HEALTHY : LABEL_UNHEALTHY;
       }
 
@@ -264,10 +276,11 @@
       function updateCardInfo(data) {
          updateCard(CARD_RENDER_TITLE, "render", RENDER_TARGET, data.RenderRate);
          updateCard(CARD_LOGIC_TITLE, "state", LOGIC_TARGET, data.LogicRate);
-         updateCard(CARD_PHYSICS_TITLE, "physics", PHYSICS_TARGET, data.PhysicsRate);       
+         updateCard(CARD_PHYSICS_TITLE, "physics", PHYSICS_TARGET, data.PhysicsRate);
       }
-      
+
    </script>
 
 </body>
+
 </html>

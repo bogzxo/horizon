@@ -1,4 +1,5 @@
 ﻿using Horizon.Content.Descriptions;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Descriptions;
@@ -32,6 +33,16 @@ public readonly struct BufferObjectDescription : IAssetDescription
             Size = 0
         };
 
+    /// <summary>
+    /// Shader storage buffer preset.
+    /// </summary>
+    public static BufferObjectDescription ShaderStorageBuffer { get; } =
+        new BufferObjectDescription
+        {
+            Type = BufferTargetARB.ShaderStorageBuffer,
+            IsStorageBuffer = false,
+            Size = 0
+        };
     /// <summary>
     /// Element array buffer preset.
     /// </summary>

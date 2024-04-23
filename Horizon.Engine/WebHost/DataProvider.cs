@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.WebSockets;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,7 +22,7 @@ internal readonly struct TelemetryData
 
 internal class DataProvider : IWebHostContentProvider
 {
-    public void HandleRequest(in string url, ref HttpListenerRequest request, ref HttpListenerResponse response)
+    public async Task HandleRequest(string url, HttpListenerRequest request, HttpListenerResponse response)
     {
         if (url.CompareTo("favicon.ico") == 0) return;
 
@@ -37,5 +38,10 @@ internal class DataProvider : IWebHostContentProvider
         stream.Write(bytes, 0, bytes.Length);
         stream.Flush();
         stream.Close();
+    }
+
+    public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)
+    {
+
     }
 }

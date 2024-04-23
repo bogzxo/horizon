@@ -3,14 +3,64 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Core;
 
 public static class Util
 {
+    public static byte[] GetBytes<T>(T str) where T : unmanaged
+    {
+        int size = Marshal.SizeOf(str);
+
+        byte[] arr = new byte[size];
+
+        GCHandle h = default;
+
+        try
+        {
+            h = GCHandle.Alloc(arr, GCHandleType.Pinned);
+
+            Marshal.StructureToPtr<T>(str, h.AddrOfPinnedObject(), false);
+        }
+        finally
+        {
+            if (h.IsAllocated)
+            {
+                h.Free();
+            }
+        }
+
+        return arr;
+    }
+
+    public static T FromBytes<T>(byte[] arr) where T : unmanaged
+    {
+        T str = default;
+
+        GCHandle h = default;
+
+        try
+        {
+            h = GCHandle.Alloc(arr, GCHandleType.Pinned);
+
+            str = Marshal.PtrToStructure<T>(h.AddrOfPinnedObject());
+
+        }
+        finally
+        {
+            if (h.IsAllocated)
+            {
+                h.Free();
+            }
+        }
+
+        return str;
+    }
     /// <summary>
     /// Splits a string into an array of lines, platform agnostic.
     /// </summary>

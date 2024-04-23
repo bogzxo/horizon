@@ -33,7 +33,7 @@ public class HttpServerComponent : IGameComponent, IDisposable
         Listener.Prefixes.Add("http://127.0.0.1:8080/");
     }
 
-    private void ListeningLoop()
+    private async Task ListeningLoop()
     {
         // start server
         Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Starting web listener.");
@@ -42,12 +42,14 @@ public class HttpServerComponent : IGameComponent, IDisposable
         // event loop
         while (isRunning)
         {
-            HttpListenerContext context = Listener.GetContextAsync().Result;
-            HttpListenerRequest request = context.Request;
-            HttpListenerResponse response = context.Response;
+            HttpListenerContext context = await Listener.GetContextAsync();
 
-            // TODO: allow external function injection
-            Host.ContentRequest(ref request, ref response);
+            if (context.Request.IsWebSocketRequest)
+                // Handle the WebSocket connection
+                await Host.SocketRequest(context);
+            else 
+                // TODO: allow external function injection
+                await Host.ContentRequest(context);
         }
 
         // end server

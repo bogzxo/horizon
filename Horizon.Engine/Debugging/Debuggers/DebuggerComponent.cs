@@ -1,4 +1,6 @@
-﻿using Bogz.Logging;
+﻿using System.Text;
+
+using Bogz.Logging;
 
 using Horizon.Core;
 using Horizon.Core.Components;

@@ -33,3 +33,11 @@ public struct DrawElementsIndirectCommand
     /// </summary>
     public uint baseInstance;
 }
+[StructLayout(LayoutKind.Sequential)]
+public struct DrawArraysIndirectCommand
+{
+    public uint count;
+    public uint instanceCount;
+    public uint first;
+    public uint baseInstance;
+}

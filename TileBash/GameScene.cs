@@ -1,11 +1,15 @@
 ﻿global using static Horizon.Rendering.Tiling<TileBash.TileTextureID>;
+
 using System;
 using System.Drawing;
 using System.Numerics;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Box2D.NetStandard.Dynamics.World;
 using Box2D.NetStandard.Dynamics.World.Callbacks;
+
 using Horizon;
 using Horizon.Core;
 using Horizon.Engine;
@@ -15,8 +19,10 @@ using Horizon.Rendering;
 using Horizon.Rendering.Particles;
 using Horizon.Rendering.Particles.Materials;
 using Horizon.Rendering.Spriting;
+
 using Silk.NET.Input;
 using Silk.NET.OpenGL;
+
 using TileBash.Animals;
 using TileBash.Player;
 
@@ -35,10 +41,8 @@ public class GameScene : Scene
     private ParticleRenderer2D rainParticleSystem;
     private DeferredRenderer2D deferredRenderer;
 
-    //private RenderOptions charOptions;
     private int catCounter = 0;
 
-    //private readonly Box2DDebugDrawCallback debugDrawCallback;
     public GameScene()
     {
         if ((tilemap = TileMap.FromTiledMap(this, "content/maps/main.tmx")!) == null)
@@ -58,30 +62,20 @@ public class GameScene : Scene
 
         random = new Random(Environment.TickCount);
 
-        //debugDrawCallback = new();
-        //debugDrawCallback.Parent = this;
-        //debugDrawCallback.Initialize();
-            
-        //debugDrawCallback.AppendFlags(
-        //    DrawFlags.CenterOfMass | DrawFlags.Joint | DrawFlags.Pair | DrawFlags.ShapePrimitive
-        //);
-        //debugDrawCallback.Enabled = true;
-
         world = AddComponent<Box2DWorldComponent>();
-        //world.SetDebugDraw(debugDrawCallback);
 
         AddEntity(player = new Player2D(world, tilemap));
         deferredRenderer = AddEntity<DeferredRenderer2D>(
             new((uint)Engine.WindowManager.WindowSize.X, (uint)Engine.WindowManager.WindowSize.Y)
         );
         cam = AddEntity<Camera2D>(new(deferredRenderer.ViewportSize / 4.0f));
-        this.ActiveCamera = cam;
+        ActiveCamera = cam;
         deferredRenderer.AddEntity(tilemap);
 
         spriteBatch = tilemap.AddEntity<SpriteBatch>();
         spriteBatch.Add(player);
 
-        deferredRenderer.AddEntity(
+        spriteBatch.AddEntity(
             rainParticleSystem = new ParticleRenderer2D(100_000)
             {
                 MaxAge = 2.5f,
@@ -90,9 +84,6 @@ public class GameScene : Scene
                 Enabled = true
             }
         );
-
-        // The tile map will now render this entity between the parallax layers, implicitly.
-        //tilemap.SetParallaxEntity(spriteBatch);
 
         AddEntity(
             new IntervalRunner(
@@ -117,11 +108,6 @@ public class GameScene : Scene
         base.Initialize();
     }
 
-    //protected override Effect[] GeneratePostProccessingEffects()
-    //{
-    //    return new[] { new VingetteEffect() { Intensity = 1.0f } };
-    //}
-
     private void InitializeGl()
     {
         Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
@@ -134,8 +120,6 @@ public class GameScene : Scene
 
     public override void UpdateState(float dt)
     {
-        //if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.F3))
-        //    Engine.Debugger.Enabled = !Engine.Debugger.Enabled;
         if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.E))
             cameraMovement = Math.Clamp(cameraMovement - 2, 0, 32);
         else if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Q))
@@ -176,8 +160,6 @@ public class GameScene : Scene
     {
         base.Render(dt);
 
-        //world.DrawDebugData();
-
         if (catCounter > 0)
         {
             Cat[] gattos = new Cat[catCounter];
@@ -194,9 +176,6 @@ public class GameScene : Scene
             spriteBatch.AddRange(gattos);
             catCounter = 0;
         }
-
-        //debugDrawCallback.Enabled = options.IsBox2DDebugDrawEnabled;
-        // spriteBatch.RenderImplicit = true;
     }
 
     private void SpawnParticle(Vector2 pos, Vector2 dir, float blend = 0.5f)
@@ -223,19 +202,4 @@ public class GameScene : Scene
             );
         }
     }
-
-    //public override void DrawGui(float dt)
-    //{
-    //    if (ImGui.Begin("Particles (& cats)"))
-    //    {
-    //        ImGui.DragFloat("Clipping Offset", ref tilemap.ClippingOffset, 0.01f, -1, 1);
-
-    //        ImGui.Text($"Particles: {rainParticleSystem.Count}");
-    //        ImGui.Text($"Cats: {spriteBatch.Count - 1}");
-
-    //        if (ImGui.Button("Spawn 100000"))
-    //            SpawnCircle(100000);
-    //        ImGui.End();
-    //    }
-    //}
 }

@@ -258,7 +258,7 @@ public class BufferObject : GLObject
         GL.NamedBufferSubData(Handle, offset, (nuint)(length > 0 ? length : (sizeof(T) * data.Length)), data);
     }
 
-    public virtual unsafe void NamedBufferSubData<T>(in T[] data, int offset = 0, int length = 0)
+    public virtual unsafe void NamedBufferSubData<T>(in T[] data, int length = 0)
         where T : unmanaged
     {
         fixed (void* d = data)

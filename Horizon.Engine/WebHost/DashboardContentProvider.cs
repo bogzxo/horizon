@@ -1,9 +1,19 @@
 ﻿using System.Net;
+using System.Net.WebSockets;
 using System.Text;
 
+using Horizon.Core;
+using Horizon.Engine.WebHost;
 using Horizon.Webhost.Providers;
 
+using Newtonsoft.Json;
+
+using Silk.NET.Core.Native;
+
 namespace Horizon.Engine.Webhost;
+
+using static System.Runtime.InteropServices.JavaScript.JSType;
+
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 public class DashboardContentProvider : IWebHostContentProvider
@@ -18,12 +28,15 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     private static readonly string filePrefix = "web_host/dashboard/";
 
-    public void HandleRequest(in string url, ref HttpListenerRequest request, ref HttpListenerResponse response)
+    private HttpListenerWebSocketContext context;
+    private bool isSocketClosed = false;
+
+    public async Task HandleRequest(string url, HttpListenerRequest request, HttpListenerResponse response)
     {
         // TODO: fuck
 
         string val = url;
-        if (url.StartsWith("index/")) val= url[6..];
+        if (url.StartsWith("index/")) val = url[6..];
 
         if (val.CompareTo(string.Empty) == 0)
         {
@@ -52,4 +65,95 @@ public class DashboardContentProvider : IWebHostContentProvider
     DIE:
         output.Close();
     }
+
+    public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)
+    {
+        this.context = socketContext;
+
+        try
+        {
+            var cancellationTokenSource = new CancellationTokenSource();
+
+            // Launch two tasks to receive and send data simultaneously
+            Task receive = ReceiveData(cancellationTokenSource.Token);
+            Task transmit = TransmitData(cancellationTokenSource.Token);
+
+            await Task.WhenAny(receive, transmit);
+
+            cancellationTokenSource.Cancel(); // Cancel tasks if any one of them completes
+            await Task.WhenAll(receive, transmit);
+
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Closed WS.");
+        }
+        catch (Exception ex)
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error handling WebSocket: {ex.Message}");
+        }
+        finally
+        {
+            // Close the WebSocket
+            await socketContext.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "WebSocket closed", CancellationToken.None);
+        }
+    }
+
+    private async Task TransmitData(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (context.WebSocket.State == WebSocketState.Open)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+
+                byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(GameEngine.Instance.CollectTelemetry()));
+
+                await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                Thread.Sleep(100);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Task was canceled
+        }
+        catch (Exception ex)
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error transmitting data: {ex.Message}");
+        }
+    }
+
+    private async Task ReceiveData(CancellationToken cancellationToken)
+    {
+        byte[] receiveBuffer = new byte[1024];
+
+        try
+        {
+            while (context.WebSocket.State == WebSocketState.Open)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+
+                var result = await context.WebSocket.ReceiveAsync(receiveBuffer, cancellationToken);
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    isSocketClosed = true;
+                    break; // Exit the loop when WebSocket is closed
+                }
+                else
+                {
+                    GameEngine.Instance.Debugger.Console.ExecuteCommand(Encoding.UTF8.GetString(receiveBuffer, 0, result.Count));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Task was canceled
+        }
+        catch (Exception ex)
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error receiving data: {ex.Message}");
+        }
+    }
+
+
 }

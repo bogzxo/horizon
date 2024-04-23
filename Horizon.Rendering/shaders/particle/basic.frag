@@ -10,7 +10,7 @@ uniform vec3 uStartColor;
 uniform vec3 uEndColor;
 
 void main() {
-  if (alive < 0.0) discard; 
-  AlbedoColor = vec4(mix(uEndColor, uStartColor, alive), alive + 0.1);
+  if (alive <= 0.0) discard; 
+  AlbedoColor = vec4(mix(uEndColor * 2.0, uStartColor, alive), alive);
   NormalFragPosColor = vec4(vec2(0.0), fragPos);
 }
