@@ -59,6 +59,7 @@ public class GameEngine : Entity
 
     public Horizon.Webhost.WebHost WebHost { get; init; }
     public SkylineDebugger Debugger { get; init; }
+    public float Runtime { get; private set; }
 
     private CustomImguiController imguiController;
 
@@ -219,6 +220,8 @@ public class GameEngine : Entity
 
     public override void UpdateState(float dt)
     {
+        Runtime += dt;
+
         // Run our custom events.
         EventManager.PreState?.Invoke(dt);
         base.UpdateState(dt);
