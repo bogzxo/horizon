@@ -64,7 +64,7 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         StringBuilder sb = new();
 
-        while (logMessages.Any())
+        while (!logMessages.IsEmpty)
         {
             if (logMessages.TryDequeue(out var msgQ))
             {
@@ -84,7 +84,6 @@ public class ConcurrentLogger : ILoggerDisposable
 
                 Console.ForegroundColor = color;
                 Console.WriteLine(msg);
-                Console.ForegroundColor = ConsoleColor.White;
 
                 if (sb.Length > 100)
                 {
@@ -97,6 +96,7 @@ public class ConcurrentLogger : ILoggerDisposable
             writer?.Write(sb.ToString());
 
         task = null;
+        Console.ForegroundColor = ConsoleColor.White;
     }
 
     public void Log(LogLevel level, object message)
@@ -117,4 +117,6 @@ public class ConcurrentLogger : ILoggerDisposable
 
         GC.SuppressFinalize(this);
     }
+
+    public void Flush() => MessageLoggingCallback();
 }

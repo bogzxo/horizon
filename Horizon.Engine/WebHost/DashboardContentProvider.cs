@@ -3,7 +3,9 @@ using System.Net.WebSockets;
 using System.Text;
 
 using Horizon.Core;
+using Horizon.Engine.Debugging.Debuggers;
 using Horizon.Engine.WebHost;
+using Horizon.Webhost;
 using Horizon.Webhost.Providers;
 
 using Newtonsoft.Json;
@@ -69,7 +71,7 @@ public class DashboardContentProvider : IWebHostContentProvider
     public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)
     {
         this.context = socketContext;
-
+        GameEngine.Instance.Debugger.Console.CommandProcessed += ProcessCommand;
         try
         {
             var cancellationTokenSource = new CancellationTokenSource();
@@ -94,21 +96,33 @@ public class DashboardContentProvider : IWebHostContentProvider
             // Close the WebSocket
             await socketContext.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "WebSocket closed", CancellationToken.None);
         }
+        GameEngine.Instance.Debugger.Console.CommandProcessed -= ProcessCommand;
     }
+
+    public Queue<IWebSocketPacket> PacketQueue { get; init; } = new();
+
+    public void ProcessCommand(IWebSocketPacket result) => PacketQueue.Enqueue(result);
 
     private async Task TransmitData(CancellationToken cancellationToken)
     {
         try
         {
+            byte[] bytes;
             while (context.WebSocket.State == WebSocketState.Open)
             {
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
-                byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(GameEngine.Instance.CollectTelemetry()));
+                if (PacketQueue.TryDequeue(out var command))
+                {
+                    bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(command));
+                    await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                }
 
+                bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(GameEngine.Instance.CollectTelemetry()));
                 await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
-                Thread.Sleep(100);
+                if (PacketQueue.Count > 0) await Task.Delay(10, cancellationToken);
+                else await Task.Delay(100, cancellationToken);
             }
         }
         catch (OperationCanceledException)

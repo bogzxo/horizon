@@ -1,0 +1,1 @@
+﻿let test = { adder: func add(x, y) { print (x + y) } } test.adder(2, 3)
