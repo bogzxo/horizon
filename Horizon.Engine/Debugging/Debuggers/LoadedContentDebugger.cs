@@ -1,10 +1,8 @@
-﻿using Horizon.Content;
-using Horizon.OpenGL;
+﻿using System.Numerics;
+
 using Horizon.OpenGL.Assets;
 
 using ImGuiNET;
-
-using System.Numerics;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -33,7 +31,8 @@ public class LoadedContentDebugger : DebuggerComponent
         }
     }
 
-    public override void Dispose() { }
+    public override void Dispose()
+    { }
 
     private void DrawTextureSection()
     {
@@ -49,7 +48,6 @@ public class LoadedContentDebugger : DebuggerComponent
             );
 
             ImGui.Columns(imagesPerRow, "TextureColumns", false);
-
 
             int collectionSize = GameEngine.Instance.ObjectManager.Textures.OwnedAssets.Count;
 
@@ -105,7 +103,9 @@ public class LoadedContentDebugger : DebuggerComponent
     //    }
     //}
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 }

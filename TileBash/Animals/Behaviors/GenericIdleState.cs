@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+
 using TileBash.Player;
 
 namespace TileBash.Animals.Behaviors;
@@ -24,7 +25,8 @@ internal class GenericIdleState : AnimalState
         UpdateState(0.0f);
     }
 
-    public override void Exit() { }
+    public override void Exit()
+    { }
 
     public override void UpdateState(float dt)
     {
@@ -36,5 +38,6 @@ internal class GenericIdleState : AnimalState
             StateMachine.Transition(AnimalBehavior.Wander);
     }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 }

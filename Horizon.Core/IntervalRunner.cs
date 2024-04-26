@@ -1,5 +1,3 @@
-using Horizon.GameEntity;
-
 namespace Horizon.Core;
 
 public class IntervalRunner : Entity

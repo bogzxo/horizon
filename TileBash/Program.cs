@@ -1,5 +1,4 @@
-﻿using Horizon;
-using Horizon.Engine;
+﻿using Horizon.Engine;
 
 namespace TileBash;
 

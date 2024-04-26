@@ -1,12 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Horizon.Engine;
-using Horizon.OpenGL.Descriptions;
+﻿using Horizon.Engine;
 using Horizon.OpenGL;
+using Horizon.OpenGL.Descriptions;
 
 namespace AutoVoxel.Rendering;
 

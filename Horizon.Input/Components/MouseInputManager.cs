@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
-using Horizon.Core.Components;
-using Horizon.Core.Primitives;
+
 using Silk.NET.Input;
 
 namespace Horizon.Input.Components
@@ -36,7 +35,8 @@ namespace Horizon.Input.Components
             Bindings = MouseBindings.Default;
         }
 
-        public override void Initialize() { }
+        public override void Initialize()
+        { }
 
         public override void SwapBuffers()
         {

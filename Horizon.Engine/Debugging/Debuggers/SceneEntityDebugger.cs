@@ -1,12 +1,9 @@
-﻿using Horizon.Core;
-using Horizon.Core.Components;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
+﻿using System.Collections;
+using System.Numerics;
+
+using Horizon.Core;
 
 using ImGuiNET;
-
-using System.Collections;
-using System.Numerics;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -43,7 +40,8 @@ public class SceneEntityDebugger : DebuggerComponent
         }
     }
 
-    public override void Dispose() { }
+    public override void Dispose()
+    { }
 
     private void DrawEntityTree(Entity? entity)
     {
@@ -468,7 +466,9 @@ public class SceneEntityDebugger : DebuggerComponent
         }
     }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 }

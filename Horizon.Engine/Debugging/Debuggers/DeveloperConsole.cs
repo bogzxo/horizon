@@ -1,15 +1,10 @@
-﻿using System.Linq;
-using System.Numerics;
-using System.Reflection.Metadata;
-using System.Text;
+﻿using System.Text;
 
 using Horizon.Horlang;
 using Horizon.Horlang.Runtime;
 using Horizon.Webhost;
 
 using ImGuiNET;
-
-using Microsoft.Win32;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -33,7 +28,9 @@ public class DeveloperConsole : DebuggerComponent
 
     private List<CommandLinePacket> commandHistory;
     private string inputBuffer = string.Empty;
+
     internal delegate void OnCommandProcessed(IWebSocketPacket result);
+
     internal event OnCommandProcessed? CommandProcessed;
 
     public override void Initialize()
@@ -74,7 +71,6 @@ let env = {
 ");
     }
 
-
     public override void Render(float dt, object? obj = null)
     {
         if (Visible && ImGui.Begin("Developer Console", ImGuiWindowFlags.NoCollapse))
@@ -105,7 +101,6 @@ let env = {
         }
     }
 
-
     internal void ExecuteCommand(string input)
     {
         // Add command to history
@@ -128,22 +123,19 @@ let env = {
             Message = text.CompareTo("null") == 0 ? "" : text
         };
 
-
         commandHistory.Add(final);
         CommandProcessed?.Invoke(final);
     }
 
     public override void UpdatePhysics(float dt)
     {
-
     }
 
     public override void UpdateState(float dt)
     {
-
     }
+
     public override void Dispose()
     {
-
     }
 }

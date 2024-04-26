@@ -1,9 +1,4 @@
-﻿using System;
-using System.Text;
-
-using Horizon.Horlang.Parsing;
-
-using static System.Formats.Asn1.AsnWriter;
+﻿using Horizon.Horlang.Parsing;
 
 namespace Horizon.Horlang.Runtime;
 
@@ -38,10 +33,7 @@ public class HorlangInterpreter
 
     private IRuntimeValue EvaluateDeleteStatement(DeleteStatement statement, Environment env)
     {
-        var runtime = env.Resolve(statement.Target);
-        if (runtime is null)
-            throw new Exception($"Cannot find scope of variable '{statement.Target}'!");
-
+        var runtime = env.Resolve(statement.Target) ?? throw new Exception($"Cannot find scope of variable '{statement.Target}'!");
         runtime.Delete(statement.Target);
         return NULL;
     }
@@ -62,8 +54,8 @@ public class HorlangInterpreter
             }
         }
         return NULL;
-
     }
+
     private IRuntimeValue EvaluateWhileExpression(WhileDeclarationExpression statement, Environment env)
     {
         var compResult = Evaluate(statement.Condition, env);
@@ -85,6 +77,7 @@ public class HorlangInterpreter
         }
         return result;
     }
+
     private IRuntimeValue EvaluateDoWhileExpression(DoWhileDeclarationExpression statement, Environment env)
     {
         IRuntimeValue result = new NullValue();
@@ -130,6 +123,7 @@ public class HorlangInterpreter
     {
         return env.Lookup(statement.Symbol) ?? new NullValue();
     }
+
     private IRuntimeValue EvaluateObjectLiteralExpression(ObjectLiteralExpression statement, Environment env)
     {
         Dictionary<string, IRuntimeValue> properties = [];
@@ -141,6 +135,7 @@ public class HorlangInterpreter
 
         return new ObjectValue(properties);
     }
+
     private IRuntimeValue EvaluateFunctionCallExpression(CallExpression statement, Environment env)
     {
         IRuntimeValue[] args = statement.Arguments.Select<IExpression, IRuntimeValue>((arg) => Evaluate(arg, env)).ToArray();
@@ -200,7 +195,6 @@ public class HorlangInterpreter
         if (expression.Operator == "!") // special case for inverting bool
             return new BooleanValue(!((BooleanValue)Evaluate(expression.Left, env)).Value);
 
-
         // evaluate both sides
         var lhs = Evaluate(expression.Left, env);
         var rhs = Evaluate(expression.Right, env);
@@ -209,13 +203,10 @@ public class HorlangInterpreter
 
         if (rhs.Type == ValueType.Boolean && lhs.Type == ValueType.Boolean)
             return EvaluateBooleanExpression((BooleanValue)lhs, (BooleanValue)rhs, expression.Operator);
-
         else if (rhs.Type == ValueType.Number && lhs.Type == ValueType.Number)
             return EvaluateNumericExpression((NumberValue)lhs, (NumberValue)rhs, expression.Operator);
-
         else if (rhs.Type == ValueType.String && lhs.Type == ValueType.String)
             return EvaluateStringComparisonExpression((StringValue)lhs, (StringValue)rhs, expression.Operator);
-
 
         return NULL;
     }
@@ -248,6 +239,7 @@ public class HorlangInterpreter
             _ => NULL,
         };
     }
+
     private IRuntimeValue EvaluateBooleanExpression(BooleanValue lhs, BooleanValue rhs, string op)
     {
         return op switch

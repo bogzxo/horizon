@@ -2,271 +2,279 @@
 <html lang="en">
 
 <head>
-   <meta charset="UTF-8">
-   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-   <link href='https://fonts.googleapis.com/css?family=Space Mono' rel='stylesheet'>
-   <title>Horizon WebHost</title>
-   <style>
-      /*
-         f55c7a
-         f57c73
-         f68c70
-         f6ac69
-         f6bc66
-      */
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href='https://fonts.googleapis.com/css?family=Space Mono' rel='stylesheet'>
+    <title>Horizon WebHost</title>
+    <style>
+          /*
+           f55c7a
+           f57c73
+           f68c70
+           f6ac69
+           f6bc66
+        */
 
-      #container {
-         width: 83.5%;
-      }
+          #container {
+              width: 83.5%;
+          }
 
-      /* Sidebar */
-      .sidebar-top>h1 {
-         color: white;
-         text-align: center;
-      }
+          /* Sidebar */
+          .sidebar-top > h1 {
+              color: white;
+              text-align: center;
+          }
 
-      .sidebar-container {
-         width: 15%;
-         height: 100vh;
-         background: linear-gradient(#f57c73, #f6bc66);
-         display: flex;
-         flex-direction: column;
-         justify-content: center;
-         /* Center items vertically */
-         align-items: center;
-      }
+          .sidebar-container {
+              width: 15%;
+              height: 100vh;
+              background: linear-gradient(#f57c73, #f6bc66);
+              display: flex;
+              flex-direction: column;
+              justify-content: center;
+              /* Center items vertically */
+              align-items: center;
+          }
 
-      .sidebar-top {
-         width: 100%;
-         height: 15vh;
-         /* background-color: red; */
-      }
+          .sidebar-top {
+              width: 100%;
+              height: 15vh;
+              /* background-color: red; */
+          }
 
-      .sidebar-list {
-         list-style-type: none;
-         padding: 0;
-         margin: auto 0;
-         /* Center items vertically */
-         width: 100%;
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         /* Center items horizontally */
-      }
+          .sidebar-list {
+              list-style-type: none;
+              padding: 0;
+              margin: auto 0;
+              /* Center items vertically */
+              width: 100%;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              /* Center items horizontally */
+          }
 
-      .sidebar-menuitem {
-         color: white;
-         font-size: 20px;
-         padding: 10px 0 10px 0;
-         width: 100%;
-         text-align: center;
-         background-color: #f55c7a;
-         transition: background-color 0.3s ease-out;
-         backdrop-filter: blur(32px);
-         /* Adjust the blur radius for frosty effect */
+          .sidebar-menuitem {
+              color: white;
+              font-size: 20px;
+              padding: 10px 0 10px 0;
+              width: 100%;
+              text-align: center;
+              background-color: #f55c7a;
+              transition: background-color 0.3s ease-out;
+              backdrop-filter: blur(32px);
+              /* Adjust the blur radius for frosty effect */
+          }
 
-      }
+              .sidebar-menuitem a {
+                  text-decoration: none;
+                  color: white;
+              }
 
-      .sidebar-menuitem a {
-         text-decoration: none;
-         color: white;
-      }
+              .sidebar-menuitem:hover {
+                  background-color: #ff00ff2b;
+                  transition: background-color 0.2s ease-in;
+              }
 
-      .sidebar-menuitem:hover {
-         background-color: #ff00ff2b;
-         transition: background-color 0.2s ease-in;
-      }
+              .sidebar-menuitem:active {
+                  background-color: #121399;
+              }
 
-      .sidebar-menuitem:active {
-         background-color: #121399;
-      }
+          /* Card Container */
+          .card-container {
+              display: flex;
+              margin: 0 1% 0 1%;
+              flex-wrap: wrap;
+              justify-content: space-between;
+              background-color: linear-gradient(#f55c7a, #f57c73);
+              width: 100%;
+              height: 20vh;
+              padding: 40px 0 20px 0;
+          }
 
-      /* Card Container */
-      .card-container {
-         display: flex;
-         margin: 0 1% 0 1%;
-         flex-wrap: wrap;
-         justify-content: space-between;
-         background-color: linear-gradient(#f55c7a, #f57c73);
-         width: 100%;
-         height: 20vh;
-         padding: 40px 0 20px 0;
-      }
+          /* Status Cards */
+          .card {
+              flex: 1;
+              /* Each div takes equal space */
+              padding: 20px;
+              margin: 5px;
+              box-sizing: border-box;
+              /* Ensure padding is included in width */
+              border-radius: 10px;
+              background-color: #f6ac69;
+              box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+              padding: 20px;
+              color: white;
+              height: 100%;
+              transition: background-color 0.1s ease-in-out;
+          }
 
-      /* Status Cards */
-      .card {
-         flex: 1;
-         /* Each div takes equal space */
-         padding: 20px;
-         margin: 5px;
-         box-sizing: border-box;
-         /* Ensure padding is included in width */
-         border-radius: 10px;
-         background-color: #f6ac69;
-         box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-         padding: 20px;
-         color: white;
-         height: 100%;
-         transition: background-color 0.1s ease-in-out;
-      }
+              .card:hover {
+                  background-color: #fece8f;
+                  transition: background-color 0.1s ease-in-out;
+              }
 
-      .card:hover {
-         background-color: #fece8f;
-         transition: background-color 0.1s ease-in-out;
-      }
+              /* Card Components */
+              .card h1 {
+                  margin-top: 0;
+                  font-size: 1.5rem;
+              }
 
-      /* Card Components */
-      .card h1 {
-         margin-top: 0;
-         font-size: 1.5rem;
-      }
+              .card h3 {
+                  color: #313131;
+              }
 
-      .card h3 {
-         color: #313131;
-      }
+              .card p {
+                  font-size: 0.8rem;
+              }
 
-      .card p {
-         font-size: 0.8rem;
-      }
+          #commandConsole {
+              background-color: #292929;
+              border-radius: 10px 10px 0px 0px;
+              padding: 20px;
+              position: fixed;
+              bottom: 0;
+              width: 100%;
+              box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+          }
 
-      #commandConsole {
-         background-color: #292929;
-         border-radius: 10px 10px 0px 0px;
-         padding: 20px;
-         position: fixed;
-         bottom: 0;
-         width: 100%;
-         box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
-      }
+          #commandBuffer {
+              width: 88%;
+              height: 200px;
+              background-color: #1e1e1e;
+              color: #fff;
+              border: none;
+              border-radius: 5px;
+              padding: 10px;
+              margin-bottom: 10px;
+              resize: none;
+              overflow-y: scroll;
+          }
 
-      #commandBuffer {
-         width: 88%;
-         height: 200px;
-         background-color: #1e1e1e;
-         color: #fff;
-         border: none;
-         border-radius: 5px;
-         padding: 10px;
-         margin-bottom: 10px;
-         resize: none;
-         overflow-y: scroll;
-      }
+          #command {
+              width: 89%;
+              height: 40px;
+              background-color: #1e1e1e;
+              color: #fff;
+              border: none;
+              border-radius: 5px;
+              padding: 10px;
+              box-sizing: border-box;
+              font-size: 16px;
+          }
 
-      #command {
-         width: 89%;
-         height: 40px;
-         background-color: #1e1e1e;
-         color: #fff;
-         border: none;
-         border-radius: 5px;
-         padding: 10px;
-         box-sizing: border-box;
-         font-size: 16px;
-      }
+              #command:focus {
+                  outline: none;
+              }
 
-      #command:focus {
-         outline: none;
-      }
+              #command::placeholder {
+                  color: #888;
+              }
 
-      #command::placeholder {
-         color: #888;
-      }
+          /* Card status styles are configured in JS */
 
+          /* VarDrop */
+          #vardrop {
+          }
 
-      /* Card status styles are configured in JS */
+          /* Body styles and animations */
+          html,
+          body {
+              font-family: 'Space Mono';
+              margin: 0 !important;
+              padding: 0 !important;
+              overflow: hidden;
+              background-color: #f57c73;
+              display: flex;
+              flex-direction: row;
+          }
 
-      /* VarDrop */
-      #vardrop {}
+          @media (max-width: 900px) {
 
-      /* Body styles and animations */
-      html,
-      body {
-         font-family: 'Space Mono';
-         margin: 0 !important;
-         padding: 0 !important;
-         overflow: hidden;
-         background-color: #f57c73;
-         display: flex;
-         flex-direction: row;
-      }
+              html,
+              body {
+                  flex-direction: column;
+                  font-size: 0.8rem;
+              }
 
-      @media (max-width: 900px) {
+              #container {
+                  width: 98%;
+              }
 
-         html,
-         body {
-            flex-direction: column;
-            font-size: 0.8rem;
-         }
+              .sidebar-container {
+                  width: 100%;
+                  height: auto;
+              }
 
-         #container {
-            width: 98%;
-         }
+              .card-container {
+                  width: 100%;
+                  height: 40vh;
+              }
 
-         .sidebar-container {
-            width: 100%;
-            height: auto;
-         }
-
-         .card-container {
-            width: 100%;
-            height: 40vh;
-         }
-
-         .card {
-            width: calc(85%);
-         }
-      }
-   </style>
+              .card {
+                  width: calc(85%);
+              }
+          }
+    </style>
 </head>
 
 <body>
-   <div class="sidebar-container">
-      <div class="sidebar-top">
-         <h1>Horizon</h1>
-      </div>
-      <ul class="sidebar-list">
-         <li class="sidebar-menuitem"><a href="#">Metrics</a></li>
-         <li class="sidebar-menuitem"><a href="#">Settings</a></li>
-      </ul>
-   </div>
-   <div>
-      <div class="card-container">
-         <div class="card" id="card-render">
-            <h1>Render</h1>
-            <div>
-               <h3>Status: <div id="render-status-label" style="display: inline;">Unknown</div>
-               </h3>
-               <p>The render thread is responsible for all render logic, as well as instantiating objects allocated using
-                  the ECS.</p>
+    <div class="sidebar-container">
+        <div class="sidebar-top">
+            <h1>Horizon</h1>
+        </div>
+        <ul class="sidebar-list">
+            <li class="sidebar-menuitem"><a href="#">Metrics</a></li>
+            <li class="sidebar-menuitem"><a href="#">Settings</a></li>
+        </ul>
+    </div>
+    <div>
+        <div class="card-container">
+            <div class="card" id="card-render">
+                <h1>Render</h1>
+                <div>
+                    <h3>
+                        Status: <div id="render-status-label" style="display: inline;">Unknown</div>
+                    </h3>
+                    <p>
+                        The render thread is responsible for all render logic, as well as instantiating objects allocated using
+                        the ECS.
+                    </p>
+                </div>
             </div>
-         </div>
-         <div class="card" id="card-state">
-            <h1>State</h1>
-            <div>
-               <h3>Status: <div id="state-status-label" style="display: inline;">Unknown</div>
-               </h3>
-               <p>The state thread governs all core game logic irrelevent from rendering, currently it is tied to the
-                  render thread.</p>
+            <div class="card" id="card-state">
+                <h1>State</h1>
+                <div>
+                    <h3>
+                        Status: <div id="state-status-label" style="display: inline;">Unknown</div>
+                    </h3>
+                    <p>
+                        The state thread governs all core game logic irrelevent from rendering, currently it is tied to the
+                        render thread.
+                    </p>
+                </div>
             </div>
-         </div>
-         <div class="card" id="card-physics">
-            <h1>Physics</h1>
-            <div>
-               <h3>Status: <div id="physics-status-label" style="display: inline;">Unknown</div>
-               </h3>
-               <p>The physics thread is allocated specifically for physics related tasks, although it is implemented as
-                  more of a general use 3rd thread.</p>
+            <div class="card" id="card-physics">
+                <h1>Physics</h1>
+                <div>
+                    <h3>
+                        Status: <div id="physics-status-label" style="display: inline;">Unknown</div>
+                    </h3>
+                    <p>
+                        The physics thread is allocated specifically for physics related tasks, although it is implemented as
+                        more of a general use 3rd thread.
+                    </p>
+                </div>
             </div>
-         </div>
-      </div>
-      <div id="commandConsole">
-         <textarea readonly id="commandBuffer"></textarea>
-         <input type="text" id="command">
-      </div>
-   </div>
+        </div>
+        <div id="commandConsole">
+            <textarea readonly id="commandBuffer"></textarea>
+            <input type="text" id="command">
+        </div>
+    </div>
 
-   <script>
-      
+    <script>
+
       var textInput = document.getElementById("command");
       var commandBuffer = document.getElementById("commandBuffer");
       const socket = new WebSocket("ws://127.0.0.1:8080/index");
@@ -291,7 +299,7 @@
             switch (csObj.PacketID) {
                case 0:
                   updateCardInfo(csObj);
-               break; 
+               break;
                case 1:
                   processCommand(csObj);
                break;
@@ -305,7 +313,7 @@
             {
                textInput.value = "";
             }
-         else 
+         else
             textInput.value = commandHistory[historyPointer];
       }
       textInput.addEventListener('keydown', (event) => {
@@ -333,7 +341,7 @@
 
       function writeToBuffer(text, isResponse) {
          commandBuffer.innerHTML += (isResponse ? ">" : "\t<") + text + "\n"
-         commandBuffer.scrollTop = commandBuffer.scrollHeight; 
+         commandBuffer.scrollTop = commandBuffer.scrollHeight;
 
       }
 
@@ -380,9 +388,6 @@
          updateCard(CARD_LOGIC_TITLE, "state", LOGIC_TARGET, data.LogicRate);
          updateCard(CARD_PHYSICS_TITLE, "physics", PHYSICS_TARGET, data.PhysicsRate);
       }
-
-   </script>
-
+    </script>
 </body>
-
 </html>

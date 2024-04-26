@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Numerics;
 
 namespace Horizon.Core.Components;
 
@@ -109,14 +104,17 @@ public class TransformComponent2D : IGameComponent
     /// Updates the transform component based on the elapsed time (dt).
     /// </summary>
     /// <param name="dt">The elapsed time since the last update call.</param>
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
     /// <summary>
     /// Draws the game entity with the current transformation.
     /// </summary>
     /// <param name="dt">The elapsed time since the last draw call.</param>
     /// <param name="options">Optional render options.</param>
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 }

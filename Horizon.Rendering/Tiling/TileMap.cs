@@ -1,14 +1,15 @@
-﻿using System.Drawing.Drawing2D;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Box2D.NetStandard.Dynamics.World;
+
 using Horizon.Core;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.GameEntity.Components.Physics2D;
-using Silk.NET.OpenGL;
+
 using TiledSharp;
 
 namespace Horizon.Rendering;

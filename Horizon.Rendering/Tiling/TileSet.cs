@@ -1,11 +1,10 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Horizon.Engine;
-using Horizon.GameEntity;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
 using Horizon.Rendering.Spriting;
 
 namespace Horizon.Rendering;

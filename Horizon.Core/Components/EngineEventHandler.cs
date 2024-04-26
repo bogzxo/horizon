@@ -1,7 +1,4 @@
-﻿using Horizon.Core;
-using Horizon.Core.Components;
-
-namespace Horizon.Core.Components;
+﻿namespace Horizon.Core.Components;
 
 /// <summary>
 /// Aggregate of more specific engine events.
@@ -21,11 +18,15 @@ public class EngineEventHandler : IGameComponent
     public string Name { get; set; }
     public Entity Parent { get; set; }
 
-    public void Initialize() { }
+    public void Initialize()
+    { }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 }

@@ -1,5 +1,4 @@
-﻿using Horizon.OpenGL;
-using Horizon.OpenGL.Buffers;
+﻿using Horizon.OpenGL.Buffers;
 
 using ImGuiNET;
 
@@ -24,9 +23,11 @@ public class DockedGameContainerDebugger : DebuggerComponent
         Name = "Game Container";
     }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 
     public override void Render(float dt, object? obj = null)
     {
@@ -46,5 +47,6 @@ public class DockedGameContainerDebugger : DebuggerComponent
         }
     }
 
-    public override void Dispose() { }
+    public override void Dispose()
+    { }
 }

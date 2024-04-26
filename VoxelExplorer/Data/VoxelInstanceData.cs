@@ -1,10 +1,8 @@
-﻿using System.Numerics;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 using Horizon.Core.Data;
 
 using Silk.NET.OpenGL;
-
 
 namespace VoxelExplorer.Data;
 

@@ -1,23 +1,17 @@
 ﻿global using static Horizon.Rendering.Tiling<TileBash.TileTextureID>;
 
-using System;
-using System.Drawing;
 using System.Numerics;
 
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
 using Box2D.NetStandard.Dynamics.World;
-using Box2D.NetStandard.Dynamics.World.Callbacks;
 
-using Horizon;
 using Horizon.Core;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.GameEntity.Components.Physics2D;
 using Horizon.Rendering;
 using Horizon.Rendering.Particles;
-using Horizon.Rendering.Particles.Materials;
 using Horizon.Rendering.Spriting;
 
 using Silk.NET.Input;

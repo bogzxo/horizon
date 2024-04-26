@@ -1,5 +1,5 @@
-﻿using Bogz.Logging;
-using Bogz.Logging.Loggers;
+﻿using Bogz.Logging.Loggers;
+
 using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -25,35 +25,40 @@ public class ObjectManager : IGameComponent, IDisposable
         TextureFactory,
         TextureDescription,
         TextureFinalizer
-    > Textures { get; init; }
+    > Textures
+    { get; init; }
 
     public AssetManager<
         Shader,
         ShaderFactory,
         ShaderDescription,
         ShaderFinalizer
-    > Shaders { get; init; }
+    > Shaders
+    { get; init; }
 
     public AssetManager<
         BufferObject,
         BufferObjectFactory,
         BufferObjectDescription,
         BufferObjectFinalizer
-    > Buffers { get; init; }
+    > Buffers
+    { get; init; }
 
     public AssetManager<
         FrameBufferObject,
         FrameBufferObjectFactory,
         FrameBufferObjectDescription,
         FrameBufferObjectFinalizer
-    > FrameBuffers { get; init; }
+    > FrameBuffers
+    { get; init; }
 
     public AssetManager<
         VertexArrayObject,
         VertexArrayObjectFactory,
         VertexArrayObjectDescription,
         VertexArrayObjectFinalizer
-    > VertexArrays { get; init; }
+    > VertexArrays
+    { get; init; }
 
     public string Name { get; set; }
     public Entity Parent { get; set; }
@@ -83,11 +88,14 @@ public class ObjectManager : IGameComponent, IDisposable
         FrameBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
     public void Dispose()
     {

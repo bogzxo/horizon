@@ -1,6 +1,5 @@
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Rendering;
 
 namespace TileBash.Player.Behaviour;
 
@@ -9,7 +8,9 @@ public class Player2DStateController : IGameComponent
     public Dictionary<
         Player2DStateIdentifier,
         Player2DStateBehaviour
-    > StateBehaviours { get; init; }
+    > StateBehaviours
+    { get; init; }
+
     public string Name { get; set; } = "Player2D State Controller";
     public Entity Parent { get; set; }
     public Player2D Player { get; private set; }
@@ -49,7 +50,9 @@ public class Player2DStateController : IGameComponent
         CurrentState = StateBehaviours[CurrentState].Update(dt);
     }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 }

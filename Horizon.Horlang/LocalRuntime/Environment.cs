@@ -1,6 +1,4 @@
-﻿using Microsoft.VisualBasic;
-
-namespace Horizon.Horlang.Runtime;
+﻿namespace Horizon.Horlang.Runtime;
 
 public class Environment(in Environment? parent = null)
 {

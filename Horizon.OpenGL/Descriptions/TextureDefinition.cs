@@ -1,5 +1,4 @@
-﻿using Horizon.Content.Descriptions;
-using Silk.NET.OpenGL;
+﻿using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Descriptions;
 
@@ -19,6 +18,7 @@ public readonly struct TextureDefinition
             PixelFormat = PixelFormat.Rgba,
             PixelType = PixelType.UnsignedByte
         };
+
     public static TextureDefinition RgbaFloat { get; } =
         new TextureDefinition
         {

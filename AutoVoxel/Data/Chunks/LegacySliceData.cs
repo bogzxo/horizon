@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace AutoVoxel.Data.Chunks;
+﻿namespace AutoVoxel.Data.Chunks;
 
 /// <summary>
 /// (VERY BAD) Slice data structure storing data in a ushort indexed hashset (dictionary)
@@ -65,6 +59,7 @@ internal class LegacySliceData : ISliceData
                 Tiles[index] = value;
         }
     }
+
     public Tile this[int x, int y, int z]
     {
         get

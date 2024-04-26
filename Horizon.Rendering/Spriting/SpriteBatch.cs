@@ -1,11 +1,10 @@
 ﻿using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using Horizon.Content;
+
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting.Components;
-using Horizon.Rendering.Spriting.Data;
 
 namespace Horizon.Rendering.Spriting;
 
@@ -118,6 +117,7 @@ public class SpriteBatch : GameObject
     /// </summary>
     /// <value>
     private Dictionary<uint, SpriteSheetRenderObject> SpritesheetSprites { get; } = new();
+
     public int Count { get; private set; }
 
     private ConcurrentStack<Sprite> _queuedSprites = new();

@@ -19,6 +19,7 @@ public class Renderer2D : GameObject
     public Vector2 ViewportSize { get; init; }
 
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
+
     protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) => GameEngine
             .Instance
             .ObjectManager

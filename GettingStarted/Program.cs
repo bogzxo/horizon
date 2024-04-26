@@ -4,7 +4,6 @@ using Bogz.Logging;
 
 using Horizon.Engine;
 using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Primitives;
@@ -15,7 +14,7 @@ using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace GettingStarted;
 
-class Program : Scene
+internal class Program : Scene
 {
     public override Camera ActiveCamera { get; protected set; }
 
@@ -44,6 +43,7 @@ class Program : Scene
                 ShaderDescription.FromPath("shader", "basic")));
         }
     }
+
     public Program()
     {
         shapeRenderer = AddEntity<PrimitiveRenderer>();
@@ -60,8 +60,8 @@ class Program : Scene
 
         viewMatrix = Matrix4x4.CreateOrthographic(1.0f * (16.0f / 9.0f), 1.0f, 0.01f, 10.0f);
         shapeRenderer.ViewMatrix = viewMatrix;
-
     }
+
     public override void Initialize()
     {
         base.Initialize();
@@ -98,7 +98,7 @@ class Program : Scene
 
         texture = Engine.ObjectManager.Textures.CreateOrGet("texture", new TextureDescription { Path = "image.png" });
 
-        /* You can F12 on the ShaderDescription.FromPath() to see that it simply is a shorthand for finding the path of all shaders in a folder with the same name, 
+        /* You can F12 on the ShaderDescription.FromPath() to see that it simply is a shorthand for finding the path of all shaders in a folder with the same name,
          * and creating a program from the shaders in said folder, this also enables my pre processor to use things such as #include :) */
     }
 
@@ -122,7 +122,6 @@ class Program : Scene
             new Vertex( -1.0f, 1.0f, 0.0f,      0.0f, 0.0f,     0.9f, 0.2f, 0.5f),
         ];
 
-
         // as well as the 6 indices.
         uint[] indices = [0, 1, 2, 0, 2, 3];
 
@@ -145,8 +144,8 @@ class Program : Scene
         vbo.VertexBuffer.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, (uint)sizeof(Vertex), sizeof(float) * 3);
 
         /* The index parameter specifies which shader binding point we want to bind to, it is standard to start from 0, the next specifies the size of the vector,
-         * if it is 1, then we pass a single value, if it is say 2, we are passing a 2D vector, etc. in this case will be passing 3 floats for each vertex, so we specify that. 
-         
+         * if it is 1, then we pass a single value, if it is say 2, we are passing a 2D vector, etc. in this case will be passing 3 floats for each vertex, so we specify that.
+
          * We then specify the data type (float in this case) and the vertexSize is the total size (also called stride) in bytes of a complete vertex, which for us is simply 3 floats, and finally
          * offset is to access different attributes within the array.
          */
@@ -182,7 +181,7 @@ class Program : Scene
             case Horizon.Content.AssetCreationStatus.Success:
 
                 /* The VAO class is a 'primitive' asset, ie. it simply holds references to buffers stored elsewhere, to get anything done we simply need to create a new VBO-
-                 * instance and inject the VAO in. 
+                 * instance and inject the VAO in.
                  */
                 vbo = new VertexBufferObject(result.Asset);
 
@@ -228,7 +227,9 @@ class Program : Scene
             };
         }
     }
-    float timer = 0.0f;
+
+    private float timer = 0.0f;
+
     public override unsafe void Render(float dt, object? obj = null)
     {
         timer += dt;
@@ -270,7 +271,7 @@ class Program : Scene
         technique.Unbind();
     }
 
-    static void Main(string[] args)
+    private static void Main(string[] args)
     {
         new GameEngine(
             GameEngineConfiguration.Default with

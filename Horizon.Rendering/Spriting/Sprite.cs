@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Horizon.Core.Components;
 using Horizon.Engine;
 
@@ -15,6 +16,7 @@ public abstract class Sprite : GameObject
     public SpriteBatch Batch { get; internal set; }
 
     public bool ShouldDraw { get; set; } = true;
+
     public bool Flipped
     {
         set
@@ -28,6 +30,7 @@ public abstract class Sprite : GameObject
         }
         get => Transform.Size.X < 0;
     }
+
     internal bool ShouldUpdateVbo { get; private set; }
 
     public bool IsAnimated { get; set; }

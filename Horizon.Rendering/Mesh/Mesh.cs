@@ -1,7 +1,4 @@
-﻿using System;
-using System.Runtime.InteropServices;
-
-using Bogz.Logging.Loggers;
+﻿using Bogz.Logging.Loggers;
 
 using Horizon.Core;
 using Horizon.Engine;
@@ -33,9 +30,11 @@ public abstract class Mesh<VertexType> : Entity
 
     public uint ElementCount { get; protected set; }
 
-    public Mesh() { }
+    public Mesh()
+    { }
 
     protected abstract VertexArrayObjectDescription ArrayDescription { get; }
+
     protected virtual VertexBufferObject AcquireBuffer() => new(
             GameEngine.Instance.ObjectManager.VertexArrays.Create(ArrayDescription)
         );

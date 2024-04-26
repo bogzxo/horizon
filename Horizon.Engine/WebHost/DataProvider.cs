@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
+﻿using System.Net;
 using System.Net.WebSockets;
-using System.Numerics;
 using System.Text;
-using System.Threading.Tasks;
 
 using Horizon.Webhost;
 using Horizon.Webhost.Providers;
@@ -48,6 +43,5 @@ internal class DataProvider : IWebHostContentProvider
 
     public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)
     {
-
     }
 }

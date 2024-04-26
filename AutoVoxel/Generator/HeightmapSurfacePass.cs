@@ -1,7 +1,4 @@
-﻿using System.Numerics;
-using System.Runtime.CompilerServices;
-
-using Silk.NET.Maths;
+﻿using Silk.NET.Maths;
 
 namespace AutoVoxel.Generator;
 

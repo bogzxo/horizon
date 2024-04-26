@@ -1,8 +1,9 @@
 ﻿using System.Numerics;
+
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Primitives;
 using Horizon.Input.Components;
+
 using Silk.NET.Input;
 
 namespace Horizon.Input
@@ -90,9 +91,11 @@ namespace Horizon.Input
                 Peripherals[i].Initialize();
         }
 
-        public void Render(float dt, object? obj = null) { }
+        public void Render(float dt, object? obj = null)
+        { }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>
         /// Swap buffers.

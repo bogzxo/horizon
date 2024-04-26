@@ -9,7 +9,7 @@ layout(location = 1) in vec3 normal;
 
 vec3 lightDir = vec3(0.6, 0.9, 0.36);
 
-void main() 
+void main()
 {
     vec4 texColor = texture(uTexAlbedo, texCoords);
     if (texColor.a == 0.0) discard;

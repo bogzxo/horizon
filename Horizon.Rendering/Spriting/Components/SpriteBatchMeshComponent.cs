@@ -1,14 +1,13 @@
-﻿using System.Diagnostics;
-using System.Numerics;
-using System.Runtime.CompilerServices;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
+
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
-using Horizon.Rendering.Primitives;
 using Horizon.Rendering.Spriting.Data;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Spriting.Components;
