@@ -116,11 +116,12 @@ public class DashboardContentProvider : IWebHostContentProvider
                 if (PacketQueue.TryDequeue(out var command))
                 {
                     bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(command));
-                    await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                        await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
                 }
 
                 bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(GameEngine.Instance.CollectTelemetry()));
                 await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+               
                 if (PacketQueue.Count > 0) await Task.Delay(10, cancellationToken);
                 else await Task.Delay(100, cancellationToken);
             }

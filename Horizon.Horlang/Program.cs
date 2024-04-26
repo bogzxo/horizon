@@ -3,45 +3,9 @@ using System.Text;
 
 using Bogz.Logging.Loggers;
 
-using Horizon.Horlang.Lexxing;
-using Horizon.Horlang.Parsing;
 using Horizon.Horlang.Runtime;
 
-
 namespace Horizon.Horlang;
-
-using Environment = Horizon.Horlang.Runtime.Environment;
-public class HorlangRuntime
-{
-    public Environment Environment { get; init; }
-    public HorlangInterpreter Interpreter { get; init; }
-
-    public HorlangRuntime()
-    {
-        Environment = new();
-        Environment.Declare("true", new BooleanValue(true));
-        Environment.Declare("false", new BooleanValue(false));
-        Environment.Declare("version", new StringValue("0.0.2"));
-        Environment.Declare("null", new NullValue());
-        Interpreter = new HorlangInterpreter();
-    }
-    public string Evaluate(in string input)
-    {
-        try
-        {
-            Token[] tokens = Lexer.Tokenize(input);
-            var parser = new Parser();
-            ProgramStatement ast = parser.ProduceSyntaxTree(tokens);
-
-            return Interpreter.Evaluate(ast, Environment).ToString() ?? string.Empty;
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e.Message);
-        }
-        return string.Empty;
-    }
-}
 
 internal class Program
 {
@@ -56,8 +20,35 @@ internal class Program
                 sb.Append(item.ToString() + " ");
 
             Console.WriteLine("> " + sb.ToString());
-            return new StringValue(string.Empty);
-        }));
+            return new StringValue(sb.ToString().Trim());
+        }), true);
+        runtime.Environment.Declare("read", new NativeFunctionValue((args, env) =>
+        {
+            return new StringValue(Console.ReadLine() ?? string.Empty);
+        }), true);
+        runtime.Environment.Declare("ld", new NativeFunctionValue((args, env) =>
+        {
+            if (args.Length < 1)
+            {
+                Console.WriteLine("Please specify a file to load.");
+                return new NullValue();
+            }
+            else if (args[0].Type != Runtime.ValueType.String)
+            {
+                Console.WriteLine("Please specify a valid string to load.");
+                return new NullValue();
+            }
+
+            string fileName = ((StringValue)args[0]).Value;
+
+            if (!File.Exists(fileName))
+            {
+                Console.WriteLine("Please specify a file to load.");
+                return new NullValue();
+            }
+
+            return new StringValue(runtime.Evaluate(File.ReadAllText(fileName)));
+        }), true);
 
         while (true)
         {

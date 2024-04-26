@@ -1,9 +1,9 @@
 ﻿namespace Horizon.Horlang.Runtime;
 
-public readonly struct NumberValue(in int val) : IRuntimeValue
+public readonly struct NumberValue(in float val) : IRuntimeValue
 {
     public ValueType Type { get; init; } = ValueType.Number;
-    public int Value { get; init; } = val;
+    public float Value { get; init; } = val;
 
     public override string ToString()
     {
