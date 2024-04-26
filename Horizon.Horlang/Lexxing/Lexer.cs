@@ -82,37 +82,47 @@ public static class Lexer
                     case '(':
                         AddToken(TokenType.OpenParenthesis, character.ToString());
                         break;
+
                     case ')':
                         AddToken(TokenType.CloseParenthesis, character.ToString());
                         break;
+
                     case ';':
                         AddToken(TokenType.Semicolon, character.ToString());
                         break;
+
                     case ':':
                         AddToken(TokenType.Colon, character.ToString());
                         break;
+
                     case ',':
                         AddToken(TokenType.Comma, character.ToString());
                         break;
+
                     case '.':
                         AddToken(TokenType.Dot, character.ToString());
                         break;
+
                     case '!':
                         if (characters.Peek() != '=')
                             AddToken(TokenType.Exclamation, character.ToString());
                         break;
+
                     case '{':
                         AddToken(TokenType.OpenBracket, character.ToString());
                         break;
+
                     case '"':
                         inString = true;
                         continue;
                     case '}':
                         AddToken(TokenType.CloseBracket, character.ToString());
                         break;
+
                     case '[':
                         AddToken(TokenType.OpenBrace, character.ToString());
                         break;
+
                     case ']':
                         AddToken(TokenType.CloseBrace, character.ToString());
                         break;
@@ -128,6 +138,7 @@ public static class Lexer
                     case '&':
                         AddToken(TokenType.BinaryOperation, character.ToString());
                         break;
+
                     case '=':
                         if (characters.Peek() != '=' && prev != '!')
                             AddToken(TokenType.Equals, character.ToString());
@@ -179,7 +190,6 @@ public static class Lexer
 
                 prev = character;
             }
-
         }
 
         // push EOF currentToken

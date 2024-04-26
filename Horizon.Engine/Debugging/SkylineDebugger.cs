@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Horizon.Core;
 using Horizon.Engine.Debugging.Debuggers;
-using Horizon.Core;
+
 using ImGuiNET;
 
 namespace Horizon.Engine.Debugging;
@@ -21,8 +17,10 @@ public class SkylineDebugger : Entity
     }
 
     private List<DebuggerComponent> _components = new();
+
     //public RenderOptionsDebugger RenderOptionsDebugger { get; private set; }
     public SceneEntityDebugger SceneEntityDebugger { get; private set; }
+
     public LoadedContentDebugger LoadedContentDebugger { get; private set; }
     public DockedGameContainerDebugger GameContainerDebugger { get; private set; }
     public PerformanceProfilerDebugger PerformanceDebugger { get; private set; }

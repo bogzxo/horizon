@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Horizon.Core.Data;
+﻿using Horizon.Core.Data;
 using Horizon.OpenGL.Descriptions;
 
 namespace Horizon.Rendering.Mesh;

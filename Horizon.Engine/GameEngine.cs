@@ -5,10 +5,8 @@ using System.Runtime.InteropServices;
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
-using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Primitives;
 using Horizon.Engine.Components;
 using Horizon.Engine.Debugging;
 using Horizon.Engine.Framework;
@@ -16,7 +14,6 @@ using Horizon.Engine.Webhost;
 using Horizon.Engine.WebHost;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
-using Horizon.Webhost;
 
 using ImGuiNET;
 
@@ -173,6 +170,7 @@ public class GameEngine : Entity
                 $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}"
             );
     }
+
     public void DrawWithMetrics(in Entity entity, in float dt)
     {
         var startTime = Stopwatch.GetTimestamp();
@@ -261,7 +259,6 @@ public class GameEngine : Entity
         for (int i = 0; i < Children.Count; i++)
             DrawWithMetrics(Children[i], dt);
 
-
         //base.Render(dt);
 
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
@@ -271,7 +268,6 @@ public class GameEngine : Entity
 
         var endTime = Stopwatch.GetTimestamp();
         var elapsedSeconds = (double)(endTime - startTime) / Stopwatch.Frequency;
-
 
         EventManager.PostRender?.Invoke(dt);
         Debugger.PerformanceDebugger.GpuMetrics.AddCustom("Engine", "GPU", elapsedSeconds);

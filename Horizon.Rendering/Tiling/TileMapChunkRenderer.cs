@@ -1,10 +1,8 @@
-﻿using Horizon.Content;
-using Horizon.Core;
+﻿using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL.Managers;
 
 namespace Horizon.Rendering;
 
@@ -81,7 +79,8 @@ public abstract partial class Tiling<TTextureID>
         private Dictionary<
             TileMapChunkSlice,
             TileMapChunkSliceTileMeshes
-        > TileMapChunkSliceTileMeshesKeyPairs { get; init; }
+        > TileMapChunkSliceTileMeshesKeyPairs
+        { get; init; }
 
         public bool Enabled { get; set; }
         public string Name { get; set; }
@@ -125,9 +124,11 @@ public abstract partial class Tiling<TTextureID>
             );
         }
 
-        public void UpdateState(float dt) { }
+        public void UpdateState(float dt)
+        { }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>d
         /// Generates the mesh for the chunk.

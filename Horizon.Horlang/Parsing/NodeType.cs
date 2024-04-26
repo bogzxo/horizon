@@ -11,6 +11,7 @@ public enum NodeType
 
     // Expression
     NullLiteral,
+
     VariableDeclaration,
     FunctionDeclaration,
     Assignment,
@@ -23,6 +24,7 @@ public enum NodeType
 
     // Literals
     Property,
+
     ObjectLiteral,
     Identifier,
     NumericLiteral,

@@ -1,18 +1,7 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Runtime.InteropServices;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
-
-using Silk.NET.Core.Native;
-using Silk.NET.OpenGL;
 
 namespace Horizon.Core;
 
@@ -25,7 +14,6 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public List<IGameComponent> Components { get; init; }
     public List<Entity> Children { get; init; }
 
-
     private readonly Queue<IInstantiable> _uninitialized = new();
 
     public Entity()
@@ -37,7 +25,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// <summary>
     /// Called after the constructor, guaranteeing that there will be a valid GL context.
     /// </summary>
-    public virtual void Initialize() { }
+    public virtual void Initialize()
+    { }
 
     public virtual void Render(float dt, object? obj = null)
     {
@@ -212,9 +201,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         return AddEntity((T)entity!);
     }
+
     protected virtual void DisposeOther()
     {
-        
     }
 
     public void Dispose()

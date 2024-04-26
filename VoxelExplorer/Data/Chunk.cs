@@ -1,6 +1,4 @@
-﻿using Horizon.OpenGL.Assets;
-
-namespace VoxelExplorer.Data
+﻿namespace VoxelExplorer.Data
 {
     internal class Chunk
     {

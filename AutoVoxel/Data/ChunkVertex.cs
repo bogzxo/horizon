@@ -1,15 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 using AutoVoxel.World;
-
-using Box2D.NetStandard.Common;
-using Box2D.NetStandard.Dynamics.World;
 
 using Horizon.Core.Data;
 
@@ -24,11 +16,13 @@ public enum UVCoordinate
     TopRight = 2,
     BottomRight = 3
 }
+
 [StructLayout(LayoutKind.Sequential)]
 public struct ChunkVertex
 {
     [VertexLayout(0, VertexAttribPointerType.UnsignedInt)]
     private uint packedData0; // 4 bytes
+
     [VertexLayout(1, VertexAttribPointerType.UnsignedInt)]
     private uint packedData1; // 4 byte
 
@@ -65,7 +59,7 @@ public struct ChunkVertex
               (x & 0b111111) << 0 // 0 - 5 = x
             | (y & 0b11111111) << 6 // 6 - 13 = y
             | (z & 0b111111) << 14 // 14 - 19 = z
-            | ((int)normal & 0b11111) << 20 // 20 - 24 = normal 
+            | ((int)normal & 0b11111) << 20 // 20 - 24 = normal
             | ((int)uv & 0b11) << 25); // 25 - 27 = texture coordinate
 
         packedData1 = (uint)(

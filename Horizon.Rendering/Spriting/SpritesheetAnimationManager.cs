@@ -1,6 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Horizon.Core;
 using Horizon.Core.Components;
 
@@ -48,7 +49,8 @@ public class SpriteSheetAnimationManager : IGameComponent
         return (value.FirstFrame, value.Index);
     }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
     public void AddAnimation(
         string name,
@@ -84,9 +86,11 @@ public class SpriteSheetAnimationManager : IGameComponent
         );
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void Initialize() { }
+    public void Initialize()
+    { }
 
     public void UpdateState(float dt)
     {

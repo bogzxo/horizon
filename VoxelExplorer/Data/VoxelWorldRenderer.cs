@@ -10,7 +10,6 @@ using Horizon.OpenGL.Descriptions;
 
 using Silk.NET.OpenGL;
 
-
 namespace VoxelExplorer.Data;
 
 internal class VoxelWorldRenderer : Entity
@@ -24,7 +23,6 @@ internal class VoxelWorldRenderer : Entity
         [VertexLayout(1, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
         private readonly Vector2 UV = uv;
     }
-
 
     private ChunkTechnique WorldTechnique;
     private VertexArrayObject QuadBuffer;
@@ -79,7 +77,7 @@ internal class VoxelWorldRenderer : Entity
 
             var chunkData = World.Chunks[i].DataProvider;
             var instance_data = new List<VoxelInstanceData>();
-            
+
             //instance_data.Add(new VoxelInstanceData(new Vector3(0), 0));
             //instance_data.Add(new VoxelInstanceData(new Vector3(0), 1));
             //instance_data.Add(new VoxelInstanceData(new Vector3(0), 2));

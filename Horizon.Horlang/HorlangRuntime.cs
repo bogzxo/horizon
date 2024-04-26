@@ -2,7 +2,6 @@
 using Horizon.Horlang.Parsing;
 using Horizon.Horlang.Runtime;
 
-
 namespace Horizon.Horlang;
 
 using Environment = Horizon.Horlang.Runtime.Environment;
@@ -22,6 +21,7 @@ public class HorlangRuntime
         Environment.Declare("null", new NullValue());
         Evaluate("func not(input) { !input }");
     }
+
     public string Evaluate(in string input)
     {
         Token[] tokens = Lexer.Tokenize(input);

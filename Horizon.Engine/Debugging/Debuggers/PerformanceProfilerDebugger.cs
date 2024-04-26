@@ -1,12 +1,12 @@
-﻿using Horizon.Core.Collections;
+﻿using System.Diagnostics.Contracts;
+using System.Numerics;
+
+using Horizon.Core.Collections;
 using Horizon.Core.Data;
 
 using ImGuiNET;
 
 using ImPlotNET;
-
-using System.Diagnostics.Contracts;
-using System.Numerics;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -26,6 +26,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
     public double RenderRate { get => (GetAverage(_renderDeltas)); }
 
     private float _updateRate = 1.0f / 30.0f;
+
     private float _updateTimer,
         _renderTimer, _physicsTimer;
 
@@ -36,6 +37,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
     private LinearBuffer<double> _updateFrameTimes,
         _renderFrameTimes;
+
     private LinearBuffer<double> _stateDeltas, _physicsDeltas,
         _renderDeltas;
 
@@ -271,9 +273,11 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         return (float)(GC.GetTotalMemory(false) / (1024.0 * 1024.0)); // in MB
     }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 
     protected virtual void Dispose(bool disposing)
     {

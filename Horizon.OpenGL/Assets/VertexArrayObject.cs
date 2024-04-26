@@ -18,5 +18,6 @@ public class VertexArrayObject : IGLObject
     }
 
     public void Bind() => ObjectManager.GL.BindVertexArray(Handle);
+
     public void Unbind() => ObjectManager.GL.BindVertexArray(0);
 }

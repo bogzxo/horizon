@@ -1,7 +1,5 @@
 ﻿using System.Numerics;
 
-using Bogz.Logging.Loggers;
-
 namespace AutoVoxel.Data;
 
 public class ChunkOctreeNode

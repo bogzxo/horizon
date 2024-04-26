@@ -1,6 +1,4 @@
-﻿using Horizon.Content.Descriptions;
-using Horizon.Content.Disposers;
-using Horizon.Core.Primitives;
+﻿using Horizon.Content.Disposers;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Managers;
 

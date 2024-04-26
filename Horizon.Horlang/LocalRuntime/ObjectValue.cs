@@ -1,7 +1,5 @@
 ﻿using System.Text;
 
-using Horizon.Horlang.Runtime;
-
 namespace Horizon.Horlang.Runtime;
 
 public readonly struct ObjectValue(in Dictionary<string, IRuntimeValue> properties) : IRuntimeValue

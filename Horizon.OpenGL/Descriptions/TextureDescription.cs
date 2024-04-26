@@ -1,5 +1,4 @@
 ﻿using Horizon.Content.Descriptions;
-using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Descriptions;
 

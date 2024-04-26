@@ -1,15 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
-
-using Box2D.NetStandard.Dynamics.World;
+﻿using System.Numerics;
 
 using Horizon.Engine;
-using Horizon.Input.Components;
 using Horizon.Input;
+using Horizon.Input.Components;
 
 using VoxelExplorer.Data;
 
@@ -33,7 +26,6 @@ namespace VoxelExplorer
             world = new VoxelWorld();
             renderer = AddEntity(new VoxelWorldRenderer(world));
             ActiveCamera = camera = AddEntity<Camera3D>();
-
 
             Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
             Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.Texture2D);

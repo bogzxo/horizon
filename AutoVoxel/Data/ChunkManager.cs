@@ -1,14 +1,11 @@
 ﻿using System.Numerics;
-using System.Runtime.InteropServices;
+
 using AutoVoxel.Data.Chunks;
 using AutoVoxel.Generator;
 using AutoVoxel.Rendering;
-using AutoVoxel.World;
+
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Engine;
-
-using Silk.NET.Maths;
 
 namespace AutoVoxel.Data;
 
@@ -35,7 +32,6 @@ public class ChunkManager : IGameComponent
         BufferPool = new();
         Chunks = new Chunk[Width * Height];
     }
-
 
     // precomputed offsets for 8 neighboring chunks
     private static readonly Vector2[] neighbourOffsets = new Vector2[]
@@ -69,7 +65,6 @@ public class ChunkManager : IGameComponent
 
         return count == neighbours.Length ? neighbours : neighbours.Take(count).ToArray();
     }
-
 
     public Tile this[int x, int y, int z]
     {
@@ -110,9 +105,12 @@ public class ChunkManager : IGameComponent
         });
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 }

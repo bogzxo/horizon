@@ -2,19 +2,12 @@
 using System.Net.WebSockets;
 using System.Text;
 
-using Horizon.Core;
-using Horizon.Engine.Debugging.Debuggers;
-using Horizon.Engine.WebHost;
 using Horizon.Webhost;
 using Horizon.Webhost.Providers;
 
 using Newtonsoft.Json;
 
-using Silk.NET.Core.Native;
-
 namespace Horizon.Engine.Webhost;
-
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
@@ -53,7 +46,6 @@ public class DashboardContentProvider : IWebHostContentProvider
     {
         Stream output = response.OutputStream;
         response.AddHeader("Access-Control-Allow-Origin", "*");
-
 
         // Convert the file contents to bytes
         if (!File.Exists(filePath)) goto DIE;
@@ -116,12 +108,12 @@ public class DashboardContentProvider : IWebHostContentProvider
                 if (PacketQueue.TryDequeue(out var command))
                 {
                     bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(command));
-                        await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                    await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
                 }
 
                 bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(GameEngine.Instance.CollectTelemetry()));
                 await context.WebSocket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
-               
+
                 if (PacketQueue.Count > 0) await Task.Delay(10, cancellationToken);
                 else await Task.Delay(100, cancellationToken);
             }
@@ -169,6 +161,4 @@ public class DashboardContentProvider : IWebHostContentProvider
             Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error receiving data: {ex.Message}");
         }
     }
-
-
 }

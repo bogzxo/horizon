@@ -1,9 +1,8 @@
-﻿using Horizon;
-using Horizon.Engine;
+﻿using Horizon.Engine;
 
 namespace VoxelExplorer
 {
-    class Program
+    internal class Program
     {
         public static void Main()
         {

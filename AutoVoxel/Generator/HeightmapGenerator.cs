@@ -23,7 +23,6 @@ public class HeightmapGenerator
                 new RandomSurfacePass(0.01f, 0.3f),
                 new SmoothSurfacePass(1.0f)
             }
-
         };
     }
 
@@ -51,7 +50,6 @@ public class HeightmapGenerator
                             target[dx + dy * targetSizeX] = heightmap[sourceStartIndex + dx + dy * sizeX];
                         }
                     }
-
 
                     // Execute the terrain generation pass on the target array
                     for (int j = 0; j < passes[i].Length; j++)

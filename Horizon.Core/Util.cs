@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.Contracts;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 using Silk.NET.OpenGL;
 
@@ -49,7 +44,6 @@ public static class Util
             h = GCHandle.Alloc(arr, GCHandleType.Pinned);
 
             str = Marshal.PtrToStructure<T>(h.AddrOfPinnedObject());
-
         }
         finally
         {
@@ -61,6 +55,7 @@ public static class Util
 
         return str;
     }
+
     /// <summary>
     /// Splits a string into an array of lines, platform agnostic.
     /// </summary>

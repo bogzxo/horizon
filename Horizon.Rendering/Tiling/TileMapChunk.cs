@@ -1,9 +1,9 @@
-﻿using System.Drawing.Drawing2D;
-using System.Numerics;
+﻿using System.Numerics;
+
 using Box2D.NetStandard.Dynamics.Bodies;
+
 using Horizon.Core.Components;
-using Horizon.Core.Primitives;
-using Horizon.Engine;
+
 using SixLabors.ImageSharp;
 
 namespace Horizon.Rendering;

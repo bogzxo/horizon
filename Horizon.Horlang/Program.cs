@@ -1,5 +1,4 @@
-﻿using System.Runtime.CompilerServices;
-using System.Text;
+﻿using System.Text;
 
 using Bogz.Logging.Loggers;
 
@@ -9,7 +8,7 @@ namespace Horizon.Horlang;
 
 internal class Program
 {
-    static void Main(string[] _)
+    private static void Main(string[] _)
     {
         Console.WriteLine("Horlang REPL");
         HorlangRuntime runtime = new();

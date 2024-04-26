@@ -1,15 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 
-using Horizon.Core;
 using Horizon.Core.Data;
 using Horizon.Core.Primitives;
-using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 
 using Silk.NET.OpenGL;
@@ -17,6 +10,7 @@ using Silk.NET.OpenGL;
 namespace Horizon.OpenGL.Assets;
 
 /* This is an abstraction for a buffer object */
+
 public class BufferObject : GLObject
 {
     public BufferTargetARB Type { get; init; }
@@ -75,12 +69,11 @@ public class BufferObject : GLObject
         fixed (void* d = data)
         {
             // FIXME cross static ref to BaseGameEngine
-            GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), d, BufferUsageARB.StreamDraw );
+            GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), d, BufferUsageARB.StreamDraw);
         }
         // FIXME cross static ref to BaseGameEngine
         GL.BindBuffer(Type, 0);
     }
-
 
     public unsafe void VertexAttributePointer(
         uint index,
@@ -95,6 +88,7 @@ public class BufferObject : GLObject
             .VertexAttribPointer(index, count, type, false, vertexSize, (void*)(offSet));
         ObjectManager.GL.EnableVertexAttribArray(index);
     }
+
     public unsafe void VertexAttributeIPointer(
         uint index,
         int count,
@@ -162,13 +156,12 @@ public class BufferObject : GLObject
         if (totalSizeInBytes % 4 != 0)
             throw new Exception($"Size of {nameof(T)} doesn't align to 4 byte boundary!");
 
-
         while (queue.Count > 0)
         {
             var ptr = queue.Dequeue();
-            
+
             if (ptr.Instanced) VertexAttributeDivisor(ptr.Index, 1);
-            
+
             switch (ptr.Type)
             {
                 case VertexAttribPointerType.Int:

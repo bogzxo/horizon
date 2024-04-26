@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Net;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -47,7 +41,7 @@ public class HttpServerComponent : IGameComponent, IDisposable
             if (context.Request.IsWebSocketRequest)
                 // Handle the WebSocket connection
                 await Host.SocketRequest(context);
-            else 
+            else
                 // TODO: allow external function injection
                 await Host.ContentRequest(context);
         }
@@ -70,9 +64,12 @@ public class HttpServerComponent : IGameComponent, IDisposable
         isRunning = false;
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 }

@@ -1,6 +1,4 @@
-﻿using Bogz.Logging.Loggers;
-
-using Horizon.Horlang.Lexxing;
+﻿using Horizon.Horlang.Lexxing;
 
 namespace Horizon.Horlang.Parsing;
 
@@ -20,7 +18,9 @@ public class Parser
         }
         return new Token { Type = TokenType.EndOfFile };
     }
+
     private Token Consume() => Tokens.Dequeue();
+
     private Token Peek() => Tokens.Peek();
 
     public ProgramStatement ProduceSyntaxTree(in Token[] inputTokens)
@@ -54,6 +54,7 @@ public class Parser
             _ => ParseExpression(),
         };
     }
+
     private IStatement ParseDeleteStatement()
     {
         Consume(TokenType.Delete); // consume the delete keyword
@@ -63,6 +64,7 @@ public class Parser
         var expression = new DeleteStatement(identifier);
         return expression;
     }
+
     private IExpression ParseIfDeclaration()
     {
         Consume(TokenType.If); // consume the do
@@ -128,7 +130,6 @@ public class Parser
         return new DoWhileDeclarationExpression(args[0], [.. body]);
     }
 
-
     private IExpression ParseFunctionDeclaration()
     {
         Consume(TokenType.Function);
@@ -143,7 +144,6 @@ public class Parser
                 throw new Exception("Func declaration parameters expected to be strings");
             arguments.Add(((IdentifierExpression)arg).Symbol);
         }
-
 
         // consume the {
         Consume(TokenType.OpenBracket);
@@ -190,7 +190,7 @@ public class Parser
     }
 
     /* Orders of precedence:
-     * 
+     *
      * 9. AssignmentExpression
      * 8. MemberExpression
      * 7. FunctionCall
@@ -201,7 +201,6 @@ public class Parser
      * 2. UnaryExpression (| & !)
      * 1. PrimaryExpression
      */
-
 
     private IExpression ParseExpression()
     {
@@ -235,7 +234,7 @@ public class Parser
 
         while (Peek().Type != TokenType.EndOfFile && Peek().Type != TokenType.CloseBracket && Peek().Type != TokenType.Semicolon)
         {
-            // expect a key 
+            // expect a key
             Token key = Consume(TokenType.Identifier);
 
             // handle shorthand declaration in a list { key, key1 }
@@ -263,7 +262,6 @@ public class Parser
                 Consume(TokenType.CloseBracket);
             else
                 Consume(TokenType.Comma);
-
         }
         return new ObjectLiteralExpression(props);
     }
@@ -294,6 +292,7 @@ public class Parser
 
         return member;
     }
+
     private IExpression ParseCallExpression(in IExpression caller)
     {
         IExpression callExpr = new CallExpression(ParseArguments(), caller);
@@ -307,6 +306,7 @@ public class Parser
 
         return callExpr;
     }
+
     private IExpression ParseMemberExpression()
     {
         var obj = ParseComparisonExpression();
@@ -378,8 +378,8 @@ public class Parser
         IExpression[] arguments = Peek().Type == TokenType.CloseParenthesis ? [] : ParseArgumentsList();
         Consume(TokenType.CloseParenthesis); // consume closing parenthesis
         return arguments;
-
     }
+
     private IExpression[] ParseArgumentsList()
     {
         // we use ParseAssignmentExpression() as we want foo(x = 69) to first set x to 69, then return x
@@ -392,6 +392,7 @@ public class Parser
         }
         return [.. arguments];
     }
+
     private IExpression ParseAdditiveExpression()
     {
         var left = ParseMultiplicativeExpression();
@@ -422,33 +423,42 @@ public class Parser
             case TokenType.Identifier:
                 result = new IdentifierExpression(Consume().Value);
                 break;
+
             case TokenType.Number:
                 result = new NumericLiteralExpression(float.Parse(Consume().Value));
                 break;
+
             case TokenType.TextLiteral:
                 result = new StringLiteralExpression(Consume().Value);
                 break;
+
             case TokenType.Function:
                 result = ParseFunctionDeclaration();
                 break;
+
             case TokenType.If:
                 result = ParseIfDeclaration();
                 break;
+
             case TokenType.While:
                 result = ParseWhileExpression();
                 break;
+
             case TokenType.Do:
                 result = ParseDoWhileExpression();
                 break;
+
             case TokenType.OpenParenthesis:
                 Consume(); // consume the opening parenthesis
                 result = ParseExpression();
                 if (Peek().Type == TokenType.CloseParenthesis)
                     Consume(TokenType.CloseParenthesis); // consume the closing parenthesis
                 break;
+
             case TokenType.Null:
                 Consume(); // consume null keyword
                 break;
+
             default:
                 Console.WriteLine($"Unexpected token found during parsing: {token}");
                 break;

@@ -40,7 +40,6 @@ public class Tessellator
         updateIndicies();
     }
 
-
     public void AddCubeFace(in CubeFace face, in Tile tile, in int x, in int y, in int z)
     {
         Mesh.Vertices.AddRange(face switch
@@ -56,8 +55,7 @@ public class Tessellator
         updateIndicies();
     }
 
-
-    void updateIndicies()
+    private void updateIndicies()
     {
         Mesh.Indices.AddRange(
             new uint[]
@@ -106,7 +104,6 @@ public class Tessellator
             new ChunkVertex(0 + x, 1 + y, 0 + z, CubeFace.Right, UVCoordinate.BottomLeft, id : tile.ID)
         };
     }
-
 
     private ChunkVertex[] generateLeftFace(Tile tile, int x, int y, int z)
     {

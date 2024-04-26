@@ -1,8 +1,4 @@
-﻿using Horizon.GameEntity;
-
-using System.Numerics;
-
-using TileBash.Player;
+﻿using System.Numerics;
 
 namespace TileBash.Animals.Behaviors;
 
@@ -14,6 +10,7 @@ internal class GenericWanderState : AnimalState
         : base(parent, stateMachine) { }
 
     private Vector2 _targetDir;
+
     private float _targetWanderTime = 0.0f,
         _wanderingTimer;
 
@@ -32,7 +29,8 @@ internal class GenericWanderState : AnimalState
             new Vector2(MathF.Cos(value), MathF.Sin(value) * 0.25f);
     }
 
-    public override void Exit() { }
+    public override void Exit()
+    { }
 
     public override void UpdateState(float dt)
     {

@@ -1,11 +1,5 @@
-﻿using System.Text;
-
-using Bogz.Logging;
-
-using Horizon.Core;
+﻿using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 

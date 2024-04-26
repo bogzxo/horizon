@@ -43,6 +43,7 @@ public readonly struct BufferObjectDescription : IAssetDescription
             IsStorageBuffer = false,
             Size = 0
         };
+
     /// <summary>
     /// Element array buffer preset.
     /// </summary>

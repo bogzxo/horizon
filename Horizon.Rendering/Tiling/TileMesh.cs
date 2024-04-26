@@ -1,13 +1,15 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
 using Horizon.Core.Data;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
+
 using Silk.NET.OpenGL;
+
 using Shader = Horizon.OpenGL.Assets.Shader;
 
 namespace Horizon.Rendering;

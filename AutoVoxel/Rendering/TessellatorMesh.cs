@@ -1,5 +1,7 @@
 ﻿using System.Runtime.InteropServices;
+
 using AutoVoxel.Data;
+
 using Horizon.Core.Primitives;
 using Horizon.Engine;
 using Horizon.OpenGL.Buffers;

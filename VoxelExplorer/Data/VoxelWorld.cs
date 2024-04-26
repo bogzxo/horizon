@@ -1,14 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Horizon.GameEntity;
-using Horizon.OpenGL.Buffers;
-
-
-namespace VoxelExplorer.Data;
+﻿namespace VoxelExplorer.Data;
 
 internal class VoxelWorld
 {

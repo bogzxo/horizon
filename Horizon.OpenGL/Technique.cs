@@ -1,15 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Reflection.Metadata;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Numerics;
+
 using Horizon.Content;
-using Horizon.Core.Primitives;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Managers;
+
 using Silk.NET.OpenGL;
+
 using Shader = Horizon.OpenGL.Assets.Shader;
 
 namespace Horizon.OpenGL;
@@ -20,7 +16,8 @@ public class Technique
     private TechniqueUniformManager uniformManager;
     private TechniqueResourceIndexManager resourceManager;
 
-    public Technique() { }
+    public Technique()
+    { }
 
     public Technique(in Shader shader)
     {
@@ -128,7 +125,8 @@ public class Technique
     /// <summary>
     /// Called after the shader is bound.
     /// </summary>
-    protected virtual void SetUniforms() { }
+    protected virtual void SetUniforms()
+    { }
 
     public void Bind()
     {

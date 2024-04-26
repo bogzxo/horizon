@@ -1,13 +1,13 @@
 ﻿using Horizon.Content;
 using Horizon.Content.Descriptions;
-using Horizon.Core.Primitives;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
+
 using Silk.NET.OpenGL;
+
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+
 using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.OpenGL.Factories;

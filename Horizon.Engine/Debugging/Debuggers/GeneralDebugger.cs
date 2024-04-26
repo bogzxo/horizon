@@ -129,7 +129,8 @@ public class GeneralDebugger : DebuggerComponent
         }
     }
 
-    public override void Dispose() { }
+    public override void Dispose()
+    { }
 
     public override void UpdateState(float dt)
     {
@@ -148,7 +149,8 @@ public class GeneralDebugger : DebuggerComponent
         }
     }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 
     ~GeneralDebugger()
     {

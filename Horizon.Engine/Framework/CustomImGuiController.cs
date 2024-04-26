@@ -1,12 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Drawing;
-using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Tasks;
 
 using Horizon.Core;
 
@@ -64,8 +59,10 @@ public class CustomImguiController : IDisposable
         private readonly GL _gl;
         public readonly string Name;
         public readonly uint GlTexture;
+
         public readonly uint Width,
             Height;
+
         public readonly uint MipmapLevels;
         public readonly SizedInternalFormat InternalFormat;
 

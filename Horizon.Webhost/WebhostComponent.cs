@@ -1,9 +1,6 @@
-﻿using System;
-using System.Net;
-using System.Net.Sockets;
+﻿using System.Net;
 
 using Horizon.Core;
-using Horizon.Core.Components;
 using Horizon.Webhost.Providers;
 using Horizon.Webhost.Server;
 
@@ -24,12 +21,11 @@ public class WebHost : Entity, IDisposable
         Name = "WebHost";
         ContentProviders = [];
 
-
         Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Initializing WebHost.");
         Server = AddComponent<HttpServerComponent>();
     }
 
-    static string GetProviderKey(in Uri url)
+    private static string GetProviderKey(in Uri url)
     {
         string value = url.AbsolutePath.Trim('/');
 
@@ -65,13 +61,11 @@ public class WebHost : Entity, IDisposable
 
         var socketContext = await context.AcceptWebSocketAsync(null);
 
-
         if (socketContext.WebSocket.State == System.Net.WebSockets.WebSocketState.Open)
         {
             Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Established WS connection.");
             await Task.Run(() => provider.HandleSocket(url, context, socketContext));
             Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Closed WS connection.");
         }
-
     }
 }
