@@ -2,8 +2,8 @@
 
 public readonly struct NumberValue(in float val) : IRuntimeValue
 {
-    public ValueType Type { get; init; } = ValueType.Number;
-    public float Value { get; init; } = val;
+    public readonly ValueType Type { get; init; } = ValueType.Number;
+    public readonly float Value { get; init; } = val;
 
     public override string ToString()
     {

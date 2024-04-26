@@ -8,9 +8,17 @@ using ImGuiNET;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
+/// <summary>
+/// End user accessible console for interfacing with the executing program, callbacks to native functions and custom runtime variables can be assigned here.
+/// </summary>
 public class DeveloperConsole : DebuggerComponent
 {
-    internal readonly struct CommandLinePacket(in string msg, in bool resp) : IWebSocketPacket
+    /// <summary>
+    /// A packet implementation for communicating with the JS frontend. TODO: Data packing: use the ID to determine special packets instead of strings.
+    /// </summary>
+    /// <param name="msg"></param>
+    /// <param name="resp"></param>
+    private readonly struct CommandLinePacket(in string msg, in bool resp) : IWebSocketPacket
     {
         public bool SpecialPacket { get; init; }
         public uint PacketID { get; init; } = 1;
@@ -24,6 +32,9 @@ public class DeveloperConsole : DebuggerComponent
         }
     }
 
+    /// <summary>
+    /// The runtime for the Horizon Engine integrated interpreted language runtime. Scene specific native callbacks may be configured here, remember to delete and scene specific delcarations on scene change.
+    /// </summary>
     public HorlangRuntime Runtime { get; init; } = new();
 
     private List<CommandLinePacket> commandHistory;
@@ -110,7 +121,7 @@ let env = {
         // Parse command
         if (input.Length < 1) return;
 
-        string returnVal = Runtime.Evaluate(input);
+        string returnVal = Runtime.Evaluate(input).result;
         SendCommand(returnVal);
     }
 

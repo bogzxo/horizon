@@ -8,10 +8,26 @@ namespace Horizon.Horlang;
 
 internal class Program
 {
+    private static bool shouldHalt = false;
     private static void Main(string[] _)
     {
-        Console.WriteLine("Horlang REPL");
+        Console.WriteLine($"Horlang REPL v{HorlangRuntime.VERSION}");
         HorlangRuntime runtime = new();
+
+        StringValue valTest = new("teehee");
+        runtime.Environment.Declare("val", new NativeValue(() =>
+        {
+            return valTest;
+        }, (val) =>
+        {
+            valTest = (StringValue)val;
+        }), false);
+        runtime.Environment.Declare("exit", new NativeFunctionValue((args, env) =>
+        {
+            shouldHalt = true;
+            return new StringValue("Halting...");
+        }), true);
+
         runtime.Environment.Declare("print", new NativeFunctionValue((args, env) =>
         {
             StringBuilder sb = new();
@@ -46,17 +62,17 @@ internal class Program
                 return new NullValue();
             }
 
-            return new StringValue(runtime.Evaluate(File.ReadAllText(fileName)));
+            return new StringValue(runtime.Evaluate(File.ReadAllText(fileName)).result);
         }), true);
 
-        while (true)
+        while (!shouldHalt)
         {
             Console.Write("> ");
             string? input = Console.ReadLine();
 
             if (input is null) continue;
 
-            Console.WriteLine(runtime.Evaluate(input));
+            Console.WriteLine(runtime.Evaluate(input).result);
             Console.WriteLine();
         }
         ConcurrentLogger.Instance.Dispose();

@@ -7,6 +7,7 @@ public enum ValueType
     Boolean,
     Object,
     NativeFunction,
+    NativeValue,
     Function,
     String,
 }

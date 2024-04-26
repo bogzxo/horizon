@@ -9,7 +9,7 @@ namespace Horizon.Webhost;
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 /// <summary>
-/// An engine utility providing a seamlessly integrating webhost.
+/// An engine utility providing a seamlessly integrating webhost. The user is expected to provide a <see cref="IWebHostContentProvider"/>, which can serve content of any MIME type, however for simplicity, a web socket request handler is provided separately, allowing bidirectional data transfer, however for the aforementioned system to be able to integrate seemlessly with the users envisioned goal, no packet protocol is provided, and is up to the end user to implement, however a skeleton interface <see cref="IWebSocketPacket"/> is provided. The user should push a content provider key-value pair, where the key is the url directory that the server will respond to.
 /// </summary>
 public class WebHost : Entity, IDisposable
 {

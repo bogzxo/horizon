@@ -2,8 +2,8 @@
 
 public readonly struct StringValue(in string str) : IRuntimeValue
 {
-    public ValueType Type { get; init; } = ValueType.String;
-    public string Value { get; init; } = str;
+    public readonly ValueType Type { get; init; } = ValueType.String;
+    public readonly string Value { get; init; } = str;
 
     public override string ToString() => Value;
 }

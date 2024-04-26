@@ -2,8 +2,8 @@
 
 public readonly struct ObjectLiteralExpression(in List<PropertyExpression> properties) : IExpression
 {
-    public NodeType Type { get; init; } = NodeType.ObjectLiteral;
-    public List<PropertyExpression> Properties { get; init; } = properties;
+    public readonly NodeType Type { get; init; } = NodeType.ObjectLiteral;
+    public readonly List<PropertyExpression> Properties { get; init; } = properties;
 
     public override string ToString()
     {
