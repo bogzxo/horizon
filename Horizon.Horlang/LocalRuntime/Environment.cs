@@ -1,22 +1,29 @@
-﻿namespace Horizon.Horlang.Runtime;
+﻿using Microsoft.VisualBasic;
+
+namespace Horizon.Horlang.Runtime;
 
 public class Environment(in Environment? parent = null)
 {
     public Environment? Parent { get; init; } = parent;
     private Dictionary<string, IRuntimeValue> variables = [];
+    private List<string> constants = [];
 
-    public IRuntimeValue Declare(in string identifier, in IRuntimeValue value)
+    public IRuntimeValue Declare(in string identifier, in IRuntimeValue value, in bool isConst = false)
     {
         if (variables.ContainsKey(identifier))
             throw new Exception($"Variable '{identifier}' already exists!");
-
+        if (constants.Contains(identifier))
+            throw new Exception($"Constant '{identifier}' already exists and cannot be changed!");
         variables.Add(identifier, value);
+        if (isConst) constants.Add(identifier);
         return value;
     }
 
     public IRuntimeValue Assign(in string name, in IRuntimeValue value)
     {
-        Resolve(name).variables[name] = value;
+        if (!constants.Contains(name))
+            Resolve(name).variables[name] = value;
+        else throw new Exception($"Constant '{name}' is immutable!");
 
         return value;
     }
@@ -40,5 +47,15 @@ public class Environment(in Environment? parent = null)
             return null;
 
         return Parent.Resolve(name);
+    }
+
+    /// <summary>
+    /// Deletes a variable or a constant.
+    /// </summary>
+    /// <param name="target"></param>
+    public void Delete(string target)
+    {
+        variables.Remove(target);
+        constants.Remove(target);
     }
 }

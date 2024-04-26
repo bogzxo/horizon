@@ -4,8 +4,8 @@ namespace Horizon.Horlang.Parsing;
 
 public readonly struct ProgramStatement() : IStatement
 {
-    public NodeType Type { get; init; } = NodeType.Program;
-    public List<IStatement> Body { get; init; } = [];
+    public readonly NodeType Type { get; init; } = NodeType.Program;
+    public readonly List<IStatement> Body { get; init; } = [];
 
     public override string ToString()
     {
@@ -15,4 +15,9 @@ public readonly struct ProgramStatement() : IStatement
             sb.AppendLine(smnt.ToString());
         return sb.ToString();
     }
+}
+public readonly struct DeleteStatement(in string target) : IStatement
+{
+    public readonly NodeType Type { get; init; } = NodeType.DeleteStatement;
+    public readonly string Target { get; init; } = target;
 }

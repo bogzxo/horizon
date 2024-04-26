@@ -12,7 +12,15 @@ public static class Lexer
         Keywords = new()
         {
             {"let", TokenType.Let },
+            {"const", TokenType.Const },
             {"func", TokenType.Function },
+            {"if", TokenType.If },
+            {"while", TokenType.While },
+            {"do", TokenType.Do},
+            {"delete", TokenType.Delete},
+            {"break", TokenType.Break},
+            {"==", TokenType.Equality},
+            {"!=", TokenType.NotEquality},
         };
     }
 
@@ -36,6 +44,7 @@ public static class Lexer
 
         Queue<char> characters = new(source.ToCharArray());
 
+        char prev = '0';
         while (characters.Count != 0)
         {
             char character = characters.Dequeue();
@@ -46,6 +55,11 @@ public static class Lexer
                 StringBuilder sb = new();
                 while (inString)
                 {
+                    if (character == '"')
+                    {
+                        inString = false;
+                        break;
+                    }
                     sb.Append(character);
                     character = characters.Dequeue();
                     if (character == '"')
@@ -83,6 +97,10 @@ public static class Lexer
                     case '.':
                         AddToken(TokenType.Dot, character.ToString());
                         break;
+                    case '!':
+                        if (characters.Peek() != '=')
+                            AddToken(TokenType.Exclamation, character.ToString());
+                        break;
                     case '{':
                         AddToken(TokenType.OpenBracket, character.ToString());
                         break;
@@ -104,10 +122,15 @@ public static class Lexer
                     case '*':
                     case '/':
                     case '%':
+                    case '<':
+                    case '>':
+                    case '|':
+                    case '&':
                         AddToken(TokenType.BinaryOperation, character.ToString());
                         break;
                     case '=':
-                        AddToken(TokenType.Equals, character.ToString());
+                        if (characters.Peek() != '=' && prev != '!')
+                            AddToken(TokenType.Equals, character.ToString());
                         break;
                 }
 
@@ -123,21 +146,21 @@ public static class Lexer
                         sb.Append(character);
 
                         // add numbers and progress queue until next char isn't a number
-                        while (characters.Count != 0 && char.IsNumber(characters.Peek()))
+                        while (characters.Count != 0 && (char.IsNumber(characters.Peek()) || characters.Peek() == '.'))
                             sb.Append(characters.Dequeue());
 
                         AddToken(TokenType.Number, sb.ToString());
                     }
                     // match assignee
-                    else if (char.IsLetter(character))
+                    else if (char.IsLetter(character) || character == '_' || (character == '=' && characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
                     {
                         StringBuilder sb = new();
 
                         // append initial character
                         sb.Append(character);
 
-                        // add numbers and progress queue until next char isnt a number
-                        while (characters.Count != 0 && char.IsLetter(characters.Peek()))
+                        // add numbers and progress queue until next char isnt a letter or special op
+                        while (characters.Count != 0 && (char.IsLetter(characters.Peek()) || characters.Peek() == '_' || characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
                             sb.Append(characters.Dequeue());
 
                         string finalValue = sb.ToString();
@@ -153,6 +176,8 @@ public static class Lexer
                 // if we haven't found a known currentToken, panic
                 if (!foundTokenFlag)
                     Console.WriteLine($"Failed to tokenize character '{character}'!");
+
+                prev = character;
             }
 
         }

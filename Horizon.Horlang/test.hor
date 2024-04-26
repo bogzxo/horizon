@@ -1,1 +1,13 @@
-﻿let test = { adder: func add(x, y) { print (x + y) } } test.adder(2, 3)
+﻿func task() {
+	let counter = 0;
+
+	while (counter < 10) {
+		counter = counter + 1;
+		print(counter);
+		""
+	}
+}
+
+func cat() {
+	while ((print(read())) != "cat") { }
+}

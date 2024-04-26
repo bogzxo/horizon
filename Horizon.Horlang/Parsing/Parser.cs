@@ -10,12 +10,15 @@ public class Parser
 
     private Token Consume(in TokenType expect)
     {
-        var val = Tokens.Dequeue();
-        if (val.Type != expect)
+        if (Tokens.TryDequeue(out Token val))
         {
-            throw new Exception($"[Parser] Expected '{expect} but got '{val.Type}'!");
+            if (val.Type != expect)
+            {
+                throw new Exception($"[Parser] Expected '{expect} but got '{val.Type}'!");
+            }
+            return val;
         }
-        return val;
+        return new Token { Type = TokenType.EndOfFile };
     }
     private Token Consume() => Tokens.Dequeue();
     private Token Peek() => Tokens.Peek();
@@ -42,16 +45,89 @@ public class Parser
 
     private IStatement ParseStatement()
     {
-        switch (Peek().Type)
+        return Peek().Type switch
         {
-            case TokenType.Let:
-                return ParseVariableDeclaration();
-            case TokenType.Function:
-                return ParseFunctionDeclaration();
-            default:
-                return ParseExpression();
-        }
+            TokenType.Let or TokenType.Const => ParseVariableDeclaration(),
+            TokenType.Delete => ParseDeleteStatement(),
+            TokenType.If => ParseIfDeclaration(),
+            TokenType.Function => ParseFunctionDeclaration(),
+            _ => ParseExpression(),
+        };
     }
+    private IStatement ParseDeleteStatement()
+    {
+        Consume(TokenType.Delete); // consume the delete keyword
+        var identifier = Consume(TokenType.Identifier).Value;
+        Consume(TokenType.Semicolon); // consume the delete keyword
+
+        var expression = new DeleteStatement(identifier);
+        return expression;
+    }
+    private IExpression ParseIfDeclaration()
+    {
+        Consume(TokenType.If); // consume the do
+        var args = ParseArguments();
+
+        // consume the {
+        Consume(TokenType.OpenBracket);
+
+        List<IStatement> body = [];
+
+        while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
+        {
+            body.Add(ParseStatement());
+        }
+
+        // consume the }
+        Consume(TokenType.CloseBracket);
+
+        return new IfDeclarationExpression(args[0], [.. body]);
+    }
+
+    private IExpression ParseWhileExpression()
+    {
+        Consume(TokenType.While); // consume the do
+        var args = ParseArgumentsList();
+
+        // consume the {
+        Consume(TokenType.OpenBracket);
+
+        List<IStatement> body = [];
+
+        while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
+        {
+            body.Add(ParseStatement());
+        }
+
+        // consume the }
+        Consume(TokenType.CloseBracket);
+
+        return new WhileDeclarationExpression(args[0], [.. body]);
+    }
+
+    private IExpression ParseDoWhileExpression()
+    {
+        Consume(TokenType.Do); // consume the do
+
+        // consume the {
+        Consume(TokenType.OpenBracket);
+
+        List<IStatement> body = [];
+
+        while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
+        {
+            body.Add(ParseStatement());
+        }
+
+        // consume the }
+        Consume(TokenType.CloseBracket);
+        Consume(TokenType.While);
+
+        var args = ParseArgumentsList();
+
+        return new DoWhileDeclarationExpression(args[0], [.. body]);
+    }
+
 
     private IExpression ParseFunctionDeclaration()
     {
@@ -90,17 +166,26 @@ public class Parser
         /* let NAME = VALUE;
          * let NAME;      */
 
-        Consume(); // consume the LET keyword
+        var isConst = Consume().Type == TokenType.Const; // consume the LET keyword
         var identifier = Consume(TokenType.Identifier).Value;
+        bool isEmpty = Peek().Type == TokenType.Semicolon;
 
-        if (Peek().Type == TokenType.Semicolon)
+        if (isEmpty && isConst)
+        {
+            throw new Exception("Constant variable must have a value.");
+        }
+
+        if (isEmpty)
         {
             Consume(); // consume the semicolon
-            return new VariableDeclarationExpression(identifier, null);
+            return new VariableDeclarationExpression(identifier, null, isConst);
         }
 
         Consume(TokenType.Equals); // expect an equals
-        var expression = new VariableDeclarationExpression(identifier, ParseExpression());
+        var expression = new VariableDeclarationExpression(identifier, ParseExpression(), isConst);
+        if (Peek().Type == TokenType.Semicolon)
+            Consume(TokenType.Semicolon); // consume the delete keyword
+
         return expression;
     }
 
@@ -113,7 +198,7 @@ public class Parser
      * 5. ComparativeExpression
      * 4. AdditiveExpression
      * 3. MultiplicativeExpression
-     * 2. UnaryExpression
+     * 2. UnaryExpression (| & !)
      * 1. PrimaryExpression
      */
 
@@ -126,12 +211,14 @@ public class Parser
 
     private IExpression ParseAssignmentExpression()
     {
-        var left = ParseObjectExpression(); // will be objects later
+        var left = ParseObjectExpression();
 
         if (Peek().Type == TokenType.Equals)
         {
             Consume(TokenType.Equals); // Consume the equals
             var value = ParseAssignmentExpression(); // allow chaining
+            if (Peek().Type == TokenType.Semicolon)
+                Consume(TokenType.Semicolon); // Consume the semicolon
             return new AssignmentExpression(left, value);
         }
 
@@ -146,7 +233,7 @@ public class Parser
         Consume(TokenType.OpenBracket); // consume the opening brace
         List<PropertyExpression> props = [];
 
-        while (Peek().Type != TokenType.EndOfFile && Peek().Type != TokenType.CloseBracket)
+        while (Peek().Type != TokenType.EndOfFile && Peek().Type != TokenType.CloseBracket && Peek().Type != TokenType.Semicolon)
         {
             // expect a key 
             Token key = Consume(TokenType.Identifier);
@@ -161,7 +248,7 @@ public class Parser
             // handle shorthand as a free standing { key }
             else if (Peek().Type == TokenType.CloseBracket)
             {
-                Consume(TokenType.CloseBracket); //eat the comma
+                Consume(TokenType.CloseBracket); //eat the bracket
                 props.Add(new PropertyExpression(key.Value, null));
                 continue;
             }
@@ -172,11 +259,10 @@ public class Parser
             // push key-value pair
             props.Add(new PropertyExpression(key.Value, value));
 
-            if (Peek().Type != TokenType.CloseBracket)
-            {
+            if (Peek().Type == TokenType.CloseBracket)
+                Consume(TokenType.CloseBracket);
+            else
                 Consume(TokenType.Comma);
-            }
-            else Consume(TokenType.CloseBracket);
 
         }
         return new ObjectLiteralExpression(props);
@@ -216,11 +302,14 @@ public class Parser
         if (Peek().Type == TokenType.OpenParenthesis)
             callExpr = ParseCallExpression(callExpr);
 
+        if (Peek().Type == TokenType.Semicolon)
+            Consume(TokenType.Semicolon);
+
         return callExpr;
     }
     private IExpression ParseMemberExpression()
     {
-        var obj = ParsePrimaryExpression();
+        var obj = ParseComparisonExpression();
 
         while (Peek().Type == TokenType.Dot || Peek().Type == TokenType.OpenBrace)
         {
@@ -242,7 +331,7 @@ public class Parser
             {
                 computed = true;
                 // allows chaning
-                property = ParseExpression();
+                property = ParseComparisonExpression();
                 Consume(TokenType.CloseBrace);
             }
 
@@ -250,6 +339,39 @@ public class Parser
         }
         return obj;
     }
+
+    private IExpression ParseComparisonExpression()
+    {
+        var left = ParseUnaryExpression();
+
+        while (Peek().Value.CompareTo(">") == 0 || Peek().Value.CompareTo("<") == 0 || Peek().Value.CompareTo("|") == 0 || Peek().Value.CompareTo("&") == 0 || Peek().Type == TokenType.Equality || Peek().Type == TokenType.NotEquality)
+        {
+            string operation = Consume().Value;
+
+            if (Peek().Type == TokenType.Equals)
+                operation += Consume().Value;
+
+            var right = ParseUnaryExpression(); // higher precidence
+
+            // recursive precedence
+            left = new BinaryExpression(left, right, operation);
+        }
+
+        return left;
+    }
+
+    private IExpression ParseUnaryExpression()
+    {
+        if (Peek().Type == TokenType.Exclamation)
+        {
+            Consume(TokenType.Exclamation);
+            var target = ParsePrimaryExpression();
+            return new BinaryExpression(target, null, "!");
+        }
+
+        return ParsePrimaryExpression();
+    }
+
     private IExpression[] ParseArguments()
     {
         Consume(TokenType.OpenParenthesis); // already checked but here for consistency sakes
@@ -276,11 +398,15 @@ public class Parser
 
         while (Peek().Value.CompareTo("+") == 0 || Peek().Value.CompareTo("-") == 0)
         {
-            var op = Consume();
+            string operation = Consume().Value;
+
+            if (Peek().Type == TokenType.Equals)
+                operation += Consume().Value;
+
             var right = ParseMultiplicativeExpression(); // higher precidence
 
             // recursive precedence
-            left = new BinaryExpression(left, right, op.Value);
+            left = new BinaryExpression(left, right, operation);
         }
 
         return left;
@@ -297,7 +423,7 @@ public class Parser
                 result = new IdentifierExpression(Consume().Value);
                 break;
             case TokenType.Number:
-                result = new NumericLiteralExpression(int.Parse(Consume().Value));
+                result = new NumericLiteralExpression(float.Parse(Consume().Value));
                 break;
             case TokenType.TextLiteral:
                 result = new StringLiteralExpression(Consume().Value);
@@ -305,18 +431,27 @@ public class Parser
             case TokenType.Function:
                 result = ParseFunctionDeclaration();
                 break;
+            case TokenType.If:
+                result = ParseIfDeclaration();
+                break;
+            case TokenType.While:
+                result = ParseWhileExpression();
+                break;
+            case TokenType.Do:
+                result = ParseDoWhileExpression();
+                break;
             case TokenType.OpenParenthesis:
                 Consume(); // consume the opening parenthesis
                 result = ParseExpression();
-                Consume(TokenType.CloseParenthesis); // consume the closing parenthesis
+                if (Peek().Type == TokenType.CloseParenthesis)
+                    Consume(TokenType.CloseParenthesis); // consume the closing parenthesis
                 break;
             case TokenType.Null:
                 Consume(); // consume null keyword
                 break;
-            case TokenType.Semicolon:
-                Consume(); break;
             default:
-                throw new Exception($"Unexpected token found during parsing: {token}");
+                Console.WriteLine($"Unexpected token found during parsing: {token}");
+                break;
         }
 
         return result;

@@ -14,6 +14,12 @@ public enum NodeType
     VariableDeclaration,
     FunctionDeclaration,
     Assignment,
+    IfExpression,
+    WhileExpression,
+    DoWhileExpression,
+
+    // Statements
+    DeleteStatement,
 
     // Literals
     Property,
@@ -24,4 +30,5 @@ public enum NodeType
     MemberExpression,
     CallExpression,
     StringLiteral,
+    BooleanLiteral,
 }

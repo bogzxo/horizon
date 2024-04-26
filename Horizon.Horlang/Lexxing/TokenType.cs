@@ -3,9 +3,15 @@
 public enum TokenType : byte
 {
     Let,
+    Const,
     Number,
     Equals,
     Dot,
+    If,
+    While,
+    Do,
+    Break,
+    Delete,
     OpenParenthesis,
     CloseParenthesis,
     BinaryOperation,
@@ -22,4 +28,7 @@ public enum TokenType : byte
     Function,
     Quote,
     TextLiteral,
+    Exclamation,
+    Equality,
+    NotEquality,
 }
