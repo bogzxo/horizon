@@ -2,7 +2,7 @@
 
 public readonly struct WhileDeclarationExpression(in IExpression expression, in IStatement[] body) : IExpression
 {
-    public NodeType Type { get; init; } = NodeType.WhileExpression;
-    public IExpression Condition { get; init; } = expression;
-    public IStatement[] Body { get; init; } = body;
+    public readonly NodeType Type { get; init; } = NodeType.WhileExpression;
+    public readonly IExpression Condition { get; init; } = expression;
+    public readonly IStatement[] Body { get; init; } = body;
 }

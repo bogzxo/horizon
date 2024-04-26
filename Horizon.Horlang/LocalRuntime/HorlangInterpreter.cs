@@ -121,7 +121,14 @@ public class HorlangInterpreter
 
     private IRuntimeValue EvaluateIdentifier(IdentifierExpression statement, Environment env)
     {
-        return env.Lookup(statement.Symbol) ?? new NullValue();
+        var variable = env.Lookup(statement.Symbol) ?? new NullValue();
+
+        if (variable is NativeValue nativeValue)
+        {
+            return nativeValue.AccessorCallback?.Invoke();
+        }
+
+        return variable;
     }
 
     private IRuntimeValue EvaluateObjectLiteralExpression(ObjectLiteralExpression statement, Environment env)

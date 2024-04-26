@@ -8,7 +8,7 @@ namespace Horizon.Webhost.Server;
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 /// <summary>
-/// Internal component integrating the HttpListener into the Horizon ECS, providing callbacks to WebHost.
+/// Internal component integrating the HttpListener into the Horizon ECS, providing delegating callbacks to from the WebHost to content providers.
 /// </summary>
 public class HttpServerComponent : IGameComponent, IDisposable
 {

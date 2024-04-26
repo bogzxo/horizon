@@ -2,8 +2,8 @@
 
 public readonly struct BooleanValue(in bool val) : IRuntimeValue
 {
-    public ValueType Type { get; init; } = ValueType.Boolean;
-    public bool Value { get; init; } = val;
+    public readonly ValueType Type { get; init; } = ValueType.Boolean;
+    public readonly bool Value { get; init; } = val;
 
     public override string ToString()
     {

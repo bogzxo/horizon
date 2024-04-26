@@ -11,6 +11,9 @@ namespace Horizon.Engine.Webhost;
 
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
+/// <summary>
+/// Global engine dashboard accessible at localhost:8080/dashboard, providing a backend interface to the executing application.
+/// </summary>
 public class DashboardContentProvider : IWebHostContentProvider
 {
     private static Dictionary<string, string> fileContentPairs = new() {
@@ -28,7 +31,7 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     public async Task HandleRequest(string url, HttpListenerRequest request, HttpListenerResponse response)
     {
-        // TODO: fuck
+        // TODO: improve handling by proper parsing of the URI
 
         string val = url;
         if (url.StartsWith("index/")) val = url[6..];
@@ -48,7 +51,7 @@ public class DashboardContentProvider : IWebHostContentProvider
         response.AddHeader("Access-Control-Allow-Origin", "*");
 
         // Convert the file contents to bytes
-        if (!File.Exists(filePath)) goto DIE;
+        if (!File.Exists(filePath)) { output.Close(); return; }
 
         byte[] buffer = System.Text.Encoding.UTF8.GetBytes(File.ReadAllText(filePath));
 
@@ -56,7 +59,7 @@ public class DashboardContentProvider : IWebHostContentProvider
         response.ContentLength64 = buffer.Length;
         response.ContentType = fileContentPairs[filePath.Split('.').Last()];
         output.Write(buffer, 0, buffer.Length);
-    DIE:
+
         output.Close();
     }
 
