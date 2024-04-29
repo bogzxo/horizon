@@ -1,9 +1,12 @@
-﻿using Horizon.Horlang.Lexxing;
+﻿using System.Xml.Linq;
 
-namespace Horizon.Horlang.Parsing;
+using Horizon.HIDL.Lexxing;
+
+namespace Horizon.HIDL.Parsing;
 
 public class Parser
 {
+    private readonly Random anonNameRandom = new();
     private Queue<Token> Tokens { get; set; }
 
     private Token Consume(in TokenType expect)
@@ -50,6 +53,7 @@ public class Parser
             TokenType.Let or TokenType.Const => ParseVariableDeclaration(),
             TokenType.Delete => ParseDeleteStatement(),
             TokenType.If => ParseIfDeclaration(),
+            TokenType.Vector => ParseVectorDeclaration(),
             TokenType.Function => ParseFunctionDeclaration(),
             _ => ParseExpression(),
         };
@@ -132,33 +136,63 @@ public class Parser
 
     private IExpression ParseFunctionDeclaration()
     {
+        (string[], IStatement[] body) genArgsBody()
+        {
+            var args = ParseArguments();
+
+            List<string> arguments = [];
+            foreach (var arg in args)
+            {
+                if (arg.Type != NodeType.Identifier)
+                    throw new Exception("Func declaration parameters expected to be strings");
+                arguments.Add(((IdentifierExpression)arg).Symbol);
+            }
+
+            // consume the {
+            Consume(TokenType.OpenBracket);
+
+            List<IStatement> body = [];
+
+            while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
+            {
+                body.Add(ParseStatement());
+            }
+
+            // consume the }
+            Consume(TokenType.CloseBracket);
+
+            return ([.. arguments], [.. body]);
+        }
+
         Consume(TokenType.Function);
 
-        var name = Consume(TokenType.Identifier);
+        if (Peek().Type == TokenType.Identifier)
+        {
+            Token name = Consume(TokenType.Identifier);
+
+            var (args, body) = genArgsBody();
+
+            return new FunctionDeclarationExpression(name.Value, args, body);
+        }
+        else // assume anonymous
+        {
+            var (args, body) = genArgsBody();
+
+            return new AnonymousFunctionDeclarationExpression(args, body);
+        }
+
+    }
+
+    private IExpression ParseVectorDeclaration()
+    {
+        if (Peek().Type != TokenType.Vector) return ParseMemberExpression();
+
+        Consume(TokenType.Vector); // consume vec
+
         var args = ParseArguments();
 
-        List<string> arguments = [];
-        foreach (var arg in args)
-        {
-            if (arg.Type != NodeType.Identifier)
-                throw new Exception("Func declaration parameters expected to be strings");
-            arguments.Add(((IdentifierExpression)arg).Symbol);
-        }
-
-        // consume the {
-        Consume(TokenType.OpenBracket);
-
-        List<IStatement> body = [];
-
-        while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
-        {
-            body.Add(ParseStatement());
-        }
-
-        // consume the }
-        Consume(TokenType.CloseBracket);
-
-        return new FunctionDeclarationExpression(name.Value, [.. arguments], [.. body]);
+        // use params to store all args and at runtime determine how many dimensions this vector has
+        return new VectorDeclarationExpression(args);
     }
 
     private IStatement ParseVariableDeclaration()
@@ -284,7 +318,7 @@ public class Parser
 
     private IExpression ParseCallMemberExpression()
     {
-        var member = ParseMemberExpression();
+        var member = ParseVectorDeclaration();
 
         // foo.bar ()
         if (Peek().Type == TokenType.OpenParenthesis)
@@ -434,6 +468,10 @@ public class Parser
 
             case TokenType.Function:
                 result = ParseFunctionDeclaration();
+                break;
+
+            case TokenType.Vector:
+                result = ParseVectorDeclaration();
                 break;
 
             case TokenType.If:

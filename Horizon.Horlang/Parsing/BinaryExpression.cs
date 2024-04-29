@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public readonly struct BinaryExpression(in IExpression left, in IExpression right, in string op) : IExpression
 {

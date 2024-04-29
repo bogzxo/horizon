@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public readonly struct DoWhileDeclarationExpression(in IExpression expression, in IStatement[] body) : IExpression
 {

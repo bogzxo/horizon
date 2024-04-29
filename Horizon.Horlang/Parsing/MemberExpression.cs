@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public struct MemberExpression(in IExpression obj, in IExpression property, in bool computed) : IExpression
 {

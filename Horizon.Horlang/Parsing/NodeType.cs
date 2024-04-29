@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 /*  let x = 10 + (foo * bar)
  *  [Let][Assignee][Equals][Number][BinaryOp][BinaryOp]
@@ -11,9 +11,11 @@ public enum NodeType
 
     // Expression
     NullLiteral,
+    VectorDeclaration,
 
     VariableDeclaration,
     FunctionDeclaration,
+    AnonymousFunctionDeclaration,
     Assignment,
     IfExpression,
     WhileExpression,

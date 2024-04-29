@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public readonly struct ObjectLiteralExpression(in List<PropertyExpression> properties) : IExpression
 {

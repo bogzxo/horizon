@@ -1,5 +1,6 @@
 ﻿using Horizon.Core;
 using Horizon.Engine.Debugging.Debuggers;
+using Horizon.HIDL.Runtime;
 
 using ImGuiNET;
 
@@ -17,6 +18,7 @@ public class SkylineDebugger : Entity
     }
 
     private List<DebuggerComponent> _components = new();
+    private bool hasInitializedHIDLE = false;
 
     //public RenderOptionsDebugger RenderOptionsDebugger { get; private set; }
     public SceneEntityDebugger SceneEntityDebugger { get; private set; }
@@ -38,16 +40,15 @@ public class SkylineDebugger : Entity
     private void CreateDebugComponents()
     {
         _components.AddRange(
-            new DebuggerComponent[]
-            {
+            [
                 //(RenderOptionsDebugger = AddComponent<RenderOptionsDebugger>()),
                 (SceneEntityDebugger = AddComponent<SceneEntityDebugger>()),
                 (LoadedContentDebugger = AddComponent<LoadedContentDebugger>()),
                 (GameContainerDebugger = AddComponent<DockedGameContainerDebugger>()),
                 (PerformanceDebugger = AddComponent<PerformanceProfilerDebugger>()),
+                (Console = AddComponent<DeveloperConsole>()),
                 (GeneralDebugger = AddComponent<GeneralDebugger>()),
-                (Console = AddComponent<DeveloperConsole>())
-            }
+            ]
         );
     }
 
@@ -65,13 +66,29 @@ public class SkylineDebugger : Entity
     {
         RenderToContainer = Enabled && GameContainerDebugger.Visible && GameContainerDebugger.FrameBuffer.Handle > 0;
 
+        if (!hasInitializedHIDLE)
+        {
+            hasInitializedHIDLE = true;
+            Console.Runtime.Evaluate(@"
+const env = {
+    print: _PRINT_LN,
+    clear: _CLEAR_SCR,
+    debugger: {
+        general: {
+            get_watch: _HORIZON_GENERALDEBUGGER_GET
+        }
+    }
+};
+", true);
+        }
+
         if (!Enabled)
         {
-            if (_components.Any())
+            if (_components.Count != 0)
                 DestroyDebugComponents();
             return;
         }
-        if (!_components.Any())
+        if (_components.Count == 0)
             CreateDebugComponents();
 
         if (ImGui.BeginMainMenuBar())

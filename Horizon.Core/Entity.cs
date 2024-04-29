@@ -18,15 +18,20 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public Entity()
     {
-        Children = new();
-        Components = new();
+        Children = [];
+        Components = [];
     }
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context.
+    /// Called after the constructor, guaranteeing that there will be a valid GL context. Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
-    { }
+    { PostInit(); }
+
+    /// <summary>
+    /// A method that executes after all initialisation is complete.
+    /// </summary>
+    public virtual void PostInit() { }
 
     public virtual void Render(float dt, object? obj = null)
     {

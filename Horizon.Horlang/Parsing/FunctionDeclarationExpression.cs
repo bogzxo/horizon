@@ -1,4 +1,6 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿using System.Numerics;
+
+namespace Horizon.HIDL.Parsing;
 
 public readonly struct FunctionDeclarationExpression(in string name, in string[] parameters, in IStatement[] body) : IExpression
 {

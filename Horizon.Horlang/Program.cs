@@ -1,47 +1,102 @@
-﻿using System.Text;
+﻿using System;
+using System.Text;
 
 using Bogz.Logging.Loggers;
 
-using Horizon.Horlang.Runtime;
+using Horizon.HIDL.Runtime;
 
-namespace Horizon.Horlang;
+namespace Horizon.HIDL;
 
 internal class Program
 {
-    private static bool shouldHalt = false;
-    private static void Main(string[] _)
-    {
-        Console.WriteLine($"Horlang REPL v{HorlangRuntime.VERSION}");
-        HorlangRuntime runtime = new();
+    static readonly string[] INTRO_FRAMES = [@"
+      ___                       ___           ___ 
+     /\__\          ___        /\  \         /\__\
+    /:/  /         /\  \      /::\  \       /:/  /
+   /:/__/          \:\  \    /:/\:\  \     /:/  / 
+  /::\  \ ___      /::\__\  /:/  \:\__\   /:/  /  
+ /:/\:\  /\__\  __/:/\/__/ /:/__/ \:|__| /:/__/   
+ \/__\:\/:/  / /\/:/  /    \:\  \ /:/  / \:\  \   
+      \::/  /  \::/__/      \:\  /:/  /   \:\  \  
+      /:/  /    \:\__\       \:\/:/  /     \:\  \ 
+     /:/  /      \/__/        \::/__/       \:\__\
+     \/__/                     ~~            \/__/", @"
+      ___                                             
+     /\  \                     _____                  
+     \:\  \       ___         /::\  \                 
+      \:\  \     /\__\       /:/\:\  \                
+  ___ /::\  \   /:/__/      /:/  \:\__\   ___     ___ 
+ /\  /:/\:\__\ /::\  \     /:/__/ \:|__| /\  \   /\__\
+ \:\/:/  \/__/ \/\:\  \__  \:\  \ /:/  / \:\  \ /:/  /
+  \::/__/       ~~\:\/\__\  \:\  /:/  /   \:\  /:/  / 
+   \:\  \          \::/  /   \:\/:/  /     \:\/:/  /  
+    \:\__\         /:/  /     \::/  /       \::/  /   
+     \/__/         \/__/       \/__/         \/__/    ", @"
+      ___                      _____                  
+     /__/\        ___         /  /::\                 
+     \  \:\      /  /\       /  /:/\:\                
+      \__\:\    /  /:/      /  /:/  \:\   ___     ___ 
+  ___ /  /::\  /__/::\     /__/:/ \__\:| /__/\   /  /\
+ /__/\  /:/\:\ \__\/\:\__  \  \:\ /  /:/ \  \:\ /  /:/
+ \  \:\/:/__\/    \  \:\/\  \  \:\  /:/   \  \:\  /:/ 
+  \  \::/          \__\::/   \  \:\/:/     \  \:\/:/  
+   \  \:\          /__/:/     \  \::/       \  \::/   
+    \  \:\         \__\/       \__\/         \__\/    
+     \__\/                                            ", @"
+      ___                        ___           ___ 
+     /  /\           ___        /  /\         /  /\
+    /  /:/          /__/\      /  /::\       /  /:/
+   /  /:/           \__\:\    /  /:/\:\     /  /:/ 
+  /  /::\ ___       /  /::\  /  /:/  \:\   /  /:/  
+ /__/:/\:\  /\   __/  /:/\/ /__/:/ \__\:| /__/:/   
+ \__\/  \:\/:/  /__/\/:/~~  \  \:\ /  /:/ \  \:\   
+      \__\::/   \  \::/      \  \:\  /:/   \  \:\  
+      /  /:/     \  \:\       \  \:\/:/     \  \:\ 
+     /__/:/       \__\/        \__\::/       \  \:\
+     \__\/                         ~~         \__\/"];
 
-        StringValue valTest = new("teehee");
-        runtime.Environment.Declare("val", new NativeValue(() =>
+    private static bool shouldHalt = false;
+    private static void Main(string[] args)
+    {
+        Console.Title = "Horizon Integrated Dynamic Language Runtime";
+        RunIntro();
+
+        HIDLRuntime runtime = new();
+
+        StringValue promptVal = new(">");
+        runtime.UserScope.Declare("prompt", new NativeValue(() =>
         {
-            return valTest;
+            return promptVal;
         }, (val) =>
         {
-            valTest = (StringValue)val;
+            promptVal = (StringValue)val;
         }), false);
-        runtime.Environment.Declare("exit", new NativeFunctionValue((args, env) =>
+
+        runtime.UserScope.Declare("exit", new NativeFunctionValue((args, env) =>
         {
             shouldHalt = true;
             return new StringValue("Halting...");
         }), true);
+        runtime.UserScope.Declare("clear", new NativeFunctionValue((args, env) =>
+        {
+            ClearConsole();
+            return new StringValue("Cleared!");
+        }), true);
 
-        runtime.Environment.Declare("print", new NativeFunctionValue((args, env) =>
+        runtime.UserScope.Declare("print", new NativeFunctionValue((args, env) =>
         {
             StringBuilder sb = new();
             foreach (var item in args)
-                sb.Append(item.ToString() + " ");
+                sb.Append(item.ToString());
 
-            Console.WriteLine("> " + sb.ToString());
+            Console.WriteLine($"{promptVal.Value} " + sb.ToString());
             return new StringValue(sb.ToString().Trim());
         }), true);
-        runtime.Environment.Declare("read", new NativeFunctionValue((args, env) =>
+        runtime.UserScope.Declare("read", new NativeFunctionValue((args, env) =>
         {
             return new StringValue(Console.ReadLine() ?? string.Empty);
         }), true);
-        runtime.Environment.Declare("ld", new NativeFunctionValue((args, env) =>
+        runtime.UserScope.Declare("ld", new NativeFunctionValue((args, env) =>
         {
             if (args.Length < 1)
             {
@@ -65,9 +120,17 @@ internal class Program
             return new StringValue(runtime.Evaluate(File.ReadAllText(fileName)).result);
         }), true);
 
+        bool startupFile = args.Length > 0 && File.Exists(args[0]);
+
         while (!shouldHalt)
         {
-            Console.Write("> ");
+            if (startupFile)
+            {
+                startupFile = false;
+                Console.WriteLine(runtime.Evaluate(File.ReadAllText(args[0])).result);
+                continue;
+            }
+            Console.Write($"{promptVal.Value} ");
             string? input = Console.ReadLine();
 
             if (input is null) continue;
@@ -76,5 +139,31 @@ internal class Program
             Console.WriteLine();
         }
         ConcurrentLogger.Instance.Dispose();
+    }
+
+    private static void ClearConsole()
+    {
+        Console.CursorVisible = false;
+        Console.Clear();
+        Console.SetCursorPosition(0, 0);
+        Console.WriteLine(INTRO_FRAMES[INTRO_FRAMES.Length - 1]);
+        Console.SetCursorPosition(0, 13);
+        Console.WriteLine($"Horizon Integrated Dynamic Language REPL v{HIDLRuntime.VERSION}");
+        Console.CursorVisible = true;
+    }
+
+    private static void RunIntro()
+    {
+        Console.CursorVisible = false;
+        for (int index = 0; index < INTRO_FRAMES.Length; index++)
+        {
+            Console.SetCursorPosition(0, 0);
+            Console.Clear();
+            Console.WriteLine(INTRO_FRAMES[index]);
+            Thread.Sleep(500);
+        }
+        Console.SetCursorPosition(0, 13);
+        Console.WriteLine($"Horizon Integrated Dynamic Language REPL v{HIDLRuntime.VERSION}");
+        Console.CursorVisible = true;
     }
 }

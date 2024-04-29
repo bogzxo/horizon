@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public readonly struct PropertyExpression(in string key, in IExpression? value) : IExpression
 {

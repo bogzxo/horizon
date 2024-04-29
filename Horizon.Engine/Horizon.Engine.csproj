@@ -29,13 +29,43 @@
   <ItemGroup>
     <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
-    <ProjectReference Include="..\Horizon.Horlang\Horizon.Horlang.csproj" />
+    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
     <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="web_host\dashboard\common.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\dash.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="web_host\dashboard\index.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\scripting.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\scripts\common-sock.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\scripts\dashboard.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\scripts\scripting.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\styles\common.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\styles\dashboard.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\styles\scripting.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

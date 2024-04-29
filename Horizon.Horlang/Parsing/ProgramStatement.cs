@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace Horizon.Horlang.Parsing;
+namespace Horizon.HIDL.Parsing;
 
 public readonly struct ProgramStatement() : IStatement
 {
