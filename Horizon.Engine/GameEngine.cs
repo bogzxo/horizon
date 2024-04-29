@@ -81,7 +81,7 @@ public class GameEngine : Entity
         // Engine children
         Debugger = AddEntity<SkylineDebugger>();
         WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
-        WebHost.ContentProviders.Add("index", new DashboardContentProvider());
+        WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
     }
 
     public override void Initialize()

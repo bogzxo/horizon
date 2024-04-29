@@ -1,6 +1,6 @@
-﻿namespace Horizon.Horlang.Runtime;
+﻿namespace Horizon.HIDL.Runtime;
 
-public enum ValueType
+public enum ValueType : byte
 {
     Null,
     Number,
@@ -9,5 +9,9 @@ public enum ValueType
     NativeFunction,
     NativeValue,
     Function,
+    AnonymousFunction,
     String,
+    Vector2,
+    Vector3,
+    Vector4
 }

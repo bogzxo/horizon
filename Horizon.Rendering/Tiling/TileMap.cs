@@ -294,11 +294,11 @@ public abstract partial class Tiling<TTextureID>
             Engine
                 .Debugger
                 .GeneralDebugger
-                .AddWatch("Chunk Maximum", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
+                .AddWatch("ChunkSize", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
             Engine
                 .Debugger
                 .GeneralDebugger
-                .AddWatch("Total Tiles", "Tilemap", () => TileUpdateCount);
+                .AddWatch("TileCount", "Tilemap", () => TileUpdateCount);
         }
 
         public override void Render(float dt, object? obj = null)

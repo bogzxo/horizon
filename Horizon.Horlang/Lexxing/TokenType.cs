@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Lexxing;
+﻿namespace Horizon.HIDL.Lexxing;
 
 public enum TokenType : byte
 {
@@ -31,4 +31,5 @@ public enum TokenType : byte
     Exclamation,
     Equality,
     NotEquality,
+    Vector,
 }

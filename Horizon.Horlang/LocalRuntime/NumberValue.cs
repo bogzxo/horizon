@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Runtime;
+﻿namespace Horizon.HIDL.Runtime;
 
 public readonly struct NumberValue(in float val) : IRuntimeValue
 {

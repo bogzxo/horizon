@@ -1,4 +1,6 @@
-﻿using ImGuiNET;
+﻿using Horizon.HIDL.Runtime;
+
+using ImGuiNET;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -61,12 +63,23 @@ public class GeneralDebugger : DebuggerComponent
             }
         }
 
-        internal void AddWatch(string name, Func<object> objExpr)
+        internal void AddWatch(in string name, in Func<object> objExpr)
         {
             if (_monitoredVariables.ContainsKey(name))
                 Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Warning, $"Attempt to assign watch '{name}' which already exists. Overriding!");
 
             _monitoredVariables[name] = objExpr;
+        }
+
+        internal object GetValue(in string name)
+        {
+            if (_cachedValues.TryGetValue(name, out object? cacheVal))
+                return cacheVal;
+
+            if (_singleUseValues.TryGetValue(name, out Func<object>? singleVal))
+                return singleVal;
+
+            return 0;
         }
     }
 
@@ -75,11 +88,21 @@ public class GeneralDebugger : DebuggerComponent
 
     private float _updateCachedValuesTimer = 0.0f;
     private int watchedCount = 0;
+    private Horizon.HIDL.Runtime.Environment hidlEnv;
 
     public override void Initialize()
     {
         _catagories["Misc"] = new GeneralDebuggerCatagory(this);
+        hidlEnv = ((SkylineDebugger)Parent).Console.Runtime.UserScope;
+        hidlEnv.Declare("_HORIZON_GENERALDEBUGGER_GET", new NativeFunctionValue((args, env) =>
+        {
+            if (args.Length != 2)
+                return new StringValue("Invalid args, ensure the category name and object name are specified as arguments.");
+            if (args[0] is StringValue key && args[1] is StringValue name)
+                return new StringValue(_catagories[key.Value].GetValue(name.Value).ToString());
 
+            return new NullValue();
+        }));
         Name = "General Information";
     }
 
@@ -101,31 +124,34 @@ public class GeneralDebugger : DebuggerComponent
         if (!Visible)
             return;
 
-        if (ImGui.Begin(Name))
+       lock (_catagoriesLock)
         {
-            ImGui.Text($"Watched Variables ({watchedCount})");
-            ImGui.Separator();
-
-            foreach ((string name, GeneralDebuggerCatagory monitor) in _catagories)
+            if (ImGui.Begin(Name))
             {
-                if (monitor.TotalWatchedValues < 1)
-                    continue;
+                ImGui.Text($"Watched Variables ({watchedCount})");
+                ImGui.Separator();
 
-                if (ImGui.CollapsingHeader(name))
+                foreach ((string name, GeneralDebuggerCatagory monitor) in _catagories)
                 {
-                    ImGui.Columns(2, $"generalDebuggerColumns_{name}", true); // 2 columns
+                    if (monitor.TotalWatchedValues < 1)
+                        continue;
 
-                    ImGui.Text("Name:");
-                    ImGui.NextColumn();
-                    ImGui.Text("Value:");
-                    ImGui.NextColumn();
+                    if (ImGui.CollapsingHeader(name))
+                    {
+                        ImGui.Columns(2, $"generalDebuggerColumns_{name}", true); // 2 columns
 
-                    monitor.Draw();
-                    ImGui.Columns(1);
+                        ImGui.Text("Name:");
+                        ImGui.NextColumn();
+                        ImGui.Text("Value:");
+                        ImGui.NextColumn();
+
+                        monitor.Draw();
+                        ImGui.Columns(1);
+                    }
                 }
-            }
 
-            ImGui.End();
+                ImGui.End();
+            }
         }
     }
 
@@ -137,20 +163,25 @@ public class GeneralDebugger : DebuggerComponent
         if (!Visible)
             return;
 
-        _updateCachedValuesTimer += dt;
-        if (_updateCachedValuesTimer > 0.5f)
-        {
-            watchedCount = 0;
-            foreach (var item in _catagories.Values)
-            {
-                item.UpdateValues();
-                watchedCount += item.TotalWatchedValues;
-            }
-        }
+
     }
 
     public override void UpdatePhysics(float dt)
-    { }
+    {
+        lock (_catagoriesLock)
+        {
+            _updateCachedValuesTimer += dt;
+            if (_updateCachedValuesTimer > 0.5f)
+            {
+                watchedCount = 0;
+                foreach (var item in _catagories.Values)
+                {
+                    item.UpdateValues();
+                    watchedCount += item.TotalWatchedValues;
+                }
+            }
+        }
+    }
 
     ~GeneralDebugger()
     {

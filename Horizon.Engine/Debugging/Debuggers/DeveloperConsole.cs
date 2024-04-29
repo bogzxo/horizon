@@ -1,7 +1,7 @@
 ﻿using System.Text;
 
-using Horizon.Horlang;
-using Horizon.Horlang.Runtime;
+using Horizon.HIDL;
+using Horizon.HIDL.Runtime;
 using Horizon.Webhost;
 
 using ImGuiNET;
@@ -35,7 +35,7 @@ public class DeveloperConsole : DebuggerComponent
     /// <summary>
     /// The runtime for the Horizon Engine integrated interpreted language runtime. Scene specific native callbacks may be configured here, remember to delete and scene specific delcarations on scene change.
     /// </summary>
-    public HorlangRuntime Runtime { get; init; } = new();
+    public HIDLRuntime Runtime { get; init; } = new();
 
     private List<CommandLinePacket> commandHistory;
     private string inputBuffer = string.Empty;
@@ -49,7 +49,7 @@ public class DeveloperConsole : DebuggerComponent
         Name = "Developer Console";
         commandHistory = new(128);
 
-        Runtime.Environment.Declare("_PRINT_LN", new NativeFunctionValue((args, env) =>
+        Runtime.GlobalScope.DeclareSystem("_PRINT_LN", new NativeFunctionValue((args, env) =>
         {
             StringBuilder sb = new();
             for (int i = 0; i < args.Length; i++)
@@ -58,7 +58,7 @@ public class DeveloperConsole : DebuggerComponent
             SendCommand(sb.ToString());
             return new NullValue();
         }));
-        Runtime.Environment.Declare("_CLEAR_SCR", new NativeFunctionValue((args, env) =>
+        Runtime.GlobalScope.DeclareSystem("_CLEAR_SCR", new NativeFunctionValue((args, env) =>
         {
             commandHistory.Clear();
             CommandProcessed?.Invoke(new CommandLinePacket()
@@ -69,17 +69,10 @@ public class DeveloperConsole : DebuggerComponent
             return new NullValue();
         }));
 
-        Runtime.Environment.Declare("help", new NativeFunctionValue((args, env) =>
+        Runtime.GlobalScope.DeclareSystem("help", new NativeFunctionValue((args, env) =>
         {
             return new StringValue("test");
         }));
-
-        Runtime.Evaluate(@"
-let env = {
-    print: _PRINT_LN,
-    clear: _CLEAR_SCR
-};
-");
     }
 
     public override void Render(float dt, object? obj = null)

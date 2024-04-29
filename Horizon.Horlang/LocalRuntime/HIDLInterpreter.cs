@@ -1,8 +1,8 @@
-﻿using Horizon.Horlang.Parsing;
+﻿using Horizon.HIDL.Parsing;
 
-namespace Horizon.Horlang.Runtime;
+namespace Horizon.HIDL.Runtime;
 
-public class HorlangInterpreter
+public class HIDLInterpreter
 {
     private readonly NullValue NULL = new();
 
@@ -22,12 +22,30 @@ public class HorlangInterpreter
             NodeType.CallExpression => EvaluateFunctionCallExpression((CallExpression)statement, env),
             NodeType.VariableDeclaration => EvaluateVariableDeclaration((VariableDeclarationExpression)statement, env),
             NodeType.FunctionDeclaration => EvaluateFunctionDeclaration((FunctionDeclarationExpression)statement, env),
+            NodeType.AnonymousFunctionDeclaration => EvaluateAnonymousFunctionDeclaration((AnonymousFunctionDeclarationExpression)statement, env),
             NodeType.MemberExpression => EvaluateMemberExpression((MemberExpression)statement, env),
             NodeType.WhileExpression => EvaluateWhileExpression((WhileDeclarationExpression)statement, env),
             NodeType.DoWhileExpression => EvaluateDoWhileExpression((DoWhileDeclarationExpression)statement, env),
             NodeType.IfExpression => EvaluateIfExpression((IfDeclarationExpression)statement, env),
             NodeType.DeleteStatement => EvaluateDeleteStatement((DeleteStatement)statement, env),
+            NodeType.VectorDeclaration => EvaluateVecDeclaration((VectorDeclarationExpression)statement, env),
             _ => throw new Exception($"This node cannot be interpreted: '{statement}'"),
+        };
+    }
+
+    private IRuntimeValue EvaluateVecDeclaration(VectorDeclarationExpression statement, Environment env)
+    {
+        float evalVectorDimension(in int dim)
+        {
+            return ((NumberValue)Evaluate(statement.Expressions[dim], env)).Value;
+        }
+
+        return (statement.Expressions.Length) switch
+        {
+            2 => new Vector2Value(new System.Numerics.Vector2(evalVectorDimension(0), evalVectorDimension(1))),
+            3 => new Vector3Value(new System.Numerics.Vector3(evalVectorDimension(0), evalVectorDimension(1), evalVectorDimension(2))),
+            4 => new Vector4Value(new System.Numerics.Vector4(evalVectorDimension(0), evalVectorDimension(1), evalVectorDimension(2), evalVectorDimension(3))),
+            _ => NULL,
         };
     }
 
@@ -119,6 +137,11 @@ public class HorlangInterpreter
         return env.Assign(statement.Name, val);
     }
 
+    private IRuntimeValue EvaluateAnonymousFunctionDeclaration(AnonymousFunctionDeclarationExpression statement, Environment env)
+    {
+        return new AnonymousFunctionValue(statement.Parameters, env, statement.Body);
+    }
+
     private IRuntimeValue EvaluateIdentifier(IdentifierExpression statement, Environment env)
     {
         var variable = env.Lookup(statement.Symbol) ?? new NullValue();
@@ -165,6 +188,21 @@ public class HorlangInterpreter
             }
             return result;
         }
+        else if (func.Type == ValueType.AnonymousFunction)
+        {
+            var fun = ((AnonymousFunctionValue )func);
+            Environment scope = new(fun.Environment);
+
+            // construct variables from parameters
+            for (int i = 0; i < fun.Parameters.Length; i++)
+                scope.Declare(fun.Parameters[i], args[i]);
+            IRuntimeValue result = new NullValue();
+            for (int i = 0; i < fun.Body.Length; i++)
+            {
+                result = Evaluate(fun.Body[i], scope);
+            }
+            return result;
+        }
         return func;
         throw new Exception("Cannot call that of whom which is not a function!");
     }
@@ -181,6 +219,60 @@ public class HorlangInterpreter
 
                 if (obj.Properties.TryGetValue(propName, out var value))
                     return value;
+            }
+        }
+        else if (objNoType.Type == ValueType.Vector2)
+        {
+            var obj = (Vector2Value)objNoType;
+            if (expression.Property.Type == NodeType.Identifier)
+            {
+                var propName = ((IdentifierExpression)expression.Property).Symbol;
+
+                switch (propName)
+                {
+                    case "x":
+                        return new NumberValue(obj.Value.X);
+                    case "y":
+                        return new NumberValue(obj.Value.Y);
+                }
+            }
+        }
+        else if (objNoType.Type == ValueType.Vector3)
+        {
+            var obj = (Vector3Value)objNoType;
+            if (expression.Property.Type == NodeType.Identifier)
+            {
+                var propName = ((IdentifierExpression)expression.Property).Symbol;
+
+                switch (propName)
+                {
+                    case "x":
+                        return new NumberValue(obj.Value.X);
+                    case "y":
+                        return new NumberValue(obj.Value.Y);
+                    case "z":
+                        return new NumberValue(obj.Value.Z);
+                }
+            }
+        }
+        else if (objNoType.Type == ValueType.Vector4)
+        {
+            var obj = (Vector4Value)objNoType;
+            if (expression.Property.Type == NodeType.Identifier)
+            {
+                var propName = ((IdentifierExpression)expression.Property).Symbol;
+
+                switch (propName)
+                {
+                    case "x":
+                        return new NumberValue(obj.Value.X);
+                    case "y":
+                        return new NumberValue(obj.Value.Y);
+                    case "z":
+                        return new NumberValue(obj.Value.Z);
+                    case "w":
+                        return new NumberValue(obj.Value.W);
+                }
             }
         }
 
@@ -214,6 +306,8 @@ public class HorlangInterpreter
             return EvaluateNumericExpression((NumberValue)lhs, (NumberValue)rhs, expression.Operator);
         else if (rhs.Type == ValueType.String && lhs.Type == ValueType.String)
             return EvaluateStringComparisonExpression((StringValue)lhs, (StringValue)rhs, expression.Operator);
+        else if ((((byte)rhs.Type > 7 && (byte)rhs.Type < 11) || rhs.Type == ValueType.Number) && ((byte)lhs.Type > 7 && (byte)lhs.Type < 11))
+            return EvaluateVectorComparisonExpression(lhs, rhs, expression.Operator);
 
         return NULL;
     }
@@ -228,6 +322,77 @@ public class HorlangInterpreter
         };
     }
 
+    private IRuntimeValue EvaluateVectorComparisonExpression(IRuntimeValue lhs, IRuntimeValue rhs, string op)
+    {
+        if (lhs is Vector2Value lVal2 && rhs is Vector2Value rVal2)
+        {
+            return op switch
+            {
+                "==" => new BooleanValue(lVal2.Value == rVal2.Value),
+                "!=" => new BooleanValue(lVal2.Value != rVal2.Value),
+                "+" => new Vector2Value(lVal2.Value + rVal2.Value),
+                "-" => new Vector2Value(lVal2.Value - rVal2.Value),
+                "/" => new Vector2Value(lVal2.Value / rVal2.Value),
+                "*" => new Vector2Value(lVal2.Value * rVal2.Value),
+                _ => NULL,
+            };
+        }
+        else if (lhs is Vector3Value lVal3 && rhs is Vector3Value rVal3)
+        {
+            return op switch
+            {
+                "==" => new BooleanValue(lVal3.Value == rVal3.Value),
+                "!=" => new BooleanValue(lVal3.Value != rVal3.Value),
+                "+" => new Vector3Value(lVal3.Value + rVal3.Value),
+                "-" => new Vector3Value(lVal3.Value - rVal3.Value),
+                "/" => new Vector3Value(lVal3.Value / rVal3.Value),
+                "*" => new Vector3Value(lVal3.Value * rVal3.Value),
+                _ => NULL,
+            };
+        }
+        else if (lhs is Vector4Value lVal && rhs is Vector4Value rVal)
+        {
+            return op switch
+            {
+                "==" => new BooleanValue(lVal.Value == rVal.Value),
+                "!=" => new BooleanValue(lVal.Value != rVal.Value),
+                "+" => new Vector4Value(lVal.Value + rVal.Value),
+                "-" => new Vector4Value(lVal.Value - rVal.Value),
+                "/" => new Vector4Value(lVal.Value / rVal.Value),
+                "*" => new Vector4Value(lVal.Value * rVal.Value),
+                _ => NULL,
+            };
+        }
+        else if (lhs is Vector2Value lVal2_0 && rhs is NumberValue rVal2_0)
+        {
+            return op switch
+            {
+                "/" => new Vector2Value(lVal2_0.Value / rVal2_0.Value),
+                "*" => new Vector2Value(lVal2_0.Value * rVal2_0.Value),
+                _ => NULL,
+            };
+        }
+        else if (lhs is Vector3Value lVal3_0 && rhs is NumberValue rVal3_0)
+        {
+            return op switch
+            {
+                "/" => new Vector3Value(lVal3_0.Value / rVal3_0.Value),
+                "*" => new Vector3Value(lVal3_0.Value * rVal3_0.Value),
+                _ => NULL,
+            };
+        }
+        else if (lhs is Vector4Value lVal_0 && rhs is NumberValue rVal_0)
+        {
+            return op switch
+            {
+                "/" => new Vector4Value(lVal_0.Value / rVal_0.Value),
+                "*" => new Vector4Value(lVal_0.Value * rVal_0.Value),
+                _ => NULL,
+            };
+        }
+
+        return NULL;
+    }
     private IRuntimeValue EvaluateNumericExpression(NumberValue lhs, NumberValue rhs, string op)
     {
         return op switch

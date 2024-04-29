@@ -28,24 +28,53 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     private HttpListenerWebSocketContext context;
     private bool isSocketClosed = false;
-
     public async Task HandleRequest(string url, HttpListenerRequest request, HttpListenerResponse response)
     {
         // TODO: improve handling by proper parsing of the URI
 
         string val = url;
-        if (url.StartsWith("index/")) val = url[6..];
+        if (url.StartsWith("dash/"))
+            val = url[5..];
 
-        if (val.CompareTo(string.Empty) == 0)
+        if (val.CompareTo("/") == 0)
         {
-            ServeFile(ref response, Path.Combine(filePrefix, "index.html"));
+            await ServeFile(response, Path.Combine(filePrefix, "dash.html"));
         }
-        else ServeFile(ref response, filePrefix + val);
-
-        Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Serving {filePrefix + (val.CompareTo(string.Empty) == 0 ? "index.html" : val)}.");
+        else
+        {
+            string filePath = filePrefix + val;
+            if (File.Exists(filePath))
+            {
+                await ServeFile(response, filePath);
+                Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Serving {filePath}.");
+            }
+            else
+            {
+                // Redirect if the file does not exist
+                string redirectUrl = "/notfound.html"; // Redirect to a not found page or any other URL
+                if (IsRedirectRequest(request))
+                {
+                    Redirect(response, redirectUrl);
+                    Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Redirecting to {redirectUrl}.");
+                }
+                else
+                {
+                    // Serve a 404 page
+                    await ServeFile(response, filePrefix + redirectUrl);
+                    Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Can't locate resource '{filePath}', serving 404 page.");
+                }
+            }
+        }
     }
 
-    private static void ServeFile(ref HttpListenerResponse response, string filePath)
+    private static void Redirect(in HttpListenerResponse response, in string redirectUrl)
+    {
+        response.StatusCode = (int)HttpStatusCode.Redirect;
+        response.AddHeader("Location", redirectUrl);
+    }
+
+
+    private static async Task ServeFile(HttpListenerResponse response, string filePath)
     {
         Stream output = response.OutputStream;
         response.AddHeader("Access-Control-Allow-Origin", "*");
@@ -58,9 +87,14 @@ public class DashboardContentProvider : IWebHostContentProvider
         // Set the content length and write the file contents to the response stream
         response.ContentLength64 = buffer.Length;
         response.ContentType = fileContentPairs[filePath.Split('.').Last()];
-        output.Write(buffer, 0, buffer.Length);
+        await output.WriteAsync(buffer, 0, buffer.Length);
 
         output.Close();
+    }
+
+    private static bool IsRedirectRequest(in HttpListenerRequest request)
+    {
+        return request.Url.Query.Contains("redirect=true");
     }
 
     public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)

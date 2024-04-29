@@ -1,6 +1,6 @@
 ﻿using System.Text;
 
-namespace Horizon.Horlang.Lexxing;
+namespace Horizon.HIDL.Lexxing;
 
 public static class Lexer
 {
@@ -21,6 +21,7 @@ public static class Lexer
             {"break", TokenType.Break},
             {"==", TokenType.Equality},
             {"!=", TokenType.NotEquality},
+            {"vec", TokenType.Vector},
         };
     }
 
@@ -171,7 +172,7 @@ public static class Lexer
                         sb.Append(character);
 
                         // add numbers and progress queue until next char isnt a letter or special op
-                        while (characters.Count != 0 && (char.IsLetter(characters.Peek()) || characters.Peek() == '_' || characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
+                        while (characters.Count != 0 && (char.IsNumber(characters.Peek()) || char.IsLetter(characters.Peek()) || characters.Peek() == '_' || characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
                             sb.Append(characters.Dequeue());
 
                         string finalValue = sb.ToString();
@@ -179,6 +180,7 @@ public static class Lexer
                         TokenType type = TokenType.Identifier;
                         if (Keywords.TryGetValue(finalValue, out TokenType newType))
                             type = newType;
+
 
                         AddToken(type, finalValue);
                     }

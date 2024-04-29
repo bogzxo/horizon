@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Runtime;
+﻿namespace Horizon.HIDL.Runtime;
 
 public readonly struct NativeFunctionValue(in Func<IRuntimeValue[], Environment, IRuntimeValue> callback) : IRuntimeValue
 {

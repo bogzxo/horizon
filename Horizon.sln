@@ -29,7 +29,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "DemoPlane", "DemoPlane\Demo
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.Webhost", "Horizon.Webhost\Horizon.Webhost.csproj", "{C2C4E0FE-4165-465A-992C-AEEF81014567}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.Horlang", "Horizon.Horlang\Horizon.Horlang.csproj", "{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.HIDL", "Horizon.Horlang\Horizon.HIDL.csproj", "{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

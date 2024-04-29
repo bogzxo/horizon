@@ -1,4 +1,4 @@
-﻿namespace Horizon.Horlang.Parsing;
+﻿namespace Horizon.HIDL.Parsing;
 
 public readonly struct CallExpression(in IExpression[] args, in IExpression caller) : IExpression
 {
