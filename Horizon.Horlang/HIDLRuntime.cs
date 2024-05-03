@@ -73,11 +73,10 @@ public class HIDLRuntime
     /// <returns>A tuple containing a success flag and the result as a string.</returns>
     public (bool success, string result) Evaluate(in string input, in bool useGlobalScope = false)
     {
-        string? value = Interpreter.Evaluate(parser.ProduceSyntaxTree(Lexer.Tokenize(input)), useGlobalScope ? GlobalScope : UserScope).ToString();
-        return (value is not null, value ?? string.Empty);
         try
         {
-
+            string? value = Interpreter.Evaluate(parser.ProduceSyntaxTree(Lexer.Tokenize(input)), useGlobalScope ? GlobalScope : UserScope).ToString();
+            return (value is not null, value ?? string.Empty);
         }
         catch (Exception e)
         {

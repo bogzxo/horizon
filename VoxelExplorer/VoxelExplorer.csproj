@@ -22,9 +22,15 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <Optimize>False</Optimize>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Rendering\**" />
+    <EmbeddedResource Remove="Rendering\**" />
+    <None Remove="Rendering\**" />
+  </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.20.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.21.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.ARB" Version="2.21.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -37,14 +43,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Rendering\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Update="content\shaders\world.fs">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="content\shaders\world.vs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="content\textures\default_dirt.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

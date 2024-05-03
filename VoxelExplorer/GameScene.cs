@@ -1,8 +1,10 @@
 ﻿using System.Numerics;
+using System.Reflection.Emit;
 
 using Horizon.Engine;
 using Horizon.Input;
 using Horizon.Input.Components;
+using Horizon.Rendering.Mesh;
 
 using VoxelExplorer.Data;
 
@@ -12,6 +14,8 @@ namespace VoxelExplorer
     {
         private VoxelWorld world;
         private VoxelWorldRenderer renderer;
+        private VoxelWorldGenerator generator;
+
         private Camera3D camera;
 
         public override Camera ActiveCamera { get; protected set; }
@@ -23,13 +27,24 @@ namespace VoxelExplorer
         {
             base.Initialize();
 
-            world = new VoxelWorld();
+            generator = new();
+            world = new(generator);
+
+            generator.StartTask();
+
+
             renderer = AddEntity(new VoxelWorldRenderer(world));
             ActiveCamera = camera = AddEntity<Camera3D>();
 
+            //camera.Position = new Vector3(VoxelWorld.WIDTH / 2 * Chunk.SIZE - Chunk.SIZE / 2, 48, VoxelWorld.DEPTH / 2 * Chunk.SIZE - Chunk.SIZE / 2);
+
             Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
+            Engine.GL.Disable(Silk.NET.OpenGL.EnableCap.CullFace);
             Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.Texture2D);
             Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.DepthTest);
+            MouseInputManager.Mouse.Cursor.CursorMode = Silk.NET.Input.CursorMode.Raw;
+
+            Engine.Debugger.GeneralDebugger.AddWatch("camera position", () => camera.Position.ToString());
         }
 
         public override void UpdateState(float dt)
@@ -44,7 +59,7 @@ namespace VoxelExplorer
 
             if (!captureInput) return;
 
-            float movementSpeed = MOVEMENT_SPEED * (Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.ShiftLeft) ? 2.0f : 1.0f);
+            float movementSpeed = MOVEMENT_SPEED * (Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.ShiftLeft) ? 6.0f : 1.0f);
             Vector2 axis = Engine.InputManager.GetVirtualController().MovementAxis;
             Vector3 oldPos = camera.Position;
             Vector3 cameraFrontNoPitch = Vector3.Normalize(new Vector3(camera.Front.X, 0, camera.Front.Z));
