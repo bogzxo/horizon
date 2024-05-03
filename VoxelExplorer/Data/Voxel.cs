@@ -1,8 +1,8 @@
 ﻿namespace VoxelExplorer.Data
 {
-    public struct Voxel
+    public struct Voxel(in byte id)
     {
-        public uint DataPack0 { get; init; }
+        public int DataPack0 { get; init; } = id;
 
         /*
          *  The CPU side data is encoded in a single UINT.
@@ -19,11 +19,7 @@
          * └────────────────────────────────────────────┘
          */
 
-        public Voxel(in byte id)
-        {
-            DataPack0 = id;
-        }
-
         public static Voxel Empty { get; } = new Voxel(0);
+        public static Voxel OOB { get; } = new Voxel { DataPack0 = -1 };
     }
 }

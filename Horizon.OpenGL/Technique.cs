@@ -43,12 +43,12 @@ public class Technique
     {
         bufferObject.Bind();
         ObjectManager
-            .GL
-            .BindBufferBase(
-                BufferTargetARB.ShaderStorageBuffer,
-                resourceManager.GetLocation(name),
-                bufferObject.Handle
-            );
+           .GL
+           .BindBufferBase(
+               BufferTargetARB.ShaderStorageBuffer,
+               resourceManager.GetLocation(name),
+               bufferObject.Handle
+           );
     }
 
     /// <summary>
@@ -112,7 +112,9 @@ public class Technique
             case bool boolValue:
                 ObjectManager.GL.Uniform1(location, boolValue ? 1 : 0);
                 break;
-
+            case ulong uLongVal:
+                ObjectManager.GL.Uniform1(location, uLongVal);
+                break;
             default:
                 //ConcurrentLogger.Instance.Log(
                 //    LogLevel.Error,

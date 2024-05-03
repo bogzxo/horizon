@@ -17,6 +17,10 @@ internal readonly struct VoxelInstanceData(in int packedData)
 
     public static VoxelInstanceData Encode(in int x, in int y, in int z, in int face)
     {
-        return new VoxelInstanceData(((31 & x) << 0 | (31 & y) << 5 | (31 & z) << 10 | (6 & face) << 15));
+        return new VoxelInstanceData(
+            (face & 0b1111)   // 4 bits for face
+            | ((x & 0b11111) << 4)     // 5 bits for x
+            | ((y & 0b11111) << 9)     // 5 bits for y
+            | ((z & 0b11111) << 14));  // 5 bits for z
     }
 }
