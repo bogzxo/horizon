@@ -1,7 +1,12 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Numerics;
+using System.Reflection;
 
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Engine;
+
+using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering;
 
@@ -71,48 +76,35 @@ public abstract partial class Tiling<TTextureID>
         public void UpdatePhysics(float dt)
         { }
 
-        /// <summary>
-        /// Renders all the chunk slices starting from 0 and ending at the layer specified by renderClampLower.
-        /// </summary>
-        /// <param name="dt">The dt.</param>
-        /// <param name="options">The options.</param>
-        public void RenderLower(in int renderClampLower, float dt)
-        {
-            // render background chunks
-            for (int _layerIndex = 0; _layerIndex < renderClampLower; _layerIndex++)
-                RenderSlices(_layerIndex, dt, TileChunkCullMode.None);
-        }
-
-        /// <summary>
-        /// Renders all the chunk slices starting at the layer specified by renderClampUpper and ending at the final layer.
-        /// </summary>
-        /// <param name="dt">The dt.</param>
-        /// <param name="options">The options.</param>
-        public void RenderUpper(in int renderClampUpper, float dt)
-        {
-            // render background chunks
-            for (int _layerIndex = renderClampUpper; _layerIndex < Map.Depth; _layerIndex++)
-                RenderSlices(_layerIndex, dt, TileChunkCullMode.Bottom);
-        }
-
-        private void RenderSlices(int index, in float dt, in TileChunkCullMode cullMode)
-        {
-            for (int chunkIndex = 0; chunkIndex < Map.Width * Map.Height; chunkIndex++)
-            {
-                Chunks[chunkIndex]?.RenderSlice(index, dt, cullMode);
-            }
-        }
-
         public void Render(float dt, object? obj = null)
         {
             // not used
+        }
+
+        public void RenderChunks(in float dt, in int startSlice, in int endSlice)
+        {
+            for (int chunkIndex = 0; chunkIndex < Map.Width * Map.Height; chunkIndex++)
+            {
+                for (int sliceIndex = startSlice; sliceIndex < endSlice; sliceIndex++)
+                {
+                    Chunks[chunkIndex]?.Renderer.DrawSliceAtIndex(sliceIndex, dt);
+                }
+            }
+        }
+
+        public void RenderChunk(in float dt, in int index)
+        {
+            for (int chunkIndex = 0; chunkIndex < Map.Width * Map.Height; chunkIndex++)
+            {
+                Chunks[chunkIndex]?.Renderer.DrawSliceAtIndex(index, dt);
+            }
         }
 
         /// <summary>
         /// This method accepts a populator action that is expected to fill the tile[].
         /// </summary>
         /// <param name="action">The populator action</param>
-        public void PopulateTiles(Action<TileMapChunkSlice[], TileMapChunk> action)
+        public void PopulateTiles(Action<List<TileMapChunkSlice>, TileMapChunk> action)
         {
             for (int i = 0; i < Map.Width * Map.Height; i++)
                 Chunks[i].Populate(action);

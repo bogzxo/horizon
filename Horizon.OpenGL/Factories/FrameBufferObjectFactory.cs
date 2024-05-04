@@ -24,9 +24,8 @@ public class FrameBufferObjectFactory
             description.Attachments
         );
 
-        var drawBuffers = new ColorBuffer[attachments.Count];
-        for (int i = 0; i < drawBuffers.Length; i++)
-            drawBuffers[i] = (ColorBuffer)description.Attachments[i];
+        var drawBuffers = attachments.Select(x => (ColorBuffer)x.Key).ToArray();
+
 
         var buffer = new FrameBufferObject
         {
@@ -72,52 +71,28 @@ public class FrameBufferObjectFactory
     private static Dictionary<FramebufferAttachment, Assets.Texture> CreateFrameBufferAttachments(
         uint width,
         uint height,
-        FramebufferAttachment[] attachmentTypes
+        Dictionary<FramebufferAttachment, TextureDefinition> attachmentTypes
     )
     {
         var attachments = new Dictionary<FramebufferAttachment, Assets.Texture>();
 
-        foreach (var attachmentType in attachmentTypes)
+        foreach (var (attachmentType, definition) in attachmentTypes)
         {
-            var (internalFormat, pixelFormat) = GetCorrespondingAttachmentFormats(attachmentType);
             attachments.Add(
                 attachmentType,
                 ObjectManager
                     .Instance
                     .Textures
-                    .Create(
-                        new TextureDescription
-                        {
-                            Width = width,
-                            Height = height,
-                            Definition = new TextureDefinition
-                            {
-                                InternalFormat = internalFormat,
-                                PixelFormat = pixelFormat,
-                                PixelType = PixelType.Float
-                            }
-                        }
-                    )
+                    .Create(new()
+                    {
+                        Definition = definition,
+                        Height = height,
+                        Width = width
+                    })
                     .Asset // TODO: error checking skipped.
             );
         }
 
         return attachments;
-    }
-
-    [Pure]
-    protected static (
-        InternalFormat internalFormat,
-        PixelFormat pixelFormat
-    ) GetCorrespondingAttachmentFormats(FramebufferAttachment attachment)
-    {
-        return attachment switch
-        {
-            FramebufferAttachment.DepthStencilAttachment
-                => (InternalFormat.DepthStencil, PixelFormat.DepthStencil),
-            FramebufferAttachment.DepthAttachment
-                => (InternalFormat.DepthComponent, PixelFormat.DepthComponent),
-            _ => (InternalFormat.Rgba32f, PixelFormat.Rgba) // TODO:  somehow customize this
-        };
     }
 }

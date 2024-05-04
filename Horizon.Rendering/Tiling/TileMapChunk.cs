@@ -10,13 +10,6 @@ namespace Horizon.Rendering;
 
 public abstract partial class Tiling<TTextureID>
 {
-    public enum TileChunkCullMode
-    {
-        None = 0,
-        Top = 1,
-        Bottom = 2
-    }
-
     /// <summary>
     /// Represents a chunk of tiles in a tile map.
     /// </summary>
@@ -37,7 +30,7 @@ public abstract partial class Tiling<TTextureID>
         /// </summary>
         public const int HEIGHT = 32;
 
-        public TileMapChunkSlice[] Slices { get; init; }
+        public List<TileMapChunkSlice> Slices { get; init; }
         private List<int> alwaysOnTop = new();
 
         /// <summary>
@@ -85,9 +78,7 @@ public abstract partial class Tiling<TTextureID>
             if (map.World is not null)
                 Body = map.World.CreateBody(new BodyDef { type = BodyType.Static });
 
-            Slices = new TileMapChunkSlice[map.Depth];
-            for (int i = 0; i < Slices.Length; i++)
-                Slices[i] = new(WIDTH, HEIGHT);
+            Slices = new();
 
             Bounds = new RectangleF(
                 pos * new Vector2(WIDTH * Map.TileSize.X, HEIGHT * Map.TileSize.Y)
@@ -103,18 +94,7 @@ public abstract partial class Tiling<TTextureID>
             Renderer.Initialize();
         }
 
-        public TileMapChunkSlice CreateSlice() => new(WIDTH, HEIGHT);
 
-        /// <summary>
-        /// Checks if a specific tile location in the chunk is empty.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile in the chunk.</param>
-        /// <param name="y">The Y coordinate of the tile in the chunk.</param>
-        /// <returns>True if the tile location is empty; otherwise, false.</returns>
-        public bool IsEmpty(int x, int y, int z)
-        {
-            return this[x, y, z] is null;
-        }
 
         /// <summary>
         /// Flags the chunk for mesh regeneration.
@@ -128,45 +108,12 @@ public abstract partial class Tiling<TTextureID>
             return IsDirty = true;
         }
 
-        /// <summary>
-        /// Gets or sets a tile at the specified coordinates in the chunk.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile in the chunk.</param>
-        /// <param name="y">The Y coordinate of the tile in the chunk.</param>
-        /// <returns>The tile at the specified coordinates in the chunk.</returns>
-        public Tile? this[int x, int y, int z]
-        {
-            get
-            {
-                if (z < 0 || z > Map.Depth - 1)
-                    return null;
-
-                return Slices[z][x, y];
-            }
-            set
-            {
-                if (z < 0 || z > Map.Depth - 1)
-                    return;
-
-                Slices[z][x, y] = value;
-            }
-        }
-
-        /// <summary>
-        /// Draws the specified chunk index.
-        /// </summary>
-        /// <param name="dt">The time elapsed since the last frame.</param>
-        /// <param name="options">Optional rendering options.</param>
-        public void RenderSlice(int index, float dt, in TileChunkCullMode cullMode)
-        {
-            Renderer.DrawSliceAtIndex(index, dt, cullMode);
-        }
 
         /// <summary>
         /// Populates the chunk with tiles using a custom action.
         /// </summary>
         /// <param name="action">The custom action to populate the chunk.</param>
-        public void Populate(Action<TileMapChunkSlice[], TileMapChunk> action)
+        public void Populate(Action<List<TileMapChunkSlice>, TileMapChunk> action)
         {
             action(Slices, this);
         }
@@ -178,26 +125,16 @@ public abstract partial class Tiling<TTextureID>
         {
             alwaysOnTop.Clear();
 
-            for (int s = 0; s < Slices.Length; s++)
+            for (int s = 0; s < Slices.Count; s++)
             {
                 var slice = Slices[s];
-                if (slice.AlwaysOnTop)
-                    alwaysOnTop.Add(s);
-                for (int i = 0; i < slice.Tiles.Length; i++)
+                for (int i = 0; i < slice.Tiles.Count; i++)
                 {
                     if (slice.Tiles[i] is null)
                         continue;
 
                     slice.Tiles[i]!.PostGeneration();
                 }
-            }
-        }
-
-        internal void RenderAlwaysOnTop(float dt)
-        {
-            for (int i = 0; i < alwaysOnTop.Count; i++)
-            {
-                Renderer.DrawSliceAtIndex(alwaysOnTop[i], dt, TileChunkCullMode.None);
             }
         }
     }

@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging;
@@ -36,10 +37,6 @@ public abstract partial class Tiling<TTextureID>
         /// </summary>
         public int Height { get; init; }
 
-        /// <summary>
-        /// The lower layer slice in which all children will be rendered in, followed by every layer above it ontop.
-        /// </summary>
-        public int ParallaxIndex { get; set; }
 
         /// <summary>
         /// Gets or sets the physics world associated with the tile map.
@@ -64,10 +61,6 @@ public abstract partial class Tiling<TTextureID>
         private int TileUpdateCount = 0;
         private bool hasBeenInitialized = false;
 
-        /// <summary>
-        /// The offset applied when calculating tilemap clipping.
-        /// </summary>
-        public float ClippingOffset = 0.1f;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TileMap"/> class.
@@ -82,7 +75,6 @@ public abstract partial class Tiling<TTextureID>
             this.Depth = depth;
             this.Width = width;
             this.Height = height;
-            this.ParallaxIndex = depth / 2;
 
             TileSets = new Dictionary<string, TileSet>();
         }
@@ -93,7 +85,7 @@ public abstract partial class Tiling<TTextureID>
         /// <param name="parent">The gamescreen (necessary if you plan to use Box2D integration).</param>
         /// <param name="tiledMapPath">The path of the tiled map.</param>
         /// <returns>An instance of <see cref="TileMap"/> based off a specified Tiled map. Null if unsuccessful.</returns>
-        public static TileMap? FromTiledMap(Entity parent, string tiledMapPath)
+        public static TileMap? FromTiledMap(Entity parent, string tiledMapPath, Action<TmxObject?>? objectCallback = null)
         {
             try
             {
@@ -146,11 +138,38 @@ public abstract partial class Tiling<TTextureID>
                     }
                 }
 
-                int layerIndex = 0;
+                uint layerIndex = 0;
 
                 int chunkWidth = TileMapChunk.WIDTH;
                 int chunkHeight = TileMapChunk.HEIGHT;
 
+                // parse objects
+
+                // Get the type of SomeClass
+                Type type = typeof(TmxObject);
+
+                // Get the private setter method info
+                MethodInfo methodInfo = type.GetMethod("set_Y", BindingFlags.NonPublic | BindingFlags.Instance);
+
+                foreach (var objGroup in tiledMap.ObjectGroups)
+                {
+                    foreach (var obj in objGroup.Objects)
+                    {
+                        // Adjust the Y position based on the height of the map and the object's height
+                        int adjustedY = ((tiledMap.Height) * tiledMap.TileHeight) - (int)obj.Y - (int)obj.Height;
+
+                        // TODO: eish reflection, need to change this
+                        methodInfo.Invoke(obj, new object[] { adjustedY });
+
+                        // Fire the callback
+                        objectCallback?.Invoke(obj);
+                    }
+                }
+
+                // Create a dictionary to map tileConfig.Level to chunk slices
+                Dictionary<uint, TileMapChunkSlice> levelToChunkSlice = new();
+
+                // Parse tiled layers
                 foreach (var layer in tiledMap.Layers)
                 {
                     var layerConfig = GenerateTiledTileConfigFromLayer(layer);
@@ -160,21 +179,10 @@ public abstract partial class Tiling<TTextureID>
                         if (tile.Gid == 0)
                             continue;
 
-                        for (int chunkIndex = 0; chunkIndex < map.Width * map.Height; chunkIndex++)
-                        {
-                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].AlwaysOnTop =
-                                layerConfig.AlwaysOnTop;
-                        }
-
-                        // invert the tile Y coordinates because one again openGL is weird (read about coordinate system orientations)
+                        // Invert the tile Y coordinates
                         int tileY = tiledMap.Height - tile.Y - 1;
-
-                        float localTileX =
-                            tile.X % chunkWidth
-                            + (float)(layer.OffsetX > 0 ? layer.OffsetX / 16.0f : 0);
-                        float localTileY =
-                            tileY % chunkHeight
-                            - (float)(layer.OffsetY > 0 ? layer.OffsetY / 16.0f : 0);
+                        float localTileX = tile.X % chunkWidth + (float)(layer.OffsetX > 0 ? layer.OffsetX / 16.0f : 0);
+                        float localTileY = tileY % chunkHeight - (float)(layer.OffsetY > 0 ? layer.OffsetY / 16.0f : 0);
 
                         int chunkX = tile.X / chunkWidth;
                         int chunkY = tileY / chunkHeight;
@@ -183,13 +191,23 @@ public abstract partial class Tiling<TTextureID>
 
                         var tileConfig = GenerateTiledTileConfigFromTile(layerConfig, map, tile);
 
-                        map[tile.X, tileY, layerIndex] = new StaticTile(
+                        TileMapChunkSlice slice;
+                        // Check if the level exists in the dictionary
+                        if (!levelToChunkSlice.TryGetValue(tileConfig.Level, out slice))
+                        {
+                            // If not, create a new slice for this level and add it to the dictionary
+                            slice = new(); // You may need to initialize ChunkSlice properly
+                            levelToChunkSlice[tileConfig.Level] = slice;
+                            chunk.Slices.Add(slice); // Add the slice to the chunk
+                        }
+
+                        // Add the tile to the correct slice
+                        slice.Tiles.Add(new StaticTile(
                             tileConfig,
                             chunk,
                             new Vector2(localTileX, localTileY)
-                        );
+                        ));
                     }
-                    layerIndex++;
                 }
 
                 map.ChunkManager.PostGenerateTiles();
@@ -212,18 +230,19 @@ public abstract partial class Tiling<TTextureID>
         /// <returns></returns>
         private static StaticTile.TiledTileConfig GenerateTiledTileConfigFromLayer(TmxLayer layer)
         {
-            layer.Properties.TryGetValue("IsCollectible", out var _stringIsCollidable);
-            layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
+            layer.Properties.TryGetValue("collidable", out var _stringIsCollidable);
+            layer.Properties.TryGetValue("render_above", out var _stringTop);
+            if (!layer.Properties.TryGetValue("level", out var _stringLevel)) _stringLevel = "420";
 
             bool isCollidable =
                 bool.TryParse(_stringIsCollidable, out isCollidable) && isCollidable;
             bool isOnTop = bool.TryParse(_stringTop, out isOnTop) && isOnTop;
-
             return new StaticTile.TiledTileConfig
             {
                 IsCollectible = isCollidable,
                 IsVisible = layer.Visible,
-                AlwaysOnTop = isOnTop
+                AlwaysOnTop = isOnTop,
+                Level = uint.Parse(_stringLevel)
             };
         }
 
@@ -303,118 +322,55 @@ public abstract partial class Tiling<TTextureID>
 
         public override void Render(float dt, object? obj = null)
         {
-            if (Children.Count > 0)
+            ChunkManager.RenderChunks(dt, 0, ChunkManager.Chunks[0].Slices.Count);
+
+            for (int i = 0; i < Children.Count; i++)
             {
-                ChunkManager.RenderLower(ParallaxIndex + 2, dt);
-
-                base.Render(dt, obj);
-
-                ChunkManager.RenderUpper(ParallaxIndex, dt);
-                for (int i = 0; i < Width * Height; i++)
-                    ChunkManager.Chunks[i].RenderAlwaysOnTop(dt);
-            }
-            else
-                ChunkManager.RenderLower(Depth, dt);
-        }
-
-        /// <summary>
-        /// Checks if a specific tile location is empty.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile.</param>
-        /// <param name="y">The Y coordinate of the tile.</param>
-        /// <returns>True if the tile location is empty; otherwise, false.</returns>
-        public bool IsEmpty(int x, int y, int z = 0)
-        {
-            return this[x, y, z] is null;
-        }
-
-        /// <summary>
-        /// Returns all the tiles within a half area by half area region around a specified point, within O(area^2) time complexity.
-        /// TODO: use inverse projection to directly sample with normalized device coordinates, maybe faster?
-        /// </summary>
-        public IEnumerable<Tile> FindVisibleTiles(Vector2 position, float area = 10.0f)
-        {
-            var areaSize = new Vector2(area / 2.0f);
-            var playerPos = position + areaSize / 2.0f;
-
-            int startingX = (int)Math.Round(playerPos.X - areaSize.X); // round the value
-            int endingX = (int)Math.Round(playerPos.X + areaSize.X); // round the value
-
-            int startingY = (int)Math.Round(playerPos.Y - areaSize.Y); // round the value
-            int endingY = (int)Math.Round(playerPos.Y + areaSize.Y); // round the value
-
-            for (int x = startingX; x <= endingX; x++) // include the endingX value
-            {
-                for (int y = startingY; y <= endingY; y++) // include the endingY value
-                {
-                    for (int z = 0; z < Depth; z++)
-                    {
-                        Tile? tile = this[(int)(x), (int)(y), z];
-                        if (tile is null) // handle null case
-                            continue;
-
-                        yield return tile;
-                    }
-                }
+                Children[i].Render(dt, obj);
             }
         }
 
-        /// <summary>
-        /// Gets or sets a tile at the specified coordinates. (safely)
-        /// For higher performance please access the ChunkManager.Chunks array directly.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile.</param>
-        /// <param name="y">The Y coordinate of the tile.</param>
-        /// <returns>The tile at the specified coordinates.</returns>
-        public Tile? this[int x, int y, int z]
-        {
-            get
-            {
-                int chunkIndexX = x / (TileMapChunk.WIDTH);
-                int chunkIndexY = y / (TileMapChunk.HEIGHT);
+        ///// <summary>
+        ///// Checks if a specific tile location is empty.
+        ///// </summary>
+        ///// <param name="x">The X coordinate of the tile.</param>
+        ///// <param name="y">The Y coordinate of the tile.</param>
+        ///// <returns>True if the tile location is empty; otherwise, false.</returns>
+        //public bool IsEmpty(int x, int y, int z = 0)
+        //{
+        //    return this[x, y, z] is null;
+        //}
 
-                if (
-                    chunkIndexX >= Width
-                    || chunkIndexY >= Height
-                    || x < 0
-                    || y < 0
-                    || z < 0
-                    || z >= Depth
-                )
-                    return null;
+        ///// <summary>
+        ///// Returns all the tiles within a half area by half area region around a specified point, within O(area^2) time complexity.
+        ///// TODO: use inverse projection to directly sample with normalized device coordinates, maybe faster?
+        ///// </summary>
+        //public IEnumerable<Tile> FindVisibleTiles(Vector2 position, float area = 10.0f)
+        //{
+        //    var areaSize = new Vector2(area / 2.0f);
+        //    var playerPos = position + areaSize / 2.0f;
 
-                int tileIndexX = x % (TileMapChunk.WIDTH);
-                int tileIndexY = y % (TileMapChunk.HEIGHT);
+        //    int startingX = (int)Math.Round(playerPos.X - areaSize.X); // round the value
+        //    int endingX = (int)Math.Round(playerPos.X + areaSize.X); // round the value
 
-                return ChunkManager.Chunks[chunkIndexX + chunkIndexY * Width][
-                    tileIndexX,
-                    tileIndexY,
-                    z
-                ];
-            }
-            set
-            {
-                TileUpdateCount++;
-                int chunkIndexX = x / (TileMapChunk.WIDTH);
-                int chunkIndexY = y / (TileMapChunk.HEIGHT);
+        //    int startingY = (int)Math.Round(playerPos.Y - areaSize.Y); // round the value
+        //    int endingY = (int)Math.Round(playerPos.Y + areaSize.Y); // round the value
 
-                if (
-                    chunkIndexX >= Width
-                    || chunkIndexY >= Height
-                    || x < 0
-                    || y < 0
-                    || z < 0
-                    || z >= Depth
-                )
-                    return;
+        //    for (int x = startingX; x <= endingX; x++) // include the endingX value
+        //    {
+        //        for (int y = startingY; y <= endingY; y++) // include the endingY value
+        //        {
+        //            for (int z = 0; z < Depth; z++)
+        //            {
+        //                Tile? tile = this[(int)(x), (int)(y), z];
+        //                if (tile is null) // handle null case
+        //                    continue;
 
-                int tileIndexX = x % (TileMapChunk.WIDTH);
-                int tileIndexY = y % (TileMapChunk.HEIGHT);
-
-                ChunkManager.Chunks[chunkIndexX + chunkIndexY * Width][tileIndexX, tileIndexY, z] =
-                    value;
-            }
-        }
+        //                yield return tile;
+        //            }
+        //        }
+        //    }
+        //}
 
         /// <summary>
         /// Adds a tile set to the tile map.
@@ -433,7 +389,7 @@ public abstract partial class Tiling<TTextureID>
         /// Populates tiles in the tile map using a custom action.
         /// </summary>
         /// <param name="action">The custom action to populate tiles.</param>
-        public void PopulateTiles(Action<TileMapChunkSlice[], TileMapChunk> action)
+        public void PopulateTiles(Action<List<TileMapChunkSlice>, TileMapChunk> action)
         {
             ChunkManager.PopulateTiles(action);
         }

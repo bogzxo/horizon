@@ -12,6 +12,11 @@ public class FrameBufferObject : IGLObject
     public Dictionary<FramebufferAttachment, Texture> Attachments { get; init; }
     public ColorBuffer[] DrawBuffers { get; init; }
 
+    public uint this[FramebufferAttachment attachment]
+    {
+        get => Attachments[attachment].Handle;
+    }
+
     /// <summary>
     /// Binds a specified attachment to a texture unit.
     /// </summary>

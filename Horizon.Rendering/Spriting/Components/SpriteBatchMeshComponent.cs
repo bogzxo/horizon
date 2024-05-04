@@ -25,7 +25,7 @@ public class SpriteBatchMesh : GameObject
         public Matrix4x4 modelMatrix;
         public Vector2 spriteOffset;
         public uint frameIndex;
-        private uint mermoryalignmentblahblah;
+        public uint index;
     }
 
     private readonly SpriteSheet sheet;
@@ -116,7 +116,7 @@ public class SpriteBatchMesh : GameObject
         throw new Exception("Please only draw a SpriteBatchMesh through a SpriteBatch");
     }
 
-    public unsafe void Draw(in ReadOnlySpan<Sprite> sprites)
+    public unsafe void Draw(in ReadOnlySpan<Sprite> sprites, in uint stencilHandle)
     {
         BindAndSetUniforms();
 
@@ -181,6 +181,7 @@ public class SpriteBatchMesh : GameObject
             dataPtr[i].modelMatrix = sprites[i].Transform.ModelMatrix;
             dataPtr[i].spriteOffset = sprites[i].GetFrameOffset();
             dataPtr[i].frameIndex = sprites[i].GetFrameIndex();
+            dataPtr[i].index = sprites[i].ZIndex;
         }
     }
 }

@@ -51,12 +51,13 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
         ObjectManager.GL.ActiveTexture(TextureUnit.Texture0);
         ObjectManager.GL.BindTexture(TextureTarget.Texture2D, texture.Handle);
 
+        //Reserve enough memory from the gpu for the whole image
         ObjectManager
             .GL
             .TexImage2D(
-                TextureTarget.Texture2D,
+                definition.TextureTarget,
                 0,
-                (int)definition.InternalFormat,
+                definition.InternalFormat,
                 texture.Width,
                 texture.Height,
                 0,
@@ -64,6 +65,10 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
                 definition.PixelType,
                 null
             );
+            
+        Console.WriteLine(definition.InternalFormat);
+        Console.WriteLine(definition.PixelFormat);
+        Console.WriteLine(definition.PixelType);
         SetParameters();
         ObjectManager.GL.BindTexture(TextureTarget.Texture2D, 0);
 
@@ -91,14 +96,14 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
         ObjectManager
             .GL
             .TexImage2D(
-                TextureTarget.Texture2D,
+                definition.TextureTarget,
                 0,
-                InternalFormat.Rgba,
+                definition.InternalFormat,
                 texture.Width,
                 texture.Height,
                 0,
-                PixelFormat.Rgba,
-                PixelType.UnsignedByte,
+                definition.PixelFormat,
+                definition.PixelType,
                 null
             );
 
@@ -165,7 +170,7 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
                 (int)GLEnum.Nearest
             );
         ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBaseLevel, 0);
-        ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 4);
+        ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 0);
         //Generating mipmaps.
         ObjectManager.GL.GenerateMipmap(TextureTarget.Texture2D);
     }

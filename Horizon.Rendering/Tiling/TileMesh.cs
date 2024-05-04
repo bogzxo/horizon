@@ -35,10 +35,6 @@ public abstract partial class Tiling<TTextureID>
         protected const string UNIFORM_TEXTURE_NORMAL = "uTextureNormal";
         public uint TileCount { get; private set; }
 
-        /// <summary>
-        /// If set to TileChunkCullMode.Top, all tiles above the screen midpoint are culled, and vice versa.
-        /// </summary>
-        public TileChunkCullMode CullMode { get; set; } = TileChunkCullMode.None;
 
         public Technique Shader { get; init; }
         public TileMap Map { get; init; }
@@ -94,7 +90,6 @@ public abstract partial class Tiling<TTextureID>
             Set = set;
             Shader = shader;
             Map = map;
-
             Vbo = new VertexBufferObject(
                 Engine
                     .ObjectManager
@@ -241,7 +236,7 @@ public abstract partial class Tiling<TTextureID>
             );
         }
 
-        public override void Render(float dt, object? obj = null)
+        public override void Render(float dt, object? index = null)
         {
             if (_uploadData)
             {
@@ -268,8 +263,7 @@ public abstract partial class Tiling<TTextureID>
 
             Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, Engine.ActiveCamera.Projection);
             Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, Engine.ActiveCamera.View);
-            Shader.SetUniform("uDiscard", (int)CullMode);
-            Shader.SetUniform("uClipOffset", Map.ClippingOffset);
+            Shader.SetUniform("uIndex", (uint)index);
 
             Vbo.Bind();
             Vbo.VertexBuffer.Bind();

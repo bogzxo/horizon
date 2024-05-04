@@ -41,9 +41,9 @@ public abstract partial class Tiling<TTextureID>
                 var tempPairs = new Dictionary<TileSet, List<Tile>>();
 
                 // Iterate through the tiles in the chunk.
-                for (int i = 0; i < Slice.Tiles.Length; i++)
+                for (int i = 0; i < Slice.Tiles.Count; i++)
                 {
-                    var tile = Slice[i];
+                    var tile = Slice.Tiles[i];
 
                     if (tile is null)
                         continue;
@@ -164,7 +164,7 @@ public abstract partial class Tiling<TTextureID>
             }
         }
 
-        public void DrawSliceAtIndex(int index, float dt, in TileChunkCullMode cullMode)
+        public void DrawSliceAtIndex(int index, float dt)
         {
             //Chunk.IsVisibleByCamera = options.Camera.Bounds.IntersectsWith(Chunk.Bounds);
             //if (!Chunk.IsVisibleByCamera)
@@ -178,7 +178,7 @@ public abstract partial class Tiling<TTextureID>
 
                 GenerateMesh();
             }
-            if (!TileMapChunkSliceTileMeshesKeyPairs.Any())
+            if (TileMapChunkSliceTileMeshesKeyPairs.Count == 0)
                 return;
 
             foreach (
@@ -187,9 +187,7 @@ public abstract partial class Tiling<TTextureID>
                 ].TileMeshPairs
             )
             {
-                mesh.CullMode = cullMode;
-                mesh.Render(dt);
-                mesh.CullMode = TileChunkCullMode.None;
+                mesh.Render(dt, (uint)index);
             }
         }
     }

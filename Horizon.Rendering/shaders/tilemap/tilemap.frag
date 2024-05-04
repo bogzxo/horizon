@@ -1,8 +1,9 @@
-﻿#version 410 core
+﻿#version 460 core
 
 layout(location = 0) out vec4 AlbedoColor;
-layout(location = 1) out vec4 NormalFragPosColor;
+layout(location = 1) out uint StencilOutput;
 
+layout(location = 0) flat in uint vIndex;
 in vec2 texCoords;
 in vec3 color;
 in float shouldDiscard;
@@ -16,8 +17,8 @@ uniform bool uWireframeEnabled;
 void main() {
   AlbedoColor = texture(uTextureAlbedo, texCoords) * vec4(color, 1.0);
 
-  if (shouldDiscard == 1.0 || AlbedoColor.a < 0.1)
+  if (shouldDiscard == 1.0 || AlbedoColor.a < 0.001)
     discard;
   
-  NormalFragPosColor = vec4(texture(uTextureNormal, texCoords).xy, fragPos);
+  StencilOutput = vIndex;
 }

@@ -16,6 +16,7 @@ public partial class Tiling<TTextureID>
             public readonly bool IsCollectible { get; init; }
             public readonly bool IsVisible { get; init; }
             public readonly bool AlwaysOnTop { get; init; }
+            public readonly uint Level { get; init; }
         }
 
         public int ID { get; init; }

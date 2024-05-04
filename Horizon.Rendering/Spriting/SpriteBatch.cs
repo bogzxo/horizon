@@ -120,6 +120,11 @@ public class SpriteBatch : GameObject
 
     public int Count { get; private set; }
 
+    /// <summary>
+    /// Handle for a texture to be used to z sort player.
+    /// </summary>
+    public uint StencilTextureHandle { get; set; }
+
     private ConcurrentStack<Sprite> _queuedSprites = new();
 
     /// <summary>
@@ -221,8 +226,9 @@ public class SpriteBatch : GameObject
         foreach (var (_, renderData) in SpritesheetSprites)
             renderData
                 .Mesh
-                .Draw( /*Transform.ModelMatrix, */
-                    CollectionsMarshal.AsSpan(renderData.Sprites)
+                .Draw(
+                    CollectionsMarshal.AsSpan(renderData.Sprites),
+                    StencilTextureHandle
                 );
     }
 }

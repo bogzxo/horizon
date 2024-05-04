@@ -1,16 +1,20 @@
-﻿#version 410 core
+﻿#version 460 core
 
-layout(location = 0) out vec4 AlbedoColor;
-layout(location = 1) out vec4 NormalFragPosColor;
+layout(location = 2) out vec4 AlbedoColor;
+layout(location = 3) out uint StencilColor;
 
 layout(location = 0) in vec2 texCoords;
 layout(location = 1) in vec2 fragPos;
+layout(location = 2) flat in uint stencil;
+layout(location = 3) in vec2 oRawTexCoords;
 
 uniform sampler2D uTexture;
-
+    
 void main() {
-  vec4 tex = texture(uTexture, texCoords);
-  if (tex.a < 0.1) discard;
-  AlbedoColor = tex;
-  NormalFragPosColor = vec4(vec2(0.0), fragPos);
+	vec4 albedo = texture(uTexture, texCoords);
+    if (albedo.a <= 0.01) discard;
+    AlbedoColor = albedo;
+    
+    StencilColor = stencil;
 }
+ 

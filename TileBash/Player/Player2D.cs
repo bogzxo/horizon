@@ -9,6 +9,8 @@ using Horizon.Core.Components.Physics2D;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting;
 
+using ImGuiNET;
+
 using TileBash.Player.Behaviour;
 
 namespace TileBash.Player;
@@ -43,6 +45,9 @@ public class Player2D : Sprite
         Current = this;
         this.world = world;
         this.map = map;
+
+
+        this.ZIndex = 2;
 
         collidersIntervalRunner = AddEntity(new IntervalRunner(1.0f / 4.0f, GenerateTileColliders));
     }
@@ -129,6 +134,13 @@ public class Player2D : Sprite
     {
         UpdateTileColliders(dt);
 
+        if (Engine.InputManager.GetVirtualController().IsPressed(Horizon.Input.VirtualAction.PrimaryAction)
+            && !Engine.InputManager.GetPreviousVirtualController().IsPressed(Horizon.Input.VirtualAction.PrimaryAction))
+            ZIndex++;
+        if (Engine.InputManager.GetVirtualController().IsPressed(Horizon.Input.VirtualAction.SecondaryAction)
+            && !Engine.InputManager.GetPreviousVirtualController().IsPressed(Horizon.Input.VirtualAction.SecondaryAction))
+            ZIndex--;
+
         base.UpdateState(dt);
     }
 
@@ -136,6 +148,13 @@ public class Player2D : Sprite
     {
         //foreach (var tile in visibleTiles)
         //    tile.Render(dt, ref options);
+
+        if (ImGui.Begin("player controller"))
+        {
+            ImGui.Text($"pos = {Transform.Position.ToString()}");
+            ImGui.Text($"z index = {ZIndex}");
+            ImGui.End();
+        }
 
         base.Render(dt);
     }

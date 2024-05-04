@@ -10,6 +10,7 @@ namespace Horizon.Rendering;
 public class DeferredRenderer2DTechnique : Renderer2DTechnique
 {
     protected virtual string UNIFORM_NORMALFRAGPOS { get; } = "uTexNormalFragPos";
+    protected virtual string UNIFORM_STENCIL { get; } = "uTexStencil";
     protected override string ShaderFileName => "deferred";
 
     public DeferredRenderer2DTechnique(FrameBufferObject frameBuffer)
@@ -21,6 +22,8 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
         SetUniform(UNIFORM_ALBEDO, 0);
         frameBuffer.BindAttachment(FramebufferAttachment.ColorAttachment1, 1);
         SetUniform(UNIFORM_NORMALFRAGPOS, 1);
+        frameBuffer.BindAttachment(FramebufferAttachment.ColorAttachment2, 2);
+        SetUniform(UNIFORM_STENCIL, 2);
 
         LightingStuff();
     }

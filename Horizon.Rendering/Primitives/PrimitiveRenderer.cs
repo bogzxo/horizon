@@ -48,6 +48,7 @@ public struct ShapePrimitive(PrimitiveShapeType type, Vector2 pos, Vector2 scale
     public float Rotation { get => rotation; set => rotation = value; }
     public Vector2 Scale { get => scale; set => scale = value; }
     public Vector2 Position { get => position; set => position = value; }
+    public Vector3 Color { get => colour; set => colour = value; }
     public uint Type { get => type; set => type = value; }
 }
 

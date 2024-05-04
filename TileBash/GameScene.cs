@@ -1,5 +1,6 @@
 ﻿global using static Horizon.Rendering.Tiling<TileBash.TileTextureID>;
 
+using System.Drawing;
 using System.Numerics;
 
 using Bogz.Logging;
@@ -12,6 +13,7 @@ using Horizon.Engine;
 using Horizon.GameEntity.Components.Physics2D;
 using Horizon.Rendering;
 using Horizon.Rendering.Particles;
+using Horizon.Rendering.Primitives;
 using Horizon.Rendering.Spriting;
 
 using Silk.NET.Input;
@@ -19,6 +21,8 @@ using Silk.NET.OpenGL;
 
 using TileBash.Animals;
 using TileBash.Player;
+
+using TiledSharp;
 
 namespace TileBash;
 
@@ -34,26 +38,60 @@ public class GameScene : Scene
     private World world;
     private ParticleRenderer2D rainParticleSystem;
     private DeferredRenderer2D deferredRenderer;
+    private PrimitiveRenderer primitiveRenderer;
+
+    private readonly Dictionary<RectangleF, uint> zOffsetTriggers = new();
 
     private int catCounter = 0;
 
     public GameScene()
     {
-        if ((tilemap = TileMap.FromTiledMap(this, "content/maps/main.tmx")!) == null)
+        primitiveRenderer = new PrimitiveRenderer(PrimitiveRenderer.UploadMethod.Automatic);
+
+        if ((tilemap = TileMap.FromTiledMap(this, "content/maps/main.tmx", objCallback)!) == null)
         {
             ConcurrentLogger.Instance.Log(LogLevel.Fatal, "Failed to load tilemap, aborting...");
             Environment.Exit(1);
         }
-        tilemap.ParallaxIndex = 2;
-        tilemap.ClippingOffset = 0.1f;
+
+        primitiveRenderer.Add(new ShapePrimitive
+        {
+            Type = 0,
+            Position = new Vector2(0, 0),
+            Scale = Vector2.One
+        });
     }
+
+    private void objCallback(TmxObject? obj)
+    {
+        if (obj is null || !(obj.Properties.TryGetValue("player_level", out string? zSetStr) && uint.TryParse(zSetStr, out uint zSet))) return;
+
+        // Assuming tile height is available from somewhere
+        float tileHeight = 16;
+
+        zOffsetTriggers.Add(new RectangleF { X = (float)obj.X, Y = (float)obj.Y, Width = (float)obj.Width, Height = (float)obj.Height }, zSet);
+
+        // Calculate the center of the rectangle, adjusting for half a tile height
+        float centerX = (float)obj.X + (float)obj.Width / 2.0f;
+        float centerY = (float)obj.Y + (float)obj.Height / 2.0f - (tileHeight / 2.0f);
+
+        // Adjust the Position property to represent the center of the shape
+        primitiveRenderer.Add(new ShapePrimitive
+        {
+            Type = (uint)PrimitiveShapeType.Rectangle,
+            Position = new Vector2(centerX, centerY),
+            // Scale remains the same
+            Scale = new Vector2((float)obj.Width / 2.0f, (float)obj.Height / 2.0f)
+        });
+    }
+
+
 
     public override void Initialize()
     {
         base.Initialize();
 
         InitializeGl();
-
         random = new Random(Environment.TickCount);
 
         world = AddComponent<Box2DWorldComponent>();
@@ -79,6 +117,8 @@ public class GameScene : Scene
             }
         );
 
+        //spriteBatch.AddEntity(primitiveRenderer);
+
         AddEntity(
             new IntervalRunner(
                 1 / 25.0f,
@@ -100,12 +140,19 @@ public class GameScene : Scene
         );
 
         base.Initialize();
+        primitiveRenderer.Add(new ShapePrimitive
+        {
+            Type = (uint)PrimitiveShapeType.Rectangle,
+            Position = new Vector2(0),
+            Scale = new Vector2(0)
+        });
     }
 
     private void InitializeGl()
     {
         Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
         Engine.GL.Enable(EnableCap.Texture2D);
+        //Engine.GL.Enable(EnableCap.StencilTest);
         Engine.GL.Enable(EnableCap.Blend);
         Engine.GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
     }
@@ -114,10 +161,12 @@ public class GameScene : Scene
 
     public override void UpdateState(float dt)
     {
+        primitiveRenderer.ViewMatrix = cam.ProjView;
+
         if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.E))
-            cameraMovement = Math.Clamp(cameraMovement - 2, 0, 32);
+            cameraMovement = Math.Clamp(cameraMovement - 2, 0, 16);
         else if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Q))
-            cameraMovement = Math.Clamp(cameraMovement + 2, 1, 32);
+            cameraMovement = Math.Clamp(cameraMovement + 2, 1, 16);
 
         cam.Zoom = cameraMovement < 2 ? 1 : 2 * MathF.Round((cameraMovement) / 2);
 
@@ -145,9 +194,33 @@ public class GameScene : Scene
             );
         }
 
-        base.UpdateState(dt);
 
+        int index = 0;
+        foreach (var (bounds, level) in this.zOffsetTriggers)
+        {
+            primitiveRenderer.Shapes[index] = primitiveRenderer.Shapes[index] with
+            {
+                Color = Vector3.Zero
+            };
+            if (player.BoundingBox.IntersectsWith(bounds))
+            {
+                primitiveRenderer.Shapes[index] = primitiveRenderer.Shapes[index] with
+                {
+                    Color = Vector3.One
+                };
+                player.ZIndex = level;
+            }
+            index++;
+        }
+
+        primitiveRenderer[3] = primitiveRenderer[3] with
+        {
+            Position = player.Position,
+            Scale = player.Transform.Size / 2.0f,
+            Type = (uint)PrimitiveShapeType.Rectangle,
+        };
         cam.Position = new Vector3(player.Position.X, player.Position.Y, 0.0f);
+        base.UpdateState(dt);
     }
 
     public override void Render(float dt, object? obj = null)

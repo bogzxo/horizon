@@ -3,8 +3,8 @@
 in float alive;
 in vec2 fragPos;
 
-layout(location = 0) out vec4 AlbedoColor;
-layout(location = 1) out vec4 NormalFragPosColor;
+layout(location = 2) out vec4 AlbedoColor;
+layout(location = 3) out uint stencilDepth;
 
 uniform vec3 uStartColor;
 uniform vec3 uEndColor;
@@ -12,5 +12,5 @@ uniform vec3 uEndColor;
 void main() {
   if (alive <= 0.0) discard; 
   AlbedoColor = vec4(mix(uEndColor * 2.0, uStartColor, alive), alive);
-  NormalFragPosColor = vec4(vec2(0.0), fragPos);
+  stencilDepth = 10;
 }

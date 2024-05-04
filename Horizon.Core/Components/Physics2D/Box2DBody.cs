@@ -1,4 +1,6 @@
-﻿using Box2D.NetStandard.Dynamics.Bodies;
+﻿using System.Drawing;
+
+using Box2D.NetStandard.Dynamics.Bodies;
 
 namespace Horizon.Core.Components.Physics2D
 {

@@ -1,5 +1,8 @@
-﻿using System.Numerics;
+﻿using System.Drawing;
+using System.Numerics;
 using System.Runtime.CompilerServices;
+
+using Box2D.NetStandard.Common;
 
 using Horizon.Core.Components;
 using Horizon.Engine;
@@ -31,17 +34,30 @@ public abstract class Sprite : GameObject
         get => Transform.Size.X < 0;
     }
 
+    public RectangleF BoundingBox
+    {
+        get => new()
+        {
+            X = Transform.Position.X - Transform.Size.X / 2.0f,
+            Y = Transform.Position.Y - Transform.Size.Y / 2.0f,
+            Width = Transform.Size.X / 2.0f,
+            Height = Transform.Size.Y / 2.0f,
+        };
+    }
+
     internal bool ShouldUpdateVbo { get; private set; }
 
     public bool IsAnimated { get; set; }
     public string FrameName { get; private set; }
 
     public TransformComponent2D Transform { get; init; }
+    public uint ZIndex { get; set; }
 
     public Sprite(in Vector2 size)
     {
         this.Transform = AddComponent<TransformComponent2D>();
         this.Transform.Size = size;
+        ZIndex = (uint)Random.Shared.Next(5);
     }
 
     /// <summary>

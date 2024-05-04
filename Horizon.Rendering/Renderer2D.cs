@@ -1,12 +1,39 @@
 ﻿using System.Numerics;
 
+using Horizon.Core;
 using Horizon.Engine;
+using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering;
+
+class ZSortingTechnique(ref readonly FrameBufferObject zFbo) // gotta love modern cs, also trying new ref readonly
+    : Technique(GameEngine.Instance.ObjectManager.Shaders.CreateOrGet("sprite_zbuff", ShaderDescription.FromPath("shaders/renderer2d", "z_sorting")))
+{
+    private readonly FrameBufferObject fbo = zFbo;
+
+    private const string U_BG_ALBEDO = "uBackgroundAlbedo";
+    private const string U_BG_ZBUFF = "uBackgroundZ";
+
+    private const string U_FG_ALBEDO = "uForegroundAlbedo";
+    private const string U_FG_ZBUFF = "uForegroundZ";
+
+    protected override void SetUniforms()
+    {
+        GameEngine.Instance.GL.BindTextureUnit(0, fbo[FramebufferAttachment.ColorAttachment0]);
+        SetUniform(U_BG_ALBEDO, 0); // background albedo
+        GameEngine.Instance.GL.BindTextureUnit(1, fbo[FramebufferAttachment.ColorAttachment1]);
+        SetUniform(U_BG_ZBUFF, 1); // background z buffer
+
+        GameEngine.Instance.GL.BindTextureUnit(2, fbo[FramebufferAttachment.ColorAttachment2]);
+        SetUniform(U_FG_ALBEDO, 2); // foreground albedo
+        GameEngine.Instance.GL.BindTextureUnit(3, fbo[FramebufferAttachment.ColorAttachment3]);
+        SetUniform(U_FG_ZBUFF, 3); // foreground z buffer
+    }
+}
 
 /// <summary>
 /// Class providing a rendering and post processing pipeline for 2D sprite oriented rendering, specializing in extra functionality for pixel art.
@@ -29,16 +56,17 @@ public class Renderer2D : GameObject
                 {
                     Width = width,
                     Height = height,
-                    Attachments = new[]
-                    {
-                        FramebufferAttachment.ColorAttachment0 // Albedo
+                    Attachments = new() {
+                        { FramebufferAttachment.ColorAttachment0, OpenGL.Descriptions.TextureDefinition.RgbaFloat },
                     }
                 }
             )
             .Asset;
 
-    private FrameBufferObject frameBuffer;
+    private FrameBufferObject frameBuffer, backgroundZBuffer;
     private RenderRectangle renderRectangle;
+    private ZSortingTechnique zsortingTechnique;
+    private Renderer2DTechnique technique;
 
     public Renderer2D(in uint width, in uint height)
     {
@@ -52,34 +80,74 @@ public class Renderer2D : GameObject
         // i am aware we just went from uint -> float!! -> uint but fuck it we ball.
         FrameBuffer = CreateFrameBuffer((uint)ViewportSize.X, (uint)ViewportSize.Y);
 
-        RenderRectangle = new(CreateTechnique());
+        backgroundZBuffer = GameEngine.Instance.ObjectManager.FrameBuffers.Create(new FrameBufferObjectDescription
+        {
+            Attachments = new() {
+                { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaFloat }, // background 
+                { FramebufferAttachment.ColorAttachment1, new() { // background Z buffer
+                    InternalFormat = InternalFormat.R32ui,
+                    PixelFormat = PixelFormat.RedInteger,
+                    PixelType = PixelType.UnsignedInt,
+                    TextureTarget = TextureTarget.Texture2D
+                } },
+                 { FramebufferAttachment.ColorAttachment2, TextureDefinition.RgbaFloat }, // foreground 
+                { FramebufferAttachment.ColorAttachment3, new() { // foreground Z buffer
+                    InternalFormat = InternalFormat.R32ui,
+                    PixelFormat = PixelFormat.RedInteger,
+                    PixelType = PixelType.UnsignedInt,
+                    TextureTarget = TextureTarget.Texture2D
+                } },
+            },
+            Width = (uint)ViewportSize.X,
+            Height = (uint)ViewportSize.Y,
+        }).Asset;
+
+        zsortingTechnique = new ZSortingTechnique(ref backgroundZBuffer);
+        technique = CreateTechnique();
+
+        RenderRectangle = new(zsortingTechnique);
         PushToInitializationQueue(renderRectangle);
     }
 
     public override void Render(float dt, object? obj = null)
     {
-        // Bind the framebuffer and its attachments
-        FrameBuffer.Bind();
-        Engine.GL.Disable(EnableCap.Blend);
+        // Background rendering
 
-        // set the viewport & clear screen
-        FrameBuffer.Viewport();
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
+        // Bind the fb
+        backgroundZBuffer.Bind();
+        // Configure the viewport
+        backgroundZBuffer.Viewport();
+        // Clear the fb
+        Engine.GL.Enable(EnableCap.Blend);
+        Engine.GL.ClearColor(0, 0, 0, 0);
+        Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 
-        // draw all children
+        // draw all children (should draw albedo = 2, and sprite_z = 1)
         base.Render(dt);
 
-        Engine.GL.Enable(EnableCap.Blend);
+        FrameBufferObject.Unbind();
 
-        // set to window frame buffer
-        if (Engine.Debugger.RenderToContainer) Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
-        else FrameBufferObject.Unbind();
+        renderRectangle.Technique = zsortingTechnique;
 
-        // restore window viewport
-        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
+        renderRectangle.Render(dt);
 
-        // draw framebuffer to window
-        RenderRectangle.Render(dt);
+
+        //// Bind the framebuffer and its attachments
+        //FrameBuffer.Bind();
+
+        //// set the viewport & clear screen
+        //FrameBuffer.Viewport();
+        //Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+
+        //// set to window frame buffer
+        //if (Engine.Debugger.RenderToContainer) Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
+        //else FrameBufferObject.Unbind();
+
+        //// restore window viewport
+        //Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
+        //Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
+
+        //// draw framebuffer to window
+        //RenderRectangle.Render(dt);
     }
 }

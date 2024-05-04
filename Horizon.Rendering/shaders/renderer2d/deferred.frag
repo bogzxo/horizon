@@ -7,6 +7,8 @@ layout(location = 0) in vec2 texCoords;
 
 uniform sampler2D uTexAlbedo;
 uniform sampler2D uTexNormalFragPos;
+uniform usampler2D uTexStencil;
+
 uniform float uAspectRatio;
 uniform float uTime;
 
@@ -62,5 +64,6 @@ void main() {
         }
     }
     
-    FragColor = vec4(aces(lighting), 1.0);
+    uint stencilValue = texelFetch(uTexStencil, ivec2(texCoords * textureSize(uTexStencil, 0)), 0).r;
+    FragColor = vec4(Albedo, 1.0);
 }
