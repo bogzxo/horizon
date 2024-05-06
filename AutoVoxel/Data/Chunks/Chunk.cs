@@ -1,18 +1,10 @@
-﻿using System;
-using System.Diagnostics;
-using System.Numerics;
+﻿using System.Numerics;
 
 using AutoVoxel.Generator;
 using AutoVoxel.Rendering;
 using AutoVoxel.World;
 
-using Horizon.Core.Data;
 using Horizon.Core.Primitives;
-using Horizon.Engine;
-using Horizon.OpenGL.Descriptions;
-using Horizon.Rendering.Mesh;
-
-using Silk.NET.Maths;
 
 namespace AutoVoxel.Data.Chunks;
 
@@ -116,7 +108,6 @@ public class Chunk : IRenderable, IDisposable
                             (int)neighbourPosition.Z
                         ];
 
-
                         // check if the neighboring voxel is empty or occludes the current voxel
                         if (neighborTile.ID == TileID.Air || neighborTile.ID == TileID.Grass)
                         {
@@ -161,11 +152,12 @@ public class Chunk : IRenderable, IDisposable
             _ => position,
         } + new Vector3(Position.X * WIDTH, 0, Position.Y * DEPTH);
     }
+
     public unsafe void Render(float dt, object? obj = null)
     {
         VoxelMesh.Render(dt);
-
     }
+
     public unsafe void RenderFolliage(float dt, object? obj = null)
     {
         FolliageMesh.Render(dt);

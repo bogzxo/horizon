@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
-using Horizon.Core.Components;
-using Horizon.Core.Primitives;
+
 using Silk.NET.Input;
 
 namespace Horizon.Input.Components
@@ -50,9 +49,11 @@ namespace Horizon.Input.Components
             Bindings = JoystickBindings.Default;
         }
 
-        public override void Initialize() { }
+        public override void Initialize()
+        { }
 
-        public override void SwapBuffers() { }
+        public override void SwapBuffers()
+        { }
 
         /// <summary>
         /// Retrieves the current JoystickData containing input information from the joystick/gamepad.

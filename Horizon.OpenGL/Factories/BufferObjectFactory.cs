@@ -1,9 +1,5 @@
-﻿using System.Collections.Generic;
-using System.Net.Mail;
-using System.Reflection.Metadata;
-using Horizon.Content;
+﻿using Horizon.Content;
 using Horizon.Content.Descriptions;
-using Horizon.Core.Primitives;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;

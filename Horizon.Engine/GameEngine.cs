@@ -1,16 +1,17 @@
-﻿using System.Numerics;
+﻿using System.Diagnostics;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
-using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Primitives;
 using Horizon.Engine.Components;
 using Horizon.Engine.Debugging;
 using Horizon.Engine.Framework;
+using Horizon.Engine.Webhost;
+using Horizon.Engine.WebHost;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
 
@@ -52,7 +53,10 @@ public class GameEngine : Entity
     public WindowManager WindowManager { get; init; }
     public SceneManager SceneManager { get; init; }
     public InputManager InputManager { get; init; }
+
+    public Horizon.Webhost.WebHost WebHost { get; init; }
     public SkylineDebugger Debugger { get; init; }
+    public float Runtime { get; private set; }
 
     private CustomImguiController imguiController;
 
@@ -76,6 +80,8 @@ public class GameEngine : Entity
 
         // Engine children
         Debugger = AddEntity<SkylineDebugger>();
+        WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
+        WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
     }
 
     public override void Initialize()
@@ -164,18 +170,71 @@ public class GameEngine : Entity
             );
     }
 
+    public void DrawWithMetrics(in Entity entity, in float dt)
+    {
+        var startTime = Stopwatch.GetTimestamp();
+        entity.InitializeAll();
+        entity.Render(dt, null);
+        var endTime = Stopwatch.GetTimestamp();
+        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
+        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
+            "EngineComponents",
+            entity.Name,
+            val
+        );
+    }
+
+    public void DrawWithMetrics(in IGameComponent component, in float dt)
+    {
+        var startTime = Stopwatch.GetTimestamp();
+        component.Render(dt, null);
+        var endTime = Stopwatch.GetTimestamp();
+        if (component.Name == "Scene Manager")
+            return;
+
+        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
+        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
+            "EngineComponents",
+            component.Name,
+            val
+        );
+    }
+
+    public override void UpdatePhysics(float dt)
+    {
+        EventManager.PrePhysics?.Invoke(dt);
+        //Debugger.PerformanceDebugger.CpuMetrics.TimeAndTrackMethod(
+        //        () =>
+        //        {
+        //            base.UpdatePhysics(dt);
+        //        },
+        //        "Engine",
+        //        "Physics"
+        //      );
+        base.UpdatePhysics(dt);
+        EventManager.PostPhysics?.Invoke(dt);
+    }
+
     public override void UpdateState(float dt)
     {
+        Runtime += dt;
+
         // Run our custom events.
         EventManager.PreState?.Invoke(dt);
-        base.UpdatePhysics(dt);
         base.UpdateState(dt);
+        //UpdatePhysics(dt);
+
+        // Run our custom events.
         EventManager.PostState?.Invoke(dt);
     }
 
     public override void Render(float dt, object? obj = null)
     {
+        var startTime = Stopwatch.GetTimestamp();
         TotalTime += dt;
+
+        // Run our custom events.
+        EventManager.PreRender?.Invoke(dt);
 
         // Make sure ImGui is up-to-date before rendering.
         imguiController.Update(dt);
@@ -190,19 +249,44 @@ public class GameEngine : Entity
         }
 
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-        // Run our custom events.
-        EventManager.PreRender?.Invoke(dt);
-        base.Render(dt);
-        EventManager.PostRender?.Invoke(dt);
+
+        // Render all entities & components
+        InitializeAll();
+        for (int i = 0; i < Components.Count; i++)
+            DrawWithMetrics(Components.ElementAt(i), dt);
+
+        for (int i = 0; i < Children.Count; i++)
+            DrawWithMetrics(Children[i], dt);
+
+        //base.Render(dt);
 
         GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
         GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         imguiController.Render();
+
+        var endTime = Stopwatch.GetTimestamp();
+        var elapsedSeconds = (double)(endTime - startTime) / Stopwatch.Frequency;
+
+        EventManager.PostRender?.Invoke(dt);
+        Debugger.PerformanceDebugger.GpuMetrics.AddCustom("Engine", "GPU", elapsedSeconds);
     }
 
     /// <summary>
     /// Instantiates a window, and opens it.
     /// </summary>
     public virtual void Run() => WindowManager.Run();
+
+    /// <summary>
+    /// Aggregates all metrics to be sent to the web host
+    /// </summary>
+    internal TelemetryData CollectTelemetry()
+    {
+        return new TelemetryData
+        {
+            LogicRate = Debugger.PerformanceDebugger.LogicRate,
+            RenderRate = Debugger.PerformanceDebugger.RenderRate,
+            PhysicsRate = Debugger.PerformanceDebugger.PhysicsRate
+        };
+    }
 }

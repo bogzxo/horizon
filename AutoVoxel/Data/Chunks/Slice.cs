@@ -1,6 +1,4 @@
-﻿using AutoVoxel.Data;
-
-namespace AutoVoxel.Data.Chunks;
+﻿namespace AutoVoxel.Data.Chunks;
 
 public class Slice
 {

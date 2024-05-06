@@ -1,5 +1,7 @@
 ﻿using System.Numerics;
+
 using Box2D.NetStandard.Collision.Shapes;
+
 using Horizon.Core.Primitives;
 
 namespace Horizon.Rendering;
@@ -158,7 +160,8 @@ public partial class Tiling<TTextureID>
             // Implement update logic here.
         }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>
         /// Performs post-generation actions for the tile.

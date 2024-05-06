@@ -1,6 +1,8 @@
 ﻿using Horizon.Core.Primitives;
 using Horizon.OpenGL.Managers;
+
 using Silk.NET.OpenGL;
+
 using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.OpenGL.Buffers;

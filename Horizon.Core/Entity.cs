@@ -1,43 +1,37 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Runtime.InteropServices;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
-
-using Silk.NET.Core.Native;
-using Silk.NET.OpenGL;
 
 namespace Horizon.Core;
 
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
-    public bool Enabled { get; set; }
+    public bool Enabled { get; set; } = true;
     public virtual string Name { get; protected set; } = string.Empty;
 
     public Entity Parent { get; set; }
     public List<IGameComponent> Components { get; init; }
     public List<Entity> Children { get; init; }
 
-
     private readonly Queue<IInstantiable> _uninitialized = new();
 
     public Entity()
     {
-        Children = new();
-        Components = new();
+        Children = [];
+        Components = [];
     }
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context.
+    /// Called after the constructor, guaranteeing that there will be a valid GL context. Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
-    public virtual void Initialize() { }
+    public virtual void Initialize()
+    { PostInit(); }
+
+    /// <summary>
+    /// A method that executes after all initialisation is complete.
+    /// </summary>
+    public virtual void PostInit() { }
 
     public virtual void Render(float dt, object? obj = null)
     {
@@ -60,7 +54,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
     }
 
-    private void InitializeAll()
+    public void InitializeAll()
     {
         while (_uninitialized.Count > 0)
         {
@@ -212,9 +206,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         return AddEntity((T)entity!);
     }
+
     protected virtual void DisposeOther()
     {
-        
     }
 
     public void Dispose()

@@ -1,21 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
-
-using Horizon.Content;
-using Horizon.Core.Data;
-using Horizon.Core.Primitives;
+﻿using Horizon.Content;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
-
-using Silk.NET.Core;
-using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Buffers;
 
@@ -58,7 +44,6 @@ public class VertexBufferObject
 
     public VertexBufferObject(AssetCreationResult<VertexArrayObject> result)
         : this(result.Asset) { }
-
 
     public virtual void Bind()
     {

@@ -1,10 +1,12 @@
-﻿using Horizon.Core.Collections;
+﻿using System.Diagnostics.Contracts;
+using System.Numerics;
+
+using Horizon.Core.Collections;
 using Horizon.Core.Data;
 
 using ImGuiNET;
+
 using ImPlotNET;
-using System.Diagnostics.Contracts;
-using System.Numerics;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -19,9 +21,14 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         set => _updateRate = 1.0f / value;
     }
 
+    public double LogicRate { get => (GetAverage(_stateDeltas)); }
+    public double PhysicsRate { get => (GetAverage(_physicsDeltas)); }
+    public double RenderRate { get => (GetAverage(_renderDeltas)); }
+
     private float _updateRate = 1.0f / 30.0f;
+
     private float _updateTimer,
-        _renderTimer = 0.0f;
+        _renderTimer, _physicsTimer;
 
     private SkylineDebugger Debugger { get; set; }
 
@@ -30,7 +37,8 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
     private LinearBuffer<double> _updateFrameTimes,
         _renderFrameTimes;
-    private LinearBuffer<double> _updateDeltas,
+
+    private LinearBuffer<double> _stateDeltas, _physicsDeltas,
         _renderDeltas;
 
     private long _prevTimestamp;
@@ -47,11 +55,17 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
         _updateFrameTimes = new(collectionSize);
         _renderFrameTimes = new(collectionSize);
-        _updateDeltas = new(collectionSize);
+
+        _stateDeltas = new(collectionSize);
         _renderDeltas = new(collectionSize);
+        _physicsDeltas = new(collectionSize);
 
         // Initialize requried dictionaries by inference.
         CpuMetrics.AddCustom("Engine", "CPU", 0.0);
+        CpuMetrics.AddCustom("Engine", "State", 0.0);
+        CpuMetrics.AddCustom("Engine", "Physics", 0.0);
+
+        // GPU
         GpuMetrics.AddCustom("Engine", "GPU", 0.0);
 
         //// Spritebatches (for 2d)
@@ -59,25 +73,46 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         GpuMetrics.CreateCategory("EngineComponents");
 
         GameEngine.Instance.EventManager.PreRender += ResetGpuMetrics;
-        GameEngine.Instance.EventManager.PreState += ResetCpuMetrics;
+        GameEngine.Instance.EventManager.PreState += ResetStateMetrics;
+        GameEngine.Instance.EventManager.PrePhysics += ResetPhysicsMetrics;
 
         GameEngine.Instance.EventManager.PostState += UpdateUpdateMetrics;
+        GameEngine.Instance.EventManager.PostPhysics += UpdatePhysicsMetrics;
         GameEngine.Instance.EventManager.PostRender += UpdateRenderMetrics;
     }
 
     private void ResetGpuMetrics(float dt)
     {
-        GpuMetrics.ResetMetrics();
+        //GpuMetrics.ResetMetrics();
     }
 
-    private void ResetCpuMetrics(float dt)
+    private void ResetStateMetrics(float dt)
     {
-        CpuMetrics.ResetMetrics();
+        //CpuMetrics.ResetMetrics();
+    }
+
+    private void ResetPhysicsMetrics(float dt)
+    {
+        //CpuMetrics.ResetMetrics();
+    }
+
+    private void UpdatePhysicsMetrics(float dt)
+    {
+        if (!Enabled)
+            return;
+
+        _physicsTimer += dt;
+
+        if (_physicsTimer > _updateRate)
+        {
+            _physicsTimer = 0.0f;
+            _physicsDeltas.Append(dt);
+        }
     }
 
     private void UpdateUpdateMetrics(float dt)
     {
-        if (!Visible)
+        if (!Enabled)
             return;
 
         _updateTimer += dt;
@@ -85,14 +120,14 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         if (_updateTimer > _updateRate)
         {
             _updateTimer = 0.0f;
-            _updateDeltas.Append(dt);
+            _stateDeltas.Append(dt);
             _updateFrameTimes.Append(GetAverage(CpuMetrics["Engine"]["CPU"]) * 1000.0);
         }
     }
 
     private void UpdateRenderMetrics(float dt)
     {
-        if (!Visible)
+        if (!Enabled)
             return;
 
         _renderTimer += dt;
@@ -115,7 +150,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         if (ImGui.Begin(Name))
         {
             ImGui.Text($"FPS (Render): {1.0f / _renderDeltas.Buffer.Average():0.0}");
-            ImGui.Text($"FPS (UpdateState): {1.0f / _updateDeltas.Buffer.Average():0.0}");
+            ImGui.Text($"FPS (UpdateState): {1.0f / _stateDeltas.Buffer.Average():0.0}");
 
             if (ImGui.CollapsingHeader("Logic Profiler"))
                 DrawCpuProfiling();
@@ -189,7 +224,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
                 ImGui.Text(valueEntry.Key);
                 ImGui.NextColumn();
-                ImGui.Text((GetAverage(valueEntry.Value) * 1000.0).ToString("0.00"));
+                ImGui.Text((GetAverage(valueEntry.Value) * 1000000.0).ToString("0.00") + "us");
 
                 ImGui.Columns(1);
             }
@@ -233,14 +268,16 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
     }
 
     [Pure]
-    private static float GetMemoryUsage()
+    public float GetMemoryUsage()
     {
         return (float)(GC.GetTotalMemory(false) / (1024.0 * 1024.0)); // in MB
     }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 
     protected virtual void Dispose(bool disposing)
     {
@@ -251,7 +288,10 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
                 // We subscribed to engine events, so we need to make sure to clean 'em up.
 
                 GameEngine.Instance.EventManager.PreRender -= ResetGpuMetrics;
-                GameEngine.Instance.EventManager.PreState -= ResetCpuMetrics;
+                GameEngine.Instance.EventManager.PreState -= ResetStateMetrics;
+
+                GameEngine.Instance.EventManager.PrePhysics -= ResetPhysicsMetrics;
+                GameEngine.Instance.EventManager.PostPhysics -= UpdatePhysics;
 
                 GameEngine.Instance.EventManager.PostState -= UpdateUpdateMetrics;
                 GameEngine.Instance.EventManager.PostRender -= UpdateRenderMetrics;

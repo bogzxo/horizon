@@ -25,9 +25,9 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
         LightingStuff();
     }
 
-    Vector2 lightPos;
-    Vector3 color = Vector3.One;
-    int indexer = 0, max = 32;
+    private Vector2 lightPos;
+    private Vector3 color = Vector3.One;
+    private int indexer = 0, max = 32;
 
     private void LightingStuff()
     {
@@ -40,7 +40,6 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
         SetUniform($"lights[{indexer}].Radius", 200.0f);
         SetUniform($"lights[{indexer}].Color", color);
 
-
         if (GameEngine.Instance.InputManager.GetPreviousVirtualController().IsPressed(Input.VirtualAction.SecondaryAction))
         {
             if (!GameEngine.Instance.InputManager.IsPressed(Input.VirtualAction.SecondaryAction))
@@ -49,8 +48,6 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
                 color = new Vector3(Random.Shared.NextSingle(), Random.Shared.NextSingle(), Random.Shared.NextSingle());
             }
         }
-
-
 
         SetUniform(
             "viewPos",

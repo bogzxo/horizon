@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Horizon.Engine;
+﻿using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
 
@@ -41,6 +35,7 @@ public class BasicTechnique : Technique
         );
     }
 }
+
 public class BasicMaterialTechnique : Technique
 {
     private const string UNIFORM_VIEW = "uCameraView";

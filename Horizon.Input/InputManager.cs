@@ -1,8 +1,9 @@
 ﻿using System.Numerics;
+
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Primitives;
 using Horizon.Input.Components;
+
 using Silk.NET.Input;
 
 namespace Horizon.Input
@@ -16,7 +17,7 @@ namespace Horizon.Input
         /// <summary>
         /// The window's native input context.
         /// </summary>
-        public IInputContext NativeInputContext { get; private set; }
+        public IInputContext? NativeInputContext { get; private set; }
 
         /// <summary>
         /// All attached PeripheralInputManagers.
@@ -78,9 +79,8 @@ namespace Horizon.Input
         public void Initialize()
         {
             // TODO: fix assumptions
-            eventHandler = Parent.GetComponent<EngineEventHandler>();
-
             NativeInputContext = Parent.GetComponent<WindowManager>().Input;
+            eventHandler = Parent.GetComponent<EngineEventHandler>();
 
             // attach events
             eventHandler.PreState += AggregateInputs;
@@ -91,9 +91,11 @@ namespace Horizon.Input
                 Peripherals[i].Initialize();
         }
 
-        public void Render(float dt, object? obj = null) { }
+        public void Render(float dt, object? obj = null)
+        { }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>
         /// Swap buffers.

@@ -1,12 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Horizon.Core.Components;
-using Horizon.Engine;
-using Horizon.Input;
+﻿using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
@@ -38,7 +30,6 @@ public class Renderer2DTechnique : Technique
                     ShaderDescription.FromPath("shaders/renderer2d", ShaderFileName)
                 ));
     }
-
 
     protected override void SetUniforms()
     {

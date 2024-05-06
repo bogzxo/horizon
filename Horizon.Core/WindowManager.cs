@@ -1,22 +1,14 @@
 ﻿using System.Diagnostics;
-using System.Linq;
 using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
 
 using Bogz.Logging.Loggers;
 
-using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 
-using Silk.NET.GLFW;
 using Silk.NET.Input;
 using Silk.NET.OpenGL;
-using Silk.NET.SDL;
 using Silk.NET.Windowing;
-using Silk.NET.Windowing.Glfw;
-using Silk.NET.Windowing.Sdl;
 
 namespace Horizon.Core;
 
@@ -27,6 +19,7 @@ public class WindowManager : IGameComponent
 {
     private readonly IWindow _window;
     private IInputContext _input;
+
     private Task logicTask,
         physicsTask;
 
@@ -144,11 +137,14 @@ public class WindowManager : IGameComponent
         ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Created window({_options.Size})!");
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
     public void Run()
     {
@@ -185,15 +181,17 @@ public class WindowManager : IGameComponent
         double elapsedTime;
         while (!_window.IsClosing)
         {
-            ticks = Environment.TickCount64;
-            elapsedTime = ((previousTicks - ticks) / (double)Stopwatch.Frequency);
-
+            ticks = Stopwatch.GetTimestamp();
+            elapsedTime = ((ticks - previousTicks) / (double)Stopwatch.Frequency);
+            System.Threading.Thread.Sleep(1);
             if (_window.IsInitialized)
                 Parent.UpdatePhysics((float)elapsedTime);
 
             previousTicks = ticks;
         }
     }
+
+    private bool needsDispatching = true;
 
     private void OnFrame()
     {
@@ -209,7 +207,11 @@ public class WindowManager : IGameComponent
 
         // Dispatch threads.
         //logicTask ??= Task.Run(OnLogicFrame);
-        //physicsTask ??= Task.Run(OnPhysicsFrame);
+        if (needsDispatching)
+        {
+            needsDispatching = false;
+            physicsTask ??= Task.Run(OnPhysicsFrame);
+        }
     }
 
     public void Dispose()
@@ -220,9 +222,7 @@ public class WindowManager : IGameComponent
         Parent.Dispose();
 
         _window.Dispose();
-        //Parent.Logger.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
-
-        GC.SuppressFinalize(this);
+        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
     }
 
     /// <summary>

@@ -1,9 +1,11 @@
 ﻿using System.Diagnostics.Contracts;
+
 using Horizon.Content;
 using Horizon.Content.Descriptions;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Factories;

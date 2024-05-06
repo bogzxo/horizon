@@ -1,14 +1,12 @@
-﻿using System.Reflection.Metadata;
-using Horizon.Content;
+﻿using Horizon.Content;
 using Horizon.Content.Descriptions;
 using Horizon.Core;
-using Horizon.Core.Primitives;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 using Horizon.OpenGL.Processors;
+
 using Silk.NET.OpenGL;
+
 using Shader = Horizon.OpenGL.Assets.Shader;
 
 namespace Horizon.OpenGL.Factories;
@@ -76,6 +74,7 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
     }
 
     /* Internal data structures to help transfer state information between stages. */
+
     private enum CompilationStatus
     {
         Pass = 0,
