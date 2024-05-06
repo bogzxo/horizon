@@ -1,7 +1,5 @@
 ﻿namespace TileBash;
 
-
-
 //public class NoiseGenerator
 //{
 //    private RenderRectangle renderRect;

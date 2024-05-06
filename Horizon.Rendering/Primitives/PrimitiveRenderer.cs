@@ -1,12 +1,5 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Reflection.Metadata;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -17,9 +10,6 @@ using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
 
 using Silk.NET.OpenGL;
-
-using static System.Runtime.InteropServices.JavaScript.JSType;
-using static Horizon.Rendering.Primitives.PrimitiveRenderer;
 
 namespace Horizon.Rendering.Primitives;
 
@@ -55,7 +45,6 @@ public struct ShapePrimitive(PrimitiveShapeType type, Vector2 pos, Vector2 scale
     [VertexLayout(4, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
     private Vector3 colour = colour;
 
-
     public float Rotation { get => rotation; set => rotation = value; }
     public Vector2 Scale { get => scale; set => scale = value; }
     public Vector2 Position { get => position; set => position = value; }
@@ -63,7 +52,7 @@ public struct ShapePrimitive(PrimitiveShapeType type, Vector2 pos, Vector2 scale
 }
 
 /// <summary>
-/// Extendable primitive shape renderer. By default all shape primitive data is stored in a persistent array buffer, 
+/// Extendable primitive shape renderer. By default all shape primitive data is stored in a persistent array buffer,
 /// it is however a storage buffer with DynamicStorageBit, and by default is updated using glBufferSubData,
 /// however a CreatePointer function exists returning a mapped pointer to the buffer for extending class functionality.
 /// </summary>
@@ -105,7 +94,9 @@ public class PrimitiveRenderer : Entity
         }
     }
 
-    public PrimitiveRenderer() : this(UploadMethod.Automatic) { }
+    public PrimitiveRenderer() : this(UploadMethod.Automatic)
+    {
+    }
 
     public PrimitiveRenderer(in UploadMethod method)
     {
@@ -127,6 +118,7 @@ public class PrimitiveRenderer : Entity
     }
 
     public void Add(in ShapePrimitive shape) => Shapes.Add(shape);
+
     public void Remove(in ShapePrimitive shape) => Shapes.Remove(shape);
 
     public override unsafe void Initialize()
@@ -160,7 +152,7 @@ public class PrimitiveRenderer : Entity
     }
 
     /// <summary>
-    /// While this function attempts to return a coherent persistent pointer, it does not ensure that 
+    /// While this function attempts to return a coherent persistent pointer, it does not ensure that
     /// </summary>
     /// <returns></returns>
     protected unsafe ShapePrimitive* CreatePointer()
@@ -185,7 +177,6 @@ public class PrimitiveRenderer : Entity
             timer = 0;
             UploadAll();
         }
-
 
         technique.Bind();
         technique.SetUniform("uView", ViewMatrix);

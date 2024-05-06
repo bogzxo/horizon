@@ -1,8 +1,5 @@
 ﻿using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
-using Horizon.Rendering;
 
 namespace TileBash.Animals.Behaviors;
 
@@ -15,7 +12,8 @@ internal class AnimalBehaviorStateMachineComponent : IGameComponent
     public Entity Parent { get; set; }
     public bool Enabled { get; set; }
 
-    public void Initialize() { }
+    public void Initialize()
+    { }
 
     public void AddState(AnimalBehavior behavior, AnimalState state)
     {
@@ -35,7 +33,11 @@ internal class AnimalBehaviorStateMachineComponent : IGameComponent
         CurrentState?.UpdateState(dt);
     }
 
-    public void Render(float dt, object? obj = null) { }
+    public void Render(float dt, object? obj = null)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    {
+        CurrentState?.UpdatePhysics(dt);
+    }
 }

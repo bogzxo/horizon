@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Horizon.Content;
+﻿using Horizon.Content;
 using Horizon.Content.Descriptions;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;

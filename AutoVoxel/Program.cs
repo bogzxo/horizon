@@ -3,13 +3,9 @@
 using AutoVoxel.Data.Chunks;
 using AutoVoxel.World;
 
-using Box2D.NetStandard.Dynamics.World;
-
 using Horizon.Engine;
 using Horizon.Input;
 using Horizon.Input.Components;
-using Horizon.Rendering;
-using Horizon.Rendering.Techniques;
 
 using ImGuiNET;
 
@@ -22,7 +18,7 @@ internal class Program : Scene
     private GameWorld world;
 
     private const float MOVEMENT_SPEED = 5.0f;
-    private const float GRAVITY = 7.0f  ;
+    private const float GRAVITY = 7.0f;
 
     public override void Initialize()
     {
@@ -43,19 +39,19 @@ internal class Program : Scene
     {
         if (ImGui.Begin("test"))
         {
-            ImGui.Text($"{MathF.Round(1.0f / dt )}");
+            ImGui.Text($"{MathF.Round(1.0f / dt)}");
             ImGui.End();
         }
-        
-        Engine.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit); 
-        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
 
+        Engine.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.ColorBufferBit | Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit);
+        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
 
         base.Render(dt, obj);
     }
 
     private bool isJumping = false, captureInput = true;
     private float jumpTimer = 0.0f;
+
     public override void UpdateState(float dt)
     {
         if (Engine.InputManager.WasPressed(VirtualAction.Pause))
@@ -73,7 +69,6 @@ internal class Program : Scene
         Vector3 movement = (Vector3.Normalize(Vector3.Cross(cameraFrontNoPitch, Vector3.UnitY)) * movementSpeed * axis.X * dt +
                             movementSpeed * cameraFrontNoPitch * axis.Y * dt) * new Vector3(1, 0, 1);
         Vector3 newPos = oldPos + movement;
-
 
         // Check collisions on x and z axes
         if ((int)world.ChunkManager[(int)newPos.X, (int)(newPos.Y - 1), (int)oldPos.Z].ID > 1 ||
@@ -97,7 +92,6 @@ internal class Program : Scene
 
         camera.Position = newPos;
 
-
         // hacky gravity
         if ((int)world.ChunkManager[(int)camera.Position.X, (int)camera.Position.Y - 2, (int)camera.Position.Z].ID < 2)
         {
@@ -112,9 +106,8 @@ internal class Program : Scene
             }
         }
 
-        // even hackier jumping 
+        // even hackier jumping
         JumpLogic(dt);
-
 
         if (float.IsNaN(camera.Position.X) || float.IsNaN(camera.Position.Y) || float.IsNaN(camera.Position.Z))
             camera.Position = new Vector3((world.ChunkManager.Width * Chunk.WIDTH) / 2.0f, 128, (world.ChunkManager.Height * Chunk.DEPTH) / 2.0f);
@@ -138,7 +131,7 @@ internal class Program : Scene
         camera.Position += Vector3.UnitY * dt * 15.0f * scalar;
     }
 
-    static void Main(string[] _)
+    private static void Main(string[] _)
     {
         var engine = new GameEngine(
             GameEngineConfiguration.Default with

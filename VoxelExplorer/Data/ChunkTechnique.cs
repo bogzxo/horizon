@@ -2,7 +2,6 @@
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
 
-
 namespace VoxelExplorer.Data
 {
     public class ChunkTechnique : Technique

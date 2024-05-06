@@ -1,14 +1,15 @@
-﻿using System.Drawing.Drawing2D;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Box2D.NetStandard.Dynamics.World;
+
 using Horizon.Core;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.GameEntity.Components.Physics2D;
-using Silk.NET.OpenGL;
+
 using TiledSharp;
 
 namespace Horizon.Rendering;
@@ -286,18 +287,18 @@ public abstract partial class Tiling<TTextureID>
             World = Parent!.GetComponent<Box2DWorldComponent>();
             ChunkManager = AddComponent<TileMapChunkManager>(new(this));
 
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Chunk Maximum", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Total Tiles", "Tilemap", () => TileUpdateCount);
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("ChunkSize", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("TileCount", "Tilemap", () => TileUpdateCount);
         }
 
         public override void Render(float dt, object? obj = null)

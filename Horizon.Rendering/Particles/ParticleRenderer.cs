@@ -1,14 +1,12 @@
 ﻿using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using Horizon.Core.Components;
+
 using Horizon.Engine;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
-using Horizon.Rendering.Spriting;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Particles;

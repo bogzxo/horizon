@@ -6,6 +6,7 @@
     internal interface IChunkDataProvider
     {
         Voxel this[in int x, in int y, in int z] { get; set; }
+
         void Populate(Func<int, int, int, Voxel>? generator = null);
     }
 }

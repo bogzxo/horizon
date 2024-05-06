@@ -1,14 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Horizon.Core;
-using Horizon.Engine;
+﻿using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting.Data;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Primitives;

@@ -1,12 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
-using Bogz.Logging.Loggers;
+﻿using System.Numerics;
+
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting;
+
 using TileBash.Animals.Behaviors;
 
 namespace TileBash.Animals

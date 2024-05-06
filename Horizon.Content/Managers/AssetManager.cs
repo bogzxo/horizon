@@ -1,5 +1,4 @@
 ﻿using System.Collections.Concurrent;
-using System.Xml.Linq;
 
 using Bogz.Logging;
 
@@ -20,9 +19,9 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     where AssetDisposerType : IGameAssetFinalizer<AssetType>
 {
     protected Action<LogLevel, string> MessageCallback;
+
     protected readonly string assetName,
         name;
-
 
     /// <summary>
     /// All keyed assets.

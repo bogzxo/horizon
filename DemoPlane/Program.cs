@@ -1,10 +1,6 @@
-﻿using System.Collections.Generic;
-using System.Numerics;
-using System.Runtime.InteropServices;
+﻿using System.Numerics;
 
 using Bogz.Logging.Loggers;
-
-using Box2D.NetStandard.Dynamics.World;
 
 using Horizon.Core;
 using Horizon.Core.Data;
@@ -21,7 +17,7 @@ using ImGuiNET;
 
 namespace DemoPlane;
 
-class IndirectBufferTestMesh : Entity
+internal class IndirectBufferTestMesh : Entity
 {
     public record struct QueuedMeshData(Vertex3D[] Vertices, uint[] Indices, DrawElementsIndirectCommand[] IndirectCommands);
 
@@ -38,7 +34,8 @@ class IndirectBufferTestMesh : Entity
 
     public uint ElementCount { get; protected set; }
 
-    public IndirectBufferTestMesh() { }
+    public IndirectBufferTestMesh()
+    { }
 
     protected VertexArrayObjectDescription ArrayDescription = new VertexArrayObjectDescription
     {
@@ -144,7 +141,7 @@ class IndirectBufferTestMesh : Entity
     }
 }
 
-class Program : Scene
+internal class Program : Scene
 {
     private const float MOVEMENT_SPEED = 5.0f;
     public override Camera ActiveCamera { get; protected set; }
@@ -215,6 +212,7 @@ class Program : Scene
 
         base.Render(dt, obj);
     }
+
     public override void UpdateState(float dt)
     {
         float movementSpeed = MOVEMENT_SPEED * (Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.ShiftLeft) ? 2.0f : 1.0f);
@@ -229,6 +227,7 @@ class Program : Scene
 
         base.UpdateState(dt);
     }
+
     public static void Main(string[] args)
     {
         new GameEngine(GameEngineConfiguration.Default with

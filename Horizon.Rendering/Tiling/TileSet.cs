@@ -1,11 +1,10 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Horizon.Engine;
-using Horizon.GameEntity;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
 using Horizon.Rendering.Spriting;
 
 namespace Horizon.Rendering;
@@ -36,7 +35,7 @@ public abstract partial class Tiling<TTextureID>
             string dir = Path.GetDirectoryName(_texturePath)!;
             int lastIndex = _texturePath.LastIndexOf(MaterialFactory.Delimiter);
             string name = Path.GetFileNameWithoutExtension(_texturePath[..lastIndex]);
-
+            
             Material = MaterialFactory.Create(dir, name);
 
             //Texture = Engine

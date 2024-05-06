@@ -1,5 +1,4 @@
 ﻿using AutoVoxel.Data;
-using AutoVoxel.Data.Chunks;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -73,9 +72,11 @@ public class ChunkRenderer : IGameComponent
         Technique.Unbind();
     }
 
-    public void UpdateState(float dt) { }
+    public void UpdateState(float dt)
+    { }
 
-    public void UpdatePhysics(float dt) { }
+    public void UpdatePhysics(float dt)
+    { }
 
     protected void BindMaterialAttachments()
     {

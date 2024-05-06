@@ -1,8 +1,7 @@
-﻿using Horizon.Core.Components;
-using Horizon.Core.Primitives;
+﻿using System.Numerics;
+
 using Silk.NET.Input;
 using Silk.NET.Input.Extensions;
-using System.Numerics;
 
 namespace Horizon.Input.Components
 {
@@ -34,7 +33,6 @@ namespace Horizon.Input.Components
             };
         }
 
-
         /// <summary>
         /// Gets the first connected keyboard, or null if none is connected.
         /// </summary>
@@ -61,9 +59,7 @@ namespace Horizon.Input.Components
 
         public override void Initialize()
         {
-
         }
-
 
         public override void SwapBuffers()
         {

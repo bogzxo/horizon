@@ -1,10 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Horizon.Core;
 using Horizon.Engine.Debugging.Debuggers;
-using Horizon.Core;
+using Horizon.HIDL.Runtime;
+
 using ImGuiNET;
 
 namespace Horizon.Engine.Debugging;
@@ -21,12 +18,16 @@ public class SkylineDebugger : Entity
     }
 
     private List<DebuggerComponent> _components = new();
+    private bool hasInitializedHIDLE = false;
+
     //public RenderOptionsDebugger RenderOptionsDebugger { get; private set; }
     public SceneEntityDebugger SceneEntityDebugger { get; private set; }
+
     public LoadedContentDebugger LoadedContentDebugger { get; private set; }
     public DockedGameContainerDebugger GameContainerDebugger { get; private set; }
     public PerformanceProfilerDebugger PerformanceDebugger { get; private set; }
     public GeneralDebugger GeneralDebugger { get; private set; }
+    public DeveloperConsole Console { get; private set; }
 
     public bool RenderToContainer { get; private set; }
 
@@ -39,15 +40,15 @@ public class SkylineDebugger : Entity
     private void CreateDebugComponents()
     {
         _components.AddRange(
-            new DebuggerComponent[]
-            {
+            [
                 //(RenderOptionsDebugger = AddComponent<RenderOptionsDebugger>()),
                 (SceneEntityDebugger = AddComponent<SceneEntityDebugger>()),
                 (LoadedContentDebugger = AddComponent<LoadedContentDebugger>()),
                 (GameContainerDebugger = AddComponent<DockedGameContainerDebugger>()),
                 (PerformanceDebugger = AddComponent<PerformanceProfilerDebugger>()),
-                (GeneralDebugger = AddComponent<GeneralDebugger>())
-            }
+                (Console = AddComponent<DeveloperConsole>()),
+                (GeneralDebugger = AddComponent<GeneralDebugger>()),
+            ]
         );
     }
 
@@ -65,13 +66,29 @@ public class SkylineDebugger : Entity
     {
         RenderToContainer = Enabled && GameContainerDebugger.Visible && GameContainerDebugger.FrameBuffer.Handle > 0;
 
+        if (!hasInitializedHIDLE)
+        {
+            hasInitializedHIDLE = true;
+            Console.Runtime.Evaluate(@"
+const env = {
+    print: _PRINT_LN,
+    clear: _CLEAR_SCR,
+    debugger: {
+        general: {
+            get_watch: _HORIZON_GENERALDEBUGGER_GET
+        }
+    }
+};
+", true);
+        }
+
         if (!Enabled)
         {
-            if (_components.Any())
+            if (_components.Count != 0)
                 DestroyDebugComponents();
             return;
         }
-        if (!_components.Any())
+        if (_components.Count == 0)
             CreateDebugComponents();
 
         if (ImGui.BeginMainMenuBar())
@@ -81,6 +98,7 @@ public class SkylineDebugger : Entity
                 if (ImGui.MenuItem("Close"))
                     GameEngine.Instance.WindowManager.Window.Close();
 
+                ImGui.MenuItem(Console.Name, "", ref Console.Visible);
                 ImGui.EndMenu();
             }
             if (ImGui.BeginMenu(DebuggerCatagoryNames.Graphics))

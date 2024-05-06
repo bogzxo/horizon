@@ -1,11 +1,5 @@
-﻿using Horizon.Content;
-using Horizon.OpenGL;
+﻿using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Horizon.Rendering.Particles.Materials
 {
@@ -18,7 +12,6 @@ namespace Horizon.Rendering.Particles.Materials
 
         public BasicParticle2DTechnique(in ParticleRenderer2D renderer, in Shader tech)
             : base(tech) { this.renderer = renderer; }
-
 
         protected override void SetUniforms()
         {

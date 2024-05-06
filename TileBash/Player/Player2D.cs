@@ -1,12 +1,14 @@
 ﻿using System.Numerics;
+
 using Box2D.NetStandard.Collision.Shapes;
 using Box2D.NetStandard.Dynamics.Bodies;
 using Box2D.NetStandard.Dynamics.World;
+
 using Horizon.Core;
 using Horizon.Core.Components.Physics2D;
 using Horizon.OpenGL.Descriptions;
-using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
+
 using TileBash.Player.Behaviour;
 
 namespace TileBash.Player;

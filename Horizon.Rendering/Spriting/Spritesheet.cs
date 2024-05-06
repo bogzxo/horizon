@@ -1,6 +1,6 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
-using Horizon.OpenGL;
+
 using Horizon.OpenGL.Assets;
 
 namespace Horizon.Rendering.Spriting;

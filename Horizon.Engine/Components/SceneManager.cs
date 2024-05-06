@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Horizon.Core;
+﻿using Horizon.Core;
 using Horizon.Core.Components;
 
 namespace Horizon.Engine.Components;
@@ -17,7 +11,8 @@ public class SceneManager : InstanceManager<Scene>, IGameComponent
 
     private bool _halt = false;
 
-    public void Initialize() { }
+    public void Initialize()
+    { }
 
     public override void ChangeInstance(Type type)
     {
