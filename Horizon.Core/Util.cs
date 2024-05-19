@@ -126,4 +126,27 @@ public static class ListAdapter<T>
                 listDONOTMODIFY);
         return fullArray[..listDONOTMODIFY.Count];
     }
+
+    /// <summary>
+    /// Converts
+    /// <paramref name="listDONOTMODIFY"/>
+    /// to an <see cref="ReadOnlyMemory{T}"/>.
+    /// </summary>
+    /// <param name="listDONOTMODIFY">
+    /// The list to convert.
+    /// On each use of the returned memory object the list must have the same value of
+    /// <see cref="List{T}.Count"/> as the original passed in value. Also between calls 
+    /// you must not do any action that would cause the internal array of the list to
+    /// be swapped out with another array.
+    /// </param>
+    /// <returns>
+    /// A <see cref="ReadOnlyMemory{T}"/> that is linked to the passed in list.
+    /// </returns>
+    public static ReadOnlyMemory<T> ToReadOnlyMemory(
+        List<T> listDONOTMODIFY)
+    {
+        ReadOnlyMemory<T> fullArray = (T[])_arrayField.GetValue(
+                listDONOTMODIFY);
+        return fullArray[..listDONOTMODIFY.Count];
+    }
 }

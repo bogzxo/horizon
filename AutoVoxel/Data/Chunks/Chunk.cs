@@ -4,24 +4,21 @@ using AutoVoxel.Generator;
 using AutoVoxel.Rendering;
 using AutoVoxel.World;
 
+using Horizon.Core;
 using Horizon.Core.Primitives;
 
 namespace AutoVoxel.Data.Chunks;
 
-public class Chunk : IRenderable, IDisposable
+public class Chunk
 {
-    public const int SLICES = 4;
+    public const int SLICES = 2;
     public const int WIDTH = Slice.SIZE;
     public const int HEIGHT = Slice.SIZE * SLICES;
     public const int DEPTH = Slice.SIZE;
 
     public Slice[] Slices { get; }
+    public int Index { get; }
     public Vector2 Position { get; }
-    public TessellatorMesh VoxelMesh { get; }
-    public TessellatorMesh FolliageMesh { get; }
-
-    private uint elementCount = 0;
-    private bool flagUpload;
 
     public Tile this[int x, int y, int z]
     {
@@ -34,24 +31,22 @@ public class Chunk : IRenderable, IDisposable
         }
     }
 
-    public Chunk(in Vector2 position)
+    public Chunk(int index, in Vector2 position)
     {
+        Index = index;
         Position = position;
         Slices = new Slice[SLICES];
         for (int i = 0; i < SLICES; i++)
             Slices[i] = new();
-
-        VoxelMesh = new();
-        FolliageMesh = new();
     }
 
-    public void GenerateTree(in HeightmapGenerator generator)
+    public void GenerateData()
     {
         for (int x = 0; x < WIDTH; x++)
         {
             for (int z = 0; z < DEPTH; z++)
             {
-                int height = (int)(generator[(int)(x + Position.X * (WIDTH - 1)), (int)(z + Position.Y * (DEPTH - 1))] * (HEIGHT - 5));
+                int height = (int)(ChunkManager.Heightmap[(int)(x + Position.X * (WIDTH - 1)), (int)(z + Position.Y * (DEPTH - 1))] * (HEIGHT - 5));
 
                 for (int y = height; y > 0; y--)
                 {
@@ -67,75 +62,90 @@ public class Chunk : IRenderable, IDisposable
                 }
             }
         }
+
+        ChunkManager.MeshGeneratorWorker.Enqueue(GenerateMeshAsync());
     }
 
-    public void GenerateMesh(ChunkManager chunkManager)
+    public Task GenerateDataAsync() => Task.Factory.StartNew(GenerateData);
+    public Task GenerateMeshAsync() => Task.Factory.StartNew(GenerateMesh);
+
+    public void GenerateMesh()
     {
-        Tessellator tes = new(VoxelMesh);
-        Tessellator folTes = new(FolliageMesh);
+        List<ChunkVertex> verts = [];
+        List<uint> slices = [];
 
-        for (int x = 0; x < WIDTH; x++)
+        for (int sliceIndex = 0; sliceIndex < SLICES; sliceIndex++)
         {
-            for (int z = 0; z < DEPTH; z++)
+            uint vertexCounter = 0;
+            for (int y = sliceIndex * Slice.SIZE; y < Slice.SIZE + sliceIndex * Slice.SIZE; y++)
             {
-                for (int y = 0; y < HEIGHT; y++)
+                for (int x = 0; x < WIDTH; x++)
                 {
-                    var tile = this[x, y, z];
-
-                    // skip rendering if the current voxel is empty
-                    if ((int)tile.ID < 2)
-                        continue;
-
-                    // hack in grass
-                    if (tile.ID == TileID.Grass)
+                    for (int z = 0; z < DEPTH; z++)
                     {
-                        folTes.AddCross(new Tile { ID = TileID.Grass }, (int)x, (int)y, (int)z);
-                        continue;
-                    }
+                        var tile = this[x, y, z];
 
-                    // check each face of the voxel for visibility
-                    for (int faceIndex = 0; faceIndex < 6; faceIndex++)
-                    {
-                        // calculate the position of the neighboring voxel
-                        Vector3 neighbourPosition = GetNeighborPosition(
-                            new Vector3(x, y, z),
-                            (CubeFace)faceIndex
-                        );
+                        // skip rendering if the current voxel is empty
+                        if ((int)tile.ID < 2)
+                            continue;
 
-                        var neighborTile = chunkManager[
-                            (int)neighbourPosition.X,
-                            (int)neighbourPosition.Y,
-                            (int)neighbourPosition.Z
-                        ];
-
-                        // check if the neighboring voxel is empty or occludes the current voxel
-                        if (neighborTile.ID == TileID.Air || neighborTile.ID == TileID.Grass)
+                        // hack in grass
+                        if (tile.ID == TileID.Grass)
                         {
-                            // generate the face if the neighboring voxel is empty
-                            tes.AddCubeFace(GetOpposingFace((CubeFace)faceIndex), tile, x, y, z);
+                            //folTes.AddCross(new Tile { ID = TileID.Grass }, (int)x, (int)yRaw, (int)z);
+                            continue;
+                        }
+
+                        // check each face of the voxel for visibility
+                        for (int faceIndex = 0; faceIndex < 6; faceIndex++)
+                        {
+                            // calculate the position of the neighboring voxel
+                            Vector3 neighbourPosition = GetNeighborPosition(
+                                new Vector3(x, y, z),
+                                (CubeFace)faceIndex
+                            );
+
+                            var neighborTile = ChunkManager.Instance[
+                                (int)neighbourPosition.X,
+                                (int)neighbourPosition.Y,
+                                (int)neighbourPosition.Z
+                            ];
+
+                            // check if the neighboring voxel is empty or occludes the current voxel
+                            if (neighborTile.ID == TileID.Air || neighborTile.ID == TileID.Grass)
+                            {
+                                // generate the face if the neighboring voxel is empty
+                                verts.Add(ChunkVertex.Encode((int)neighbourPosition.X, (int)neighbourPosition.Y, (int)neighbourPosition.Z, (CubeFace)faceIndex, tile.ID));
+                                vertexCounter++; // Count vertex offsets
+                            }
                         }
                     }
                 }
             }
+            slices.Add(vertexCounter);
         }
-        VoxelMesh.FlagDirty();
-        FolliageMesh.FlagDirty();
-    }
 
-    private CubeFace GetOpposingFace(CubeFace face)
-    {
-        return face switch
+        ChunkRenderer.MeshUploadQueue.Enqueue(new()
         {
-            CubeFace.Left => CubeFace.Right,
-            CubeFace.Right => CubeFace.Left,
-
-            CubeFace.Front => CubeFace.Back,
-            CubeFace.Back => CubeFace.Front,
-
-            CubeFace.Top => CubeFace.Top,
-            CubeFace.Bottom => CubeFace.Bottom
-        };
+            Data = ListAdapter<ChunkVertex>.ToReadOnlyMemory(verts),
+            Index = Index,
+            OffsetX = (int)(Position.X * WIDTH),
+            OffsetZ = (int)(Position.Y * DEPTH),
+            SliceOffsets = [.. slices], // We can afford a copy for 4 elements
+        });
     }
+
+    private CubeFace GetOpposingFace(CubeFace face) => face switch
+    {
+        CubeFace.Left => CubeFace.Right,
+        CubeFace.Right => CubeFace.Left,
+
+        CubeFace.Front => CubeFace.Back,
+        CubeFace.Back => CubeFace.Front,
+
+        CubeFace.Top => CubeFace.Top,
+        CubeFace.Bottom => CubeFace.Bottom
+    };
 
     private Vector3 GetNeighborPosition(Vector3 position, CubeFace face)
     {
@@ -151,20 +161,5 @@ public class Chunk : IRenderable, IDisposable
             CubeFace.Bottom => new Vector3(position.X, position.Y + 1, position.Z),
             _ => position,
         } + new Vector3(Position.X * WIDTH, 0, Position.Y * DEPTH);
-    }
-
-    public unsafe void Render(float dt, object? obj = null)
-    {
-        VoxelMesh.Render(dt);
-    }
-
-    public unsafe void RenderFolliage(float dt, object? obj = null)
-    {
-        FolliageMesh.Render(dt);
-    }
-
-    public void Dispose()
-    {
-        VoxelMesh.Dispose();
     }
 }

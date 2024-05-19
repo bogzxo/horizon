@@ -21,10 +21,9 @@ public class DeferredRenderer2D : Renderer2D
                 {
                     Width = width,
                     Height = height,
-                    Attachments = new[]
-                    {
-                        FramebufferAttachment.ColorAttachment0, // Albedo
-                        FramebufferAttachment.ColorAttachment1 // Normal and Fragment Position
+                    Attachments = new() { 
+                    { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaUnsignedByte },
+                    { FramebufferAttachment.ColorAttachment1, TextureDefinition.RgbaUnsignedByte },
                     }
                 }
             )

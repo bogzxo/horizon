@@ -2,6 +2,7 @@
 
 using AutoVoxel.Data.Chunks;
 using AutoVoxel.Generator;
+using AutoVoxel.Generator.Paralleliser;
 using AutoVoxel.Rendering;
 
 using Horizon.Core;
@@ -9,9 +10,8 @@ using Horizon.Core.Components;
 
 namespace AutoVoxel.Data;
 
-public class ChunkManager : IGameComponent
+public class ChunkManager : IGameComponent, IDisposable
 {
-    public static VertexBufferPool BufferPool { get; private set; }
     public Chunk[] Chunks { get; }
 
     public bool Enabled { get; set; }
@@ -20,16 +20,27 @@ public class ChunkManager : IGameComponent
 
     public int Width { get; }
     public int Height { get; }
+    public static HeightmapGenerator Heightmap { get; private set; }
+
+    public static ChunkManager Instance { get; private set; }
+    public static readonly ParallelQueueWorker DataGeneratorWorker, MeshGeneratorWorker;
 
     public ChunkManager()
-        : this(8, 8) { }
+        : this(16, 16) { }
+
+    static ChunkManager()
+    {
+        DataGeneratorWorker = new();
+        MeshGeneratorWorker = new();
+    }
 
     public ChunkManager(int width, int height)
     {
+        Instance = this;
+
         Width = width;
         Height = height;
 
-        BufferPool = new();
         Chunks = new Chunk[Width * Height];
     }
 
@@ -88,21 +99,18 @@ public class ChunkManager : IGameComponent
 
     public void Initialize()
     {
-        BufferPool.Initialize();
+        Heightmap = new HeightmapGenerator(this);
+        Heightmap.Generate();
 
-        var generator = new HeightmapGenerator(this);
-        generator.Generate();
-
-        Parallel.For(0, Width * Height, i =>
+        for (int i = 0; i < Chunks.Length; i++)
         {
-            Chunks[i] = new Chunk(new Vector2(i % Width, i / Width));
-            Chunks[i].GenerateTree(generator);
-        });
+            Chunks[i] = new Chunk(i, new Vector2(i % Width, i / Width));
 
-        Parallel.For(0, Width * Height, i =>
-        {
-            Chunks[i].GenerateMesh(this);
-        });
+            DataGeneratorWorker.Enqueue(Chunks[i].GenerateDataAsync());
+        }
+
+        DataGeneratorWorker.StartTask();
+        MeshGeneratorWorker.StartTask();
     }
 
     public void Render(float dt, object? obj = null)
@@ -113,4 +121,13 @@ public class ChunkManager : IGameComponent
 
     public void UpdatePhysics(float dt)
     { }
+
+    public void Dispose()
+    {
+        DataGeneratorWorker.Stop();
+        MeshGeneratorWorker.Stop();
+
+        DataGeneratorWorker.Dispose();
+        MeshGeneratorWorker.Dispose();
+    }
 }

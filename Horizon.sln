@@ -31,6 +31,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.Webhost", "Horizon.
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.HIDL", "Horizon.Horlang\Horizon.HIDL.csproj", "{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeKneading", "CodeKneeding\CodeKneading.csproj", "{ACD9C922-0062-4773-A898-975D67DEDB2E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -151,6 +153,14 @@ Global
 		{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}.Release|x64.ActiveCfg = Release|Any CPU
 		{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}.Release|x64.Build.0 = Release|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Debug|x64.Build.0 = Debug|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Release|x64.ActiveCfg = Release|Any CPU
+		{ACD9C922-0062-4773-A898-975D67DEDB2E}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

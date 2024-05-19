@@ -1,6 +1,9 @@
 ﻿using Horizon.OpenGL.Buffers;
+using Horizon.OpenGL.Descriptions;
 
 using ImGuiNET;
+
+using Silk.NET.OpenGL;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -12,10 +15,10 @@ public class DockedGameContainerDebugger : DebuggerComponent
     {
         FrameBuffer = GameEngine.Instance.ObjectManager.FrameBuffers.CreateOrGet("container", new OpenGL.Descriptions.FrameBufferObjectDescription
         {
-            Attachments = [
-                Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0,
-                Silk.NET.OpenGL.FramebufferAttachment.DepthAttachment
-                ],
+            Attachments = new() {
+                { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaUnsignedByte },
+                { FramebufferAttachment.DepthAttachment, TextureDefinition.DepthComponent },
+            },
             Width = 800,
             Height = 600
         });

@@ -16,14 +16,25 @@ public class Camera3D : Camera
     public Camera3D()
         : this(90.0f) { }
 
-    public Camera3D(in float fov = 45)
+
+    public Camera3D(in float w, in float h)
+    {
+        Projection = Matrix4x4.CreateOrthographic(w, h, 0.01f, 100.0f);
+    }
+    public Camera3D(in float fov = 45.0f)
     {
         Projection = Matrix4x4.CreatePerspectiveFieldOfView(
             MathHelper.DegreesToRadians(fov),
             GameEngine.Instance.WindowManager.AspectRatio,
             0.1f,
-            1000.0f
+            500.0f
         );
+    }
+
+    public void LookAt(in Vector3 target)
+    {
+        View = Matrix4x4.CreateLookAt(Position, target, CameraUp);
+        ProjView = View * Projection;
     }
 
     protected override void UpdateMatrices()
