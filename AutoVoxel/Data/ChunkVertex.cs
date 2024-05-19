@@ -18,53 +18,18 @@ public enum UVCoordinate
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct ChunkVertex
+public readonly struct ChunkVertex(in int packedData)
 {
-    [VertexLayout(0, VertexAttribPointerType.UnsignedInt)]
-    private uint packedData0; // 4 bytes
+    [VertexLayout(0, VertexAttribPointerType.Int)]
+    private readonly int PackedData = packedData;
 
-    [VertexLayout(1, VertexAttribPointerType.UnsignedInt)]
-    private uint packedData1; // 4 byte
-
-    public readonly Vector3 Position
+    public static ChunkVertex Encode(in int x, in int y, in int z, in CubeFace face, in TileID tileId)
     {
-        get
-        {
-            Vector3 result;
-
-            result.X = (packedData0 & 0x1F); // 0 - 4 = x
-            result.Y = ((packedData0 >> 5) & 0x1F); // 5 - 9 = y
-            result.Z = ((packedData0 >> 10) & 0x1F); // 10 - 14 = z
-
-            return result;
-        }
-    }
-
-    public ChunkVertex(
-        int x,
-        int y,
-        int z,
-        CubeFace normal,
-        UVCoordinate uv,
-        int c = 255,
-        TileID id = TileID.Dirt
-    )
-    {
-        /* We use vertex packing to compress vertex data.
-         * Each tile locally is within a 32^3 coordinate space, which only needs 5 bytes,
-         * the chunks coordinates can be sent via a shader uniform and the final vertex position
-         * can be computed in the vertex shader. */
-        packedData0 =
-              (uint)(
-              (x & 0b111111) << 0 // 0 - 5 = x
-            | (y & 0b11111111) << 6 // 6 - 13 = y
-            | (z & 0b111111) << 14 // 14 - 19 = z
-            | ((int)normal & 0b11111) << 20 // 20 - 24 = normal
-            | ((int)uv & 0b11) << 25); // 25 - 27 = texture coordinate
-
-        packedData1 = (uint)(
-            // subtract 2 from ID as first 2 IDs are null and air tiles
-            (((byte)id - 2) & 0b11111111) << 0 // 0 - 7 = tile id
-            );
+        return new ChunkVertex(
+            ((int)face & 0b1111)   // 4 bits for face
+            | ((x & 0b11111) << 4)     // 5 bits for x
+            | ((y & 0b11111) << 9)     // 5 bits for y
+            | ((z & 0b11111) << 14)  // 5 bits for z
+            | (((int)(tileId - 2) & 0b11111) << 19));  // 5 bits for id
     }
 }

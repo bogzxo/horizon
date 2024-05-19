@@ -183,6 +183,7 @@ public class WindowManager : IGameComponent
         {
             ticks = Stopwatch.GetTimestamp();
             elapsedTime = ((ticks - previousTicks) / (double)Stopwatch.Frequency);
+            if (elapsedTime > 5) elapsedTime = 0;
             System.Threading.Thread.Sleep(1);
             if (_window.IsInitialized)
                 Parent.UpdatePhysics((float)elapsedTime);

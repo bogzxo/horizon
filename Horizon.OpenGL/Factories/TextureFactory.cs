@@ -36,11 +36,12 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
     }
 
     private static unsafe AssetCreationResult<Texture> CreateFromDimensions(
-        in uint width,
-        in uint height,
-        in TextureDefinition definition
-    )
+    in uint width,
+    in uint height,
+    in TextureDefinition definition
+)
     {
+        ObjectManager.GL.GetError(); // Clear errors
         var texture = new Texture
         {
             Handle = ObjectManager.GL.GenTexture(),
@@ -48,26 +49,65 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
             Height = (uint)height
         };
 
+        // Check if texture creation was successful
+        if (texture.Handle == 0)
+        {
+            return new AssetCreationResult<Texture>
+            {
+                Status = AssetCreationStatus.Failed,
+                Message = "Failed to generate texture handle"
+            };
+        }
+
         ObjectManager.GL.ActiveTexture(TextureUnit.Texture0);
         ObjectManager.GL.BindTexture(TextureTarget.Texture2D, texture.Handle);
 
-        ObjectManager
-            .GL
-            .TexImage2D(
-                TextureTarget.Texture2D,
-                0,
-                (int)definition.InternalFormat,
-                texture.Width,
-                texture.Height,
-                0,
-                definition.PixelFormat,
-                definition.PixelType,
-                null
-            );
+        // Reserve enough memory from the GPU for the whole image
+        ObjectManager.GL.TexImage2D(
+            definition.TextureTarget,
+            0,
+            definition.InternalFormat,
+            texture.Width,
+            texture.Height,
+            0,
+            definition.PixelFormat,
+            definition.PixelType,
+            null
+        );
+
+        // Check for OpenGL errors after TexImage2D call
+        var error = ObjectManager.GL.GetError();
+        if (error != GLEnum.NoError)
+        {
+            return new AssetCreationResult<Texture>
+            {
+                Status = AssetCreationStatus.Failed,
+                Message = $"Failed to allocate texture memory: {error}"
+            };
+        }
+
+        // Set texture parameters
         SetParameters();
+
+        // Unbind texture
         ObjectManager.GL.BindTexture(TextureTarget.Texture2D, 0);
 
-        return new() { Asset = texture, Status = AssetCreationStatus.Success };
+        // Check for OpenGL errors after unbinding texture
+        error = ObjectManager.GL.GetError();
+        if (error != GLEnum.NoError)
+        {
+            return new AssetCreationResult<Texture>
+            {
+                Status = AssetCreationStatus.Failed,
+                Message = $"Failed to unbind texture: {error}"
+            };
+        }
+
+        return new AssetCreationResult<Texture>
+        {
+            Asset = texture,
+            Status = AssetCreationStatus.Success
+        };
     }
 
     private static unsafe AssetCreationResult<Texture> CreateFromFile(
@@ -91,14 +131,14 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
         ObjectManager
             .GL
             .TexImage2D(
-                TextureTarget.Texture2D,
+                definition.TextureTarget,
                 0,
-                InternalFormat.Rgba,
+                definition.InternalFormat,
                 texture.Width,
                 texture.Height,
                 0,
-                PixelFormat.Rgba,
-                PixelType.UnsignedByte,
+                definition.PixelFormat,
+                definition.PixelType,
                 null
             );
 
@@ -165,7 +205,7 @@ public class TextureFactory : IAssetFactory<Texture, TextureDescription>
                 (int)GLEnum.Nearest
             );
         ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureBaseLevel, 0);
-        ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 4);
+        ObjectManager.GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMaxLevel, 0);
         //Generating mipmaps.
         ObjectManager.GL.GenerateMipmap(TextureTarget.Texture2D);
     }

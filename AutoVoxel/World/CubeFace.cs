@@ -3,12 +3,10 @@
 // Enum to represent cube faces
 public enum CubeFace
 {
-    Front = 0,
-    Back = 1,
-
-    Left = 2,
-    Right = 3,
-
-    Top = 4,
-    Bottom = 5
+    Bottom = 0,
+    Top = 1,
+    Front = 2,
+    Back = 3,
+    Right = 4,
+    Left = 5,
 }

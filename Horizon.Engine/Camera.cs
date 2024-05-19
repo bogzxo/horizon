@@ -17,9 +17,9 @@ public abstract class Camera : GameObject
 
     public override void Render(float dt, object? obj = null)
     {
+        base.Render(dt);
         UpdateMatrices();
         ProjView = View * Projection;
-        base.Render(dt);
     }
 
     protected abstract void UpdateMatrices();

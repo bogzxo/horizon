@@ -22,9 +22,8 @@ public class RenderTarget : GameObject
                 {
                     Width = width,
                     Height = height,
-                    Attachments = new[]
-                    {
-                        FramebufferAttachment.ColorAttachment0 // Albedo
+                    Attachments = new() {
+                        { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaFloat },
                     }
                 }
             )

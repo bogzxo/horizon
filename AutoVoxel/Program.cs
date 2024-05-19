@@ -3,7 +3,9 @@
 using AutoVoxel.Data.Chunks;
 using AutoVoxel.World;
 
+using Horizon.Core;
 using Horizon.Engine;
+using Horizon.HIDL.Runtime;
 using Horizon.Input;
 using Horizon.Input.Components;
 
@@ -16,6 +18,7 @@ internal class Program : Scene
     public override Camera ActiveCamera { get; protected set; }
     private Camera3D camera;
     private GameWorld world;
+    private bool flyMode = false;
 
     private const float MOVEMENT_SPEED = 5.0f;
     private const float GRAVITY = 7.0f;
@@ -27,19 +30,30 @@ internal class Program : Scene
         ActiveCamera = camera = AddEntity<Camera3D>();
 
         world = AddEntity<GameWorld>();
-        camera.Position = new Vector3((world.ChunkManager.Width * Chunk.WIDTH) / 2.0f, 128, (world.ChunkManager.Height * Chunk.DEPTH) / 2.0f);
+        camera.Position = new Vector3((world.ChunkManager.Width * Chunk.WIDTH) / 2.0f, 35, (world.ChunkManager.Height * Chunk.DEPTH) / 2.0f);
+
 
         MouseInputManager.Mouse.Cursor.CursorMode = Silk.NET.Input.CursorMode.Raw;
         Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
         Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.Texture2D);
         Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.DepthTest);
+
+        // allow fly = true to enable flying
+        Engine.Debugger.Console.Runtime.GlobalScope.Assign("fly", new NativeValue(
+            () => new BooleanValue(flyMode),
+            (value) => flyMode = ((BooleanValue)value).Value
+            ));
     }
 
     public override void Render(float dt, object? obj = null)
     {
         if (ImGui.Begin("test"))
         {
-            ImGui.Text($"{MathF.Round(1.0f / dt)}");
+            ImGui.Text($"Frame Rate: {MathF.Round(1.0f / dt)}");
+
+            // Print camera direction
+            ImGui.Text($"Camera Direction: {camera.Rotation.X}");
+            ImGui.Text($"Fly Mode? {flyMode}");
             ImGui.End();
         }
 
@@ -48,6 +62,7 @@ internal class Program : Scene
 
         base.Render(dt, obj);
     }
+
 
     private bool isJumping = false, captureInput = true;
     private float jumpTimer = 0.0f;
@@ -60,14 +75,19 @@ internal class Program : Scene
             MouseInputManager.Mouse.Cursor.CursorMode = captureInput ? Silk.NET.Input.CursorMode.Raw : Silk.NET.Input.CursorMode.Normal;
         }
 
+        if (Engine.InputManager.KeyboardManager.CurrentState.IsKeyPressed(Silk.NET.Input.Key.GraveAccent) && !Engine.InputManager.KeyboardManager.PreviousState.IsKeyPressed(Silk.NET.Input.Key.GraveAccent))
+        {
+            Engine.Debugger.Console.Visible = !Engine.Debugger.Console.Visible;
+        }
+
         if (!captureInput) return;
 
         float movementSpeed = MOVEMENT_SPEED * (Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.ShiftLeft) ? 2.0f : 1.0f);
         Vector2 axis = Engine.InputManager.GetVirtualController().MovementAxis;
         Vector3 oldPos = camera.Position;
-        Vector3 cameraFrontNoPitch = Vector3.Normalize(new Vector3(camera.Front.X, 0, camera.Front.Z));
+        Vector3 cameraFrontNoPitch = flyMode ? camera.Front : Vector3.Normalize(new Vector3(camera.Front.X, 0, camera.Front.Z));
         Vector3 movement = (Vector3.Normalize(Vector3.Cross(cameraFrontNoPitch, Vector3.UnitY)) * movementSpeed * axis.X * dt +
-                            movementSpeed * cameraFrontNoPitch * axis.Y * dt) * new Vector3(1, 0, 1);
+                            movementSpeed * cameraFrontNoPitch * axis.Y * dt) * new Vector3(1, flyMode ? 1 : 0, 1);
         Vector3 newPos = oldPos + movement;
 
         // Check collisions on x and z axes
@@ -93,7 +113,7 @@ internal class Program : Scene
         camera.Position = newPos;
 
         // hacky gravity
-        if ((int)world.ChunkManager[(int)camera.Position.X, (int)camera.Position.Y - 2, (int)camera.Position.Z].ID < 2)
+        if (!flyMode && (int)world.ChunkManager[(int)camera.Position.X, (int)camera.Position.Y - 2, (int)camera.Position.Z].ID < 2)
         {
             camera.Position -= Vector3.UnitY * dt * GRAVITY;
         }
@@ -110,7 +130,7 @@ internal class Program : Scene
         JumpLogic(dt);
 
         if (float.IsNaN(camera.Position.X) || float.IsNaN(camera.Position.Y) || float.IsNaN(camera.Position.Z))
-            camera.Position = new Vector3((world.ChunkManager.Width * Chunk.WIDTH) / 2.0f, 128, (world.ChunkManager.Height * Chunk.DEPTH) / 2.0f);
+            camera.Position = new Vector3((world.ChunkManager.Width * Chunk.WIDTH) / 2.0f, 164, (world.ChunkManager.Height * Chunk.DEPTH) / 2.0f);
 
         base.UpdateState(dt);
     }

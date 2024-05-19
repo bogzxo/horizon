@@ -64,8 +64,7 @@ public class Environment(in Environment? parent = null)
                 nativeValue.MutatorCallback(value);
                 return nativeValue.AccessorCallback.Invoke();
             }
-
-            return variable;
+            return variables[name] = value;
 
         }
         else throw new Exception($"Constant '{name}' is immutable!");

@@ -22,6 +22,7 @@ public class BufferObjectFactory : IAssetFactory<BufferObject, BufferObjectDescr
             return new() { Asset = buffer, Status = AssetCreationStatus.Failed };
 
         if (description.IsStorageBuffer)
+        {
             ObjectManager
                 .GL
                 .NamedBufferStorage(
@@ -30,6 +31,7 @@ public class BufferObjectFactory : IAssetFactory<BufferObject, BufferObjectDescr
                     null,
                     description.StorageMasks
                 );
+        }
 
         return new()
         {
