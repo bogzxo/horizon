@@ -1,4 +1,7 @@
-﻿using Horizon.Core.Primitives;
+﻿using System.Diagnostics;
+
+using Horizon.Core.Primitives;
+using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 
 using Silk.NET.OpenGL;
@@ -9,14 +12,22 @@ namespace Horizon.OpenGL.Buffers;
 
 public class FrameBufferObject : IGLObject
 {
-    public Dictionary<FramebufferAttachment, Texture> Attachments { get; init; }
+    public Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset> Attachments { get; init; }
     public ColorBuffer[] DrawBuffers { get; init; }
 
     /// <summary>
     /// Binds a specified attachment to a texture unit.
     /// </summary>
-    public void BindAttachment(in FramebufferAttachment type, in uint index) =>
-        ObjectManager.GL.BindTextureUnit(index, Attachments[type].Handle);
+    public void BindAttachment(in FramebufferAttachment type, in uint index)
+    {
+#if DEBUG
+        Debug.Assert(Attachments[type].Texture.Handle != 0);
+#endif
+
+        Attachments[type].Texture.Bind(index);
+    }
+        
+
 
     /// <summary>
     /// Binds the current frame buffer and binds its buffers to be draw to.

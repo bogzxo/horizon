@@ -125,7 +125,7 @@ public class Chunk
             slices.Add(vertexCounter);
         }
 
-        ChunkRenderer.MeshUploadQueue.Enqueue(new()
+        ChunkBufferManager.MeshUploadQueue.Enqueue(new()
         {
             Data = ListAdapter<ChunkVertex>.ToReadOnlyMemory(verts),
             Index = Index,

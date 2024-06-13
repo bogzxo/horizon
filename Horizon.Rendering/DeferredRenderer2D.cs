@@ -12,22 +12,33 @@ namespace Horizon.Rendering;
 /// </summary>
 public class DeferredRenderer2D : Renderer2D
 {
-    protected override FrameBufferObject CreateFrameBuffer(in uint width, in uint height) => GameEngine
+    protected override FrameBufferObject CreateFrameBuffer(in uint width, in uint height)
+    {
+        if (GameEngine
             .Instance
             .ObjectManager
             .FrameBuffers
-            .Create(
+            .TryCreate(
                 new FrameBufferObjectDescription
                 {
                     Width = width,
                     Height = height,
-                    Attachments = new() { 
-                    { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaUnsignedByte },
-                    { FramebufferAttachment.ColorAttachment1, TextureDefinition.RgbaUnsignedByte },
+                    Attachments = new() {
+                    { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
+                    { FramebufferAttachment.ColorAttachment1, FrameBufferAttachmentDefinition.TextureRGBAByte },
                     }
-                }
-            )
-            .Asset;
+                },
+                out var result
+            ))
+        {
+            return result.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            throw new Exception(result.Message);
+        }
+    }
 
     protected override Renderer2DTechnique CreateTechnique() => new DeferredRenderer2DTechnique(FrameBuffer);
 

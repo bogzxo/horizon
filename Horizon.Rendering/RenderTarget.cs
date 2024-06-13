@@ -1,6 +1,9 @@
 ﻿using System.Numerics;
 
+using Horizon.Core.Components;
+using Horizon.Core.Primitives;
 using Horizon.Engine;
+using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 
@@ -8,56 +11,73 @@ using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering;
 
-public class RenderTarget : GameObject
+public class RenderTarget : IInstantiable, IRenderable
 {
     public FrameBufferObject FrameBuffer { get; protected set; }
     public Vector2 ViewportSize { get; }
 
-    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) => GameEngine
+    private readonly bool createRenderRectangle = false;
+    private readonly bool createFbo;
+    private RenderRectangle renderRectangle;
+
+    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height)
+    {
+        if (GameEngine
             .Instance
             .ObjectManager
             .FrameBuffers
-            .Create(
+            .TryCreate(
                 new FrameBufferObjectDescription
                 {
                     Width = width,
                     Height = height,
                     Attachments = new() {
-                        { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaFloat },
+                        { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
+                        { FramebufferAttachment.DepthAttachment, FrameBufferAttachmentDefinition.TextureDepth },
                     }
-                }
-            )
-            .Asset;
+                },
+                out var result
+            ))
+        {
+            return result.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            throw new Exception(result.Message);
+        }
+    }
+
 
     public RenderTarget(in uint width, in uint height)
     {
         ViewportSize = new Vector2(width, height);
     }
-
-    public override void Initialize()
+    public RenderTarget(in uint width, in uint height, in Technique technique, bool createFbo = true)
+        : this(width, height)
     {
-        FrameBuffer = CreateFrameBuffer((uint)ViewportSize.X, (uint)ViewportSize.Y);
-        base.Initialize();
+        this.createRenderRectangle = true;
+        this.renderRectangle = new RenderRectangle(technique);
+        this.createFbo = createFbo;
     }
 
-    public override void Render(float dt, object? obj = null)
+    public void Initialize()
     {
-        // Bind the framebuffer and its attachments
+        if (createFbo) FrameBuffer = CreateFrameBuffer((uint)ViewportSize.X, (uint)ViewportSize.Y);
+        renderRectangle?.Initialize();
+    }
+
+    public void Render(float dt, object? obj = null)
+    {
+        if (!createRenderRectangle) return;
+
+        renderRectangle.Render(dt, obj);
+    }
+    public void BindForRendering()
+    {
         FrameBuffer.Bind();
-        Engine.GL.Disable(EnableCap.Blend);
-
-        // set the viewport & clear screen
         FrameBuffer.Viewport();
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
-
-        // draw all children
-        base.Render(dt);
-
-        Engine.GL.Enable(EnableCap.Blend);
-        // set to window frame buffer
-        FrameBufferObject.Unbind();
-
-        // restore window viewport
-        Engine.GL.Viewport(0, 0, (uint)GameEngine.Instance.WindowManager.WindowSize.X, (uint)GameEngine.Instance.WindowManager.WindowSize.Y);
     }
+
+    public void BindForReading(in FramebufferAttachment attachment, in uint unit) => FrameBuffer.BindAttachment(attachment, unit);
 }

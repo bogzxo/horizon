@@ -3,3 +3,25 @@
     height: 50%;
     display: block;
 }
+
+#commandConsole {
+    background-color: #292929;
+    border-radius: 10px 10px 0px 0px;
+    padding: 20px;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+}
+#commandBuffer {
+    width: 88%;
+    height: 200px;
+    background-color: #1e1e1e;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+    resize: none;
+    overflow-y: scroll;
+}

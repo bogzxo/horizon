@@ -2,8 +2,9 @@
 using Horizon.OpenGL.Descriptions;
 
 using ImGuiNET;
-
 using Silk.NET.OpenGL;
+
+using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -13,15 +14,22 @@ public class DockedGameContainerDebugger : DebuggerComponent
 
     public override void Initialize()
     {
-        FrameBuffer = GameEngine.Instance.ObjectManager.FrameBuffers.CreateOrGet("container", new OpenGL.Descriptions.FrameBufferObjectDescription
+        if (GameEngine.Instance.ObjectManager.FrameBuffers.TryCreateOrGet("container", new OpenGL.Descriptions.FrameBufferObjectDescription
         {
             Attachments = new() {
-                { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaUnsignedByte },
-                { FramebufferAttachment.DepthAttachment, TextureDefinition.DepthComponent },
+                { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
+                { FramebufferAttachment.DepthAttachment, FrameBufferAttachmentDefinition.TextureDepth },
             },
             Width = 800,
             Height = 600
-        });
+        }, out var result))
+        {
+            FrameBuffer = result.Asset;
+        }
+        else
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
         Name = "Game Container";
     }
@@ -40,7 +48,7 @@ public class DockedGameContainerDebugger : DebuggerComponent
                 (nint)
                     FrameBuffer.Attachments[
                         Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0
-                    ].Handle,
+                    ].Texture.Handle,
                 new System.Numerics.Vector2(FrameBuffer.Width, FrameBuffer.Height),
                 new System.Numerics.Vector2(0, 1),
                 new System.Numerics.Vector2(1, 0)

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Horizon Web-Backend</title>
+    <link rel="stylesheet" href="styles/common.css">
+    <link rel="stylesheet" href="styles/scripting.css">
+    <link href="https://cdn.jsdelivr.net/npm/hack-font@3.3.0/build/web/hack.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="lib/codemirror.css">
+    <link rel="stylesheet" href="styles/dracula.css">
+    <script src="lib/codemirror.js"></script>
+    <script src="scripts/hidl.js"></script>
+</head>
+
+<body>
+    <!-- Container for all page elements, implemented as such so that a margin border may be added to 'float' the ui  -->
+    <div class="container">
+        <div class="header shadow-element">
+            <a href="#" class="logo">Horizon</a>
+            <div class="header-right">
+                <a href="dash.html">Metrics</a>
+                <a class="active" href="#">Scripting</a>
+                <a href="#">Settings</a>
+            </div>
+        </div>
+        <!-- Content container implemented as such for responsiveness  -->
+        <div class="content">
+            <textarea id="editor">
+func() test {
+    print("Hello, world!");
+    ""
+}
+
+test();</textarea>
+        </div>
+    </div>
+    <script src="scripts/common-sock.js"></script>
+    <script src="scripts/scripting.js"></script>
+</body>
+
+</html>

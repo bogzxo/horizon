@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 
+using Horizon.Core.Components;
 using Horizon.Engine;
 
 namespace CodeKneading.Player.Behaviour;
@@ -10,6 +11,7 @@ internal class MovementBehaviour : IPlayerBehaviour
 
     public GamePlayer Player { get; init; }
 
+
     public void Activate(in IPlayerBehaviour previous)
     {
 
@@ -17,7 +19,7 @@ internal class MovementBehaviour : IPlayerBehaviour
 
     public void UpdatePhysics(float dt)
     {
-        Player.Transform.Position += GetMovementDirection(dt);
+        GamePlayer.Transform.Position += GetMovementDirection(dt);
     }
 
     public void UpdateState(float dt)
@@ -31,29 +33,29 @@ internal class MovementBehaviour : IPlayerBehaviour
     internal Vector3 GetMovementDirection(in float dt)
     {
         // store old position
-        Vector3 oldPos = Player.Transform.Position;
+        Vector3 oldPos = GamePlayer.Transform.Position;
 
         // calculate new position
         Vector3 newPos = oldPos + CalculatePhysics(dt);
 
-        // test collisions on x axis
-        if ((int)Player.World[(int)newPos.X, (int)(newPos.Y - 1), (int)oldPos.Z].Type > 0 ||
-            (int)Player.World[(int)newPos.X, (int)newPos.Y, (int)oldPos.Z].Type > 0)
-        {
-            newPos.X = oldPos.X;
-        }
-        // test collisions on z axis
-        if ((int)Player.World[(int)oldPos.X, (int)(newPos.Y - 1), (int)newPos.Z].Type > 0 ||
-            (int)Player.World[(int)oldPos.X, (int)newPos.Y, (int)newPos.Z].Type > 0)
-        {
-            newPos.Z = oldPos.Z;
-        }
-        // test collisions on the y axis
-        if ((int)Player.World[(int)newPos.X, (int)newPos.Y - 1, (int)newPos.Z].Type > 0 ||
-            (int)Player.World[(int)newPos.X, (int)(newPos.Y - 1.9f), (int)newPos.Z].Type > 0)
-        {
-            newPos.Y = oldPos.Y;
-        }
+        //// test collisions on x axis
+        //if ((int)Player.World[(int)newPos.X, (int)(newPos.Y - 1), (int)oldPos.Z].Type > 0 ||
+        //    (int)Player.World[(int)newPos.X, (int)newPos.Y, (int)oldPos.Z].Type > 0)
+        //{
+        //    newPos.X = oldPos.X;
+        //}
+        //// test collisions on z axis
+        //if ((int)Player.World[(int)oldPos.X, (int)(newPos.Y - 1), (int)newPos.Z].Type > 0 ||
+        //    (int)Player.World[(int)oldPos.X, (int)newPos.Y, (int)newPos.Z].Type > 0)
+        //{
+        //    newPos.Z = oldPos.Z;
+        //}
+        //// test collisions on the y axis
+        //if ((int)Player.World[(int)newPos.X, (int)newPos.Y - 1, (int)newPos.Z].Type > 0 ||
+        //    (int)Player.World[(int)newPos.X, (int)(newPos.Y - 1.9f), (int)newPos.Z].Type > 0)
+        //{
+        //    newPos.Y = oldPos.Y;
+        //}
 
         // return the difference
         return newPos - oldPos;
@@ -72,16 +74,17 @@ internal class MovementBehaviour : IPlayerBehaviour
 
         // get camera front with no pitch
         Vector3 cameraFrontNoPitch = Vector3.Normalize(new Vector3(Player.Camera.Front.X, 0, Player.Camera.Front.Z));
+        cameraFrontNoPitch = Player.Camera.Front;
 
         // get travel direction vector with respect to camera, removing the Y direction
         Vector3 movement = ((Vector3.Normalize(Vector3.Cross(cameraFrontNoPitch, Vector3.UnitY)) * movementSpeed * axis.X * dt) +
-                            (movementSpeed * cameraFrontNoPitch * axis.Y * dt)) * new Vector3(1, 0, 1);
+                            (movementSpeed * cameraFrontNoPitch * axis.Y * dt)) * new Vector3(1, 1, 1);
 
         // apply jumping logic
         movement += JumpLogic(dt);
 
         // apply gravity logic
-        movement += GravityLogic(dt);
+        //movement += GravityLogic(dt);
 
         // modify momentum with weight coefficient
         momentum = Vector3.Lerp(momentum, movement, dt * massCoeff);
@@ -106,7 +109,7 @@ internal class MovementBehaviour : IPlayerBehaviour
         if (timeSinceLastJump < 0.1) return Vector3.Zero;
 
         // check if we are grounded
-        if (!Player.IsGrounded) return Vector3.Zero;
+        //if (!Player.IsGrounded) return Vector3.Zero;
 
         // check that a jump is requested
         if (!GameEngine.Instance.InputManager.GetVirtualController().IsPressed(Horizon.Input.VirtualAction.MoveJump)) return Vector3.Zero;

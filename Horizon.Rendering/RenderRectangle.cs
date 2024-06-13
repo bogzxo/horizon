@@ -34,11 +34,19 @@ public class RenderRectangle : GameObject
                 new Vector2(-1, 1),
                 new Vector2(0, 1)
             };
+
             var indices = new uint[] { 0, 1, 2, 0, 2, 3 };
 
-            vbo = new VertexBufferObject(
-                Engine.ObjectManager.VertexArrays.Create(VertexArrayObjectDescription.VertexBuffer)
-            );
+            if (Engine.ObjectManager.VertexArrays.TryCreate(
+                VertexArrayObjectDescription.VertexBuffer,
+                out var result))
+            {
+                vbo = new VertexBufferObject(result.Asset);
+            }
+            else
+            {
+                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            }
 
             vbo.Bind();
             {

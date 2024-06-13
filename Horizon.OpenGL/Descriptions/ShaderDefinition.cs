@@ -2,4 +2,4 @@
 
 namespace Horizon.OpenGL.Descriptions;
 
-public record struct ShaderDefinition(ShaderType Type, string File, string Source);
+public readonly record struct ShaderDefinition(ShaderType Type, string File, string Source);

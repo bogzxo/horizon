@@ -105,7 +105,7 @@ public class Player2D : Sprite
                 Engine
                     .ObjectManager
                     .Textures
-                    .Create(new TextureDescription { Path = "content/spritesheet.png" })
+                    .TryCreate(new TextureDescription { Paths = "content/spritesheet.png" })
                     .Asset,
                 new Vector2(16, 16)
             ),

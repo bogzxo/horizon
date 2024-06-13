@@ -7,21 +7,27 @@ using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 
 using Silk.NET.Input;
+using Silk.NET.Input.Glfw;
+using Silk.NET.Input.Sdl;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
+using Silk.NET.Windowing.Glfw;
+using Silk.NET.Windowing.Sdl;
 
 namespace Horizon.Core;
 
 /// <summary>
 /// Engine component that manages all associated window activities and threads.
 /// </summary>
-public class WindowManager : IGameComponent
+public class WindowManager : IGameComponent, IDisposable
 {
     private readonly IWindow _window;
     private IInputContext _input;
 
     private Task logicTask,
         physicsTask;
+
+    private readonly CancellationTokenSource tokenSource;
 
     public bool IsRunning { get; private set; }
 
@@ -68,19 +74,24 @@ public class WindowManager : IGameComponent
     }
 
     // copy of initial WindowOptions instance.
-    private readonly WindowOptions _options;
+    public readonly WindowOptions WindowOptions;
 
     public WindowManager(in WindowManagerConfiguration config)
     {
+        GlfwWindowing.RegisterPlatform();
+        GlfwInput.RegisterPlatform();
+
+        tokenSource = new CancellationTokenSource();
+
         // Create a window with the specified options.
-        _options = WindowOptions.Default with
+        WindowOptions = WindowOptions.Default with
         {
             API = new GraphicsAPI()
             {
                 Flags = ContextFlags.ForwardCompatible,
                 API = ContextAPI.OpenGL,
                 Profile = ContextProfile.Core,
-                Version = new APIVersion(4, 6)
+                Version = new APIVersion(4, 6),
             },
             Title = config.WindowTitle,
             Size = new Silk.NET.Maths.Vector2D<int>(
@@ -91,15 +102,16 @@ public class WindowManager : IGameComponent
             FramesPerSecond = 0,
             ShouldSwapAutomatically = true,
             VSync = false,
-            PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(10, 10, 10, 8)
+            PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
         };
 
         ViewportSize = WindowSize = config.WindowSize;
 
         // Create the window.
-        this._window = Silk.NET.Windowing.Window.Create(_options);
+        this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
         SubscribeWindowEvents();
     }
+    
 
     private void SubscribeWindowEvents()
     {
@@ -109,6 +121,9 @@ public class WindowManager : IGameComponent
 
         this._window.Load += () =>
         {
+            _window.Center();
+            _window.SetDefaultIcon();
+
             GL = _window.CreateOpenGL();
             GLObject.SetGL(GL);
 
@@ -134,7 +149,7 @@ public class WindowManager : IGameComponent
 
     public void Initialize()
     {
-        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Created window({_options.Size})!");
+        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Created window({WindowOptions.Size})!");
     }
 
     public void Render(float dt, object? obj = null)
@@ -161,8 +176,6 @@ public class WindowManager : IGameComponent
 
         // Dispose and unload
         _window.DoEvents();
-        Dispose();
-        _window.Reset();
     }
 
     private void OnLogicFrame()
@@ -200,29 +213,37 @@ public class WindowManager : IGameComponent
 
         if (!_window.IsClosing)
             _window.DoRender();
-        if (!_window.IsClosing)
-            Window.DoUpdate();
 
         /* it is important to ensure that atleast one Render pass has happened, before
          * we dispatch all the threads, as lazy initialization of unmanaged object is done in the render thread. */
 
         // Dispatch threads.
-        //logicTask ??= Task.Run(OnLogicFrame);
         if (needsDispatching)
         {
             needsDispatching = false;
-            physicsTask ??= Task.Run(OnPhysicsFrame);
+
+            logicTask ??= Task.Run(OnLogicFrame, tokenSource.Token);
+            physicsTask ??= Task.Run(OnPhysicsFrame, tokenSource.Token);
         }
     }
 
     public void Dispose()
     {
-        // this freezes the app if any threads get stuck so lets not do this
-        //physicsTask.Wait();
-        //logicTask.Wait();
-        Parent.Dispose();
+        GC.SuppressFinalize(this);
 
+        tokenSource.Cancel();
+
+        physicsTask.Wait();
+        logicTask.Wait();
+
+        physicsTask.Dispose();
+        logicTask.Dispose();
+
+        tokenSource.Dispose();
+
+        _window.Reset();
         _window.Dispose();
+
         ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
     }
 

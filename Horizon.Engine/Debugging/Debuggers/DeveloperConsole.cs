@@ -142,4 +142,9 @@ public class DeveloperConsole : DebuggerComponent
     public override void Dispose()
     {
     }
+
+    internal void EvaluateCallback(string obj)
+    {
+        ExecuteCommand(obj);
+    }
 }

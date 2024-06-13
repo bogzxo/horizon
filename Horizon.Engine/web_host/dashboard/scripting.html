@@ -28,12 +28,16 @@
         <!-- Content container implemented as such for responsiveness  -->
         <div class="content">
             <textarea id="editor">
-func() test {
-    print("Hello, world!");
+func test() {
+    _PRINT_LN("Hello, world!");
     ""
 }
 
 test();</textarea>
+        </div>
+        <button id="evalBtn" onclick="evaluateCode()">Evaluate</button>
+        <div id="commandConsole">
+            <textarea readonly id="commandBuffer"></textarea>
         </div>
     </div>
     <script src="scripts/common-sock.js"></script>

@@ -8,6 +8,7 @@
     <Nullable>enable</Nullable>
     <InvariantGlobalization>true</InvariantGlobalization>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
   </PropertyGroup>
 	<PropertyGroup Condition="'$(Configuration)'=='Release'">
 		<DebugSymbols>False</DebugSymbols>

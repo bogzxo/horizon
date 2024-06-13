@@ -13,7 +13,7 @@ internal abstract class IndexManager
     public IndexManager(in IGLObject obj)
     {
         glObject = obj;
-        namedIndices = new();
+        namedIndices = [];
     }
 
     public uint GetLocation(in string name)

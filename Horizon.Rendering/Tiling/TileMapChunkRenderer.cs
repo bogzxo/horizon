@@ -114,14 +114,24 @@ public abstract partial class Tiling<TTextureID>
 
         public void Initialize()
         {
-            _shader ??= new Technique(
-                GameObject
+            if (_shader == null)
+            {
+                if (GameObject
                     .Engine
                     .ObjectManager
                     .Shaders
-                    .Create(ShaderDescription.FromPath("shaders/tilemap", "tilemap"))
-                    .Asset
-            );
+                    .TryCreate(
+                    ShaderDescription.FromPath("shaders/tilemap",
+                    "tilemap"
+                    ), out var result))
+                {
+                    _shader = new(result.Asset);
+                }
+                else
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+                }
+            }
         }
 
         public void UpdateState(float dt)

@@ -57,6 +57,7 @@ public class InstanceManager<InstanceType>
         }
 
         var instance = (InstanceType)Activator.CreateInstance(type)!;
+        
         AddInstance<InstanceType>(instance);
     }
 
@@ -79,6 +80,6 @@ public class InstanceManager<InstanceType>
         if (!Instances.ContainsKey(type))
             AddInstance(type);
 
-        CurrentInstance = Instances[type];
+        CurrentInstance = Instances.Values.Last();
     }
 }

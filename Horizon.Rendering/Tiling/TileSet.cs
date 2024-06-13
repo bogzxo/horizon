@@ -41,10 +41,10 @@ public abstract partial class Tiling<TTextureID>
             //Texture = Engine
             //    .ObjectManager
             //    .Textures
-            //    .Create(
+            //    .TryCreate(
             //        new OpenGL.Descriptions.TextureDescription
             //        {
-            //            Path = _texturePath,
+            //            Paths = _texturePath,
             //            Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByte
             //        }
             //    )

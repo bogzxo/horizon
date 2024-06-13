@@ -52,7 +52,7 @@ internal class Program : Scene
             ImGui.Text($"Frame Rate: {MathF.Round(1.0f / dt)}");
 
             // Print camera direction
-            ImGui.Text($"Camera Direction: {camera.Rotation.X}");
+            ImGui.Text($"Camera Direction: {camera.Direction.X}");
             ImGui.Text($"Fly Mode? {flyMode}");
             ImGui.End();
         }

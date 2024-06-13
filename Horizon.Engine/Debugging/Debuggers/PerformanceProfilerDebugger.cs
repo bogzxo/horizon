@@ -232,7 +232,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
     }
 
     [Pure]
-    private static void PlotValues(
+    public static void PlotValues(
         in string label,
         in LinearBuffer<double> frameTimes,
         in string unit = "ms"
@@ -268,7 +268,7 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
     }
 
     [Pure]
-    public float GetMemoryUsage()
+    public static float GetMemoryUsage()
     {
         return (float)(GC.GetTotalMemory(false) / (1024.0 * 1024.0)); // in MB
     }

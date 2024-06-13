@@ -11,16 +11,22 @@ public class ChunkTechnique : Technique
 
     public ChunkTechnique()
     {
-        SetShader(
-            GameEngine
+        if (GameEngine
                 .Instance
                 .ObjectManager
                 .Shaders
-                .CreateOrGet(
+                .TryCreateOrGet(
                     "chunk_technique",
-                    ShaderDescription.FromPath("shaders/", "world")
-                )
-        );
+                    ShaderDescription.FromPath("shaders/", "world"),
+                    out var result
+                ))
+        {
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
     }
 
     protected override void SetUniforms()

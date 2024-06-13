@@ -84,13 +84,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
     public ParticleRenderer2D(int count)
     {
         this.Maximum = (uint)count;
-        this.Material = new Materials.BasicParticle2DTechnique(
-            this,
-            Engine
-                .ObjectManager
-                .Shaders
-                .CreateOrGet("particle2d", ShaderDescription.FromPath("shaders/particle", "basic"))
-        );
+        this.Material = new Materials.BasicParticle2DTechnique(this);
 
         Particles = new Particle2D[count];
         renderData = new ParticleRenderData[count];
@@ -111,11 +105,10 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
     public override unsafe void Initialize()
     {
-        buffer = new VertexBufferObject(
-            Engine
+        if (Engine
                 .ObjectManager
                 .VertexArrays
-                .Create(
+                .TryCreate(
                     new OpenGL.Descriptions.VertexArrayObjectDescription
                     {
                         Buffers = new()
@@ -143,9 +136,13 @@ public class ParticleRenderer2D : GameObject, IDisposable
                                 }
                             }
                         }
-                    }
+                    },
+                    out var result
                 )
-        );
+        )
+        {
+            buffer = new VertexBufferObject(result.Asset);
+        }
 
         // Configure VAO layout
         buffer.Bind();

@@ -95,11 +95,13 @@ public abstract partial class Tiling<TTextureID>
             Shader = shader;
             Map = map;
 
-            Vbo = new VertexBufferObject(
+
+
+            if (
                 Engine
                     .ObjectManager
                     .VertexArrays
-                    .Create(
+                    .TryCreate(
                         new OpenGL.Descriptions.VertexArrayObjectDescription
                         {
                             Buffers = new()
@@ -117,9 +119,16 @@ public abstract partial class Tiling<TTextureID>
                                     BufferObjectDescription.ArrayBuffer
                                 }
                             }
-                        }
+                        }, out var result
                     )
-            );
+            )
+            {
+                Vbo = new(result.Asset);
+            }
+            else
+            {
+                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            }
 
             Vector2 tileTextureSize =
                 set.TileSize / new Vector2(set.Material.Width, set.Material.Height);

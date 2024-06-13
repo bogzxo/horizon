@@ -1,0 +1,25 @@
+﻿let demo_object = {
+	greet_user: func(name) {
+    	print("Hello, ", name, "!")	
+    }
+};
+
+demo_object.greet_user("Abdul");
+
+
+func cat() {
+	while ((print(read())) != "cat") { }
+}
+
+func list_program() {
+	print("0. cat() - A CAT program");
+	""
+}
+
+func welcome() {
+	print("Welcome to HIDL!");
+	print("You can run 'list_program();' to view all included demo programs!");
+	""
+}
+
+welcome();

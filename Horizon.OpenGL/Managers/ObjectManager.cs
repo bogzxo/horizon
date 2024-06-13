@@ -45,6 +45,23 @@ public class ObjectManager : IGameComponent, IDisposable
     { get; init; }
 
     public AssetManager<
+       QueryObject,
+       QueryObjectFactory,
+       QueryObjectDescription,
+       QueryObjectFinalizer
+   > Queries
+    { get; init; }
+
+
+    public AssetManager<
+        RenderBufferObject,
+        RenderBufferObjectFactory,
+        RenderBufferObjectDescription,
+        RenderBufferObjectFinalizer
+    > RenderBuffers
+    { get; init; }
+
+    public AssetManager<
         FrameBufferObject,
         FrameBufferObjectFactory,
         FrameBufferObjectDescription,
@@ -69,10 +86,11 @@ public class ObjectManager : IGameComponent, IDisposable
         Instance = this;
         Name = "Content Manager";
 
-        // primitive types
         Textures = new();
         Shaders = new();
+        Queries = new();
         Buffers = new();
+        RenderBuffers = new();
         FrameBuffers = new();
         VertexArrays = new();
     }
@@ -86,6 +104,8 @@ public class ObjectManager : IGameComponent, IDisposable
         Buffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
         VertexArrays.SetMessageCallback(ConcurrentLogger.Instance.Log);
         FrameBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
+        RenderBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
+        Queries.SetMessageCallback(ConcurrentLogger.Instance.Log);
     }
 
     public void Render(float dt, object? obj = null)
@@ -102,8 +122,10 @@ public class ObjectManager : IGameComponent, IDisposable
         // textures bound to fbo so we free the fbos first.
         FrameBuffers.Dispose();
         Textures.Dispose();
+        RenderBuffers.Dispose();
 
         Shaders.Dispose();
+        Queries.Dispose();
 
         // the vbos are bound to vaos so we need to dispose the vaos first.
         VertexArrays.Dispose();

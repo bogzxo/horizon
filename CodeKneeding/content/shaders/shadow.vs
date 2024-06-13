@@ -1,18 +1,20 @@
 #version 460 core
 
 // vertex data
-layout(location = 0) in uint vLocalPacked;
-    
-// instance data
-layout(location = 1) in uint iPackedData;
+layout(location = 0) in uint vPackedData;
 
-uniform mat4 uCameraView;
-uniform mat4 uCameraProjection;
+// layout(std430) buffer CameraData {
+//     mat4 view;
+//     mat4 projection;
+//     vec3 camPos;
+// };
 
+uniform mat4 view;
+uniform mat4 projection;
 
 #include "world.h"
 
 void main() {
     // Transform the final position using camera view and projection matrices
-    gl_Position = uCameraProjection * uCameraView * vec4(getFinalPosition(), 1.0);
+    gl_Position = projection * view * vec4(getFinalPosition(), 1.0);
 }

@@ -70,7 +70,7 @@ public class BMFontImporter
             if (node.Type != type)
                 Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[BMFont Parser] Expected token {type} but got {node.Type}!");
             return node;
-        } 
+        }
 
         private static (CharDefinition[] defs, string filePath) ParseTokens(in ParserNode[] nodes)
         {
@@ -283,11 +283,21 @@ public class BMFontImporter
     public BMFontImporter(in string dir, in string bmFile)
     {
         (CharDefinition[] defs, string path) = BMParser.Parse(Path.Combine(dir, bmFile));
-        Texture = GameEngine.Instance.ObjectManager.Textures.CreateOrGet(path, new OpenGL.Descriptions.TextureDescription
+        if (GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
+            path,
+            new OpenGL.Descriptions.TextureDescription
+            {
+                Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByte,
+                Paths = [Path.Combine(dir, path)]
+            },
+            out var result))
         {
-            Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByte,
-            Path = Path.Combine(dir, path)
-        });
+            Texture = result.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
         Definitions = [];
         foreach (var item in defs)

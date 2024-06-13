@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.Content;
 using Horizon.OpenGL.Assets;
@@ -15,6 +16,7 @@ public class Technique
     private Shader shader;
     private TechniqueUniformManager uniformManager;
     private TechniqueResourceIndexManager resourceManager;
+    private TechniqueUniformBlockManager blockManager;
 
     public Technique()
     { }
@@ -24,6 +26,7 @@ public class Technique
         this.shader = shader;
         uniformManager = new(shader);
         resourceManager = new(shader);
+        blockManager = new(shader);
     }
 
     /// <summary>
@@ -34,107 +37,132 @@ public class Technique
         shader ??= inShader;
         uniformManager ??= new(shader);
         resourceManager ??= new(shader);
+        blockManager ??= new(shader);
     }
 
     public Technique(AssetCreationResult<Shader> asset)
         : this(asset.Asset) { }
 
-    public void BindBuffer(in string name, in BufferObject bufferObject)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void UniformBlockBinding(in string name, in uint index) => blockManager.UniformBlockBinding(name, index);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BindBuffer(in string name, in BufferObject bufferObject, BufferTargetARB target = BufferTargetARB.ShaderStorageBuffer)
     {
-        bufferObject.Bind();
+        if (target == BufferTargetARB.ShaderStorageBuffer)
+        {
+            ObjectManager
+               .GL
+               .BindBufferBase(
+                   target,
+                   resourceManager.GetLocation(name),
+                   bufferObject.Handle
+               );
+        }
+        else if (target == BufferTargetARB.UniformBuffer)
+        {
+            ObjectManager
+               .GL
+               .BindBufferBase(
+                   target,
+                   uniformManager.GetLocation(name),
+                   bufferObject.Handle
+               );
+        }
+    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BindBuffer(in uint index, in BufferObject bufferObject, BufferTargetARB target = BufferTargetARB.ShaderStorageBuffer)
+    {
         ObjectManager
-           .GL
-           .BindBufferBase(
-               BufferTargetARB.ShaderStorageBuffer,
-               resourceManager.GetLocation(name),
-               bufferObject.Handle
-           );
+               .GL
+               .BindBufferBase(
+                   target,
+                   index,
+                   bufferObject.Handle
+               );
     }
 
     /// <summary>
     /// Sets the specified uniform to a specified value, the uniform index is guaranteed to be cached.
     /// </summary>
-    public void SetUniform(in string name, in object? value)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, in int value)
     {
         int location = (int)uniformManager.GetLocation(name);
-        //if (location == -1 || value is null) // If GetUniformLocation returns -1, the uniform is not found.
-        //{
-        //    //ConcurrentLogger.Instance.Log(
-        //    //    LogLevel.Error,
-        //    //    $"Shader[{Handle}] Uniform('{name}') Error! Check if the uniform is defined!"
-        //    //);
-        //    return;
-        //}
-
-        switch (value)
-        {
-            case int intValue:
-                ObjectManager.GL.Uniform1(location, intValue);
-                break;
-
-            case float floatValue:
-                ObjectManager.GL.Uniform1(location, floatValue);
-                break;
-
-            case uint uintValue:
-                ObjectManager.GL.Uniform1(location, uintValue);
-                break;
-
-            case Vector2 vector2Value:
-                ObjectManager.GL.Uniform2(location, vector2Value.X, vector2Value.Y);
-                break;
-
-            case Vector3 vector3Value:
-                ObjectManager
-                    .GL
-                    .Uniform3(location, vector3Value.X, vector3Value.Y, vector3Value.Z);
-                break;
-
-            case Vector4 vector4Value:
-                ObjectManager
-                    .GL
-                    .Uniform4(
-                        location,
-                        vector4Value.X,
-                        vector4Value.Y,
-                        vector4Value.Z,
-                        vector4Value.W
-                    );
-                break;
-
-            case Matrix4x4 matrixValue:
-                unsafe // Don't wanna make the whole method unsafe for a single call.
-                {
-                    ObjectManager.GL.UniformMatrix4(location, 1, false, (float*)&matrixValue);
-                }
-                break;
-
-            case bool boolValue:
-                ObjectManager.GL.Uniform1(location, boolValue ? 1 : 0);
-                break;
-            case ulong uLongVal:
-                ObjectManager.GL.Uniform1(location, uLongVal);
-                break;
-            default:
-                //ConcurrentLogger.Instance.Log(
-                //    LogLevel.Error,
-                //    $"Shader[{Handle}] Attempt to upload uniform of unsupported data type {value!.GetType()}."
-                //);
-                return;
-        }
+        ObjectManager.GL.Uniform1(location, value);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, in float value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform1(location, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, in uint value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform1(location, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, ref readonly Vector2 value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform2(location, value.X, value.Y);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, ref readonly Vector3 value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform3(location, value.X, value.Y, value.Z);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, ref readonly Vector4 value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform4(location, value.X, value.Y, value.Z, value.W);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, ref readonly Matrix4x4 value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.UniformMatrix4(location, 1, false, in value.M11);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, in bool value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform1(location, value ? 1 : 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void SetUniform(in string name, in ulong value)
+    {
+        int location = (int)uniformManager.GetLocation(name);
+        ObjectManager.GL.Uniform1(location, value);
+    }
+
 
     /// <summary>
     /// Called after the shader is bound.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     protected virtual void SetUniforms()
     { }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Bind()
     {
         ObjectManager.GL.UseProgram(shader.Handle);
         SetUniforms();
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unbind() => ObjectManager.GL.UseProgram(Shader.Invalid.Handle);
 }

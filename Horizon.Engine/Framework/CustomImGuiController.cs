@@ -619,6 +619,7 @@ public class CustomImguiController : IDisposable
 
         float L = drawDataPtr.DisplayPos.X;
         float R = drawDataPtr.DisplayPos.X + drawDataPtr.DisplaySize.X;
+
         float T = drawDataPtr.DisplayPos.Y;
         float B = drawDataPtr.DisplayPos.Y + drawDataPtr.DisplaySize.Y;
 

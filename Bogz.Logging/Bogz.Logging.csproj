@@ -6,6 +6,7 @@
     <IsPublishable>false</IsPublishable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
   </PropertyGroup>
 	<PropertyGroup Condition="'$(Configuration)'=='Release'">
 		<DebugSymbols>False</DebugSymbols>

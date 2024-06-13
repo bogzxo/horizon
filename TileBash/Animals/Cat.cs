@@ -26,7 +26,7 @@ namespace TileBash.Animals
                         .Textures
                         .CreateOrGet(
                             "cat_spritesheet",
-                            new TextureDescription { Path = "content/cat.png" }
+                            new TextureDescription { Paths = "content/cat.png" }
                         ),
                     new Vector2(32)
                 ),

@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Buffers.Text;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 
@@ -6,6 +7,8 @@ using Horizon.Webhost;
 using Horizon.Webhost.Providers;
 
 using Newtonsoft.Json;
+
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 
 namespace Horizon.Engine.Webhost;
 
@@ -16,7 +19,13 @@ using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 /// </summary>
 public class DashboardContentProvider : IWebHostContentProvider
 {
-    private static Dictionary<string, string> fileContentPairs = new() {
+    private readonly struct InternalPayloadPacket : IWebSocketPacket
+    {
+        public readonly uint PacketID { get; init; }
+        public readonly string Payload {  get; init; }
+    }
+
+    private static readonly Dictionary<string, string> fileContentPairs = new() {
         { "html", "text/html" },
         { "", "text/html" },
         { "css", "text/css" },
@@ -24,10 +33,29 @@ public class DashboardContentProvider : IWebHostContentProvider
         { "map", "text/plain" }
     };
 
+    private readonly Dictionary<uint, Action<string>> packetcallbacks = [];
+
+    public void RegisterPacketCallback(in uint id, Action<string> action)
+    {
+        if (!packetcallbacks.TryAdd(id, action))
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Packet[{id}] already has a handler.");
+    }
+
     private static readonly string filePrefix = "web_host/dashboard/";
 
+    public DashboardContentProvider()
+    {
+        GameEngine.Instance.Debugger.Console.CommandProcessed += ProcessCommand;
+        
+        RegisterPacketCallback(2, GameEngine.Instance.Debugger.Console.EvaluateCallback);
+    }
+
+    ~DashboardContentProvider()
+    {
+        GameEngine.Instance.Debugger.Console.CommandProcessed -= ProcessCommand;
+    }
+
     private HttpListenerWebSocketContext context;
-    private bool isSocketClosed = false;
     public async Task HandleRequest(string url, HttpListenerRequest request, HttpListenerResponse response)
     {
         // TODO: improve handling by proper parsing of the URI
@@ -100,7 +128,6 @@ public class DashboardContentProvider : IWebHostContentProvider
     public async Task HandleSocket(string url, HttpListenerContext context, HttpListenerWebSocketContext socketContext)
     {
         this.context = socketContext;
-        GameEngine.Instance.Debugger.Console.CommandProcessed += ProcessCommand;
         try
         {
             var cancellationTokenSource = new CancellationTokenSource();
@@ -125,7 +152,6 @@ public class DashboardContentProvider : IWebHostContentProvider
             // Close the WebSocket
             await socketContext.WebSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "WebSocket closed", CancellationToken.None);
         }
-        GameEngine.Instance.Debugger.Console.CommandProcessed -= ProcessCommand;
     }
 
     public Queue<IWebSocketPacket> PacketQueue { get; init; } = new();
@@ -167,8 +193,7 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     private async Task ReceiveData(CancellationToken cancellationToken)
     {
-        byte[] receiveBuffer = new byte[1024];
-
+        byte[] buffer = new byte[1024];
         try
         {
             while (context.WebSocket.State == WebSocketState.Open)
@@ -176,16 +201,25 @@ public class DashboardContentProvider : IWebHostContentProvider
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
-                var result = await context.WebSocket.ReceiveAsync(receiveBuffer, cancellationToken);
+                var result = await context.WebSocket.ReceiveAsync(buffer, cancellationToken);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    isSocketClosed = true;
                     break; // Exit the loop when WebSocket is closed
                 }
                 else
                 {
-                    GameEngine.Instance.Debugger.Console.ExecuteCommand(Encoding.UTF8.GetString(receiveBuffer, 0, result.Count));
+                    InternalPayloadPacket packet = JsonConvert.DeserializeObject<InternalPayloadPacket>(Encoding.UTF8.GetString(buffer, 0, result.Count));
+
+                    if (packetcallbacks.TryGetValue(packet.PacketID, out Action<string>? callback))
+                    {
+                        byte[] data = Convert.FromBase64String(packet.Payload);
+                        callback?.Invoke(Encoding.UTF8.GetString(data));
+                    }
+                    else
+                    {
+                        Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] No callback for packet [{packet.PacketID}].");
+                    }
                 }
             }
         }

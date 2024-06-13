@@ -8,6 +8,7 @@ using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Primitives;
 
+using Silk.NET.Core.Native;
 using Silk.NET.OpenGL;
 
 using Texture = Horizon.OpenGL.Assets.Texture;
@@ -34,13 +35,21 @@ internal class Program : Scene
     {
         public ShaderTeq()
         {
-            SetShader(GameEngine
+            if(GameEngine
                 .Instance
                 .ObjectManager
                 .Shaders
-                .CreateOrGet(
+                .TryCreateOrGet(
                 "basic",
-                ShaderDescription.FromPath("shader", "basic")));
+                ShaderDescription.FromPath("shader", "basic"),
+                out var result))
+            {
+                SetShader(result.Asset);
+            }
+            else
+            {
+                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            }
         }
     }
 
@@ -96,7 +105,7 @@ internal class Program : Scene
         // side note: to copy source files to the build directory, select them in visual studio and in the properties panel you will see an option for "Copy to output directory"
         technique = new ShaderTeq();
 
-        texture = Engine.ObjectManager.Textures.CreateOrGet("texture", new TextureDescription { Path = "image.png" });
+        texture = Engine.ObjectManager.Textures.CreateOrGet("texture", new TextureDescription { Paths = "image.png" });
 
         /* You can F12 on the ShaderDescription.FromPath() to see that it simply is a shorthand for finding the path of all shaders in a folder with the same name,
          * and creating a program from the shaders in said folder, this also enables my pre processor to use things such as #include :) */
@@ -163,7 +172,7 @@ internal class Program : Scene
          * -buffer (a general purpose buffer) and an element buffer (still an array buffer, just storing indices instead of vertices) are different, here we ask the
          * object manager to construct a VAO with an array buffer, and an element buffer, which are both actually just array buffers.
          */
-        var result = Engine.ObjectManager.VertexArrays.Create(new VertexArrayObjectDescription
+        var result = Engine.ObjectManager.VertexArrays.TryCreate(new VertexArrayObjectDescription
         {
             Buffers = new()
             {
@@ -190,7 +199,7 @@ internal class Program : Scene
                     Engine
                         .ObjectManager
                         .VertexArrays
-                        .Create(
+                        .TryCreate(
                             new VertexArrayObjectDescription
                             {
                                 Buffers = new()
