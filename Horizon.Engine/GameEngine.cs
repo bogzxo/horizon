@@ -13,11 +13,16 @@ using Horizon.Engine.Framework;
 using Horizon.Engine.Webhost;
 using Horizon.Engine.WebHost;
 using Horizon.Input;
+using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Managers;
 
 using ImGuiNET;
 
+using Silk.NET.Input.Glfw;
+using Silk.NET.Input.Sdl;
 using Silk.NET.OpenGL;
+using Silk.NET.Windowing.Glfw;
+using Silk.NET.Windowing.Sdl;
 
 namespace Horizon.Engine;
 
@@ -40,8 +45,10 @@ public class GameEngine : Entity
     /// </summary>
     public Camera? ActiveCamera
     {
-        get => SceneManager.CurrentInstance?.ActiveCamera;
+        get => SceneManager?.CurrentInstance?.ActiveCamera ?? camera;
     }
+
+    public Camera camera;
 
     /// <summary>
     /// Total time in seconds that the window has been open.
@@ -58,7 +65,12 @@ public class GameEngine : Entity
     public SkylineDebugger Debugger { get; init; }
     public float Runtime { get; private set; }
 
-    private CustomImguiController imguiController;
+    internal CustomImguiController imguiController;
+
+    public void SetScene(in Scene scene)
+     {
+        SceneManager.SetScene(scene);
+    }
 
     public GameEngine(in GameEngineConfiguration engineConfiguration)
     {
@@ -68,9 +80,6 @@ public class GameEngine : Entity
         Configuration = engineConfiguration;
 
         Enabled = true;
-
-        // Create window manager, the window manager will bootstrap and call Initialize(), Render(), UpdateState() and UpdatePhysics()
-        WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
 
         // Engine components
         EventManager = AddComponent<EngineEventHandler>();
@@ -82,27 +91,38 @@ public class GameEngine : Entity
         Debugger = AddEntity<SkylineDebugger>();
         WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
         WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
+
+        // TryCreate window manager, the window manager will bootstrap and call Initialize(), Render(), UpdateState() and UpdatePhysics()
+        WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
     }
 
     public override void Initialize()
     {
         base.Initialize();
-
         unsafe
         {
             GL.Enable(EnableCap.Texture2D);
             GL.Enable(EnableCap.DebugOutput);
+
+            for (int i = 0; i < 16; i++)
+            {
+                GL.ActiveTexture(TextureUnit.Texture0 + i);
+            }
+
             GL.DebugMessageCallback(debugCallback, null);
         }
 
         imguiController = new CustomImguiController(GL, WindowManager.Window, WindowManager.Input);
         LoadImGuiStyle();
 
-        SceneManager.AddInstance(Configuration.InitialScene);
+        if (Configuration.InitialScene is not null) 
+            SceneManager.ChangeInstance(Configuration.InitialScene);
     }
 
-    private static void LoadImGuiStyle()
+    private void LoadImGuiStyle()
     {
+        if (imguiController is null) return;
+
         ImGuiStylePtr style = ImGui.GetStyle();
 
         style.AntiAliasedLines = true;
@@ -230,7 +250,6 @@ public class GameEngine : Entity
 
     public override void Render(float dt, object? obj = null)
     {
-        var startTime = Stopwatch.GetTimestamp();
         TotalTime += dt;
 
         // Run our custom events.
@@ -251,25 +270,27 @@ public class GameEngine : Entity
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
         // Render all entities & components
-        InitializeAll();
-        for (int i = 0; i < Components.Count; i++)
-            DrawWithMetrics(Components.ElementAt(i), dt);
+        //InitializeAll();
+        //for (int i = 0; i < Components.Count; i++)
+        //    DrawWithMetrics(Components[i], dt);
 
-        for (int i = 0; i < Children.Count; i++)
-            DrawWithMetrics(Children[i], dt);
+        //for (int i = 0; i < Children.Count; i++)
+        //    DrawWithMetrics(Children[i], dt);
 
-        //base.Render(dt);
+        base.Render(dt);
 
-        GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        //GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
-        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        //GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         imguiController.Render();
 
-        var endTime = Stopwatch.GetTimestamp();
-        var elapsedSeconds = (double)(endTime - startTime) / Stopwatch.Frequency;
-
+        
         EventManager.PostRender?.Invoke(dt);
-        Debugger.PerformanceDebugger.GpuMetrics.AddCustom("Engine", "GPU", elapsedSeconds);
+    }
+
+    protected override void DisposeOther()
+    {
+        ConcurrentLogger.Instance.Dispose();
     }
 
     /// <summary>

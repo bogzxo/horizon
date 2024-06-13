@@ -32,13 +32,23 @@ public class Mesh2D : GameObject
     {
         base.Initialize();
 
-        Buffer = new VertexBufferObject(
+        if (
             Engine
                 .ObjectManager
                 .VertexArrays
-                .Create(VertexArrayObjectDescription.VertexBuffer)
-                .Asset
-        );
+                .TryCreate(
+                VertexArrayObjectDescription.VertexBuffer,
+                out var result
+                )
+        )
+        {
+            Buffer = new VertexBufferObject(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+
         SetVboLayout();
     }
 

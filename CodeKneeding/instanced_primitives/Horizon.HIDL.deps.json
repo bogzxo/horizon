@@ -1,0 +1,36 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "Horizon.HIDL/1.0.0": {
+        "dependencies": {
+          "Bogz.Logging": "1.0.0"
+        },
+        "runtime": {
+          "Horizon.HIDL.dll": {}
+        }
+      },
+      "Bogz.Logging/1.0.0": {
+        "runtime": {
+          "Bogz.Logging.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "Horizon.HIDL/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Bogz.Logging/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

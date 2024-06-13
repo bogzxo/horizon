@@ -3,7 +3,6 @@
 using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Descriptions;
-
 public readonly struct BufferObjectDescription : IAssetDescription
 {
     public readonly BufferTargetARB Type { get; init; }

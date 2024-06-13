@@ -1,4 +1,6 @@
-﻿using Horizon.Engine;
+﻿using Bogz.Logging;
+
+using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
@@ -20,15 +22,22 @@ public class Renderer2DTechnique : Technique
         : base()
     {
         this.frameBuffer = frameBuffer;
-
-        SetShader(GameEngine
+        if (GameEngine
                 .Instance
                 .ObjectManager
                 .Shaders
-                .CreateOrGet(
+                .TryCreateOrGet(
                     $"renderer2d_{ShaderFileName}",
-                    ShaderDescription.FromPath("shaders/renderer2d", ShaderFileName)
-                ));
+                    ShaderDescription.FromPath("shaders/renderer2d", ShaderFileName),
+                    out var result
+                ))
+        {
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
     }
 
     protected override void SetUniforms()

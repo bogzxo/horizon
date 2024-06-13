@@ -1,121 +1,131 @@
-﻿using System.Numerics;
+﻿using System;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
-using AutoVoxel.Data.Chunks;
-
-using CodeKneading.Player;
 using CodeKneading.Rendering;
-
-using Horizon.Core;
-using Horizon.Core.Components;
 using Horizon.Engine;
-
 using Silk.NET.Maths;
 
 namespace CodeKneading.Voxel;
 
-internal class SkyManager : IGameComponent
-{
-    public bool Enabled { get; set; }
-    public string Name { get; set; }
-    public Entity Parent { get; set; }
-
-    public static Matrix4x4 SunProj { get; private set; }
-
-    public static Matrix4x4 SunView;
-    public Vector3 SunPosition { get; private set; }
-    public Vector3 SunDirection { get => Vector3.Normalize(new Vector3(128, 0, 128) - SunPosition); }
-
-
-    public SkyManager()
-    {
-        Name = "SkyManager";
-        Enabled = true;
-    }
-
-    public void Initialize()
-    {
-
-    }
-
-    public void Render(float dt, object? obj = null)
-    {
-
-    }
-
-    public void UpdatePhysics(float dt)
-    {
-
-    }
-
-    float timer = 0.0f;
-    public void UpdateState(float dt)
-    {
-        timer += dt;
-        SunProj = Matrix4x4.CreateOrthographic(250, 250, 100, 400.0f);
-        SunPosition = new Vector3(MathF.Sin(timer / (60.0f * 20.0f)) * 256, 128, MathF.Cos(timer / (60.0f * 20.0f)) * 256);
-        SunView = Matrix4x4.CreateLookAt(SunPosition, new Vector3(128, 0, 128), Vector3.UnitY);
-    }
-}
-
 internal class VoxelWorld : GameObject
 {
-    internal static readonly ParallelQueueWorker DataGeneratorWorker = new();
-    internal static readonly ParallelQueueWorker MeshGeneratorWorker = new();
-
     public readonly WorldRenderer Renderer;
     public readonly SkyManager Sky;
 
-    public const int WIDTH = 8;
-    public const int DEPTH = 8;
+    public const int LOADED_DISTANCE = 128;
+    private const int LOD_PARTITION_DIST = 128;
+    public const int HEIGHT = 8;
 
-    public static readonly int CHUNK_COUNT = WIDTH * DEPTH;
+    public static readonly TileChunk[] Chunks = new TileChunk[LOADED_DISTANCE * LOADED_DISTANCE * HEIGHT];
 
     public VoxelWorld()
     {
-        Chunks = new TileChunk[WIDTH * DEPTH];
-
         Renderer = AddComponent<WorldRenderer>(new(this));
         Sky = AddComponent<SkyManager>();
+    }
 
-        DataGeneratorWorker.StartTask();
-        MeshGeneratorWorker.StartTask();
-
-        // idk why i do that
-        Task.Factory.StartNew(() =>
+    static void CalculateLODLevel()
+    {
+        Parallel.ForEach(Chunks, (chunk) =>
         {
-            for (int i = 0; i < CHUNK_COUNT; i++)
-            {
-                Chunks[i] = new TileChunk(new Vector2D<int>(i % WIDTH, i / DEPTH));
-                DataGeneratorWorker.Enqueue(ChunkDataGenerator.GenerateTilesAsync(Chunks[i]));
-            }
+            chunk.LOD = GetLod(in chunk);
         });
     }
 
-    protected override void DisposeOther()
+    static int GetLod(ref readonly TileChunk chunk)
     {
-        DataGeneratorWorker.Dispose();
-        MeshGeneratorWorker.Dispose();
+        return Math.Clamp((int)Vector3.Distance(new Vector3(chunk.ChunkPosition.X * TileChunk.SIZE, chunk.ChunkPosition.Y * TileChunk.SIZE, chunk.ChunkPosition.Z * TileChunk.SIZE), Player.GamePlayer.Transform.Position) / LOD_PARTITION_DIST, 0, 4);
     }
 
-    public Tile this[int x, int y, int z]
+    public override void Initialize()
     {
-        get
+        base.Initialize();
+        WorldChunkLoaderAsync();
+    }
+
+    private void WorldChunkLoaderAsync()
+    {
+        Span<TileChunk> chunkSpan = new(Chunks);
+
+        Task<TileChunk>[] dataTasks = new Task<TileChunk>[Chunks.Length];
+        for (int z = 0; z < LOADED_DISTANCE; z++)
         {
-            if (x < 0 || y < 0 || z < 0)
-                return Tile.Empty;
-
-            int chunkX = x / TileChunk.SIZE;
-            int chunkY = z / TileChunk.SIZE;
-
-            if (chunkX >= WIDTH || chunkY >= DEPTH || y >= TileChunk.SIZE)
-                return Tile.Empty;
-
-            int localX = x % TileChunk.SIZE;
-            int localZ = z % TileChunk.SIZE;
-
-            return Chunks[chunkX + (chunkY * WIDTH)].GetFloor(localX, y, localZ);
+            for (int x = 0; x < LOADED_DISTANCE; x++)
+            {
+                for (int y = 0; y < HEIGHT; y++)
+                {
+                    int index = x + (y * LOADED_DISTANCE) + (z * LOADED_DISTANCE * HEIGHT);
+                    chunkSpan[index] = (new TileChunk(new Vector3D<int>(x, y, z)));
+                }
+            }
         }
+        CalculateLODLevel();
+
+
+        Task.Run(() => Parallel.For(0, Chunks.Length, (index) => ChunkDataGenerator.GenerateTiles(Chunks[index])))
+            .ContinueWith((_) => Task.Run(() => Parallel.For(0, Chunks.Length, (index) => ChunkMeshGenerator.GenerateMesh(Chunks[index]))));
     }
 
-    public TileChunk[] Chunks { get; init; }
+    int currentLod = -1;
+    public override void UpdateState(float dt)
+    {
+        int key =
+            Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.Number0) ? 0 :
+            Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.Number1) ? 1 :
+            Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.Number2) ? 2 :
+            Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.Number3) ? 3 :
+            Engine.InputManager.KeyboardManager.IsKeyDown(Silk.NET.Input.Key.Number4) ? 4 : -1;
+
+        if (key != -1 && currentLod != key)
+        {
+            var chunkSpan = new ReadOnlySpan<TileChunk>(Chunks);
+            currentLod = key;
+            Renderer.BufferManager.ChunkletManager.FreeAll();
+
+            for (int i = 0; i < Chunks.Length; i++)
+            {
+                chunkSpan[i].LOD = currentLod;
+                ChunkMeshGenerator.GenerateMeshAsync(chunkSpan[i]);
+            }
+
+        }
+
+        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Silk.NET.Input.Key.F))
+        {
+            currentLod = -1;
+            //Array.Sort(Chunks, new ChunkDistanceComparer(Player.GamePlayer.Transform.Position));
+            var chunkSpan = new ReadOnlySpan<TileChunk>(Chunks);
+            CalculateLODLevel();
+            Renderer.BufferManager.ChunkletManager.FreeAll();
+
+
+            for (int i = 0; i < Chunks.Length; i++)
+            {
+                ChunkMeshGenerator.GenerateMeshAsync(chunkSpan[i]);
+            }
+        }
+
+        base.UpdateState(dt);
+    }
+
+    public static Tile GetTile(in int x, in int y, in int z)
+    {
+        if (x < 0 || y < 0 || z < 0)
+            return Tile.OOB;
+
+        int chunkX = x / TileChunk.SIZE;
+        int chunkZ = z / TileChunk.SIZE;
+        int chunkY = y / TileChunk.SIZE;
+
+        if (chunkX >= LOADED_DISTANCE || chunkZ >= LOADED_DISTANCE || y >= TileChunk.SIZE * HEIGHT || chunkY >= HEIGHT)
+            return Tile.OOB;
+
+        int localX = x % TileChunk.SIZE;
+        int localY = y % TileChunk.SIZE;
+        int localZ = z % TileChunk.SIZE;
+        int index = (chunkZ * LOADED_DISTANCE * HEIGHT) + (chunkY * LOADED_DISTANCE) + chunkX;
+        return Chunks[index][localX, localY, localZ];
+    }
 }

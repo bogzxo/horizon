@@ -5,12 +5,12 @@ using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 
 namespace Horizon.OpenGL.Factories;
-
 public class VertexArrayObjectFactory
     : IAssetFactory<VertexArrayObject, VertexArrayObjectDescription>
 {
-    public static AssetCreationResult<VertexArrayObject> Create(
-        in VertexArrayObjectDescription description
+    public static bool TryCreate(
+        in VertexArrayObjectDescription description,
+        out AssetCreationResult<VertexArrayObject> result
     )
     {
         uint vaoHandle = ObjectManager.GL.CreateVertexArray();
@@ -21,8 +21,7 @@ public class VertexArrayObjectFactory
 
         foreach (var (type, desc) in description.Buffers)
         {
-            var buffer = ObjectManager.Instance.Buffers.Create(desc);
-            if (buffer.Status != AssetCreationStatus.Success)
+            if (!ObjectManager.Instance.Buffers.TryCreate(desc, out var buffer))
             {
                 // make sure to free the VertexArrayObject
                 ObjectManager.GL.BindVertexArray(0);
@@ -33,24 +32,28 @@ public class VertexArrayObjectFactory
                     ObjectManager.Instance.Buffers.Remove(item);
                 buffers.Clear();
 
-                return new AssetCreationResult<VertexArrayObject>
+                result = new AssetCreationResult<VertexArrayObject>
                 {
                     Asset = new(),
                     Status = AssetCreationStatus.Failed,
                     Message = $"Failed to create and attach BufferObject[{type}] to VAO!"
                 };
+                return false;
             }
             else
+            {
                 buffers.Add(type, buffer.Asset);
+            }
 
             buffer.Asset.Bind();
         }
         ObjectManager.GL.BindVertexArray(0);
 
-        return new AssetCreationResult<VertexArrayObject>
+        result = new AssetCreationResult<VertexArrayObject>
         {
             Asset = new() { Handle = vaoHandle, Buffers = buffers },
             Status = AssetCreationStatus.Success
         };
+        return true;
     }
 }

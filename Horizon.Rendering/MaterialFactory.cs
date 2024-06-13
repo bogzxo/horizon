@@ -50,17 +50,19 @@ public static class MaterialFactory
                 string identifier = rawFileName[lastIndex..];
 
                 // load the image
-                var texture = GameEngine
+                if (GameEngine
                     .Instance
                     .ObjectManager
                     .Textures
-                    .CreateOrGet(
+                    .TryCreateOrGet(
                         $"{name}{identifier}",
-                        new OpenGL.Descriptions.TextureDescription { Path = fullFile }
-                    );
-
-                // add it to attachment list
-                attachments.Add(_fileSuffixes[identifier], texture);
+                        new OpenGL.Descriptions.TextureDescription { Paths = [fullFile] },
+                        out var result
+                    ))
+                {
+                    // add it to attachment list
+                    attachments.Add(_fileSuffixes[identifier], result.Asset);
+                }
             }
         }
 

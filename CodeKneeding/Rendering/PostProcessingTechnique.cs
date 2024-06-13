@@ -1,31 +1,51 @@
-﻿using CodeKneading.Voxel;
+﻿using System.Numerics;
+
+using CodeKneading.Player;
+using CodeKneading.Voxel;
 
 using Horizon.Core;
 using Horizon.Engine;
 using Horizon.OpenGL;
+using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
+using Horizon.Rendering;
+
+using Silk.NET.Maths;
+using Silk.NET.OpenGL;
 
 namespace CodeKneading.Rendering;
 
 internal class PostProcessingTechnique : Technique
 {
-    private readonly WorldRenderer renderer;
+    private RenderTarget target;
+    private Horizon.OpenGL.Assets.Texture skybox;
+    private uint skyTextureHandle;
+    private FrameBufferObject skyTextureFbo;
 
-    public PostProcessingTechnique(in Entity parent)
+    public PostProcessingTechnique()
     {
-        SetShader(GameEngine.Instance.ObjectManager.Shaders.Create(ShaderDescription.FromPath("content/shaders", "post")).Asset);
+        if(GameEngine.Instance.ObjectManager.Shaders.TryCreate(
+            ShaderDescription.FromPath(
+                "content/shaders",
+                "post"
+                ),
+            out var result))
+        {
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
-        var world = parent as VoxelWorld;
-        this.renderer = world.Renderer;
+        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture5);
+        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture6);
+    }
 
-
-        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture0);
-        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture1);
-        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture2);
-        GameEngine.Instance.GL.ActiveTexture(Silk.NET.OpenGL.TextureUnit.Texture3);
-        GameEngine.Instance.GL.Enable(Silk.NET.OpenGL.EnableCap.Texture2D);
-
+    public void SetRenderTarget(in RenderTarget target)
+    {
+        this.target = target;
     }
 
     protected override void SetUniforms()
@@ -33,18 +53,22 @@ internal class PostProcessingTechnique : Technique
         SetFboUniforms();
     }
 
+    internal void SetSkyBox(FrameBufferObject frameBuffer)
+    {
+        this.skyTextureFbo = frameBuffer;
+    }
+
     private void SetFboUniforms()
     {
-        GameEngine.Instance.GL.BindTextureUnit(0, renderer.FrameBuffer.Attachments[Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0].Handle);
-        SetUniform("uTexAlbedo", 0);
+        target.BindForReading(Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0, 5);
+        SetUniform("uTexAlbedo", 5);
 
-        GameEngine.Instance.GL.BindTextureUnit(1, renderer.FrameBuffer.Attachments[Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment1].Handle);
-        SetUniform("uTexSun", 1);
+        target.BindForReading(Silk.NET.OpenGL.FramebufferAttachment.DepthAttachment, 6);
+        SetUniform("uTexDepth", 6);
 
-        GameEngine.Instance.GL.BindTextureUnit(2, renderer.FrameBuffer.Attachments[Silk.NET.OpenGL.FramebufferAttachment.DepthAttachment].Handle);
-        SetUniform("uTexDepth", 2);
+        skyTextureFbo.BindAttachment(FramebufferAttachment.ColorAttachment0, 7);
+        SetUniform("uTexSky", 7);
 
-        GameEngine.Instance.GL.BindTextureUnit(3, renderer.FrameBuffer.Attachments[Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment2].Handle);
-        SetUniform("uTexFrag", 3);
+        SetUniform("uCameraDir", GameEngine.Instance.ActiveCamera.Direction);
     }
 }

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href='https://fonts.googleapis.com/css?family=Space Mono' rel='stylesheet'>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.1/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.1/theme/dracula.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.1/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.1/mode/javascript/javascript.min.js"></script>
+
+    <title>Horizon WebHost</title>
+    <style>
+        /*
+           f55c7a
+           f57c73
+           f68c70
+           f6ac69
+           f6bc66
+        */
+
+        /* Sidebar */
+.sidebar-top>h1 {
+    color: white;
+    text-align: center;
+}
+
+.sidebar-container {
+    max-width: 20%;
+    height: 100vh;
+    background: linear-gradient(#f57c73, #f6bc66);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.sidebar-top {
+    width: 100%;
+    height: 15vh;
+}
+
+.sidebar-list {
+    list-style-type: none;
+    padding: 0;
+    margin: auto 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.sidebar-menuitem {
+    color: white;
+    font-size: 20px;
+    padding: 10px 0 10px 0;
+    width: 100%;
+    text-align: center;
+    background-color: #f55c7a;
+    transition: background-color 0.3s ease-out;
+    backdrop-filter: blur(32px);
+}
+
+.sidebar-menuitem a {
+    text-decoration: none;
+    color: white;
+}
+
+.sidebar-menuitem:hover {
+    background-color: #ff00ff2b;
+    transition: background-color 0.2s ease-in;
+}
+
+.sidebar-menuitem:active {
+    background-color: #121399;
+}
+
+/* Card Container */
+.tabcontent {
+    margin: 0 1%;
+    background-color: linear-gradient(#f55c7a, #f57c73);
+    width: 100%;
+    height: 20vh;
+    padding: 40px 0 20px 0;
+}
+
+#metrics {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+
+/* Status Cards */
+.card {
+    flex: 1;
+    padding: 20px;
+    margin: 5px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    background-color: #f6ac69;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+    padding: 20px;
+    color: white;
+    height: 100%;
+    transition: background-color 0.1s ease-in-out;
+}
+
+.card:hover {
+    background-color: #fece8f;
+    transition: background-color 0.1s ease-in-out;
+}
+
+/* Card Components */
+.card h1 {
+    margin-top: 0;
+    font-size: 1.5rem;
+}
+
+.card h3 {
+    color: #313131;
+}
+
+.card p {
+    font-size: 0.8rem;
+}
+
+#commandConsole {
+    background-color: #292929;
+    border-radius: 10px 10px 0px 0px;
+    padding: 20px;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+}
+
+#scriptArea {
+    width: calc(100vw);
+    height: 70vh !important;
+    background-color: #1e1e1e;
+    color: #fff;
+    border: none;
+    resize: none;
+    overflow-y: scroll;
+}
+
+#commandBuffer {
+    width: 88%;
+    height: 200px;
+    background-color: #1e1e1e;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+    resize: none;
+    overflow-y: scroll;
+}
+
+#command {
+    width: 89%;
+    height: 40px;
+    background-color: #1e1e1e;
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 10px;
+    box-sizing: border-box;
+    font-size: 16px;
+}
+
+#command:focus {
+    outline: none;
+}
+
+#command::placeholder {
+    color: #888;
+}
+
+/* Card status styles are configured in JS */
+
+/* VarDrop */
+#vardrop {}
+
+/* Body styles and animations */
+html,
+body {
+    width: 100%;
+    font-family: 'Space Mono';
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    background-color: #f57c73;
+    display: flex;
+    flex-direction: row;
+}
+
+@media (max-width: 900px) {
+
+html,
+body {
+    flex-direction: column;
+    font-size: 0.8rem;
+}
+
+.sidebar-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    height: auto;
+}
+
+.card-container {
+    width: 100%;
+    height: 40vh;
+}
+
+.card {
+    width: calc(85%);
+}
+}
+    </style>
+</head>
+
+<body>
+    <div class="sidebar-container">
+        <div class="sidebar-top">
+            <h1>Horizon</h1>
+        </div>
+        <ul class="sidebar-list">
+            <li class="sidebar-menuitem"><a href="#" onclick="setTab(event, 'metrics')" id="defaultOpen">Metrics</a>
+            </li>
+            <li class="sidebar-menuitem"><a href="#" onclick="setTab(event, 'scripting')">Scripting</a></li>
+            <li class="sidebar-menuitem"><a href="#" onclick="setTab(event, 'settings')">Settings</a></li>
+        </ul>
+    </div>
+    <div>
+        <div>
+            <div id="metrics" class="card-container tabcontent">
+                <div class="card" id="card-render">
+                    <h1>Render</h1>
+                    <div>
+                        <h3>
+                            Status: <div id="render-status-label" style="display: inline;">Unknown</div>
+                        </h3>
+                        <p>
+                            The render thread is responsible for all render logic, as well as instantiating objects
+                            allocated using
+                            the ECS.
+                        </p>
+                    </div>
+                </div>
+                <div class="card" id="card-state">
+                    <h1>State</h1>
+                    <div>
+                        <h3>
+                            Status: <div id="state-status-label" style="display: inline;">Unknown</div>
+                        </h3>
+                        <p>
+                            The state thread governs all core game logic irrelevent from rendering, currently it is tied
+                            to the
+                            render thread.
+                        </p>
+                    </div>
+                </div>
+                <div class="card" id="card-physics">
+                    <h1>Physics</h1>
+                    <div>
+                        <h3>
+                            Status: <div id="physics-status-label" style="display: inline;">Unknown</div>
+                        </h3>
+                        <p>
+                            The physics thread is allocated specifically for physics related tasks, although it is
+                            implemented as
+                            more of a general use 3rd thread.
+                        </p>
+                    </div>
+                </div>
+                <div id="commandConsole">
+                    <textarea readonly id="commandBuffer"></textarea>
+                    <input type="text" id="command">
+                </div>
+            </div>
+
+        </div>
+        <div id="scripting" class="card-container tabcontent" style="display: none;">
+            <textarea id="scriptArea"></textarea>
+        </div>        
+    </div>
+
+
+    <script>
+        var scriptEditor = CodeMirror.fromTextArea(document.getElementById("scriptArea"), {
+            lineNumbers: true,
+            mode: "javascript",
+            theme: "dracula",
+            // Set a fixed height for the editor
+            height: "70vh",
+            width: "100%",
+        });
+
+
+        function setTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "";
+            evt.currentTarget.className += " active";
+        }
+
+
+        var textInput = document.getElementById("command");
+        var commandBuffer = document.getElementById("commandBuffer");
+        const socket = new WebSocket("ws://127.0.0.1:8080/index");
+        const commandHistory = [""];
+
+        window.onbeforeunload = function () {
+            socket.onclose = function () { }; // disable onclose handler first
+            socket.close();
+        };
+
+        socket.onmessage = function (event) {
+            const csObj = JSON.parse(event.data);
+
+            if (csObj.SpecialPacket) {
+                switch (csObj.Message) {
+                    case "clear":
+                        commandBuffer.innerHTML = "";
+                        break;
+                }
+            }
+            else {
+                switch (csObj.PacketID) {
+                    case 0:
+                        updateCardInfo(csObj);
+                        break;
+                    case 1:
+                        processCommand(csObj);
+                        break;
+                }
+            }
+        };
+
+        var historyPointer = 0;
+        function displayPastCommand() {
+            if (historyPointer < 0 || historyPointer > commandHistory.length - 1) {
+                textInput.value = "";
+            }
+            else
+                textInput.value = commandHistory[historyPointer];
+        }
+        textInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                if (socket.readyState != 1) {
+                    writeToBuffer(textInput.value, false);
+                    writeToBuffer("Horizon.WebHost server is not ready.", true);
+                }
+                else {
+                    socket.send(textInput.value);
+                }
+                commandHistory.push(textInput.value);
+                textInput.value = "";
+                historyPointer = commandHistory.length;
+            }
+            else if (event.keyCode == 38) {
+                if (historyPointer > 0) historyPointer--;
+                displayPastCommand();
+            }
+            else if (event.keyCode == 40) {
+                displayPastCommand();
+                if (historyPointer < commandHistory.length) historyPointer++;
+            }
+        });
+
+        function writeToBuffer(text, isResponse) {
+            commandBuffer.innerHTML += (isResponse ? ">" : "\t<") + text + "\n"
+            commandBuffer.scrollTop = commandBuffer.scrollHeight;
+
+        }
+
+        function processCommand(data) {
+            commandBuffer.innerHTML += (data.IsResponse ? ">" : "\t<") + data.Message + "\n";
+            commandBuffer.scrollTop = commandBuffer.scrollHeight;
+        }
+
+        const LABEL_HEALTHY = "Healthy";
+        const LABEL_UNHEALTHY = "Unhealthy";
+
+        const COLOUR_UNHEALTHY = "red";
+        const COLOUR_WARNING = "yellow";
+        const COLOUR_HEALTHY = "green";
+
+        const RENDER_TARGET = 1 / 60.0;
+        const LOGIC_TARGET = 1 / 120.0;
+        const PHYSICS_TARGET = 1 / 40.0;
+
+        const SECOND_US_MULT = 1000000.0;
+        const SAFE_MARGIN = 3.0 / 8.0; // warning margin as a multiplier
+
+        function updateCard(title, card, targetRate, realRate) {
+            // Updates the card title
+            document.querySelector('#' + "card-" + card).childNodes[1].textContent =
+                title + " " +  // Title
+                Math.round(1.0 / realRate) + "hz (" + // FPS
+                Math.round(realRate * SECOND_US_MULT) + "us/" + // Real FPS
+                Math.round(targetRate * SECOND_US_MULT) + "us)"; // Target FPS
+
+            // Updates the cards status
+            const state = realRate < targetRate;
+            const diff = targetRate - realRate;
+
+            document.querySelector("#" + card + "-status-label").style.color = ((diff < (targetRate * SAFE_MARGIN) && state)) ? COLOUR_WARNING : (state ? COLOUR_HEALTHY : COLOUR_UNHEALTHY);
+            document.querySelector("#" + card + "-status-label").textContent = state ? LABEL_HEALTHY : LABEL_UNHEALTHY;
+        }
+
+        const CARD_RENDER_TITLE = 'Render';
+        const CARD_LOGIC_TITLE = 'State';
+        const CARD_PHYSICS_TITLE = 'Physics';
+        function updateCardInfo(data) {
+            updateCard(CARD_RENDER_TITLE, "render", RENDER_TARGET, data.RenderRate);
+            updateCard(CARD_LOGIC_TITLE, "state", LOGIC_TARGET, data.LogicRate);
+            updateCard(CARD_PHYSICS_TITLE, "physics", PHYSICS_TARGET, data.PhysicsRate);
+        }
+    </script>
+</body>
+
+</html>

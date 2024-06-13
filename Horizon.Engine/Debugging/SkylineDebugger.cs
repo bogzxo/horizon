@@ -64,6 +64,8 @@ public class SkylineDebugger : Entity
 
     public override void Render(float dt, object? obj = null)
     {
+        if (GameEngine.Instance.imguiController is null) return;
+
         RenderToContainer = Enabled && GameContainerDebugger.Visible && GameContainerDebugger.FrameBuffer.Handle > 0;
 
         if (!hasInitializedHIDLE)
@@ -145,5 +147,11 @@ const env = {
         }
 
         base.Render(dt, obj);
+    }
+
+    public override void UpdateState(float dt)
+    {
+        if (GameEngine.Instance.imguiController is null) return;
+        base.UpdateState(dt);
     }
 }

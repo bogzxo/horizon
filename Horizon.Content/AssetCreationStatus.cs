@@ -8,10 +8,10 @@ public enum AssetCreationStatus
     Success = 1
 }
 
-public readonly struct AssetCreationResult<AssetType>
+public struct AssetCreationResult<AssetType>
     where AssetType : IGLObject
 {
-    public readonly AssetType Asset { get; init; }
-    public readonly AssetCreationStatus Status { get; init; }
-    public readonly string Message { get; init; }
+    public AssetType Asset { get; set; }
+    public AssetCreationStatus Status { get; set; }
+    public string Message { get; set; }
 }

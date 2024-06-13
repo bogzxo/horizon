@@ -1,4 +1,6 @@
-﻿using Horizon.Core.Primitives;
+﻿using System.Runtime.CompilerServices;
+
+using Horizon.Core.Primitives;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 
@@ -17,7 +19,9 @@ public class VertexArrayObject : IGLObject
         get => Buffers[type];
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Bind() => ObjectManager.GL.BindVertexArray(Handle);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unbind() => ObjectManager.GL.BindVertexArray(0);
 }

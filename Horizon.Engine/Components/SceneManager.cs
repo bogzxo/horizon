@@ -23,6 +23,15 @@ public class SceneManager : InstanceManager<Scene>, IGameComponent
         CurrentInstance!.Parent = Parent; // pass through the engine.
     }
 
+    public void SetScene(in Scene scene)
+    {
+        CurrentInstance = scene;
+
+        _halt = true;
+        CurrentInstance!.Enabled = false;
+        CurrentInstance!.Parent = Parent; // pass through the engine.
+    }
+
     public void Render(float dt, object? obj = null)
     {
         if (_halt && CurrentInstance is not null)

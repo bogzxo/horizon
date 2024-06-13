@@ -16,61 +16,67 @@ namespace Horizon.OpenGL.Factories;
 /// </summary>
 public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
 {
-    public static AssetCreationResult<Shader> Create(in ShaderDescription description)
+    public static bool TryCreate(
+        in ShaderDescription description,
+        out AssetCreationResult<Shader> result
+        )
     {
         // Program compilation result.
-        var result = new Shader { Handle = ObjectManager.GL.CreateProgram() };
+        var asset = new Shader { Handle = ObjectManager.GL.CreateProgram() };
 
         // Enumerate and compile each program in the source.
         var aggregatedResults = CompileShaderSources(description.Definitions).ToArray();
         var failed = aggregatedResults.Where(res => res.Status == CompilationStatus.Fail).ToArray();
 
         // If any of our shaders failed to compile throw an error.
-        if (failed.Any())
+        if (failed.Length != 0)
         {
             string errorMessage =
                 "[ShaderFactory] Cannot compile Program({handle}) with failed shaders:\n\n";
             foreach (var item in failed)
                 errorMessage += $"[{item.Handle}:{item.Status}] {item.ErrorMessage}\n";
 
-            return new()
+            result = new()
             {
-                Asset = result,
+                Asset = asset,
                 Message = errorMessage,
                 Status = AssetCreationStatus.Failed
             };
+            return false;
         }
 
         // Attach each shader to the program.
         foreach (var res in aggregatedResults)
-            ObjectManager.GL.AttachShader(result.Handle, res.Handle);
+            ObjectManager.GL.AttachShader(asset.Handle, res.Handle);
 
         // Attempt to link them together.
-        ObjectManager.GL.LinkProgram(result.Handle);
+        ObjectManager.GL.LinkProgram(asset.Handle);
 
         // (cleanup) Detach and delete each shader to the program.
         foreach (var res in aggregatedResults)
         {
-            ObjectManager.GL.DetachShader(result.Handle, res.Handle);
+            ObjectManager.GL.DetachShader(asset.Handle, res.Handle);
             ObjectManager.GL.DeleteShader(res.Handle);
         }
 
         // Check for linking errors.
-        ObjectManager.GL.GetProgram(result.Handle, GLEnum.LinkStatus, out var status);
+        ObjectManager.GL.GetProgram(asset.Handle, GLEnum.LinkStatus, out var status);
         if (status == 0)
         {
-            return new()
+            result = new()
             {
-                Asset = result,
+                Asset = asset,
                 Message =
-                    $"Shader Failed to link with error: {ObjectManager.GL.GetProgramInfoLog(result.Handle)}",
+                    $"Shader Failed to link with error: {ObjectManager.GL.GetProgramInfoLog(asset.Handle)}",
                 Status = AssetCreationStatus.Failed
             };
+            return false;
         }
 
         // Success
         //ObjectManager.Logger.Log(LogLevel.Debug, $"Shader[{handle}] created!");
-        return new() { Asset = result, Status = AssetCreationStatus.Success };
+        result = new() { Asset = asset, Status = AssetCreationStatus.Success };
+        return true;
     }
 
     /* Internal data structures to help transfer state information between stages. */
@@ -95,7 +101,7 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
     /// <returns>A <see cref="CompilationResult"/> fully encapsulating the result of attempting to compile the shader, including the shader handle if successful.</returns>
     private static CompilationResult CompileShaderFromSource(in ShaderType type, in string source)
     {
-        // Create a shader handle.
+        // TryCreate a shader handle.
         uint handle = ObjectManager.GL.CreateShader(type);
 
         // Shader compilation result.

@@ -8,7 +8,7 @@ public readonly struct FrameBufferObjectDescription : IAssetDescription
 {
     public readonly uint Width { get; init; }
     public readonly uint Height { get; init; }
-    public readonly Dictionary<FramebufferAttachment, TextureDefinition> Attachments { get; init; }
+    public readonly Dictionary<FramebufferAttachment, FrameBufferAttachmentDefinition> Attachments { get; init; }
 
     /// <summary>
     /// Returns a frame buffer description with a single color buffer.
@@ -18,6 +18,6 @@ public readonly struct FrameBufferObjectDescription : IAssetDescription
         {
             Width = width,
             Height = height,
-            Attachments = new() { { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaFloat } },
+            Attachments = new() { { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAF } },
         };
 }

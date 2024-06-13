@@ -1,0 +1,102 @@
+/* Helper class for adding shadows */
+.shadow-element {
+    box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+}
+
+/* Style the header with a grey background and some padding */
+.header {
+    overflow: hidden;
+    background-color: #f1f1f1;
+    border-radius: 25px;
+}
+
+/* Style the header links */
+.header a {
+    float: left;
+    color: black;
+    text-align: center;
+    padding: 16px 16px;
+    margin: 16px 0 16px 0;
+    text-decoration: none;
+    font-size: 18px;
+    line-height: 25px;
+    border-radius: 16px;
+    margin-right: 8px;
+}
+
+/* Style the logo link (notice that we set the same value of line-height and font-size to prevent the header to increase when the font gets bigger */
+.header a.logo {
+    font-size: 2.5em;
+    font-weight: bold;
+    margin-left: 8px; /* see .header a margin-right */
+}
+
+/* Change the background color on mouse-over */
+.header a:hover {
+    background-color: #ddd;
+    color: black;
+}
+
+/* Style the active/current link*/
+.header a.active {
+    background-color: dodgerblue;
+    color: white;
+}
+
+/* Float the link section to the right */
+.header-right {
+    float: right;
+}
+
+/* Style the icon on the left */
+.header img {
+    height: 25%;
+    width: 25%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Style the body a horizon-esque gradient */
+body {
+    font-family: 'Hack';
+    margin: 0;
+    height: 100vh;
+    background-image: linear-gradient(to top, dodgerblue, lightblue);
+}
+
+/* Style the container to have a transparent border to float the ui */
+.container {
+    height: 100%;
+    border: 16px transparent solid;
+    box-sizing: border-box;
+}
+
+.content {
+    margin-top: 16px;
+}
+
+/* Add media queries for responsiveness - when the screen is 500px wide or less, stack the links on top of each other */
+@media screen and (max-width: 540px) {
+    .container {
+        border: 0;
+        margin: 0;
+    }
+    .header {
+        border-radius: 0;
+    }
+    .header a {
+        float: none;
+        display: block;
+        margin: 0;
+        border-radius: 0px;
+    }
+    .header img {
+        display: none;
+    }
+    .header-right {
+        float: none;
+    }
+    .header a.logo {
+        font-size: 2em;
+    }
+}

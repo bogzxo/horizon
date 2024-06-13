@@ -20,21 +20,32 @@ public class Renderer2D : GameObject
 
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
 
-    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) => GameEngine
+    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height)
+    {
+        if (GameEngine
             .Instance
             .ObjectManager
             .FrameBuffers
-            .Create(
+            .TryCreate(
                 new FrameBufferObjectDescription
                 {
                     Width = width,
                     Height = height,
                     Attachments = new() {
-                        { FramebufferAttachment.ColorAttachment0, TextureDefinition.RgbaUnsignedByte },
+                        { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
                     }
-                }
-            )
-            .Asset;
+                },
+                out var result
+            ))
+        {
+            return result.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            throw new Exception(result.Message);
+        }
+    }
 
     private FrameBufferObject frameBuffer;
     private RenderRectangle renderRectangle;

@@ -18,13 +18,19 @@ public class ConcurrentLogger : ILoggerDisposable
         get => _logger.Value;
     }
 
-    private ConcurrentQueue<LogMessage> logMessages;
-    private StreamWriter? writer;
-    private Task? task;
+    private readonly ConcurrentQueue<LogMessage> logMessages;
+    private readonly StreamWriter? writer;
+    private readonly Task loggingTask;
+    private readonly CancellationTokenSource tokenSource;
+    private readonly ManualResetEventSlim eventSlim;
 
     public ConcurrentLogger(string logFile)
     {
-        logMessages = new();
+        logMessages = new ConcurrentQueue<LogMessage>();
+
+        eventSlim = new ManualResetEventSlim();
+        tokenSource = new CancellationTokenSource();
+        loggingTask = MessageLoggingCallbackAsync();
 
         if (logFile.Equals(string.Empty))
             return;
@@ -44,24 +50,20 @@ public class ConcurrentLogger : ILoggerDisposable
 
     public virtual void Log(LogLevel level, string message)
     {
-        try
-        {
-            logMessages.Enqueue(new(message, level));
-            if (task?.Status == TaskStatus.Running)
-                return;
-
-            // TODO yk
-            task ??= Task.Factory.StartNew(() => MessageLoggingCallback());
-        }
-        catch { }
+        logMessages.Enqueue(new(message, level));
+        eventSlim.Set();
     }
 
+    private Task MessageLoggingCallbackAsync() => Task.Run(MessageLoggingCallback, tokenSource.Token);
     private void MessageLoggingCallback()
     {
         StringBuilder sb = new();
 
-        while (!logMessages.IsEmpty)
+        while (!tokenSource.IsCancellationRequested)
         {
+            eventSlim.Wait();
+            eventSlim.Reset();
+
             if (logMessages.TryDequeue(out var msgQ))
             {
                 string msg = $"[{msgQ.Level}] {msgQ.Message}";
@@ -87,12 +89,11 @@ public class ConcurrentLogger : ILoggerDisposable
                     sb.Clear();
                 }
             }
+            if (sb.Length > 0)
+                writer?.Write(sb.ToString());
+            Console.ForegroundColor = ConsoleColor.White;
         }
-        if (sb.Length > 0)
-            writer?.Write(sb.ToString());
 
-        task = null;
-        Console.ForegroundColor = ConsoleColor.White;
     }
 
     public void Log(LogLevel level, object message)
@@ -103,16 +104,21 @@ public class ConcurrentLogger : ILoggerDisposable
     public void Dispose()
     {
         Log(LogLevel.Info, "[Logger] Disposing self!");
-        MessageLoggingCallback();
-
         Console.WriteLine("Flushing logger.");
+        tokenSource.Cancel();
+        Flush();
         writer?.Flush();
+        loggingTask.Wait();
+        tokenSource.Dispose();
+        loggingTask.Dispose();
+
         Console.WriteLine("Disposing logger.");
+        writer?.Close();
         writer?.Dispose();
         Console.WriteLine("Logger Finalized.");
 
         GC.SuppressFinalize(this);
     }
 
-    public void Flush() => MessageLoggingCallback();
+    public void Flush() => eventSlim.Set();
 }

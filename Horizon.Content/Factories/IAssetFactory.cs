@@ -11,5 +11,5 @@ public interface IAssetFactory<AssetType, DescriptionType>
     where AssetType : IGLObject
     where DescriptionType : IAssetDescription
 {
-    public static abstract AssetCreationResult<AssetType> Create(in DescriptionType description);
+    public static abstract bool TryCreate(in DescriptionType description, out AssetCreationResult<AssetType> result);
 }

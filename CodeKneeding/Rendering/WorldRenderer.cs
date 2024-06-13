@@ -3,78 +3,116 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Reflection.PortableExecutable;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 
-using AutoVoxel;
-
+using CodeKneading.Player;
 using CodeKneading.Voxel;
 
 using Horizon.Core;
+using Horizon.Core.Collections;
 using Horizon.Core.Components;
 using Horizon.Engine;
+using Horizon.Engine.Debugging.Debuggers;
+using Horizon.HIDL.Runtime;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering;
 
+using ImGuiNET;
+
+using ImPlotNET;
+
+using Silk.NET.Core.Native;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.SDL;
 
+using static CodeKneading.Rendering.WorldBufferManager;
+
 namespace CodeKneading.Rendering;
 
-internal static class ChunkDataGenerator
+internal class FrustumCullingTechnique : Technique
 {
-    public static Task GenerateTilesAsync(TileChunk chunk)
+    public FrustumCullingTechnique()
     {
-        return Task.Factory.StartNew(() =>
+        if (GameEngine.Instance.ObjectManager.Shaders.TryCreate(ShaderDescription.FromPath("content/shaders", "tilemesh_frustum"), out var result))
         {
-            for (int z = 0; z < TileChunk.SIZE; z++)
-            {
-                for (int x = 0; x < TileChunk.SIZE; x++)
-                {
-                    int yStart = (int)(Perlin.perlin((x + (chunk.ChunkPosition.X * TileChunk.SIZE)) * 0.01, 1, (z + (chunk.ChunkPosition.Y * TileChunk.SIZE)) * 0.01) * TileChunk.SIZE);
-
-                    for (int y = yStart; y > 0; y--)
-                    {
-                        chunk.GroundTiles[x, y, z] = new Tile { Type = TileType.Ground };
-                    }
-                }
-            }
-
-            // add ourselves to mesh generation queue
-            VoxelWorld.MeshGeneratorWorker.Enqueue(ChunkMeshGenerator.GenerateMeshAsync(chunk));
-        });
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
     }
 }
 
+internal class OcclusionTechnique : Technique
+{
+    public OcclusionTechnique()
+    {
+        if (GameEngine.Instance.ObjectManager.Shaders.TryCreate(ShaderDescription.FromPath("content/shaders", "occlusion"), out var result))
+        {
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+    }
+
+    protected override void SetUniforms()
+    {
+        BindBuffer(3, MainScene.CameraData);
+    }
+}
+
+internal class UpdateCullingTechnique : Technique
+{
+    public UpdateCullingTechnique()
+    {
+        if (GameEngine.Instance.ObjectManager.Shaders.TryCreate(ShaderDescription.FromPath("content/shaders", "tilemesh_cull"), out var result))
+        {
+            SetShader(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+    }
+}
 internal class WorldRenderer : IGameComponent
 {
-    public static readonly ConcurrentQueue<ChunkMeshData> MeshUploadQueue = [];
-
-    internal FrameBufferObject FrameBuffer;
-
+    internal readonly WorldBufferManager BufferManager;
+    internal FrameBufferObject FrameBufferFar, FrameBufferNear;
     private readonly VoxelWorld world;
-    private SkyManager skyManager;
+    private readonly int ZERO = 0;
     private Horizon.OpenGL.Assets.Texture atlas;
-
-    private WorldTechnique technique;
+    private readonly LinearBuffer<double> averageDrawFrameTimes = new(512);
+    private readonly LinearBuffer<double> averageShadowFrameTimes = new(512);
+    private readonly LinearBuffer<double> averageTimes = new(512);
+    private QueryObject cullQuery, drawQuery, shadowQuery;
+    private UpdateCullingTechnique cullShader;
+    private float cullTimer = 0.0f, fps = 0.0f;
+    private FrustumCullingTechnique frustumTechnique;
+    private bool hasBeenLogged, collectMetrics, calcCull, usePreCulling = false;
+    private OcclusionTechnique occlusionTechnique;
     private ShadowTechnique shadow;
-    private BufferObject chunkPosBuffer;
-    private VertexArrayObject buffer;
-    private RenderRectangle target;
-    private PostProcessingTechnique postProcessingTechnique;
-    private uint drawCount = 0;
-    private unsafe DrawArraysIndirectCommand* drawCommandsPtr;
-    private unsafe Vector2D<int>* chunkPosPtr;
-
+    private RenderTarget skyboxTarget, postProcessingTarget;
+    private SkyManager skyManager;
+    private WorldTechnique technique;
+    private float time = 0;
+    private BufferObject visibilityBuffer, chunkIndexBuffer;
     public WorldRenderer(in VoxelWorld world)
     {
         Name = "WorldRenderer";
         Enabled = true;
         this.world = world;
+        BufferManager = new();
     }
 
     public bool Enabled { get; set; }
@@ -83,207 +121,162 @@ internal class WorldRenderer : IGameComponent
 
     public void Initialize()
     {
-        skyManager = (Parent as VoxelWorld).Sky;
+        skyManager = (Parent as VoxelWorld)!.Sky;
+
+        BufferManager.Initialize();
 
         technique = new WorldTechnique();
         shadow = new ShadowTechnique();
-        atlas = GameEngine.Instance.ObjectManager.Textures.Create(new TextureDescription
-        {
-            Path = "content/textures/atlas_albedo.png",
-            Definition = TextureDefinition.RgbaUnsignedByte
-        }).Asset;
+        frustumTechnique = new FrustumCullingTechnique();
+        occlusionTechnique = new OcclusionTechnique();
+        cullShader = new UpdateCullingTechnique();
 
-        CreateFaceInstanceBuffer();
-        CreateBufferStreamingPointers();
-        CreateChunkOffsetBufferAndPointer();
-        UploadFaceDataAndLayoutData();
-
-        FrameBuffer = GameEngine.Instance.ObjectManager.FrameBuffers.Create(new FrameBufferObjectDescription
-        {
-            Width = 4096,
-            Height = 4096,
-            Attachments = new() {
-                { FramebufferAttachment.DepthAttachment, TextureDefinition.DepthComponent},
+        if (GameEngine.Instance.ObjectManager.Queries.TryCreate(
+            new QueryObjectDescription
+            {
+                Target = QueryTarget.TimeElapsed
             },
-        }).Asset;
+            out var cullResult)
+            )
+        {
+            cullQuery = cullResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to create QueryObject!");
+        }
 
-        postProcessingTechnique = new PostProcessingTechnique(Parent);
-        target = new RenderRectangle(postProcessingTechnique);
-        target.Initialize();
+        if (GameEngine.Instance.ObjectManager.Queries.TryCreate(
+          new QueryObjectDescription
+          {
+              Target = QueryTarget.TimeElapsed
+          },
+          out var drawResult)
+          )
+        {
+            drawQuery = drawResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to create QueryObject!");
+        }
 
+        if (GameEngine.Instance.ObjectManager.Queries.TryCreate(
+         new QueryObjectDescription
+         {
+             Target = QueryTarget.TimeElapsed
+         },
+         out var shadowResult)
+         )
+        {
+            shadowQuery = shadowResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to create QueryObject!");
+        }
+
+        GameEngine.Instance.GL.Enable(EnableCap.Multisample);
+
+        if (GameEngine.Instance.ObjectManager.Textures.TryCreate(new TextureDescription
+        {
+            Paths = ["content/textures/atlas_albedo.png"],
+            Definition = TextureDefinition.RgbaUnsignedByte with
+            {
+                Parameters = [
+                    new () { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Nearest},
+                    new () { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Nearest },
+                    new () { Name = TextureParameterName.TextureBaseLevel, Value = 0 },
+                    new () { Name = TextureParameterName.TextureMaxLevel, Value = 0 },
+                    ]
+            }
+        }, out var atlasResult))
+        {
+            atlas = atlasResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, atlasResult.Message);
+        }
+
+        CreateShadowMaps();
+        CreateAndUploadCullBuffer();
+
+        skyboxTarget = new RenderTarget(1600, 900, new SkyBoxTechnique());
+        skyboxTarget.Initialize();
+
+        var p = new PostProcessingTechnique();
+        postProcessingTarget = new RenderTarget(1600, 900, p);
+        postProcessingTarget.Initialize();
+        p.SetRenderTarget(postProcessingTarget);
+        p.SetSkyBox(skyboxTarget.FrameBuffer);
 
         GameEngine.Instance.GL.ActiveTexture(TextureUnit.Texture0);
     }
 
-
-    private unsafe void CreateChunkOffsetBufferAndPointer()
-    {
-        const uint chunkPosBufferSize = 4096 * 1024;
-        chunkPosBuffer = GameEngine.Instance.ObjectManager.Buffers.Create(BufferObjectDescription.ShaderStorageBuffer with
-        {
-            IsStorageBuffer = true,
-            Size = chunkPosBufferSize,
-            StorageMasks =
-                Silk.NET.OpenGL.BufferStorageMask.MapWriteBit
-                | Silk.NET.OpenGL.BufferStorageMask.MapCoherentBit
-                | Silk.NET.OpenGL.BufferStorageMask.MapPersistentBit
-        }).Asset;
-        chunkPosBuffer.BufferStorage(chunkPosBufferSize);
-        chunkPosPtr = (Vector2D<int>*)chunkPosBuffer.MapBufferRange(chunkPosBufferSize, Silk.NET.OpenGL.MapBufferAccessMask.PersistentBit | Silk.NET.OpenGL.MapBufferAccessMask.CoherentBit | Silk.NET.OpenGL.MapBufferAccessMask.WriteBit);
-    }
-
-    private readonly struct VoxelVertex(in uint data)
-    {
-        // No need to bother with smaller types, we are forced to align to 4 bytes
-        public readonly uint PackedData { get; init; } = data;
-
-        /// <summary>
-        /// Returns an array of packed vertices as bytes, where the first 2 bits are the X and Z coordinates, and the last two bits are the texture coordinates
-        /// </summary>
-        /// <returns>Packed quad vertices.</returns>
-        public static VoxelVertex[] GetQuad()
-        {
-            return [
-                new (0b01),
-                new (0b11),
-                new (0b10),
-                new (0b00),
-                ];
-        }
-    }
-
-    private void UploadFaceDataAndLayoutData()
-    {
-        VoxelVertex[] quadVertices = VoxelVertex.GetQuad();
-        buffer[VertexArrayBufferAttachmentType.ArrayBuffer].NamedBufferData(quadVertices);
-
-        buffer.Bind();
-
-        // Configure base instance buffer
-        buffer[VertexArrayBufferAttachmentType.ArrayBuffer].Bind();
-        buffer[VertexArrayBufferAttachmentType.ArrayBuffer].VertexAttributeIPointer(0, 1, Silk.NET.OpenGL.VertexAttribIType.UnsignedByte, sizeof(uint), 0); // Configure single byte compressed vertex data
-
-        // Configure instanced buffer
-        buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0].Bind();
-        buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0].VertexAttributeIPointer(1, 1, Silk.NET.OpenGL.VertexAttribIType.UnsignedInt, sizeof(uint), 0);
-        buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0].VertexAttributeDivisor(1, 1);
-        buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0].NamedBufferData(1024 * 1024);
-        buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0].Unbind();
-        buffer.Unbind();
-    }
-
-    private unsafe void CreateBufferStreamingPointers()
-    {
-        const uint indBufferSize = 1024;
-
-        // Map a streaming pointer to modify the draw commands for realtime frusctum culling
-        buffer[VertexArrayBufferAttachmentType.IndirectBuffer].BufferStorage(indBufferSize);
-        drawCommandsPtr = (DrawArraysIndirectCommand*)buffer[VertexArrayBufferAttachmentType.IndirectBuffer].MapBufferRange(indBufferSize, Silk.NET.OpenGL.MapBufferAccessMask.CoherentBit |
-            Silk.NET.OpenGL.MapBufferAccessMask.PersistentBit |
-            Silk.NET.OpenGL.MapBufferAccessMask.WriteBit);
-    }
-
-    private void CreateFaceInstanceBuffer()
-    {
-        buffer = GameEngine.Instance.ObjectManager.VertexArrays.Create(new VertexArrayObjectDescription
-        {
-            Buffers = new() {
-                { VertexArrayBufferAttachmentType.ArrayBuffer, BufferObjectDescription.ArrayBuffer },
-                { VertexArrayBufferAttachmentType.AdditionalBuffer0, BufferObjectDescription.ArrayBuffer },
-                { VertexArrayBufferAttachmentType.IndirectBuffer, GenerateIndirectBufferDescription() },
-            }
-        }).Asset;
-    }
-
-    private static BufferObjectDescription GenerateIndirectBufferDescription()
-    {
-        return BufferObjectDescription.IndirectBuffer with
-        {
-            IsStorageBuffer = true, // Configure the buffer as a storage buffer
-            Size = 1024, // Map it as a KB
-            StorageMasks = Silk.NET.OpenGL.BufferStorageMask.MapWriteBit // Allow writing 
-            | Silk.NET.OpenGL.BufferStorageMask.MapCoherentBit // Allow simultaneous access
-            | Silk.NET.OpenGL.BufferStorageMask.MapPersistentBit // Keep this buffer mapped
-        };
-    }
-
-
     public unsafe void Render(float dt, object? obj = null)
     {
-        UploadMesh();
+        BufferManager.UploadMesh();
+        if (!BufferManager.ShouldDraw) return;
 
-        if (drawCount == 0) return;
-
-        DrawShadowPass();
-        DrawRenderPass();
-    }
-
-    private unsafe void DrawRenderPass()
-    {
-        GameEngine.Instance.GL.Viewport(0, 0, (uint)GameEngine.Instance.WindowManager.WindowSize.X, (uint)GameEngine.Instance.WindowManager.WindowSize.Y);
-        GameEngine.Instance.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit | ClearBufferMask.ColorBufferBit);
-
-        buffer.Bind();
-        technique.Bind();
-
-        FrameBuffer.BindAttachment(FramebufferAttachment.DepthAttachment, 0);
-        technique.SetUniform("uTexSunDepth", 0);
-
-        atlas.Bind(1);
-        technique.SetUniform("uTexAlbedo", 1);
-
-
-        technique.SetUniform("uSunDirection", skyManager.SunDirection);
-        technique.SetUniform("uSunView", SkyManager.SunView);
-        technique.SetUniform("uSunProjection", SkyManager.SunProj);
-        technique.BindBuffer("b_chunkOffsets", chunkPosBuffer);
-
-        GameEngine.Instance.GL.MultiDrawArraysIndirect(Silk.NET.OpenGL.PrimitiveType.TriangleFan, null, drawCount, 0);
-        technique.Unbind();
-    }
-
-    private unsafe void DrawShadowPass()
-    {
-        FrameBuffer.Bind();
-        FrameBuffer.Viewport();
-        GameEngine.Instance.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit);
-
-        buffer.Bind();
-        shadow.Bind();
-
-        shadow.BindBuffer("b_chunkOffsets", chunkPosBuffer);
-
-        GameEngine.Instance.GL.MultiDrawArraysIndirect(Silk.NET.OpenGL.PrimitiveType.TriangleFan, null, drawCount, 0);
-
-
-        shadow.Unbind();
-        buffer.Unbind();
-        GameEngine.Instance.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-    }
-
-    private int meshOffset = 0;
-
-    private unsafe void UploadMesh()
-    {
-        if (MeshUploadQueue.TryDequeue(out ChunkMeshData result))
+        //lock (BufferManager.Buffer)
         {
-            lock (buffer)
+            cullTimer += dt;
+            if (cullTimer > 0.1f)
             {
-                buffer[VertexArrayBufferAttachmentType.AdditionalBuffer0]
-                    .NamedBufferSubData(result.Data.Span, meshOffset * sizeof(VoxelInstance));
+                fps = MathF.Round(1.0f / dt, 3);
+                cullQuery.Begin();
+                OcclusionCullChunks();
+                cullQuery.End();
 
-                drawCommandsPtr[drawCount] = new DrawArraysIndirectCommand
+                //cullTimer = 0;
+                calcCull = true;
+            }
+            time += dt;
+
+            //shadowQuery.Begin();
+            DrawShadowPass();
+            //shadowQuery.End();
+
+            //drawQuery.Begin();
+            DrawRenderPass();
+            //drawQuery.End();
+
+            if (ImGui.Begin("World Renderer"))
+            {
+                ImGui.Text($"FPS: {fps}\nAllocated Chunklets: {BufferManager.ChunkletManager.Count}\nHeap info: \nVertex: {(int)(BufferManager.ChunkletManager.VertexHeap.UsedBytes / 1024.0 / 1024.0)}MB ({BufferManager.ChunkletManager.VertexHeap.Health}%%)\nElement: {(int)(BufferManager.ChunkletManager.ElementHeap.UsedBytes / 1024.0 / 1024.0)}MB\nCull: {(int)(BufferManager.ChunkletManager.CullIndirectHeap.UsedBytes / 1024.0 / 1024.0)}MB\nDraw: {(int)(BufferManager.ChunkletManager.DrawIndirectHeap.UsedBytes / 1024.0 / 1024.0)}MB\nData: {(int)(BufferManager.ChunkletManager.DrawDataHeap.UsedBytes / 1024.0 / 1024.0)}MB\nDrawCommands: {BufferManager.RealDrawCount}\n");
+
+                ImGui.Checkbox("Prefrustum culling", ref usePreCulling);
+                ImGui.Checkbox("Collect Metrics", ref collectMetrics);
+                if (collectMetrics)
                 {
-                    first = 0,
-                    count = 4,
-                    instanceCount = (uint)result.Data.Length,
-                    baseInstance = (uint)meshOffset
-                };
-                chunkPosPtr[drawCount++] = result.ChunkPos;
+                    double cAvg = averageTimes.Buffer.Average();
+                    double rAvg = averageDrawFrameTimes.Buffer.Average();
+                    double sAvg = averageShadowFrameTimes.Buffer.Average();
 
-                meshOffset += result.Data.Length;
+                    ImGui.Text($"({averageTimes.Length}/{averageTimes.Capacity}samples)");
+                    ImGui.SameLine();
+                    if (ImGui.Button("Clear"))
+                    {
+                        averageTimes.Clear();
+                        averageDrawFrameTimes.Clear();
+                        averageShadowFrameTimes.Clear();
+                    }
+                    ImGui.Separator();
+
+                    ImGui.Text($"culling time: {Math.Round(cAvg, 5)}ms/{Math.Round(1.0 / cAvg * 1000)}FPS");
+                    ImGui.Text($"render  time: {Math.Round(rAvg, 5)}ms/{Math.Round(1.0 / rAvg * 1000)}FPS");
+                    ImGui.Text($"shadow  time: {Math.Round(sAvg, 5)}ms/{Math.Round(1.0 / sAvg * 1000)}FPS");
+
+                    PerformanceProfilerDebugger.PlotValues("Frame Times", averageDrawFrameTimes);
+                }
+                ImGui.End();
             }
         }
+
+        calcCull = false;
     }
 
     public void UpdatePhysics(float dt)
@@ -292,5 +285,247 @@ internal class WorldRenderer : IGameComponent
 
     public void UpdateState(float dt)
     {
+    }
+
+    private static string genData(in double[] buffer, in string unit = "ms")
+    {
+        double average = buffer.Average();
+        double sum = buffer.Sum(d => Math.Pow(d - average, 2));
+        double deviation = Math.Sqrt(sum / (buffer.Length - 1));
+
+        return $"{buffer.Min()}{unit}\t{buffer.Max()}{unit}\t{average}{unit}\t{deviation}{unit}";
+    }
+
+    private unsafe void CreateAndUploadCullBuffer()
+    {
+        if (GameEngine.Instance.ObjectManager.Buffers.TryCreate(
+            BufferObjectDescription.ShaderStorageBuffer,
+            out var result))
+        {
+            visibilityBuffer = result.Asset;
+            visibilityBuffer.NamedBufferData(VoxelWorld.LOADED_DISTANCE * VoxelWorld.HEIGHT * VoxelWorld.LOADED_DISTANCE * sizeof(uint) * 6);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+    }
+
+    private void CreateShadowMaps()
+    {
+        if (GameEngine.Instance.ObjectManager.FrameBuffers.TryCreate(new FrameBufferObjectDescription
+        {
+            Width = 4096,
+            Height = 4096,
+            Attachments = new() {
+                { FramebufferAttachment.DepthAttachment, FrameBufferAttachmentDefinition.TextureDepth with {
+                    TextureDefinition = TextureDefinition.DepthComponent with {
+                        Parameters = [
+                            new () { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+                            new () { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+                            new () { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Linear },
+                            new () { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Linear },
+
+                            new () { Name = TextureParameterName.TextureCompareMode, Value = (int)GLEnum.CompareRefToTexture },
+                            new () { Name = TextureParameterName.TextureCompareFunc, Value = (int)GLEnum.Lequal },
+
+                        ]
+                    }
+                } },
+            },
+        }, out var farResult))
+        {
+            FrameBufferFar = farResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, farResult.Message);
+        }
+
+        if (GameEngine.Instance.ObjectManager.FrameBuffers.TryCreate(new FrameBufferObjectDescription
+        {
+            Width = 4096,
+            Height = 4096,
+            Attachments = new() {
+                 { FramebufferAttachment.DepthAttachment, FrameBufferAttachmentDefinition.TextureDepth with {
+                    TextureDefinition = TextureDefinition.DepthComponent with {
+                        Parameters = [
+                            new () { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+                            new () { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+                            new () { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Linear },
+                            new () { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Linear },
+
+                            new () { Name = TextureParameterName.TextureCompareMode, Value = (int)GLEnum.CompareRefToTexture },
+                            new () { Name = TextureParameterName.TextureCompareFunc, Value = (int)GLEnum.Lequal },
+
+                        ]
+                    }
+                } },
+            },
+        }, out var nearResult))
+        {
+            FrameBufferNear = nearResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, nearResult.Message);
+        }
+    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private unsafe void CullChunks(Vector3 direction, bool cullFaces = true)
+    {
+        if (!calcCull) return;
+
+        cullShader.Bind();
+        cullShader.SetUniform("uCullFaces", cullFaces);
+        cullShader.SetUniform("uCamDir", in direction);
+        cullShader.SetUniform("uTileChunkCount", (uint)BufferManager.MeshDrawCount);
+
+        cullShader.BindBuffer(0, BufferManager.Buffer[VertexArrayBufferAttachmentType.IndirectBuffer]);
+        cullShader.BindBuffer(1, visibilityBuffer);
+        cullShader.BindBuffer(2, BufferManager.FinalIndirectBuffer);
+        cullShader.BindBuffer(3, BufferManager.ChunkPositionsIndexBuffer);
+
+        GameEngine.Instance.GL.DispatchCompute((uint)VoxelWorld.Chunks.Length / 32, 1, 1);
+        GameEngine.Instance.GL.MemoryBarrier(MemoryBarrierMask.AllBarrierBits);
+        BufferManager.RealDrawCount = BufferManager.FinalIndirectBuffer.GetSubData<uint>(0, 1);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private unsafe void DrawRenderPass()
+    {
+        postProcessingTarget.BindForRendering();
+        GameEngine.Instance.GL.Clear(ClearBufferMask.DepthBufferBit | ClearBufferMask.ColorBufferBit);
+
+        // frustum and backface culling compute shader
+        CullChunks(GameEngine.Instance.ActiveCamera.Direction);
+
+        BufferManager.Buffer.Bind();
+        technique.Bind();
+
+        FrameBufferFar.BindAttachment(FramebufferAttachment.DepthAttachment, 0);
+        technique.SetUniform("uTexSunDepthFar", 0);
+
+        FrameBufferNear.BindAttachment(FramebufferAttachment.DepthAttachment, 1);
+        technique.SetUniform("uTexSunDepthNear", 1);
+
+        atlas.Bind(2);
+        technique.SetUniform("uTexAlbedo", 2);
+
+        technique.SetUniform("uSunViewProjNear", skyManager.SunViewNear * SkyManager.SunProjNear);
+        technique.SetUniform("uSunViewProjFar", skyManager.SunViewFar * SkyManager.SunProjFar);
+        technique.SetUniform("uSunDir", skyManager.SunDirection);
+
+        technique.BindBuffer(0, BufferManager.ChunkPositionsBuffer);
+        technique.BindBuffer(1, BufferManager.ChunkPositionsIndexBuffer);
+        technique.SetUniform("uUseIndexMap", true);
+
+        BufferManager.FinalIndirectBuffer.Bind();
+        BufferManager.Render();
+
+        technique.Unbind();
+        BufferManager.Buffer.Unbind();
+
+        skyboxTarget.BindForRendering();
+        GameEngine.Instance.GL.Clear(ClearBufferMask.DepthBufferBit | ClearBufferMask.ColorBufferBit);
+
+        skyboxTarget.Render(0, null);
+
+        GameEngine.Instance.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        GameEngine.Instance.GL.Viewport(0, 0, (uint)GameEngine.Instance.WindowManager.WindowSize.X, (uint)GameEngine.Instance.WindowManager.WindowSize.Y);
+
+        GameEngine.Instance.GL.Clear(ClearBufferMask.DepthBufferBit | ClearBufferMask.ColorBufferBit);
+
+        postProcessingTarget.Render(0, null);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private unsafe void DrawShadowPass()
+    {
+        DrawShadowPassBuffer(FrameBufferFar, SkyManager.SunProjFar, skyManager.SunViewFar, -skyManager.SunDirection);
+        DrawShadowPassBuffer(FrameBufferNear, SkyManager.SunProjNear, skyManager.SunViewNear, -skyManager.SunDirection);
+
+        GameEngine.Instance.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private unsafe void DrawShadowPassBuffer(in FrameBufferObject fbo, Matrix4x4 sunProj, Matrix4x4 sunView, Vector3 dir)
+    {
+        fbo.Bind();
+        fbo.Viewport();
+
+        GameEngine.Instance.GL.Clear(Silk.NET.OpenGL.ClearBufferMask.DepthBufferBit);
+
+        BufferManager.Buffer.Bind();
+        shadow.SetSun(in sunProj, in sunView);
+        shadow.Bind();
+
+        technique.BindBuffer(0, BufferManager.ChunkPositionsBuffer);
+        technique.BindBuffer(1, BufferManager.ChunkPositionsIndexBuffer);
+
+        BufferManager.Buffer[VertexArrayBufferAttachmentType.IndirectBuffer].Bind();
+        BufferManager.RenderAll();
+
+        shadow.Unbind();
+        BufferManager.Buffer.Unbind();
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void FrustumCullChunks(Matrix4x4 view, Matrix4x4 proj)
+    {
+        frustumTechnique.Bind();
+        frustumTechnique.SetUniform("uProj", proj);
+        frustumTechnique.SetUniform("uView", view);
+        frustumTechnique.SetUniform("uTileChunkCount", BufferManager.MeshDrawCount);
+
+        frustumTechnique.BindBuffer("b_indirectBlock", BufferManager.CullIndirectBuffer);
+
+        GameEngine.Instance.GL.DispatchCompute((uint)VoxelWorld.Chunks.Length / 32, 1, 1);
+        GameEngine.Instance.GL.MemoryBarrier(MemoryBarrierMask.AllBarrierBits);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private unsafe void OcclusionCullChunks()
+    {
+        GameEngine.Instance.GL.Clear(ClearBufferMask.DepthBufferBit);
+        GameEngine.Instance.GL.ClearNamedBufferData(visibilityBuffer.Handle, SizedInternalFormat.R8i, Silk.NET.OpenGL.PixelFormat.RedInteger, Silk.NET.OpenGL.PixelType.Int, in ZERO);
+
+        if (usePreCulling)
+            FrustumCullChunks(GameEngine.Instance.ActiveCamera!.View, GameEngine.Instance.ActiveCamera!.Projection);
+
+        occlusionTechnique.Bind();
+        occlusionTechnique.BindBuffer(0, BufferManager.ChunkPositionsBuffer);
+        occlusionTechnique.BindBuffer(2, visibilityBuffer);
+
+        BufferManager.Buffer.Bind();
+        BufferManager.CullIndirectBuffer.Bind();
+        BufferManager.RenderAll();
+
+        occlusionTechnique.Unbind();
+    }
+
+    private void TryCollectMetrics()
+    {
+        if (!collectMetrics) return;
+
+        if (!averageTimes.IsFull)
+        {
+            averageTimes.Append((cullQuery.GetParameter()) / 1000000.0);
+            averageShadowFrameTimes.Append(shadowQuery.GetParameter() / 1000000.0);
+            averageDrawFrameTimes.Append(drawQuery.GetParameter() / 1000000.0);
+        }
+        else if (!hasBeenLogged)
+        {
+            hasBeenLogged = true;
+            Console.WriteLine("Logged!");
+            using var stream = new StreamWriter(File.Open("metrics.txt", FileMode.Append, FileAccess.Write));
+
+            const string title = "combined no pre cull";
+            stream.WriteLine($"Culling pass ({title}):\t\t{genData(averageTimes.Buffer)}");
+            stream.WriteLine($"Drawing pass ({title}):\t\t{genData(averageDrawFrameTimes.Buffer)}");
+            stream.WriteLine($"Shadows pass ({title}):\t\t{genData(averageShadowFrameTimes.Buffer)}");
+            stream.WriteLine();
+            stream.Close();
+        }
     }
 }

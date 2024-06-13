@@ -12,31 +12,54 @@ using CodeKneading.Voxel;
 
 using Horizon.Engine;
 using Horizon.Input.Components;
+using Horizon.OpenGL.Assets;
+using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Mesh;
 
 using ImGuiNET;
+
+using Silk.NET.OpenGL;
 
 namespace CodeKneading;
 
 internal class MainScene : Scene
 {
     public override Camera ActiveCamera { get; protected set; }
-    public GamePlayer Player { get; init; }
+    public GamePlayer Player { get; set; }
 
-    protected readonly VoxelWorld World;
+    protected VoxelWorld World;
+    public static BufferObject CameraData { get; private set; }
 
-    public MainScene()
+    public override unsafe void Initialize()
     {
         this.World = AddEntity<VoxelWorld>();
         this.Player = AddEntity<GamePlayer>();
-        this.ActiveCamera = this.Player.Camera;
-    }
+        base.Initialize();
 
-    public override void Initialize()
-    {
+        Engine.camera = this.ActiveCamera = this.Player.Camera;
+
         Engine.GL.ClearColor(System.Drawing.Color.CornflowerBlue);
         Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.DepthTest);
 
-        base.Initialize();
+        if (Engine.ObjectManager.Buffers.TryCreate(
+            new BufferObjectDescription
+            {
+                Type = Silk.NET.OpenGL.BufferTargetARB.UniformBuffer
+            },
+            out var resBuf
+            ))
+        {
+            CameraData = resBuf.Asset;
+            CameraData.NamedBufferData((nuint)(sizeof(Matrix4x4) * 2 + sizeof(Vector4)));
+        }
+
+    }
+
+    public override void Render(float dt, object? obj = null)
+    {
+        CameraData.NamedBufferSubData(new ReadOnlySpan<Matrix4x4>([ActiveCamera.View, ActiveCamera.Projection]), 0, 32 * 4);
+
+        CameraData.NamedBufferSubData(new ReadOnlySpan<Vector4>([new Vector4(ActiveCamera.Position, 1.0f)]), 32 * 4, 4 * 4);
+        base.Render(dt, obj);
     }
 }

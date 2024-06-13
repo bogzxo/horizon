@@ -128,13 +128,20 @@ public class SpriteBatch : GameObject
     /// <param name="shader">A custom shader used to render sprites. It is recommended to leave default and apply effects using the post processing pipeline.</param>
     public SpriteBatch()
     {
-        this.Shader = new Technique(
-            Engine
+        if (Engine
                 .ObjectManager
                 .Shaders
-                .Create("sprite", ShaderDescription.FromPath("shaders/spritebatch", "sprites"))
-                .Asset
-        );
+                .TryCreateOrGet(
+                "sprite",
+                ShaderDescription.FromPath("shaders/spritebatch", "sprites"),
+                out var result))
+        {
+            this.Shader = new Technique(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
         // this.Transform = AddComponent<TransformComponent>();
         //Engine.Debugger.GeneralDebugger.AddWatch("Sprite Count", "SpriteBatch", () => Count);

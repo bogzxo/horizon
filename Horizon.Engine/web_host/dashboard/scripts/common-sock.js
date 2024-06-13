@@ -2,14 +2,29 @@
 class PacketEventDispatcher {
     constructor() {
         this.packetHandlers = [];
-        this.socket = new WebSocket("ws://127.0.0.1:8080/dash");
+        this.isConnected = false;
 
         window.onbeforeunload = this.closeSocket.bind(this);
+        
+        this.socket = new WebSocket("ws://127.0.0.1:8080/dash");
+        this.socket.onopen = this.onOpenSocket.bind(this);
 
         this.socket.onmessage = this.handleMessage.bind(this);
+        this.socket.onclose = this.onCloseSocket.bind(this);
+    }
+
+    onOpenSocket() {
+        this.isConnected = true;
+    }
+
+    onCloseSocket() {
+        this.isConnected = false;
     }
 
     closeSocket() {
+        if (!this.isConnected)
+            throw new Error("Cannot close a closed socket.");
+        
         this.socket.close();
     }
 
@@ -22,6 +37,14 @@ class PacketEventDispatcher {
             throw new Error("Packet ID already registered");
 
         this.packetHandlers[packetID] = handler;
+    }
+
+    sendPacket(payload) {
+        if (!this.isConnected)
+            throw new Error("Cannot send a packet to a closed socket.");
+        if (typeof payload !== "object")
+            throw new Error("Packet payload must be an object");
+        this.socket.send(JSON.stringify(payload));
     }
 
     handleMessage(event) {

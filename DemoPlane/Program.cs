@@ -46,9 +46,18 @@ internal class IndirectBufferTestMesh : Entity
         }
     };
 
-    protected virtual VertexBufferObject AcquireBuffer() => new(
-            GameEngine.Instance.ObjectManager.VertexArrays.Create(ArrayDescription)
-        );
+    protected virtual VertexBufferObject AcquireBuffer()
+    {
+        if (GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(ArrayDescription, out var result))
+        {
+            return new(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            throw new Exception(result.Message);
+        }
+    }
 
     public override void Initialize()
     {

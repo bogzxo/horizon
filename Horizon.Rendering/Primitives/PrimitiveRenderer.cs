@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
 
+using Bogz.Logging;
+
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Core.Data;
@@ -82,7 +84,17 @@ public class PrimitiveRenderer : Entity
 
         public ShapeRendererTechnique(in TransformComponent2D transform)
         {
-            SetShader(GameEngine.Instance.ObjectManager.Shaders.CreateOrGet("ShapeRendererTechnique", ShaderDescription.FromPath("shaders/primitives", "shapes")));
+            if (GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet(
+                "ShapeRendererTechnique",
+                ShaderDescription.FromPath("shaders/primitives", "shapes"),
+                out var result))
+            {
+                SetShader(result.Asset);
+            }
+            else
+            {
+                Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            }
             this.transform = transform;
         }
 
@@ -127,7 +139,8 @@ public class PrimitiveRenderer : Entity
 
         technique = new ShapeRendererTechnique(Transform);
         arrayBufferSize = 4096;
-        VertexArray = GameEngine.Instance.ObjectManager.VertexArrays.Create(new VertexArrayObjectDescription
+
+        if (GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(new VertexArrayObjectDescription
         {
             Buffers = new Dictionary<VertexArrayBufferAttachmentType, BufferObjectDescription>
             {
@@ -142,7 +155,15 @@ public class PrimitiveRenderer : Entity
                     Type = BufferTargetARB.ArrayBuffer
                 } }
             }
-        }).Asset;
+        }, out var result))
+        {
+            VertexArray = result.Asset;
+        }
+        else
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+
 
         VertexArray.Bind();
         VertexArray[VertexArrayBufferAttachmentType.ArrayBuffer].Bind();

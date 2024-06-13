@@ -1,32 +1,26 @@
-
 struct chunkOffset {
 	int xPos;
+	int yPos;
 	int zPos;
+    int face;
 };
 
-layout(std430) buffer b_chunkOffsets {
+layout(binding = 0, std430) readonly buffer b_chunkOffsets {
   chunkOffset data[];
 } chunkOffets;
+
+layout(binding = 1, std430) readonly buffer b_chunkOffsetsIndex {
+  uint indices[];
+} chunkMap;
+
+
+uniform bool uUseIndexMap;
 
 #define ATLAS_SIZE 256.0
 #define SINGLE_TILE_SIZE (16.0 / ATLAS_SIZE)
 #define ATLAS_OFFSET 256.0 / 16.0
 
-vec3 getPosition() {
-     // Extracting X, Z coordinates
-    float xCoord = float((vLocalPacked >> 0) & 0x01); // Extracting first bit
-    float zCoord = float((vLocalPacked >> 1) & 0x01); // Extracting second bit
-
-    return vec3(xCoord, 0, zCoord);
-}
-
-vec2 getTexCoords() {
-    // Extracting texture coordinates
-    float texXCoord = float((vLocalPacked >> 0) & 0x01); // Extracting third bit
-    float texYCoord = float((vLocalPacked >> 1) & 0x01); // Extracting fourth bit
-
-    return vec2(texXCoord, texYCoord);
-}
+#define POS_BITS 0x3F
 
 vec3 normals[6] = {
     vec3(0.0, -1.0, 0.0),
@@ -37,47 +31,42 @@ vec3 normals[6] = {
     vec3(-1.0, 0.0, 0.0)
 };
 
-uint getFace() {
-    return (iPackedData >> 0) & 0xF;
-}
-
 vec3 getNormal() {
-    return normals[getFace()];
+    return normals[chunkOffets.data[uUseIndexMap ? chunkMap.indices[gl_DrawID] : gl_DrawID].face];
 }
 
 vec3 getFinalPosition() {
-    vec3 position = getPosition();
-    uint face = getFace();
-    if (face == 1) {
-        position.y++;
-    }
-    else if (face == 2) {
-        position.xzy = position.xyz;
-    }
-    else if (face == 3) {
-        position.xzy = position.xyz;
-        position.z++;
-    }
-    else if (face == 4) {
-        position.yxz = position.xyz;
-    }
-    else if (face == 5) {
-        position.yxz = position.xyz;
-        position.x++;
-    }
-
     // Extracting x, y, and z from iPackedData (5 bits each)
-    uint x = (iPackedData >> 4) & 0x1F;
-    uint y = (iPackedData >> 9) & 0x1F;
-    uint z = (iPackedData >> 14) & 0x1F;
+    uint x = (vPackedData >> 4) & POS_BITS;
+    uint y = (vPackedData >> 10) & POS_BITS;
+    uint z = (vPackedData >> 16) & POS_BITS;
 
-    return vec3(x, y, z) + position + vec3(chunkOffets.data[gl_DrawID].xPos, 0.0, chunkOffets.data[gl_DrawID].zPos);
+    return vec3(x, y, z) + vec3(chunkOffets.data[uUseIndexMap ? chunkMap.indices[gl_DrawID] : gl_DrawID].xPos, chunkOffets.data[uUseIndexMap ? chunkMap.indices[gl_DrawID] : gl_DrawID].yPos, chunkOffets.data[uUseIndexMap ? chunkMap.indices[gl_DrawID] : gl_DrawID].zPos);
+}
+
+vec3 getLodColour() {
+    int lod = int((vPackedData >> 28) & 0x3);
+    
+    if (lod == 0) {
+        return vec3(0.1, 0.1, 0.1);
+    } else if (lod == 1) {
+        return vec3(1.0, 0.0, 0.0);
+    } else if (lod == 2) {
+        return vec3(0.0, 1.0, 0.1);
+    }else if (lod == 3) {
+        return vec3(0.3, 0.5, 0.1);
+    } else {
+        return vec3(1.0, 1.0, 0.3);
+    }
 }
 
 vec2 getFinalTexCoords() {
     // extract the id
-    float tileId = float((iPackedData >> 19) & 0xF);
+    float tileId = float((vPackedData >> 22) & 0xF);
+    float x = float((vPackedData >> 26) & 0x1);
+    float y = float((vPackedData >> 27) & 0x1);
+
 
     // Pass through data to fragment shader
-    return getTexCoords() * SINGLE_TILE_SIZE + vec2(mod(tileId, ATLAS_OFFSET), tileId / ATLAS_OFFSET) * SINGLE_TILE_SIZE;
+    return vec2(x, y) * SINGLE_TILE_SIZE + vec2(mod(tileId, ATLAS_OFFSET), tileId / ATLAS_OFFSET) * SINGLE_TILE_SIZE;
 }

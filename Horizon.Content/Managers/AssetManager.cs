@@ -49,29 +49,37 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     public void SetMessageCallback(in Action<LogLevel, string> callback) =>
         this.MessageCallback = callback;
 
-    public AssetType CreateOrGet(in string name, in AssetDescriptionType description)
+    public bool TryCreateOrGet(in string name, in AssetDescriptionType description, out AssetCreationResult<AssetType> result)
     {
-        if (NamedAssets.ContainsKey(name))
-            return NamedAssets[name];
+        if (NamedAssets.TryGetValue(name, out AssetType value))
+        {
+            result = new()
+            {
+                Asset = value,
+                Status = AssetCreationStatus.Success,
+                Message = string.Empty,
+            };
+        }
 
-        return Create(name, description).Asset;
+        return TryCreate(name, description, out result);
     }
 
     /// <summary>
     /// Creates a new named managed instance of an asset from a description.
     /// </summary>
     /// <returns>The newly created asset.</returns>
-    public AssetCreationResult<AssetType> Create(
+    public bool TryCreate(
         in string name,
-        in AssetDescriptionType description
+        in AssetDescriptionType description,
+        out AssetCreationResult<AssetType> result
     )
     {
-        var result = AssetFactoryType.Create(description);
+        AssetFactoryType.TryCreate(description, out result);
 
         if (result.Status != AssetCreationStatus.Success)
         {
             MessageCallback?.Invoke(LogLevel.Error, $"[{name}] {result.Message}");
-            return result;
+            return false;
         }
 
         MessageCallback?.Invoke(
@@ -87,27 +95,30 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         if (result.Status > 0 && result.Message?.CompareTo(string.Empty) != 0)
             MessageCallback?.Invoke(LogLevel.Info, $"[{name}] {result.Message}");
 
-        return result;
+        return true;
     }
 
     /// <summary>
     /// Creates a new unnamed managed instance of an asset from a description.
     /// </summary>
     /// <returns>The newly created asset.</returns>
-    public AssetCreationResult<AssetType> Create(AssetDescriptionType description)
+    public bool TryCreate(
+        in AssetDescriptionType description,
+        out AssetCreationResult<AssetType> result
+        )
     {
-        var result = AssetFactoryType.Create(description);
+        AssetFactoryType.TryCreate(description, out result);
 
         if (result.Status != AssetCreationStatus.Success)
         {
             MessageCallback?.Invoke(LogLevel.Error, $"[{name}] {result.Message}");
-            return result;
+            return false;
         }
 
         MessageCallback?.Invoke(LogLevel.Info, $"[{name}] Successfully created a new {assetName}!");
 
         OwnedAssets.Add(result.Asset);
-        return result;
+        return true;
     }
 
     /// <summary>

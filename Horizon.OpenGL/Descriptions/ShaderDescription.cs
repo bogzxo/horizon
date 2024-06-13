@@ -22,8 +22,8 @@ public readonly struct ShaderDescription : IAssetDescription
             return default;
 
         List<ShaderDefinition> definitions = new();
-
-        foreach (var file in Directory.GetFiles(path, $"{name}.*"))
+        var files = Directory.GetFiles(path, $"{name}.*");
+        foreach (var file in files)
         {
             // yummy expensive string manipulations
             string ext = Path.GetExtension(file).ToLower().Trim('.');

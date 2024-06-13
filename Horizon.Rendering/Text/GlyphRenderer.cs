@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 using Horizon.Core.Components;
 using Horizon.Core.Data;
@@ -45,12 +46,17 @@ public class GlyphRenderer : GameObject
         base.Initialize();
 
         FontImporter = new("fonts/vcr_mono/", "vcr_mono.fnt");
-        vao = Engine.ObjectManager.VertexArrays.Create(new VertexArrayObjectDescription
+
+        if (Engine.ObjectManager.VertexArrays.TryCreate(new VertexArrayObjectDescription
         {
             Buffers = new() {
                 { VertexArrayBufferAttachmentType.ArrayBuffer, BufferObjectDescription.ArrayBuffer }
             }
-        }).Asset;
+        }, out var result)) { vao = result.Asset; }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
         vao.Bind();
         vao[VertexArrayBufferAttachmentType.ArrayBuffer].Bind();
@@ -63,7 +69,21 @@ public class GlyphRenderer : GameObject
         vao[VertexArrayBufferAttachmentType.ArrayBuffer].NamedBufferData(verts);
         count = (uint)verts.Length;
 
-        Technique = new(Engine.ObjectManager.Shaders.CreateOrGet("bitmap_font", ShaderDescription.FromPath("shaders/font/", "bitmap")));
+        if (Engine.ObjectManager.Shaders.TryCreateOrGet(
+            "bitmap_font",
+            ShaderDescription.FromPath(
+                "shaders/font/",
+           "bitmap"),
+            out var shaderResult
+            ))
+        {
+            Technique = new(shaderResult.Asset);
+        }
+        else
+        {
+            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, shaderResult.Message);
+        }
+
     }
 
     private TextVertex[] GenerateCharacterVerticesFromString(in string str)
@@ -83,7 +103,7 @@ public class GlyphRenderer : GameObject
     {
         // Calculate vertices positions
         float x1 = offsetX + charDef.Offset.X;
-        float y1 = offsetY ;
+        float y1 = offsetY;
         float x2 = x1 + charDef.Size.X;
         float y2 = y1 + charDef.Size.Y;
 
@@ -119,7 +139,7 @@ public class GlyphRenderer : GameObject
 
         vao.Bind();
         Technique.Bind();
-        Technique.SetUniform("u_vp", Engine.ActiveCamera.ProjView);
+        Technique.SetUniform("u_vp", Engine.ActiveCamera.ViewProj);
         Technique.SetUniform("u_model", Transform.ModelMatrix);
 
         Engine.GL.BindTextureUnit(0, FontTexture.Handle);

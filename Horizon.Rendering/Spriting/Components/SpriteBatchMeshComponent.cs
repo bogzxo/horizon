@@ -48,14 +48,21 @@ public class SpriteBatchMesh : GameObject
         bufferLength = (uint)(BufferObject.ALIGNMENT * 128);
         this.sheet = sheet;
 
-        Buffer = new VertexBufferObject(
-            Engine.ObjectManager.VertexArrays.Create(VertexArrayObjectDescription.VertexBuffer)
-        );
+        if (Engine.ObjectManager.VertexArrays.TryCreate(
+            VertexArrayObjectDescription.VertexBuffer,
+            out var result)) {
 
-        StorageBuffer = Engine
+            Buffer = new VertexBufferObject(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+
+        if (Engine
             .ObjectManager
             .Buffers
-            .Create(
+            .TryCreate(
                 new BufferObjectDescription
                 {
                     IsStorageBuffer = true,
@@ -65,9 +72,16 @@ public class SpriteBatchMesh : GameObject
                         | BufferStorageMask.MapPersistentBit
                         | BufferStorageMask.MapWriteBit,
                     Type = BufferTargetARB.ShaderStorageBuffer
-                }
+                },
+                out var storeResult)
             )
-            .Asset;
+        {
+            StorageBuffer = storeResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, storeResult.Message);
+        }
 
         SetVboLayout();
 

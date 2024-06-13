@@ -6,17 +6,24 @@ using System.Threading.Tasks;
 
 namespace CodeKneading.Voxel;
 
-public enum TileType : byte
+public enum TileType : sbyte
 {
     None,
-    Ground
+    OOB,
+    Ground,
+    Rock,
 }
 
 public readonly struct Tile
 {
     public readonly TileType Type { get; init; }
 
-    public static  Tile Empty = new Tile { 
+    public static readonly Tile Empty = new()
+    {
         Type = TileType.None,
+    };
+    public static readonly Tile OOB = new()
+    {
+        Type = TileType.OOB,
     };
 }

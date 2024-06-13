@@ -76,7 +76,7 @@ internal class VoxelWorldRenderer : Entity
 
         texture = GameEngine.Instance.ObjectManager.Textures.CreateOrGet("dirt_texture", new TextureDescription
         {
-            Path = "content/textures/default_dirt.png",
+            Paths = "content/textures/default_dirt.png",
             Definition = TextureDefinition.RgbaUnsignedByte
         });
 
@@ -100,7 +100,7 @@ internal class VoxelWorldRenderer : Entity
 
     private unsafe void SetupBaseQuadBuffer()
     {
-        chunkOffsetBuffer = GameEngine.Instance.ObjectManager.Buffers.Create(BufferObjectDescription.ShaderStorageBuffer with
+        chunkOffsetBuffer = GameEngine.Instance.ObjectManager.Buffers.TryCreate(BufferObjectDescription.ShaderStorageBuffer with
         {
             IsStorageBuffer = true,
             Size = 1024 * 1024, // : TODO: eish
@@ -113,7 +113,7 @@ internal class VoxelWorldRenderer : Entity
             );
 
 
-        QuadBuffer = GameEngine.Instance.ObjectManager.VertexArrays.Create(new VertexArrayObjectDescription
+        QuadBuffer = GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(new VertexArrayObjectDescription
         {
             Buffers = new()
             {
