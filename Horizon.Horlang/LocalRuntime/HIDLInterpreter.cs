@@ -289,7 +289,7 @@ public class HIDLInterpreter
         return lastEvaluated;
     }
 
-    public IRuntimeValue EvaluateBinaryExpression(BinaryExpression expression, Environment env)
+    private IRuntimeValue EvaluateBinaryExpression(BinaryExpression expression, Environment env)
     {
         if (expression.Operator == "!") // special case for inverting bool
             return new BooleanValue(!((BooleanValue)Evaluate(expression.Left, env)).Value);

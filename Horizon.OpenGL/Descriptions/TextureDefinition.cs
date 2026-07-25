@@ -30,6 +30,23 @@ namespace Horizon.OpenGL.Descriptions
                     ]
             };
 
+        public static TextureDefinition RgbaUnsignedByteNearest { get; } =
+          new TextureDefinition
+          {
+              InternalFormat = InternalFormat.Rgba8,
+              PixelFormat = PixelFormat.Rgba,
+              PixelType = PixelType.UnsignedByte,
+              TextureTarget = TextureTarget.Texture2D,
+              Parameters = [
+                  new () { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Nearest },
+                    new () { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Nearest},
+                    new () { Name = TextureParameterName.TextureBaseLevel, Value = 0 },
+                    new () { Name = TextureParameterName.TextureMaxLevel, Value = 0 },
+                  ]
+          };
+
         public static TextureDefinition RgbaUnsignedByteCubeMap { get; } =
            new TextureDefinition
            {

@@ -18,7 +18,7 @@ public class SpriteSheetAnimationManager : IGameComponent
     public bool Enabled { get; set; }
 
     public ConcurrentDictionary<string, SpriteAnimationDefinition> Animations { get; init; }
-    public Vector2 SpriteSize { get; init; }
+    public Vector2 SpriteSize { get; set; }
 
     public SpriteSheetAnimationManager(in Vector2 spriteSize)
     {
@@ -94,6 +94,8 @@ public class SpriteSheetAnimationManager : IGameComponent
 
     public void UpdateState(float dt)
     {
+        if (!Enabled) return;
+
         foreach (var name in Animations.Keys)
         {
             var frame = Animations[name];
@@ -114,5 +116,20 @@ public class SpriteSheetAnimationManager : IGameComponent
 
             Animations[name] = frame;
         }
+    }
+
+    public (bool reset, uint index) IncrementFrame(string name)
+    {
+        var frame = Animations[name];
+
+        if (frame.Length < 1)
+        {
+            frame.Index = 0;
+        }
+        bool finished = frame.Index + 1 >= frame.Length;
+
+        frame.Index = (frame.Index + 1) % frame.Length;
+        Animations[name] = frame;
+        return (finished, frame.Index);
     }
 }

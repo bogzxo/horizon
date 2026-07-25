@@ -34,13 +34,13 @@ public class SceneManager : InstanceManager<Scene>, IGameComponent
 
     public void Render(float dt, object? obj = null)
     {
+        CurrentInstance?.Render(dt);
         if (_halt && CurrentInstance is not null)
         {
             CurrentInstance.Initialize();
             CurrentInstance.Enabled = true;
             _halt = false;
         }
-        CurrentInstance?.Render(dt);
     }
 
     public void UpdatePhysics(float dt)

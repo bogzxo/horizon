@@ -15,7 +15,7 @@ internal class VoxelWorld : GameObject
     public readonly SkyManager Sky;
 
     public const int LOADED_DISTANCE = 128;
-    private const int LOD_PARTITION_DIST = 128;
+    private const int LOD_PARTITION_DIST = 384;
     public const int HEIGHT = 8;
 
     public static readonly TileChunk[] Chunks = new TileChunk[LOADED_DISTANCE * LOADED_DISTANCE * HEIGHT];

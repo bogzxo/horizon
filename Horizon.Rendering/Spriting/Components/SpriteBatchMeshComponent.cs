@@ -18,7 +18,9 @@ public class SpriteBatchMesh : GameObject
     private const string UNIFORM_CAMERA_PROJ_MATRIX = "uCameraProjection";
     private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
 
-    // TODO: we'll get back to memory alignment later. edit: still havent
+    // TODO: we'll get back to memory alignment later.
+    // edit: still havent
+    // edit 03/09/25 still havent
     [StructLayout(LayoutKind.Sequential)]
     private struct SpriteData
     {
@@ -185,12 +187,12 @@ public class SpriteBatchMesh : GameObject
 
     private unsafe void AggregateSpriteData(in ReadOnlySpan<Sprite> sprites)
     {
-        if (dataPtr == null)
+        if (dataPtr == null) // no nullptr c#!!!! woww!!!!
             return;
         for (int i = 0; i < sprites.Length; i++)
         {
             if (sprites[i] is null)
-                return; // incase we modified the array while itterating!! thanks multithreading
+                return; // incase we modified the array while itterating!! thanks multithreading!!
 
             dataPtr[i].modelMatrix = sprites[i].Transform.ModelMatrix;
             dataPtr[i].spriteOffset = sprites[i].GetFrameOffset();

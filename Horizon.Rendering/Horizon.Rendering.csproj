@@ -30,7 +30,7 @@
 
   <ItemGroup>
     <PackageReference Include="Box2D.NetStandard" Version="2.4.7-alpha" />
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.21.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
     <PackageReference Include="TiledSharp" Version="1.0.1" />
   </ItemGroup>
 
@@ -38,6 +38,7 @@
     <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
+    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
   </ItemGroup>
 
@@ -83,6 +84,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="shaders\fast_random.glsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="shaders\font\bitmap.fs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="shaders\font\bitmap.vs">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="shaders\primitives\shapes.gs">

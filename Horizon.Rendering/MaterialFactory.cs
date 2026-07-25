@@ -56,7 +56,7 @@ public static class MaterialFactory
                     .Textures
                     .TryCreateOrGet(
                         $"{name}{identifier}",
-                        new OpenGL.Descriptions.TextureDescription { Paths = [fullFile] },
+                        new OpenGL.Descriptions.TextureDescription { Paths = [fullFile], Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByteNearest },
                         out var result
                     ))
                 {

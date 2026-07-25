@@ -100,17 +100,19 @@ public class Player2D : Sprite
 
     private void CreateSprite()
     {
-        ConfigureSpriteSheet(
-            SpriteSheet.FromTexture(
-                Engine
+        if (Engine
                     .ObjectManager
                     .Textures
-                    .TryCreate(new TextureDescription { Paths = "content/spritesheet.png" })
-                    .Asset,
-                new Vector2(16, 16)
-            ),
-            "idle"
-        );
+                    .TryCreate(new TextureDescription { Paths = ["content/spritesheet.png"] }, out var texture))
+        {
+            ConfigureSpriteSheet(
+                SpriteSheet.FromTexture(
+                    texture.Asset,
+                    new Vector2(16, 16)
+                ),
+                "idle"
+            );
+        }
 
         AddAnimationRange(
             new (string, Vector2, uint, float, Vector2?)[]

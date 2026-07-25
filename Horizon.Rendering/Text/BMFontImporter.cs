@@ -287,7 +287,7 @@ public class BMFontImporter
             path,
             new OpenGL.Descriptions.TextureDescription
             {
-                Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByte,
+                Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByteNearest,
                 Paths = [Path.Combine(dir, path)]
             },
             out var result))

@@ -293,8 +293,16 @@ public class Parser
             props.Add(new PropertyExpression(key.Value, value));
 
             if (Peek().Type == TokenType.CloseBracket)
+            {
                 Consume(TokenType.CloseBracket);
-            else
+                if (Peek().Type == TokenType.Comma)
+                {
+                    Consume(TokenType.Comma);
+                    break;
+                }
+            }
+
+            if (Peek().Type == TokenType.Comma)
                 Consume(TokenType.Comma);
         }
         return new ObjectLiteralExpression(props);
