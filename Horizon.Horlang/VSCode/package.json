@@ -1,0 +1,35 @@
+{
+    "name": "whorlang",
+    "displayName": "WHorlang",
+    "description": "Syntax highlighting for the WHorlang scripting language.",
+    "version": "0.0.1",
+    "publisher": "bogzxo",
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "whorlang",
+                "aliases": [
+                    "WHorlang",
+                    "whorlang"
+                ],
+                "extensions": [
+                    ".hor"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "whorlang",
+                "scopeName": "source.whorlang",
+                "path": "./syntaxes/whorlang.tmLanguage.json"
+            }
+        ]
+    }
+}

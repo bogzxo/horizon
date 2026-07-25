@@ -12,7 +12,7 @@ namespace Horizon.Rendering;
 public abstract partial class Tiling<TTextureID>
 {
     public class TileSet : GameObject
-    {
+    { 
         public Material Material { get; private set; }
         private string _texturePath;
 

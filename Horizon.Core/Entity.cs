@@ -16,12 +16,13 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public List<Entity> Children { get; init; } = [];
 
     private readonly Queue<IInstantiable> _uninitialized = [];
+    private bool _initialized = false;
 
     /// <summary>
     /// Called after the constructor, guaranteeing that there will be a valid GL context. Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
-    { PostInit(); }
+    { if (_initialized) return; _initialized = true; PostInit(); }
 
     /// <summary>
     /// A method that executes after all initialisation is complete.

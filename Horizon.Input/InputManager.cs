@@ -40,6 +40,11 @@ namespace Horizon.Input
         public XInputJoystickInputManager XInputJoystickManager { get; init; }
 
         /// <summary>
+        /// Gets the DualSenseInputManager responsible for handling joystick input.
+        /// </summary>
+        //public DualSenseInputManager DualSenseInputManager { get; init; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether input is captured by the InputManager.
         /// </summary>
         public bool Enabled { get; set; }
@@ -65,7 +70,8 @@ namespace Horizon.Input
             {
                 XInputJoystickManager = new XInputJoystickInputManager(),
                 KeyboardManager = new KeyboardInputManager(),
-                MouseManager = new MouseInputManager()
+                MouseManager = new MouseInputManager(),
+                //DualSenseInputManager = new DualSenseInputManager()
             };
         }
 
@@ -125,23 +131,26 @@ namespace Horizon.Input
         {
             var keyboardData = KeyboardManager.GetData();
             var mouseData = MouseManager.GetData();
-            var joystickData = XInputJoystickManager.IsConnected
+            var xjoystickData = XInputJoystickManager.IsConnected
                 ? XInputJoystickManager.GetData()
                 : JoystickData.Default;
+            //var djoystickData = DualSenseInputManager.GetData();
 
             VirtualController.Actions =
-                keyboardData.Actions | mouseData.Actions | joystickData.Actions;
+                keyboardData.Actions | mouseData.Actions | xjoystickData.Actions;// | djoystickData.Actions;
 
             VirtualController.MovementAxis =
                 keyboardData.MovementDirection
-                + (XInputJoystickManager.IsConnected ? joystickData.PrimaryAxis : Vector2.Zero);
+                + (XInputJoystickManager.IsConnected ? xjoystickData.PrimaryAxis : Vector2.Zero);
+               // + (DualSenseInputManager.IsConnected ? djoystickData.PrimaryAxis : Vector2.Zero);
 
             if (VirtualController.MovementAxis.LengthSquared() > 1.0f)
                 VirtualController.MovementAxis = Vector2.Normalize(VirtualController.MovementAxis);
 
             VirtualController.LookingAxis =
                 mouseData.Direction
-                + (XInputJoystickManager.IsConnected ? joystickData.SecondaryAxis : Vector2.Zero);
+                + (XInputJoystickManager.IsConnected ? xjoystickData.SecondaryAxis : Vector2.Zero);
+               // + (DualSenseInputManager.IsConnected ? djoystickData.SecondaryAxis : Vector2.Zero);
         }
 
         /// <summary>

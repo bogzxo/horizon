@@ -9,6 +9,8 @@ public readonly struct ObjectValue(in Dictionary<string, IRuntimeValue> properti
 
     public override string ToString()
     {
+        if (Properties is null) return string.Empty;
+
         StringBuilder sb = new();
         foreach (var item in Properties)
             sb.AppendLine(item.Value.ToString());

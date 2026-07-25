@@ -1,6 +1,8 @@
 ﻿using System.Numerics;
 
+using Silk.NET.GLFW;
 using Silk.NET.Input;
+using Silk.NET.SDL;
 
 namespace Horizon.Input.Components
 {
@@ -12,23 +14,23 @@ namespace Horizon.Input.Components
         /// <summary>
         /// Gets the first connected joystick/gamepad, or null if none is connected.
         /// </summary>
-        public static IJoystick? Joystick =>
+        public static IGamepad? Joystick =>
             Manager.NativeInputContext.Joysticks.Count > 0 ? GetController() : null;
 
-        private static IJoystick? GetController()
+        private static IGamepad? GetController()
         {
             // FIXME yea....
             return (
-                from stick in Manager.NativeInputContext.Joysticks
+                from stick in Manager.NativeInputContext.Gamepads
                 where stick.IsConnected
                 select stick
             ).FirstOrDefault();
         }
 
         /// <summary>
-        /// Gets the JoystickBindings representing the button-to-action mappings for the joystick.
+        /// Gets the XJoystickBindings representing the button-to-action mappings for the joystick.
         /// </summary>
-        public JoystickBindings Bindings { get; private set; }
+        public XJoystickBindings Bindings { get; private set; }
 
         /// <summary>
         /// Gets a value indicating whether a joystick/gamepad is connected.
@@ -42,11 +44,11 @@ namespace Horizon.Input.Components
             triggers;
 
         /// <summary>
-        /// Initializes the JoystickInputManager by setting the default JoystickBindings.
+        /// Initializes the JoystickInputManager by setting the default XJoystickBindings.
         /// </summary>
         public XInputJoystickInputManager()
         {
-            Bindings = JoystickBindings.Default;
+            Bindings = XJoystickBindings.Default;
         }
 
         public override void Initialize()
@@ -70,18 +72,30 @@ namespace Horizon.Input.Components
             };
         }
 
+        public XJoystickButton[] JoystickKeys;
+
         /// <summary>
         /// Updates the JoystickInputManager, processing input from the connected joystick/gamepad.
         /// </summary>
         /// <param name="dt">The time elapsed since the last update.</param>
         public override void AggregateData(float dt)
         {
+            List<XJoystickButton> buttonPresses = [];
+
+            foreach (var button in Joystick.Buttons)
+            {
+                if (button.Pressed)
+                    buttonPresses.Add((XJoystickButton)button.Index);
+            }
+            JoystickKeys = [.. buttonPresses];
+
             actions = VirtualAction.None;
 
-            if (Joystick == null || !Joystick.IsConnected)
+            if (Joystick?.IsConnected != true)
                 return;
 
-            foreach ((JoystickButton key, VirtualAction action) in Bindings.ButtonActionPairs)
+            
+            foreach ((XJoystickButton key, VirtualAction action) in Bindings.ButtonActionPairs)
             {
                 if (Joystick.Buttons[(int)key].Pressed)
                 {
@@ -92,10 +106,10 @@ namespace Horizon.Input.Components
                     actions ^= action;
                 }
             }
-
-            primaryAxis = new Vector2(Joystick.Axes[0].Position, Joystick.Axes[1].Position);
-            secondaryAxis = new Vector2(Joystick.Axes[2].Position, Joystick.Axes[3].Position);
-            triggers = new Vector2(Joystick.Axes[4].Position, Joystick.Axes[5].Position);
+            
+            primaryAxis = new Vector2(Joystick.Thumbsticks[0].X, Joystick.Thumbsticks[0].Y);
+            secondaryAxis = new Vector2(Joystick.Thumbsticks[1].X, Joystick.Thumbsticks[1].X);
+            triggers = new Vector2(Joystick.Triggers[0].Position, Joystick.Triggers[1].Position);
         }
     }
 }

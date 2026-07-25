@@ -1,134 +1,165 @@
-﻿//using DualSenseAPI;
-//using Horizon.GameEntity;
-//using Horizon.GameEntity.Components;
-//using Horizon.Rendering;
-//using System.Numerics;
+﻿using DualSenseAPI;
+using System.Numerics;
 
-//namespace Horizon.Input.Components
-//{
-//    /// <summary>
-//    /// The DualSenseInputManager class is responsible for handling input from a joystick/gamepad.
-//    /// </summary>
-//    public class DualSenseInputManager : IGameComponent, IDisposable
-//    {
-//        public string Name { get; set; }
+namespace Horizon.Input.Components
+{
+    /// <summary>
+    /// The DualSenseInputManager class is responsible for handling input from a joystick/gamepad.
+    /// </summary>
+    public class DualSenseInputManager : PeripheralInputManager, IDisposable
+    {
+        /// <summary>
+        /// Gets the first connected joystick/gamepad, or null if none is connected.
+        /// </summary>
+        public DualSense? Controller { get; private set; }
 
-//        /// <summary>
-//        /// Gets or sets the parent Entity that owns this DualSenseInputManager component.
-//        /// </summary>
-//        public Entity Parent { get; set; }
+        public DJoystickBindings Bindings { get; private set; }
 
-//        /// <summary>
-//        /// Gets the first connected joystick/gamepad, or null if none is connected.
-//        /// </summary>
-//        public DualSense? Controller { get; private set; }
+        public bool IsConnected { get; private set; } = false;
+        public DualSenseAPI.State.DualSenseOutputState OutputState { get; set; } =
+            new DualSenseAPI.State.DualSenseOutputState();
 
-//        public bool HasController { get; private set; } = false;
-//        public DualSenseAPI.State.DualSenseOutputState OutputState { get; set; } =
-//            new DualSenseAPI.State.DualSenseOutputState();
 
-//        private DualSense? AttachController()
-//        {
-//            var controller = DualSense.EnumerateControllers().FirstOrDefault();
-//            if (controller == null)
-//                return null;
+        private DualSense? AttachController()
+        {
 
-//            controller.Acquire();
-//            controller.JoystickDeadZone = 0.1f;
-//            controller.BeginPolling(10);
-//            controller.OnStatePolled += ControllerStatePolled;
+            var controller = DualSense.EnumerateControllers().FirstOrDefault();
+            if (controller == null)
+                return null;
 
-//            HasController = true;
-//            return controller;
-//        }
+            controller.Acquire();
+            controller.JoystickDeadZone = 0.2f;
+            controller.BeginPolling(12);
+            controller.OnStatePolled += ControllerStatePolled;
 
-//        private void ControllerStatePolled(DualSense sender)
-//        {
-//            lock (_updateLock)
-//            {
-//                var state = sender.InputState;
+            IsConnected = true;
+            return controller;
+        }
 
-//                // TODO: implement keybinds for controller
-//                actions = VirtualAction.None;
+        private void ControllerStatePolled(DualSense sender)
+        {
+            lock (_updateLock)
+            {
+                var state = sender.InputState;
 
-//                primaryAxis = state.LeftAnalogStick;
-//                secondaryAxis = state.RightAnalogStick;
-//                triggers = new Vector2(state.L2, state.R2);
+                if (state.CircleButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Circle];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Circle];
 
-//                sender.OutputState = OutputState;
-//            }
-//        }
+                if (state.SquareButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Square];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Square];
 
-//        private readonly object _updateLock = new();
+                if (state.TriangleButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Triangle];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Triangle];
 
-//        /// <summary>
-//        /// Gets the JoystickBindings representing the button-to-action mappings for the joystick.
-//        /// </summary>
-//        public JoystickBindings Bindings { get; private set; }
+                if (state.CrossButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.X];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.X];
 
-//        private VirtualAction actions;
+                if (state.DPadUpButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.DPadUp];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.DPadUp];
 
-//        private Vector2 primaryAxis,
-//            secondaryAxis,
-//            triggers;
+                if (state.DPadDownButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.DPadDown];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.DPadDown];
 
-//        /// <summary>
-//        /// Initializes the JoystickInputManager by setting the default JoystickBindings.
-//        /// </summary>
-//        public void Initialize()
-//        {
-//            Bindings = JoystickBindings.Default;
+                if (state.DPadLeftButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.DPadLeft];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.DPadLeft];
 
-//            Controller = AttachController();
-//        }
+                if (state.DPadRightButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.DPadRight];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.DPadRight];
 
-//        /// <summary>
-//        /// Retrieves the current JoystickData containing input information from the joystick/gamepad.
-//        /// </summary>
-//        /// <returns>The JoystickData containing the joystick input.</returns>
-//        public JoystickData GetData()
-//        {
-//            lock (_updateLock)
-//            {
-//                return new JoystickData
-//                {
-//                    Actions = actions,
-//                    PrimaryAxis = primaryAxis,
-//                    SecondaryAxis = secondaryAxis,
-//                    Triggers = triggers
-//                };
-//            }
-//        }
+                if (state.L1Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.L1];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.L1];
 
-//        /// <summary>
-//        /// Updates the JoystickInputManager, processing input from the connected joystick/gamepad.
-//        /// </summary>
-//        /// <param name="dt">The time elapsed since the last update.</param>
-//        public void UpdateState(float dt)
-//        {
-//            // Not used for joystick input.
-//        }
+                if (state.L2Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.L2];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.L2];
 
-//        /// <summary>
-//        /// Draws the JoystickInputManager, not used for joystick input.
-//        /// </summary>
-//        /// <param name="dt">The time elapsed since the last draw.</param>
-//        /// <param name="options">Optional rendering options (not used).</param>
-//        public void Render(float dt, object obj=null)
-//        {
-//            // Not used for joystick input.
-//        }
+                if (state.R1Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.R1];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.R1];
 
-//        public void Dispose()
-//        {
-//            OutputState.LeftRumble = OutputState.RightRumble = 0.0f;
-//            OutputState.L2Effect = OutputState.R2Effect = DualSenseAPI.TriggerEffect.Default;
+                if (state.R2Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.R2];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.R2];
 
-//            Controller?.ReadWriteOnce();
-//            Controller?.EndPolling();
-//            Controller?.Release();
-//        }
+                if (state.MenuButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Menu];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Menu];
 
-//        public void UpdatePhysics(float dt) { }
-//    }
-//}
+                if (state.LogoButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Sony];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Sony];
+
+                if (state.CreateButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Create];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Create];
+
+                if (state.L3Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.LeftStickClick];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.LeftStickClick];
+
+                if (state.R3Button) actions |= Bindings.ButtonActionPairs[DJoystickButton.RightStickClick];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.RightStickClick];
+
+                if (state.TouchpadButton) actions |= Bindings.ButtonActionPairs[DJoystickButton.Touchpad];
+                else actions ^= Bindings.ButtonActionPairs[DJoystickButton.Touchpad];
+
+
+                primaryAxis = new Vector2(state.LeftAnalogStick.X, state.LeftAnalogStick.Y);
+                secondaryAxis = new Vector2(state.RightAnalogStick.X, state.RightAnalogStick.Y);
+                triggers = new Vector2(state.L2, state.R2);
+
+                sender.OutputState = OutputState;
+            }
+        }
+
+        private readonly object _updateLock = new();
+
+
+        private VirtualAction actions;
+
+        private Vector2 primaryAxis,
+            secondaryAxis,
+            triggers;
+
+        /// <summary>
+        /// Initializes the JoystickInputManager by setting the default XJoystickBindings.
+        /// </summary>
+        public override void Initialize()
+        {
+            Bindings = DJoystickBindings.Default;
+
+            Controller = AttachController();
+        }
+
+        /// <summary>
+        /// Retrieves the current JoystickData containing input information from the joystick/gamepad.
+        /// </summary>
+        /// <returns>The JoystickData containing the joystick input.</returns>
+        public JoystickData GetData()
+        {
+            lock (_updateLock)
+            {
+                return new JoystickData
+                {
+                    Actions = actions,
+                    PrimaryAxis = primaryAxis,
+                    SecondaryAxis = secondaryAxis,
+                    Triggers = triggers
+                };
+            }
+        }
+
+        public override void SwapBuffers()
+        {
+            
+        }
+
+        public override void AggregateData(float dt)
+        {
+            
+        }
+
+        public void Dispose()
+        {
+            OutputState.LeftRumble = OutputState.RightRumble = 0.0f;
+            OutputState.L2Effect = OutputState.R2Effect = DualSenseAPI.TriggerEffect.Default;
+
+            Controller?.ReadWriteOnce();
+            Controller?.EndPolling();
+            Controller?.Release();
+        }
+    }
+}

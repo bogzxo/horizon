@@ -121,6 +121,7 @@ internal class Program
         }), true);
 
         bool startupFile = args.Length > 0 && File.Exists(args[0]);
+        Console.WriteLine(runtime.Evaluate(File.ReadAllText("test.hor")).result);
 
         while (!shouldHalt)
         {
@@ -131,6 +132,8 @@ internal class Program
                 continue;
             }
             Console.Write($"{promptVal.Value} ");
+
+
             string? input = Console.ReadLine();
 
             if (input is null) continue;

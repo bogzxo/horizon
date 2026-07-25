@@ -39,5 +39,5 @@ float calcShadow(float bias) {
 void main() {
     float bias = abs(dot(uSunDir, fs_in.normal));
     vec3 col = (texture(uTexAlbedo, fs_in.texCoords)).rgb * vec3(max(0.3, bias) + 0.2);
-    frag_out = vec4(col * (calcShadow(bias)) * fs_in.tint , 1.0);
+    frag_out = vec4(col * (calcShadow(bias))/* * fs_in.tint */, 1.0);
 }

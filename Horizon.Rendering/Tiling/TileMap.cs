@@ -93,7 +93,7 @@ public abstract partial class Tiling<TTextureID>
         /// <param name="parent">The gamescreen (necessary if you plan to use Box2D integration).</param>
         /// <param name="tiledMapPath">The path of the tiled map.</param>
         /// <returns>An instance of <see cref="TileMap"/> based off a specified Tiled map. Null if unsuccessful.</returns>
-        public static TileMap? FromTiledMap(Entity parent, string tiledMapPath)
+        public static bool TryFromTiledMap(Entity parent, string tiledMapPath, out TileMap? map)
         {
             try
             {
@@ -118,7 +118,7 @@ public abstract partial class Tiling<TTextureID>
                 int heightInChunks = tiledMap.Height / TileMapChunk.HEIGHT;
                 int depthInLayers = tiledMap.Layers.Count;
 
-                var map = new TileMap(
+                map = new TileMap(
                     widthInChunks,
                     heightInChunks,
                     depthInLayers,
@@ -194,14 +194,15 @@ public abstract partial class Tiling<TTextureID>
 
                 map.ChunkManager.PostGenerateTiles();
 
-                return map;
+                return true;
             }
             catch (Exception ex)
             {
                 ConcurrentLogger
                     .Instance
                     .Log(LogLevel.Error, $"Error loading Tiled map: + {ex.Message}");
-                return null;
+                map = null;
+                return false;
             }
         }
 

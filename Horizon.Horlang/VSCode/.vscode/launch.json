@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Horlang Extension",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "${workspaceFolder}"
+            ]
+        }
+    ]
+}

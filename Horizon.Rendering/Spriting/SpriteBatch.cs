@@ -156,7 +156,7 @@ public class SpriteBatch : GameObject
     /// </summary>
     /// <param name="sprite"></param>
     public void Add(in Sprite sprite) => _queuedSprites.Push(sprite);
-
+    
     /// <summary>
     /// Commits an object to be rendered.
     /// </summary>
@@ -185,7 +185,7 @@ public class SpriteBatch : GameObject
         if (!Enabled)
             return;
 
-        if (_queuedSprites.Any())
+        if (!_queuedSprites.IsEmpty)
         {
             int length = _queuedSprites.Count;
             Sprite[] sprites = new Sprite[length];

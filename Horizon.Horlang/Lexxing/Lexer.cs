@@ -36,6 +36,9 @@ public static class Lexer
         // flag for parsing strings
         bool inString = false;
 
+        // flag for parsing comments
+        bool inComment = false;
+
         // helper function to construct currentToken and set flag
         void AddToken(in TokenType type, in string value)
         {
@@ -44,13 +47,29 @@ public static class Lexer
         }
 
         Queue<char> characters = new(source.ToCharArray());
-
+        
         char prev = '0';
         while (characters.Count != 0)
         {
             char character = characters.Dequeue();
             foundTokenFlag = false;
 
+            if (inComment)
+            {
+                while (inComment)
+                {
+                    character = characters.Dequeue();
+                    if (character == '*')
+                    {
+                        if (characters.Peek() == '/')
+                        {
+                            inComment = false;
+                            characters.Dequeue();
+                            break;
+                        }
+                    }
+                }
+            }
             if (inString)
             {
                 StringBuilder sb = new();
@@ -128,10 +147,21 @@ public static class Lexer
                         AddToken(TokenType.CloseBrace, character.ToString());
                         break;
 
+                    case '/':
+                        if (characters.Peek() == '*')
+                        {
+                            characters.Dequeue();
+                            inComment = true;
+                            continue;
+                        }
+                        else
+                        {
+                            AddToken(TokenType.BinaryOperation, character.ToString());
+                        }
+                        break;
                     case '+':
                     case '-':
                     case '*':
-                    case '/':
                     case '%':
                     case '<':
                     case '>':

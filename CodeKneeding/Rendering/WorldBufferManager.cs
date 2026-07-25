@@ -172,7 +172,7 @@ internal class WorldBufferManager : IInstantiable
                 .NamedBufferData(Buffer[VertexArrayBufferAttachmentType.IndirectBuffer].Size);
 
             if (GameEngine.Instance.ObjectManager.Buffers.TryCreate(
-                GenerateIndirectBufferDescription(),
+                description: GenerateIndirectBufferDescription(),
                 out var indResult))
             {
                 CullIndirectBuffer = indResult.Asset;

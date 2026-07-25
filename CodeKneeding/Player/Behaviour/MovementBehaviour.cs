@@ -7,7 +7,7 @@ namespace CodeKneading.Player.Behaviour;
 
 internal class MovementBehaviour : IPlayerBehaviour
 {
-    internal const float MOVEMENT_SPEED = 10.0f;
+    internal const float MOVEMENT_SPEED = 100.0f;
 
     public GamePlayer Player { get; init; }
 

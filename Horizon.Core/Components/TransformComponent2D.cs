@@ -73,6 +73,14 @@ public class TransformComponent2D : IGameComponent
             updateModelMatrix();
         }
     }
+    /// <summary>
+    /// Sets the transform position relative to the center of the object.
+    /// </summary>
+    /// <param name="position"></param>
+    public void SetPositionRelativeToOrigin(Vector2 position)
+    {
+        Position = position + size / new Vector2(2, -2);
+    }
 
     /// <summary>
     /// Gets or sets the size in pixels.
