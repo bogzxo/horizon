@@ -12,10 +12,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Bogz.Logging\Bogz.Logging.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Update="test.hor">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

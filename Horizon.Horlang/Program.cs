@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Text;
 
-using Bogz.Logging.Loggers;
 
 using Horizon.HIDL.Runtime;
 
@@ -141,7 +140,6 @@ internal class Program
             Console.WriteLine(runtime.Evaluate(input).result);
             Console.WriteLine();
         }
-        ConcurrentLogger.Instance.Dispose();
     }
 
     private static void ClearConsole()
