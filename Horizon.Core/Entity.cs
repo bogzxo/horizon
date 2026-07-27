@@ -38,7 +38,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var entSpan = CollectionsMarshal.AsSpan(Children);
             for (int i = 0; i < entSpan.Length; i++)
             {
-                if (entSpan[i] is null) continue;
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
 
                 entSpan[i].InitializeAll();
 
@@ -50,7 +50,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var compSpan = CollectionsMarshal.AsSpan(Components);
             for (int i = 0; i < compSpan.Length; i++)
             {
-                if (compSpan[i] is null) continue;
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
                 compSpan[i].Render(dt);
             }
         }
@@ -82,7 +82,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var compSpan = CollectionsMarshal.AsSpan(Components);
             for (int i = 0; i < compSpan.Length; i++)
             {
-                if (compSpan[i] is null) continue;
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
                 compSpan[i].UpdatePhysics(dt);
             }
         }
@@ -92,7 +92,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var entSpan = CollectionsMarshal.AsSpan(Children);
             for (int i = 0; i < entSpan.Length; i++)
             {
-                if (entSpan[i] is null) continue;
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
                 entSpan[i].UpdatePhysics(dt);
             }
         }
@@ -105,7 +105,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var compSpan = CollectionsMarshal.AsSpan(Components);
             for (int i = 0; i < compSpan.Length; i++)
             {
-                if (compSpan[i] is null) continue;
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
+                if (!_uninitialized.Contains(compSpan[i]))
                 compSpan[i].UpdateState(dt);
             }
         }
@@ -115,7 +116,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             var entSpan = CollectionsMarshal.AsSpan(Children);
             for (int i = 0; i < entSpan.Length; i++)
             {
-                if (entSpan[i] is null) continue;
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
                 entSpan[i].UpdateState(dt);
             }
         }

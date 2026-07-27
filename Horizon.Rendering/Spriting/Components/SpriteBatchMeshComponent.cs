@@ -21,6 +21,7 @@ public class SpriteBatchMesh : GameObject
     // TODO: we'll get back to memory alignment later.
     // edit: still havent
     // edit 03/09/25 still havent
+    // edit 27/07/26 still havent
     [StructLayout(LayoutKind.Sequential)]
     private struct SpriteData
     {

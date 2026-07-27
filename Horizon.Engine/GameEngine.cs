@@ -19,10 +19,10 @@ using Horizon.OpenGL.Managers;
 using ImGuiNET;
 
 using Silk.NET.Input.Glfw;
-using Silk.NET.Input.Sdl;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing.Glfw;
-using Silk.NET.Windowing.Sdl;
+
+using SixLabors.ImageSharp;
 
 namespace Horizon.Engine;
 
@@ -114,9 +114,6 @@ public class GameEngine : Entity
 
         imguiController = new CustomImguiController(GL, WindowManager.Window, WindowManager.Input);
         LoadImGuiStyle();
-
-        if (Configuration.InitialScene is not null) 
-            SceneManager.ChangeInstance(Configuration.InitialScene);
     }
 
     private void LoadImGuiStyle()

@@ -57,9 +57,10 @@ internal class MainScene : Scene
 
     public override void Render(float dt, object? obj = null)
     {
+        base.Render(dt, obj);
+        if (ActiveCamera is null) return;
         CameraData.NamedBufferSubData(new ReadOnlySpan<Matrix4x4>([ActiveCamera.View, ActiveCamera.Projection]), 0, 32 * 4);
 
         CameraData.NamedBufferSubData(new ReadOnlySpan<Vector4>([new Vector4(ActiveCamera.Position, 1.0f)]), 32 * 4, 4 * 4);
-        base.Render(dt, obj);
     }
 }

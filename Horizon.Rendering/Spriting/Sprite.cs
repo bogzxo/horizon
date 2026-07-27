@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Bogz.Logging.Loggers;
 
 using Horizon.Core.Components;
+using Horizon.Core.Components.Physics2D;
 using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -41,7 +42,8 @@ public class Sprite : GameObject
     public bool IsAnimated { get; set; }
     public string FrameName { get; private set; }
 
-    public TransformComponent2D Transform { get; init; }
+    public virtual TransformComponent2D Transform { get; init; }
+
 
     public Sprite(in Vector2 size)
     {

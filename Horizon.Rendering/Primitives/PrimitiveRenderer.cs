@@ -30,22 +30,60 @@ public enum PrimitiveShapeType : uint
 /// <param name="scale">ShapePrimitive scale</param>
 /// <param name="rot">ShapePrimitive rotation in degrees</param>
 [StructLayout(LayoutKind.Sequential)] // explicitly set sequential layout
-public struct ShapePrimitive(PrimitiveShapeType type, Vector2 pos, Vector2 scale, Vector3 colour, float rot)
+public struct ShapePrimitive(PrimitiveShapeType type, Vector2 pos, Vector2 scale, Vector3 colour, float rot) : IVertex
 {
-    [VertexLayout(0, Silk.NET.OpenGL.VertexAttribPointerType.UnsignedInt)]
     private uint type = (uint)type;
 
-    [VertexLayout(1, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
     private Vector2 position = pos;
 
-    [VertexLayout(2, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
     private Vector2 scale = scale;
 
-    [VertexLayout(3, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
     private float rotation = rot;
 
-    [VertexLayout(4, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
     private Vector3 colour = colour;
+    public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
+      {
+            new() {
+                Index = 0,
+                Size = sizeof(uint),
+                Count = 1,
+                Offset = 0,
+                Type = VertexAttribPointerType.UnsignedInt,
+                Instanced = false
+            },
+            new() {
+                Index = 1,
+                Size = sizeof(float) * 2,
+                Count = 2,
+                Offset = sizeof(uint),
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            },
+            new() {
+                Index = 2,
+                Size = sizeof(float) * 2,
+                Count = 2,
+                Offset = sizeof(uint) + sizeof(float) * 2,
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            },
+            new() {
+                Index = 3,
+                Size = sizeof(float),
+                Count = 1,
+                Offset = sizeof(uint) + sizeof(float) * 4,
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            },
+            new() {
+                Index = 4,
+                Size = sizeof(float) * 3,
+                Count = 3,
+                Offset = sizeof(uint) + sizeof(float) * 5,
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            }
+      };
 
     public float Rotation { get => rotation; set => rotation = value; }
     public Vector2 Scale { get => scale; set => scale = value; }

@@ -154,7 +154,7 @@ public abstract partial class Tiling<TTextureID>
                 foreach (var layer in tiledMap.Layers)
                 {
                     var layerConfig = GenerateTiledTileConfigFromLayer(layer);
-
+                    
                     foreach (var tile in layer.Tiles)
                     {
                         if (tile.Gid == 0)
@@ -162,6 +162,7 @@ public abstract partial class Tiling<TTextureID>
 
                         for (int chunkIndex = 0; chunkIndex < map.Width * map.Height; chunkIndex++)
                         {
+                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].Visible = layerConfig.IsVisible;
                             map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].AlwaysOnTop =
                                 layerConfig.AlwaysOnTop;
                         }
@@ -213,7 +214,7 @@ public abstract partial class Tiling<TTextureID>
         /// <returns></returns>
         private static StaticTile.TiledTileConfig GenerateTiledTileConfigFromLayer(TmxLayer layer)
         {
-            layer.Properties.TryGetValue("IsCollectible", out var _stringIsCollidable);
+            layer.Properties.TryGetValue("IsCollidable", out var _stringIsCollidable);
             layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
 
             bool isCollidable =

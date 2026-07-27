@@ -120,7 +120,7 @@ public class SpriteSheetAnimationManager : IGameComponent
 
     public (bool reset, uint index) IncrementFrame(string name)
     {
-        var frame = Animations[name];
+        var frame = Animations[name ?? ""];
 
         if (frame.Length < 1)
         {

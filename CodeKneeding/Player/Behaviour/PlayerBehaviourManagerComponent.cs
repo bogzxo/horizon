@@ -53,11 +53,13 @@ internal class PlayerBehaviourManagerComponent : IGameComponent
 
     public void UpdatePhysics(float dt)
     {
+        if (Behavior != null)
         Behavior.UpdatePhysics(dt);
     }
 
     public void UpdateState(float dt)
     {
-        Behavior.UpdateState(dt);
+        if (Behavior != null)
+            Behavior.UpdateState(dt);
     }
 }

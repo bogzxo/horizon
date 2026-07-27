@@ -39,7 +39,7 @@ public class GameScene : Scene
 
     public GameScene()
     {
-        if ((tilemap = TileMap.FromTiledMap(this, "content/maps/main.tmx")!) == null)
+        if (!(TileMap.TryFromTiledMap(this, "content/maps/main.tmx", out tilemap)))
         {
             ConcurrentLogger.Instance.Log(LogLevel.Fatal, "Failed to load tilemap, aborting...");
             Environment.Exit(1);
@@ -56,7 +56,7 @@ public class GameScene : Scene
 
         random = new Random(Environment.TickCount);
 
-        world = AddComponent<Box2DWorldComponent>();
+        world = AddComponent(new Box2DWorldComponent(Vector2.Zero));
 
         AddEntity(player = new Player2D(world, tilemap));
         deferredRenderer = AddEntity<DeferredRenderer2D>(
@@ -147,6 +147,7 @@ public class GameScene : Scene
 
         base.UpdateState(dt);
 
+        if (player.PhysicsBody != null)
         cam.Position = new Vector3(player.Position.X, player.Position.Y, 0.0f);
     }
 

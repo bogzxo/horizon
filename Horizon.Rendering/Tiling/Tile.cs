@@ -100,7 +100,7 @@ public partial class Tiling<TTextureID>
                 Distance = 0
             };
 
-            PhysicsData.Fixture.m_friction = 0.6f;
+            PhysicsData.Fixture.m_friction = 0.1f;
             PhysicsData.HasCollider = true;
 
             return true;

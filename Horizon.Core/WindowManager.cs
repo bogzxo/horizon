@@ -8,11 +8,9 @@ using Horizon.Core.Primitives;
 
 using Silk.NET.Input;
 using Silk.NET.Input.Glfw;
-using Silk.NET.Input.Sdl;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 using Silk.NET.Windowing.Glfw;
-using Silk.NET.Windowing.Sdl;
 
 namespace Horizon.Core;
 

@@ -1,7 +1,10 @@
-﻿using Horizon.Core;
+﻿using System.Diagnostics.CodeAnalysis;
+
+using Horizon.Core;
 
 namespace Horizon.Engine;
 
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 public abstract class GameObject : Entity
 {
     public static GameEngine Engine { get; internal set; }

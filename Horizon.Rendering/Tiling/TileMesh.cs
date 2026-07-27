@@ -50,7 +50,7 @@ public abstract partial class Tiling<TTextureID>
         private bool _uploadData,
             _isUpdatingMesh;
 
-        private readonly struct BasicVertex
+        private readonly struct BasicVertex : IVertex
         {
             public readonly Vector2 Position
             {
@@ -66,11 +66,29 @@ public abstract partial class Tiling<TTextureID>
 
             public static uint SizeInBytes { get; } = sizeof(float) * 4;
 
-            [VertexLayout(0, VertexAttribPointerType.Float)]
             private readonly Vector2 position;
 
-            [VertexLayout(1, VertexAttribPointerType.Float)]
             private readonly Vector2 texCoords;
+
+            public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
+             {
+                    new() {
+                        Index = 0,
+                        Size = sizeof(float) * 2,
+                        Count = 2,
+                        Offset = 0,
+                        Type = VertexAttribPointerType.Float,
+                        Instanced = false
+                    },
+                    new() {
+                        Index = 1,
+                        Size = sizeof(float) * 2,
+                        Count = 2,
+                        Offset = sizeof(float) * 2,
+                        Type = VertexAttribPointerType.Float,
+                        Instanced = false
+                    },
+             };
 
             public BasicVertex(Vector2 position, Vector2 texCoords)
             {
