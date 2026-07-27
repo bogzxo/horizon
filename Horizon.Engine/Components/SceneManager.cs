@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 
 using Horizon.Core;
+
 using Horizon.Core.Components;
 
 namespace Horizon.Engine.Components;

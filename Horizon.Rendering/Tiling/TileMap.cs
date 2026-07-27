@@ -154,7 +154,7 @@ public abstract partial class Tiling<TTextureID>
                 foreach (var layer in tiledMap.Layers)
                 {
                     var layerConfig = GenerateTiledTileConfigFromLayer(layer);
-                    
+
                     foreach (var tile in layer.Tiles)
                     {
                         if (tile.Gid == 0)
@@ -456,10 +456,10 @@ public abstract partial class Tiling<TTextureID>
                 }
             }
 
-            //ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Fatal,
-            //    $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
-            //);
+            ConcurrentLogger.Instance.Log(
+                Bogz.Logging.LogLevel.Fatal,
+                $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
+            );
             return null!;
         }
     }
