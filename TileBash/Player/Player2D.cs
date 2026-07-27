@@ -144,19 +144,19 @@ public class Player2D : Sprite
 
     private void GenerateTileColliders()
     {
-        //// Enumerate the enumerable so its only iterated _once_.
-        //visibleTiles = map.FindVisibleTiles(Position - Transform.Size / 2.0f, 8.0f)
-        //    .Where(e => e.PhysicsData.IsCollidable)
-        //    .ToArray();
+        // Enumerate the enumerable so its only iterated _once_.
+        visibleTiles = map.FindVisibleTiles(Position - Transform.Size / 2.0f, 8.0f)
+            .Where(e => e.PhysicsData.IsCollidable)
+            .ToArray();
 
-        //foreach (var tile in visibleTiles)
-        //{
-        //    tile.PhysicsData.Age = 0;
+        foreach (var tile in visibleTiles)
+        {
+            tile.PhysicsData.Age = 0;
 
-        //    if (!colliableTiles.Contains(tile))
-        //        if (tile.TryGenerateCollider())
-        //            colliableTiles.Add(tile);
-        //}
+            if (!colliableTiles.Contains(tile))
+                if (tile.TryGenerateCollider())
+                    colliableTiles.Add(tile);
+        }
     }
 
     private void UpdateTileColliders(float dt)

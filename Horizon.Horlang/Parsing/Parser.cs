@@ -404,11 +404,20 @@ public class Parser
 
     private IExpression ParseUnaryExpression()
     {
+        // handle logical not
         if (Peek().Type == TokenType.Exclamation)
         {
             Consume(TokenType.Exclamation);
             var target = ParsePrimaryExpression();
             return new BinaryExpression(target, null, "!");
+        }
+
+        // handle unary plus/minus (e.g. -5, +3, -x)
+        if (Peek().Type == TokenType.BinaryOperation && (Peek().Value == "-" || Peek().Value == "+"))
+        {
+            var op = Consume().Value;
+            var target = ParsePrimaryExpression();
+            return new BinaryExpression(target, null, op);
         }
 
         return ParsePrimaryExpression();
@@ -458,7 +467,7 @@ public class Parser
     private IExpression ParsePrimaryExpression()
     {
         Token token = Peek();
-        IExpression result = new NullLiteral(); ;
+        IExpression result = new NullLiteral();
 
         switch (token.Type)
         {

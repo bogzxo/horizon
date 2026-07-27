@@ -2,7 +2,6 @@
 
 using Silk.NET.GLFW;
 using Silk.NET.Input;
-using Silk.NET.SDL;
 
 namespace Horizon.Input.Components
 {
@@ -14,8 +13,8 @@ namespace Horizon.Input.Components
         /// <summary>
         /// Gets the first connected joystick/gamepad, or null if none is connected.
         /// </summary>
-        public static IGamepad? Joystick =>
-            Manager.NativeInputContext.Joysticks.Count > 0 ? GetController() : null;
+        public static IGamepad? Gamepad =>
+            Manager.NativeInputContext.Gamepads.Count > 0 ? GetController() : null;
 
         private static IGamepad? GetController()
         {
@@ -35,7 +34,7 @@ namespace Horizon.Input.Components
         /// <summary>
         /// Gets a value indicating whether a joystick/gamepad is connected.
         /// </summary>
-        public bool IsConnected => Joystick?.IsConnected ?? false;
+        public bool IsConnected => Gamepad?.IsConnected ?? false;
 
         private VirtualAction actions;
 
@@ -82,7 +81,7 @@ namespace Horizon.Input.Components
         {
             List<XJoystickButton> buttonPresses = [];
 
-            foreach (var button in Joystick.Buttons)
+            foreach (var button in Gamepad.Buttons)
             {
                 if (button.Pressed)
                     buttonPresses.Add((XJoystickButton)button.Index);
@@ -91,13 +90,13 @@ namespace Horizon.Input.Components
 
             actions = VirtualAction.None;
 
-            if (Joystick?.IsConnected != true)
+            if (Gamepad?.IsConnected != true)
                 return;
 
             
             foreach ((XJoystickButton key, VirtualAction action) in Bindings.ButtonActionPairs)
             {
-                if (Joystick.Buttons[(int)key].Pressed)
+                if (Gamepad.Buttons[(int)key].Pressed)
                 {
                     actions |= action;
                 }
@@ -107,9 +106,9 @@ namespace Horizon.Input.Components
                 }
             }
             
-            primaryAxis = new Vector2(Joystick.Thumbsticks[0].X, Joystick.Thumbsticks[0].Y);
-            secondaryAxis = new Vector2(Joystick.Thumbsticks[1].X, Joystick.Thumbsticks[1].X);
-            triggers = new Vector2(Joystick.Triggers[0].Position, Joystick.Triggers[1].Position);
+            primaryAxis = new Vector2(Gamepad.Thumbsticks[0].X, Gamepad.Thumbsticks[0].Y);
+            secondaryAxis = new Vector2(Gamepad.Thumbsticks[1].X, Gamepad.Thumbsticks[1].X);
+            triggers = new Vector2(Gamepad.Triggers[0].Position, Gamepad.Triggers[1].Position);
         }
     }
 }

@@ -24,6 +24,11 @@ public abstract partial class Tiling<TTextureID>
         /// </summary>
         public bool AlwaysOnTop { get; set; } = false;
 
+        /// <summary>
+        /// Gets or sets a value indicating whether this slice is rendered.
+        /// </summary>
+        public bool Visible { get; set; } = true;
+
         public TileMapChunkSlice(int width, int height)
         {
             this.Width = width;

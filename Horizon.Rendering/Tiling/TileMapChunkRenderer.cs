@@ -151,6 +151,8 @@ public abstract partial class Tiling<TTextureID>
             // UpdateState tileset/tile associations.
             foreach (var slice in Chunk.Slices)
             {
+                if (!slice.Visible) continue;
+
                 if (!TileMapChunkSliceTileMeshesKeyPairs.ContainsKey(slice))
                     TileMapChunkSliceTileMeshesKeyPairs.Add(slice, new(slice));
 
@@ -160,6 +162,8 @@ public abstract partial class Tiling<TTextureID>
             // generate the meshes accordingly.
             foreach (var sliceMesh in TileMapChunkSliceTileMeshesKeyPairs.Values)
             {
+                if (!sliceMesh.Slice.Visible) continue;
+
                 foreach (var tileset in sliceMesh.TileSetPairs.Keys)
                 {
                     if (!sliceMesh.TileMeshPairs.ContainsKey(tileset))
@@ -190,6 +194,8 @@ public abstract partial class Tiling<TTextureID>
             }
             if (!TileMapChunkSliceTileMeshesKeyPairs.Any())
                 return;
+            
+            if (!TileMapChunkSliceTileMeshesKeyPairs.ContainsKey(Chunk.Slices[index])) return;
 
             foreach (
                 var (_, mesh) in TileMapChunkSliceTileMeshesKeyPairs[

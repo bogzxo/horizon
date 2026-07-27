@@ -294,6 +294,19 @@ public class HIDLInterpreter
         if (expression.Operator == "!") // special case for inverting bool
             return new BooleanValue(!((BooleanValue)Evaluate(expression.Left, env)).Value);
 
+        // unary plus/minus (expression.Right == null) e.g. -5 or +x
+        if (expression.Right is null && (expression.Operator == "-" || expression.Operator == "+"))
+        {
+            var leftVal = Evaluate(expression.Left, env);
+            if (leftVal.Type == ValueType.Number)
+            {
+                var num = ((NumberValue)leftVal).Value;
+                return expression.Operator == "-" ? new NumberValue(-num) : new NumberValue(num);
+            }
+            // fallback: if not a number, return null value
+            return NULL;
+        }
+
         // evaluate both sides
         var lhs = Evaluate(expression.Left, env);
         var rhs = Evaluate(expression.Right, env);

@@ -28,6 +28,7 @@ namespace Horizon.Core.Components.Physics2D
 
         public void UpdateState(float dt)
         {
+            if (transform is null) return;
             transform.Position = Body.Position;
             transform.Rotation = MathHelper.RadiansToDegrees(Body.GetAngle());
         }

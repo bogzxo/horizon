@@ -153,54 +153,23 @@ public class BufferObject : GLObject
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public unsafe void SetLayout<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.NonPublicFields)] T>()
-        where T : unmanaged
+    public unsafe void SetLayout<T>() where T : unmanaged, IVertex
     {
-        // get all fields
-        var fields = typeof(T)
-            .GetFields(BindingFlags.NonPublic | BindingFlags.Instance) // read all fields and sort by index, we trust every property has the attribute.
-            .OrderBy(p => p.GetCustomAttributes().OfType<VertexLayout>().First().Index)
-            .ToArray(); // remember enumerate the array.
-
-        // store queue of layout.
-        var queue = new Queue<VertexLayoutDescription>();
-
-        // iterate
-        int totalSizeInBytes = 0;
-        for (uint i = 0; i < fields.Length; i++)
-        {
-            var attribute =
-                (fields[i].GetCustomAttribute(typeof(VertexLayout)) as VertexLayout)
-                ?? throw new Exception("Undescribed property!");
-
-            int count = fields[i].FieldType.IsPrimitive ? 1 : Math.Max(fields[i].FieldType.GetFields().Length, 1);
-            int size = count * GetSizeFromVertexAttribPointerType(attribute.Type);
-
-            queue.Enqueue(
-                new VertexLayoutDescription
-                {
-                    Index = i,
-                    Size = size,
-                    Count = count,
-                    Offset = totalSizeInBytes,
-                    Type = attribute.Type,
-                    Instanced = attribute.Instanced
-                }
-            );
-            totalSizeInBytes += size;
-        }
-
-        if (totalSizeInBytes != sizeof(T))
-            throw new Exception($"Size of {nameof(T)} doesn't match VertexLayout declarations!");
+        // Because T is unmanaged, sizeof(T) works perfectly at compile time
+        int totalSizeInBytes = sizeof(T);
 
         if (totalSizeInBytes % 4 != 0)
-            throw new Exception($"Size of {nameof(T)} doesn't align to 4 byte boundary!");
+            throw new Exception($"Size of {nameof(T)} doesn't align to a 4-byte boundary!");
 
-        while (queue.Count > 0)
+        // Pull the layout directly from the struct type without reflection
+        var layout = T.GetLayout();
+
+        int calculatedSize = 0;
+
+        foreach (ref readonly var ptr in layout)
         {
-            var ptr = queue.Dequeue();
-
-            if (ptr.Instanced) VertexAttributeDivisor(ptr.Index, 1);
+            if (ptr.Instanced)
+                VertexAttributeDivisor(ptr.Index, 1);
 
             switch (ptr.Type)
             {
@@ -214,7 +183,7 @@ public class BufferObject : GLObject
                         ptr.Index,
                         ptr.Count,
                         (VertexAttribIType)ptr.Type,
-                        (uint)totalSizeInBytes,
+                        (uint)totalSizeInBytes, // Total stride
                         ptr.Offset
                     );
                     break;
@@ -224,12 +193,17 @@ public class BufferObject : GLObject
                         ptr.Index,
                         ptr.Count,
                         ptr.Type,
-                        (uint)totalSizeInBytes,
+                        (uint)totalSizeInBytes, // Total stride
                         ptr.Offset
                     );
                     break;
             }
+
+            calculatedSize += ptr.Size;
         }
+
+        if (calculatedSize != totalSizeInBytes)
+            throw new Exception($"Calculated size ({calculatedSize}) of {nameof(T)} doesn't match struct size ({totalSizeInBytes})! Check your GetLayout() offsets.");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -273,7 +247,7 @@ public class BufferObject : GLObject
             Handle,
             (nuint)(data.Length * sizeof(T)),
             data,
-            VertexBufferObjectUsage.DynamicDraw
+            BufferUsageARB.DynamicDraw
         );
     }
 
@@ -285,7 +259,7 @@ public class BufferObject : GLObject
             Handle,
             (nuint)(size),
             null,
-            VertexBufferObjectUsage.DynamicDraw
+            BufferUsageARB.DynamicDraw
         );
     }
 
@@ -314,7 +288,7 @@ public class BufferObject : GLObject
                 Handle,
                 (nuint)(length > 0 ? length : (sizeof(T) * data.Length)),
                 d,
-                VertexBufferObjectUsage.DynamicDraw
+                BufferUsageARB.DynamicDraw
             );
         }
     }
@@ -329,7 +303,7 @@ public class BufferObject : GLObject
                 Handle,
                 (nuint)(sizeof(T) * data.Length),
                 d,
-                VertexBufferObjectUsage.DynamicDraw
+                BufferUsageARB.DynamicDraw
             );
         }
     }

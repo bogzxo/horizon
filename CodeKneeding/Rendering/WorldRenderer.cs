@@ -30,7 +30,6 @@ using ImPlotNET;
 using Silk.NET.Core.Native;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.SDL;
 
 using static CodeKneading.Rendering.WorldBufferManager;
 

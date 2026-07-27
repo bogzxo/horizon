@@ -147,4 +147,6 @@ public class DeveloperConsole : DebuggerComponent
     {
         ExecuteCommand(obj);
     }
+
+    public void Log(string text) => SendCommand(text);
 }

@@ -1,21 +1,47 @@
 ﻿using System.Numerics;
 using System.Runtime.InteropServices;
 
+using Horizon.OpenGL;
+
 using Silk.NET.OpenGL;
 
-namespace Horizon.Core.Data;
+namespace Horizon.Rendering;
 
 [StructLayout(LayoutKind.Sequential)] // explicitly set sequential layout
-public struct Vertex3D
+public struct Vertex3D : IVertex
 {
-    [VertexLayout(0, VertexAttribPointerType.Float)]
     private Vector3 position; // 12 bytes
 
-    [VertexLayout(1, VertexAttribPointerType.Float)]
     private Vector3 normal; // 12 bytes
 
-    [VertexLayout(2, VertexAttribPointerType.Float)]
     private Vector2 texCoord; // 8 bytes
+    public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
+    {
+        new() {
+            Index = 0,
+            Size = sizeof(float) * 3,
+            Count = 3,
+            Offset = 0,
+            Type = VertexAttribPointerType.Float,
+            Instanced = false
+        },
+        new() {
+            Index = 1,
+            Size = sizeof(float) * 3,
+            Count = 3,
+            Offset = sizeof(float) * 3,
+            Type = VertexAttribPointerType.Float,
+            Instanced = false
+        },
+        new() {
+            Index = 2,
+            Size = sizeof(float) * 2,
+            Count = 2,
+            Offset = sizeof(float) * 6,
+            Type = VertexAttribPointerType.Float,
+            Instanced = false
+        }
+    };
 
     public Vertex3D(Vector3 position, Vector3 normal, Vector2 texCoord)
     {

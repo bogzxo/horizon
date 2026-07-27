@@ -15,7 +15,6 @@ using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
 
 using Silk.NET.OpenGL;
-using Silk.NET.SDL;
 
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
