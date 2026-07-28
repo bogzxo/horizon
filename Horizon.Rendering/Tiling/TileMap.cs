@@ -456,10 +456,10 @@ public abstract partial class Tiling<TTextureID>
                 }
             }
 
-            ConcurrentLogger.Instance.Log(
-                Bogz.Logging.LogLevel.Fatal,
-                $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
-            );
+            //ConcurrentLogger.Instance.Log(
+            //    Bogz.Logging.LogLevel.Fatal,
+            //    $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
+            //);
             return null!;
         }
     }
