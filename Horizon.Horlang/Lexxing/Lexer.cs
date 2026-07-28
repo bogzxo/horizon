@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Collections.Generic;
 
 namespace Horizon.HIDL.Lexxing;
 
@@ -36,9 +37,6 @@ public static class Lexer
         // flag for parsing strings
         bool inString = false;
 
-        // flag for parsing comments
-        bool inComment = false;
-
         // helper function to construct currentToken and set flag
         void AddToken(in TokenType type, in string value)
         {
@@ -47,29 +45,13 @@ public static class Lexer
         }
 
         Queue<char> characters = new(source.ToCharArray());
-        
+
         char prev = '0';
         while (characters.Count != 0)
         {
             char character = characters.Dequeue();
             foundTokenFlag = false;
 
-            if (inComment)
-            {
-                while (inComment)
-                {
-                    character = characters.Dequeue();
-                    if (character == '*')
-                    {
-                        if (characters.Peek() == '/')
-                        {
-                            inComment = false;
-                            characters.Dequeue();
-                            break;
-                        }
-                    }
-                }
-            }
             if (inString)
             {
                 StringBuilder sb = new();
@@ -81,6 +63,9 @@ public static class Lexer
                         break;
                     }
                     sb.Append(character);
+
+                    if (characters.Count == 0) break; // Prevent crash if string doesn't close before EOF
+
                     character = characters.Dequeue();
                     if (character == '"')
                     {
@@ -124,7 +109,7 @@ public static class Lexer
                         break;
 
                     case '!':
-                        if (characters.Peek() != '=')
+                        if (characters.Count == 0 || characters.Peek() != '=')
                             AddToken(TokenType.Exclamation, character.ToString());
                         break;
 
@@ -135,6 +120,7 @@ public static class Lexer
                     case '"':
                         inString = true;
                         continue;
+
                     case '}':
                         AddToken(TokenType.CloseBracket, character.ToString());
                         break;
@@ -148,17 +134,37 @@ public static class Lexer
                         break;
 
                     case '/':
-                        if (characters.Peek() == '*')
+                        if (characters.Count > 0 && characters.Peek() == '/')
                         {
-                            characters.Dequeue();
-                            inComment = true;
-                            continue;
+                            // single-line comment: consume characters until a newline
+                            characters.Dequeue(); // consume second '/'
+                            while (characters.Count > 0 && characters.Peek() != '\n')
+                            {
+                                characters.Dequeue();
+                            }
+                            continue; // move on
+                        }
+                        else if (characters.Count > 0 && characters.Peek() == '*')
+                        {
+                            // multi-line / inline comment: consume characters until '*/'
+                            characters.Dequeue(); // consume '*'
+                            while (characters.Count > 0)
+                            {
+                                char c = characters.Dequeue();
+                                if (c == '*' && characters.Count > 0 && characters.Peek() == '/')
+                                {
+                                    characters.Dequeue(); // consume closing '/'
+                                    break;
+                                }
+                            }
+                            continue; // Move on
                         }
                         else
                         {
                             AddToken(TokenType.BinaryOperation, character.ToString());
                         }
                         break;
+
                     case '+':
                     case '-':
                     case '*':
@@ -171,7 +177,7 @@ public static class Lexer
                         break;
 
                     case '=':
-                        if (characters.Peek() != '=' && prev != '!')
+                        if ((characters.Count == 0 || characters.Peek() != '=') && prev != '!')
                             AddToken(TokenType.Equals, character.ToString());
                         break;
                 }
@@ -194,25 +200,40 @@ public static class Lexer
                         AddToken(TokenType.Number, sb.ToString());
                     }
                     // match assignee
-                    else if (char.IsLetter(character) || character == '_' || (character == '=' && characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
+                    else
                     {
-                        StringBuilder sb = new();
+                        // Safely check next token equality to prevent crashing on End Of File
+                        bool nextIsEquals = characters.Count > 0 && characters.Peek() == '=';
 
-                        // append initial character
-                        sb.Append(character);
+                        if (char.IsLetter(character) || character == '_' || (character == '=' && nextIsEquals) || (character == '!' && nextIsEquals))
+                        {
+                            StringBuilder sb = new();
 
-                        // add numbers and progress queue until next char isnt a letter or special op
-                        while (characters.Count != 0 && (char.IsNumber(characters.Peek()) || char.IsLetter(characters.Peek()) || characters.Peek() == '_' || characters.Peek() == '=') || (character == '!' && characters.Peek() == '='))
-                            sb.Append(characters.Dequeue());
+                            // append initial character
+                            sb.Append(character);
 
-                        string finalValue = sb.ToString();
+                            // add characters and progress queue until next char isnt a letter or special op
+                            while (characters.Count != 0)
+                            {
+                                char peek = characters.Peek();
+                                if (char.IsNumber(peek) || char.IsLetter(peek) || peek == '_' || peek == '=')
+                                {
+                                    sb.Append(characters.Dequeue());
+                                }
+                                else
+                                {
+                                    break;
+                                }
+                            }
 
-                        TokenType type = TokenType.Identifier;
-                        if (Keywords.TryGetValue(finalValue, out TokenType newType))
-                            type = newType;
+                            string finalValue = sb.ToString();
 
+                            TokenType type = TokenType.Identifier;
+                            if (Keywords.TryGetValue(finalValue, out TokenType newType))
+                                type = newType;
 
-                        AddToken(type, finalValue);
+                            AddToken(type, finalValue);
+                        }
                     }
                 }
 
@@ -226,6 +247,6 @@ public static class Lexer
 
         // push EOF currentToken
         tokens.Add(new(TokenType.EndOfFile, string.Empty));
-        return [.. tokens];
+        return tokens.ToArray();
     }
 }

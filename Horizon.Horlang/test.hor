@@ -6,7 +6,6 @@
 
 demo_object.greet_user("Abdul");
 
-
 func cat() {
 	while ((print(read())) != "cat") { }
 }
