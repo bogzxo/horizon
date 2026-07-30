@@ -100,10 +100,6 @@ namespace Horizon.Input.Components
                 {
                     actions |= action;
                 }
-                else
-                {
-                    actions ^= action;
-                }
             }
             
             primaryAxis = new Vector2(Gamepad.Thumbsticks[0].X, Gamepad.Thumbsticks[0].Y);

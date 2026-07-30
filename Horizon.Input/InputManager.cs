@@ -52,8 +52,8 @@ namespace Horizon.Input
         public string Name { get; set; }
         public Entity Parent { get; set; }
 
-        private VirtualController VirtualController = default;
-        private VirtualController PreviousVirtualController = default;
+        private VirtualController VirtualController = new() { Actions = VirtualAction.None };
+        private VirtualController PreviousVirtualController = new() { Actions = VirtualAction.None };
 
         private EngineEventHandler eventHandler;
 

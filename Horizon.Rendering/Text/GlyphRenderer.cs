@@ -25,6 +25,7 @@ public class TextLabel
     public string Text { get; set; } = string.Empty;
     public TransformComponent2D Transform { get; init; }
     public float Width { get; internal set; }
+    public Origin Origin { get; init; } = Origin.TopLeft;
 
     public TextLabel()
     {
@@ -50,18 +51,42 @@ public class GlyphRenderer : GameObject
     }
 
     private bool _isDirty = false;
+
+    public void SetDirty() => _isDirty = true;
+
     public TransformComponent2D Transform { get; init; }
 
     public Dictionary<string, TextLabel> Labels { get; init; }
 
     public OpenGL.Assets.Texture FontTexture { get => FontImporter.Texture; }
 
-    private CharDefinition GetDefinition(in char ch) => FontImporter.Definitions.ContainsKey(ch) ? FontImporter.Definitions[ch] : default;
+    //private CharDefinition GetDefinition(in char ch) => FontImporter.Definitions.ContainsKey(ch) ? FontImporter.Definitions[ch] : default;
+
+    private CharDefinition GetDefinition(char c)
+    {
+        // Return the actual definition if it exists
+        if (FontImporter.Definitions.TryGetValue(c, out var def))
+            return def;
+
+        // Fallback gracefully (e.g., return the '?' character if a glyph is missing)
+        if (FontImporter.Definitions.TryGetValue('?', out var fallback))
+            return fallback;
+
+        // Absolute worst-case fallback, return an empty struct
+        return default;
+    }
 
     private BMFontImporter FontImporter;
     private VertexArrayObject vao;
     private Technique Technique;
     private uint count;
+    private readonly string fontFile = "vcr_mono.fnt", fontPath = "fonts/vcr_mono/";
+
+    public GlyphRenderer(in string fontPath, in string fontFile) : this()
+    {
+        this.fontPath = fontPath;
+        this.fontFile = fontFile;
+    }
 
     public GlyphRenderer()
     {
@@ -84,80 +109,133 @@ public class GlyphRenderer : GameObject
 
     private BufferObject labelBuffer;
 
-    public Vector2 CalculateSize(in string text)
+    public Vector2 CalculateSize(in string text) => CalculateSize(text, Vector2.One);
+    public Vector2 CalculateSize(in string text, Vector2 scale)
     {
-        float offsetX = 0, offsetY = 0;
+        float totalWidth = 0f;
+        float maxHeight = 0f;
+
         for (int i = 0; i < text.Length; i++)
         {
             var charDef = GetDefinition(text[i]);
 
-            // Calculate vertices positions
-            float x1 = offsetX + charDef.Offset.X;
-            float y1 = offsetY;
-            float x2 = x1 + charDef.Size.X;
-            float y2 = y1 + charDef.Size.Y;
+            // Multiply character dimensions by the label's scale
+            totalWidth += charDef.XAdvance * scale.X;
 
-            offsetX += charDef.Size.X + charDef.Offset.X;
-            offsetY += charDef.Size.Y + charDef.Offset.Y;
-
-            // Calculate texture coordinates
-            float tx1 = charDef.Position.X / FontTexture.Width;
-            float ty2 = charDef.Position.Y / FontTexture.Height;
-            float tx2 = (charDef.Position.X + charDef.Size.X) / FontTexture.Width;
-            float ty1 = (charDef.Position.Y + charDef.Size.Y) / FontTexture.Height;
+            float charHeight = (charDef.Offset.Y + charDef.Size.Y) * scale.Y;
+            if (charHeight > maxHeight)
+            {
+                maxHeight = charHeight;
+            }
         }
 
-        return new Vector2(offsetX, offsetY);
+        return new Vector2(totalWidth, maxHeight);
     }
 
     private void BuildBuffer()
     {
         List<TextVertex> vertices = [];
-        List <TextLabelDef> defs = [];
+        List<TextLabelDef> defs = [];
 
         uint index = 0;
-        float offsetX = 0, offsetY = 0;
 
-        // TODO: this is slow and shit as shit fuck fuuuckk
         foreach (var (identifier, lbl) in Labels)
         {
-            offsetX = offsetY = 0;
+            // Extract scale from the label's transform matrix/component
+            Vector2 scale = lbl.Transform.Size;
+
+            // 1. Calculate bounding size scaled properly
+            Vector2 textSize = CalculateSize(lbl.Text, scale);
+            lbl.Width = textSize.X;
+
+            // 2. Compute translation offset based on scaled origin dimensions
+            float originOffsetX = 0f;
+            float originOffsetY = 0f;
+
+            switch (lbl.Origin)
+            {
+                case Origin.TopLeft:
+                    originOffsetX = 0f;
+                    originOffsetY = 0f;
+                    break;
+                case Origin.Top:
+                    originOffsetX = -textSize.X * 0.5f;
+                    originOffsetY = 0f;
+                    break;
+                case Origin.TopRight:
+                    originOffsetX = -textSize.X;
+                    originOffsetY = 0f;
+                    break;
+
+                case Origin.Left:
+                    originOffsetX = 0f;
+                    originOffsetY = -textSize.Y * 0.5f;
+                    break;
+                case Origin.Center:
+                    originOffsetX = -textSize.X * 0.5f;
+                    originOffsetY = -textSize.Y * 0.5f;
+                    break;
+                case Origin.Right:
+                    originOffsetX = -textSize.X;
+                    originOffsetY = -textSize.Y * 0.5f;
+                    break;
+
+                case Origin.BottomLeft:
+                    originOffsetX = 0f;
+                    originOffsetY = -textSize.Y;
+                    break;
+                case Origin.Bottom:
+                    originOffsetX = -textSize.X * 0.5f;
+                    originOffsetY = -textSize.Y;
+                    break;
+                case Origin.BottomRight:
+                    originOffsetX = -textSize.X;
+                    originOffsetY = -textSize.Y;
+                    break;
+            }
+
+            float offsetX = 0f;
+            float offsetY = 0f;
+
+            // 3. Generate vertices applying the scale factor to glyph positions and dimensions
             for (int i = 0; i < lbl.Text.Length; i++)
             {
                 var charDef = GetDefinition(lbl.Text[i]);
 
-                // Calculate vertices positions
-                float x1 = offsetX + charDef.Offset.X;
-                float y1 = offsetY;
-                float x2 = x1 + charDef.Size.X;
-                float y2 = y1 + charDef.Size.Y;
+                float x1 = offsetX + (charDef.Offset.X * scale.X) + originOffsetX;
+                float y1 = offsetY + originOffsetY;
 
-                offsetX += charDef.Size.X + charDef.Offset.X;
+                float x2 = x1 + (charDef.Size.X * scale.X);
+                float y2 = y1 + (charDef.Size.Y * scale.Y);
 
-                // Calculate texture coordinates
+                // Texture coordinates remain standard UV range [0, 1]
                 float tx1 = charDef.Position.X / FontTexture.Width;
                 float ty2 = charDef.Position.Y / FontTexture.Height;
                 float tx2 = (charDef.Position.X + charDef.Size.X) / FontTexture.Width;
                 float ty1 = (charDef.Position.Y + charDef.Size.Y) / FontTexture.Height;
 
-                vertices.AddRange([
-                    // First triangle
-                    new TextVertex(index, x1, y1, tx1, ty1),
-                    new TextVertex(index, x1, y2, tx1, ty2),
-                    new TextVertex(index, x2, y1, tx2, ty1),
-        
-                    // Second triangle
-                    new TextVertex(index, x2, y1, tx2, ty1),
-                    new TextVertex(index, x1, y2, tx1, ty2),
-                    new TextVertex(index, x2, y2, tx2, ty2)]);
+                // First triangle
+                vertices.Add(new TextVertex(index, x1, y1, tx1, ty1));
+                vertices.Add(new TextVertex(index, x1, y2, tx1, ty2));
+                vertices.Add(new TextVertex(index, x2, y1, tx2, ty1));
 
+                // Second triangle
+                vertices.Add(new TextVertex(index, x2, y1, tx2, ty1));
+                vertices.Add(new TextVertex(index, x1, y2, tx1, ty2));
+                vertices.Add(new TextVertex(index, x2, y2, tx2, ty2));
+
+                // Advance scaled X offset
+                offsetX += charDef.XAdvance * scale.X;
             }
 
-            defs.Add(new TextLabelDef {
-                ModelMat = lbl.Transform.ModelMatrix
+            // Pass Matrix without Scale if building mesh scaled on CPU, OR 
+            // construct Matrix translation-only to avoid double-scaling in shader.
+            Matrix4x4 translationMat = Matrix4x4.CreateTranslation(lbl.Transform.Position.X, lbl.Transform.Position.Y, 0f);
+
+            defs.Add(new TextLabelDef
+            {
+                ModelMat = translationMat
             });
-            // TODO: modifying an array while we index it :))))))))))))))))))))))
-            Labels[identifier].Width = offsetX;
 
             index++;
         }
@@ -170,7 +248,7 @@ public class GlyphRenderer : GameObject
     public override void Initialize()
     {
         base.Initialize();
-        FontImporter = new("fonts/vcr_mono/", "vcr_mono.fnt");
+        FontImporter = new(fontPath, fontFile);
 
         unsafe
         {

@@ -18,8 +18,8 @@ public struct XJoystickBindings
         {
             ButtonActionPairs = new Dictionary<XJoystickButton, VirtualAction>
             {
-                { XJoystickButton.Y, VirtualAction.Back },
-                { XJoystickButton.X, VirtualAction.Interact },
+                { XJoystickButton.A, VirtualAction.Interact },
+                { XJoystickButton.B, VirtualAction.Back },
                 { XJoystickButton.Start, VirtualAction.Pause }
             }
         };
