@@ -1,6 +1,6 @@
-﻿using Horizon.Core.Collections;
-using Horizon.GameEntity;
-using System.Diagnostics;
+﻿using System.Diagnostics;
+
+using Horizon.Core.Collections;
 
 namespace Horizon.Core.Data;
 

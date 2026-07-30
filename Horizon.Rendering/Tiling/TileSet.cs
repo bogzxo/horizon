@@ -1,11 +1,10 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Horizon.Engine;
-using Horizon.GameEntity;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
 using Horizon.Rendering.Spriting;
 
 namespace Horizon.Rendering;
@@ -13,7 +12,7 @@ namespace Horizon.Rendering;
 public abstract partial class Tiling<TTextureID>
 {
     public class TileSet : GameObject
-    {
+    { 
         public Material Material { get; private set; }
         private string _texturePath;
 
@@ -36,16 +35,16 @@ public abstract partial class Tiling<TTextureID>
             string dir = Path.GetDirectoryName(_texturePath)!;
             int lastIndex = _texturePath.LastIndexOf(MaterialFactory.Delimiter);
             string name = Path.GetFileNameWithoutExtension(_texturePath[..lastIndex]);
-
+            
             Material = MaterialFactory.Create(dir, name);
 
             //Texture = Engine
             //    .ObjectManager
             //    .Textures
-            //    .Create(
+            //    .TryCreate(
             //        new OpenGL.Descriptions.TextureDescription
             //        {
-            //            Path = _texturePath,
+            //            Paths = _texturePath,
             //            Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByte
             //        }
             //    )

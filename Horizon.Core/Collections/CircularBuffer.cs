@@ -13,8 +13,11 @@ public class CircularBuffer<T>
 
     public int Length { get; private set; }
 
+    public int Capacity { get; init; }
+
     public CircularBuffer(int capacity)
     {
+        Capacity = capacity;
         buffer = new T[capacity];
         startIndex = 0;
         Index = -1;
@@ -35,6 +38,13 @@ public class CircularBuffer<T>
         {
             Length++;
         }
+    }
+
+    public void Reset()
+    {
+        Index = 0;
+        Length = 0;
+        Array.Clear(buffer);
     }
 
     public T[] Buffer

@@ -1,14 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Horizon.Core;
-using Horizon.Engine;
+﻿using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting.Data;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Primitives;
@@ -37,13 +32,23 @@ public class Mesh2D : GameObject
     {
         base.Initialize();
 
-        Buffer = new VertexBufferObject(
+        if (
             Engine
                 .ObjectManager
                 .VertexArrays
-                .Create(VertexArrayObjectDescription.VertexBuffer)
-                .Asset
-        );
+                .TryCreate(
+                VertexArrayObjectDescription.VertexBuffer,
+                out var result
+                )
+        )
+        {
+            Buffer = new VertexBufferObject(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+
         SetVboLayout();
     }
 

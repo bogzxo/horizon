@@ -26,6 +26,7 @@ out vec4 FragColor;
 void main() {
     // retrieve data from G-buffer
     vec3 Albedo = texture(uTexAlbedo, texCoords).rgb;
+    float alpha = texture(uTexAlbedo, texCoords).a;
     vec4 NormalFragPos = texture(uTexNormalFragPos, texCoords);
     vec2 Normal = NormalFragPos.rg * 2.0 - 1.0;
     vec2 FragPos = NormalFragPos.ba;
@@ -55,7 +56,8 @@ void main() {
                 float attenuation = 1.0 / (constant + linear * dist + 
                     quadratic * (dist * dist)) * (max((1.0 - dist / lights[i].Radius), 0.0));
 
-                lighting += diffuse * attenuation * desaturate(Albedo, 1.0 - attenuation);
+                lighting += (diffuse * attenuation * desaturate(Albedo, 1.0 - attenuation));
+
             }
         }
     }

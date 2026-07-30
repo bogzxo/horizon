@@ -1,9 +1,12 @@
 ﻿using System.Diagnostics.Contracts;
+
 using Horizon.Content;
 using Horizon.Content.Descriptions;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
+
+using Silk.NET.Core.Native;
 using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Factories;
@@ -11,20 +14,19 @@ namespace Horizon.OpenGL.Factories;
 public class FrameBufferObjectFactory
     : IAssetFactory<FrameBufferObject, FrameBufferObjectDescription>
 {
-    public static unsafe AssetCreationResult<FrameBufferObject> Create(
-        in FrameBufferObjectDescription description
-    )
+    public static unsafe bool TryCreate(
+    in FrameBufferObjectDescription description,
+    out AssetCreationResult<FrameBufferObject> asset
+)
     {
-        // delegates textrue creation to the texture manager.
+        // Delegates texture creation to the texture manager.
         var attachments = CreateFrameBufferAttachments(
             description.Width,
             description.Height,
             description.Attachments
         );
 
-        var drawBuffers = new DrawBufferMode[attachments.Count];
-        for (int i = 0; i < drawBuffers.Length; i++)
-            drawBuffers[i] = (DrawBufferMode)description.Attachments[i];
+        var drawBuffers = attachments.Select(x => (ColorBuffer)x.Key).ToArray();
 
         var buffer = new FrameBufferObject
         {
@@ -37,85 +39,133 @@ public class FrameBufferObjectFactory
 
         ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, buffer.Handle);
 
-        foreach (var (attachment, texture) in attachments)
-            ObjectManager.GL.NamedFramebufferTexture(buffer.Handle, attachment, texture.Handle, 0);
+        foreach (var (attachmentType, attachment) in attachments)
+        {
+            if (attachment.Type == FrameBufferAttachmentType.Texture)
+            {
+                // Ensure correct attachment point for each texture
+                ObjectManager.GL.NamedFramebufferTexture(
+                    buffer.Handle,
+                    attachmentType,
+                    attachment.Texture.Handle,
+                    0
+                );
+            }
+            else
+            {
+                ObjectManager.GL.NamedFramebufferRenderbuffer(buffer.Handle, attachmentType, RenderbufferTarget.Renderbuffer, attachment.RenderBuffer.Handle);
+            }
+        }
+
+        if (attachments.Count == 1 && attachments.ContainsKey(FramebufferAttachment.DepthAttachment))
+        {
+            ObjectManager.GL.DrawBuffer(DrawBufferMode.None);
+            ObjectManager.GL.ReadBuffer(ReadBufferMode.None);
+        }
 
         // Check if the framebuffer is complete
-        if (
-            ObjectManager.GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer)
-            != GLEnum.FramebufferComplete
-        )
+        var status = ObjectManager.GL.CheckNamedFramebufferStatus(buffer.Handle, FramebufferTarget.Framebuffer);
+        if (status != GLEnum.FramebufferComplete)
         {
             // Unbind the framebuffer
             ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
-            // cleanup
+            // Cleanup
             ObjectManager.GL.DeleteFramebuffer(buffer.Handle);
-            foreach (var (_, texture) in attachments)
-                ObjectManager.Instance.Textures.Remove(texture);
 
-            return new AssetCreationResult<FrameBufferObject>
+            foreach (var (_, attachment) in attachments)
+                if (attachment.Type == FrameBufferAttachmentType.Texture)
+                    ObjectManager.Instance.Textures.Remove(attachment.Texture);
+                else ObjectManager.Instance.RenderBuffers.Remove(attachment.RenderBuffer);
+
+            asset = new AssetCreationResult<FrameBufferObject>
             {
                 Asset = buffer,
-                Message = "Framebuffer is incomplete.",
+                Message = $"Framebuffer is incomplete: {status}",
                 Status = AssetCreationStatus.Failed
             };
+            return false;
         }
 
         // Unbind the framebuffer
         ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-        return new() { Asset = buffer, Status = AssetCreationStatus.Success };
+        asset = new AssetCreationResult<FrameBufferObject>
+        {
+            Asset = buffer,
+            Status = AssetCreationStatus.Success
+        };
+        return true;
     }
 
-    private static Dictionary<FramebufferAttachment, Assets.Texture> CreateFrameBufferAttachments(
+
+    private static Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset> CreateFrameBufferAttachments(
         uint width,
         uint height,
-        FramebufferAttachment[] attachmentTypes
+        Dictionary<FramebufferAttachment, FrameBufferAttachmentDefinition> attachmentTypes
     )
     {
-        var attachments = new Dictionary<FramebufferAttachment, Assets.Texture>();
+        var attachments = new Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset>();
 
-        foreach (var attachmentType in attachmentTypes)
+        foreach (var (attachmentType, definition) in attachmentTypes)
         {
-            var (internalFormat, pixelFormat) = GetCorrespondingAttachmentFormats(attachmentType);
-            attachments.Add(
-                attachmentType,
-                ObjectManager
-                    .Instance
-                    .Textures
-                    .Create(
-                        new TextureDescription
-                        {
-                            Width = width,
-                            Height = height,
-                            Definition = new TextureDefinition
-                            {
-                                InternalFormat = internalFormat,
-                                PixelFormat = pixelFormat,
-                                PixelType = PixelType.Float
-                            }
-                        }
-                    )
-                    .Asset // TODO: error checking skipped.
-            );
+            if (definition.IsRenderBuffer)
+            {
+                if (!ObjectManager.Instance.RenderBuffers.TryCreate(
+                    definition.RenderBufferDescription with
+                    {
+                        Width = width,
+                        Height = height,
+                    },
+                    out var renderBuffer))
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, renderBuffer.Message);
+                }
+
+                if (renderBuffer.Status == AssetCreationStatus.Failed)
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment render buffer: {renderBuffer.Message}");
+                }
+
+                attachments.Add(
+                    attachmentType,
+                    new FrameBufferAttachmentAsset
+                    {
+                        RenderBuffer = renderBuffer.Asset,
+                        Type = FrameBufferAttachmentType.RenderBuffer
+                    }
+                );
+            }
+            else
+            {
+             if(!ObjectManager
+                   .Instance
+                   .Textures
+                   .TryCreate(new()
+                   {
+                       Definition = definition.TextureDefinition,
+                       Height = height,
+                       Width = width
+                   }, out var texture))
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, texture.Message);
+                }
+
+                if (texture.Status == AssetCreationStatus.Failed)
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment texture: {texture.Message}");
+                }
+
+                attachments.Add(
+                    attachmentType,
+                    new FrameBufferAttachmentAsset
+                    {
+                        Texture = texture.Asset,
+                        Type = FrameBufferAttachmentType.Texture
+                    }
+                );
+            }
         }
 
         return attachments;
-    }
-
-    [Pure]
-    protected static (
-        InternalFormat internalFormat,
-        PixelFormat pixelFormat
-    ) GetCorrespondingAttachmentFormats(FramebufferAttachment attachment)
-    {
-        return attachment switch
-        {
-            FramebufferAttachment.DepthStencilAttachment
-                => (InternalFormat.DepthStencil, PixelFormat.DepthStencil),
-            FramebufferAttachment.DepthAttachment
-                => (InternalFormat.DepthComponent, PixelFormat.DepthComponent),
-            _ => (InternalFormat.Rgba32f, PixelFormat.Rgba) // TODO:  somehow customize this
-        };
     }
 }

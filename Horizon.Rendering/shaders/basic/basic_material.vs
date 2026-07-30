@@ -9,6 +9,7 @@ uniform mat4 uCameraProjection;
 
 layout(location = 0) out vec2 oTexCoord;
 
+
 void main()
 {
 	oTexCoord = vTexCoord;

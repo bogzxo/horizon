@@ -1,0 +1,140 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "Horlang",
+    "scopeName": "source.horlang",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#constants"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#functionCalls"
+        },
+        {
+            "include": "#properties"
+        },
+        {
+            "include": "#operators"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.horlang",
+                    "match": "//.*$"
+                },
+                {
+                    "name": "comment.block.horlang",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.horlang",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.horlang",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.horlang",
+                    "match": "\\b(let|const|func|if|while|do|break|delete)\\b"
+                }
+            ]
+        },
+
+        "types": {
+            "patterns": [
+                {
+                    "name": "storage.type.horlang",
+                    "match": "\\bvec\\b"
+                }
+            ]
+        },
+
+        "constants": {
+            "patterns": [
+                {
+                    "name": "constant.language.horlang",
+                    "match": "\\bnull\\b"
+                }
+            ]
+        },
+
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.horlang",
+                    "match": "-?\\b\\d+(?:\\.\\d+)?\\b"
+                }
+            ]
+        },
+
+        "functions": {
+            "patterns": [
+                {
+                    "name": "entity.name.function.horlang",
+                    "match": "(?<=\\bfunc\\s)[A-Za-z_][A-Za-z0-9_]*"
+                }
+            ]
+        },
+
+        "functionCalls": {
+            "patterns": [
+                {
+                    "name": "support.function.horlang",
+                    "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+                }
+            ]
+        },
+
+        "properties": {
+            "patterns": [
+                {
+                    "name": "variable.other.property.horlang",
+                    "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+                }
+            ]
+        },
+
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.horlang",
+                    "match": "==|!=|<=|>=|=|<|>|\\+|\\-|\\*|/|%|!|\\."
+                }
+            ]
+        }
+    }
+}

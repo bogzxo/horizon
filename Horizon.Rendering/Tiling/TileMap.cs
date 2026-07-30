@@ -1,14 +1,15 @@
-﻿using System.Drawing.Drawing2D;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
+
 using Box2D.NetStandard.Dynamics.World;
+
 using Horizon.Core;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.GameEntity.Components.Physics2D;
-using Silk.NET.OpenGL;
+
 using TiledSharp;
 
 namespace Horizon.Rendering;
@@ -92,7 +93,7 @@ public abstract partial class Tiling<TTextureID>
         /// <param name="parent">The gamescreen (necessary if you plan to use Box2D integration).</param>
         /// <param name="tiledMapPath">The path of the tiled map.</param>
         /// <returns>An instance of <see cref="TileMap"/> based off a specified Tiled map. Null if unsuccessful.</returns>
-        public static TileMap? FromTiledMap(Entity parent, string tiledMapPath)
+        public static bool TryFromTiledMap(Entity parent, string tiledMapPath, out TileMap? map)
         {
             try
             {
@@ -117,7 +118,7 @@ public abstract partial class Tiling<TTextureID>
                 int heightInChunks = tiledMap.Height / TileMapChunk.HEIGHT;
                 int depthInLayers = tiledMap.Layers.Count;
 
-                var map = new TileMap(
+                map = new TileMap(
                     widthInChunks,
                     heightInChunks,
                     depthInLayers,
@@ -161,6 +162,7 @@ public abstract partial class Tiling<TTextureID>
 
                         for (int chunkIndex = 0; chunkIndex < map.Width * map.Height; chunkIndex++)
                         {
+                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].Visible = layerConfig.IsVisible;
                             map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].AlwaysOnTop =
                                 layerConfig.AlwaysOnTop;
                         }
@@ -193,14 +195,15 @@ public abstract partial class Tiling<TTextureID>
 
                 map.ChunkManager.PostGenerateTiles();
 
-                return map;
+                return true;
             }
             catch (Exception ex)
             {
                 ConcurrentLogger
                     .Instance
                     .Log(LogLevel.Error, $"Error loading Tiled map: + {ex.Message}");
-                return null;
+                map = null;
+                return false;
             }
         }
 
@@ -211,7 +214,7 @@ public abstract partial class Tiling<TTextureID>
         /// <returns></returns>
         private static StaticTile.TiledTileConfig GenerateTiledTileConfigFromLayer(TmxLayer layer)
         {
-            layer.Properties.TryGetValue("IsCollectible", out var _stringIsCollidable);
+            layer.Properties.TryGetValue("IsCollidable", out var _stringIsCollidable);
             layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
 
             bool isCollidable =
@@ -286,18 +289,18 @@ public abstract partial class Tiling<TTextureID>
             World = Parent!.GetComponent<Box2DWorldComponent>();
             ChunkManager = AddComponent<TileMapChunkManager>(new(this));
 
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Chunk Maximum", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
-            //Engine
-            //    .Debugger
-            //    .GeneralDebugger
-            //    .AddWatch("Total Tiles", "Tilemap", () => TileUpdateCount);
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("ChunkSize", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
+            Engine
+                .Debugger
+                .GeneralDebugger
+                .AddWatch("TileCount", "Tilemap", () => TileUpdateCount);
         }
 
         public override void Render(float dt, object? obj = null)
@@ -454,7 +457,7 @@ public abstract partial class Tiling<TTextureID>
             }
 
             //ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Fatal,
+            //    Bogz.Logging.LogLevel.Fatal,
             //    $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
             //);
             return null!;

@@ -1,15 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 
-using Horizon.Core;
 using Horizon.Core.Data;
 using Horizon.Core.Primitives;
-using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
 
 using Silk.NET.OpenGL;
@@ -17,9 +11,11 @@ using Silk.NET.OpenGL;
 namespace Horizon.OpenGL.Assets;
 
 /* This is an abstraction for a buffer object */
+
 public class BufferObject : GLObject
 {
     public BufferTargetARB Type { get; init; }
+    public uint Size { get; init; }
 
     public static long ALIGNMENT = 0;
 
@@ -28,18 +24,32 @@ public class BufferObject : GLObject
         ALIGNMENT = GL.GetInteger64(GetPName.MinMapBufferAlignment);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void BufferData<T>(in ReadOnlySpan<T> data)
         where T : unmanaged
     {
         Bind();
         // FIXME cross static ref to BaseGameEngine
 
-        GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), data, BufferUsageARB.StreamDraw);
+        GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), data, BufferUsageARB.DynamicDraw);
+
+        // FIXME cross static ref to BaseGameEngine
+        GL.BindBuffer(Type, 0);
+    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public virtual unsafe void BufferData<T>(in uint size)
+        where T : unmanaged
+    {
+        Bind();
+        // FIXME cross static ref to BaseGameEngine
+
+        GL.BufferData(Type, (nuint)(size * sizeof(T)), null, BufferUsageARB.DynamicDraw);
 
         // FIXME cross static ref to BaseGameEngine
         GL.BindBuffer(Type, 0);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void BufferSubData<T>(in ReadOnlySpan<T> data, int offset = 0)
         where T : unmanaged
     {
@@ -52,6 +62,7 @@ public class BufferObject : GLObject
         GL.BindBuffer(Type, 0);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void BufferSubData<T>(in T[] data, int offset = 0)
         where T : unmanaged
     {
@@ -67,6 +78,26 @@ public class BufferObject : GLObject
         GL.BindBuffer(Type, 0);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public unsafe T GetSubData<T>(uint offset, uint size)
+        where T : unmanaged
+    {
+        return GL.GetNamedBufferSubData<T>(Handle, (nint)(offset * sizeof(T)), (nuint)(size * sizeof(T)));
+    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public unsafe T GetSubData<T>(uint size)
+        where T : unmanaged
+    {
+        return GL.GetNamedBufferSubData<T>(Handle, 0, (nuint)(size * sizeof(T)));
+    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public unsafe T GetSubData<T>()
+        where T : unmanaged
+    {
+        return GL.GetNamedBufferSubData<T>(Handle, 0, (nuint)(Size * sizeof(T)));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void BufferData<T>(in T[] data)
         where T : unmanaged
     {
@@ -75,13 +106,13 @@ public class BufferObject : GLObject
         fixed (void* d = data)
         {
             // FIXME cross static ref to BaseGameEngine
-            GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), d, BufferUsageARB.StreamDraw );
+            GL.BufferData(Type, (nuint)(data.Length * sizeof(T)), d, BufferUsageARB.DynamicDraw);
         }
         // FIXME cross static ref to BaseGameEngine
         GL.BindBuffer(Type, 0);
     }
 
-
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public unsafe void VertexAttributePointer(
         uint index,
         int count,
@@ -95,6 +126,8 @@ public class BufferObject : GLObject
             .VertexAttribPointer(index, count, type, false, vertexSize, (void*)(offSet));
         ObjectManager.GL.EnableVertexAttribArray(index);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public unsafe void VertexAttributeIPointer(
         uint index,
         int count,
@@ -119,56 +152,25 @@ public class BufferObject : GLObject
         public readonly VertexAttribPointerType Type { get; init; }
     }
 
-    public unsafe void SetLayout<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.NonPublicFields)] T>()
-        where T : unmanaged
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public unsafe void SetLayout<T>() where T : unmanaged, IVertex
     {
-        // get all fields
-        var fields = typeof(T)
-            .GetFields(BindingFlags.NonPublic | BindingFlags.Instance) // read all fields and sort by index, we trust every property has the attribute.
-            .OrderBy(p => p.GetCustomAttributes().OfType<VertexLayout>().First().Index)
-            .ToArray(); // remember enumerate the array.
-
-        // store queue of layout.
-        var queue = new Queue<VertexLayoutDescription>();
-
-        // iterate
-        int totalSizeInBytes = 0;
-        for (uint i = 0; i < fields.Length; i++)
-        {
-            var attribute =
-                (fields[i].GetCustomAttribute(typeof(VertexLayout)) as VertexLayout)
-                ?? throw new Exception("Undescribed property!");
-
-            int count = fields[i].FieldType.IsPrimitive ? 1 : Math.Max(fields[i].FieldType.GetFields().Length, 1);
-            int size = count * GetSizeFromVertexAttribPointerType(attribute.Type);
-
-            queue.Enqueue(
-                new VertexLayoutDescription
-                {
-                    Index = i,
-                    Size = size,
-                    Count = count,
-                    Offset = totalSizeInBytes,
-                    Type = attribute.Type,
-                    Instanced = attribute.Instanced
-                }
-            );
-            totalSizeInBytes += size;
-        }
-
-        if (totalSizeInBytes != sizeof(T))
-            throw new Exception($"Size of {nameof(T)} doesn't match VertexLayout declarations!");
+        // Because T is unmanaged, sizeof(T) works perfectly at compile time
+        int totalSizeInBytes = sizeof(T);
 
         if (totalSizeInBytes % 4 != 0)
-            throw new Exception($"Size of {nameof(T)} doesn't align to 4 byte boundary!");
+            throw new Exception($"Size of {nameof(T)} doesn't align to a 4-byte boundary!");
 
+        // Pull the layout directly from the struct type without reflection
+        var layout = T.GetLayout();
 
-        while (queue.Count > 0)
+        int calculatedSize = 0;
+
+        foreach (ref readonly var ptr in layout)
         {
-            var ptr = queue.Dequeue();
-            
-            if (ptr.Instanced) VertexAttributeDivisor(ptr.Index, 1);
-            
+            if (ptr.Instanced)
+                VertexAttributeDivisor(ptr.Index, 1);
+
             switch (ptr.Type)
             {
                 case VertexAttribPointerType.Int:
@@ -181,7 +183,7 @@ public class BufferObject : GLObject
                         ptr.Index,
                         ptr.Count,
                         (VertexAttribIType)ptr.Type,
-                        (uint)totalSizeInBytes,
+                        (uint)totalSizeInBytes, // Total stride
                         ptr.Offset
                     );
                     break;
@@ -191,14 +193,20 @@ public class BufferObject : GLObject
                         ptr.Index,
                         ptr.Count,
                         ptr.Type,
-                        (uint)totalSizeInBytes,
+                        (uint)totalSizeInBytes, // Total stride
                         ptr.Offset
                     );
                     break;
             }
+
+            calculatedSize += ptr.Size;
         }
+
+        if (calculatedSize != totalSizeInBytes)
+            throw new Exception($"Calculated size ({calculatedSize}) of {nameof(T)} doesn't match struct size ({totalSizeInBytes})! Check your GetLayout() offsets.");
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetSizeFromVertexAttribPointerType(in VertexAttribPointerType type)
     {
         return type switch
@@ -215,11 +223,13 @@ public class BufferObject : GLObject
         };
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void VertexAttributeDivisor(uint index, uint divisor)
     {
         ObjectManager.GL.VertexAttribDivisor(index, divisor);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual void Bind()
     {
         /* Binding the buffer object, with the correct buffer type.
@@ -228,6 +238,7 @@ public class BufferObject : GLObject
         GL.BindBuffer(Type, Handle);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void NamedBufferData<T>(in ReadOnlySpan<T> data)
         where T : unmanaged
     {
@@ -236,10 +247,11 @@ public class BufferObject : GLObject
             Handle,
             (nuint)(data.Length * sizeof(T)),
             data,
-            VertexBufferObjectUsage.StreamDraw
+            BufferUsageARB.DynamicDraw
         );
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void NamedBufferData(in nuint size)
     {
         // FIXME cross static ref to BaseGameEngine
@@ -247,10 +259,11 @@ public class BufferObject : GLObject
             Handle,
             (nuint)(size),
             null,
-            VertexBufferObjectUsage.StreamDraw
+            BufferUsageARB.DynamicDraw
         );
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void NamedBufferSubData<T>(in ReadOnlySpan<T> data, int offset = 0, int length = 0)
         where T : unmanaged
     {
@@ -258,7 +271,15 @@ public class BufferObject : GLObject
         GL.NamedBufferSubData(Handle, offset, (nuint)(length > 0 ? length : (sizeof(T) * data.Length)), data);
     }
 
-    public virtual unsafe void NamedBufferSubData<T>(in T[] data, int offset = 0, int length = 0)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public virtual unsafe void NamedBufferSubData(in void* data, int length, int offset = 0)
+    {
+        // FIXME cross static ref to BaseGameEngine
+        GL.NamedBufferSubData(Handle, offset, (nuint)(length), data);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public virtual unsafe void NamedBufferSubData<T>(in T[] data, int length = 0)
         where T : unmanaged
     {
         fixed (void* d = data)
@@ -267,11 +288,12 @@ public class BufferObject : GLObject
                 Handle,
                 (nuint)(length > 0 ? length : (sizeof(T) * data.Length)),
                 d,
-                VertexBufferObjectUsage.StreamDraw
+                BufferUsageARB.DynamicDraw
             );
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual unsafe void NamedBufferData<T>(in T[] data)
         where T : unmanaged
     {
@@ -281,14 +303,16 @@ public class BufferObject : GLObject
                 Handle,
                 (nuint)(sizeof(T) * data.Length),
                 d,
-                VertexBufferObjectUsage.StreamDraw
+                BufferUsageARB.DynamicDraw
             );
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public unsafe void* MapBufferRange(int size, MapBufferAccessMask access) =>
         MapBufferRange((uint)size, access);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public unsafe void* MapBufferRange(uint length, MapBufferAccessMask access)
     {
         //int length = (int)(Math.Round((size) / (double)ALIGNMENT) * (double)ALIGNMENT + ALIGNMENT);
@@ -296,16 +320,19 @@ public class BufferObject : GLObject
         return GL.MapNamedBufferRange(Handle, 0, length, access);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UnmapBuffer()
     {
         GL.UnmapNamedBuffer(Handle);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public virtual void Unbind()
     {
         GL.BindBuffer(Type, 0);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public unsafe void BufferStorage(
         uint size,
         BufferStorageMask masks =

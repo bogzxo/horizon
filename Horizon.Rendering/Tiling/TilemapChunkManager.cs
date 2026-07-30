@@ -1,9 +1,7 @@
-﻿using System.Drawing.Drawing2D;
-using System.Numerics;
+﻿using System.Numerics;
+
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
 
 namespace Horizon.Rendering;
 
@@ -70,7 +68,8 @@ public abstract partial class Tiling<TTextureID>
             }
         }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>
         /// Renders all the chunk slices starting from 0 and ending at the layer specified by renderClampLower.

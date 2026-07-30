@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Bogz.Logging;
+﻿using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
 namespace Horizon.Core;
@@ -62,6 +57,7 @@ public class InstanceManager<InstanceType>
         }
 
         var instance = (InstanceType)Activator.CreateInstance(type)!;
+        
         AddInstance<InstanceType>(instance);
     }
 
@@ -84,6 +80,6 @@ public class InstanceManager<InstanceType>
         if (!Instances.ContainsKey(type))
             AddInstance(type);
 
-        CurrentInstance = Instances[type];
+        CurrentInstance = Instances.Values.Last();
     }
 }

@@ -1,5 +1,4 @@
 ﻿using Horizon.Content.Descriptions;
-using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL.Descriptions;
 
@@ -8,14 +7,14 @@ namespace Horizon.OpenGL.Descriptions;
 /// </summary>
 public readonly struct TextureDescription : IAssetDescription
 {
-    public readonly string Path { get; init; }
+    public readonly string[] Paths { get; init; }
     public readonly uint Width { get; init; }
     public readonly uint Height { get; init; }
     public readonly TextureDefinition Definition { get; init; }
 
     public TextureDescription()
     {
-        Path = string.Empty;
+        Paths = Array.Empty<string>();
         Definition = TextureDefinition.RgbaFloat;
     }
 }

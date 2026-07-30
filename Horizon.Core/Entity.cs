@@ -1,43 +1,33 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Security.Principal;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Runtime.InteropServices;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
-
-using Silk.NET.Core.Native;
-using Silk.NET.OpenGL;
 
 namespace Horizon.Core;
 
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
-    public bool Enabled { get; set; }
-    public string Name { get; protected set; } = string.Empty;
+    public bool Enabled { get; set; } = true;
+    public virtual string Name { get; protected set; } = string.Empty;
 
     public Entity Parent { get; set; }
-    public List<IGameComponent> Components { get; init; }
-    public List<Entity> Children { get; init; }
 
+    public List<IGameComponent> Components { get; init; } = [];
+    public List<Entity> Children { get; init; } = [];
 
-    private readonly Queue<IInstantiable> _uninitialized = new();
-
-    public Entity()
-    {
-        Children = new();
-        Components = new();
-    }
+    private readonly Queue<IInstantiable> _uninitialized = [];
+    private bool _initialized = false;
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context.
+    /// Called after the constructor, guaranteeing that there will be a valid GL context. Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
-    public virtual void Initialize() { }
+    public virtual void Initialize()
+    { if (_initialized) return; _initialized = true; PostInit(); }
+
+    /// <summary>
+    /// A method that executes after all initialisation is complete.
+    /// </summary>
+    public virtual void PostInit() { }
 
     public virtual void Render(float dt, object? obj = null)
     {
@@ -46,21 +36,27 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         if (Children.Count > 0)
         {
             var entSpan = CollectionsMarshal.AsSpan(Children);
-            foreach (var ent in entSpan)
+            for (int i = 0; i < entSpan.Length; i++)
             {
-                ent?.InitializeAll();
-                ent?.Render(dt);
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
+
+                entSpan[i].InitializeAll();
+
+                entSpan[i].Render(dt);
             }
         }
         if (Components.Count > 0)
         {
             var compSpan = CollectionsMarshal.AsSpan(Components);
-            foreach (var comp in compSpan)
-                comp?.Render(dt);
+            for (int i = 0; i < compSpan.Length; i++)
+            {
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
+                compSpan[i].Render(dt);
+            }
         }
     }
 
-    private void InitializeAll()
+    public void InitializeAll()
     {
         while (_uninitialized.Count > 0)
         {
@@ -84,15 +80,21 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         if (Components.Count > 0)
         {
             var compSpan = CollectionsMarshal.AsSpan(Components);
-            foreach (var comp in compSpan)
-                comp?.UpdatePhysics(dt);
+            for (int i = 0; i < compSpan.Length; i++)
+            {
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
+                compSpan[i].UpdatePhysics(dt);
+            }
         }
 
         if (Children.Count > 0)
         {
             var entSpan = CollectionsMarshal.AsSpan(Children);
-            foreach (var ent in entSpan)
-                ent?.UpdatePhysics(dt);
+            for (int i = 0; i < entSpan.Length; i++)
+            {
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
+                entSpan[i].UpdatePhysics(dt);
+            }
         }
     }
 
@@ -101,15 +103,22 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         if (Components.Count > 0)
         {
             var compSpan = CollectionsMarshal.AsSpan(Components);
-            foreach (var comp in compSpan)
-                comp?.UpdateState(dt);
+            for (int i = 0; i < compSpan.Length; i++)
+            {
+                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
+                if (!_uninitialized.Contains(compSpan[i]))
+                compSpan[i].UpdateState(dt);
+            }
         }
 
         if (Children.Count > 0)
         {
             var entSpan = CollectionsMarshal.AsSpan(Children);
-            foreach (var ent in entSpan)
-                ent?.UpdateState(dt);
+            for (int i = 0; i < entSpan.Length; i++)
+            {
+                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
+                entSpan[i].UpdateState(dt);
+            }
         }
     }
 
@@ -161,7 +170,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public T AddComponent<T>()
         where T : IGameComponent, new()
     {
-        var component = Activator.CreateInstance(typeof(T));
+        var component = new T();
         if (component is null)
         {
             // failed to create component.
@@ -177,12 +186,13 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// Attempts to attach a child entity to this Entity.
     /// </summary>
     /// <returns>A reference to the child entity.</returns>
-    /// <param name="renderImplicit">If set to true, this entity will be added to a separate array to be rendered implicitly by the class.</param>
     public T AddEntity<T>(in T entity)
         where T : Entity
     {
         if (!Children.Contains(entity) && !_uninitialized.Contains(entity))
+        {
             _uninitialized.Enqueue(entity);
+        }
         else
         {
             // entity already exists, dupe.
@@ -204,7 +214,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public T AddEntity<T>()
         where T : Entity, new()
     {
-        var entity = Activator.CreateInstance(typeof(T));
+        var entity = new T();
         if (entity is null)
         {
             // failed to create entity.
@@ -212,21 +222,31 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         return AddEntity((T)entity!);
     }
+
     protected virtual void DisposeOther()
     {
-        
     }
 
     public void Dispose()
     {
         foreach (var item in Components)
+        {
             if (item is IDisposable managedItem)
+            {
                 managedItem.Dispose();
+            }
+        }
+
         Components.Clear();
 
         foreach (var item in Children)
+        {
             if (item is IDisposable managedItem)
+            {
                 managedItem.Dispose();
+            }
+        }
+
         Children.Clear();
 
         DisposeOther();

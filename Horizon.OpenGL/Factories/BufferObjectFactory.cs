@@ -1,9 +1,5 @@
-﻿using System.Collections.Generic;
-using System.Net.Mail;
-using System.Reflection.Metadata;
-using Horizon.Content;
+﻿using Horizon.Content;
 using Horizon.Content.Descriptions;
-using Horizon.Core.Primitives;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
 using Horizon.OpenGL.Managers;
@@ -12,20 +8,26 @@ namespace Horizon.OpenGL.Factories;
 
 public class BufferObjectFactory : IAssetFactory<BufferObject, BufferObjectDescription>
 {
-    public static unsafe AssetCreationResult<BufferObject> Create(
-        in BufferObjectDescription description
+    public static unsafe bool TryCreate(
+        in BufferObjectDescription description,
+        out AssetCreationResult<BufferObject> asset
     )
     {
         var buffer = new BufferObject
         {
             Handle = ObjectManager.GL.CreateBuffer(),
-            Type = description.Type
+            Type = description.Type,
+            Size = description.Size,
         };
 
         if (buffer.Handle == 0)
-            return new() { Asset = buffer, Status = AssetCreationStatus.Failed };
+        {
+            asset = new() { Asset = buffer, Status = AssetCreationStatus.Failed };
+            return false;
+        }
 
         if (description.IsStorageBuffer)
+        {
             ObjectManager
                 .GL
                 .NamedBufferStorage(
@@ -34,14 +36,17 @@ public class BufferObjectFactory : IAssetFactory<BufferObject, BufferObjectDescr
                     null,
                     description.StorageMasks
                 );
+        }
 
-        return new()
+        asset = new()
         {
             Asset = buffer,
             Status = AssetCreationStatus.Success,
             Message = description.IsStorageBuffer
                 ? $"Storage buffer with size {description.Size} created!"
-                : string.Empty
+                : $"{description.Type} buffer created!"
         };
+
+        return true;
     }
 }

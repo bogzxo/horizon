@@ -7,7 +7,8 @@ public readonly struct VertexArrayObjectDescription : IAssetDescription
     public Dictionary<
         VertexArrayBufferAttachmentType,
         BufferObjectDescription
-    > Buffers { get; init; }
+    > Buffers
+    { get; init; }
 
     /// <summary>
     /// A standard configuration of a vertex buffer with one array buffer and one element buffer.

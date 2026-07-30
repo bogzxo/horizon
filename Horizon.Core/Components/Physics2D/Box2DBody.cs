@@ -23,14 +23,17 @@ namespace Horizon.Core.Components.Physics2D
             transform = Parent.GetComponent<TransformComponent2D>()!;
         }
 
-        public void Render(float dt, object? obj = null) { }
+        public void Render(float dt, object? obj = null)
+        { }
 
         public void UpdateState(float dt)
         {
+            if (transform is null) return;
             transform.Position = Body.Position;
             transform.Rotation = MathHelper.RadiansToDegrees(Body.GetAngle());
         }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
     }
 }

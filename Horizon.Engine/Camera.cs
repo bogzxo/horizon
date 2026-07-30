@@ -1,12 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Linq;
+﻿using System.Drawing;
 using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
-using Box2D.NetStandard.Common;
-using Horizon.Core.Components;
 
 namespace Horizon.Engine;
 
@@ -17,15 +10,18 @@ public abstract class Camera : GameObject
 
     public Matrix4x4 View { get; protected set; }
     public Matrix4x4 Projection { get; protected set; }
-    public Matrix4x4 ProjView { get; protected set; }
+    public Matrix4x4 ViewProj { get; protected set; }
+
+    public float Near { get; protected set; }
+    public float Far { get; protected set; }
 
     public RectangleF Bounds { get; protected set; }
     public Vector3 Position { get; set; }
+    public Vector3 Direction { get; protected set; }
 
     public override void Render(float dt, object? obj = null)
     {
         UpdateMatrices();
-        ProjView = View * Projection;
         base.Render(dt);
     }
 
@@ -46,7 +42,7 @@ public abstract class Camera : GameObject
 
         // Calculate the inverse view-projection matrix
         Matrix4x4 inverseViewProj;
-        if (Matrix4x4.Invert(ProjView, out inverseViewProj))
+        if (Matrix4x4.Invert(ViewProj, out inverseViewProj))
         {
             // Transform the normalized screen position into world coordinates
             Vector4 worldPosition4D = Vector4.Transform(
@@ -78,7 +74,7 @@ public abstract class Camera : GameObject
         // Transform the normalized screen position into world coordinates
         Vector4 worldPosition4D = Vector4.Transform(
             new Vector4(screenPosition, 0.0f, 1.0f),
-            ProjView
+            ViewProj
         );
         Vector3 worldPosition = new Vector3(
             worldPosition4D.X,

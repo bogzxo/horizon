@@ -1,14 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Bogz.Logging;
+﻿namespace Bogz.Logging;
 
 public class Logger
 {
     private static ILogger _logger;
+
     public static void InitializeLogger(ILogger logger)
     {
         _logger = logger;
