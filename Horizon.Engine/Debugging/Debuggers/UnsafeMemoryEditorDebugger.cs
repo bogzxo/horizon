@@ -1,6 +1,7 @@
-﻿using ImGuiNET;
-using System.Globalization;
+﻿using System.Globalization;
 using System.Numerics;
+
+using ImGuiNET;
 
 namespace Horizon.Engine.Debugging.Debuggers
 {
@@ -315,6 +316,7 @@ namespace Horizon.Engine.Debugging.Debuggers
     {
         public float StartPosY;
         public float ItemsHeight;
+
         public int ItemsCount,
             StepNo,
             DisplayStart,

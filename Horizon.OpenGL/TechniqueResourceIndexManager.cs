@@ -1,5 +1,6 @@
 ﻿using Horizon.Core.Primitives;
 using Horizon.OpenGL.Managers;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.OpenGL;

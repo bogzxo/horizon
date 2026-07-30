@@ -19,22 +19,33 @@ public class Renderer2D : GameObject
     public Vector2 ViewportSize { get; init; }
 
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
-    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) => GameEngine
+
+    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height)
+    {
+        if (GameEngine
             .Instance
             .ObjectManager
             .FrameBuffers
-            .Create(
+            .TryCreate(
                 new FrameBufferObjectDescription
                 {
                     Width = width,
                     Height = height,
-                    Attachments = new[]
-                    {
-                        FramebufferAttachment.ColorAttachment0 // Albedo
+                    Attachments = new() {
+                        { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
                     }
-                }
-            )
-            .Asset;
+                },
+                out var result
+            ))
+        {
+            return result.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            throw new Exception(result.Message);
+        }
+    }
 
     private FrameBufferObject frameBuffer;
     private RenderRectangle renderRectangle;
@@ -69,11 +80,14 @@ public class Renderer2D : GameObject
         base.Render(dt);
 
         Engine.GL.Enable(EnableCap.Blend);
+
         // set to window frame buffer
-        FrameBufferObject.Unbind();
+        if (Engine.Debugger.RenderToContainer) Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
+        else FrameBufferObject.Unbind();
 
         // restore window viewport
-        Engine.GL.Viewport(0, 0, (uint)GameEngine.Instance.WindowManager.WindowSize.X, (uint)GameEngine.Instance.WindowManager.WindowSize.Y);
+        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
+        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
 
         // draw framebuffer to window
         RenderRectangle.Render(dt);

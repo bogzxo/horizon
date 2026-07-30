@@ -1,14 +1,13 @@
-﻿using System.Diagnostics;
-using System.Numerics;
-using System.Runtime.CompilerServices;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
+
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
-using Horizon.Rendering.Primitives;
 using Horizon.Rendering.Spriting.Data;
+
 using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Spriting.Components;
@@ -19,7 +18,10 @@ public class SpriteBatchMesh : GameObject
     private const string UNIFORM_CAMERA_PROJ_MATRIX = "uCameraProjection";
     private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
 
-    // TODO: we'll get back to memory alignment later. edit: still havent
+    // TODO: we'll get back to memory alignment later.
+    // edit: still havent
+    // edit 03/09/25 still havent
+    // edit 27/07/26 still havent
     [StructLayout(LayoutKind.Sequential)]
     private struct SpriteData
     {
@@ -49,14 +51,21 @@ public class SpriteBatchMesh : GameObject
         bufferLength = (uint)(BufferObject.ALIGNMENT * 128);
         this.sheet = sheet;
 
-        Buffer = new VertexBufferObject(
-            Engine.ObjectManager.VertexArrays.Create(VertexArrayObjectDescription.VertexBuffer)
-        );
+        if (Engine.ObjectManager.VertexArrays.TryCreate(
+            VertexArrayObjectDescription.VertexBuffer,
+            out var result)) {
 
-        StorageBuffer = Engine
+            Buffer = new VertexBufferObject(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
+
+        if (Engine
             .ObjectManager
             .Buffers
-            .Create(
+            .TryCreate(
                 new BufferObjectDescription
                 {
                     IsStorageBuffer = true,
@@ -66,9 +75,16 @@ public class SpriteBatchMesh : GameObject
                         | BufferStorageMask.MapPersistentBit
                         | BufferStorageMask.MapWriteBit,
                     Type = BufferTargetARB.ShaderStorageBuffer
-                }
+                },
+                out var storeResult)
             )
-            .Asset;
+        {
+            StorageBuffer = storeResult.Asset;
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, storeResult.Message);
+        }
 
         SetVboLayout();
 
@@ -172,12 +188,12 @@ public class SpriteBatchMesh : GameObject
 
     private unsafe void AggregateSpriteData(in ReadOnlySpan<Sprite> sprites)
     {
-        if (dataPtr == null)
+        if (dataPtr == null) // no nullptr c#!!!! woww!!!!
             return;
         for (int i = 0; i < sprites.Length; i++)
         {
             if (sprites[i] is null)
-                return; // incase we modified the array while itterating!! thanks multithreading
+                return; // incase we modified the array while itterating!! thanks multithreading!!
 
             dataPtr[i].modelMatrix = sprites[i].Transform.ModelMatrix;
             dataPtr[i].spriteOffset = sprites[i].GetFrameOffset();

@@ -27,7 +27,7 @@ public class Camera2D : Camera
     protected override void UpdateMatrices()
     {
         View = Matrix4x4.CreateLookAt(Position, Position + CameraFront, CameraUp);
-        ProjView = View * Projection;
+        ViewProj = View * Projection;
 
         Bounds = new RectangleF(
             Position.X - 0.5f * Size.X * Zoom,

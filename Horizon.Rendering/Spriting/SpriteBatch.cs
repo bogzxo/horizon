@@ -1,11 +1,10 @@
 ﻿using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using Horizon.Content;
+
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Spriting.Components;
-using Horizon.Rendering.Spriting.Data;
 
 namespace Horizon.Rendering.Spriting;
 
@@ -118,6 +117,7 @@ public class SpriteBatch : GameObject
     /// </summary>
     /// <value>
     private Dictionary<uint, SpriteSheetRenderObject> SpritesheetSprites { get; } = new();
+
     public int Count { get; private set; }
 
     private ConcurrentStack<Sprite> _queuedSprites = new();
@@ -128,13 +128,20 @@ public class SpriteBatch : GameObject
     /// <param name="shader">A custom shader used to render sprites. It is recommended to leave default and apply effects using the post processing pipeline.</param>
     public SpriteBatch()
     {
-        this.Shader = new Technique(
-            Engine
+        if (Engine
                 .ObjectManager
                 .Shaders
-                .Create("sprite", ShaderDescription.FromPath("shaders/spritebatch", "sprites"))
-                .Asset
-        );
+                .TryCreateOrGet(
+                "sprite",
+                ShaderDescription.FromPath("shaders/spritebatch", "sprites"),
+                out var result))
+        {
+            this.Shader = new Technique(result.Asset);
+        }
+        else
+        {
+            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        }
 
         // this.Transform = AddComponent<TransformComponent>();
         //Engine.Debugger.GeneralDebugger.AddWatch("Sprite Count", "SpriteBatch", () => Count);
@@ -149,7 +156,7 @@ public class SpriteBatch : GameObject
     /// </summary>
     /// <param name="sprite"></param>
     public void Add(in Sprite sprite) => _queuedSprites.Push(sprite);
-
+    
     /// <summary>
     /// Commits an object to be rendered.
     /// </summary>
@@ -178,7 +185,7 @@ public class SpriteBatch : GameObject
         if (!Enabled)
             return;
 
-        if (_queuedSprites.Any())
+        if (!_queuedSprites.IsEmpty)
         {
             int length = _queuedSprites.Count;
             Sprite[] sprites = new Sprite[length];

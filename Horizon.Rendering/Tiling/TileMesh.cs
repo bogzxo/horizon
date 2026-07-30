@@ -1,13 +1,15 @@
 ﻿using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
 using Horizon.Core.Data;
 using Horizon.Engine;
-using Horizon.GameEntity;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
+
 using Silk.NET.OpenGL;
+
 using Shader = Horizon.OpenGL.Assets.Shader;
 
 namespace Horizon.Rendering;
@@ -48,7 +50,7 @@ public abstract partial class Tiling<TTextureID>
         private bool _uploadData,
             _isUpdatingMesh;
 
-        private readonly struct BasicVertex
+        private readonly struct BasicVertex : IVertex
         {
             public readonly Vector2 Position
             {
@@ -64,11 +66,29 @@ public abstract partial class Tiling<TTextureID>
 
             public static uint SizeInBytes { get; } = sizeof(float) * 4;
 
-            [VertexLayout(0, VertexAttribPointerType.Float)]
             private readonly Vector2 position;
 
-            [VertexLayout(1, VertexAttribPointerType.Float)]
             private readonly Vector2 texCoords;
+
+            public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
+             {
+                    new() {
+                        Index = 0,
+                        Size = sizeof(float) * 2,
+                        Count = 2,
+                        Offset = 0,
+                        Type = VertexAttribPointerType.Float,
+                        Instanced = false
+                    },
+                    new() {
+                        Index = 1,
+                        Size = sizeof(float) * 2,
+                        Count = 2,
+                        Offset = sizeof(float) * 2,
+                        Type = VertexAttribPointerType.Float,
+                        Instanced = false
+                    },
+             };
 
             public BasicVertex(Vector2 position, Vector2 texCoords)
             {
@@ -93,11 +113,13 @@ public abstract partial class Tiling<TTextureID>
             Shader = shader;
             Map = map;
 
-            Vbo = new VertexBufferObject(
+
+
+            if (
                 Engine
                     .ObjectManager
                     .VertexArrays
-                    .Create(
+                    .TryCreate(
                         new OpenGL.Descriptions.VertexArrayObjectDescription
                         {
                             Buffers = new()
@@ -115,9 +137,16 @@ public abstract partial class Tiling<TTextureID>
                                     BufferObjectDescription.ArrayBuffer
                                 }
                             }
-                        }
+                        }, out var result
                     )
-            );
+            )
+            {
+                Vbo = new(result.Asset);
+            }
+            else
+            {
+                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            }
 
             Vector2 tileTextureSize =
                 set.TileSize / new Vector2(set.Material.Width, set.Material.Height);
@@ -290,9 +319,5 @@ public abstract partial class Tiling<TTextureID>
             Shader.Unbind();
         }
 
-        //public override void Load(in IMeshData<TileRenderData> data, in Material? mat = null)
-        //{
-        //    Vbo.InstanceBuffer.BufferData(data.Vertices.Span);
-        //}
     }
 }

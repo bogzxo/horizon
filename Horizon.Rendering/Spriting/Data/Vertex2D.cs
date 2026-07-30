@@ -1,15 +1,37 @@
 ﻿using System.Numerics;
+
 using Horizon.Core.Data;
+using Horizon.OpenGL;
+
+using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Spriting.Data
 {
-    public struct Vertex2D
+    public struct Vertex2D : IVertex
     {
-        [VertexLayout(0, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
         private Vector2 position;
 
-        [VertexLayout(1, Silk.NET.OpenGL.VertexAttribPointerType.Float)]
         private Vector2 texCoords;
+
+        public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
+        {
+            new() {
+                Index = 0,
+                Size = sizeof(float) * 2,
+                Count = 2,
+                Offset = 0,
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            },
+            new() {
+                Index = 1,
+                Size = sizeof(float) * 2,
+                Count = 2,
+                Offset = sizeof(float) * 2, // Previous offset + previous size
+                Type = VertexAttribPointerType.Float,
+                Instanced = false
+            }
+        };
 
         /// <summary>
         /// Gets or sets the position of the vertex in 2D world space.

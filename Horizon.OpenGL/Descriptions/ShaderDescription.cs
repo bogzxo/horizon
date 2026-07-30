@@ -22,12 +22,12 @@ public readonly struct ShaderDescription : IAssetDescription
             return default;
 
         List<ShaderDefinition> definitions = new();
-
-        foreach (var file in Directory.GetFiles(path, $"{name}.*"))
+        var files = Directory.GetFiles(path, $"{name}.*");
+        foreach (var file in files)
         {
             // yummy expensive string manipulations
             string ext = Path.GetExtension(file).ToLower().Trim('.');
-
+            if (ext.CompareTo("h") == 0) continue;
             definitions.Add(
                 new ShaderDefinition
                 {
@@ -37,7 +37,6 @@ public readonly struct ShaderDescription : IAssetDescription
                         "frag" or "fs" or "fsh" => ShaderType.FragmentShader,
                         "comp" or "cs" or "csh" => ShaderType.ComputeShader,
                         "geom" or "gs" or "gsh" => ShaderType.GeometryShader,
-                        _ => throw new Exception($"Unrecognized shader file extension '{ext}'!")
                     },
                     File = file
                 }

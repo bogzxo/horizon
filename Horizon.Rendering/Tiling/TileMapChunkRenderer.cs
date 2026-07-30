@@ -1,10 +1,8 @@
-﻿using Horizon.Content;
-using Horizon.Core;
+﻿using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL.Managers;
 
 namespace Horizon.Rendering;
 
@@ -81,7 +79,8 @@ public abstract partial class Tiling<TTextureID>
         private Dictionary<
             TileMapChunkSlice,
             TileMapChunkSliceTileMeshes
-        > TileMapChunkSliceTileMeshesKeyPairs { get; init; }
+        > TileMapChunkSliceTileMeshesKeyPairs
+        { get; init; }
 
         public bool Enabled { get; set; }
         public string Name { get; set; }
@@ -115,19 +114,31 @@ public abstract partial class Tiling<TTextureID>
 
         public void Initialize()
         {
-            _shader ??= new Technique(
-                GameObject
+            if (_shader == null)
+            {
+                if (GameObject
                     .Engine
                     .ObjectManager
                     .Shaders
-                    .Create(ShaderDescription.FromPath("shaders/tilemap", "tilemap"))
-                    .Asset
-            );
+                    .TryCreate(
+                    ShaderDescription.FromPath("shaders/tilemap",
+                    "tilemap"
+                    ), out var result))
+                {
+                    _shader = new(result.Asset);
+                }
+                else
+                {
+                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+                }
+            }
         }
 
-        public void UpdateState(float dt) { }
+        public void UpdateState(float dt)
+        { }
 
-        public void UpdatePhysics(float dt) { }
+        public void UpdatePhysics(float dt)
+        { }
 
         /// <summary>d
         /// Generates the mesh for the chunk.
@@ -140,6 +151,8 @@ public abstract partial class Tiling<TTextureID>
             // UpdateState tileset/tile associations.
             foreach (var slice in Chunk.Slices)
             {
+                if (!slice.Visible) continue;
+
                 if (!TileMapChunkSliceTileMeshesKeyPairs.ContainsKey(slice))
                     TileMapChunkSliceTileMeshesKeyPairs.Add(slice, new(slice));
 
@@ -149,6 +162,8 @@ public abstract partial class Tiling<TTextureID>
             // generate the meshes accordingly.
             foreach (var sliceMesh in TileMapChunkSliceTileMeshesKeyPairs.Values)
             {
+                if (!sliceMesh.Slice.Visible) continue;
+
                 foreach (var tileset in sliceMesh.TileSetPairs.Keys)
                 {
                     if (!sliceMesh.TileMeshPairs.ContainsKey(tileset))
@@ -179,6 +194,8 @@ public abstract partial class Tiling<TTextureID>
             }
             if (!TileMapChunkSliceTileMeshesKeyPairs.Any())
                 return;
+            
+            if (!TileMapChunkSliceTileMeshesKeyPairs.ContainsKey(Chunk.Slices[index])) return;
 
             foreach (
                 var (_, mesh) in TileMapChunkSliceTileMeshesKeyPairs[

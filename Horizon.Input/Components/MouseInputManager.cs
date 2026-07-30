@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
-using Horizon.Core.Components;
-using Horizon.Core.Primitives;
+
 using Silk.NET.Input;
 
 namespace Horizon.Input.Components
@@ -15,7 +14,7 @@ namespace Horizon.Input.Components
         /// Gets the first connected mouse, or null if none is connected.
         /// </summary>
         public static IMouse? Mouse =>
-            Manager.NativeInputContext.Mice.Count > 0 ? Manager.NativeInputContext.Mice[0] : null;
+            Manager.NativeInputContext?.Mice.Count > 0 ? Manager.NativeInputContext.Mice[0] : null;
 
         /// <summary>
         /// Gets the MouseBindings representing the button-to-action mappings for the mouse.
@@ -36,7 +35,8 @@ namespace Horizon.Input.Components
             Bindings = MouseBindings.Default;
         }
 
-        public override void Initialize() { }
+        public override void Initialize()
+        { }
 
         public override void SwapBuffers()
         {

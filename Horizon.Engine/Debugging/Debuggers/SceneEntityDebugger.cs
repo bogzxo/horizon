@@ -1,19 +1,16 @@
-﻿using Horizon.Core;
-using Horizon.Core.Components;
-using Horizon.GameEntity;
-using Horizon.GameEntity.Components;
+﻿using System.Collections;
+using System.Numerics;
+
+using Horizon.Core;
 
 using ImGuiNET;
-
-using System.Collections;
-using System.Numerics;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
 public class SceneEntityDebugger : DebuggerComponent
 {
     private const float V_speed = 0.05f;
-    public bool DebugInstance = false;
+    public bool DebugInstance = true;
 
     public override void Initialize()
     {
@@ -43,7 +40,8 @@ public class SceneEntityDebugger : DebuggerComponent
         }
     }
 
-    public override void Dispose() { }
+    public override void Dispose()
+    { }
 
     private void DrawEntityTree(Entity? entity)
     {
@@ -84,8 +82,15 @@ public class SceneEntityDebugger : DebuggerComponent
 
             ImGui.Columns(1);
 
-            foreach (IGameComponent? component in entity!.Components)
+            int collectionSize = entity!.Components.Count;
+
+            for (int i = 0; i < collectionSize; i++)
             {
+                if (collectionSize != entity!.Components.Count)
+                    break; // detect and handle collection modification
+
+                var component = entity!.Components[i];
+
                 if (component == null)
                     continue;
 
@@ -461,7 +466,9 @@ public class SceneEntityDebugger : DebuggerComponent
         }
     }
 
-    public override void UpdateState(float dt) { }
+    public override void UpdateState(float dt)
+    { }
 
-    public override void UpdatePhysics(float dt) { }
+    public override void UpdatePhysics(float dt)
+    { }
 }
