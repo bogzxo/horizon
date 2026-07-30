@@ -319,9 +319,5 @@ public abstract partial class Tiling<TTextureID>
             Shader.Unbind();
         }
 
-        //public override void Load(in IMeshData<TileRenderData> data, in Material? mat = null)
-        //{
-        //    Vbo.InstanceBuffer.BufferData(data.Vertices.Span);
-        //}
     }
 }
