@@ -91,9 +91,7 @@ public class Box2DDebugRendererComponent : DebugDraw, IGameComponent
     }
 
     public void Initialize()
-    {
-        
-
+    {   
         if (GameObject
                    .Engine
                    .ObjectManager
@@ -195,6 +193,19 @@ public class Box2DDebugRendererComponent : DebugDraw, IGameComponent
             indices.Add(baseIndex + (uint)((i + 1) % vertexCount));
         }
     }
+    public void DrawPolygon(in Vector2[] _vertices, in Vector4 color)
+    {
+        uint baseIndex = (uint)vertices.Count;
+
+        for (int i = 0; i < _vertices.Length; i++)
+        {
+            vertices.Add(new BasicVertex(_vertices[i].X, _vertices[i].Y, color.X, color.Y, color.Z));
+
+            // Connect lines in a loop: 0->1, 1->2 ... (N-1)->0
+            indices.Add(baseIndex + (uint)i);
+            indices.Add(baseIndex + (uint)((i + 1) % _vertices.Length));
+        }
+    }
 
     public override void DrawSolidPolygon(in Vec2[] vertices, int vertexCount, in Color color)
     {
@@ -215,6 +226,26 @@ public class Box2DDebugRendererComponent : DebugDraw, IGameComponent
             float y = center.Y + radius * MathF.Sin(theta);
 
             vertices.Add(new BasicVertex(x, y, color.R, color.G, color.B));
+
+            indices.Add(baseIndex + (uint)i);
+            indices.Add(baseIndex + (uint)((i + 1) % segments));
+        }
+
+    }
+
+    public void DrawCircle(Vector2 center, float radius, Vector4 color)
+    {
+        const int segments = 16;
+        float increment = 2.0f * MathF.PI / segments;
+        uint baseIndex = (uint)vertices.Count;
+
+        for (int i = 0; i < segments; i++)
+        {
+            float theta = i * increment;
+            float x = center.X + radius * MathF.Cos(theta);
+            float y = center.Y + radius * MathF.Sin(theta);
+
+            vertices.Add(new BasicVertex(x, y, color.X, color.Y, color.Z));
 
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % segments));
