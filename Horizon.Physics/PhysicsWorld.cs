@@ -6,6 +6,7 @@ using System.Text;
 
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Physics.Debug;
 using Horizon.Physics.Fixtures;
 using Horizon.Rendering;
 
@@ -21,7 +22,7 @@ public class PhysicsWorld : IGameComponent
     public string Name { get; set; } = "Physics World";
     public Entity Parent { get; set; }
 
-    private Box2DDebugRendererComponent debugRenderer = new();
+    private PhysicsWorldDebugRenderer debugRenderer = new();
 
     public PhysicsBodyComponent2D CreateBody(PhysicsBodySimulationType simulationType, Vector2 initialPosition)
     {
@@ -63,7 +64,7 @@ public class PhysicsWorld : IGameComponent
     }
     public void Render(float dt, object? obj = null)
     {
-        void drawBody(in PhysicsBodyComponent2D body, Vector4 colour)
+        void drawBody(in PhysicsBodyComponent2D body, Vector3 colour)
         {
             foreach (var fixture in body.Fixtures)
             {
@@ -89,11 +90,11 @@ public class PhysicsWorld : IGameComponent
 
             foreach (var body in StaticBodies)
             {
-                drawBody(body, new System.Numerics.Vector4(1, 0, 0, 1));
+                drawBody(body, new System.Numerics.Vector3(1, 0, 0));
             }
             foreach (var body in DynamicBodies)
             {
-                drawBody(body, new System.Numerics.Vector4(0, 0, 1, 1));
+                drawBody(body, new System.Numerics.Vector3(0, 0, 1));
             }
 
 
