@@ -26,6 +26,7 @@ public class TextLabel
     public TransformComponent2D Transform { get; init; }
     public float Width { get; internal set; }
     public Origin Origin { get; init; } = Origin.TopLeft;
+    public bool IsVisible { get; set; } = true;
 
     public TextLabel()
     {
@@ -96,7 +97,11 @@ public class GlyphRenderer : GameObject
 
     public TextLabel this[string key]
     {
-        get => Labels[key];
+        get
+        {
+            MarkDirty();
+            return Labels[key];
+        }
     }
 
     public void AddLabel(in string id, in TextLabel label)
@@ -141,6 +146,9 @@ public class GlyphRenderer : GameObject
 
         foreach (var (identifier, lbl) in Labels)
         {
+            if (!lbl.IsVisible)
+                continue;
+
             // Extract scale from the label's transform matrix/component
             Vector2 scale = lbl.Transform.Size;
 

@@ -108,6 +108,7 @@ namespace Horizon.Input
         /// </summary>
         private void SwapBuffers(float _)
         {
+            if (!Enabled) return;
             for (int i = 0; i < Peripherals.Length; i++)
                 Peripherals[i].SwapBuffers();
 
@@ -119,6 +120,8 @@ namespace Horizon.Input
         /// </summary>
         private void AggregateInputs(float dt)
         {
+            if (!Enabled) return;
+
             for (int i = 0; i < Peripherals.Length; i++)
                 Peripherals[i].AggregateData(dt);
         }
@@ -129,6 +132,8 @@ namespace Horizon.Input
         /// <param name="dt">The time elapsed since the last update.</param>
         public void UpdateState(float dt)
         {
+            if (!Enabled) return; 
+
             var keyboardData = KeyboardManager.GetData();
             var mouseData = MouseManager.GetData();
             var xjoystickData = XInputJoystickManager.IsConnected
