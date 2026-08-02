@@ -129,6 +129,8 @@ namespace Horizon.Input
         /// <param name="dt">The time elapsed since the last update.</param>
         public void UpdateState(float dt)
         {
+            if (!Enabled) return; 
+
             var keyboardData = KeyboardManager.GetData();
             var mouseData = MouseManager.GetData();
             var xjoystickData = XInputJoystickManager.IsConnected
