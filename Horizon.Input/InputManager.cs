@@ -108,6 +108,7 @@ namespace Horizon.Input
         /// </summary>
         private void SwapBuffers(float _)
         {
+            if (!Enabled) return;
             for (int i = 0; i < Peripherals.Length; i++)
                 Peripherals[i].SwapBuffers();
 
@@ -119,6 +120,7 @@ namespace Horizon.Input
         /// </summary>
         private void AggregateInputs(float dt)
         {
+            if (!Enabled) return;
             for (int i = 0; i < Peripherals.Length; i++)
                 Peripherals[i].AggregateData(dt);
         }
