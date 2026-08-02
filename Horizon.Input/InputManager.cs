@@ -121,6 +121,7 @@ namespace Horizon.Input
         private void AggregateInputs(float dt)
         {
             if (!Enabled) return;
+
             for (int i = 0; i < Peripherals.Length; i++)
                 Peripherals[i].AggregateData(dt);
         }

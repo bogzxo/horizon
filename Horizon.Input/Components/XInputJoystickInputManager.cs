@@ -79,6 +79,9 @@ namespace Horizon.Input.Components
         /// <param name="dt">The time elapsed since the last update.</param>
         public override void AggregateData(float dt)
         {
+            if (Gamepad is null)
+                return;
+
             List<XJoystickButton> buttonPresses = [];
 
             foreach (var button in Gamepad.Buttons)
