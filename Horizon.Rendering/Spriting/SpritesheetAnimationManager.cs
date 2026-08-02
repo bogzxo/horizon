@@ -16,6 +16,7 @@ public class SpriteSheetAnimationManager : IGameComponent
     public string Name { get; set; } = "SpriteSheet Animation Manager";
     public Entity Parent { get; set; }
     public bool Enabled { get; set; }
+    public bool AnimateFrames { get; set; } = true;
 
     public ConcurrentDictionary<string, SpriteAnimationDefinition> Animations { get; init; }
     public Vector2 SpriteSize { get; set; }
@@ -94,7 +95,7 @@ public class SpriteSheetAnimationManager : IGameComponent
 
     public void UpdateState(float dt)
     {
-        if (!Enabled) return;
+        if (!Enabled || !AnimateFrames) return;
 
         foreach (var name in Animations.Keys)
         {
