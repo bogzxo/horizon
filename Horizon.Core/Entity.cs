@@ -13,6 +13,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 {
     // Backing store for Thread-Safe Enable/Disable
     private volatile bool _enabled = true;
+
     public bool Enabled
     {
         get => _enabled;
@@ -25,6 +26,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     // Use IReadOnlyList so external classes can't bypass our thread-safe Add/Remove methods.
     public IReadOnlyList<IGameComponent> Components => _componentsCache;
+
     public IReadOnlyList<Entity> Children => _childrenCache;
 
     // Mutex lock for structural modifications (Add/Remove)
@@ -38,12 +40,13 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     // Thread-safe queues and O(1) lookups for initialization
     private readonly ConcurrentQueue<IInstantiable> _uninitializedQueue = new();
+
     private readonly ConcurrentDictionary<IInstantiable, byte> _uninitializedSet = new();
 
     private int _initialized = 0; // Thread-safe boolean (0 = false, 1 = true)
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context. 
+    /// Called after the constructor, guaranteeing that there will be a valid GL context.
     /// Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
@@ -58,7 +61,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// <summary>
     /// A method that executes after all initialisation is complete.
     /// </summary>
-    public virtual void PostInit() { }
+    public virtual void PostInit()
+    { }
 
     public virtual void Render(float dt, object? obj = null)
     {
@@ -94,6 +98,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
                 case IGameComponent comp:
                     comp.Enabled = true;
                     break;
+
                 case Entity ent:
                     ent.Enabled = true;
                     break;
@@ -148,6 +153,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             }
         }
     }
+
     public void RemoveComponent(IGameComponent comp)
     {
         lock (_structuralLock)
@@ -256,7 +262,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public T AddEntity<T>() where T : Entity, new() =>
         AddEntity(new T());
 
-    protected virtual void DisposeOther() { }
+    protected virtual void DisposeOther()
+    { }
 
     public void Dispose()
     {

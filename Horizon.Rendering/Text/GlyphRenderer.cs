@@ -26,6 +26,7 @@ public class TextLabel
     public TransformComponent2D Transform { get; init; }
     public float Width { get; internal set; }
     public Origin Origin { get; init; } = Origin.TopLeft;
+    public bool IsVisible { get; set; } = true;
 
     public TextLabel()
     {
@@ -96,7 +97,11 @@ public class GlyphRenderer : GameObject
 
     public TextLabel this[string key]
     {
-        get => Labels[key];
+        get
+        {
+            MarkDirty();
+            return Labels[key];
+        }
     }
 
     public void AddLabel(in string id, in TextLabel label)
@@ -110,6 +115,7 @@ public class GlyphRenderer : GameObject
     private BufferObject labelBuffer;
 
     public Vector2 CalculateSize(in string text) => CalculateSize(text, Vector2.One);
+
     public Vector2 CalculateSize(in string text, Vector2 scale)
     {
         float totalWidth = 0f;
@@ -141,6 +147,9 @@ public class GlyphRenderer : GameObject
 
         foreach (var (identifier, lbl) in Labels)
         {
+            if (!lbl.IsVisible)
+                continue;
+
             // Extract scale from the label's transform matrix/component
             Vector2 scale = lbl.Transform.Size;
 
@@ -158,10 +167,12 @@ public class GlyphRenderer : GameObject
                     originOffsetX = 0f;
                     originOffsetY = 0f;
                     break;
+
                 case Origin.Top:
                     originOffsetX = -textSize.X * 0.5f;
                     originOffsetY = 0f;
                     break;
+
                 case Origin.TopRight:
                     originOffsetX = -textSize.X;
                     originOffsetY = 0f;
@@ -171,10 +182,12 @@ public class GlyphRenderer : GameObject
                     originOffsetX = 0f;
                     originOffsetY = -textSize.Y * 0.5f;
                     break;
+
                 case Origin.Center:
                     originOffsetX = -textSize.X * 0.5f;
                     originOffsetY = -textSize.Y * 0.5f;
                     break;
+
                 case Origin.Right:
                     originOffsetX = -textSize.X;
                     originOffsetY = -textSize.Y * 0.5f;
@@ -184,10 +197,12 @@ public class GlyphRenderer : GameObject
                     originOffsetX = 0f;
                     originOffsetY = -textSize.Y;
                     break;
+
                 case Origin.Bottom:
                     originOffsetX = -textSize.X * 0.5f;
                     originOffsetY = -textSize.Y;
                     break;
+
                 case Origin.BottomRight:
                     originOffsetX = -textSize.X;
                     originOffsetY = -textSize.Y;
@@ -228,7 +243,7 @@ public class GlyphRenderer : GameObject
                 offsetX += charDef.XAdvance * scale.X;
             }
 
-            // Pass Matrix without Scale if building mesh scaled on CPU, OR 
+            // Pass Matrix without Scale if building mesh scaled on CPU, OR
             // construct Matrix translation-only to avoid double-scaling in shader.
             Matrix4x4 translationMat = Matrix4x4.CreateTranslation(lbl.Transform.Position.X, lbl.Transform.Position.Y, 0f);
 
@@ -290,7 +305,6 @@ public class GlyphRenderer : GameObject
         vao[VertexArrayBufferAttachmentType.ArrayBuffer].Unbind();
         vao.Unbind();
 
-
         if (Engine.ObjectManager.Shaders.TryCreateOrGet(
             "bitmap_font",
             ShaderDescription.FromPath(
@@ -320,7 +334,7 @@ public class GlyphRenderer : GameObject
         }
 
         if (count == 0) return;
-        
+
         vao.Bind();
         Technique.Bind();
         Technique.BindBuffer("labelData", labelBuffer);
@@ -333,6 +347,5 @@ public class GlyphRenderer : GameObject
         Engine.GL.DrawArrays(Silk.NET.OpenGL.PrimitiveType.Triangles, 0, count);
         Engine.GL.UseProgram(0);
         vao.Unbind();
-
     }
 }
