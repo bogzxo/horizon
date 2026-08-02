@@ -135,6 +135,8 @@ public class SpriteBatchMesh : GameObject
 
     public unsafe void Draw(in ReadOnlySpan<Sprite> sprites)
     {
+        if (!Enabled || Engine.ActiveCamera == null) return;
+
         BindAndSetUniforms();
 
         // I AM TESING STUFF!!!!

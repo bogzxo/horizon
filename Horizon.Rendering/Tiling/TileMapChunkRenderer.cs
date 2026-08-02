@@ -83,7 +83,7 @@ public abstract partial class Tiling<TTextureID>
         { get; init; }
 
         public bool Enabled { get; set; }
-        public string Name { get; set; }
+        public string Name { get; set; } = "Tilemap Chunk Renderer";
         public Entity Parent { get; set; }
 
         public TileMapChunkRenderer(in TileMapChunk chunk)

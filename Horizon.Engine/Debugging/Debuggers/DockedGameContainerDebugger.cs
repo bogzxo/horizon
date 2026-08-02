@@ -20,8 +20,8 @@ public class DockedGameContainerDebugger : DebuggerComponent
                 { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
                 { FramebufferAttachment.DepthAttachment, FrameBufferAttachmentDefinition.TextureDepth },
             },
-            Width = 800,
-            Height = 600
+            Width = 854,
+            Height = 480
         }, out var result))
         {
             FrameBuffer = result.Asset;
@@ -42,7 +42,9 @@ public class DockedGameContainerDebugger : DebuggerComponent
 
     public override void Render(float dt, object? obj = null)
     {
-        if (Visible && ImGui.Begin("Game Container"))
+        if (!Visible) return;
+
+        if (ImGui.Begin("Game Container", ImGuiWindowFlags.AlwaysAutoResize))
         {
             ImGui.Image(
                 (nint)

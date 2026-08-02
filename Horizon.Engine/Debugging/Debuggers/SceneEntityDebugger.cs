@@ -63,7 +63,7 @@ public class SceneEntityDebugger : DebuggerComponent
             {
                 if (ImGui.MenuItem("Remove Entity"))
                 {
-                    entity?.Parent?.Children.Remove(entity);
+                    entity?.Parent?.RemoveEntity(entity);
                 }
                 ImGui.EndPopup();
             }
@@ -100,7 +100,7 @@ public class SceneEntityDebugger : DebuggerComponent
                     {
                         if (ImGui.MenuItem("Delete"))
                         {
-                            entity.Components.Remove(component);
+                            entity.RemoveComponent(component);
 
                             // TODO: some king of disposing.tho
                             ImGui.CloseCurrentPopup();
