@@ -52,7 +52,7 @@ public class GlyphRenderer : GameObject
 
     private bool _isDirty = false;
 
-    public void SetDirty() => _isDirty = true;
+    public void MarkDirty() => _isDirty = true;
 
     public TransformComponent2D Transform { get; init; }
 
