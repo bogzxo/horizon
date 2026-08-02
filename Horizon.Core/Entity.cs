@@ -1,4 +1,8 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
@@ -7,22 +11,49 @@ namespace Horizon.Core;
 
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
-    public bool Enabled { get; set; } = true;
+    // Backing store for Thread-Safe Enable/Disable
+    private volatile bool _enabled = true;
+    public bool Enabled
+    {
+        get => _enabled;
+        set => _enabled = value;
+    }
+
     public virtual string Name { get; protected set; } = string.Empty;
 
-    public Entity Parent { get; set; }
+    public Entity? Parent { get; set; }
 
-    public List<IGameComponent> Components { get; init; } = [];
-    public List<Entity> Children { get; init; } = [];
+    // Use IReadOnlyList so external classes can't bypass our thread-safe Add/Remove methods.
+    public IReadOnlyList<IGameComponent> Components => _componentsCache;
+    public IReadOnlyList<Entity> Children => _childrenCache;
 
-    private readonly Queue<IInstantiable> _uninitialized = [];
-    private bool _initialized = false;
+    // Mutex lock for structural modifications (Add/Remove)
+    private readonly Lock _structuralLock = new();
+
+    private readonly List<IGameComponent> _components = [];
+    private IGameComponent[] _componentsCache = []; // Fast lock-free iteration cache
+
+    private readonly List<Entity> _children = [];
+    private Entity[] _childrenCache = []; // Fast lock-free iteration cache
+
+    // Thread-safe queues and O(1) lookups for initialization
+    private readonly ConcurrentQueue<IInstantiable> _uninitializedQueue = new();
+    private readonly ConcurrentDictionary<IInstantiable, byte> _uninitializedSet = new();
+
+    private int _initialized = 0; // Thread-safe boolean (0 = false, 1 = true)
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context. Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
+    /// Called after the constructor, guaranteeing that there will be a valid GL context. 
+    /// Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
-    { if (_initialized) return; _initialized = true; PostInit(); }
+    {
+        // Thread-safe initialization guard
+        if (Interlocked.Exchange(ref _initialized, 1) == 1)
+            return;
+
+        PostInit();
+    }
 
     /// <summary>
     /// A method that executes after all initialisation is complete.
@@ -33,224 +64,230 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     {
         InitializeAll();
 
-        if (Children.Count > 0)
+        // Lock-free span iteration using the cache array
+        var entSpan = _childrenCache.AsSpan();
+        for (int i = 0; i < entSpan.Length; i++)
         {
-            var entSpan = CollectionsMarshal.AsSpan(Children);
-            for (int i = 0; i < entSpan.Length; i++)
-            {
-                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
+            if (_uninitializedSet.ContainsKey(entSpan[i])) continue;
 
-                entSpan[i].InitializeAll();
+            entSpan[i].InitializeAll();
 
-                entSpan[i].Render(dt);
-            }
+            entSpan[i].Render(dt, obj);
         }
-        if (Components.Count > 0)
+
+        var compSpan = _componentsCache.AsSpan();
+        for (int i = 0; i < compSpan.Length; i++)
         {
-            var compSpan = CollectionsMarshal.AsSpan(Components);
-            for (int i = 0; i < compSpan.Length; i++)
-            {
-                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
-                compSpan[i].Render(dt);
-            }
+            if (_uninitializedSet.ContainsKey(compSpan[i])) continue;
+            compSpan[i].Render(dt, obj);
         }
     }
 
     public void InitializeAll()
     {
-        while (_uninitialized.Count > 0)
+        while (_uninitializedQueue.TryDequeue(out IInstantiable? result))
         {
-            if (_uninitialized.TryDequeue(out IInstantiable? result))
+            result.Initialize();
+
+            switch (result)
             {
-                if (result is null)
-                    continue;
-
-                result.Initialize();
-
-                if (result is IGameComponent comp)
+                case IGameComponent comp:
                     comp.Enabled = true;
-                if (result is Entity ent)
+                    break;
+                case Entity ent:
                     ent.Enabled = true;
+                    break;
             }
+
+            // Remove from the set only AFTER it is fully initialized
+            _uninitializedSet.TryRemove(result, out _);
         }
     }
 
     public virtual void UpdatePhysics(float dt)
     {
-        if (Components.Count > 0)
+        var compSpan = _componentsCache.AsSpan();
+        for (int i = 0; i < compSpan.Length; i++)
         {
-            var compSpan = CollectionsMarshal.AsSpan(Components);
-            for (int i = 0; i < compSpan.Length; i++)
-            {
-                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
-                compSpan[i].UpdatePhysics(dt);
-            }
+            if (compSpan[i] is null || _uninitializedSet.ContainsKey(compSpan[i])) continue;
+            compSpan[i].UpdatePhysics(dt);
         }
 
-        if (Children.Count > 0)
+        var entSpan = _childrenCache.AsSpan();
+        for (int i = 0; i < entSpan.Length; i++)
         {
-            var entSpan = CollectionsMarshal.AsSpan(Children);
-            for (int i = 0; i < entSpan.Length; i++)
-            {
-                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
-                entSpan[i].UpdatePhysics(dt);
-            }
+            if (entSpan[i] is null || _uninitializedSet.ContainsKey(entSpan[i])) continue;
+            entSpan[i].UpdatePhysics(dt);
         }
     }
 
     public virtual void UpdateState(float dt)
     {
-        if (Components.Count > 0)
+        var compSpan = _componentsCache.AsSpan();
+        for (int i = 0; i < compSpan.Length; i++)
         {
-            var compSpan = CollectionsMarshal.AsSpan(Components);
-            for (int i = 0; i < compSpan.Length; i++)
-            {
-                if (compSpan[i] is null || _uninitialized.Contains(compSpan[i])) continue;
-                if (!_uninitialized.Contains(compSpan[i]))
-                compSpan[i].UpdateState(dt);
-            }
+            if (compSpan[i] is null || _uninitializedSet.ContainsKey(compSpan[i])) continue;
+            compSpan[i].UpdateState(dt);
         }
 
-        if (Children.Count > 0)
+        var entSpan = _childrenCache.AsSpan();
+        for (int i = 0; i < entSpan.Length; i++)
         {
-            var entSpan = CollectionsMarshal.AsSpan(Children);
-            for (int i = 0; i < entSpan.Length; i++)
-            {
-                if (entSpan[i] is null || _uninitialized.Contains(entSpan[i])) continue;
-                entSpan[i].UpdateState(dt);
-            }
+            if (entSpan[i] is null || _uninitializedSet.ContainsKey(entSpan[i])) continue;
+            entSpan[i].UpdateState(dt);
         }
     }
 
     public void RemoveEntity(in Entity ent)
     {
-        Children.Remove(ent);
+        lock (_structuralLock)
+        {
+            if (_children.Remove(ent))
+            {
+                _childrenCache = _children.ToArray();
+            }
+        }
+    }
+    public void RemoveComponent(IGameComponent comp)
+    {
+        lock (_structuralLock)
+        {
+            if (_components.Remove(comp)) // We remove from the PRIVATE list
+            {
+                // Then we update the cache for the render thread
+                _componentsCache = _components.ToArray();
+            }
+        }
     }
 
     /// <summary>
-    /// Attempts to return a reference to a specified type of Component.
+    /// Attempts to return a reference to a specified type of Component lock-free.
     /// </summary>
-    public T? GetComponent<T>()
-        where T : IGameComponent => (T?)Components.Find(comp => comp is T);
+    public T? GetComponent<T>() where T : IGameComponent
+    {
+        var span = _componentsCache.AsSpan();
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] is T typedComp) return typedComp;
+        }
+        return default;
+    }
 
     /// <summary>
-    /// Attempts to find all reference to a specified type of Entity.
+    /// Attempts to find all references to a specified type of Entity lock-free.
     /// </summary>
-    public List<Entity> GetEntities<T>()
-        where T : Entity => Children.FindAll(e => e is T);
+    public List<Entity> GetEntities<T>() where T : Entity
+    {
+        var result = new List<Entity>();
+        var span = _childrenCache.AsSpan();
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] is T typedEnt) result.Add(typedEnt);
+        }
+        return result;
+    }
 
     /// <summary>
-    /// Attempts to return a reference to a specified type of Entity. (if multiple are found, the first one is selected.)
+    /// Attempts to return a reference to a specified type of Entity lock-free.
     /// </summary>
-    public T? GetEntity<T>()
-        where T : Entity => (T?)Children.FindAll(e => e is T).FirstOrDefault();
+    public T? GetEntity<T>() where T : Entity
+    {
+        var span = _childrenCache.AsSpan();
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] is T typedEnt) return typedEnt;
+        }
+        return default;
+    }
 
     /// <summary>
     /// Attempts to attach a component to this Entity.
     /// </summary>
-    /// <returns>A reference to the component.</returns>
-    public T AddComponent<T>(T component)
-        where T : IGameComponent
+    public T AddComponent<T>(T component) where T : IGameComponent
     {
-        if (GetComponent<T>() is null && !_uninitialized.Contains(component))
-            _uninitialized.Enqueue(component);
+        PushToInitializationQueue(component);
 
         component.Parent = this;
         component.Enabled = false;
-        component.Name ??= component.GetType().Name;
+        if (component.Name.Length == 0) component.Name = component.GetType().Name;
 
-        Components.Add(component);
+        lock (_structuralLock)
+        {
+            if (_components.Contains(component)) return component;
+            _components.Add(component);
+            _componentsCache = [.. _components]; // Update the thread-safe read cache
+        }
         return component;
     }
 
-    /// <summary>
-    /// Attempts to attach a component to this Entity.
-    /// </summary>
-    /// <returns>A reference to the component.</returns>
-    public T AddComponent<T>()
-        where T : IGameComponent, new()
+    public T AddComponent<T>() where T : IGameComponent, new() =>
+        AddComponent(new T());
+
+    public void PushToInitializationQueue(in IInstantiable entity)
     {
-        var component = new T();
-        if (component is null)
+        // TryAdd prevents double-queuing efficiently
+        if (_uninitializedSet.TryAdd(entity, 1))
         {
-            // failed to create component.
+            _uninitializedQueue.Enqueue(entity);
         }
-
-        return AddComponent((T)component!);
     }
-
-    public void PushToInitializationQueue(in IInstantiable entity) =>
-        _uninitialized.Enqueue(entity);
 
     /// <summary>
     /// Attempts to attach a child entity to this Entity.
     /// </summary>
-    /// <returns>A reference to the child entity.</returns>
-    public T AddEntity<T>(in T entity)
-        where T : Entity
+    public T AddEntity<T>(in T entity) where T : Entity
     {
-        if (!Children.Contains(entity) && !_uninitialized.Contains(entity))
-        {
-            _uninitialized.Enqueue(entity);
-        }
-        else
-        {
-            // entity already exists, dupe.
-        }
+        PushToInitializationQueue(entity);
 
         entity.Parent = this;
         entity.Enabled = false;
-        entity.Name ??= entity.GetType().Name;
+        if (entity.Name.Length == 0) entity.Name = entity.GetType().Name;
 
-        Children.Add(entity);
+        lock (_structuralLock)
+        {
+            if (_children.Contains(entity)) return entity;
+            _children.Add(entity);
+            _childrenCache = [.. _children]; // Update the thread-safe read cache
+        }
 
         return entity;
     }
 
-    /// <summary>
-    /// Attempts to attach a child entity  to this Entity.
-    /// </summary>
-    /// <returns>A reference to the child entity.</returns>
-    public T AddEntity<T>()
-        where T : Entity, new()
-    {
-        var entity = new T();
-        if (entity is null)
-        {
-            // failed to create entity.
-        }
+    public T AddEntity<T>() where T : Entity, new() =>
+        AddEntity(new T());
 
-        return AddEntity((T)entity!);
-    }
-
-    protected virtual void DisposeOther()
-    {
-    }
+    protected virtual void DisposeOther() { }
 
     public void Dispose()
     {
-        foreach (var item in Components)
+        IGameComponent[] compsToDispose;
+        Entity[] childrenToDispose;
+
+        // Safely extract all items and clear the collections
+        lock (_structuralLock)
         {
-            if (item is IDisposable managedItem)
-            {
-                managedItem.Dispose();
-            }
+            compsToDispose = _componentsCache;
+            _components.Clear();
+            _componentsCache = [];
+
+            childrenToDispose = _childrenCache;
+            _children.Clear();
+            _childrenCache = [];
         }
 
-        Components.Clear();
-
-        foreach (var item in Children)
+        foreach (var item in compsToDispose)
         {
             if (item is IDisposable managedItem)
-            {
                 managedItem.Dispose();
-            }
         }
 
-        Children.Clear();
+        foreach (var item in childrenToDispose)
+        {
+            if (item is IDisposable managedItem)
+                managedItem.Dispose();
+        }
 
         DisposeOther();
-
         GC.SuppressFinalize(this);
     }
 }

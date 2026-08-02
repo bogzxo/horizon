@@ -49,7 +49,7 @@ namespace Horizon.Input
         /// </summary>
         public bool Enabled { get; set; }
 
-        public string Name { get; set; }
+        public string Name { get; set; } = "Horizon Input Manager";
         public Entity Parent { get; set; }
 
         private VirtualController VirtualController = new() { Actions = VirtualAction.None };

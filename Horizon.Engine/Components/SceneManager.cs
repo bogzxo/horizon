@@ -11,7 +11,7 @@ namespace Horizon.Engine.Components;
 public class SceneManager : IGameComponent
 {
     public bool Enabled { get; set; }
-    public string Name { get; set; }
+    public string Name { get; set; } = "Scene Manager";
     public Entity Parent { get; set; }
 
     // Absorbed from InstanceManager

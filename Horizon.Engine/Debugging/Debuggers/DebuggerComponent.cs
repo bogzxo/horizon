@@ -5,7 +5,7 @@ namespace Horizon.Engine.Debugging.Debuggers;
 
 public abstract class DebuggerComponent : IGameComponent, IDisposable
 {
-    public string Name { get; set; }
+    public string Name { get; set; } = "Generic Debugger Componenet";
     public Entity Parent { get; set; }
     public bool Enabled { get; set; }
 

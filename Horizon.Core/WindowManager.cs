@@ -50,7 +50,7 @@ public class WindowManager : IGameComponent, IDisposable
     public GL GL { get; private set; }
 
     public bool Enabled { get; set; }
-    public string Name { get; set; }
+    public string Name { get; set; } = "Window Manager";
     public Entity Parent { get; set; }
 
     /// <summary>

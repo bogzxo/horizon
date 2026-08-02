@@ -9,7 +9,7 @@ public abstract partial class Tiling<TTextureID>
 {
     public class TileMapChunkManager : IGameComponent
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = "Tilemap Chunk Manager";
         public Entity Parent { get; set; }
         public bool Enabled { get; set; }
         public TileMap Map { get; private set; }
