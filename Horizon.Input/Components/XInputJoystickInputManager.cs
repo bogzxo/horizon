@@ -82,32 +82,40 @@ namespace Horizon.Input.Components
             if (Gamepad is null)
                 return;
 
-            List<XJoystickButton> buttonPresses = [];
-
-            foreach (var button in Gamepad.Buttons)
+            try
             {
-                if (button.Pressed)
-                    buttonPresses.Add((XJoystickButton)button.Index);
-            }
-            JoystickKeys = [.. buttonPresses];
+                List<XJoystickButton> buttonPresses = [];
 
-            actions = VirtualAction.None;
-
-            if (Gamepad?.IsConnected != true)
-                return;
-
-            
-            foreach ((XJoystickButton key, VirtualAction action) in Bindings.ButtonActionPairs)
-            {
-                if (Gamepad.Buttons[(int)key].Pressed)
+                foreach (var button in Gamepad.Buttons)
                 {
-                    actions |= action;
+                    if (button.Pressed)
+                        buttonPresses.Add((XJoystickButton)button.Index);
                 }
+
+                JoystickKeys = [.. buttonPresses];
+
+                actions = VirtualAction.None;
+
+                if (Gamepad?.IsConnected != true)
+                    return;
+
+
+                foreach ((XJoystickButton key, VirtualAction action) in Bindings.ButtonActionPairs)
+                {
+                    if (Gamepad.Buttons[(int)key].Pressed)
+                    {
+                        actions |= action;
+                    }
+                }
+
+                primaryAxis = new Vector2(Gamepad.Thumbsticks[0].X, Gamepad.Thumbsticks[0].Y);
+                secondaryAxis = new Vector2(Gamepad.Thumbsticks[1].X, Gamepad.Thumbsticks[1].X);
+                triggers = new Vector2(Gamepad.Triggers[0].Position, Gamepad.Triggers[1].Position);
             }
-            
-            primaryAxis = new Vector2(Gamepad.Thumbsticks[0].X, Gamepad.Thumbsticks[0].Y);
-            secondaryAxis = new Vector2(Gamepad.Thumbsticks[1].X, Gamepad.Thumbsticks[1].X);
-            triggers = new Vector2(Gamepad.Triggers[0].Position, Gamepad.Triggers[1].Position);
+            catch
+            {
+
+            }
         }
     }
 }
