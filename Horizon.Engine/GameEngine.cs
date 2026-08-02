@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
@@ -255,33 +256,29 @@ public class GameEngine : Entity
         // Make sure ImGui is up-to-date before rendering.
         imguiController.Update(dt);
 
-        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-
         if (Debugger.RenderToContainer)
         {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             Debugger.GameContainerDebugger.FrameBuffer.Bind();
             Debugger.GameContainerDebugger.FrameBuffer.Viewport();
         }
+        else GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
 
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        // Render all entities & components
-        //InitializeAll();
-        //for (int i = 0; i < Components.Count; i++)
-        //    DrawWithMetrics(Components[i], dt);
-
-        //for (int i = 0; i < Children.Count; i++)
-        //    DrawWithMetrics(Children[i], dt);
-
+        // Render all entities & component
         base.Render(dt);
 
-        //GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        if (Debugger.RenderToContainer)
+        {
+            ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
-        //GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+            GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        }
+
+        // TODO: resize imgui
         imguiController.Render();
 
-        
         EventManager.PostRender?.Invoke(dt);
     }
 

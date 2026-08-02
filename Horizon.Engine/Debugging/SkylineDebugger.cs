@@ -56,7 +56,7 @@ public class SkylineDebugger : Entity
     {
         foreach (var comp in _components)
         {
-            Components.Remove(comp);
+            RemoveComponent(comp);
             comp.Dispose();
         }
         _components.Clear();

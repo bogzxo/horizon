@@ -7,7 +7,7 @@ namespace Horizon.GameEntity.Components.Physics2D;
 
 public class Box2DWorldComponent : Box2D.NetStandard.Dynamics.World.World, IGameComponent
 {
-    public string Name { get; set; }
+    public string Name { get; set; } = "Box2D World";
     public Entity Parent { get; set; }
     public bool Enabled { get; set; }
 
