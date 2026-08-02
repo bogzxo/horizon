@@ -78,7 +78,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         public BasicVertex(float x, float y, float r, float g, float b)
         {
             Position = new Vector2(x, y);
-            Colour = new Vector3(r, b, g);
+            Colour = new Vector3(r, g, b);
         }
     }
 
@@ -146,7 +146,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         _technique.SetUniform("uCameraProjection", GameEngine.Instance.ActiveCamera.Projection);
 
         _vbo.Bind();
-        GameEngine.Instance.GL.DrawElements(PrimitiveType.LineLoop, (uint)indices.Count, DrawElementsType.UnsignedInt, null);
+        GameEngine.Instance.GL.DrawElements(PrimitiveType.Lines, (uint)indices.Count, DrawElementsType.UnsignedInt, null);
 
         _technique.Unbind();
     }
@@ -167,8 +167,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
 
         for (int i = 0; i < _vertices.Length; i++)
         {
-            vertices.Add(new BasicVertex(_vertices[i].X, _vertices[i].Y, colour.X, colour.Y, colour.Z));
-
+            vertices.Add(new BasicVertex(_vertices[i], colour));
             // Connect lines in a loop: 0->1, 1->2 ... (N-1)->0
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % _vertices.Length));
@@ -187,7 +186,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
             float x = center.X + radius * MathF.Cos(theta);
             float y = center.Y + radius * MathF.Sin(theta);
 
-            vertices.Add(new BasicVertex(x, y, colour.X, colour.Y, colour.Z));
+            vertices.Add(new BasicVertex(new Vector2(x, y), colour));
 
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % segments));

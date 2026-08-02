@@ -9,5 +9,6 @@ namespace Horizon.Physics;
 public enum PhysicsBodySimulationType
 {
     Static,
-    Dynamic
+    Dynamic,
+    Kinematic
 }
