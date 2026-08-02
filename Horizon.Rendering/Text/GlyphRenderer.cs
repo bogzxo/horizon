@@ -311,6 +311,8 @@ public class GlyphRenderer : GameObject
     {
         base.Render(dt, obj);
 
+        if (!Enabled || Engine.ActiveCamera == null) return;
+
         if (_isDirty)
         {
             BuildBuffer();

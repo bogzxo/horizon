@@ -15,7 +15,7 @@ public class EngineEventHandler : IGameComponent
     public Action<float>? PostRender;
 
     public bool Enabled { get; set; }
-    public string Name { get; set; }
+    public string Name { get; set; } = "Engine Event Handler";
     public Entity Parent { get; set; }
 
     public void Initialize()

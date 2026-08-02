@@ -5,7 +5,7 @@ namespace Horizon.Core.Components.Physics2D
     //[RequiresComponent(typeof(TransformComponent2D))]
     public class Box2DBodyComponent : IGameComponent
     {
-        public string Name { get; set; }
+        public string Name { get; set; } = "Box2D Body";
         public Entity Parent { get; set; }
         public bool Enabled { get; set; }
 

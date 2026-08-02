@@ -3,42 +3,39 @@
 namespace Horizon.Core.Components;
 
 /// <summary>
-/// Represents a component that handles the 2D transformation of a game entity.
+/// Represents a component that handles the 3D transformation of a game entity.
 /// </summary>
-public class TransformComponent2D : IGameComponent
+public class TransformComponent3D : IGameComponent
 {
-    public string Name { get; set; } = "Transform2D";
+    public string Name { get; set; } = "Transform3D";
     public bool Enabled { get; set; }
 
     /// <summary>
     /// The position of the game entity in 3D space.
     /// </summary>
-    private Vector2 pos;
+    private Vector3 pos;
 
     /// <summary>
     /// The rotation angles of the game entity in degrees around each axis (X, Y, and Z).
     /// </summary>
-    private float rot;
+    private Vector3 rot;
 
     /// <summary>
     /// The size factors of the game entity along each axis (X and Y).
     /// </summary>
-    private Vector2 size = Vector2.One;
+    private Vector3 size = Vector3.One;
 
     /// <summary>
     /// Updates the model matrix based on the current position, rotation, and size values.
     /// </summary>
     private void updateModelMatrix()
     {
-        // Convert rotation angles to radians
-        float radiansZ = MathHelper.DegreesToRadians(rot);
-
         // Create quaternions for each rotation axis
-        Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, radiansZ);
+        Quaternion rotation = Quaternion.CreateFromYawPitchRoll(MathHelper.DegreesToRadians(rot.X), MathHelper.DegreesToRadians(rot.Y), MathHelper.DegreesToRadians(rot.Z));
 
         // Create the model matrix
         ModelMatrix =
-            Matrix4x4.CreateScale(size.X, size.Y, 1.0f)
+            Matrix4x4.CreateScale(size.X, size.Y, size.Z)
             * Matrix4x4.CreateFromQuaternion(rotation)
             * Matrix4x4.CreateTranslation(pos.X, pos.Y, 0.0f);
     }
@@ -51,7 +48,7 @@ public class TransformComponent2D : IGameComponent
     /// <summary>
     /// Gets or sets the position of the game entity in 3D space.
     /// </summary>
-    public Vector2 Position
+    public Vector3 Position
     {
         get => pos;
         set
@@ -64,7 +61,7 @@ public class TransformComponent2D : IGameComponent
     /// <summary>
     /// Gets or sets the rotation angles of the game entity in degrees around each axis (X, Y, and Z).
     /// </summary>
-    public float Rotation
+    public Vector3 Rotation
     {
         get => rot;
         set
@@ -73,19 +70,11 @@ public class TransformComponent2D : IGameComponent
             updateModelMatrix();
         }
     }
-    /// <summary>
-    /// Sets the transform position relative to the center of the object.
-    /// </summary>
-    /// <param name="position"></param>
-    public void SetPositionRelativeToOrigin(Vector2 position)
-    {
-        Position = position + size / new Vector2(2, -2);
-    }
 
     /// <summary>
     /// Gets or sets the size in pixels.
     /// </summary>
-    public Vector2 Size
+    public Vector3 Size
     {
         get => size;
         set
