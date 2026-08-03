@@ -133,11 +133,11 @@ public class SpriteBatchMesh : GameObject
         throw new Exception("Please only draw a SpriteBatchMesh through a SpriteBatch");
     }
 
-    public unsafe void Draw(in ReadOnlySpan<Sprite> sprites)
+    public unsafe void Draw(in ReadOnlySpan<Sprite> sprites, Camera engineActiveCamera)
     {
-        if (!Enabled || Engine.ActiveCamera == null) return;
+        if (!Enabled || (engineActiveCamera == null && Engine.ActiveCamera == null)) return;
 
-        BindAndSetUniforms();
+        BindAndSetUniforms(engineActiveCamera);
 
         // I AM TESING STUFF!!!!
 
@@ -176,12 +176,12 @@ public class SpriteBatchMesh : GameObject
         Shader.Unbind();
     }
 
-    protected void BindAndSetUniforms()
+    protected void BindAndSetUniforms(in Camera? camera)
     {
         Shader.Bind();
 
-        Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, Engine.ActiveCamera.Projection);
-        Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, Engine.ActiveCamera.View);
+        Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, camera?.Projection ?? Engine.ActiveCamera.Projection);
+        Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, camera?.View ?? Engine.ActiveCamera.View);
         Shader.SetUniform(UNIFORM_SINGLE_BUFFER_SIZE, sheet.SingleSpriteSize);
 
         Engine.GL.BindTextureUnit(0, sheet.Handle);
