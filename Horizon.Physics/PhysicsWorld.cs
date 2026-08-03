@@ -105,6 +105,7 @@ public class PhysicsWorld : IGameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
+                // Test against static bodies...
                 foreach (var other in staticBodies)
                 {
                     foreach (var otherFixture in other.DynamicFixtures)
@@ -120,6 +121,28 @@ public class PhysicsWorld : IGameComponent
                         }
                     }
                 }
+
+
+                // Test against dynamic bodies...
+                foreach (var other in dynamicBodies)
+                {
+                    // Yeah lets not collide with ourselves
+                    if (other == body) continue;
+
+                    foreach (var otherFixture in other.DynamicFixtures)
+                    {
+                        if (fixture.TestIntersection(otherFixture, nextPositionX, other.Position))
+                        {
+                            nextPositionX.X = currentPosition.X;
+                            body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+
+                            other.Velocity = -body.Velocity;
+                            fixture.IsTouching = true;
+                            otherFixture.IsTouching = true;
+                            fixture.ActiveContacts.Add(otherFixture);
+                        }
+                    }
+                }
             }
 
             // 4. Resolve Y Axis using updated X position
@@ -127,6 +150,7 @@ public class PhysicsWorld : IGameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
+                // Test against static bodies...
                 foreach (var other in staticBodies)
                 {
                     foreach (var otherFixture in other.DynamicFixtures)
@@ -142,6 +166,28 @@ public class PhysicsWorld : IGameComponent
                         }
                     }
                 }
+
+                // Test against dynamic bodies...
+                foreach (var other in dynamicBodies)
+                {
+                    // Yeah lets not collide with ourselves
+                    if (other == body) continue;
+
+                    foreach (var otherFixture in other.DynamicFixtures)
+                    {
+                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                        {
+                            nextPositionY.Y = currentPosition.Y;
+                            body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+
+                            other.Velocity = -body.Velocity;
+
+                            fixture.IsTouching = true;
+                            otherFixture.IsTouching = true;
+                            fixture.ActiveContacts.Add(otherFixture);
+                        }
+                    }
+                }
             }
 
             // 5. Update Kinematic Triggers against final position
@@ -149,6 +195,22 @@ public class PhysicsWorld : IGameComponent
             {
                 foreach (var other in staticBodies)
                 {
+                    foreach (var otherFixture in other.DynamicFixtures)
+                    {
+                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
+                        {
+                            fixture.IsTouching = true;
+                            otherFixture.IsTouching = true;
+                            fixture.ActiveContacts.Add(otherFixture);
+                        }
+                    }
+                }
+
+                foreach (var other in dynamicBodies)
+                {
+                    // Yeah lets not collide with ourselves
+                    if (other == body) continue;
+
                     foreach (var otherFixture in other.DynamicFixtures)
                     {
                         if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
