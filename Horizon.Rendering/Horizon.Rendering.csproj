@@ -53,6 +53,7 @@
 
   <ItemGroup>
     <Folder Include="shaders\particle\" />
+    <Folder Include="UI\" />
   </ItemGroup>
 
   <ItemGroup>

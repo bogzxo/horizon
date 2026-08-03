@@ -15,6 +15,8 @@ namespace Horizon.Rendering.Spriting;
 /// <seealso cref="Horizon.Rendering.Spriting.I2DBatchedRenderer&lt;Horizon.Rendering.Spriting.Sprite&gt;" />
 public class SpriteBatch : GameObject
 {
+    public Camera? CustomCamera { get; set; }
+
     /// <summary>
     /// Helper struct to aggregate data related to rendering a series of sprites with a common sprite sheet.
     /// </summary>
@@ -229,7 +231,8 @@ public class SpriteBatch : GameObject
             renderData
                 .Mesh
                 .Draw( /*Transform.ModelMatrix, */
-                    CollectionsMarshal.AsSpan(renderData.Sprites)
+                    CollectionsMarshal.AsSpan(renderData.Sprites),
+                    CustomCamera is not null ? CustomCamera : Engine.ActiveCamera
                 );
     }
 }
