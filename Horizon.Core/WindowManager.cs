@@ -22,8 +22,8 @@ public class WindowManager : IGameComponent, IDisposable
     private readonly IWindow _window;
     private IInputContext _input;
 
-    private Task logicTask,
-        physicsTask;
+    private Task logicTask;
+    //private Task physicsTask;
 
     private readonly CancellationTokenSource tokenSource;
 
@@ -96,11 +96,13 @@ public class WindowManager : IGameComponent, IDisposable
                 (int)config.WindowSize.X,
                 (int)config.WindowSize.Y
             ),
-            UpdatesPerSecond = 0,
+            UpdatesPerSecond = 120,
             FramesPerSecond = 0,
             ShouldSwapAutomatically = true,
             VSync = false,
             PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
+            Samples = 0,
+            
         };
 
         ViewportSize = WindowSize = config.WindowSize;
@@ -114,7 +116,10 @@ public class WindowManager : IGameComponent, IDisposable
     private void SubscribeWindowEvents()
     {
         this._window.Render += (dt) => Parent.Render((float)dt);
+        
         this._window.Update += (dt) => Parent.UpdateState((float)dt);
+        this._window.Update += (dt) => Parent.UpdatePhysics((float)dt);
+
         this._window.Resize += WindowResize;
 
         this._window.Load += () =>
@@ -184,24 +189,27 @@ public class WindowManager : IGameComponent, IDisposable
                 _window.DoUpdate();
         }
     }
+    //private async Task OnPhysicsFrame()
+    //{
+    //    // PeriodicTimer leverages OS high-resolution timers natively
+    //    //using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
 
-    private void OnPhysicsFrame()
-    {
-        long previousTicks = 0,
-            ticks;
-        double elapsedTime;
-        while (!_window.IsClosing)
-        {
-            ticks = Stopwatch.GetTimestamp();
-            elapsedTime = ((ticks - previousTicks) / (double)Stopwatch.Frequency);
-            if (elapsedTime > 5) elapsedTime = 0;
-            System.Threading.Thread.Sleep(1);
-            if (_window.IsInitialized)
-                Parent.UpdatePhysics((float)elapsedTime);
+    //    long previousTicks = Stopwatch.GetTimestamp();
 
-            previousTicks = ticks;
-        }
-    }
+    //    while (!(tokenSource.Token.IsCancellationRequested || _window.IsClosing))
+    //    {
+    //        // Await next tick without blocking thread pool resources
+    //        //if (!await timer.WaitForNextTickAsync(tokenSource.Token))
+    //        //    break;
+
+    //        long currentTicks = Stopwatch.GetTimestamp();
+    //        double deltaTime = (currentTicks - previousTicks) / (double)Stopwatch.Frequency;
+    //        previousTicks = currentTicks;
+
+    //        // Handle physics calculation
+    //        Parent.UpdatePhysics((float)deltaTime);
+    //    }
+    //}
 
     private bool needsDispatching = true;
 
@@ -221,7 +229,7 @@ public class WindowManager : IGameComponent, IDisposable
             needsDispatching = false;
 
             logicTask ??= Task.Run(OnLogicFrame, tokenSource.Token);
-            physicsTask ??= Task.Run(OnPhysicsFrame, tokenSource.Token);
+            //physicsTask ??= Task.Run(OnPhysicsFrame, tokenSource.Token);
         }
     }
 
@@ -231,10 +239,10 @@ public class WindowManager : IGameComponent, IDisposable
 
         tokenSource.Cancel();
 
-        physicsTask.Wait();
+        //physicsTask.Wait();
         logicTask.Wait();
 
-        physicsTask.Dispose();
+        //physicsTask.Dispose();
         logicTask.Dispose();
 
         tokenSource.Dispose();
