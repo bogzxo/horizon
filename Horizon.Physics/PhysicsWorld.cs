@@ -62,10 +62,6 @@ public class PhysicsWorld : IGameComponent
     }
     public void UpdatePhysics(float dt)
     {
-       
-    }
-    public void UpdateState(float dt)
-    {
         if (!Enabled) return;
 
         var dynamicBodies = CollectionsMarshal.AsSpan<PhysicsBodyComponent2D>(this.DynamicBodies);
@@ -225,6 +221,10 @@ public class PhysicsWorld : IGameComponent
 
             body.Position = nextPositionY;
         }
+    }
+    public void UpdateState(float dt)
+    {
+        
     }
     public void Render(float dt, object? obj = null)
     {
