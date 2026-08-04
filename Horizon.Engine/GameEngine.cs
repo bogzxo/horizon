@@ -44,9 +44,13 @@ public class GameEngine : Entity
     /// <summary>
     /// Gets the main active camera associated with the current active Scene.
     /// </summary>
-    public Camera? ActiveCamera
+    public Camera ActiveCamera
     {
-        get => SceneManager?.CurrentInstance?.ActiveCamera ?? camera;
+        get
+        {
+            var activeCamera = SceneManager.CurrentInstance?.ActiveCamera;
+            return activeCamera ?? camera;
+        }
     }
 
     public Camera camera;
@@ -100,6 +104,8 @@ public class GameEngine : Entity
     public override void Initialize()
     {
         base.Initialize();
+        camera = AddEntity(new Camera2D(WindowManager.ViewportSize));
+
         unsafe
         {
             GL.Enable(EnableCap.Texture2D);

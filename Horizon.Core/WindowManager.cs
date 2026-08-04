@@ -22,7 +22,9 @@ public class WindowManager : IGameComponent, IDisposable
     private readonly IWindow _window;
     private IInputContext _input;
 
-    private Task logicTask;
+    private Thread logicThread;
+
+    //private Task logicTask;
     //private Task physicsTask;
 
     private readonly CancellationTokenSource tokenSource;
@@ -228,7 +230,16 @@ public class WindowManager : IGameComponent, IDisposable
         {
             needsDispatching = false;
 
-            logicTask ??= Task.Run(OnLogicFrame, tokenSource.Token);
+            logicThread = new Thread(OnLogicFrame)
+            {
+                Name = "GameLogicThread",
+                Priority = ThreadPriority.AboveNormal,
+                IsBackground = true
+            };
+
+            logicThread.Start();
+
+            //logicTask ??= Task.Run(OnLogicFrame, tokenSource.Token);
             //physicsTask ??= Task.Run(OnPhysicsFrame, tokenSource.Token);
         }
     }
@@ -239,11 +250,13 @@ public class WindowManager : IGameComponent, IDisposable
 
         tokenSource.Cancel();
 
+        logicThread.Join();
+
         //physicsTask.Wait();
-        logicTask.Wait();
+        //logicTask.Wait();
 
         //physicsTask.Dispose();
-        logicTask.Dispose();
+        //logicTask.Dispose();
 
         tokenSource.Dispose();
 

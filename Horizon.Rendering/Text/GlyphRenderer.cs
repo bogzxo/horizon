@@ -323,9 +323,9 @@ public class GlyphRenderer : GameObject
 
     public override void Render(float dt, object? obj = null)
     {
-        base.Render(dt, obj);
+        if (!Enabled) return;
 
-        if (!Enabled || Engine.ActiveCamera == null) return;
+        base.Render(dt, obj);
 
         if (_isDirty)
         {
