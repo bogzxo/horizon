@@ -133,4 +133,19 @@ public class SpriteSheetAnimationManager : IGameComponent
         Animations[name] = frame;
         return (finished, frame.Index);
     }
+    public bool SetFrame(string name, int index, bool invert = false)
+    {
+        var frame = Animations[name ?? ""];
+
+        if (frame.Length < 1)
+        {
+            frame.Index = 0;
+        }
+        bool finished = index >= frame.Length;
+
+        frame.Index = (uint)((invert ? frame.Length - index - 1 : index));
+        Animations[name] = frame;
+        
+        return (finished);
+    }
 }
