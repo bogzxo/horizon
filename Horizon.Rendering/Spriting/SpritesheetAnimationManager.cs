@@ -141,9 +141,9 @@ public class SpriteSheetAnimationManager : IGameComponent
         {
             frame.Index = 0;
         }
-        bool finished = index >= frame.Length;
 
         frame.Index = (uint)((invert ? frame.Length - index - 1 : index));
+        bool finished = frame.Index >= frame.Length - 1;
         Animations[name] = frame;
         
         return (finished);
