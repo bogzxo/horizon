@@ -42,7 +42,8 @@ public class CircularBuffer<T>
 
     public void Reset()
     {
-        Index = 0;
+        startIndex = 0;
+        Index = -1;
         Length = 0;
         Array.Clear(buffer);
     }
