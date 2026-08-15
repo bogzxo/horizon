@@ -19,7 +19,7 @@ using Silk.NET.Windowing;
 
 namespace Horizon.Engine.Framework;
 
-public class CustomImguiController : IDisposable
+public unsafe class CustomImguiController : IDisposable
 {
     public readonly struct ImGuiFontConfig
     {
