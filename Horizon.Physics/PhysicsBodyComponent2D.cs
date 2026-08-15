@@ -99,7 +99,7 @@ public class PhysicsBodyComponent2D : IGameComponent
 
     public void UpdateState(float dt)
     {
-        if (parentTransform is null)
+        if (!Enabled || parentTransform is null)
             return;
 
         parentTransform.Position = Position;
