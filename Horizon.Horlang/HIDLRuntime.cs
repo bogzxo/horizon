@@ -60,9 +60,15 @@ public class HIDLRuntime
         scratchEnv.Copy(UserScope);
 
         ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
-        IRuntimeValue val = Interpreter.Evaluate(ast, scratchEnv);
-        scratchEnv.Reset(true);
-        return val;
+        try
+        {
+            return Interpreter.Evaluate(ast, scratchEnv);
+        }
+        finally
+        {
+            // Ensure scratchEnv is reset even if evaluation throws (including YieldException)
+            scratchEnv.Reset(true);
+        }
     }
 
 

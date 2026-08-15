@@ -201,25 +201,34 @@ public class DashboardContentProvider : IWebHostContentProvider
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
-                var result = await context.WebSocket.ReceiveAsync(buffer, cancellationToken);
+                using var ms = new MemoryStream();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await context.WebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        // Exit outer loop if Close frame received
+                        break;
+                    }
+                    if (result.Count > 0)
+                        ms.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
                     break; // Exit the loop when WebSocket is closed
                 }
+                // Parse the accumulated full message
+                var message = Encoding.UTF8.GetString(ms.ToArray());
+                InternalPayloadPacket packet = JsonConvert.DeserializeObject<InternalPayloadPacket>(message);
+                if (packetcallbacks.TryGetValue(packet.PacketID, out Action<string>? callback))
+                {                    byte[] data = Convert.FromBase64String(packet.Payload);
+                    callback?.Invoke(Encoding.UTF8.GetString(data));
+                }
                 else
-                {
-                    InternalPayloadPacket packet = JsonConvert.DeserializeObject<InternalPayloadPacket>(Encoding.UTF8.GetString(buffer, 0, result.Count));
-
-                    if (packetcallbacks.TryGetValue(packet.PacketID, out Action<string>? callback))
-                    {
-                        byte[] data = Convert.FromBase64String(packet.Payload);
-                        callback?.Invoke(Encoding.UTF8.GetString(data));
-                    }
-                    else
-                    {
-                        Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] No callback for packet [{packet.PacketID}].");
-                    }
+                {                    Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] No callback for packet [{packet.PacketID}].");
                 }
             }
         }
