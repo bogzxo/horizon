@@ -95,6 +95,20 @@ internal class Program
         {
             return new StringValue(Console.ReadLine() ?? string.Empty);
         }), true);
+
+        // tick helper to advance a generator returned from a function containing yields
+        runtime.UserScope.Declare("tick", new NativeFunctionValue((args, env) =>
+        {
+            if (args.Length < 1) return new NumberValue(0);
+            var gv = args[0];
+            if (gv.Type != Runtime.ValueType.Generator) return new NumberValue(0);
+            var gen = gv as GeneratorValue;
+            if (gen is null) return new NumberValue(0);
+            bool moved = gen.MoveNext();
+            if (moved) return new NumberValue(gen.Current);
+            return new NumberValue(0);
+        }), true);
+
         runtime.UserScope.Declare("ld", new NativeFunctionValue((args, env) =>
         {
             if (args.Length < 1)

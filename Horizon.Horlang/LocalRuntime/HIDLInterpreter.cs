@@ -29,6 +29,7 @@ public class HIDLInterpreter
             NodeType.IfExpression => EvaluateIfExpression((IfDeclarationExpression)statement, env),
             NodeType.DeleteStatement => EvaluateDeleteStatement((DeleteStatement)statement, env),
             NodeType.VectorDeclaration => EvaluateVecDeclaration((VectorDeclarationExpression)statement, env),
+            NodeType.YieldStatement => EvaluateYieldStatement((YieldStatement)statement, env),
             _ => throw new Exception($"This node cannot be interpreted: '{statement}'"),
         };
     }
@@ -56,6 +57,18 @@ public class HIDLInterpreter
         return NULL;
     }
 
+    private IRuntimeValue EvaluateYieldStatement(YieldStatement statement, Environment env)
+    {
+        // Evaluate the expression and throw a YieldException to allow the caller (generator runtime)
+        // to capture the yielded value and pause execution.
+        var val = Evaluate(statement.Expression, env);
+        if (val.Type != ValueType.Number)
+            throw new Exception("Yield expression must evaluate to a number.");
+
+        // throw a special exception that generators catch to pause execution
+        throw new YieldException((int)((NumberValue)val).Value);
+    }
+
     private IRuntimeValue EvaluateIfExpression(IfDeclarationExpression statement, Environment env)
     {
         var compResult = Evaluate(statement.Condition, env);
@@ -76,21 +89,16 @@ public class HIDLInterpreter
 
     private IRuntimeValue EvaluateWhileExpression(WhileDeclarationExpression statement, Environment env)
     {
-        var compResult = Evaluate(statement.Condition, env);
         IRuntimeValue result = new NullValue();
+        var compResult = Evaluate(statement.Condition, env);
         if (compResult.Type == ValueType.Boolean)
         {
-            for (int j = 0; j < 500; j++)
+            while (((BooleanValue)Evaluate(statement.Condition, env)).Value)
             {
-                compResult = Evaluate(statement.Condition, env);
-                if (((BooleanValue)compResult).Value)
+                for (int i = 0; i < statement.Body.Length; i++)
                 {
-                    for (int i = 0; i < statement.Body.Length; i++)
-                    {
-                        result = Evaluate(statement.Body[i], env);
-                    }
+                    result = Evaluate(statement.Body[i], env);
                 }
-                else break;
             }
         }
         return result;
@@ -99,15 +107,15 @@ public class HIDLInterpreter
     private IRuntimeValue EvaluateDoWhileExpression(DoWhileDeclarationExpression statement, Environment env)
     {
         IRuntimeValue result = new NullValue();
-        for (int j = 0; j < 500; j++)
+        do
         {
             for (int i = 0; i < statement.Body.Length; i++)
             {
                 result = Evaluate(statement.Body[i], env);
             }
-
-            if (!((BooleanValue)Evaluate(statement.Condition, env)).Value) break;
         }
+        while (((BooleanValue)Evaluate(statement.Condition, env)).Value);
+
         return result;
     }
 
@@ -176,6 +184,13 @@ public class HIDLInterpreter
         else if (func.Type == ValueType.Function)
         {
             var fun = ((FunctionValue)func);
+
+            // If the function contains any yield statements, return a GeneratorValue instead
+            if (FunctionContainsYield(fun.Body))
+            {
+                return new GeneratorValue(fun, args);
+            }
+
             Environment scope = new(fun.Environment);
 
             // construct variables from parameters
@@ -191,6 +206,15 @@ public class HIDLInterpreter
         else if (func.Type == ValueType.AnonymousFunction)
         {
             var fun = ((AnonymousFunctionValue )func);
+
+            // If the anonymous function contains yields, return a generator
+            if (FunctionContainsYield(fun.Body))
+            {
+                // wrap anonymous function into a FunctionValue-like view: create a synthetic FunctionValue
+                var synthetic = new FunctionValue("<anon>", fun.Parameters, fun.Environment, fun.Body);
+                return new GeneratorValue(synthetic, args);
+            }
+
             Environment scope = new(fun.Environment);
 
             // construct variables from parameters
@@ -203,8 +227,35 @@ public class HIDLInterpreter
             }
             return result;
         }
-        return func;
-        throw new Exception("Cannot call that of whom which is not a function!");
+        throw new Exception("Cannot call that which is not a function!");
+    }
+
+    private static bool FunctionContainsYield(IStatement[] body)
+    {
+        bool containsYield(IStatement[] stmts)
+        {
+            foreach (var s in stmts)
+            {
+                if (s == null) continue;
+                if (s.Type == NodeType.YieldStatement) return true;
+
+                if (s.Type == NodeType.IfExpression && s is IfDeclarationExpression ifExp)
+                {
+                    if (containsYield(ifExp.Body)) return true;
+                }
+                else if (s.Type == NodeType.WhileExpression && s is WhileDeclarationExpression whileExp)
+                {
+                    if (containsYield(whileExp.Body)) return true;
+                }
+                else if (s.Type == NodeType.DoWhileExpression && s is DoWhileDeclarationExpression doExp)
+                {
+                    if (containsYield(doExp.Body)) return true;
+                }
+            }
+            return false;
+        }
+
+        return containsYield(body);
     }
 
     private IRuntimeValue EvaluateMemberExpression(MemberExpression expression, Environment env)

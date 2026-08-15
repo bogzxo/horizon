@@ -13,5 +13,8 @@ public enum ValueType : byte
     String,
     Vector2,
     Vector3,
-    Vector4
+    Vector4,
+
+    // generator value returned when functions contain yield statements
+    Generator
 }

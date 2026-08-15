@@ -23,6 +23,8 @@ public static class Lexer
             {"==", TokenType.Equality},
             {"!=", TokenType.NotEquality},
             {"vec", TokenType.Vector},
+            {"yield", TokenType.Yield},
+            {"return", TokenType.Return},
         };
     }
 

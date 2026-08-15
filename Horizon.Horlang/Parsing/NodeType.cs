@@ -35,4 +35,7 @@ public enum NodeType
     CallExpression,
     StringLiteral,
     BooleanLiteral,
+
+    // Yield
+    YieldStatement,
 }

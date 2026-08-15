@@ -55,6 +55,7 @@ public class Parser
             TokenType.If => ParseIfDeclaration(),
             TokenType.Vector => ParseVectorDeclaration(),
             TokenType.Function => ParseFunctionDeclaration(),
+            TokenType.Yield => ParseYieldStatement(),
             _ => ParseExpression(),
         };
     }
@@ -161,6 +162,34 @@ public class Parser
             // consume the }
             Consume(TokenType.CloseBracket);
 
+            // Validate: do not allow yields nested inside control-flow blocks. Only top-level YieldStatement nodes inside the function body are allowed by the current generator implementation.
+            bool ContainsYieldRec(IStatement s)
+            {
+                if (s == null) return false;
+                if (s.Type == NodeType.YieldStatement) return true;
+                if (s is IfDeclarationExpression ifExp)
+                {
+                    foreach (var st in ifExp.Body) if (ContainsYieldRec(st)) return true;
+                }
+                else if (s is WhileDeclarationExpression whileExp)
+                {
+                    foreach (var st in whileExp.Body) if (ContainsYieldRec(st)) return true;
+                }
+                else if (s is DoWhileDeclarationExpression doExp)
+                {
+                    foreach (var st in doExp.Body) if (ContainsYieldRec(st)) return true;
+                }
+                return false;
+            }
+
+            foreach (var stmt in body)
+            {
+                if (stmt == null) continue;
+                if (stmt.Type == NodeType.YieldStatement) continue; // top-level yield is OK
+                if (ContainsYieldRec(stmt))
+                    throw new Exception("Nested 'yield' statements are not supported; place 'yield' as a top-level statement in the function body.");
+            }
+
             return ([.. arguments], [.. body]);
         }
 
@@ -193,6 +222,21 @@ public class Parser
 
         // use params to store all args and at runtime determine how many dimensions this vector has
         return new VectorDeclarationExpression(args);
+    }
+
+    private IStatement ParseYieldStatement()
+    {
+        // consume 'yield'
+        Consume(TokenType.Yield);
+        // optional 'return' token to support `yield return <expr>;`
+        if (Peek().Type == TokenType.Return)
+            Consume(TokenType.Return);
+
+        var expr = ParseExpression();
+        if (Peek().Type == TokenType.Semicolon)
+            Consume(TokenType.Semicolon);
+
+        return new YieldStatement(expr);
     }
 
     private IStatement ParseVariableDeclaration()

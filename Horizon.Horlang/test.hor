@@ -22,3 +22,20 @@ func welcome() {
 }
 
 welcome();
+
+
+// Generator test for yield-return of integers
+func KickLeft() {
+	print("kick start");
+	yield return 2;
+	print("hit");
+	yield return 2;
+	print("kick end");
+	""
+}
+
+let r = KickLeft();
+while (tick(r) != 0) {
+	print("frame");
+}
+print("generator finished");
