@@ -1,16 +1,10 @@
 namespace Horizon.Core;
 
-public class IntervalRunner : Entity
+public class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
 {
-    public float TimeInterval { get; init; }
+    public float TimeInterval { get; init; } = timeInterval;
     private float _timer = 0.0f;
-    private Action _action;
-
-    public IntervalRunner(float timeInterval, Action action)
-    {
-        TimeInterval = timeInterval;
-        _action = action;
-    }
+    private Action _action = action;
 
     public void SetAction(Action action)
     {
@@ -26,9 +20,10 @@ public class IntervalRunner : Entity
         }
 
         _timer += dt;
-        if (_timer >= TimeInterval)
+
+        while (_timer > TimeInterval)
         {
-            _timer = 0.0f;
+            _timer -= TimeInterval;
             _action.Invoke();
         }
     }
