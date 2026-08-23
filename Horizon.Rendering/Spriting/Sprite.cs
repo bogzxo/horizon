@@ -112,7 +112,7 @@ public class Sprite : GameObject
         };
     }
 
-    public bool LoadSpriteSheetFromDirectory(in string dir)
+    public bool LoadSpriteSheetFromDirectory(in string dir, in string defFileName= "definition.hor")
     {
         if (!Directory.Exists(dir))
         {
@@ -120,21 +120,27 @@ public class Sprite : GameObject
             return false;
         }
 
-        if (!(File.Exists(dir + "/spritesheet.png") || File.Exists(dir + "/definition.hor")))
-        {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to load spritesheet or definition!");
-            return false;
-        }
 
         HIDLRuntime runtime = new();
-        var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/definition.hor"));
+        var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/" + defFileName));
         if (!success) { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"Malformed sprite definition!\r\b{msg}");  return false; }
 
-
+        string spriteFilePath = "spritesheet.png";
         float spriteSizeX = 0, spriteSizeY = 0, gridSizeX = 0, gridSizeY = 0;
 
         if (runtime.UserScope.Lookup("sprite") is ObjectValue def)
         {
+            if (def.Properties.ContainsKey("sprite_file") && def.Properties["sprite_file"] is StringValue sprite_file)
+            {
+                if (!File.Exists(dir + "/" + sprite_file.Value))
+                {
+                    ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to load spritesheet or definition!");
+                    return false;
+                }
+
+                spriteFilePath = sprite_file.Value;
+            }
+
             if (def.Properties["sprite_size"] is ObjectValue sprite_size)
             {
                 if (sprite_size.Properties["w"] is NumberValue sprite_width) spriteSizeX = sprite_width.Value;
@@ -186,7 +192,7 @@ public class Sprite : GameObject
         }
         if (Engine.ObjectManager.Textures.TryCreate(new TextureDescription
         {
-            Paths = [dir + "/spritesheet.png"],
+            Paths = [dir + "/" + spriteFilePath],
             Definition = TextureDefinition.RgbaUnsignedByteNearest
         }, out var result))
         {

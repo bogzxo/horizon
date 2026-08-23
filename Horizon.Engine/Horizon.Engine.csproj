@@ -31,9 +31,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Egui" Version="0.9.0" />
+    <PackageReference Include="Egui.Silk.NET" Version="0.9.0" />
+    <PackageReference Include="Egui.Silk.NET.OpenGL" Version="0.9.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.5-beta1" />
-    <PackageReference Include="Twizzle.ImGui.NET" Version="1.89.4" />
-    <PackageReference Include="Twizzle.ImPlot.NET" Version="1.89.4" />
+    <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
   </ItemGroup>
 
   <ItemGroup>

@@ -5,15 +5,29 @@ namespace Horizon.HIDL.Runtime;
 /// <summary>
 /// The environment is the scope that the interpreter uses to localize variables and soon states in functions.
 /// </summary>
-/// <param name="parent"></param>
-public class Environment(in Environment? parent = null)
+/// <param name="parent">The parent environment scope or environment to copy.</param>
+/// <param name="copy">If true, copies all variables, system variables, and constants from parent instead of linking parent by reference.</param>
+public class Environment
 {
     private static readonly NullValue NULL = new();
 
-    public Environment? Parent { get; init; } = parent;
+    public Environment? Parent { get; init; }
     private Dictionary<string, IRuntimeValue> systemVariables = [];
     private Dictionary<string, IRuntimeValue> variables = [];
     private List<string> constants = [];
+
+    public Environment(in Environment? parent = null, in bool copy = false)
+    {
+        if (copy && parent is not null)
+        {
+            Parent = parent.Parent;
+            Copy(parent);
+        }
+        else
+        {
+            Parent = parent;
+        }
+    }
 
     /// <summary>
     /// Declare a variable in the global scope, functions are defined using the <see cref="NativeFunctionValue"/> struct.
@@ -117,6 +131,30 @@ public class Environment(in Environment? parent = null)
             return null;
 
         return Parent.Resolve(name);
+    }
+
+    /// <summary>
+    /// Recursively gathers all declared variables, system variables, and constants in this environment and parents.
+    /// </summary>
+    public Dictionary<string, IRuntimeValue> GetAllDeclaredValues(bool includeParents = true)
+    {
+        Dictionary<string, IRuntimeValue> result = [];
+        if (includeParents && Parent is not null)
+        {
+            foreach (var item in Parent.GetAllDeclaredValues(true))
+            {
+                result[item.Key] = item.Value;
+            }
+        }
+        foreach (var item in systemVariables)
+        {
+            result[item.Key] = item.Value;
+        }
+        foreach (var item in variables)
+        {
+            result[item.Key] = item.Value;
+        }
+        return result;
     }
 
     /// <summary>

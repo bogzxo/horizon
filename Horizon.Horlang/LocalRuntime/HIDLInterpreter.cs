@@ -113,10 +113,42 @@ public class HIDLInterpreter
 
     private IRuntimeValue EvaluateAssignment(AssignmentExpression statement, Environment env)
     {
-        if (statement.Assignee.Type != NodeType.Identifier)
-            throw new Exception($"Invalid LHS assignee '{statement.Assignee.ToString()}'");
+        if (statement.Assignee.Type == NodeType.Identifier)
+        {
+            return env.Assign(((IdentifierExpression)statement.Assignee).Symbol, Evaluate(statement.Value, env));
+        }
+        else if (statement.Assignee.Type == NodeType.MemberExpression)
+        {
+            var memberExpr = (MemberExpression)statement.Assignee;
+            var objNoType = Evaluate(memberExpr.Object, env);
 
-        return env.Assign(((IdentifierExpression)statement.Assignee).Symbol, Evaluate(statement.Value, env));
+            if (objNoType.Type == ValueType.Object)
+            {
+                var obj = (ObjectValue)objNoType;
+                if (memberExpr.Property.Type == NodeType.Identifier)
+                {
+                    var propName = ((IdentifierExpression)memberExpr.Property).Symbol;
+                    var value = Evaluate(statement.Value, env);
+
+                    if (obj.Properties.TryGetValue(propName, out var propVal) && propVal.Type == ValueType.NativeValue && propVal is NativeValue nativeVal)
+                    {
+                        nativeVal.MutatorCallback?.Invoke(value);
+                    }
+                    else
+                    {
+                        obj.Properties[propName] = value;
+                    }
+                    return value;
+                }
+                else
+                {
+                    throw new Exception("Property assignment with non-identifier property is not implemented");
+                }
+            }
+            throw new Exception("Cannot assign to property of non-object");
+        }
+
+        throw new Exception($"Invalid LHS assignee '{statement.Assignee.ToString()}'");
     }
 
     private IRuntimeValue EvaluateVariableDeclaration(VariableDeclarationExpression statement, Environment env)
@@ -218,7 +250,11 @@ public class HIDLInterpreter
                 var propName = ((IdentifierExpression)expression.Property).Symbol;
 
                 if (obj.Properties.TryGetValue(propName, out var value))
+                {
+                    if (value.Type == ValueType.NativeValue && value is NativeValue nativeValue)
+                        return nativeValue.AccessorCallback?.Invoke() ?? new NullValue();
                     return value;
+                }
             }
         }
         else if (objNoType.Type == ValueType.Vector2)

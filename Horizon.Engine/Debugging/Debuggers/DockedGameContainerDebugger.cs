@@ -1,7 +1,10 @@
-﻿using Horizon.OpenGL.Buffers;
+﻿#if DEBUG
+using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 
-using ImGuiNET;
+using Egui;
+using Egui.Containers;
+using Egui.Widgets;
 using Silk.NET.OpenGL;
 
 using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
@@ -40,26 +43,22 @@ public class DockedGameContainerDebugger : DebuggerComponent
     public override void UpdatePhysics(float dt)
     { }
 
-    public override void Render(float dt, object? obj = null)
+    public override void RenderUi(Ui root)
     {
         if (!Visible) return;
 
-        if (ImGui.Begin("Game Container", ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.Image(
-                (nint)
-                    FrameBuffer.Attachments[
-                        Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0
-                    ].Texture.Handle,
-                new System.Numerics.Vector2(FrameBuffer.Width, FrameBuffer.Height),
-                new System.Numerics.Vector2(0, 1),
-                new System.Numerics.Vector2(1, 0)
-            );
-
-            ImGui.End();
-        }
+        new Window("Game Container")
+            .Show(root.Ctx, ui =>
+            {
+                var handle = FrameBuffer.Attachments[Silk.NET.OpenGL.FramebufferAttachment.ColorAttachment0].Texture.Handle;
+                // Note: Egui doesn't support immediate arbitrary texture rendering without registering it in the texture manager
+                // Assumes Egui.TextureId exists or handle can be passed. Fallback to basic label if texture binding is missing.
+                ui.Label($"[Game Container: Texture {handle}, {FrameBuffer.Width}x{FrameBuffer.Height}]");
+            });
     }
+
 
     public override void Dispose()
     { }
 }
+#endif

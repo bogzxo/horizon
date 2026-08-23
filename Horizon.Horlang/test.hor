@@ -1,4 +1,4 @@
-﻿let demo_object = {
+let demo_object = {
 	greet_user: func(name) {
     	print("Hello, ", name, "!")	
     }

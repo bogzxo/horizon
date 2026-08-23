@@ -46,8 +46,14 @@ public class Parser
         };
     }
 
-    private IStatement ParseStatement()
+    private IStatement? ParseStatement()
     {
+        if (Peek().Type == TokenType.Semicolon)
+        {
+            Consume(TokenType.Semicolon);
+            return null;
+        }
+
         return Peek().Type switch
         {
             TokenType.Let or TokenType.Const => ParseVariableDeclaration(),
@@ -55,6 +61,7 @@ public class Parser
             TokenType.If => ParseIfDeclaration(),
             TokenType.Vector => ParseVectorDeclaration(),
             TokenType.Function => ParseFunctionDeclaration(),
+            //TokenType.Yield => ParseYieldExpression(),
             _ => ParseExpression(),
         };
     }
@@ -69,6 +76,13 @@ public class Parser
         return expression;
     }
 
+    //private IExpression ParseYieldExpression()
+    //{
+    //    Consume(TokenType.Yield);
+    //    var value = ParseExpression();
+    //    return new YieldExpression(value);
+    //}
+
     private IExpression ParseIfDeclaration()
     {
         Consume(TokenType.If); // consume the do
@@ -81,7 +95,8 @@ public class Parser
 
         while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
         {
-            body.Add(ParseStatement());
+            if (ParseStatement() is { } stmt)
+                body.Add(stmt);
         }
 
         // consume the }
@@ -93,7 +108,7 @@ public class Parser
     private IExpression ParseWhileExpression()
     {
         Consume(TokenType.While); // consume the do
-        var args = ParseArgumentsList();
+        var args = ParseArguments();
 
         // consume the {
         Consume(TokenType.OpenBracket);
@@ -102,7 +117,8 @@ public class Parser
 
         while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
         {
-            body.Add(ParseStatement());
+            if (ParseStatement() is { } stmt)
+                body.Add(stmt);
         }
 
         // consume the }
@@ -122,14 +138,15 @@ public class Parser
 
         while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
         {
-            body.Add(ParseStatement());
+            if (ParseStatement() is { } stmt)
+                body.Add(stmt);
         }
 
         // consume the }
         Consume(TokenType.CloseBracket);
         Consume(TokenType.While);
 
-        var args = ParseArgumentsList();
+        var args = ParseArguments();
 
         return new DoWhileDeclarationExpression(args[0], [.. body]);
     }
@@ -155,7 +172,8 @@ public class Parser
 
             while (Peek().Type != TokenType.EndOfFile && this.Peek().Type != TokenType.CloseBracket)
             {
-                body.Add(ParseStatement());
+                if (ParseStatement() is { } stmt)
+                    body.Add(stmt);
             }
 
             // consume the }
@@ -312,7 +330,7 @@ public class Parser
     {
         var left = ParseCallMemberExpression();
 
-        while (Peek().Value.CompareTo("/") == 0 || Peek().Value.CompareTo("*") == 0 || Peek().Value.CompareTo("%") == 0)
+        while (Peek().Value.Equals("/") || Peek().Value.Equals("*") || Peek().Value.Equals("%"))
         {
             var op = Consume();
             var right = ParseCallMemberExpression();
@@ -386,7 +404,7 @@ public class Parser
     {
         var left = ParseUnaryExpression();
 
-        while (Peek().Value.CompareTo(">") == 0 || Peek().Value.CompareTo("<") == 0 || Peek().Value.CompareTo("|") == 0 || Peek().Value.CompareTo("&") == 0 || Peek().Type == TokenType.Equality || Peek().Type == TokenType.NotEquality)
+        while (Peek().Value.Equals(">") || Peek().Value.Equals("<") || Peek().Value.Equals("|") || Peek().Value.Equals("&") || Peek().Type == TokenType.Equality || Peek().Type == TokenType.NotEquality)
         {
             string operation = Consume().Value;
 
@@ -448,7 +466,7 @@ public class Parser
     {
         var left = ParseMultiplicativeExpression();
 
-        while (Peek().Value.CompareTo("+") == 0 || Peek().Value.CompareTo("-") == 0)
+        while (Peek().Value.Equals("+") || Peek().Value.Equals("-"))
         {
             string operation = Consume().Value;
 
@@ -513,7 +531,9 @@ public class Parser
             case TokenType.Null:
                 Consume(); // consume null keyword
                 break;
-
+            case TokenType.Comment:
+                Consume();
+                break;
             default:
                 Console.WriteLine($"Unexpected token found during parsing: {token}");
                 break;

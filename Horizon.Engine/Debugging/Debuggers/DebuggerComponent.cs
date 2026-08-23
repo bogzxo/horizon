@@ -17,7 +17,9 @@ public abstract class DebuggerComponent : IGameComponent, IDisposable
 
     public abstract void UpdatePhysics(float dt);
 
-    public abstract void Dispose();
+    public virtual void Render(float dt, object? obj = null) { }
 
-    public abstract void Render(float dt, object? obj = null);
+    public virtual void RenderUi(Egui.Ui root) { }
+
+    public abstract void Dispose();
 }

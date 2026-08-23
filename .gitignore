@@ -398,3 +398,7 @@ FodyWeavers.xsd
 *.sln.iml
 /Horizon.Physics
 /Fighter2D/Player
+
+
+
+**/*.sync-conflict*

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Text;
 
 
@@ -55,10 +56,11 @@ internal class Program
      \__\/                         ~~         \__\/"];
 
     private static bool shouldHalt = false;
+
     private static void Main(string[] args)
     {
         Console.Title = "Horizon Integrated Dynamic Language Runtime";
-        RunIntro();
+        //RunIntro();
 
         HIDLRuntime runtime = new();
 
@@ -70,6 +72,32 @@ internal class Program
         {
             promptVal = (StringValue)val;
         }), false);
+
+        runtime.UserScope.Declare("env", new ObjectValue(
+            new Dictionary<string, IRuntimeValue>
+            {
+                {
+                    "print",
+                    new NativeFunctionValue((values, _) =>
+                    {
+                        StringBuilder sb = new();
+                        foreach (var item in values)
+                            sb.Append(item.ToString());
+
+                        Console.WriteLine($"{promptVal.Value} " + sb.ToString());
+                        return new StringValue(sb.ToString().Trim());
+                    })
+                },
+                {
+                    "clear",
+                    new NativeFunctionValue((args, env) =>
+                    {
+                        ClearConsole();
+                        return new StringValue("Cleared!");
+                    })
+                }
+            }
+        ), true );
 
         runtime.UserScope.Declare("exit", new NativeFunctionValue((args, env) =>
         {
