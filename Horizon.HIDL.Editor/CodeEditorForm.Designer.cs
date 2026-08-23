@@ -56,9 +56,9 @@ namespace Horizon.HIDL.Editor
             rtb.Location = new Point(0, 0);
             rtb.Name = "rtb";
             rtb.ScrollWidth = 229;
-            rtb.Size = new Size(900, 544);
+            rtb.Size = new Size(738, 410);
             rtb.TabIndex = 0;
-            rtb.Text = "// Welcome to Dawn - HIDL Code Editor";
+            rtb.Text = "// Welcome to Dawn - HIDL Code Editor\r\n\r\nlet index = 0;\r\nwhile (index < 6) {\r\n    print(\"Hi! index is: \", index);\r\n    index = index + 1;\r\n}";
             // 
             // toolStrip1
             // 
@@ -66,7 +66,7 @@ namespace Horizon.HIDL.Editor
             toolStrip1.Items.AddRange(new ToolStripItem[] { btnNew, btnOpen, btnSave, toolStripSeparator1, btnRun });
             toolStrip1.Location = new Point(0, 0);
             toolStrip1.Name = "toolStrip1";
-            toolStrip1.Size = new Size(900, 25);
+            toolStrip1.Size = new Size(738, 25);
             toolStrip1.TabIndex = 3;
             toolStrip1.Text = "toolStrip1";
             // 
@@ -106,16 +106,16 @@ namespace Horizon.HIDL.Editor
             // statusStrip1
             // 
             statusStrip1.Items.AddRange(new ToolStripItem[] { lblStatus, lblLineCol, lblEncoding, lblVersion });
-            statusStrip1.Location = new Point(0, 569);
+            statusStrip1.Location = new Point(0, 435);
             statusStrip1.Name = "statusStrip1";
-            statusStrip1.Size = new Size(900, 22);
+            statusStrip1.Size = new Size(738, 22);
             statusStrip1.TabIndex = 4;
             statusStrip1.Text = "statusStrip1";
             // 
             // lblStatus
             // 
             lblStatus.Name = "lblStatus";
-            lblStatus.Size = new Size(725, 17);
+            lblStatus.Size = new Size(532, 17);
             lblStatus.Spring = true;
             lblStatus.Text = "Ready";
             lblStatus.TextAlign = ContentAlignment.MiddleLeft;
@@ -144,14 +144,14 @@ namespace Horizon.HIDL.Editor
             pnlEditorContainer.Dock = DockStyle.Fill;
             pnlEditorContainer.Location = new Point(0, 25);
             pnlEditorContainer.Name = "pnlEditorContainer";
-            pnlEditorContainer.Size = new Size(900, 544);
+            pnlEditorContainer.Size = new Size(738, 410);
             pnlEditorContainer.TabIndex = 2;
             // 
             // CodeEditorForm
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(900, 591);
+            ClientSize = new Size(738, 457);
             Controls.Add(pnlEditorContainer);
             Controls.Add(toolStrip1);
             Controls.Add(statusStrip1);

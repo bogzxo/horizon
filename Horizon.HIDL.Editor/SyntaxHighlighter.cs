@@ -39,6 +39,11 @@ namespace Horizon.HIDL.Editor
 
         public void InitializeStyles()
         {
+            rtb.TabWidth = 4;
+            rtb.IndentWidth = 4;
+            rtb.UseTabs = false;
+            rtb.TabIndents = true;
+
             rtb.StyleResetDefault();
             rtb.Styles[Style.Default].Font = "Consolas";
             rtb.Styles[Style.Default].Size = 13;

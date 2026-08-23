@@ -51,7 +51,7 @@ public class HIDLRuntime
     /// Creates a valid runtime value without directly modifying the current environment; This can be used to declare a system object by generating a valid runtime value that can be injected into <see cref="Environment.DeclareSystem(in string identifier, in IRuntimeValue value)"/>.
     /// </summary>
     /// <param name="input">The code to evaluate.</param>
-    public IRuntimeValue GenerateValue(in string input)
+    public (bool success, IRuntimeValue result) GenerateValue(in string input)
     {
         return GenerateValue(input, out _);
     }
@@ -61,20 +61,24 @@ public class HIDLRuntime
     /// </summary>
     /// <param name="input">The code to evaluate.</param>
     /// <param name="declaredValues">The runtime values declared during evaluation in the scratch environment.</param>
-    public IRuntimeValue GenerateValue(in string input, out Dictionary<string, IRuntimeValue> declaredValues)
+    public (bool success, IRuntimeValue result) GenerateValue(in string input, out Dictionary<string, IRuntimeValue> declaredValues)
     {
         Environment scratchEnv = new Environment(UserScope);
+        IRuntimeValue val = NULL;
+        bool success = false;
         try
         {
             ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
-            IRuntimeValue val = Interpreter.Evaluate(ast, scratchEnv);
-            declaredValues = scratchEnv.GetAllDeclaredValues(true);
-            return val;
+            val = Interpreter.Evaluate(ast, scratchEnv);
+            success = true;
         }
-        finally
+        catch
         {
-            scratchEnv.Reset(true);
         }
+
+        declaredValues = scratchEnv.GetAllDeclaredValues(true);
+        scratchEnv.Reset(true);
+        return (success, val);
     }
 
 
