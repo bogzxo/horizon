@@ -2,8 +2,13 @@
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
+
+using AutocompleteMenuNS;
+
 using Horizon.HIDL.Runtime;
+using Microsoft.VisualBasic;
 
 namespace Horizon.HIDL.Editor
 {
@@ -12,9 +17,9 @@ namespace Horizon.HIDL.Editor
         private readonly System.Windows.Forms.Timer _highlightTimer;
         private string? _currentFilePath;
         private SyntaxHighlighter? _syntaxHighlighter;
+        private HidlAutocomplete? _autocompleteHandler;
         private SunOverlayControl _sunOverlay;
-
-
+        private StringBuilder _programLog = new();
         public HIDLRuntime? Runtime { get; set; }
 
         public CodeEditorForm()
@@ -22,6 +27,8 @@ namespace Horizon.HIDL.Editor
             InitializeComponent();
 
             ApplyDarkTheme();
+
+            _autocompleteHandler = new HidlAutocomplete(rtb);
 
             _sunOverlay = new SunOverlayControl
             {
@@ -46,14 +53,13 @@ namespace Horizon.HIDL.Editor
                     return;
                 }
 
-                HighlightSyntax(true);
-                _sunOverlay.BringToFront();
+                HighlightSyntax();
             };
 
             rtb.TextChanged += (s, e) =>
             {
-                HighlightSyntax();
-                _sunOverlay.BringToFront();
+                _highlightTimer.Stop();
+                _highlightTimer.Start();
             };
 
             rtb.UpdateUI += (s, e) =>
@@ -73,13 +79,11 @@ namespace Horizon.HIDL.Editor
             btnSave.Click += SaveFile_Click;
             btnRun.Click += RunScript_Click;
 
-            lblVersion.Text = $"Dawn IDE -- HIDL v{HIDLRuntime.VERSION}";
+            lblVersion.Text = $"Dawn IDE — HIDL v{HIDLRuntime.VERSION}";
             UpdateCursorPosition();
 
             Load += (_, _) =>
             {
-                rtb.Invalidate();
-                rtb.Update();
                 UpdateSunLocation();
                 _highlightTimer.Stop();
                 _highlightTimer.Start();
@@ -88,7 +92,7 @@ namespace Horizon.HIDL.Editor
 
         private void UpdateSunLocation()
         {
-            if (pnlEditorContainer != null)
+            if (_sunOverlay != null && pnlEditorContainer != null)
             {
                 _sunOverlay.Location = new Point(
                     pnlEditorContainer.Width - _sunOverlay.Width,
@@ -137,7 +141,7 @@ namespace Horizon.HIDL.Editor
         {
             rtb.Text = string.Empty;
             _currentFilePath = null;
-            Text = "Dawn -- Untitled";
+            Text = "Dawn — Untitled";
             lblStatus.Text = "New file created.";
         }
 
@@ -153,7 +157,7 @@ namespace Horizon.HIDL.Editor
             {
                 rtb.Text = File.ReadAllText(ofd.FileName);
                 _currentFilePath = ofd.FileName;
-                Text = $"Dawn -- {Path.GetFileName(_currentFilePath)}";
+                Text = $"Dawn — {Path.GetFileName(_currentFilePath)}";
                 lblStatus.Text = $"Loaded: {_currentFilePath}";
             }
         }
@@ -183,37 +187,75 @@ namespace Horizon.HIDL.Editor
             {
                 File.WriteAllText(sfd.FileName, rtb.Text);
                 _currentFilePath = sfd.FileName;
-                Text = $"Dawn -- {Path.GetFileName(_currentFilePath)}";
+                Text = $"Dawn — {Path.GetFileName(_currentFilePath)}";
                 lblStatus.Text = $"Saved: {_currentFilePath}";
             }
+        }
+
+        private HIDLRuntime GenerateRuntime()
+        {
+            var runtime = new HIDLRuntime();
+
+            runtime.GlobalScope.DeclareSystem("input", new NativeFunctionValue((args, _) =>
+            {
+                string title = "Enter text", caption = "";
+                if (args.Length > 0)
+                    title = args[0].ToString();
+                if (args.Length == 2)
+                    caption = args[1].ToString();
+
+                var (success, result) = runtime.GenerateValue(Interaction.InputBox(title, caption));
+                if (success) return result;
+
+                return new NullValue();
+            }));
+
+
+            runtime.GlobalScope.DeclareSystem("print", new NativeFunctionValue((args, _) =>
+            {
+                _programLog.AppendLine(string.Join(string.Empty, args));
+
+                return new NullValue();
+            }));
+
+            return runtime;
         }
 
         private void RunScript_Click(object? sender, EventArgs e)
         {
             if (string.IsNullOrWhiteSpace(rtb.Text)) return;
-            Runtime ??= new HIDLRuntime();
-            var (success, result) = Runtime.Evaluate(rtb.Text);
-            if (!string.IsNullOrEmpty(result))
-            {
-                MessageBox.Show(result, success ? "Execution Result" : "Runtime Error", MessageBoxButtons.OK, success ? MessageBoxIcon.Information : MessageBoxIcon.Error);
-            }
+            Runtime ??= GenerateRuntime();
+
+            _programLog.Clear();
+            var (success, result) = Runtime.GenerateValue(rtb.Text);
+            new ProgramRunDialog(_programLog.ToString(), result.ToString(), success).ShowDialog(this);
         }
 
-        private void HighlightSyntax(bool execute=false)
+        private void HighlightSyntax()
         {
             if (string.IsNullOrEmpty(rtb.Text) || _syntaxHighlighter == null)
             {
                 lblStatus.Text = "Ready";
                 btnRun.Enabled = true;
+                _autocompleteHandler?.UpdateAutocompleteItems(Runtime);
                 return;
             }
 
-            Runtime ??= new HIDLRuntime();
-            var parseError = _syntaxHighlighter.HighlightSyntax(execute ? Runtime : null);
+            Runtime ??= GenerateRuntime();
+            var parseError = _syntaxHighlighter.HighlightSyntax(Runtime);
+
+            _autocompleteHandler?.UpdateAutocompleteItems(Runtime);
 
             btnRun.Enabled = parseError == null;
 
-            lblStatus.Text = parseError != null ? $"Error: {parseError.Message}" : "Ready";
+            if (parseError != null)
+            {
+                lblStatus.Text = $"Error: {parseError.Message}";
+            }
+            else
+            {
+                lblStatus.Text = "Ready";
+            }
         }
     }
 }

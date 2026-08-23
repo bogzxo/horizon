@@ -282,8 +282,14 @@ public class Parser
         if (Peek().Type != TokenType.OpenBracket) return ParseAdditiveExpression();
 
         Consume(TokenType.OpenBracket); // consume the opening brace
-        List<PropertyExpression> props = [];
 
+        if (Peek().Type == TokenType.CloseBracket)
+        {
+            Consume(TokenType.CloseBracket);
+            return new ObjectLiteralExpression([]);
+        }
+
+        List<PropertyExpression> props = [];
         while (Peek().Type != TokenType.EndOfFile && Peek().Type != TokenType.CloseBracket && Peek().Type != TokenType.Semicolon)
         {
             // expect a key
@@ -524,8 +530,7 @@ public class Parser
             case TokenType.OpenParenthesis:
                 Consume(); // consume the opening parenthesis
                 result = ParseExpression();
-                if (Peek().Type == TokenType.CloseParenthesis)
-                    Consume(TokenType.CloseParenthesis); // consume the closing parenthesis
+                Consume(TokenType.CloseParenthesis); // consume the closing parenthesis
                 break;
 
             case TokenType.Null:
@@ -536,6 +541,7 @@ public class Parser
                 break;
             default:
                 Console.WriteLine($"Unexpected token found during parsing: {token}");
+                Consume();
                 break;
         }
 
