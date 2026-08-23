@@ -3,6 +3,9 @@ using System.Numerics;
 
 using Bogz.Logging.Loggers;
 
+using Egui;
+using Egui.Silk.NET;
+
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 
@@ -50,6 +53,8 @@ public class WindowManager : IGameComponent, IDisposable
     /// The GL context associated with the windows main render thread.
     /// </summary>
     public GL GL { get; private set; }
+
+    public SilkGlIntegration Egui { get; internal set; }
 
     public bool Enabled { get; set; }
     public string Name { get; set; } = "Window Manager";
@@ -133,6 +138,10 @@ public class WindowManager : IGameComponent, IDisposable
             GLObject.SetGL(GL);
 
             _input = _window.CreateInput();
+
+            // TODO: @bogz investigate why errors crash the integration
+            GL.GetError();
+            Egui = new SilkGlIntegration(new Context(), _window, _input);
 
             UpdateViewport();
             Parent.Initialize();
@@ -234,7 +243,8 @@ public class WindowManager : IGameComponent, IDisposable
             {
                 Name = "GameLogicThread",
                 Priority = ThreadPriority.AboveNormal,
-                IsBackground = true
+                IsBackground = true,
+
             };
 
             logicThread.Start();

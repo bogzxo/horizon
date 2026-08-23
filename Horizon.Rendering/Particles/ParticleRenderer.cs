@@ -222,6 +222,8 @@ public class ParticleRenderer2D : GameObject, IDisposable
         base.UpdateState(dt);
         if (!Enabled)
             return;
+        
+
 
         for (int i = 0; i < Maximum; i++)
         {

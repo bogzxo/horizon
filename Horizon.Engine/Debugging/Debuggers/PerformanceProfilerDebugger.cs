@@ -1,12 +1,14 @@
-﻿using System.Diagnostics.Contracts;
+﻿#if DEBUG
+using System.Diagnostics.Contracts;
+using System.Linq;
 using System.Numerics;
 
 using Horizon.Core.Collections;
 using Horizon.Core.Data;
 
-using ImGuiNET;
-
-using ImPlotNET;
+using Egui;
+using Egui.Containers;
+using Egui.Widgets;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -142,129 +144,89 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
 
     private double GetAverage(LinearBuffer<double> linearBuffer) => linearBuffer.Buffer.Average();
 
-    public override void Render(float dt, object? obj = null)
+    public override void RenderUi(Ui root)
     {
         if (!Visible)
             return;
 
-        if (ImGui.Begin(Name))
-        {
-            ImGui.Text($"FPS (Render): {1.0f / _renderDeltas.Buffer.Average():0.0}");
-            ImGui.Text($"FPS (UpdateState): {1.0f / _stateDeltas.Buffer.Average():0.0}");
+        new Window(Name)
+            .Show(root.Ctx, ui =>
+            {
+                ui.Label($"FPS (Render): {1.0f / _renderDeltas.Buffer.Average():0.0}");
+                ui.Label($"FPS (UpdateState): {1.0f / _stateDeltas.Buffer.Average():0.0}");
 
-            if (ImGui.CollapsingHeader("Logic Profiler"))
-                DrawCpuProfiling();
-            if (ImGui.CollapsingHeader("Render Profiler"))
-                DrawGpuProfling();
+                ui.Collapsing("Logic Profiler", innerUi => 
+                {
+                    DrawCpuProfiling(innerUi);
+                });
 
-            ImGui.End();
-        }
+                ui.Collapsing("Render Profiler", innerUi =>
+                {
+                    DrawGpuProfling(innerUi);
+                });
+            });
     }
 
-    private void DrawGpuProfling()
+    private void DrawGpuProfling(Ui ui)
     {
-        PlotValues("Frametime (GPU)", in _renderFrameTimes);
-        DrawProfiler(GpuMetrics);
+        PlotValues(ui, "Frametime (GPU)", in _renderFrameTimes);
+        DrawProfiler(ui, GpuMetrics);
 
-        if (
-            GpuMetrics.Categories["EngineComponents"].Keys.Any()
-            && ImPlot.BeginPlot(
-                "Test",
-                new Vector2(ImGui.GetContentRegionAvail().X, 200.0f),
-                ImPlotFlags.Equal
-            )
-        )
+        if (GpuMetrics.Categories["EngineComponents"].Keys.Any())
         {
             string[] names = GpuMetrics.Categories["EngineComponents"].Keys.ToArray();
             double[] values = GpuMetrics.Categories["EngineComponents"].Values
                 .ToArray()
-                .Select(
-                    (r) =>
-                    {
-                        return GetAverage(r) * 1000.0;
-                    }
-                )
+                .Select(r => GetAverage(r) * 1000.0)
                 .ToArray();
 
-            ImPlot.SetupAxes(null, null, ImPlotAxisFlags.AutoFit, ImPlotAxisFlags.AutoFit);
-            ImPlot.PlotPieChart(
-                names,
-                ref values[0],
-                names.Length,
-                0.0,
-                0.0,
-                1.0,
-                "",
-                0.0,
-                ImPlotPieChartFlags.Normalize
-            );
-
-            ImPlot.EndPlot();
+            ui.Heading("GPU Breakdown");
+            for (int i = 0; i < names.Length; i++)
+            {
+                ui.Label($"{names[i]}: {values[i]:0.00} ms");
+            }
         }
     }
 
-    private void DrawCpuProfiling()
+    private void DrawCpuProfiling(Ui ui)
     {
-        PlotValues("Frametime (CPU)", in _updateFrameTimes);
-        DrawProfiler(CpuMetrics);
+        PlotValues(ui, "Frametime (CPU)", in _updateFrameTimes);
+        DrawProfiler(ui, CpuMetrics);
     }
 
-    private void DrawProfiler(Metrika gpuMetrics)
+    private void DrawProfiler(Ui ui, Metrika metrics)
     {
-        foreach (var categoryEntry in gpuMetrics.Categories)
+        foreach (var categoryEntry in metrics.Categories)
         {
             if (categoryEntry.Key.CompareTo("Engine") == 0)
                 continue;
 
-            ImGui.Text(categoryEntry.Key);
+            ui.Heading(categoryEntry.Key);
 
             foreach (var valueEntry in categoryEntry.Value)
             {
-                ImGui.Columns(2, "ProfilerTimerValueColumns", true);
-
-                ImGui.Text(valueEntry.Key);
-                ImGui.NextColumn();
-                ImGui.Text((GetAverage(valueEntry.Value) * 1000000.0).ToString("0.00") + "us");
-
-                ImGui.Columns(1);
+                ui.Horizontal(row =>
+                {
+                    row.Label(valueEntry.Key);
+                    row.Label((GetAverage(valueEntry.Value) * 1000000.0).ToString("0.00") + "us");
+                });
             }
         }
     }
 
     [Pure]
     public static void PlotValues(
+        Ui ui,
         in string label,
         in LinearBuffer<double> frameTimes,
         in string unit = "ms"
     )
     {
-        var windowWidth = ImGui.GetContentRegionAvail().X;
         var averageFrameTime = frameTimes.Buffer.Average();
         var minFrameTime = frameTimes.Buffer.Min();
         var maxFrameTime = frameTimes.Buffer.Max();
 
-        ImPlot.SetNextAxisLimits(ImAxis.X1, 0, frameTimes.Length);
-        ImPlot.SetNextAxisLimits(ImAxis.Y1, minFrameTime, maxFrameTime * 1.2);
-
-        if (
-            ImPlot.BeginPlot(
-                $"{label} - Avg: {averageFrameTime:0.00}{unit} - Max Diff: {(maxFrameTime - minFrameTime):0.00}{unit} - Excp. FPS: {1.0f / (averageFrameTime / 1000.0f):0}FPS",
-                new Vector2(windowWidth, 200.0f)
-            )
-        )
-        {
-            ImPlot.PlotLine(
-                "",
-                ref frameTimes.Buffer[0],
-                frameTimes.Length,
-                1.0f,
-                0.0,
-                ImPlotLineFlags.Shaded,
-                frameTimes.Index
-            );
-
-            ImPlot.EndPlot();
-        }
+        ui.Label($"{label}: Avg {averageFrameTime:0.00}{unit} | Min {minFrameTime:0.00}{unit} | Max {maxFrameTime:0.00}{unit}");
     }
 
     [Pure]
@@ -317,3 +279,4 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         GC.SuppressFinalize(this);
     }
 }
+#endif

@@ -12,9 +12,8 @@ using Environment = Horizon.HIDL.Runtime.Environment;
 public class HIDLRuntime
 {
     public const string VERSION = "0.0.4";
-    private static readonly NullValue NULL = new();
+    public static readonly NullValue NULL = new();
     private static readonly Parser parser = new();
-    private static readonly Environment scratchEnv = new();
 
     /// <summary>
     /// The user scope for code execution, variables (and by extension function and objects) may be declared here.
@@ -51,18 +50,31 @@ public class HIDLRuntime
     /// <summary>
     /// Creates a valid runtime value without directly modifying the current environment; This can be used to declare a system object by generating a valid runtime value that can be injected into <see cref="Environment.DeclareSystem(in string identifier, in IRuntimeValue value)"/>.
     /// </summary>
-    /// <param name="identifier">The identifier/name.</param>
-    /// <param name="code">The code to evaluate.</param>
+    /// <param name="input">The code to evaluate.</param>
     public IRuntimeValue GenerateValue(in string input)
     {
-        // TODO: i dont even need to explain
+        return GenerateValue(input, out _);
+    }
 
-        scratchEnv.Copy(UserScope);
-
-        ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
-        IRuntimeValue val = Interpreter.Evaluate(ast, scratchEnv);
-        scratchEnv.Reset(true);
-        return val;
+    /// <summary>
+    /// Creates a valid runtime value without directly modifying the current environment and returns all declared runtime values.
+    /// </summary>
+    /// <param name="input">The code to evaluate.</param>
+    /// <param name="declaredValues">The runtime values declared during evaluation in the scratch environment.</param>
+    public IRuntimeValue GenerateValue(in string input, out Dictionary<string, IRuntimeValue> declaredValues)
+    {
+        Environment scratchEnv = new Environment(UserScope);
+        try
+        {
+            ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
+            IRuntimeValue val = Interpreter.Evaluate(ast, scratchEnv);
+            declaredValues = scratchEnv.GetAllDeclaredValues(true);
+            return val;
+        }
+        finally
+        {
+            scratchEnv.Reset(true);
+        }
     }
 
 

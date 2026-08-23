@@ -1,8 +1,10 @@
-﻿using Horizon.Core;
+﻿using Box2D.NetStandard.Common;
+using Egui;
+using Egui.Containers;
+using Egui.Widgets;
+using Horizon.Core;
 using Horizon.Engine.Debugging.Debuggers;
 using Horizon.HIDL.Runtime;
-
-using ImGuiNET;
 
 namespace Horizon.Engine.Debugging;
 
@@ -20,13 +22,14 @@ public class SkylineDebugger : Entity
     private List<DebuggerComponent> _components = new();
     private bool hasInitializedHIDLE = false;
 
+#if DEBUG
     //public RenderOptionsDebugger RenderOptionsDebugger { get; private set; }
     public SceneEntityDebugger SceneEntityDebugger { get; private set; }
-
     public LoadedContentDebugger LoadedContentDebugger { get; private set; }
     public DockedGameContainerDebugger GameContainerDebugger { get; private set; }
     public PerformanceProfilerDebugger PerformanceDebugger { get; private set; }
     public GeneralDebugger GeneralDebugger { get; private set; }
+#endif
     public DeveloperConsole Console { get; private set; }
 
     public bool RenderToContainer { get; private set; }
@@ -42,12 +45,14 @@ public class SkylineDebugger : Entity
         _components.AddRange(
             [
                 //(RenderOptionsDebugger = AddComponent<RenderOptionsDebugger>()),
-                (SceneEntityDebugger = AddComponent<SceneEntityDebugger>()),
-                (LoadedContentDebugger = AddComponent<LoadedContentDebugger>()),
+                (Console = AddComponent<DeveloperConsole>()),
+#if DEBUG
+            (LoadedContentDebugger = AddComponent<LoadedContentDebugger>()),
                 (GameContainerDebugger = AddComponent<DockedGameContainerDebugger>()),
                 (PerformanceDebugger = AddComponent<PerformanceProfilerDebugger>()),
-                (Console = AddComponent<DeveloperConsole>()),
                 (GeneralDebugger = AddComponent<GeneralDebugger>()),
+                (SceneEntityDebugger = AddComponent<SceneEntityDebugger>())
+#endif
             ]
         );
     }
@@ -62,96 +67,87 @@ public class SkylineDebugger : Entity
         _components.Clear();
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void RenderUi(Ui root)
     {
-        if (GameEngine.Instance.imguiController is null) return;
+        base.RenderUi(root);
 
-        RenderToContainer = Enabled && GameContainerDebugger.Visible && GameContainerDebugger.FrameBuffer.Handle > 0;
+        RenderToContainer =
+            Enabled &&
+            GameContainerDebugger is { Visible: true, FrameBuffer.Handle: > 0 };
 
-        if (!hasInitializedHIDLE)
-        {
-            hasInitializedHIDLE = true;
-            Console.Runtime.Evaluate(@"
-const env = {
-    print: _PRINT_LN,
-    clear: _CLEAR_SCR,
-    debugger: {
-        general: {
-            get_watch: _HORIZON_GENERALDEBUGGER_GET
-        }
-    }
-};
-", true);
-        }
 
         if (!Enabled)
         {
             if (_components.Count != 0)
                 DestroyDebugComponents();
+
             return;
         }
+
         if (_components.Count == 0)
             CreateDebugComponents();
 
-        if (ImGui.BeginMainMenuBar())
+        new MenuBar().Ui(root, menuBar =>
         {
-            if (ImGui.BeginMenu(DebuggerCatagoryNames.Home))
+            menuBar.MenuButton(DebuggerCatagoryNames.Home, menuUi =>
             {
-                if (ImGui.MenuItem("Close"))
+                if (menuUi.Button("Close").Clicked)
+                {
                     GameEngine.Instance.WindowManager.Window.Close();
+                }
 
-                ImGui.MenuItem(Console.Name, "", ref Console.Visible);
-                ImGui.EndMenu();
-            }
-            if (ImGui.BeginMenu(DebuggerCatagoryNames.Graphics))
-            {
-                //ImGui.MenuItem(
-                //    RenderOptionsDebugger.Name,
-                //    "",
-                //    ref RenderOptionsDebugger.Visible
-                //);
-                ImGui.MenuItem(
-                    GameContainerDebugger.Name,
-                    "",
-                    ref GameContainerDebugger.Visible
+                menuUi.Checkbox(
+                    ref Console.Visible,
+                    Console.Name
                 );
-                ImGui.EndMenu();
-            }
-            if (ImGui.BeginMenu(DebuggerCatagoryNames.Metrics))
+            });
+#if DEBUG
+            menuBar.MenuButton(DebuggerCatagoryNames.Graphics, menuUi =>
             {
-                ImGui.MenuItem(PerformanceDebugger.Name, "", ref PerformanceDebugger.Visible);
-                ImGui.MenuItem(GeneralDebugger.Name, "", ref GeneralDebugger.Visible);
-                ImGui.EndMenu();
-            }
-            if (ImGui.BeginMenu(DebuggerCatagoryNames.Scene))
-            {
-                ImGui.MenuItem(SceneEntityDebugger.Name, "", ref SceneEntityDebugger.Visible);
-                ImGui.MenuItem(
-                    "Debug Entire Instance",
-                    "",
-                    ref SceneEntityDebugger.DebugInstance
+                menuUi.Checkbox(
+                    ref GameContainerDebugger.Visible,
+                    GameContainerDebugger.Name
                 );
-                ImGui.EndMenu();
-            }
-            if (ImGui.BeginMenu(DebuggerCatagoryNames.Content))
-            {
-                ImGui.MenuItem(
-                    LoadedContentDebugger.Name,
-                    "",
-                    ref LoadedContentDebugger.Visible
-                );
-                ImGui.EndMenu();
-            }
+            });
 
-            ImGui.EndMainMenuBar();
+            menuBar.MenuButton(DebuggerCatagoryNames.Metrics, menuUi =>
+            {
+                menuUi.Checkbox(
+                    ref PerformanceDebugger.Visible,
+                    PerformanceDebugger.Name
+                );
+
+                menuUi.Checkbox(
+                    ref GeneralDebugger.Visible,
+                    GeneralDebugger.Name
+                );
+            });
+
+            menuBar.MenuButton(DebuggerCatagoryNames.Scene, menuUi =>
+            {
+                menuUi.Checkbox(
+                    ref SceneEntityDebugger.Visible,
+                    PerformanceDebugger.Name
+                );
+                menuUi.Label("SceneDebugger is very WIP.");
+            });
+
+            menuBar.MenuButton(DebuggerCatagoryNames.Content, menuUi =>
+            {
+                menuUi.Checkbox(
+                    ref LoadedContentDebugger.Visible,
+                    LoadedContentDebugger.Name
+                );
+            });
+#endif
+        });
+
+        foreach (var comp in _components)
+        {
+            comp.RenderUi(root);
         }
 
-        base.Render(dt, obj);
+        base.RenderUi(root);
     }
 
-    public override void UpdateState(float dt)
-    {
-        if (GameEngine.Instance.imguiController is null) return;
-        base.UpdateState(dt);
-    }
 }

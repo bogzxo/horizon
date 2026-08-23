@@ -1,9 +1,14 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 
 using Horizon.Core;
 
-using ImGuiNET;
+using Egui;
+using Egui.Containers;
+using Egui.Widgets;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -17,73 +22,56 @@ public class SceneEntityDebugger : DebuggerComponent
         Name = "Scene Tree";
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void RenderUi(Ui root)
     {
         if (!Visible)
             return;
 
-        if (ImGui.Begin(Name))
-        {
-            Entity mainNode = DebugInstance
-                ? GameEngine.Instance
-                : GameEngine.Instance.SceneManager.CurrentInstance;
+        new Window(Name)
+            .Show(root.Ctx, ui =>
+            {
+                Entity mainNode = DebugInstance
+                    ? GameEngine.Instance
+                    : GameEngine.Instance.SceneManager.CurrentInstance;
 
-            ImGui.Text($"Total Entities: {mainNode.Children.Count}");
-            ImGui.Text($"Total Components: {mainNode.Components.Count}");
+                ui.Label($"Total Entities: {mainNode.Children.Count}");
+                ui.Label($"Total Components: {mainNode.Components.Count}");
 
-            ImGui.Separator();
-            ImGui.NewLine();
+                ui.Separator();
 
-            DrawEntityTree(mainNode);
-
-            ImGui.End();
-        }
+                DrawEntityTree(ui, mainNode);
+            });
     }
 
     public override void Dispose()
     { }
 
-    private void DrawEntityTree(Entity? entity)
+    private void DrawEntityTree(Ui ui, Entity? entity)
     {
         if (entity is null)
             return;
 
-        ImGui.PushStyleVar(ImGuiStyleVar.IndentSpacing, 20.0f);
-
-        ImGui.OpenPopupOnItemClick($"EntityContextMenu_{entity.Name}");
-
-        if (
-            ImGui.TreeNodeEx(
-                entity.Name,
-                ImGuiTreeNodeFlags.DefaultOpen
-            )
-        )
+        ui.Collapsing(entity.Name ?? "Unnamed Entity", innerUi =>
         {
-            if (ImGui.BeginPopupContextItem($"EntityContextMenu_{entity.Name}"))
+            if (innerUi.Button("Remove Entity").Clicked)
             {
-                if (ImGui.MenuItem("Remove Entity"))
-                {
-                    entity?.Parent?.RemoveEntity(entity);
-                }
-                ImGui.EndPopup();
+                entity?.Parent?.RemoveEntity(entity);
             }
 
-            ImGui.Columns(2, "EntityColumns", false);
-            ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
+            innerUi.Horizontal(row =>
+            {
+                row.Heading("Property");
+                row.Heading("Value");
+            });
 
-            ImGui.Text("Property");
-            ImGui.NextColumn();
-            ImGui.Text("Value");
-            ImGui.NextColumn();
+            innerUi.Separator();
 
-            ImGui.Separator();
-
-            DrawProperties(entity, 1);
-
-            ImGui.Columns(1);
+            // Draw Properties
+            DrawProperties(innerUi, entity, 1);
 
             int collectionSize = entity!.Components.Count;
 
+            // Draw Components
             for (int i = 0; i < collectionSize; i++)
             {
                 if (collectionSize != entity!.Components.Count)
@@ -94,41 +82,35 @@ public class SceneEntityDebugger : DebuggerComponent
                 if (component == null)
                     continue;
 
-                if (ImGui.TreeNodeEx(component.Name ??= component.GetType().Name))
+                innerUi.Collapsing(component.Name ??= component.GetType().Name, compUi =>
                 {
-                    if (ImGui.BeginPopupContextItem($"{component.Name}"))
+                    if (compUi.Button("Delete Component").Clicked)
                     {
-                        if (ImGui.MenuItem("Delete"))
-                        {
-                            entity.RemoveComponent(component);
-
-                            // TODO: some king of disposing.tho
-                            ImGui.CloseCurrentPopup();
-                        }
-
-                        ImGui.EndPopup();
+                        entity.RemoveComponent(component);
                     }
 
-                    DrawProperties(component, 1);
-                    ImGui.TreePop();
-                }
+                    DrawProperties(compUi, component, 1);
+                });
             }
 
-            for (int i = 0; i < entity.Children.Count; i++)
-                DrawEntityTree(entity.Children[i]);
+            // Recursively draw all entity children in a distinct visual hierarchy
+            if (entity.Children.Count <= 0) return;
+            innerUi.Separator();
+            innerUi.Heading($"Children ({entity.Children.Count})");
 
-            ImGui.TreePop();
-        }
+            foreach (var ent in entity.Children)
+            {
+                DrawEntityTree(innerUi, ent);
+            }
 
-        ImGui.PopStyleVar();
-        ImGui.NewLine();
+        });
     }
 
-    public static void DrawProperties(object? component, int depth = 0, int maxDepth = 3)
+    public static void DrawProperties(Ui ui, object? component, int depth = 0, int maxDepth = 3)
     {
         if (component is null || depth > maxDepth)
         {
-            ImGui.Text("Depth Limit Reached.");
+            ui.Label("Depth Limit Reached.");
             return;
         }
 
@@ -143,7 +125,7 @@ public class SceneEntityDebugger : DebuggerComponent
                 if (property is null || property.IsCollectible)
                     continue;
 
-                object? value = property.GetValue(component);
+                var value = property.GetValue(component);
 
                 if (property.GetMethod?.IsStatic == true)
                 {
@@ -152,270 +134,293 @@ public class SceneEntityDebugger : DebuggerComponent
 
                 if (property.PropertyType.IsArray)
                 {
-                    DrawArrayProperty(property.Name, (Array)value!);
+                    DrawArrayProperty(ui, property.Name, (Array)value!);
                 }
-                else if (
-                    property.PropertyType.IsGenericType
-                    && property.PropertyType.GetGenericTypeDefinition() == typeof(List<>)
-                )
+                else switch (property.PropertyType.IsGenericType)
                 {
-                    if (value is null)
-                        continue;
+                    case true
+                        when property.PropertyType.GetGenericTypeDefinition() == typeof(List<>):
+                    {
+                        if (value is null)
+                            continue;
 
-                    DrawListProperty(property.Name, value);
-                }
-                else if (
-                    property.PropertyType.IsGenericType
-                    && property.PropertyType.GetGenericTypeDefinition() == typeof(Dictionary<,>)
-                )
-                {
-                    if (value is null)
-                        continue;
+                        DrawListProperty(ui, property.Name, value);
+                        break;
+                    }
+                    case true
+                        when property.PropertyType.GetGenericTypeDefinition() == typeof(Dictionary<,>):
+                    {
+                        if (value is null)
+                            continue;
 
-                    DrawDictionaryProperty(property.Name, value);
-                }
-                else if (property.PropertyType.IsValueType)
-                {
-                    if (
-                        property.PropertyType.Namespace is null
-                        || property.PropertyType.Namespace.StartsWith("System")
-                    )
-                        continue;
+                        DrawDictionaryProperty(ui, property.Name, value);
+                        break;
+                    }
+                    default:
+                    {
+                        if (property.PropertyType.IsValueType)
+                        {
+                            if (
+                                property.PropertyType.Namespace is null
+                                || property.PropertyType.Namespace.StartsWith("System")
+                            )
+                                continue;
 
-                    if (ImGui.TreeNodeEx($"{property.Name} (Value Type)"))
-                    {
-                        DrawProperties(value, depth + 1);
-                        ImGui.TreePop();
+                            ui.Collapsing($"{property.Name} (Value Type)", innerUi =>
+                            {
+                                DrawProperties(innerUi, value, depth + 1);
+                            });
+                        }
+                        else if (!property.CanWrite || value == null)
+                        {
+                            DrawPropertyRow(ui, property.Name, $"{value}");
+                        }
+                        else if (value is int intValue)
+                        {
+                            ui.Horizontal(row =>
+                            {
+                                row.Label(property.Name);
+                                double dVal = intValue;
+                                if (CustomDragValue(row, ref dVal))
+                                {
+                                    property.SetValue(component, (int)dVal);
+                                }
+                            });
+                        }
+                        else if (value is string stringValue)
+                        {
+                            DrawPropertyRow(ui, property.Name, $"\"{stringValue}\"");
+                        }
+                        else if (value is float floatValue)
+                        {
+                            ui.Horizontal(row =>
+                            {
+                                row.Label(property.Name);
+                                double dVal = floatValue;
+                                if (CustomDragValue(row, ref dVal))
+                                {
+                                    property.SetValue(component, (float)dVal);
+                                }
+                            });
+                        }
+                        else if (value is Vector2 vector2Value)
+                        {
+                            ui.Horizontal(row =>
+                            {
+                                row.Label(property.Name);
+                                double x = vector2Value.X, y = vector2Value.Y;
+
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+
+                                if (changedX || changedY)
+                                {
+                                    property.SetValue(component, new Vector2((float)x, (float)y));
+                                }
+                            });
+                        }
+                        else if (value is Vector3 vector3Value)
+                        {
+                            ui.Horizontal(row =>
+                            {
+                                row.Label(property.Name);
+                                double x = vector3Value.X, y = vector3Value.Y, z = vector3Value.Z;
+
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+                                bool changedZ = CustomDragValue(row, ref z);
+
+                                if (changedX || changedY || changedZ)
+                                {
+                                    property.SetValue(component, new Vector3((float)x, (float)y, (float)z));
+                                }
+                            });
+                        }
+                        else if (value is Vector4 vector4Value)
+                        {
+                            ui.Horizontal(row =>
+                            {
+                                row.Label(property.Name);
+                                double x = vector4Value.X, y = vector4Value.Y, z = vector4Value.Z, w = vector4Value.W;
+
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+                                bool changedZ = CustomDragValue(row, ref z);
+                                bool changedW = CustomDragValue(row, ref w);
+
+                                if (changedX || changedY || changedZ || changedW)
+                                {
+                                    property.SetValue(component, new Vector4((float)x, (float)y, (float)z, (float)w));
+                                }
+                            });
+                        }
+                        else if (value is bool boolValue)
+                        {
+                            if (ui.Checkbox(ref boolValue, property.Name).Changed)
+                            {
+                                property.SetValue(component, boolValue);
+                            }
+                        }
+                        else
+                        {
+                            DrawPropertyRow(ui, property.Name, $"{GetFriendlyName(value)}");
+                        }
+
+                        break;
                     }
-                }
-                else if (!property.CanWrite || value == null)
-                {
-                    DrawPropertyRow(property.Name, $"{value}");
-                }
-                else if (value is int intValue)
-                {
-                    if (ImGui.DragInt(property.Name, ref intValue, V_speed))
-                        property.SetValue(component, intValue);
-                }
-                else if (value is string stringValue)
-                {
-                    DrawPropertyRow(property.Name, $"\"{stringValue}\"");
-                }
-                else if (value is float floatValue)
-                {
-                    if (ImGui.DragFloat(property.Name, ref floatValue, V_speed))
-                    {
-                        property.SetValue(component, floatValue);
-                    }
-                }
-                else if (value is Vector2 vector2Value)
-                {
-                    if (ImGui.DragFloat2(property.Name, ref vector2Value, V_speed))
-                    {
-                        property.SetValue(component, vector2Value);
-                    }
-                }
-                else if (value is Vector3 vector3Value)
-                {
-                    if (ImGui.DragFloat3(property.Name, ref vector3Value, V_speed))
-                    {
-                        property.SetValue(component, vector3Value);
-                    }
-                }
-                else if (value is Vector4 vector4Value)
-                {
-                    if (ImGui.DragFloat4(property.Name, ref vector4Value, V_speed))
-                    {
-                        property.SetValue(component, vector4Value);
-                    }
-                }
-                else if (value is bool boolValue)
-                {
-                    if (ImGui.Checkbox(property.Name, ref boolValue))
-                    {
-                        property.SetValue(component, boolValue);
-                    }
-                }
-                else
-                {
-                    DrawPropertyRow(property.Name, $"{GetFriendlyName(value)}");
                 }
             }
         }
         catch
         {
-            ImGui.Text("EISH MY MAN");
+            // TODO: @bogz maybe handle this a little better man?
+            ui.Label("EISH MY MAN");
             throw;
         }
     }
 
-    private static void DrawPropertyRow(string propertyName, string propertyValue)
+    private static void DrawPropertyRow(Ui ui, string propertyName, string propertyValue)
     {
-        ImGui.Columns(2, propertyName, false);
-        ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-        ImGui.Text(propertyName);
-        ImGui.NextColumn();
-        ImGui.Text(propertyValue);
-        ImGui.NextColumn();
-
-        ImGui.Columns(1);
-    }
-
-    private static void DrawListProperty(string name, object listObj)
-    {
-        if (listObj is IList list)
+        ui.Horizontal(row =>
         {
-            if (list.Count < 1)
-                return;
-
-            if (ImGui.TreeNode($"{name} (List)"))
-            {
-                ImGui.Columns(2, name, false);
-                ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-                ImGui.Text(name);
-                ImGui.NextColumn();
-                ImGui.Text("(List)");
-
-                ImGui.NextColumn();
-
-                for (int i = 0; i < list.Count; i++)
-                {
-                    object? element = list[i];
-
-                    if (element != null)
-                    {
-                        ImGui.Columns(2, $"Element {i}", false);
-                        ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-                        ImGui.Text($"Element {i}");
-                        ImGui.NextColumn();
-
-                        if (element is int intValue)
-                        {
-                            if (ImGui.DragInt("", ref intValue, V_speed))
-                            {
-                                list[i] = intValue;
-                            }
-                        }
-                        else if (element is float floatValue)
-                        {
-                            if (ImGui.DragFloat("", ref floatValue, V_speed))
-                            {
-                                list[i] = floatValue;
-                            }
-                        }
-                        else if (element is Vector2 vectorValue2)
-                        {
-                            if (ImGui.DragFloat2("", ref vectorValue2, V_speed))
-                            {
-                                list[i] = vectorValue2;
-                            }
-                        }
-                        else if (element is Vector3 vectorValue3)
-                        {
-                            if (ImGui.DragFloat3("", ref vectorValue3, V_speed))
-                            {
-                                list[i] = vectorValue3;
-                            }
-                        }
-                        else if (element is Vector4 vectorValue4)
-                        {
-                            if (ImGui.DragFloat4("", ref vectorValue4, V_speed))
-                            {
-                                list[i] = vectorValue4;
-                            }
-                        }
-                        else if (element is bool boolValue)
-                        {
-                            if (ImGui.Checkbox("", ref boolValue))
-                            {
-                                list[i] = boolValue;
-                            }
-                        }
-                        else
-                        {
-                            ImGui.Text($"{GetFriendlyName(element)}");
-                        }
-
-                        ImGui.Columns(1);
-                    }
-                }
-                ImGui.Columns(1);
-                ImGui.TreePop();
-            }
-        }
+            row.Label(propertyName);
+            row.Label(propertyValue);
+        });
     }
 
-    private static void DrawArrayProperty(string name, Array array)
+    private static void DrawListProperty(Ui ui, string name, object listObj)
+    {
+        if (listObj is not IList list) return;
+        if (list.Count < 1)
+            return;
+
+        ui.Collapsing($"{name} (List)", innerUi =>
+        {
+            innerUi.Horizontal(row =>
+            {
+                row.Label(name);
+                row.Label("(List)");
+            });
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                var element = list[i];
+
+                if (element == null) continue;
+
+                innerUi.Horizontal(row =>
+                {
+                    row.Label($"Element {i}");
+
+                    switch (element)
+                    {
+                        case int intValue:
+                            {
+                                double dVal = intValue;
+                                if (CustomDragValue(row, ref dVal))
+                                {
+                                    list[i] = (int)dVal;
+                                }
+
+                                break;
+                            }
+                        case float floatValue:
+                            {
+                                double dVal = floatValue;
+                                if (CustomDragValue(row, ref dVal))
+                                {
+                                    list[i] = (float)dVal;
+                                }
+
+                                break;
+                            }
+                        case Vector2 vectorValue2:
+                            {
+                                double x = vectorValue2.X, y = vectorValue2.Y;
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+                                if (changedX || changedY)
+                                {
+                                    list[i] = new Vector2((float)x, (float)y);
+                                }
+
+                                break;
+                            }
+                        case Vector3 vectorValue3:
+                            {
+                                double x = vectorValue3.X, y = vectorValue3.Y, z = vectorValue3.Z;
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+                                bool changedZ = CustomDragValue(row, ref z);
+                                if (changedX || changedY || changedZ)
+                                {
+                                    list[i] = new Vector3((float)x, (float)y, (float)z);
+                                }
+
+                                break;
+                            }
+                        case Vector4 vectorValue4:
+                            {
+                                double x = vectorValue4.X, y = vectorValue4.Y, z = vectorValue4.Z, w = vectorValue4.W;
+                                bool changedX = CustomDragValue(row, ref x);
+                                bool changedY = CustomDragValue(row, ref y);
+                                bool changedZ = CustomDragValue(row, ref z);
+                                bool changedW = CustomDragValue(row, ref w);
+                                if (changedX || changedY || changedZ || changedW)
+                                {
+                                    list[i] = new Vector4((float)x, (float)y, (float)z, (float)w);
+                                }
+
+                                break;
+                            }
+                        case bool boolValue:
+                            {
+                                if (row.Checkbox(ref boolValue, "").Changed)
+                                {
+                                    list[i] = boolValue;
+                                }
+
+                                break;
+                            }
+                        default:
+                            row.Label($"{GetFriendlyName(element)}");
+                            break;
+                    }
+
+                    row.Separator();
+                });
+                innerUi.Separator();
+            }
+            innerUi.Separator();
+        });
+    }
+
+    private static void DrawArrayProperty(Ui ui, string name, Array array)
     {
         if (array.Length < 1)
             return;
 
-        ImGui.Columns(2, name, false);
-        ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-        ImGui.Text(name);
-        ImGui.NextColumn();
-        ImGui.Text("(Array)");
-        ImGui.NextColumn();
+        ui.Horizontal(row =>
+        {
+            row.Label(name);
+            row.Label("(Array)");
+        });
 
         for (int i = 0; i < array.Length; i++)
         {
-            object? element = array.GetValue(i);
+            var element = array.GetValue(i);
 
             if (element != null)
             {
-                ImGui.Columns(2, $"Element {i}", false);
-                ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-                ImGui.Text($"Element {i}");
-                ImGui.NextColumn();
-
-                if (element is int intValue)
+                ui.Horizontal(row =>
                 {
-                    if (ImGui.DragInt("", ref intValue, V_speed))
-                    {
-                        array.SetValue(intValue, i);
-                    }
-                }
-                else if (element is float floatValue)
-                {
-                    if (ImGui.DragFloat("", ref floatValue, V_speed))
-                    {
-                        array.SetValue(floatValue, i);
-                    }
-                }
-                else if (element is Vector2 vectorValue2)
-                {
-                    if (ImGui.DragFloat2("", ref vectorValue2, V_speed))
-                    {
-                        array.SetValue(vectorValue2, i);
-                    }
-                }
-                else if (element is Vector3 vectorValue3)
-                {
-                    if (ImGui.DragFloat3("", ref vectorValue3, V_speed))
-                    {
-                        array.SetValue(vectorValue3, i);
-                    }
-                }
-                else if (element is bool boolValue)
-                {
-                    if (ImGui.Checkbox("", ref boolValue))
-                    {
-                        array.SetValue(boolValue, i);
-                    }
-                }
-                else
-                    ImGui.Text($"{GetFriendlyName(element)}");
-
-                ImGui.Columns(1);
+                    row.Label($"Element {i}");
+                    DrawProperties(row, element, 1);
+                });
             }
         }
 
-        ImGui.Columns(1);
+        ui.Separator();
     }
 
     public static string GetFriendlyName(object? obj)
@@ -428,42 +433,38 @@ public class SceneEntityDebugger : DebuggerComponent
         return $"{(type.IsClass ? type.Name : obj.ToString())}";
     }
 
-    private static void DrawDictionaryProperty(string name, object dictionaryObj)
+    private static void DrawDictionaryProperty(Ui ui, string name, object dictionaryObj)
     {
-        if (dictionaryObj is IDictionary dictionary)
+        if (dictionaryObj is not IDictionary dictionary) return;
+
+        if (dictionary.Count < 1)
+            return;
+
+        ui.Collapsing($"{name} (Dictionary)", innerUi =>
         {
-            if (dictionary.Count < 1)
-                return;
-
-            if (ImGui.TreeNodeEx($"{name} (Dictionary)"))
+            innerUi.Horizontal(row =>
             {
-                ImGui.Columns(2, name, false);
-                ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
+                row.Label("Key");
+                row.Label("Value");
+            });
 
-                ImGui.Text("Key");
-                ImGui.NextColumn();
-                ImGui.Text("Value");
-                ImGui.NextColumn();
+            innerUi.Separator();
 
-                ImGui.Separator();
-
-                foreach (DictionaryEntry entry in dictionary)
+            foreach (DictionaryEntry entry in dictionary)
+            {
+                innerUi.Horizontal(row =>
                 {
-                    ImGui.Columns(2, $"{entry.Key?.GetType().Name}", false);
-                    ImGui.SetColumnWidth(0, ImGui.GetWindowWidth() * 0.4f);
-
-                    ImGui.Text($"{GetFriendlyName(entry.Key)}");
-                    ImGui.NextColumn();
-
-                    ImGui.Text($"{GetFriendlyName(entry.Value)}");
-                    ImGui.NextColumn();
-
-                    ImGui.Columns(1);
-                }
-
-                ImGui.TreePop();
+                    row.Label(entry.Key.ToString() ?? "null");
+                    row.Label(GetFriendlyName(entry.Value));
+                });
             }
-        }
+        });
+    }
+
+    public static bool CustomDragValue(Ui ui, ref double value)
+    {
+        // Add the actual interactive EGui.NET DragValue element:
+        return ui.Add(new DragValue<double>(ref value).Speed(V_speed)).Changed;
     }
 
     public override void UpdateState(float dt)

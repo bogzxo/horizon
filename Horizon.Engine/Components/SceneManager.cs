@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-
+using Egui;
 using Horizon.Core;
 
 using Horizon.Core.Components;
@@ -8,12 +8,8 @@ using Horizon.Core.Components;
 namespace Horizon.Engine.Components;
 
 // Dropped InstanceManager<Scene> to guarantee no Activator/Reflection warnings during AOT publishing.
-public class SceneManager : IGameComponent
+public class SceneManager : Entity
 {
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Scene Manager";
-    public Entity Parent { get; set; }
-
     // Absorbed from InstanceManager
     public Scene? CurrentInstance { get; private set; }
 
@@ -22,8 +18,6 @@ public class SceneManager : IGameComponent
     // AOT-friendly registry for dynamic Type lookups
     private readonly Dictionary<Type, Func<Scene>> _sceneFactories = new();
 
-    public void Initialize()
-    { }
 
     /// <summary>
     /// AOT Safe: Registers a factory delegate for a scene type.
@@ -66,14 +60,12 @@ public class SceneManager : IGameComponent
         CurrentInstance = scene;
 
         _halt = true;
-        if (CurrentInstance is not null)
-        {
-            CurrentInstance.Enabled = false;
-            CurrentInstance.Parent = Parent; // pass through the engine.
-        }
+        if (CurrentInstance is null) return;
+        CurrentInstance.Enabled = false;
+        CurrentInstance.Parent = Parent; // pass through the engine.
     }
 
-    public void Render(float dt, object? obj = null)
+    public override void Render(float dt, object? obj = null)
     {
         CurrentInstance?.Render(dt);
         if (_halt && CurrentInstance is not null)
@@ -82,19 +74,34 @@ public class SceneManager : IGameComponent
             CurrentInstance.Enabled = true;
             _halt = false;
         }
+
+        base.Render(dt, obj);
     }
 
-    public void UpdatePhysics(float dt)
+    public override void RenderUi(Ui root)
+    {
+        if (_halt || !Enabled)
+            return;
+        CurrentInstance?.RenderUi(root);
+
+        base.RenderUi(root);
+    }
+
+    public override void UpdatePhysics(float dt)
     {
         if (_halt || !Enabled)
             return;
         CurrentInstance?.UpdatePhysics(dt);
+
+        base.UpdatePhysics(dt);
     }
 
-    public void UpdateState(float dt)
+    public override void UpdateState(float dt)
     {
         if (_halt || !Enabled)
             return;
         CurrentInstance?.UpdateState(dt);
+
+        base.UpdateState(dt);
     }
 }

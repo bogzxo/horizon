@@ -28,225 +28,238 @@ public static class Lexer
 
     public static Token[] Tokenize(in string source)
     {
-        // final currentToken array
+        string src = source;
         List<Token> tokens = [];
+        int index = 0;
+        int line = 1;
+        int col = 1;
 
-        // flag for if a currentToken has been identified yet
-        bool foundTokenFlag;
-
-        // flag for parsing strings
-        bool inString = false;
-
-        // helper function to construct currentToken and set flag
-        void AddToken(in TokenType type, in string value)
+        char Peek(int offset = 0)
         {
-            tokens.Add(new Token(type, value));
-            foundTokenFlag = true;
+            if (index + offset >= src.Length) return '\0';
+            return src[index + offset];
         }
 
-        Queue<char> characters = new(source.ToCharArray());
-
-        char prev = '0';
-        while (characters.Count != 0)
+        char Consume()
         {
-            char character = characters.Dequeue();
-            foundTokenFlag = false;
-
-            if (inString)
+            if (index >= src.Length) return '\0';
+            char c = src[index];
+            index++;
+            if (c == '\n')
             {
-                StringBuilder sb = new();
-                while (inString)
-                {
-                    if (character == '"')
-                    {
-                        inString = false;
-                        break;
-                    }
-                    sb.Append(character);
-
-                    if (characters.Count == 0) break; // Prevent crash if string doesn't close before EOF
-
-                    character = characters.Dequeue();
-                    if (character == '"')
-                    {
-                        inString = false;
-                        break;
-                    }
-                }
-                AddToken(TokenType.TextLiteral, sb.ToString());
+                line++;
+                col = 1;
             }
             else
             {
-                // match skippable characters
-                if (char.IsWhiteSpace(character) || character == '\t' || character == '\n' || character == '\r')
-                    continue;
-
-                // match basic single character Tokens
-                switch (character)
-                {
-                    case '(':
-                        AddToken(TokenType.OpenParenthesis, character.ToString());
-                        break;
-
-                    case ')':
-                        AddToken(TokenType.CloseParenthesis, character.ToString());
-                        break;
-
-                    case ';':
-                        AddToken(TokenType.Semicolon, character.ToString());
-                        break;
-
-                    case ':':
-                        AddToken(TokenType.Colon, character.ToString());
-                        break;
-
-                    case ',':
-                        AddToken(TokenType.Comma, character.ToString());
-                        break;
-
-                    case '.':
-                        AddToken(TokenType.Dot, character.ToString());
-                        break;
-
-                    case '!':
-                        if (characters.Count == 0 || characters.Peek() != '=')
-                            AddToken(TokenType.Exclamation, character.ToString());
-                        break;
-
-                    case '{':
-                        AddToken(TokenType.OpenBracket, character.ToString());
-                        break;
-
-                    case '"':
-                        inString = true;
-                        continue;
-
-                    case '}':
-                        AddToken(TokenType.CloseBracket, character.ToString());
-                        break;
-
-                    case '[':
-                        AddToken(TokenType.OpenBrace, character.ToString());
-                        break;
-
-                    case ']':
-                        AddToken(TokenType.CloseBrace, character.ToString());
-                        break;
-
-                    case '/':
-                        if (characters.Count > 0 && characters.Peek() == '/')
-                        {
-                            // single-line comment: consume characters until a newline
-                            characters.Dequeue(); // consume second '/'
-                            while (characters.Count > 0 && characters.Peek() != '\n')
-                            {
-                                characters.Dequeue();
-                            }
-                            continue; // move on
-                        }
-                        else if (characters.Count > 0 && characters.Peek() == '*')
-                        {
-                            // multi-line / inline comment: consume characters until '*/'
-                            characters.Dequeue(); // consume '*'
-                            while (characters.Count > 0)
-                            {
-                                char c = characters.Dequeue();
-                                if (c == '*' && characters.Count > 0 && characters.Peek() == '/')
-                                {
-                                    characters.Dequeue(); // consume closing '/'
-                                    break;
-                                }
-                            }
-                            continue; // Move on
-                        }
-                        else
-                        {
-                            AddToken(TokenType.BinaryOperation, character.ToString());
-                        }
-                        break;
-
-                    case '+':
-                    case '-':
-                    case '*':
-                    case '%':
-                    case '<':
-                    case '>':
-                    case '|':
-                    case '&':
-                        AddToken(TokenType.BinaryOperation, character.ToString());
-                        break;
-
-                    case '=':
-                        if ((characters.Count == 0 || characters.Peek() != '=') && prev != '!')
-                            AddToken(TokenType.Equals, character.ToString());
-                        break;
-                }
-
-                // match multicharacter Tokens
-                if (!foundTokenFlag)
-                {
-                    // try matching numbers
-                    if (char.IsNumber(character))
-                    {
-                        StringBuilder sb = new();
-
-                        // append initial character
-                        sb.Append(character);
-
-                        // add numbers and progress queue until next char isn't a number
-                        while (characters.Count != 0 && (char.IsNumber(characters.Peek()) || characters.Peek() == '.'))
-                            sb.Append(characters.Dequeue());
-
-                        AddToken(TokenType.Number, sb.ToString());
-                    }
-                    // match assignee
-                    else
-                    {
-                        // Safely check next token equality to prevent crashing on End Of File
-                        bool nextIsEquals = characters.Count > 0 && characters.Peek() == '=';
-
-                        if (char.IsLetter(character) || character == '_' || (character == '=' && nextIsEquals) || (character == '!' && nextIsEquals))
-                        {
-                            StringBuilder sb = new();
-
-                            // append initial character
-                            sb.Append(character);
-
-                            // add characters and progress queue until next char isnt a letter or special op
-                            while (characters.Count != 0)
-                            {
-                                char peek = characters.Peek();
-                                if (char.IsNumber(peek) || char.IsLetter(peek) || peek == '_' || peek == '=')
-                                {
-                                    sb.Append(characters.Dequeue());
-                                }
-                                else
-                                {
-                                    break;
-                                }
-                            }
-
-                            string finalValue = sb.ToString();
-
-                            TokenType type = TokenType.Identifier;
-                            if (Keywords.TryGetValue(finalValue, out TokenType newType))
-                                type = newType;
-
-                            AddToken(type, finalValue);
-                        }
-                    }
-                }
-
-                // if we haven't found a known currentToken, panic
-                if (!foundTokenFlag)
-                    Console.WriteLine($"Failed to tokenize character '{character}'!");
-
-                prev = character;
+                col++;
             }
+            return c;
         }
 
-        // push EOF currentToken
-        tokens.Add(new(TokenType.EndOfFile, string.Empty));
-        return tokens.ToArray();
+        void AddToken(TokenType type, string value, int startLine, int startCol)
+        {
+            tokens.Add(new Token(type, value, startLine, startCol));
+        }
+
+        while (index < src.Length)
+        {
+            char current = Peek();
+
+            // Skip whitespace
+            if (char.IsWhiteSpace(current))
+            {
+                Consume();
+                continue;
+            }
+
+            int startLine = line;
+            int startCol = col;
+
+            // Comments
+            if (current == '/' && Peek(1) == '/')
+            {
+                StringBuilder sb = new();
+                sb.Append(Consume()); // '/'
+                sb.Append(Consume()); // '/'
+                while (Peek() != '\0' && Peek() != '\n' && Peek() != '\r')
+                {
+                    sb.Append(Consume());
+                }
+                AddToken(TokenType.Comment, sb.ToString(), startLine, startCol);
+                continue;
+            }
+            if (current == '/' && Peek(1) == '*')
+            {
+                StringBuilder sb = new();
+                sb.Append(Consume()); // '/'
+                sb.Append(Consume()); // '*'
+                while (Peek() != '\0')
+                {
+                    if (Peek() == '*' && Peek(1) == '/')
+                    {
+                        sb.Append(Consume()); // '*'
+                        sb.Append(Consume()); // '/'
+                        break;
+                    }
+                    sb.Append(Consume());
+                }
+                AddToken(TokenType.Comment, sb.ToString(), startLine, startCol);
+                continue;
+            }
+
+            // Strings
+            if (current == '"')
+            {
+                Consume(); // '"'
+                StringBuilder sb = new();
+                while (Peek() != '\0' && Peek() != '"')
+                {
+                    sb.Append(Consume());
+                }
+                if (Peek() == '"')
+                {
+                    Consume(); // '"'
+                }
+                AddToken(TokenType.TextLiteral, sb.ToString(), startLine, startCol);
+                continue;
+            }
+
+            // Equality operators
+            if (current == '=' && Peek(1) == '=')
+            {
+                Consume(); // '='
+                Consume(); // '='
+                AddToken(TokenType.Equality, "==", startLine, startCol);
+                continue;
+            }
+            if (current == '!' && Peek(1) == '=')
+            {
+                Consume(); // '!'
+                Consume(); // '='
+                AddToken(TokenType.NotEquality, "!=", startLine, startCol);
+                continue;
+            }
+
+            // Single character operators and punctuation
+            bool singleMatch = true;
+            switch (current)
+            {
+                case '(':
+                    Consume();
+                    AddToken(TokenType.OpenParenthesis, "(", startLine, startCol);
+                    break;
+
+                case ')':
+                    Consume();
+                    AddToken(TokenType.CloseParenthesis, ")", startLine, startCol);
+                    break;
+
+                case ';':
+                    Consume();
+                    AddToken(TokenType.Semicolon, ";", startLine, startCol);
+                    break;
+
+                case ':':
+                    Consume();
+                    AddToken(TokenType.Colon, ":", startLine, startCol);
+                    break;
+
+                case ',':
+                    Consume();
+                    AddToken(TokenType.Comma, ",", startLine, startCol);
+                    break;
+
+                case '.':
+                    Consume();
+                    AddToken(TokenType.Dot, ".", startLine, startCol);
+                    break;
+
+                case '!':
+                    Consume();
+                    AddToken(TokenType.Exclamation, "!", startLine, startCol);
+                    break;
+
+                case '{':
+                    Consume();
+                    AddToken(TokenType.OpenBracket, "{", startLine, startCol);
+                    break;
+
+                case '}':
+                    Consume();
+                    AddToken(TokenType.CloseBracket, "}", startLine, startCol);
+                    break;
+
+                case '[':
+                    Consume();
+                    AddToken(TokenType.OpenBrace, "[", startLine, startCol);
+                    break;
+
+                case ']':
+                    Consume();
+                    AddToken(TokenType.CloseBrace, "]", startLine, startCol);
+                    break;
+
+                case '/':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '<':
+                case '>':
+                case '|':
+                case '&':
+                    Consume();
+                    AddToken(TokenType.BinaryOperation, current.ToString(), startLine, startCol);
+                    break;
+
+                case '=':
+                    Consume();
+                    AddToken(TokenType.Equals, "=", startLine, startCol);
+                    break;
+
+                default:
+                    singleMatch = false;
+                    break;
+            }
+
+            if (singleMatch) continue;
+
+            // Numbers
+            if (char.IsDigit(current))
+            {
+                StringBuilder sb = new();
+                while (char.IsDigit(Peek()) || Peek() == '.')
+                {
+                    sb.Append(Consume());
+                }
+                AddToken(TokenType.Number, sb.ToString(), startLine, startCol);
+                continue;
+            }
+
+            // Identifiers / Keywords
+            if (char.IsLetter(current) || current == '_')
+            {
+                StringBuilder sb = new();
+                while (char.IsLetterOrDigit(Peek()) || Peek() == '_')
+                {
+                    sb.Append(Consume());
+                }
+                string finalValue = sb.ToString();
+                TokenType type = TokenType.Identifier;
+                if (Keywords.TryGetValue(finalValue, out TokenType keywordType))
+                {
+                    type = keywordType;
+                }
+                AddToken(type, finalValue, startLine, startCol);
+                continue;
+            }
+
+            // Fallback for unexpected characters
+            throw new Parsing.ParseException($"Failed to tokenize character '{current}' at line {startLine}, column {startCol}!", startLine, startCol, 1);
+        }
+
+        tokens.Add(new Token(TokenType.EndOfFile, string.Empty, line, col));
+        return [.. tokens];
     }
 }

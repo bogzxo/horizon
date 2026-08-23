@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
-
+using Egui;
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 
@@ -70,20 +70,20 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         // Lock-free span iteration using the cache array
         var entSpan = _childrenCache.AsSpan();
-        for (int i = 0; i < entSpan.Length; i++)
+        foreach (var ent in entSpan)
         {
-            if (_uninitializedSet.ContainsKey(entSpan[i])) continue;
+            if (_uninitializedSet.ContainsKey(ent)) continue;
 
-            entSpan[i].InitializeAll();
+            ent.InitializeAll();
 
-            entSpan[i].Render(dt, obj);
+            ent.Render(dt, obj);
         }
 
         var compSpan = _componentsCache.AsSpan();
-        for (int i = 0; i < compSpan.Length; i++)
+        foreach (var comp in compSpan)
         {
-            if (_uninitializedSet.ContainsKey(compSpan[i])) continue;
-            compSpan[i].Render(dt, obj);
+            if (_uninitializedSet.ContainsKey(comp)) continue;
+            comp.Render(dt, obj);
         }
     }
 
@@ -109,37 +109,47 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
     }
 
+    public virtual void RenderUi(Ui root)
+    {
+        var entSpan = _childrenCache.AsSpan();
+        foreach (var entity in entSpan)
+        {
+            if (_uninitializedSet.ContainsKey(entity)) continue;
+            entity.RenderUi(root);
+        }
+    }
+
     public virtual void UpdatePhysics(float dt)
     {
         var compSpan = _componentsCache.AsSpan();
-        for (int i = 0; i < compSpan.Length; i++)
+        foreach (var comp in compSpan)
         {
-            if (compSpan[i] is null || _uninitializedSet.ContainsKey(compSpan[i])) continue;
-            compSpan[i].UpdatePhysics(dt);
+            if (_uninitializedSet.ContainsKey(comp)) continue;
+            comp.UpdatePhysics(dt);
         }
 
         var entSpan = _childrenCache.AsSpan();
-        for (int i = 0; i < entSpan.Length; i++)
+        foreach (var t in entSpan)
         {
-            if (entSpan[i] is null || _uninitializedSet.ContainsKey(entSpan[i])) continue;
-            entSpan[i].UpdatePhysics(dt);
+            if (_uninitializedSet.ContainsKey(t)) continue;
+            t.UpdatePhysics(dt);
         }
     }
 
     public virtual void UpdateState(float dt)
     {
         var compSpan = _componentsCache.AsSpan();
-        for (int i = 0; i < compSpan.Length; i++)
+        foreach (var comp in compSpan)
         {
-            if (compSpan[i] is null || _uninitializedSet.ContainsKey(compSpan[i])) continue;
-            compSpan[i].UpdateState(dt);
+            if (_uninitializedSet.ContainsKey(comp)) continue;
+            comp.UpdateState(dt);
         }
 
         var entSpan = _childrenCache.AsSpan();
-        for (int i = 0; i < entSpan.Length; i++)
+        foreach (var ent in entSpan)
         {
-            if (entSpan[i] is null || _uninitializedSet.ContainsKey(entSpan[i])) continue;
-            entSpan[i].UpdateState(dt);
+            if (_uninitializedSet.ContainsKey(ent)) continue;
+            ent.UpdateState(dt);
         }
     }
 
@@ -149,7 +159,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         {
             if (_children.Remove(ent))
             {
-                _childrenCache = _children.ToArray();
+                _childrenCache = [.. _children];
             }
         }
     }
@@ -161,7 +171,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (_components.Remove(comp)) // We remove from the PRIVATE list
             {
                 // Then we update the cache for the render thread
-                _componentsCache = _components.ToArray();
+                _componentsCache = [.. _components];
             }
         }
     }
@@ -172,9 +182,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public T? GetComponent<T>() where T : IGameComponent
     {
         var span = _componentsCache.AsSpan();
-        for (int i = 0; i < span.Length; i++)
+        foreach (var comp in span)
         {
-            if (span[i] is T typedComp) return typedComp;
+            if (comp is T typedComp) return typedComp;
         }
         return default;
     }
@@ -186,9 +196,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     {
         var result = new List<Entity>();
         var span = _childrenCache.AsSpan();
-        for (int i = 0; i < span.Length; i++)
+        foreach (var ent in span)
         {
-            if (span[i] is T typedEnt) result.Add(typedEnt);
+            if (ent is T typedEnt) result.Add(typedEnt);
         }
         return result;
     }
@@ -199,11 +209,11 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public T? GetEntity<T>() where T : Entity
     {
         var span = _childrenCache.AsSpan();
-        for (int i = 0; i < span.Length; i++)
+        foreach (var ent in span)
         {
-            if (span[i] is T typedEnt) return typedEnt;
+            if (ent is T typedEnt) return typedEnt;
         }
-        return default;
+        return null;
     }
 
     /// <summary>

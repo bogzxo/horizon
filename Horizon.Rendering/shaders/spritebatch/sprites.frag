@@ -10,7 +10,7 @@ uniform sampler2D uTexture;
 
 void main() {
   vec4 tex = texture(uTexture, texCoords);
-  //if (tex.a < 0.1) discard;
+  if (tex.a == 0.0) discard;
   AlbedoColor = tex;
   NormalFragPosColor = vec4(vec2(0.0), fragPos);
 }

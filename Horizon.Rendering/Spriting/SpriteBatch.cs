@@ -112,7 +112,7 @@ public class SpriteBatch : GameObject
     /// <summary>
     /// Gets the shader.
     /// </summary>
-    public Technique Shader { get; init; }
+    public Technique Shader { get; set; }
 
     /// <summary>
     /// TODO please remind me to make a custom datastruct for this shit
@@ -130,10 +130,14 @@ public class SpriteBatch : GameObject
     /// <param name="shader">A custom shader used to render sprites. It is recommended to leave default and apply effects using the post processing pipeline.</param>
     public SpriteBatch()
     {
+    }
+
+    public override void Initialize()
+    {
         if (Engine
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet(
+            .ObjectManager
+            .Shaders
+            .TryCreateOrGet(
                 "sprite",
                 ShaderDescription.FromPath("shaders/spritebatch", "sprites"),
                 out var result))
@@ -145,12 +149,7 @@ public class SpriteBatch : GameObject
             Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
         }
 
-        // this.Transform = AddComponent<TransformComponent>();
-        //Engine.Debugger.GeneralDebugger.AddWatch("Sprite Count", "SpriteBatch", () => Count);
-        //Engine
-        //    .Debugger
-        //    .GeneralDebugger
-        //    .AddWatch("Mesh Count", "SpriteBatch", () => SpritesheetSprites.Count);
+        base.Initialize();
     }
 
     /// <summary>

@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Scenes\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
+    <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
+    <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
+    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
+    <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
+    <ProjectReference Include="..\Horizon.Physics\Horizon.Physics.csproj" />
+    <ProjectReference Include="..\Horizon.Rendering.UIX\Horizon.Rendering.UIX.csproj" />
+    <ProjectReference Include="..\Horizon.Rendering\Horizon.Rendering.csproj" />
+    <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
+  </ItemGroup>
+
+</Project>

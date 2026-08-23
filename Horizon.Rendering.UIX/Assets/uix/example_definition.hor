@@ -1,0 +1,11 @@
+﻿let sprite = {
+	sprite_size: { w: 128, h: 128},
+    grid_size: { w: 10, h: 10},
+    sprite_file: "example_ui.png",
+
+    animations: {
+        btn_normal: { x: 0, y: 0, l: 1, t: 1 },
+        orange_square: { x: 1, y: 0, l: 1, t: 1 },
+        red_square: { x: 2, y: 0, l: 1, t: 1 },
+    }
+}

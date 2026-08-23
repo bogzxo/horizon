@@ -1,6 +1,9 @@
-﻿using Horizon.HIDL.Runtime;
+﻿#if DEBUG
+using Horizon.HIDL.Runtime;
 
-using ImGuiNET;
+using Egui;
+using Egui.Containers;
+using Egui.Widgets;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -35,21 +38,23 @@ public class GeneralDebugger : DebuggerComponent
             _cachedValues.Clear();
         }
 
-        internal void Draw()
+        internal void Draw(Ui ui)
         {
             foreach ((string name, object value) in _cachedValues)
             {
-                ImGui.Text($"{name}:");
-                ImGui.NextColumn();
-                ImGui.Text($"{value}");
-                ImGui.NextColumn();
+                ui.Horizontal(row =>
+                {
+                    row.Label($"{name}:");
+                    row.Label($"{value}");
+                });
             }
             foreach ((string name, object value) in _singleUseValues)
             {
-                ImGui.Text($"{name}:");
-                ImGui.NextColumn();
-                ImGui.Text($"{value}");
-                ImGui.NextColumn();
+                ui.Horizontal(row =>
+                {
+                    row.Label($"{name}:");
+                    row.Label($"{value}");
+                });
             }
 
             _singleUseValues.Clear();
@@ -83,7 +88,7 @@ public class GeneralDebugger : DebuggerComponent
         }
     }
 
-    private readonly object _catagoriesLock = new();
+    private readonly Lock _catagoriesLock = new();
     private readonly Dictionary<string, GeneralDebuggerCatagory> _catagories = new();
 
     private float _updateCachedValuesTimer = 0.0f;
@@ -119,39 +124,36 @@ public class GeneralDebugger : DebuggerComponent
         }
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void RenderUi(Ui root)
     {
         if (!Visible)
             return;
 
-       lock (_catagoriesLock)
+        lock (_catagoriesLock)
         {
-            if (ImGui.Begin(Name))
-            {
-                ImGui.Text($"Watched Variables ({watchedCount})");
-                ImGui.Separator();
-
-                foreach ((string name, GeneralDebuggerCatagory monitor) in _catagories)
+            new Window(Name)
+                .Show(root.Ctx, ui =>
                 {
-                    if (monitor.TotalWatchedValues < 1)
-                        continue;
+                    ui.Label($"Watched Variables ({watchedCount})");
+                    ui.Separator();
 
-                    if (ImGui.CollapsingHeader(name))
+                    foreach ((string name, GeneralDebuggerCatagory monitor) in _catagories)
                     {
-                        ImGui.Columns(2, $"generalDebuggerColumns_{name}", true); // 2 columns
+                        if (monitor.TotalWatchedValues < 1)
+                            continue;
 
-                        ImGui.Text("Name:");
-                        ImGui.NextColumn();
-                        ImGui.Text("Value:");
-                        ImGui.NextColumn();
+                        ui.Collapsing(name, innerUi =>
+                        {
+                            innerUi.Horizontal(row =>
+                            {
+                                row.Heading("Name");
+                                row.Heading("Value");
+                            });
 
-                        monitor.Draw();
-                        ImGui.Columns(1);
+                            monitor.Draw(innerUi);
+                        });
                     }
-                }
-
-                ImGui.End();
-            }
+                });
         }
     }
 
@@ -171,14 +173,13 @@ public class GeneralDebugger : DebuggerComponent
         lock (_catagoriesLock)
         {
             _updateCachedValuesTimer += dt;
-            if (_updateCachedValuesTimer > 0.5f)
+            if (!(_updateCachedValuesTimer > 0.5f)) return;
+            
+            watchedCount = 0;
+            foreach (var item in _catagories.Values)
             {
-                watchedCount = 0;
-                foreach (var item in _catagories.Values)
-                {
-                    item.UpdateValues();
-                    watchedCount += item.TotalWatchedValues;
-                }
+                item.UpdateValues();
+                watchedCount += item.TotalWatchedValues;
             }
         }
     }
@@ -192,3 +193,4 @@ public class GeneralDebugger : DebuggerComponent
         _catagories.Clear();
     }
 }
+#endif
