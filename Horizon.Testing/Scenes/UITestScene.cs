@@ -52,10 +52,15 @@ public class UITestScene : Scene
         base.PostInit();
 
         var (success, result) = _compositor.Runtime.Evaluate(@"
-            let btn = compositor.button(""F"");
-            btn.scale = 1.2;
+            let btn = compositor.button({
+                label: ""Test"",
+                spr_scale: 1.0,
+                lbl_scale: 0.4,
+                pos: vec(0, 0)
+            });
+            
 
-btn.on_pressed = func() {
+            btn.on_pressed = func() {
                 print(""HIDL Button Pressed! Progress reset!"");
             };
             
