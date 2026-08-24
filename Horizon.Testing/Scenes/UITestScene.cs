@@ -5,6 +5,8 @@ using Horizon.Input;
 using Horizon.Rendering.UIX;
 using Horizon.Rendering.UIX.Components;
 using Horizon.HIDL.Runtime;
+using Silk.NET.Input;
+using Button = Horizon.Rendering.UIX.Components.Button;
 
 namespace Horizon.Testing.Scenes;
 
@@ -27,36 +29,43 @@ public class UITestScene : Scene
             return new NullValue();
         }));
 
-        // 2. Test C# Component Creation
-        var btn = new Button("Click Me (C#)");
-        btn.OnPressed = () => 
-        {
-            Console.WriteLine("C# Button Pressed!");
-            _progressBar.Progress += 0.1f;
-            if (_progressBar.Progress > 1.0f) 
-                _progressBar.Progress = 0f;
-        };
-        _compositor.AddComponent(btn);
+        //// 2. Test C# Component Creation
+        //var btn = new Button("Click Me (C#)");
+        //btn.OnPressed = () => 
+        //{
+        //    Console.WriteLine("C# Button Pressed!");
+        //    _progressBar.Progress += 0.1f;
+        //    if (_progressBar.Progress > 1.0f) 
+        //        _progressBar.Progress = 0f;
+        //};
+        //_compositor.AddComponent(btn);
 
-        _progressBar = new ProgressBar();
-        _progressBar.Progress = 0.5f;
-        _compositor.AddComponent(_progressBar);
+        //_progressBar = new ProgressBar();
+        //_progressBar.Progress = 0.5f;
+        //_compositor.AddComponent(_progressBar);
 
         // 3. Test HIDL Integration
+    }
+
+    public override void PostInit()
+    {
+        base.PostInit();
+
         var (success, result) = _compositor.Runtime.Evaluate(@"
-            let btn = compositor.button(""Click Me (HIDL)"");
-            
+            let btn = compositor.button(""F"");
+            btn.scale = 1.2;
 
 btn.on_pressed = func() {
                 print(""HIDL Button Pressed! Progress reset!"");
             };
             
+
             let pb = compositor.progress_bar();
             pb.progress = ""0.25;""
 
         ");
-        
-        //if (!success)
+
+        if (!success)
         {
             Console.WriteLine($"HIDL Error: {result}");
         }
@@ -67,17 +76,17 @@ btn.on_pressed = func() {
     public override void UpdateState(float dt)
     {
         base.UpdateState(dt);
-        
-        //// Simulating button presses for testing
-        //if (Engine.Input.KeyboardManager.IsKeyPressed(Key.Space))
-        //{
-        //    foreach (var comp in _compositor.Components)
-        //    {
-        //        if (comp is Button b)
-        //        {
-        //            b.OnPressed?.Invoke();
-        //        }
-        //    }
-        //}
+
+        // Simulating button presses for testing
+        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Space))
+        {
+            foreach (var comp in _compositor.Components)
+            {
+                if (comp is Button b)
+                {
+                    b.OnPressed?.Invoke();
+                }
+            }
+        }
     }
 }

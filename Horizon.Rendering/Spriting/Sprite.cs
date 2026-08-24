@@ -179,8 +179,15 @@ public class Sprite : GameObject
                         if (anim.Properties["y"] is NumberValue anim_y) posY = anim_y.Value;
                         else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim offset"); return false; }
 
-                        if (anim.Properties["l"] is NumberValue anim_l) length = (uint)anim_l.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim length!"); return false; }
+                        if (anim.Properties.TryGetValue("l", out var animProp))
+                        {
+                            if (animProp is NumberValue anim_l) length = (uint)anim_l.Value;
+                            else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim length!"); return false; }
+                        }
+                        else
+                        {
+                            length = 0;
+                        }
 
                         if (anim.Properties.ContainsKey("t") && anim.Properties["t"] is NumberValue anim_t) 
                             time = anim_t.Value;

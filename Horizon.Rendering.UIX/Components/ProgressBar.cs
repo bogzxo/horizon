@@ -8,7 +8,7 @@ using Horizon.Rendering.UI;
 
 namespace Horizon.Rendering.UIX.Components
 {
-    public class ProgressBar : IUIComponent
+    public class ProgressBar : UIComponent
     {
         public ObjectValue Object { get; init; }
         public NativeValue ProgressValue { get; init; }
@@ -53,7 +53,7 @@ namespace Horizon.Rendering.UIX.Components
             });
         }
 
-        public void Initialize(UICompositor compositor)
+        public override void Initialize(UICompositor compositor)
         {
             _backgroundSprite = new UISprite(new Vector2(200, 30));
             _fillSprite = new UISprite(new Vector2(200, 30));
@@ -71,7 +71,7 @@ namespace Horizon.Rendering.UIX.Components
             compositor.GlyphRenderer.AddLabel(_labelId, _textLabel);
         }
 
-        public void UpdateState(float dt)
+        public override void UpdateState(float dt)
         {
             if (_fillSprite != null)
             {

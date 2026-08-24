@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Text;
 using Horizon.Engine;
 using Horizon.Rendering.UIX;
@@ -17,5 +18,16 @@ internal class TestSelectorScene : Scene
         _compositor = AddComponent<UICompositor>();
         _compositor.Load("Data/example/example.hor");
         Console.WriteLine();
+    }
+
+    public override void Initialize()
+    {
+        base.Initialize();
+    }
+
+    public override void Render(float dt, object? obj = null)
+    {
+        Engine.GL.ClearColor(Color.CornflowerBlue);
+        base.Render(dt, obj);
     }
 }
