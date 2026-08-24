@@ -10,37 +10,16 @@ using System.Numerics;
 
 namespace Horizon.Rendering.UIX.Components
 {
-    public class Button : UIComponent
+    public class Button(in string label, Vector2 position, float sprScale = 1.0f, float lblScale = 1.0f) : UIComponent
     {
-        public NativeValue TextValue { get; protected set; }
-        public NativeValue ScaleValue { get; protected set; }
-        private string _text;
-        private float _scale;
+        private string _text = label;
         
         public Action OnPressed { get; set; }
         private IRuntimeValue _hidlCallback;
         
-        public string Text
-        {
-            get => TextValue.AccessorCallback.Invoke().ToString() ?? "NO_STR";
-            set => TextValue.MutatorCallback.Invoke(new StringValue(value));
-        }
-        public float Scale
-        {
-            get => float.TryParse(TextValue.AccessorCallback.Invoke().ToString(), out var val) ? val : 0.0f;
-            set => TextValue.MutatorCallback.Invoke(new NumberValue(value));
-        }
-
         private UISprite _backgroundSprite;
         private TextLabel _textLabel;
-        private string _labelId;
-
-        public Button(UICompositor compositor, in string label, float scale=1.0f)
-        {
-            _text = label;
-            _scale = scale;
-            _labelId = Guid.NewGuid().ToString();
-        }
+        private string _labelId = Guid.NewGuid().ToString();
 
         public override void Initialize(UICompositor compositor)
         {
@@ -48,6 +27,8 @@ namespace Horizon.Rendering.UIX.Components
             _backgroundSprite = new UISprite(compositor.SharedSheet.SpriteSize);
             _backgroundSprite.ConfigureSpriteSheet(compositor.SharedSheet, "btn_normal");
             _backgroundSprite.IsAnimated = false;
+            _backgroundSprite.Transform.Position = position;
+            _backgroundSprite.Transform.Size *= sprScale;
 
             compositor.SpriteBatch.Add(_backgroundSprite);
 
@@ -58,29 +39,10 @@ namespace Horizon.Rendering.UIX.Components
                 Origin = Origin.Center,
                 Transform =
                 {
-                    Size = Vector2.One * 0.4f
+                    Size = Vector2.One * lblScale
                 }
             };
             compositor.GlyphRenderer.AddLabel(_labelId, _textLabel);
-
-            this.TextValue = new NativeValue(() => new StringValue(_text), (val) =>
-            {
-                if (val is StringValue strVal)
-                {
-                    _text = strVal.Value;
-                    _textLabel.Text = _text;
-                }
-                else throw new Exception("Button text label has to be a string!");
-            });
-            this.ScaleValue = new NativeValue(() => new NumberValue(_scale), (val) =>
-            {
-                if (val is NumberValue fltVal)
-                {
-                    _scale = fltVal.Value;
-                    _backgroundSprite.Transform.Size = compositor.SharedSheet.SpriteSize * _scale;
-                }
-                else throw new Exception("Button scale has to be a number!");
-            });
 
             var onPressedValue = new NativeValue(
                 () => _hidlCallback ?? new NullValue(),
@@ -92,8 +54,6 @@ namespace Horizon.Rendering.UIX.Components
 
             this.Object = new ObjectValue(new Dictionary<string, IRuntimeValue>()
             {
-                {"label", this.TextValue},
-                {"scale", this.ScaleValue},
                 {"on_pressed", onPressedValue}
             });
 

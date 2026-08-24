@@ -12,15 +12,11 @@ public class Parser
 
     private Token Consume(in TokenType expect)
     {
-        if (Tokens.TryDequeue(out Token val))
-        {
-            if (val.Type != expect)
-            {
-                throw new Exception($"[Parser] Expected '{expect} but got '{val.Type}'!");
-            }
-            return val;
-        }
-        return new Token { Type = TokenType.EndOfFile };
+        var token = Peek();
+        if (token.Type != expect)
+            throw new Exception($"[Parser] Expected '{expect} but got '{token.Type}'!");
+
+        return Tokens.TryDequeue(out Token val) ? val : new Token { Type = TokenType.EndOfFile };
     }
 
     private Token Consume() => Tokens.Dequeue();
@@ -291,6 +287,7 @@ public class Parser
         }
 
         List<PropertyExpression> props = [];
+
         while (Peek().Type != TokenType.EndOfFile && Peek().Type != TokenType.CloseBracket && Peek().Type != TokenType.Semicolon)
         {
             // expect a key
@@ -329,6 +326,12 @@ public class Parser
 
             if (Peek().Type == TokenType.Comma)
                 Consume(TokenType.Comma);
+            
+            // End of a object def as a parameter such as in test.x({ A, B, ... })
+            if (Peek().Type == TokenType.CloseParenthesis)
+            {
+                break;
+            }
         }
         return new ObjectLiteralExpression(props);
     }
