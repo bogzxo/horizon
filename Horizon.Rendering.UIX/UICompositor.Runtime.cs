@@ -21,7 +21,7 @@ public partial class UICompositor
                     if (args.Length != 1) throw new Exception("Button constructor expects one parameter");
                     if (args[0] is not StringValue label) throw new Exception("Button label text must be a string!");
 
-                    return AddComponent(new Button(label.Value)).Object;
+                    return AddComponent(new Button(this, label.Value)).Object;
                 })},
                 {"progress_bar", new NativeFunctionValue((args, env) =>
                 {

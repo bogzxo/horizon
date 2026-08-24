@@ -1,4 +1,5 @@
-﻿using System.Xml.Linq;
+﻿using System.Globalization;
+using System.Xml.Linq;
 
 using Horizon.HIDL.Lexxing;
 
@@ -500,7 +501,7 @@ public class Parser
                 break;
 
             case TokenType.Number:
-                result = new NumericLiteralExpression(float.Parse(Consume().Value));
+                result = new NumericLiteralExpression(float.Parse(Consume().Value, CultureInfo.InvariantCulture));
                 break;
 
             case TokenType.TextLiteral:

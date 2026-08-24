@@ -18,7 +18,7 @@ public partial class UICompositor : IGameComponent
     private readonly SpriteBatch _spriteBatch;
     private readonly GlyphRenderer _glyphRenderer;
     private SpriteSheet _sharedSheet;
-    public List<IUIComponent> Components { get; init; } = [];
+    public List<UIComponent> Components { get; init; } = [];
 
     public UICompositor()
     {
@@ -29,13 +29,10 @@ public partial class UICompositor : IGameComponent
         SetupRuntime();
     }
 
-    public IUIComponent AddComponent(in IUIComponent component)
+    public UIComponent AddComponent(in UIComponent component)
     {
         this.Components.Add(component);
-        if (_sharedSheet != null) 
-        {
-            component.Initialize(this);
-        }
+        component.Initialize(this);
         return component;
     }
 
@@ -63,7 +60,7 @@ public partial class UICompositor : IGameComponent
 
     public void Initialize()
     {
-        var dummy = new Sprite(Vector2.One);
+        var dummy = new Sprite(new Vector2(128));
         if (dummy.LoadSpriteSheetFromDirectory("Assets/uix/", "example_definition.hor"))
         {
             _sharedSheet = dummy.Spritesheet;
@@ -75,11 +72,6 @@ public partial class UICompositor : IGameComponent
 
         _spriteBatch.Initialize();
         _glyphRenderer.Initialize();
-        
-        foreach (var component in Components)
-        {
-            component.Initialize(this);
-        }
     }
 
     public SpriteBatch SpriteBatch => _spriteBatch;
