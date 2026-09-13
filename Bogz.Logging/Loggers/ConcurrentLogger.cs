@@ -98,7 +98,7 @@ public class ConcurrentLogger : ILoggerDisposable
 
     public void Log(LogLevel level, object message)
     {
-        Log(level, message);
+        Log(level, message.ToString());
     }
 
     public void Dispose()

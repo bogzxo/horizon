@@ -58,7 +58,8 @@ public class SpriteSheetAnimationManager : IGameComponent
         Vector2 position,
         uint length,
         float frameTime = 0.1f,
-        Vector2? inSize = null
+        Vector2? inSize = null,
+        uint span = 0
     )
     {
         if (Animations.ContainsKey(name))
@@ -79,7 +80,8 @@ public class SpriteSheetAnimationManager : IGameComponent
                 FirstFrame = new SpriteDefinition
                 {
                     Position = position,
-                    Size = inSize ?? SpriteSize
+                    Size = inSize ?? SpriteSize,
+                    Span = span
                 },
                 FrameTime = frameTime,
                 Fuzz = Random.Shared.NextSingle() * 0.2f + 0.8f
@@ -121,7 +123,7 @@ public class SpriteSheetAnimationManager : IGameComponent
 
     public (bool reset, uint index) IncrementFrame(string name)
     {
-        var frame = Animations[name ?? ""];
+        var frame = Animations[name];
 
         if (frame.Length < 1)
         {
@@ -135,7 +137,7 @@ public class SpriteSheetAnimationManager : IGameComponent
     }
     public bool SetFrame(string name, int index, bool invert = false)
     {
-        var frame = Animations[name ?? ""];
+        var frame = Animations[name];
 
         if (frame.Length < 1)
         {

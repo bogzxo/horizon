@@ -153,11 +153,11 @@ public class GlyphRenderer : GameObject
             // Extract scale from the label's transform matrix/component
             Vector2 scale = lbl.Transform.Size;
 
-            // 1. Calculate bounding size scaled properly
+            // Calculate bounding size scaled properly
             Vector2 textSize = CalculateSize(lbl.Text, scale);
             lbl.Width = textSize.X;
 
-            // 2. Compute translation offset based on scaled origin dimensions
+            // Compute translation offset based on scaled origin dimensions
             float originOffsetX = 0f;
             float originOffsetY = 0f;
 
@@ -212,7 +212,7 @@ public class GlyphRenderer : GameObject
             float offsetX = 0f;
             float offsetY = 0f;
 
-            // 3. Generate vertices applying the scale factor to glyph positions and dimensions
+            // Generate vertices applying the scale factor to glyph positions and dimensions
             for (int i = 0; i < lbl.Text.Length; i++)
             {
                 var charDef = GetDefinition(lbl.Text[i]);

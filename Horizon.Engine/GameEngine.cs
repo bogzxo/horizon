@@ -200,17 +200,16 @@ public class GameEngine : Entity
 
         // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
-        GL.Enable(EnableCap.Blend);
 
         if (Debugger.RenderToContainer)
         {
-            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
             Debugger.GameContainerDebugger.FrameBuffer.Bind();
             Debugger.GameContainerDebugger.FrameBuffer.Viewport();
         }
         else GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-
-        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+        
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
         // Render all entities & component
         base.Render(dt);
 

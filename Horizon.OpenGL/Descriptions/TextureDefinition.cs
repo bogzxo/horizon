@@ -114,6 +114,7 @@ namespace Horizon.OpenGL.Descriptions
                     ]
            };
 
+
         public static TextureDefinition DepthStencil { get; } =
             new TextureDefinition
             {

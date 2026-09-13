@@ -33,6 +33,7 @@ public class Renderer2D : GameObject
                     Height = height,
                     Attachments = new() {
                         { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
+                        { FramebufferAttachment.DepthStencilAttachment, FrameBufferAttachmentDefinition.DepthStencilComponent},
                     }
                 },
                 out var result
@@ -74,7 +75,7 @@ public class Renderer2D : GameObject
 
         // set the viewport & clear screen
         FrameBuffer.Viewport();
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
+        Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.StencilBufferBit);
 
         // draw all children
         base.Render(dt);
@@ -87,7 +88,7 @@ public class Renderer2D : GameObject
 
         // restore window viewport
         Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit);
+        Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.StencilBufferBit);
 
         // draw framebuffer to window
         RenderRectangle.Render(dt);

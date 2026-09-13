@@ -214,7 +214,6 @@ public class PerformanceProfilerDebugger : DebuggerComponent, IDisposable
         }
     }
 
-    [Pure]
     public static void PlotValues(
         Ui ui,
         in string label,

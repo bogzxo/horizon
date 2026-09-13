@@ -10,6 +10,11 @@ public readonly struct FrameBufferAttachmentDefinition
         IsRenderBuffer = false,
         TextureDefinition = TextureDefinition.RgbaFloat,
     };
+    public static FrameBufferAttachmentDefinition DepthStencilComponent { get; } = new()
+    {
+        IsRenderBuffer = false,
+        TextureDefinition = TextureDefinition.DepthStencil,
+    };
 
     public static FrameBufferAttachmentDefinition RenderBufferRGBA { get; } = new()
     {

@@ -6,6 +6,7 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering.UIX.Components;
+using ValueType = Horizon.HIDL.Runtime.ValueType;
 
 namespace Horizon.Rendering.UIX;
 
@@ -25,6 +26,7 @@ public partial class UICompositor
                     float sprScale = 1.0f;
                     float lblScale = 1.0f;
                     Vector2 pos = Vector2.One;
+                    IRuntimeValue callback = new NullValue();
 
                     if (args[0] is ObjectValue obj)
                     {
@@ -34,18 +36,21 @@ public partial class UICompositor
                             sprScale = sprScaleVal.Value;
                         if (obj.Properties["lbl_scale"] is NumberValue lblScaleVal)
                             lblScale = lblScaleVal.Value;
-                        if (obj.Properties["position"] is Vector2Value posVal)
+                        if (obj.Properties["pos"] is Vector2Value posVal)
                             pos = posVal.Value;
+
+                        if (obj.Properties.TryGetValue("on_press", out var callbackVal)) 
+                            callback = callbackVal;
+
                     }
                     else throw new Exception("Buttons constructor required object scheme");
 
-                    return AddComponent(new Button(label, pos, sprScale, lblScale)).Object;
+                    return AddComponent(new Button(label, pos, sprScale, lblScale, callback)).Object;
                 })},
 
 
-                {"progress_bar", new NativeFunctionValue((args, env) =>
-                {
-                    return AddComponent(new ProgressBar()).Object;
+                {"progress_bar", new NativeFunctionValue((args, env) => {
+                    return AddComponent(new ProgressBar(Vector2.Zero)).Object;
                 })}
             }
         });

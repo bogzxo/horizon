@@ -60,7 +60,7 @@ internal class Program
     private static void Main(string[] args)
     {
         Console.Title = "Horizon Integrated Dynamic Language Runtime";
-        //RunIntro();
+        RunIntro();
 
         HIDLRuntime runtime = new();
 

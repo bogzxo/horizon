@@ -14,10 +14,10 @@ internal class TestSelectorScene : Scene
     public TestSelectorScene()
     {
         // Create a 2d scene camera
-        ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
-        _compositor = AddComponent<UICompositor>();
+        Camera2D cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
+        ActiveCamera = cam;
+        _compositor = AddComponent(new UICompositor(cam));
         _compositor.Load("Data/example/example.hor");
-        Console.WriteLine();
     }
 
     public override void Initialize()
