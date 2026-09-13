@@ -11,7 +11,7 @@ public class Camera2D : Camera
         set
         {
             _zoom = value;
-            Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1.0f);
+            Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
         }
     }
 

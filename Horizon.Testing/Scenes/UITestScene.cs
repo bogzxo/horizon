@@ -1,11 +1,15 @@
 using System;
 using System.Numerics;
+
 using Horizon.Engine;
+using Horizon.HIDL.Runtime;
 using Horizon.Input;
 using Horizon.Rendering.UIX;
 using Horizon.Rendering.UIX.Components;
-using Horizon.HIDL.Runtime;
+
 using Silk.NET.Input;
+using Silk.NET.OpenGL;
+
 using Button = Horizon.Rendering.UIX.Components.Button;
 
 namespace Horizon.Testing.Scenes;
@@ -19,8 +23,9 @@ public class UITestScene : Scene
     public UITestScene()
     {
         // 1. Setup Camera and Compositor
-        ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
-        _compositor = AddComponent<UICompositor>();
+        var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
+        ActiveCamera = cam;
+        _compositor = AddComponent(new UICompositor(cam));
 
         // Register a print function in HIDL for testing
         _compositor.Runtime.GlobalScope.DeclareSystem("print", new NativeFunctionValue((args, env) =>
@@ -52,21 +57,28 @@ public class UITestScene : Scene
         base.PostInit();
 
         var (success, result) = _compositor.Runtime.Evaluate(@"
-            let btn = compositor.button({
-                label: ""Test"",
+            let btnAdd = compositor.button({
+                label: ""Add 10%"",
                 spr_scale: 1.0,
                 lbl_scale: 0.4,
-                pos: vec(0, 0)
+                pos: vec(64, -128)
             });
-            
 
-            btn.on_pressed = func() {
-                print(""HIDL Button Pressed! Progress reset!"");
+            let btnSub = compositor.button({
+                label: ""Sub 10%"",
+                spr_scale: 1.0,
+                lbl_scale: 0.4,
+                pos: vec(-64, -128)
+            });
+
+            btnAdd.on_pressed = func() {
+                pb.progress = pb.progress + 0.1;
             };
-            
+            btnSub.on_pressed = func() {
+                pb.progress = pb.progress - 0.1;
+            };
 
             let pb = compositor.progress_bar();
-            pb.progress = ""0.25;""
 
         ");
 
@@ -76,7 +88,9 @@ public class UITestScene : Scene
         }
 
         Console.WriteLine("UITestScene Initialized. Press SPACE to simulate pressing all buttons.");
+        Engine.GL.ClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     }
+
 
     public override void UpdateState(float dt)
     {
@@ -85,6 +99,7 @@ public class UITestScene : Scene
         // Simulating button presses for testing
         if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Space))
         {
+            _compositor.Scale += new Vector2(0.1f);
             foreach (var comp in _compositor.Components)
             {
                 if (comp is Button b)

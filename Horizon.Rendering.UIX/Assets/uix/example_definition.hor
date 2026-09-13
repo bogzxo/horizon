@@ -5,7 +5,8 @@
 
     animations: {
         btn_normal: { x: 0, y: 0 },
-        orange_square: { x: 1, y: 0 },
-        red_square: { x: 2, y: 0 },
+        btn_depressed: { x: 1, y: 0 },
+        progress_frame: { x: 2, y: 0, span: 1 },
+        progress_fill: { x: 4, y: 0, span: 1 },
     }
 }

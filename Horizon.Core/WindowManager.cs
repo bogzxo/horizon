@@ -108,6 +108,7 @@ public class WindowManager : IGameComponent, IDisposable
             ShouldSwapAutomatically = true,
             VSync = false,
             PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
+            PreferredStencilBufferBits = 8,
             Samples = 0,
             
         };

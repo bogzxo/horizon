@@ -1,6 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-
+using Horizon.Core.Components;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
@@ -15,7 +15,15 @@ namespace Horizon.Rendering.Spriting;
 /// <seealso cref="Horizon.Rendering.Spriting.I2DBatchedRenderer&lt;Horizon.Rendering.Spriting.Sprite&gt;" />
 public class SpriteBatch : GameObject
 {
+    /// <summary>
+    /// A Camera used to render all sprite meshes against, if null this defaults to the scene camera.
+    /// </summary>
     public Camera? CustomCamera { get; set; }
+
+    /// <summary>
+    /// The global transform for all sprite meshes.
+    /// </summary>
+    public TransformComponent2D Transform { get; private set; }
 
     /// <summary>
     /// Helper struct to aggregate data related to rendering a series of sprites with a common sprite sheet.
@@ -30,7 +38,6 @@ public class SpriteBatch : GameObject
         public SpriteSheetRenderObject(in SpriteBatchMesh mesh)
         {
             this.Mesh = mesh;
-            //this.Index = 0;
             this.Sprites = new();
         }
 
@@ -44,71 +51,19 @@ public class SpriteBatch : GameObject
             if (Sprites.Contains(sprite))
                 return;
 
-            // Make sure we conform our new array.
-            //if (Index > Sprites.Count)
-            //    Array.Resize(ref Sprites, Sprites.Length + 1);
-
             Sprites.Add(sprite);
         }
 
         public void AddRange(in Sprite[] sprites)
         {
             Sprites.AddRange(sprites);
-            //// Make sure we conform our new array.
-            //if (Index + sprites.Length > Sprites.Length)
-            //    Array.Resize(ref Sprites, Sprites.Length + sprites.Length);
-
-            //for (ushort i = 0; i < sprites.Length; i++)
-            //{
-            //    if (Sprites.Contains(sprites[i]))
-            //        continue;
-
-            //    Sprites[Index + i] = sprites[i];
-            //    Index++;
-            //}
         }
 
         public void AddRange(in List<Sprite> sprites)
         {
             Sprites.AddRange(sprites);
-            //// Make sure we conform our new array.
-            //if (Index + sprites.Count > Sprites.Length)
-            //    Array.Resize(ref Sprites, Sprites.Length + sprites.Count);
-
-            //int counter = 0;
-            //for (int i = 0; i < Sprites.Length; i++)
-            //{
-            //    if (Sprites[i] is null && sprites.Count > 0)
-            //    {
-            //        Sprites[i] = sprites[counter];
-            //        sprites.RemoveAt(counter);
-            //        counter++;
-            //    }
-            //}
-
-            //counter = 0;
-            //foreach (var sprite in sprites)
-            //{
-            //    if (Sprites.Contains(sprite))
-            //        continue;
-            //}
-
-            //for (ushort i = 0; i < sprites.Count; i++)
-            //{
-            //    if (Sprites.Contains(sprites[i]))
-            //        continue;
-
-            //    Sprites[Index + i] = sprites[i];
-            //    Index++;
-            //}
         }
     }
-
-    /// <summary>
-    /// The global transform for all sprite meshes.
-    /// </summary>
-    //public TransformComponent Transform { get; init; }
-
     /// <summary>
     /// Gets the shader.
     /// </summary>
@@ -124,12 +79,9 @@ public class SpriteBatch : GameObject
 
     private ConcurrentStack<Sprite> _queuedSprites = new();
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="SpriteBatch"/> class.
-    /// </summary>
-    /// <param name="shader">A custom shader used to render sprites. It is recommended to leave default and apply effects using the post processing pipeline.</param>
     public SpriteBatch()
     {
+        Transform = AddComponent<TransformComponent2D>();
     }
 
     public override void Initialize()
@@ -226,12 +178,13 @@ public class SpriteBatch : GameObject
                 }
             }
         }
+
         foreach (var (_, renderData) in SpritesheetSprites)
             renderData
                 .Mesh
-                .Draw( /*Transform.ModelMatrix, */
+                .Draw( Transform.ModelMatrix,
                     CollectionsMarshal.AsSpan(renderData.Sprites),
-                    CustomCamera is not null ? CustomCamera : Engine.ActiveCamera
+                    CustomCamera ?? Engine.ActiveCamera
                 );
     }
 }

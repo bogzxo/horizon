@@ -18,9 +18,7 @@ namespace Horizon.HIDL.Editor
 
             ImageIndex = GetImageIndex(itemType, parentObject);
 
-            MenuText = string.IsNullOrEmpty(parentObject)
-                ? $"{text} : {itemType}"
-                : $"{text} : {itemType}";
+            MenuText = $"{text} : {itemType}";
 
             ToolTipTitle = string.IsNullOrEmpty(parentObject) ? text : $"{parentObject}.{text}";
             ToolTipText = toolTip ?? (string.IsNullOrEmpty(parentObject)

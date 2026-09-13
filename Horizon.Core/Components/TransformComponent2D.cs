@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using Horizon.Rendering;
 
 namespace Horizon.Core.Components;
 
@@ -24,23 +25,59 @@ public class TransformComponent2D : IGameComponent
     /// The size factors of the game entity along each axis (X and Y).
     /// </summary>
     private Vector2 size = Vector2.One;
+    /// <summary>
+    /// You may override this as a means to fight Z axis clipping.
+    /// </summary>
+    public float ZOffset = 0.0f;
 
     /// <summary>
-    /// Updates the model matrix based on the current position, rotation, and size values.
+    /// Sets the origin around which the position is considered.
+    /// </summary>
+    public Origin Origin { get; set; } = Origin.Center;
+
+    
+    private Vector2 GetOriginOffset()
+    {
+        // Assuming your base generic box vertices go from -0.5 to +0.5
+        return Origin switch
+        {
+            Origin.Center => new Vector2(0f, 0f),
+
+            // Stretching from the right means the right edge stays pinned at x=0
+            Origin.Right => new Vector2(-0.5f, 0f),
+            Origin.Left => new Vector2(0.5f, 0f),
+
+            Origin.Top => new Vector2(0f, -0.5f),  // Note: Y-sign depends on whether your engine is Y-up or Y-down
+            Origin.Bottom => new Vector2(0f, 0.5f),
+
+            Origin.TopLeft => new Vector2(0.5f, -0.5f),
+            Origin.TopRight => new Vector2(-0.5f, -0.5f),
+            Origin.BottomLeft => new Vector2(0.5f, 0.5f),
+            Origin.BottomRight => new Vector2(-0.5f, 0.5f),
+
+            _ => Vector2.Zero
+        };
+    }
+
+    /// <summary>
+    /// Updates the model matrix based on the current position, rotation, size, and origin.
     /// </summary>
     private void updateModelMatrix()
     {
-        // Convert rotation angles to radians
-        float radiansZ = MathHelper.DegreesToRadians(rot);
+        // 1. Get the local space offset based on the selected origin
+        Vector2 originOffset = GetOriginOffset();
 
-        // Create quaternions for each rotation axis
+        // 2. Convert rotation angles to radians
+        float radiansZ = MathHelper.DegreesToRadians(rot);
         Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, radiansZ);
 
-        // Create the model matrix
+        // 3. Create the model matrix
+        // Order matters: Origin Offset -> Scale -> Rotation -> World Translation
         ModelMatrix =
-            Matrix4x4.CreateScale(size.X, size.Y, 1.0f)
+            Matrix4x4.CreateTranslation(originOffset.X, originOffset.Y, 0f)
+            * Matrix4x4.CreateScale(size.X, size.Y, 1.0f)
             * Matrix4x4.CreateFromQuaternion(rotation)
-            * Matrix4x4.CreateTranslation(pos.X, pos.Y, 0.0f);
+            * Matrix4x4.CreateTranslation(pos.X, pos.Y, ZOffset);
     }
 
     /// <summary>
