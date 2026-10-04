@@ -18,7 +18,7 @@ namespace Horizon.Physics;
 
 public class PhysicsWorld : IGameComponent
 {
-    public bool RenderDebug { get; set; } = true;
+    public bool RenderDebug { get; set; } = false;
     public List<PhysicsBodyComponent2D> StaticBodies { get; init; } = [];
     public List<PhysicsBodyComponent2D> DynamicBodies { get; init; } = new();
 

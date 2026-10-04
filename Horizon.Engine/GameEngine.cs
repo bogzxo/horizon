@@ -61,7 +61,7 @@ public class GameEngine : Entity
     public SceneManager SceneManager { get; init; }
     public InputManager InputManager { get; init; }
 
-    public Horizon.Webhost.WebHost WebHost { get; init; }
+    //public Horizon.Webhost.WebHost WebHost { get; init; }
     public SkylineDebugger Debugger { get; init; }
     public float Runtime { get; private set; }
 
@@ -87,8 +87,8 @@ public class GameEngine : Entity
         // Engine children
         Debugger = AddEntity<SkylineDebugger>();
         SceneManager = AddEntity<SceneManager>();
-        WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
-        WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
+        //WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
+        //WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
 
         // TryCreate window manager, the window manager will bootstrap and call Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));

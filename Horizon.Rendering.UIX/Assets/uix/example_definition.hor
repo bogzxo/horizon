@@ -8,5 +8,7 @@
         btn_depressed: { x: 1, y: 0 },
         progress_frame: { x: 2, y: 0, span: 1 },
         progress_fill: { x: 4, y: 0, span: 1 },
+        tgl_on: { x: 6, y: 0 },
+        tgl_off: { x: 7, y: 0 },
     }
 }

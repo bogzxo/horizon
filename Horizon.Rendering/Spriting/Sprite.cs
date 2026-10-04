@@ -22,8 +22,6 @@ public class Sprite : GameObject
 
     public bool UseStencilBuffer { get; set; } = false;
 
-    public bool ShouldDraw { get; set; } = true;
-
     public bool Flipped
     {
         set
