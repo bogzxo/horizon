@@ -49,6 +49,19 @@ public class SpriteSheetAnimationManager : IGameComponent
 
         return (value.FirstFrame, value.Index);
     }
+    public uint GetFrameCount(string name)
+    {
+        if (!Animations.TryGetValue(name, out SpriteAnimationDefinition value))
+        {
+            //Entity.ConcurrentLogger.Instance.Log(
+            //    Logging.LogLevel.Error,
+            //    $"Attempt to get animation '{name}' which doesn't exist!"
+            //); TODO: FIX
+            return 0;
+        }
+
+        return value.Index;
+    }
 
     public void UpdatePhysics(float dt)
     { }
@@ -135,7 +148,7 @@ public class SpriteSheetAnimationManager : IGameComponent
         Animations[name] = frame;
         return (finished, frame.Index);
     }
-    public bool SetFrame(string name, int index, bool invert = false)
+    public bool SetFrame(string name, uint index, bool invert = false)
     {
         var frame = Animations[name];
 

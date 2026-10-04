@@ -1,132 +1,120 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Text;
+﻿using System.Numerics;
+
 using Horizon.HIDL.Runtime;
-using ValueType = Horizon.HIDL.Runtime.ValueType;
-using Horizon.Rendering.Text;
-using System.Numerics;
-using Silk.NET.Maths;
+using Horizon.Rendering.UIX.Drawing;
+using Horizon.Rendering.UIX.Skinning;
 
-namespace Horizon.Rendering.UIX.Components
+namespace Horizon.Rendering.UIX.Components;
+
+/// <summary>
+/// A button with a text label. It is pressed by releasing the pointer on it after pressing it there.
+/// Unless given a size it is as big as its art, or bigger if the label needs the room.
+/// </summary>
+public class Button : UIComponent
 {
-    public class Button : UIComponent
+    private string style = "button";
+    private string pressedStyle = "button_pressed";
+    private string hoverStyle = "button_hover";
+
+    private IRuntimeValue? pressedHandler;
+
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>The scale of the label, or zero to use the skin's.</summary>
+    public float LabelScale { get; set; }
+
+    /// <summary>
+    /// The name of the skin region the button is drawn with. The regions named after it with
+    /// "_pressed" and "_hover" on the end are used for those states, if the skin has them.
+    /// </summary>
+    public string Style
     {
-        private string _text;
-        
-        public Action OnPressed { get; set; }
-        private IRuntimeValue _hidlCallback;
-        
-        private UISprite _backgroundSprite;
-        private TextLabel _textLabel;
-        private string _labelId = Guid.NewGuid().ToString();
-        private readonly Vector2 position;
-        private readonly float sprScale;
-        private readonly float lblScale;
-        private Rectangle<float> bounds;
-
-
-        public Button(in string label, Vector2 position, float sprScale, float lblScale, IRuntimeValue callback)
+        get => style;
+        set
         {
-            this.position = position;
-            this.sprScale = sprScale;
-            this.lblScale = lblScale;
-            _text = label;
-            _hidlCallback = callback;
+            style = value;
+            pressedStyle = value + "_pressed";
+            hoverStyle = value + "_hover";
+        }
+    }
 
+    /// <summary>
+    /// Shows the button as the chosen one of a group, the way hovering does. For menus that are
+    /// driven by a gamepad or the keyboard, where there is no pointer to hover with.
+    /// </summary>
+    public bool Selected { get; set; }
 
-            var onPressedValue = new NativeValue(
-                () => _hidlCallback ?? new NullValue(),
-                (val) =>
-                {
-                    _hidlCallback = val;
-                }
-            );
+    /// <summary>Called when the button is pressed.</summary>
+    public Action? OnPressed { get; set; }
 
-            this.Object = new ObjectValue(new Dictionary<string, IRuntimeValue>()
-            {
-                {"on_pressed", onPressedValue}
-            });
+    public Button()
+    { }
+
+    public Button(string label)
+    {
+        Label = label;
+    }
+
+    protected override bool HitTestVisible => true;
+
+    protected override Vector2 Measure(UISkin skin)
+    {
+        Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        Vector2 art = skin.TryGetRegion(style, out var region) ? region.Size : Vector2.Zero;
+
+        return Vector2.Max(art, label + skin.ButtonPadding.Total);
+    }
+
+    protected override void Paint(UIDrawList list)
+    {
+        UISkin skin = list.Skin;
+
+        bool enabled = EnabledInHierarchy;
+        bool down = enabled && IsPressed && IsHovered;
+        bool hovered = enabled && (IsHovered || Selected) && !down;
+        Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
+
+        // A state the skin has no art of its own for is drawn with the plain button's.
+        bool stateArt = skin.TryGetRegion(down ? pressedStyle : hovered ? hoverStyle : style, out var region);
+        if (stateArt || skin.TryGetRegion(style, out region))
+            list.NineSlice(region, Bounds, tint);
+        else
+            list.Rect(Bounds, skin.ControlColor * (down ? new Vector4(0.8f, 0.8f, 0.8f, 1.0f) : Vector4.One) * tint);
+
+        if (hovered && !stateArt)
+        {
+            list.Rect(Bounds.Shrink(new UIEdges(2.0f)), skin.HoverColor);
+            list.Outline(Bounds, 2.0f, skin.HighlightColor);
         }
 
-        public override void Initialize(UICompositor compositor)
-        {
-            // Initialize the background sprite
-            _backgroundSprite = new UISprite(compositor);
-            _backgroundSprite.SetAnimation("btn_normal");
-            _backgroundSprite.Transform.Position = position;
-            _backgroundSprite.Transform.Size *= sprScale;
+        // The label sinks with the button.
+        UIRect area = down ? new UIRect(Bounds.Min - Vector2.UnitY * 2.0f, Bounds.Max - Vector2.UnitY * 2.0f) : Bounds;
+        list.Text(
+            Label,
+            area,
+            Origin.Center,
+            LabelScale > 0.0f ? LabelScale : skin.TextScale,
+            skin.ControlTextColor * tint);
+    }
 
-            compositor.SpriteBatch.Add(_backgroundSprite);
-            bounds = new Rectangle<float>(position.X - _backgroundSprite.Transform.Size.X / 2, position.Y - _backgroundSprite.Transform.Size.Y / 2, _backgroundSprite.Transform.Size.X, _backgroundSprite.Transform.Size.Y);
+    protected internal override void OnClick()
+    {
+        OnPressed?.Invoke();
+        InvokeScript(pressedHandler);
+    }
 
-            // Initialize the text label
-            _textLabel = new TextLabel
-            {
-                Text = _text,
-                Origin = Origin.Center,
-                Transform =
-                {
-                    Size = Vector2.One * lblScale,
-                    Position = position
-                }
-            };
-            compositor.GlyphRenderer.AddLabel(_labelId, _textLabel);
+    protected override void DefineScript()
+    {
+        base.DefineScript();
 
-            this.OnPressed = () =>
-            {
-                if (_hidlCallback == null) return;
+        Expose("label", () => Label, value => Label = value);
+        Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
+        Expose("style", () => Style, value => Style = value);
+        Expose("selected", () => Selected, value => Selected = value);
 
-                switch (_hidlCallback)
-                {
-                    case NativeFunctionValue nfv:
-                        nfv.Callback.Invoke([], compositor.Runtime.GlobalScope);
-                        break;
-                    case FunctionValue fv:
-                        {
-                            var scope = new Horizon.HIDL.Runtime.Environment(fv.Environment);
-                            foreach (var stmt in fv.Body)
-                                compositor.Runtime.Interpreter.Evaluate(stmt, scope);
-                            break;
-                        }
-                    case AnonymousFunctionValue afv:
-                        {
-                            var scope = new Horizon.HIDL.Runtime.Environment(afv.Environment);
-                            foreach (var stmt in afv.Body)
-                                compositor.Runtime.Interpreter.Evaluate(stmt, scope);
-                            break;
-                        }
-                }
-            };
-        }
-
-        private float clickTimer = 0.0f;
-        private bool holdoff = false;
-        public override void UpdateState(float dt, in UICompositor compositor, Vector2 mousePos, bool clicked)
-        {
-            if (holdoff)
-            {
-                clickTimer += dt;
-                if (clickTimer > 0.15f)
-                {
-                    clickTimer = 0;
-                    holdoff = false;
-                    _backgroundSprite.SetAnimation("btn_normal");
-                }
-            }
-
-            if (clicked)
-            {
-                var testBounds = bounds.GetTranslated(new Vector2D<float>(compositor.Position.X, compositor.Position.Y))
-                    .GetScaled(new Vector2D<float>(compositor.Scale.X, compositor.Scale.Y), new Vector2D<float>(0));
-
-                if (testBounds.Contains(new Vector2D<float>(mousePos.X, mousePos.Y)))
-                {
-                    holdoff = true;
-                    OnPressed?.Invoke();
-                    _backgroundSprite.SetAnimation("btn_depressed");
-                }
-            }
-        }
+        // Scale used to be called spr_scale, and the handler could only be given as on_press up front.
+        Expose("spr_scale", () => Scale, value => Scale = value);
+        Expose("on_pressed", () => pressedHandler ?? new NullValue(), value => pressedHandler = value);
+        Expose("on_press", () => pressedHandler ?? new NullValue(), value => pressedHandler = value);
     }
 }

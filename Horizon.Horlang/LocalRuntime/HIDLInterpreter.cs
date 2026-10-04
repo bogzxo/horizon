@@ -201,8 +201,16 @@ public class HIDLInterpreter
     private IRuntimeValue EvaluateFunctionCallExpression(CallExpression statement, Environment env)
     {
         IRuntimeValue[] args = statement.Arguments.Select<IExpression, IRuntimeValue>((arg) => Evaluate(arg, env)).ToArray();
-        var func = Evaluate(statement.Caller, env);
+        return Call(Evaluate(statement.Caller, env), args, env);
+    }
 
+    /// <summary>
+    /// Calls a function value with arguments that have already been evaluated. This is how native code
+    /// runs a function a script handed to it, such as an event handler.
+    /// </summary>
+    /// <param name="env">The scope a native function is called from; script functions run in the scope they were declared in.</param>
+    public IRuntimeValue Call(IRuntimeValue func, IRuntimeValue[] args, Environment env)
+    {
         if (func.Type == ValueType.NativeFunction)
             return ((NativeFunctionValue)func).Callback.Invoke(args, env);
         else if (func.Type == ValueType.Function)

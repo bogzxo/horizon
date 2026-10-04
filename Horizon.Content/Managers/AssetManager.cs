@@ -59,9 +59,37 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
                 Status = AssetCreationStatus.Success,
                 Message = string.Empty,
             };
+            return true;
         }
 
         return TryCreate(name, description, out result);
+    }
+
+    /// <summary>
+    /// The handles of every asset alive right now. Together with <see cref="RemoveUnnamedExcept"/>
+    /// this lets a caller free whatever was created after a point in time.
+    /// </summary>
+    public HashSet<uint> GetOwnedHandles() => OwnedAssets.Select(asset => asset.Handle).ToHashSet();
+
+    /// <summary>
+    /// Disposes every asset that isn't in <paramref name="keep"/>. Named assets are left alone:
+    /// they are a cache shared by whoever asks for the name next.
+    /// </summary>
+    /// <returns>How many assets were disposed.</returns>
+    public int RemoveUnnamedExcept(HashSet<uint> keep)
+    {
+        var named = NamedAssets.Values.Select(asset => asset.Handle).ToHashSet();
+        var stale = OwnedAssets
+            .Where(asset => !keep.Contains(asset.Handle) && !named.Contains(asset.Handle))
+            .ToArray();
+
+        foreach (var asset in stale)
+        {
+            AssetDisposerType.Dispose(asset);
+            OwnedAssets.Remove(asset);
+        }
+
+        return stale.Length;
     }
 
     /// <summary>

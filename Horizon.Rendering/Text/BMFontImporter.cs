@@ -280,8 +280,42 @@ public class BMFontImporter
     public Texture Texture { get; private set; }
     public Dictionary<char, CharDefinition> Definitions { get; init; }
 
+    /// <summary>
+    /// The distance in pixels between the tops of two consecutive lines, 0 if the font doesn't say.
+    /// </summary>
+    public int LineHeight { get; private set; }
+
+    /// <summary>
+    /// The distance in pixels from the top of a line down to its baseline, 0 if the font doesn't say.
+    /// </summary>
+    public int Base { get; private set; }
+
+    // The char parser skips the header, so the "common" line is picked out separately.
+    private void ReadCommon(string bmFile)
+    {
+        if (!File.Exists(bmFile))
+            return;
+
+        foreach (string line in File.ReadLines(bmFile))
+        {
+            if (!line.StartsWith("common"))
+                continue;
+
+            foreach (string pair in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (pair.StartsWith("lineHeight=") && int.TryParse(pair["lineHeight=".Length..], out int lineHeight))
+                    LineHeight = lineHeight;
+                else if (pair.StartsWith("base=") && int.TryParse(pair["base=".Length..], out int baseline))
+                    Base = baseline;
+            }
+            return;
+        }
+    }
+
     public BMFontImporter(in string dir, in string bmFile)
     {
+        ReadCommon(Path.Combine(dir, bmFile));
+
         (CharDefinition[] defs, string path) = BMParser.Parse(Path.Combine(dir, bmFile));
         if (GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
             path,

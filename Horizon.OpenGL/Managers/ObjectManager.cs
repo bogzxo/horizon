@@ -108,6 +108,46 @@ public class ObjectManager : IGameComponent, IDisposable
         Queries.SetMessageCallback(ConcurrentLogger.Instance.Log);
     }
 
+    /// <summary>
+    /// What existed at one moment, as taken by <see cref="Snapshot"/>.
+    /// </summary>
+    public sealed class AssetSnapshot
+    {
+        internal HashSet<uint> Textures = [], Shaders = [], Buffers = [], Queries = [], RenderBuffers = [], FrameBuffers = [], VertexArrays = [];
+    }
+
+    /// <summary>
+    /// Records which assets exist, so that everything created afterwards can be freed in one go with
+    /// <see cref="ReleaseSince"/>. Has to be called on the GL thread.
+    /// </summary>
+    public AssetSnapshot Snapshot() => new()
+    {
+        Textures = Textures.GetOwnedHandles(),
+        Shaders = Shaders.GetOwnedHandles(),
+        Buffers = Buffers.GetOwnedHandles(),
+        Queries = Queries.GetOwnedHandles(),
+        RenderBuffers = RenderBuffers.GetOwnedHandles(),
+        FrameBuffers = FrameBuffers.GetOwnedHandles(),
+        VertexArrays = VertexArrays.GetOwnedHandles()
+    };
+
+    /// <summary>
+    /// Frees every asset created since a snapshot was taken, apart from named ones, which stay cached
+    /// for the next user. Has to be called on the GL thread, once nothing draws with those assets any more.
+    /// </summary>
+    /// <returns>How many assets were freed.</returns>
+    public int ReleaseSince(AssetSnapshot snapshot)
+    {
+        // The same order as Dispose: what refers to something goes before the thing it refers to.
+        return FrameBuffers.RemoveUnnamedExcept(snapshot.FrameBuffers)
+            + Textures.RemoveUnnamedExcept(snapshot.Textures)
+            + RenderBuffers.RemoveUnnamedExcept(snapshot.RenderBuffers)
+            + Shaders.RemoveUnnamedExcept(snapshot.Shaders)
+            + Queries.RemoveUnnamedExcept(snapshot.Queries)
+            + VertexArrays.RemoveUnnamedExcept(snapshot.VertexArrays)
+            + Buffers.RemoveUnnamedExcept(snapshot.Buffers);
+    }
+
     public void Render(float dt, object? obj = null)
     { }
 

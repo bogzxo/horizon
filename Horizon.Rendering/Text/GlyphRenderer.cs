@@ -69,7 +69,7 @@ public class GlyphRenderer : GameObject
         if (FontImporter.Definitions.TryGetValue(c, out var def))
             return def;
 
-        // Fallback gracefully (e.g., return the '?' character if a glyph is missing)
+        // Fallback gracefully
         if (FontImporter.Definitions.TryGetValue('?', out var fallback))
             return fallback;
 

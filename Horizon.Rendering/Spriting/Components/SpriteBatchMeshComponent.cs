@@ -285,16 +285,26 @@ public class SpriteBatchMesh : GameObject
         if (dataPtr == null) // no nullptr c#!!!! woww!!!!
             return;
 
-        for (int i = 0; i < sprites.Length; i++)
+        int i = 0;
+        foreach (var sprite in sprites)
         {
-            if (sprites[i] is null)
-                return; // incase we modified the array while itterating!! thanks multithreading!!
+            if (sprite == null) return;
+            
+            if (!sprite.Enabled)
+            {
+                i = Math.Max(0, i - 1);
+                continue;
+            }
 
             // shift the pointer by memoryOffset so we hit the right third of the buffer
-            dataPtr[memoryOffset + i].modelMatrix = sprites[i].UseStencilBuffer && useStencilBuffer ? sprites[i].StencilTransform.ModelMatrix : sprites[i].Transform.ModelMatrix;
-            dataPtr[memoryOffset + i].spriteOffset = sprites[i].GetFrameOffset();
-            dataPtr[memoryOffset + i].frameIndex = sprites[i].GetFrameIndex();
-            dataPtr[memoryOffset + i].spriteSpan = sprites[i].GetFrameSpan();
+            dataPtr[memoryOffset + i].modelMatrix = 
+                sprite.UseStencilBuffer && useStencilBuffer 
+                    ? sprite.StencilTransform.ModelMatrix : sprite.Transform.ModelMatrix;
+            dataPtr[memoryOffset + i].spriteOffset = sprite.GetFrameOffset();
+            dataPtr[memoryOffset + i].frameIndex = sprite.GetFrameIndex();
+            dataPtr[memoryOffset + i].spriteSpan = sprite.GetFrameSpan();
+
+            i++;
         }
     }
 }

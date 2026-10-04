@@ -84,7 +84,7 @@ public class WindowManager : IGameComponent, IDisposable
     public WindowManager(in WindowManagerConfiguration config)
     {
         GlfwWindowing.RegisterPlatform();
-        GlfwInput.RegisterPlatform();
+        GlfwInput.RegisterPlatform(); 
 
         tokenSource = new CancellationTokenSource();
 
@@ -129,7 +129,7 @@ public class WindowManager : IGameComponent, IDisposable
         this._window.Update += (dt) => Parent.UpdatePhysics((float)dt);
 
         this._window.Resize += WindowResize;
-
+        
         this._window.Load += () =>
         {
             _window.Center();

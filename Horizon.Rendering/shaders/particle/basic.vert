@@ -14,6 +14,11 @@ out vec2 fragPos;
 
 void main() {
   alive = vAlive;
-  gl_Position = uCameraProjection * uCameraView * vec4(vPos + vOffset, 0.0, 1.0);
   fragPos = vPos + vOffset;
+
+  // The compute simulator keeps dead particles in its pool, so they still arrive here as instances:
+  // push them outside the clip volume so they never reach the rasteriser.
+  gl_Position = vAlive > 0.0
+    ? uCameraProjection * uCameraView * vec4(fragPos, 0.0, 1.0)
+    : vec4(2.0, 2.0, 2.0, 1.0);
 }
