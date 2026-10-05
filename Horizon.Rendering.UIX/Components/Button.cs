@@ -12,6 +12,8 @@ namespace Horizon.Rendering.UIX.Components;
 /// </summary>
 public class Button : UIComponent
 {
+    private const string SELECTION_REGION = "selection";
+
     private string style = "button";
     private string pressedStyle = "button_pressed";
     private string hoverStyle = "button_hover";
@@ -41,8 +43,19 @@ public class Button : UIComponent
     /// <summary>
     /// Shows the button as the chosen one of a group, the way hovering does. For menus that are
     /// driven by a gamepad or the keyboard, where there is no pointer to hover with.
+    /// A skin with a "selection" region has that drawn around the button as well, so the chosen one
+    /// can be told from one the pointer just happens to be over.
     /// </summary>
     public bool Selected { get; set; }
+
+    /// <summary>
+    /// Whether the button gives a little when something happens to it: a bump when it lights up
+    /// (hovered or <see cref="Selected"/>) and a squeeze when it is pressed.
+    /// </summary>
+    public bool Animated { get; set; } = true;
+
+    // Whether the button was lit up on the last update, and whether there has been one yet.
+    private bool wasLit, updated;
 
     /// <summary>Called when the button is pressed.</summary>
     public Action? OnPressed { get; set; }
@@ -60,9 +73,11 @@ public class Button : UIComponent
     protected override Vector2 Measure(UISkin skin)
     {
         Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
-        Vector2 art = skin.TryGetRegion(style, out var region) ? region.Size : Vector2.Zero;
+        bool hasArt = skin.TryGetRegion(style, out var region);
 
-        return Vector2.Max(art, label + skin.ButtonPadding.Total);
+        // Art that says where its label goes is given that much room around it, otherwise the skin decides.
+        UIEdges padding = hasArt ? region.ContentOr(skin.ButtonPadding) : skin.ButtonPadding;
+        return Vector2.Max(hasArt ? region.Size : Vector2.Zero, label + padding.Total);
     }
 
     protected override void Paint(UIDrawList list)
@@ -87,8 +102,16 @@ public class Button : UIComponent
             list.Outline(Bounds, 2.0f, skin.HighlightColor);
         }
 
-        // The label sinks with the button.
-        UIRect area = down ? new UIRect(Bounds.Min - Vector2.UnitY * 2.0f, Bounds.Max - Vector2.UnitY * 2.0f) : Bounds;
+        // The marker of the chosen one sits one of its own pixels outside of the button.
+        if (enabled && Selected && skin.TryGetRegion(SELECTION_REGION, out var marker))
+            list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
+
+        // The label is centred on what the padding leaves over, which is the face of the button when
+        // the art has a lip or a shadow along one side. It sinks with the button.
+        bool hasArt = stateArt || skin.TryGetRegion(style, out region);
+        UIRect area = Bounds.Shrink(hasArt ? region.ContentOr(skin.ButtonPadding) : skin.ButtonPadding);
+        if (down)
+            area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
         list.Text(
             Label,
             area,
@@ -97,8 +120,23 @@ public class Button : UIComponent
             skin.ControlTextColor * tint);
     }
 
+    protected override void Update(float dt)
+    {
+        bool lit = EnabledInHierarchy && (IsHovered || Selected);
+
+        // A button that is lit from the start hasn't changed, there is nothing to bump for.
+        if (lit && !wasLit && updated && Animated)
+            this.Punch(0.05f, 0.2f);
+
+        wasLit = lit;
+        updated = true;
+    }
+
     protected internal override void OnClick()
     {
+        if (Animated)
+            this.Punch(-0.08f, 0.2f);
+
         OnPressed?.Invoke();
         InvokeScript(pressedHandler);
     }

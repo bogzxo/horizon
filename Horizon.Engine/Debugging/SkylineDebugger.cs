@@ -71,10 +71,13 @@ public class SkylineDebugger : Entity
     {
         base.RenderUi(root);
 
+
+#if DEBUG
         RenderToContainer =
             Enabled &&
             GameContainerDebugger is { Visible: true, FrameBuffer.Handle: > 0 };
 
+#endif
 
         if (!Enabled)
         {

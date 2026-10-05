@@ -160,6 +160,7 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     private async Task TransmitData(CancellationToken cancellationToken)
     {
+#if DEBUG
         try
         {
             byte[] bytes;
@@ -189,6 +190,8 @@ public class DashboardContentProvider : IWebHostContentProvider
         {
             Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error transmitting data: {ex.Message}");
         }
+        
+#endif
     }
 
     private async Task ReceiveData(CancellationToken cancellationToken)

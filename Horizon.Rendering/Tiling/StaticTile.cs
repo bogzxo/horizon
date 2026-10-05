@@ -17,6 +17,7 @@ public partial class Tiling<TTextureID>
             public readonly bool IsVisible { get; init; }
             public readonly bool AlwaysOnTop { get; init; }
             public readonly float Emissive { get; init; }
+            public readonly bool CastsShadows { get; init; }
         }
 
         public int ID { get; init; }
@@ -28,6 +29,7 @@ public partial class Tiling<TTextureID>
             this.Set = config.Set;
             this.PhysicsData.IsCollidable = config.IsCollectible;
             this.RenderingData.IsVisible = config.IsVisible;
+            this.RenderingData.CastsShadows = config.CastsShadows;
         }
     }
 }

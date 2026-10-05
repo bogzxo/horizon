@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
+using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering.UIX.Drawing;
 using Horizon.Rendering.UIX.Scripting;
@@ -38,6 +39,8 @@ public abstract class UIComponent
     // while another thread adds to the tree.
     private readonly Lock childrenLock = new();
     private UIComponent[] children = [];
+
+    private TweenContext? tweens;
 
     private UIModule? module;
     private Dictionary<string, IRuntimeValue>? script;
@@ -85,6 +88,27 @@ public abstract class UIComponent
 
     /// <summary>The space kept clear between the edges of this component and its children.</summary>
     public UIEdges Padding { get; set; }
+
+    /// <summary>
+    /// Moves where the component and everything inside it is drawn, away from where the layout put it.
+    /// Nothing around it moves along: this is for animating, see <see cref="UITweens"/>. Y points up.
+    /// </summary>
+    public Vector2 VisualOffset { get; set; }
+
+    /// <summary>
+    /// Scales how the component and everything inside it is drawn, around the middle of its bounds.
+    /// The layout doesn't notice, unlike with <see cref="Scale"/>.
+    /// </summary>
+    public Vector2 VisualScale { get; set; } = Vector2.One;
+
+    /// <summary>How see-through the component and everything inside it is drawn, from 0 (not at all) to 1.</summary>
+    public float Opacity { get; set; } = 1.0f;
+
+    /// <summary>
+    /// The tweens that are animating this component, moved along once per update for as long as the component
+    /// is in a UI. See <see cref="UITweens"/> for the ones that come ready made.
+    /// </summary>
+    public TweenContext Tweens => tweens ?? Interlocked.CompareExchange(ref tweens, new TweenContext(), null) ?? tweens;
 
     /// <summary>An invisible component, and everything inside it, is neither drawn nor hit by the pointer.</summary>
     public bool Visible { get; set; } = true;
@@ -245,13 +269,20 @@ public abstract class UIComponent
 
     internal void PaintTree(UIDrawList list)
     {
-        if (!Visible)
+        if (!Visible || Opacity <= 0.0f)
             return;
+
+        bool animated = VisualOffset != Vector2.Zero || VisualScale != Vector2.One || Opacity < 1.0f;
+        if (animated)
+            list.PushVisual(VisualOffset, VisualScale, Bounds.Center, Opacity);
 
         Paint(list);
 
         foreach (var child in children)
             child.PaintTree(list);
+
+        if (animated)
+            list.PopVisual();
     }
 
     /// <summary>
@@ -264,6 +295,7 @@ public abstract class UIComponent
 
     internal void UpdateTree(float dt)
     {
+        tweens?.Tick(dt);
         Update(dt);
 
         foreach (var child in children)
@@ -287,6 +319,16 @@ public abstract class UIComponent
     {
         if (!Visible)
             return null;
+
+        // The pointer is where things are drawn, which for a component that is being animated isn't where
+        // the layout has them.
+        if (VisualOffset != Vector2.Zero || VisualScale != Vector2.One)
+        {
+            if (VisualScale.X == 0.0f || VisualScale.Y == 0.0f)
+                return null;
+
+            point = Bounds.Center + (point - VisualOffset - Bounds.Center) / VisualScale;
+        }
 
         var snapshot = children;
         for (int i = snapshot.Length - 1; i >= 0; i--)

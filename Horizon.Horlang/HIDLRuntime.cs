@@ -45,7 +45,24 @@ public class HIDLRuntime
             UserScope.Reset();
             return new StringValue("UserScope Reset!");
         }), true);
+
+        // to_text(value) gives a value back as the source that declares it, to_text() the whole user scope.
+        GlobalScope.Declare("to_text", new NativeFunctionValue((args, _) =>
+        {
+            return new StringValue(args.Length > 0 ? HIDLWriter.Write(args[0]) : ToText());
+        }), true);
     }
+
+    /// <summary>
+    /// Writes everything declared in the user scope as source that declares it again when it is evaluated,
+    /// see <see cref="HIDLWriter"/> for what can be written.
+    /// </summary>
+    public string ToText() => HIDLWriter.Write(UserScope);
+
+    /// <summary>
+    /// Saves everything declared in the user scope to a file that <see cref="Evaluate"/> can read back.
+    /// </summary>
+    public void Save(in string path) => File.WriteAllText(path, ToText());
 
     /// <summary>
     /// Creates a valid runtime value without directly modifying the current environment; This can be used to declare a system object by generating a valid runtime value that can be injected into <see cref="Environment.DeclareSystem(in string identifier, in IRuntimeValue value)"/>.

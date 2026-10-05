@@ -43,11 +43,16 @@ public class Slider : ProgressBar
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
 
         UIRect track = GetTrack(skin);
+
+        // A handle the skin has art for is as big as its art, otherwise it is a bar as tall as the slider.
+        bool hasHandle = skin.TryGetRegion(HANDLE_REGION, out var region);
         UIRect handle = UIRect.FromCenter(
             new Vector2(track.Min.X + track.Width * Value, Bounds.Center.Y),
-            new Vector2(HANDLE_WIDTH, Bounds.Height));
+            hasHandle ? region.Size : new Vector2(HANDLE_WIDTH, Bounds.Height));
 
-        if (skin.TryGetRegion(HANDLE_REGION, out var region) || skin.TryGetRegion(HANDLE_FALLBACK_REGION, out region))
+        if (hasHandle)
+            list.Region(region, handle, tint);
+        else if (skin.TryGetRegion(HANDLE_FALLBACK_REGION, out region))
             list.NineSlice(region, handle, tint);
         else
             list.Rect(handle, skin.ControlColor * tint);

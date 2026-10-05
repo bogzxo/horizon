@@ -1,33 +1,74 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 
 using Bogz.Logging;
 using Bogz.Logging.Loggers;
 
-using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Rendering.Spriting;
 using Horizon.Rendering.UIX.Drawing;
 using Horizon.Rendering.UIX.Scripting;
 
 namespace Horizon.Rendering.UIX.Skinning;
 
 /// <summary>
-/// The look of a UI: one texture holding the art, the named regions of it the components draw with,
-/// a font, and the colours and sizes components use unless told otherwise.
+/// The look of a UI: the art the components draw with, a font, and the colours and sizes components use
+/// unless told otherwise.
+/// The art comes from a sprite sheet definition (or straight out of an image) and is stitched into an
+/// atlas of the skin's own, one piece at a time as it is first asked for. So a skin can sit on top of a
+/// pack of thousands of sprites and only ever hold the handful a UI really uses, and any sprite of the
+/// pack can be drawn by name without the skin having to list it.
 /// Components ask for regions by name and fall back to flat colours when a skin doesn't have one, so
 /// a skin only needs the art it actually has.
 /// </summary>
-public sealed class UISkin
+public sealed class UISkin : IUIIconSource, IDisposable
 {
     private const string DEFAULT_FONT_DIRECTORY = "fonts/vcr_mono/";
     private const string DEFAULT_FONT_FILE = "vcr_mono.fnt";
+    private const char FRAME_SEPARATOR = '#';
+    private const int MAX_INHERITANCE = 8;
 
-    private readonly Dictionary<string, UIRegion> regions = [];
+    /// <summary>What the skin file says a region is: a sprite of the sheet, or a rectangle of an image.</summary>
+    private readonly record struct RegionSource(
+        string? Sprite, string? Path, int X, int Y, int Width, int Height, UIEdges? Border, UIEdges? Content, float? Scale, Vector4 Tint);
 
-    public Texture Texture { get; }
+    /// <summary>What the skin file says an icon is.</summary>
+    private readonly record struct IconSource(
+        string Region, string Label, Vector4? LabelColor, string? Symbol = null, Vector4 SymbolColor = default, float SymbolSize = 0.5f);
+
+    /// <summary>A name worked out down to the pixels it stands for, which can be done before any of it is loaded.</summary>
+    private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key);
+
+    /// <summary>An icon worked out the same way.</summary>
+    private sealed record IconArt(
+        string Region, Vector2 TexelSize, string Label, Vector4 LabelColor, string? Symbol, Vector4 SymbolColor, float SymbolSize);
+
+    private readonly Dictionary<string, RegionSource> sources = [];
+    private readonly Dictionary<string, IconSource> icons = [];
+
+    // Filled in as names are asked for. A name that stands for nothing is remembered as null, as
+    // components ask for art a skin might not have on every single frame.
+    private readonly ConcurrentDictionary<string, Art?> arts = new();
+    private readonly ConcurrentDictionary<string, IconArt?> iconArts = new();
+    private readonly ConcurrentDictionary<string, UIRegion> regions = new();
+
+    /// <summary>The texture the art of the skin is stitched into.</summary>
+    public TextureAtlas Atlas { get; } = new();
+
     public UIFont Font { get; }
+
+    /// <summary>The sprite sheet definition the art is looked up in, null for a skin that only cuts its regions out of an image.</summary>
+    public SpriteSheetDefinition? Sheet { get; }
+
+    /// <summary>Which theme of the sprite sheet the skin uses, for sheets that hold their art in several colours.</summary>
+    public string? Theme { get; }
+
+    /// <summary>
+    /// How many units on screen a texel of the art takes up. Pixel art is usually drawn at two or three
+    /// times its size; everything a region measures (its size, its borders) is scaled along.
+    /// </summary>
+    public float ArtScale { get; private set; } = 1.0f;
 
     /// <summary>The scale text is drawn at unless a component asks for its own.</summary>
     public float TextScale { get; set; } = 0.4f;
@@ -65,6 +106,21 @@ public sealed class UISkin
     /// <summary>What a disabled control is tinted with.</summary>
     public Vector4 DisabledTint { get; set; } = new(1.0f, 1.0f, 1.0f, 0.4f);
 
+    /// <summary>The colour of the label on an icon that doesn't say its own.</summary>
+    public Vector4 IconLabelColor { get; set; } = new(1.0f, 1.0f, 1.0f, 1.0f);
+
+    /// <summary>
+    /// How tall the icons in a line of text are, as a multiple of the height of the line. Every icon is
+    /// drawn at that height, whatever the size of its art.
+    /// </summary>
+    public float IconScale { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Whether the fill of a progress bar or slider is drawn on top of its frame rather than underneath.
+    /// For art whose frame is the whole empty bar, not just the rim of one.
+    /// </summary>
+    public bool ProgressFillOverFrame { get; set; }
+
     /// <summary>The space a button keeps between its label and its edges.</summary>
     public UIEdges ButtonPadding { get; set; } = new(16.0f, 10.0f);
 
@@ -77,25 +133,181 @@ public sealed class UISkin
     /// <summary>The gap between related things: a toggle and its caption, the children of a stack.</summary>
     public float Spacing { get; set; } = 10.0f;
 
-    public UISkin(Texture texture, UIFont font)
+    /// <summary>
+    /// The themes the skin file comes in, the same skin with some things done differently (its art in another
+    /// colour). Empty for a skin that is just the one.
+    /// </summary>
+    public IReadOnlyList<string> Themes { get; private set; } = [];
+
+    public UISkin(UIFont font, SpriteSheetDefinition? sheet = null, string? theme = null)
     {
-        Texture = texture;
         Font = font;
+        Sheet = sheet;
+        Theme = theme;
+
+        // The font can't know what an icon is, but text has to make room for them.
+        font.Icons = this;
     }
 
-    public void SetRegion(string name, in UIRegion region) => regions[name] = region;
-
-    public bool TryGetRegion(string name, out UIRegion region) => regions.TryGetValue(name, out region);
+    /// <summary>
+    /// Puts the art that was asked for since the last time into the atlas. Has to be called on the GL
+    /// thread; the compositor does, before it draws.
+    /// </summary>
+    /// <returns>Whether any art arrived.</returns>
+    internal bool Update() => Atlas.Update();
 
     /// <summary>
-    /// Loads a skin from a HIDL definition (see Assets/uix/skin.hor) that sits next to its texture.
-    /// Has to run on the GL thread. Logs what went wrong and returns null if the skin can't be loaded.
+    /// Finds a piece of art by name: a region the skin declares, or failing that any sprite of its sheet
+    /// ("name#2" being the third frame of one that has frames). Art that is asked for the first time isn't
+    /// there until the next frame is drawn, as it has to be stitched into the atlas first.
     /// </summary>
-    public static UISkin? Load(string directory, string file)
+    public bool TryGetRegion(string name, out UIRegion region)
+    {
+        if (regions.TryGetValue(name, out region))
+            return true;
+
+        if (name.Length == 0 || Describe(name) is not { } art)
+            return false;
+
+        Atlas.Request(art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height);
+        if (!Atlas.TryGet(art.Key, out var placed))
+            return false;
+
+        region = new UIRegion(
+            placed.Position, placed.Size, art.Border, art.Scale, art.Tint, art.Source.Frames, art.Source.FrameTime, art.Content);
+        regions[name] = region;
+        return true;
+    }
+
+    /// <summary>
+    /// Finds an icon by name, the way an <c>[icon:name]</c> tag does: an icon the skin declares, or
+    /// failing that the region of that name.
+    /// </summary>
+    public bool TryGetIcon(ReadOnlySpan<char> name, out UIIcon icon)
+    {
+        icon = default;
+
+        if (DescribeIcon(name) is not { } art || !TryGetRegion(art.Region, out var region))
+            return false;
+
+        // A symbol that hasn't made it into the atlas yet is left off for a frame, the icon is still an icon.
+        UIRegion? symbol = art.Symbol is not null && TryGetRegion(art.Symbol, out var found) ? found : null;
+
+        icon = new UIIcon(region, art.Label, art.LabelColor, symbol, art.SymbolColor, art.SymbolSize);
+        return true;
+    }
+
+    float IUIIconSource.IconScale => IconScale;
+
+    bool IUIIconSource.TryGetIconSize(ReadOnlySpan<char> name, out Vector2 texelSize)
+    {
+        texelSize = DescribeIcon(name)?.TexelSize ?? default;
+        return texelSize != default;
+    }
+
+    private IconArt? DescribeIcon(ReadOnlySpan<char> name)
+    {
+        // Looked up by the characters of the tag as they are, so text with icons in it doesn't make a
+        // string for every one of them on every frame.
+        var lookup = iconArts.GetAlternateLookup<ReadOnlySpan<char>>();
+        if (lookup.TryGetValue(name, out var known))
+            return known;
+
+        string key = name.ToString();
+        IconSource source = icons.TryGetValue(key, out var declared) ? declared : new IconSource(key, string.Empty, null);
+
+        IconArt? icon = Describe(source.Region) is { } art
+            ? new IconArt(
+                source.Region,
+                new Vector2(art.Source.Width, art.Source.Height),
+                source.Label,
+                source.LabelColor ?? IconLabelColor,
+                source.Symbol,
+                source.SymbolColor,
+                source.SymbolSize)
+            : null;
+
+        iconArts[key] = icon;
+        return icon;
+    }
+
+    private Art? Describe(string name) => arts.TryGetValue(name, out var art) ? art : arts.GetOrAdd(name, Lookup);
+
+    private Art? Lookup(string name)
+    {
+        // A single frame is asked for as "name#3", of whatever the name stands for.
+        string frame = string.Empty;
+        int separator = name.LastIndexOf(FRAME_SEPARATOR);
+        if (separator > 0)
+        {
+            frame = name[separator..];
+            name = name[..separator];
+        }
+
+        SpriteSource source;
+        UIEdges? border = null;
+        UIEdges? content = null;
+        float scale = ArtScale;
+        Vector4 tint = Vector4.One;
+
+        if (sources.TryGetValue(name, out var declared))
+        {
+            if (declared.Sprite is { } sprite)
+            {
+                if (Sheet is null || !Sheet.TryGetSprite(sprite + frame, Theme, out source))
+                {
+                    ConcurrentLogger.Instance.Log(
+                        LogLevel.Error,
+                        $"[UISkin] '{name}' is meant to be the sprite '{sprite + frame}', which the sprite sheet doesn't have.");
+                    return null;
+                }
+            }
+            else
+            {
+                if (frame.Length > 0)
+                    return null;
+
+                source = new SpriteSource(
+                    declared.Path!, declared.X, declared.Y, declared.Width, declared.Height, Vector4.Zero, Vector4.Zero, 1, 0.1f);
+            }
+
+            border = declared.Border;
+            content = declared.Content;
+            scale = declared.Scale ?? ArtScale;
+            tint = declared.Tint;
+        }
+        else if (Sheet is null || !Sheet.TryGetSprite(name + frame, Theme, out source))
+        {
+            return null;
+        }
+
+        return new Art(
+            source,
+            border ?? new UIEdges(source.Border.X, source.Border.Y, source.Border.Z, source.Border.W),
+            content ?? new UIEdges(source.Content.X, source.Content.Y, source.Content.Z, source.Content.W),
+            scale,
+            tint,
+            // The same pixels asked for under two names are only stitched in once.
+            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height));
+    }
+
+    public void Dispose() => Atlas.Dispose();
+
+    /// <summary>
+    /// Loads a skin from a HIDL definition (see Assets/uix/dead_revolver/skin.hor for one that explains
+    /// itself). Has to run on the GL thread. Logs what went wrong and returns null if the skin can't be loaded.
+    /// </summary>
+    /// <param name="theme">Which of the skin's themes to load, null for the one the file says is its usual one.</param>
+    public static UISkin? Load(string directory, string file, string? theme = null)
     {
         try
         {
-            return Read(directory, file);
+            var properties = ReadProperties(directory, file, 0);
+            string[] themes = ApplyTheme(properties, theme);
+
+            UISkin skin = Read(directory, properties);
+            skin.Themes = themes;
+            return skin;
         }
         catch (Exception e)
         {
@@ -106,40 +318,100 @@ public sealed class UISkin
         }
     }
 
-    private static UISkin Read(string directory, string file)
+    /// <summary>
+    /// Reads what a skin file sets, on top of what the skin it inherits from sets.
+    /// </summary>
+    private static Dictionary<string, IRuntimeValue> ReadProperties(string directory, string file, int depth)
     {
         string path = Path.Combine(directory, file);
         if (!File.Exists(path))
-            throw new FileNotFoundException("The file doesn't exist.");
+            throw new FileNotFoundException($"'{path}' doesn't exist.");
+        if (depth > MAX_INHERITANCE)
+            throw new Exception($"'{path}' inherits from itself.");
 
         HIDLRuntime runtime = new();
         var (success, message) = runtime.Evaluate(File.ReadAllText(path));
         if (!success)
-            throw new Exception(message);
+            throw new Exception($"'{path}': {message}");
 
         if (runtime.UserScope.Lookup("skin") is not ObjectValue definition)
-            throw new Exception("It has to declare an object called 'skin'.");
+            throw new Exception($"'{path}' has to declare an object called 'skin'.");
 
-        var properties = definition.Properties;
+        if (!definition.Properties.TryGetValue("inherit", out var parent))
+            return new Dictionary<string, IRuntimeValue>(definition.Properties);
 
-        if (!properties.TryGetValue("texture", out var textureFile))
-            throw new Exception("The skin has to name its texture.");
+        var properties = ReadProperties(directory, UIScript.ToText(parent, "inherit"), depth + 1);
+        Merge(properties, definition.Properties);
+        return properties;
+    }
 
-        if (!GameEngine
-                .Instance
-                .ObjectManager
-                .Textures
-                .TryCreate(
-                    new TextureDescription
-                    {
-                        Paths = [Path.Combine(directory, UIScript.ToText(textureFile, "texture"))],
-                        Definition = TextureDefinition.RgbaUnsignedByteNearest
-                    },
-                    out var texture))
+    /// <summary>
+    /// Puts what one of the skin's themes does differently on top of what the skin sets, and takes the list of
+    /// themes out of the properties.
+    /// </summary>
+    /// <returns>The names of the themes the skin has.</returns>
+    private static string[] ApplyTheme(Dictionary<string, IRuntimeValue> properties, string? theme)
+    {
+        string? wanted = theme ?? (properties.TryGetValue("theme", out var usual) ? UIScript.ToText(usual, "theme") : null);
+        string[] names = [];
+
+        if (properties.Remove("themes", out var themesValue))
         {
-            throw new Exception(texture.Message);
+            if (themesValue is not ObjectValue themes)
+                throw new Exception("themes has to be an object.");
+
+            names = [.. themes.Properties.Keys];
+
+            if (wanted is not null && themes.Properties.TryGetValue(wanted, out var own))
+            {
+                if (own is not ObjectValue different)
+                    throw new Exception($"themes.{wanted} has to be an object.");
+
+                Merge(properties, different.Properties);
+            }
+            else if (theme is not null)
+            {
+                throw new Exception($"The skin has no theme called '{theme}'. It has: {string.Join(", ", names)}.");
+            }
         }
 
+        if (wanted is not null)
+            properties["theme"] = new StringValue(wanted);
+
+        return names;
+    }
+
+    /// <summary>
+    /// Puts properties on top of others. Regions and icons are added to the ones that are there, everything
+    /// else replaces what was there.
+    /// </summary>
+    private static void Merge(Dictionary<string, IRuntimeValue> properties, Dictionary<string, IRuntimeValue> over)
+    {
+        foreach (var (key, value) in over)
+        {
+            if (key == "inherit")
+                continue;
+
+            if (key is "regions" or "icons"
+                && value is ObjectValue added
+                && properties.TryGetValue(key, out var below)
+                && below is ObjectValue existing)
+            {
+                var merged = new Dictionary<string, IRuntimeValue>(existing.Properties);
+                foreach (var (name, entry) in added.Properties)
+                    merged[name] = entry;
+
+                properties[key] = new ObjectValue(merged);
+            }
+            else
+            {
+                properties[key] = value;
+            }
+        }
+    }
+
+    private static UISkin Read(string directory, Dictionary<string, IRuntimeValue> properties)
+    {
         string fontDirectory = DEFAULT_FONT_DIRECTORY;
         string fontFile = DEFAULT_FONT_FILE;
         if (properties.TryGetValue("font", out var fontValue))
@@ -155,13 +427,30 @@ public sealed class UISkin
             fontFile = UIScript.ToText(name, "font.file");
         }
 
-        var skin = new UISkin(texture.Asset, new UIFont(fontDirectory, fontFile));
+        SpriteSheetDefinition? sheet = properties.TryGetValue("sprites", out var sprites)
+            ? SpriteSheetDefinition.Load(directory, UIScript.ToText(sprites, "sprites"))
+            : null;
+
+        string? theme = properties.TryGetValue("theme", out var themeValue) ? UIScript.ToText(themeValue, "theme") : null;
+        if (theme is not null && sheet is not null && !sheet.Themes.Contains(theme))
+            throw new Exception($"The sprite sheet has no theme called '{theme}'. It has: {string.Join(", ", sheet.Themes)}.");
+
+        // The image regions are cut out of when they give a rectangle rather than the name of a sprite.
+        string? texture = properties.TryGetValue("texture", out var textureFile)
+            ? Path.Combine(directory, UIScript.ToText(textureFile, "texture"))
+            : null;
+
+        var skin = new UISkin(new UIFont(fontDirectory, fontFile), sheet, theme);
+
+        // Before anything else: it is what every region is scaled by unless it says otherwise.
+        if (properties.TryGetValue("art_scale", out var artScale))
+            skin.ArtScale = UIScript.ToNumber(artScale, "art_scale");
 
         foreach (var (key, value) in properties)
         {
             switch (key)
             {
-                case "texture" or "font":
+                case "texture" or "font" or "sprites" or "theme" or "art_scale":
                     break;
 
                 case "text_scale":
@@ -200,6 +489,15 @@ public sealed class UISkin
                 case "disabled_tint":
                     skin.DisabledTint = UIScript.ToColor(value, key);
                     break;
+                case "icon_label_color":
+                    skin.IconLabelColor = UIScript.ToColor(value, key);
+                    break;
+                case "icon_scale":
+                    skin.IconScale = UIScript.ToNumber(value, key);
+                    break;
+                case "progress_fill_over_frame":
+                    skin.ProgressFillOverFrame = UIScript.ToBoolean(value, key);
+                    break;
                 case "button_padding":
                     skin.ButtonPadding = UIScript.ToEdges(value, key);
                     break;
@@ -218,7 +516,15 @@ public sealed class UISkin
                         throw new Exception("regions has to be an object.");
 
                     foreach (var (name, region) in regions.Properties)
-                        skin.SetRegion(name, ReadRegion(name, region));
+                        skin.sources[name] = ReadRegion(name, region, texture);
+                    break;
+
+                case "icons":
+                    if (value is not ObjectValue icons)
+                        throw new Exception("icons has to be an object.");
+
+                    foreach (var (name, icon) in icons.Properties)
+                        skin.ReadIcon(name, icon, texture);
                     break;
 
                 default:
@@ -226,24 +532,98 @@ public sealed class UISkin
             }
         }
 
+        // A skin that only says what its accent is has things highlighted in it.
+        if (properties.ContainsKey("accent_color") && !properties.ContainsKey("highlight_color"))
+            skin.HighlightColor = skin.AccentColor with { W = 0.9f };
+
+        UIRenderer.PrepareFont(skin.Font);
+
+        // The art the skin declares is what its components are about to ask for, so it is stitched in
+        // right away rather than a frame late.
+        foreach (string name in skin.sources.Keys)
+            skin.TryGetRegion(name, out _);
+        skin.Update();
+
         return skin;
     }
 
-    private static UIRegion ReadRegion(string name, IRuntimeValue value)
+    /// <summary>
+    /// A region is the name of a sprite, or an object: { sprite: "name" } to change something about a
+    /// sprite (its border, content, scale or tint), { x, y, w, h } to cut a rectangle out of the skin's texture.
+    /// </summary>
+    private static RegionSource ReadRegion(string name, IRuntimeValue value, string? texture)
     {
-        if (value is not ObjectValue region)
-            throw new Exception($"Region '{name}' has to be an object.");
+        if (value is StringValue sprite)
+            return new RegionSource(sprite.Value, null, 0, 0, 0, 0, null, null, null, Vector4.One);
 
-        float Number(string key) =>
-            region.Properties.TryGetValue(key, out var number)
-                ? UIScript.ToNumber(number, $"{name}.{key}")
+        if (value is not ObjectValue region)
+            throw new Exception($"Region '{name}' has to be the name of a sprite or an object.");
+
+        var properties = region.Properties;
+
+        UIEdges? border = properties.TryGetValue("border", out var borderValue)
+            ? UIScript.ToEdges(borderValue, $"{name}.border")
+            : null;
+        UIEdges? content = properties.TryGetValue("content", out var contentValue)
+            ? UIScript.ToEdges(contentValue, $"{name}.content")
+            : null;
+        float? scale = properties.TryGetValue("scale", out var scaleValue)
+            ? UIScript.ToNumber(scaleValue, $"{name}.scale")
+            : null;
+        Vector4 tint = properties.TryGetValue("tint", out var tintValue)
+            ? UIScript.ToColor(tintValue, $"{name}.tint")
+            : Vector4.One;
+
+        if (properties.TryGetValue("sprite", out var spriteName))
+            return new RegionSource(UIScript.ToText(spriteName, $"{name}.sprite"), null, 0, 0, 0, 0, border, content, scale, tint);
+
+        if (texture is null)
+            throw new Exception($"Region '{name}' is a rectangle, but the skin names no texture to cut it out of.");
+
+        int Number(string key) =>
+            properties.TryGetValue(key, out var number)
+                ? (int)UIScript.ToNumber(number, $"{name}.{key}")
                 : throw new Exception($"Region '{name}' is missing its {key}.");
 
-        return new UIRegion(
-            new Vector2(Number("x"), Number("y")),
-            new Vector2(Number("w"), Number("h")),
-            region.Properties.TryGetValue("border", out var border)
-                ? UIScript.ToEdges(border, $"{name}.border")
-                : default);
+        // A rectangle with no border isn't stretched as a nine-slice, which is what null would leave to the sprite.
+        return new RegionSource(
+            null, texture, Number("x"), Number("y"), Number("w"), Number("h"), border ?? default(UIEdges), content ?? default(UIEdges), scale, tint);
+    }
+
+    /// <summary>
+    /// An icon is the name of a region, or an object that is a region of its own (see <see cref="ReadRegion"/>)
+    /// with an optional label and label_color on top, or a symbol (the name of a region) with a symbol_color
+    /// and a symbol_size.
+    /// </summary>
+    private void ReadIcon(string name, IRuntimeValue value, string? texture)
+    {
+        if (value is StringValue region)
+        {
+            icons[name] = new IconSource(region.Value, string.Empty, null);
+            return;
+        }
+
+        if (value is not ObjectValue icon)
+            throw new Exception($"Icon '{name}' has to be the name of a region or an object.");
+
+        // The art of an icon is a region nobody else can ask for by name.
+        string own = $"icon:{name}";
+        var properties = new Dictionary<string, IRuntimeValue>(icon.Properties);
+
+        string label = properties.Remove("label", out var labelValue) ? UIScript.ToText(labelValue, $"{name}.label") : string.Empty;
+        Vector4? labelColor = properties.Remove("label_color", out var colorValue)
+            ? UIScript.ToColor(colorValue, $"{name}.label_color")
+            : null;
+
+        string? symbol = properties.Remove("symbol", out var symbolValue) ? UIScript.ToText(symbolValue, $"{name}.symbol") : null;
+        Vector4 symbolColor = properties.Remove("symbol_color", out var symbolColorValue)
+            ? UIScript.ToColor(symbolColorValue, $"{name}.symbol_color")
+            : Vector4.One;
+        float symbolSize = properties.Remove("symbol_size", out var symbolSizeValue)
+            ? UIScript.ToNumber(symbolSizeValue, $"{name}.symbol_size")
+            : 0.5f;
+
+        sources[own] = ReadRegion(name, new ObjectValue(properties), texture);
+        icons[name] = new IconSource(own, label, labelColor, symbol, symbolColor, symbolSize);
     }
 }

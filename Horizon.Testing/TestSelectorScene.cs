@@ -40,7 +40,8 @@ internal class TestSelectorScene : Scene
         {
             Color = new Vector4(0.1f, 0.12f, 0.17f, 0.92f),
             Padding = new UIEdges(32),
-            Spacing = 24
+            Spacing = 24,
+            Background = "panel"
         });
 
         panel.Add(new Label("Horizon tests") { TextScale = 0.6f });

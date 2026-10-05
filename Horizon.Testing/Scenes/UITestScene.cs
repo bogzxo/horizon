@@ -18,9 +18,12 @@ namespace Horizon.Testing.Scenes;
 /// With the aid of Gemini's <c>selfTest</c>, a scripted pointer works its way through the controls instead of the mouse and
 /// the results are printed, so the UI can be tested without touching anything.
 /// </summary>
-public class UITestScene : Scene
+public class UITestScene : Scene, ITestControls
 {
     public override Camera ActiveCamera { get; protected set; }
+
+    // Listed on screen by the test host
+    public IReadOnlyList<TestControl> Controls { get; } = [new("Space", "scale the scripted panel")];
 
     private readonly UICompositor _compositor;
     private readonly UISelfTest? _selfTest;
@@ -55,7 +58,7 @@ public class UITestScene : Scene
         if (_selfTest is not null)
             ScriptSelfTest(_selfTest);
 
-        Console.WriteLine("UITestScene Initialized. Press SPACE to scale the scripted panel.");
+        Console.WriteLine("UITestScene Initialized.");
         Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
     }
 

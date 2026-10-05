@@ -15,16 +15,24 @@ namespace Horizon.Rendering.UIX;
 /// everything on top of the scene.
 /// The work is split the way the engine splits it. Input, layout and painting happen in
 /// <see cref="UpdateState"/> on the logic thread and produce a list of quads; <see cref="Render"/>
-/// only uploads the latest list and draws it, so components never touch the GPU.
+/// only hands the latest list to the sprite renderer, so components never touch the GPU.
 /// </summary>
 public class UICompositor : IGameComponent
 {
-    private const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/";
-    private const string DEFAULT_SKIN_FILE = "skin.hor";
+    /// <summary>Where the skin every UI has unless it asks for another one is kept.</summary>
+    public const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/dead_revolver/";
+
+    /// <summary>The definition of that skin.</summary>
+    public const string DEFAULT_SKIN_FILE = "skin.hor";
 
     internal readonly Camera2D viewportCamera;
-    private readonly string skinDirectory;
-    private readonly string skinFile;
+    private string skinDirectory;
+    private string skinFile;
+    private string? skinTheme;
+
+    // A skin asked for with SetSkin, waiting for the GL thread to load it.
+    private (string Directory, string File, string? Theme)? requestedSkin;
+    private readonly Lock skinLock = new();
 
     private readonly UIRenderer renderer = new();
 
@@ -39,6 +47,9 @@ public class UICompositor : IGameComponent
     private UIDrawList front = new();
     private int paintedFrame;
     private int uploadedFrame;
+
+    // The last frame that was painted before art it asked for was in the atlas.
+    private int incompleteFrame = -1;
 
     private bool pointerWasDown;
     private UIComponent? hovered;
@@ -84,17 +95,21 @@ public class UICompositor : IGameComponent
     public string Name { get; set; } = "UI Compositor";
     public Entity Parent { get; set; }
 
-    public UICompositor(in Camera2D viewportCamera)
-        : this(viewportCamera, DEFAULT_SKIN_DIRECTORY, DEFAULT_SKIN_FILE) { }
+    /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
+    /// <param name="theme">Which theme of the usual skin to draw the UI in ("red", "gold"), null for the one the skin says is its usual one.</param>
+    public UICompositor(in Camera2D viewportCamera, string? theme = null)
+        : this(viewportCamera, DEFAULT_SKIN_DIRECTORY, DEFAULT_SKIN_FILE, theme) { }
 
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
-    /// <param name="skinDirectory">The directory holding the skin definition and its texture.</param>
+    /// <param name="skinDirectory">The directory holding the skin definition and its art.</param>
     /// <param name="skinFile">The name of the skin definition in that directory.</param>
-    public UICompositor(in Camera2D viewportCamera, string skinDirectory, string skinFile)
+    /// <param name="theme">Which of the skin's themes to use, null for the one it says is its usual one.</param>
+    public UICompositor(in Camera2D viewportCamera, string skinDirectory, string skinFile, string? theme = null)
     {
         this.viewportCamera = viewportCamera;
         this.skinDirectory = skinDirectory;
         this.skinFile = skinFile;
+        this.skinTheme = theme;
     }
 
     public UIModule CreateModule()
@@ -122,12 +137,52 @@ public class UICompositor : IGameComponent
 
     public void Initialize()
     {
-        Skin = UISkin.Load(skinDirectory, skinFile);
-
-        if (Skin is not null)
-            renderer.Initialize(Skin);
+        Skin = UISkin.Load(skinDirectory, skinFile, skinTheme);
+        renderer.Initialize();
 
         UIKeyboard.Hook();
+    }
+
+    /// <summary>
+    /// Swaps the look of the whole UI for another skin, such as another theme of the same art. Safe
+    /// from any thread: the skin is loaded the next time the UI is drawn, and if it can't be the
+    /// current one stays.
+    /// </summary>
+    /// <param name="directory">The directory holding the skin definition and its art.</param>
+    /// <param name="file">The name of the skin definition in that directory.</param>
+    /// <param name="theme">Which of the skin's themes to use, null for the one it says is its usual one.</param>
+    public void SetSkin(string directory, string file, string? theme = null)
+    {
+        lock (skinLock)
+            requestedSkin = (directory, file, theme);
+    }
+
+    /// <summary>
+    /// Swaps the UI over to another theme of the skin it has, see <see cref="UISkin.Themes"/> for the ones
+    /// there are. Safe from any thread, like <see cref="SetSkin"/>.
+    /// </summary>
+    public void SetTheme(string? theme) => SetSkin(skinDirectory, skinFile, theme);
+
+    private void LoadRequestedSkin()
+    {
+        (string Directory, string File, string? Theme)? request;
+        lock (skinLock)
+        {
+            request = requestedSkin;
+            requestedSkin = null;
+        }
+
+        if (request is not { } wanted || UISkin.Load(wanted.Directory, wanted.File, wanted.Theme) is not { } skin)
+            return;
+
+        (skinDirectory, skinFile, skinTheme) = wanted;
+
+        // What was painted so far shows art of the old skin's atlas, which is about to go.
+        UISkin? old = Skin;
+        Skin = skin;
+
+        renderer.Clear();
+        old?.Dispose();
     }
 
     public void UpdateState(float dt)
@@ -171,19 +226,29 @@ public class UICompositor : IGameComponent
 
     public void Render(float dt, object? obj = null)
     {
+        LoadRequestedSkin();
+
         if (Skin is not { } skin)
             return;
 
         lock (frameLock)
         {
+            // Art that was asked for while painting is stitched into the atlas now. The frame that asked
+            // for it was painted without, so it is skipped: the next one has it.
+            if (skin.Update())
+                incompleteFrame = paintedFrame;
+
             if (uploadedFrame != paintedFrame)
             {
-                renderer.Upload(front);
+                // A frame painted with a skin that has been swapped out since is skipped too.
+                if (front.Skin == skin && paintedFrame != incompleteFrame)
+                    renderer.Upload(front);
+
                 uploadedFrame = paintedFrame;
             }
         }
 
-        renderer.Draw(viewportCamera, skin);
+        renderer.Draw(viewportCamera);
     }
 
     private UIPointer ReadMouse()

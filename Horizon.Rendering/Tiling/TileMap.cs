@@ -226,6 +226,7 @@ public abstract partial class Tiling<TTextureID>
             layer.Properties.TryGetValue("IsCollidable", out var _stringIsCollidable);
             layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
             layer.Properties.TryGetValue("Emissive", out var _stringEmissive);
+            layer.Properties.TryGetValue("CastsShadows", out var _stringShadows);
 
             bool isCollidable =
                 bool.TryParse(_stringIsCollidable, out isCollidable) && isCollidable;
@@ -235,12 +236,18 @@ public abstract partial class Tiling<TTextureID>
             if (!float.TryParse(_stringEmissive, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float emissive))
                 emissive = 0.0f;
 
+            // A layer that says nothing about it blocks light if it blocks everything else: a map with nothing but
+            // a layer of colliders still gets its shadows from those
+            if (!bool.TryParse(_stringShadows, out bool castsShadows))
+                castsShadows = isCollidable;
+
             return new StaticTile.TiledTileConfig
             {
                 IsCollectible = isCollidable,
                 IsVisible = layer.Visible,
                 AlwaysOnTop = isOnTop,
-                Emissive = Math.Clamp(emissive, 0.0f, 1.0f)
+                Emissive = Math.Clamp(emissive, 0.0f, 1.0f),
+                CastsShadows = castsShadows
             };
         }
 
@@ -304,6 +311,7 @@ public abstract partial class Tiling<TTextureID>
             World = Parent!.GetComponent<Box2DWorldComponent>();
             ChunkManager = AddComponent<TileMapChunkManager>(new(this));
 
+#if DEBUG
             Engine
                 .Debugger
                 .GeneralDebugger
@@ -316,6 +324,8 @@ public abstract partial class Tiling<TTextureID>
                 .Debugger
                 .GeneralDebugger
                 .AddWatch("TileCount", "Tilemap", () => TileUpdateCount);
+        
+#endif
         }
 
         public override void Render(float dt, object? obj = null)

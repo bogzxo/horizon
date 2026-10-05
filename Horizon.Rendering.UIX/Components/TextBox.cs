@@ -14,6 +14,9 @@ namespace Horizon.Rendering.UIX.Components;
 /// </summary>
 public class TextBox : UIComponent
 {
+    private const string REGION = "textbox";
+    private const string FOCUSED_REGION = "textbox_focused";
+
     private const float DEFAULT_WIDTH = 320.0f;
     private const float BLINK_INTERVAL = 0.5f;
 
@@ -142,22 +145,31 @@ public class TextBox : UIComponent
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
 
-        list.Rect(Bounds, skin.TrackColor * tint);
-        if (enabled && IsHovered && !focused)
-            list.Rect(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, 0.4f));
-        list.Outline(Bounds, 2.0f, focused ? skin.HighlightColor : skin.HoverColor);
+        // A skin without art for it gets a flat box with an outline that lights up with the focus.
+        if ((focused && skin.TryGetRegion(FOCUSED_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
+        {
+            list.NineSlice(art, Bounds, tint);
+        }
+        else
+        {
+            list.Rect(Bounds, skin.TrackColor * tint);
+            if (enabled && IsHovered && !focused)
+                list.Rect(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, 0.4f));
+            list.Outline(Bounds, 2.0f, focused ? skin.HighlightColor : skin.HoverColor);
+        }
 
         UIRect content = Bounds.Shrink(Padding);
         bool empty = Text.Length == 0;
 
         // Text that has outgrown the box keeps its end, where the typing happens, in view.
-        float width = empty ? 0.0f : skin.Font.Measure(Text, scale).X;
+        // Text somebody typed is shown as typed, tags and all.
+        float width = empty ? 0.0f : skin.Font.Measure(Text, scale, markup: false).X;
         float overflow = MathF.Max(0.0f, width - content.Width);
         UIRect line = new(content.Min - Vector2.UnitX * overflow, content.Max);
 
         list.PushClip(content);
         if (!empty)
-            list.Text(Text, line, Origin.Left, scale, skin.TextColor * tint);
+            list.Text(Text, line, Origin.Left, scale, skin.TextColor * tint, markup: false);
         else if (!focused)
             list.Text(Placeholder, line, Origin.Left, scale, skin.TextColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.45f));
         list.PopClip();

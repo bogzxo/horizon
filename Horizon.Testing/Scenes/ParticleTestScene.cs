@@ -14,13 +14,22 @@ namespace Horizon.Testing.Scenes;
 /// the compute shader one the right half (blue). Each side sets off an explosion every so often.
 /// Left click: explosion. Hold right click: fountain. G: toggle gravity.
 /// </summary>
-public class ParticleTestScene : Scene
+public class ParticleTestScene : Scene, ITestControls
 {
     private const float BurstInterval = 1.5f;
 
     private static readonly Vector2 Gravity = new(0, -600);
 
     public override Camera ActiveCamera { get; protected set; }
+
+    // Listed on screen by the test host.
+    public IReadOnlyList<TestControl> Controls { get; } =
+    [
+        new("Left click", "explosion"),
+        new("Hold right click", "fountain"),
+        new("G", "toggle gravity"),
+        new("F", "toggle autobomb"),
+    ];
 
     private ParticleRenderer2D cpuParticles = null!;
     private ParticleRenderer2D gpuParticles = null!;
@@ -62,7 +71,6 @@ public class ParticleTestScene : Scene
         base.PostInit();
 
         Console.WriteLine("ParticleTestScene\r\n\r\n CPU simulator on the left, compute shader simulator on the right.");
-        Console.WriteLine("Left click: explosion. Hold right click: fountain. G: toggle gravity. F: toggle autobomb");
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
     }
 
