@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Bogz.Logging.Loggers;
 
 using Horizon.Core.Components;
+using Horizon.Core.Tweening;
 using Horizon.Core.Components.Physics2D;
 using Horizon.Engine;
 using Horizon.HIDL;
@@ -20,7 +21,45 @@ public class Sprite : GameObject
     public SpriteSheetAnimationManager AnimationManager { get; protected set; }
     public SpriteBatch Batch { get; internal set; }
 
+    /// <summary>
+    /// The atlas the sprite is drawn out of, null for a sprite that shows a cell of a <see cref="SpriteSheet"/> instead.
+    /// </summary>
+    public TextureAtlas? Atlas { get; private set; }
+
+    // What the frames of the sprite go by in the atlas, and which of them is showing
+    private string[] _atlasFrames = [];
+    private float _atlasFrameTime, _atlasFrameTimer;
+    private int _atlasFrame;
+
+    /// <summary>
+    /// Whether a sprite out of an atlas plays through its frames, off it stays on the one it is on.
+    /// </summary>
+    public bool Animated { get; set; } = true;
+
+    /// <summary>
+    /// Multiplied into the colours of the sprite.
+    /// </summary>
+    public Vector4 Tint { get; set; } = Vector4.One;
+
+    /// <summary>
+    /// Whether the pixels of the sprite are blended where they meet, for pixel art that is drawn at a size that isn't
+    /// a whole multiple of itself (see <see cref="SpriteItem.SmoothFlag"/>).
+    /// </summary>
+    public bool Smooth { get; set; }
+
     public bool UseStencilBuffer { get; set; } = false;
+
+    private TweenContext? _tweens;
+
+    /// <summary>
+    /// The tweens that are animating this sprite, moved along once per update. See <see cref="SpriteTweens"/> for the ones that come ready made.
+    /// </summary>
+    public TweenContext Tweens => _tweens ?? Interlocked.CompareExchange(ref _tweens, new TweenContext(), null) ?? _tweens;
+
+    /// <summary>
+    /// Whether the sprite has been told what to show, by either <see cref="ConfigureSpriteSheet"/> or <see cref="ConfigureAtlas"/>.
+    /// </summary>
+    internal bool IsConfigured => Atlas is not null || AnimationManager is not null;
 
     public bool Flipped
     {
@@ -124,6 +163,92 @@ public class Sprite : GameObject
         //this.IsAnimated = AnimationManager.Animations.Any();
 
         _hasBeenSetup = true;
+    }
+
+    /// <summary>
+    /// Makes the sprite show a named sprite of a <see cref="SpriteSheetDefinition"/>, drawn out of an atlas that only
+    /// holds the sprites that are used. Sprites that share an atlas are drawn together whichever image their art is from.
+    /// The art is put into the atlas the next time the batch draws, the sprite shows nothing until then.
+    /// </summary>
+    /// <param name="theme">The theme to find the sprite in, for definitions that hold their art in several colours.</param>
+    /// <returns>False if the definition has no sprite by that name, the sprite is left as it was.</returns>
+    public bool ConfigureAtlas(TextureAtlas atlas, SpriteSheetDefinition definition, string name, string? theme = null)
+    {
+        if (!definition.TryGetSprite(name, theme, out var source))
+        {
+            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[Sprite] '{definition.Path}' has no sprite called '{name}'!");
+            return false;
+        }
+
+        _atlasFrames = atlas.Request(source);
+        _atlasFrameTime = source.FrameTime;
+        _atlasFrameTimer = 0.0f;
+        _atlasFrame = 0;
+
+        this.Atlas = atlas;
+        this.FrameName = name;
+
+        _hasBeenSetup = true;
+        return true;
+    }
+
+    public override void UpdateState(float dt)
+    {
+        base.UpdateState(dt);
+
+        _tweens?.Tick(dt);
+
+        // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager
+        if (Atlas is null || !Animated || _atlasFrames.Length < 2 || _atlasFrameTime <= 0.0f) return;
+
+        _atlasFrameTimer += dt;
+        while (_atlasFrameTimer >= _atlasFrameTime)
+        {
+            _atlasFrameTimer -= _atlasFrameTime;
+            _atlasFrame = (_atlasFrame + 1) % _atlasFrames.Length;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to describe the sprite to the renderer as it is right now.
+    /// </summary>
+    /// <param name="mask">Whether this is for the stencil pass, where a sprite that has a mask is drawn as that instead.</param>
+    /// <returns>False while there is nothing to draw, the art of a sprite out of an atlas isn't there until the atlas has been updated.</returns>
+    internal bool TryCreateItem(bool mask, out SpriteItem item)
+    {
+        Vector2 texMin, texMax;
+
+        if (Atlas is { } atlas)
+        {
+            // The frame can change under us (it is advanced on the logic thread), the array it indexes can't
+            string[] frames = _atlasFrames;
+            int frame = _atlasFrame;
+
+            if (frames.Length == 0 || !atlas.TryGet(frames[frame < frames.Length ? frame : 0], out var region))
+            {
+                item = default;
+                return false;
+            }
+
+            texMin = region.Position;
+            texMax = region.Position + region.Size;
+        }
+        else
+        {
+            // a frame can span several cells of the sheet, the frames of an animation follow each other to the right
+            Vector2 size = Spritesheet.SpriteSize * new Vector2(1 + GetFrameSpan(), 1);
+
+            texMin = GetFrameOffset() * new Vector2(Spritesheet.Width, Spritesheet.Height) + new Vector2(size.X * GetFrameIndex(), 0);
+            texMax = texMin + size;
+        }
+
+        item = SpriteItem.FromModel(
+            UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix,
+            texMin,
+            texMax,
+            SpriteItem.PackColor(Tint),
+            Smooth ? SpriteItem.SmoothFlag : 0);
+        return true;
     }
 
     public void SetAnimation(string name)

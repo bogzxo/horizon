@@ -10,6 +10,8 @@ namespace Horizon.Rendering.Spriting;
 
 /// <summary>
 /// An alternative (high performance) rendering back end for rendering a collection of dynamic sprites.
+/// Besides the sprites added to it, it draws anything that can be described as a list of <see cref="SpriteItem"/>s
+/// through the very same shader and buffers, see <see cref="Draw(ReadOnlySpan{SpriteItem}, ReadOnlySpan{SpriteRun}, Camera?)"/>.
 /// </summary>
 /// <seealso cref="Horizon.GameEntity.Entity" />
 /// <seealso cref="Horizon.Rendering.Spriting.I2DBatchedRenderer&lt;Horizon.Rendering.Spriting.Sprite&gt;" />
@@ -75,9 +77,17 @@ public class SpriteBatch : GameObject
     /// <value>
     private Dictionary<uint, SpriteSheetRenderObject> SpritesheetSprites { get; } = new();
 
+    /// <summary>
+    /// The sprites that are drawn out of an atlas rather than a sprite sheet of their own, by atlas.
+    /// </summary>
+    private Dictionary<TextureAtlas, SpriteSheetRenderObject> AtlasSprites { get; } = new();
+
     public int Count { get; private set; }
 
     private ConcurrentStack<Sprite> _queuedSprites = new();
+
+    // The mesh for the items that are handed to us directly, made the first time there are any
+    private SpriteBatchMesh? _itemMesh;
 
     public SpriteBatch()
     {
@@ -105,6 +115,65 @@ public class SpriteBatch : GameObject
     }
 
     /// <summary>
+    /// Draws items right now, in the order they are in, each showing one of the textures by its slot.
+    /// This is the way to draw things that aren't a <see cref="Sprite"/> (text, the regions of a texture atlas,
+    /// flat colours) with the sprite renderer. Has to be called on the render thread.
+    /// </summary>
+    /// <param name="textures">The textures the items refer to, <see cref="SpriteBatchMesh.MaxTextures"/> at the most.</param>
+    /// <param name="camera">The camera to draw with, if null this defaults to the custom camera and then the scene camera.</param>
+    public void Draw(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteTexture> textures, Camera? camera = null)
+    {
+        ReadOnlySpan<SpriteRun> runs = [new SpriteRun(0, items.Length)];
+        Draw(items, runs, camera, textures);
+    }
+
+    /// <summary>
+    /// Draws items right now, split up into runs for when they show more textures between them than fit in one call.
+    /// The items are only copied to the GPU once however many runs there are.
+    /// </summary>
+    /// <param name="shared">The textures in the first slots of every run, the ones of the run itself come after them.</param>
+    public void Draw(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, Camera? camera = null, ReadOnlySpan<SpriteTexture> shared = default)
+    {
+        if (!Enabled || items.IsEmpty || Shader is null)
+            return;
+
+        PrepareItems();
+        camera ??= CustomCamera ?? Engine.ActiveCamera;
+
+        Span<SpriteItem> buffer = _itemMesh!.BeginItems(items.Length);
+        if (!buffer.IsEmpty)
+        {
+            items.CopyTo(buffer);
+
+            Span<SpriteTexture> textures = stackalloc SpriteTexture[SpriteBatchMesh.MaxTextures];
+            foreach (var run in runs)
+            {
+                int count = 0;
+                foreach (var texture in shared)
+                    if (count < textures.Length) textures[count++] = texture;
+                if (run.Texture0.Handle != 0 && count < textures.Length) textures[count++] = run.Texture0;
+                if (run.Texture1.Handle != 0 && count < textures.Length) textures[count++] = run.Texture1;
+
+                _itemMesh!.DrawItems(run.First, run.Count, textures[..count], Transform.ModelMatrix, camera);
+            }
+        }
+
+        _itemMesh!.EndItems();
+    }
+
+    /// <summary>
+    /// Makes the buffers that drawing items needs. They are otherwise made the first time there are items to draw,
+    /// this is for whoever would rather have that over with (it has to be called on the render thread, after Initialize).
+    /// </summary>
+    public void PrepareItems()
+    {
+        if (Shader is not null)
+        {
+            _itemMesh ??= new SpriteBatchMesh(Shader);
+        }
+    }
+
+    /// <summary>
     /// Commits an object to be rendered.
     /// </summary>
     /// <param name="sprite"></param>
@@ -118,6 +187,13 @@ public class SpriteBatch : GameObject
 
     public void Remove(in Sprite sprite)
     {
+        if (sprite.Atlas is not null)
+        {
+            if (AtlasSprites.TryGetValue(sprite.Atlas, out var atlasSprites))
+                atlasSprites.Sprites.Remove(sprite);
+            return;
+        }
+
         if (!SpritesheetSprites.ContainsKey(sprite.Spritesheet.Handle))
             return;
         if (!SpritesheetSprites[sprite.Spritesheet.Handle].Sprites.Contains(sprite))
@@ -150,10 +226,21 @@ public class SpriteBatch : GameObject
                 {
                     sprites[i].Batch = this;
 
-                    if (sprites[i].AnimationManager is null)
+                    if (!sprites[i].IsConfigured)
                     {
                         // Sprite not yet initialized
                         _queuedSprites.Push(sprites[i]);
+                    }
+                    else if (sprites[i].Atlas is { } atlas)
+                    {
+                        // Sprites out of the same atlas are drawn together, whichever image their art came from
+                        if (!AtlasSprites.TryGetValue(atlas, out var atlasSprites))
+                        {
+                            AtlasSprites.Add(atlas, atlasSprites = new SpriteSheetRenderObject(new SpriteBatchMesh(Shader)));
+                        }
+
+                        atlasSprites.Add(sprites[i]);
+                        Count++;
                     }
                     else
                     {
@@ -186,5 +273,19 @@ public class SpriteBatch : GameObject
                     CollectionsMarshal.AsSpan(renderData.Sprites),
                     CustomCamera ?? Engine.ActiveCamera
                 );
+
+        foreach (var (atlas, renderData) in AtlasSprites)
+        {
+            // Whatever the sprites asked for since the last frame is put into the atlas before they are drawn
+            atlas.Update();
+
+            renderData
+                .Mesh
+                .Draw( Transform.ModelMatrix,
+                    CollectionsMarshal.AsSpan(renderData.Sprites),
+                    CustomCamera ?? Engine.ActiveCamera,
+                    new SpriteTexture(atlas.Texture)
+                );
+        }
     }
 }

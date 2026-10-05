@@ -56,7 +56,12 @@ public class ProgressBar : UIComponent
         if (!hasFrame)
             list.Rect(Bounds, skin.ControlColor * tint);
 
-        list.Rect(track, skin.TrackColor * tint);
+        // Art that is a whole empty bar rather than just the rim of one goes underneath the fill.
+        bool frameFirst = hasFrame && skin.ProgressFillOverFrame;
+        if (frameFirst)
+            list.NineSlice(frame, Bounds, tint);
+        else
+            list.Rect(track, skin.TrackColor * tint);
 
         // The fill is always drawn at the size of a full bar and cut off where the progress ends, so
         // its pattern stays put instead of being squashed as the bar empties.
@@ -68,7 +73,7 @@ public class ProgressBar : UIComponent
         list.PopClip();
 
         // The frame goes on top so its corners cover the square ends of the fill.
-        if (hasFrame)
+        if (hasFrame && !frameFirst)
             list.NineSlice(frame, Bounds, tint);
 
         if (ShowText)

@@ -14,13 +14,26 @@ namespace Horizon.Testing;
 /// <summary>
 /// Switches between the selector and the tests. It lives on the engine rather than in a scene, so it
 /// stays around whichever scene is showing. While a test runs it draws a small bar over it with the
-/// test's name and a way back, and listens for ESC.
-/// A test is therefore just a scene, and doesn't have to know it is being hosted.
+/// test's name and a way back, lists the keys the test reacts to, and listens for ESC.
+/// A test is therefore just a scene, and doesn't have to know it is being hosted. One that can be
+/// interacted with says how through <see cref="ITestControls"/>.
 /// </summary>
 internal sealed class TestHost : GameObject
 {
+    private const float KeysTextScale = 0.25f;
+
+    private static readonly Vector4 PanelColor = new(0.1f, 0.12f, 0.17f, 0.92f);
+    private static readonly Vector4 InputColor = new(1.0f, 0.8f, 0.45f, 1.0f);
+    private static readonly Vector4 DimColor = new(0.93f, 0.95f, 1.0f, 0.6f);
+
+    // The keys that are the host's own, listed under those of every test.
+    private static readonly TestControl[] HostControls = [new("Esc", "back to the tests")];
+
     private readonly UIModule bar;
-    private readonly Label title;
+    private readonly Label title, keysHint;
+
+    // The list of keys: what to press on the left, what it does on the right.
+    private readonly StackPanel keys, inputs, actions;
 
     // What to switch to at the next frame: a TestDefinition, or the selector scene.
     private object? request;
@@ -49,9 +62,9 @@ internal sealed class TestHost : GameObject
             Anchor = Origin.BottomLeft,
             Position = new Vector2(16, 16),
             Direction = UIDirection.Horizontal,
-            Color = new Vector4(0.1f, 0.12f, 0.17f, 0.92f),
+            Color = PanelColor,
             Padding = new UIEdges(10),
-            Spacing = 14
+            Spacing = 14,
         });
 
         row.Add(new Button("Back")
@@ -61,8 +74,55 @@ internal sealed class TestHost : GameObject
             OnPressed = ShowSelector
         });
         title = row.Add(new Label { TextScale = 0.3f });
+        keysHint = row.Add(new Label { TextScale = KeysTextScale, Color = DimColor });
+
+        // Halfway up the right edge, which is where the tests have the least going on.
+        keys = bar.AddComponent(new StackPanel
+        {
+            Anchor = Origin.Right,
+            Position = new Vector2(-16, 0),
+            Direction = UIDirection.Horizontal,
+            Color = PanelColor,
+            Padding = new UIEdges(14),
+            Spacing = 16
+        });
+
+        // Two columns of labels at the same scale, so every key lines up with what it does.
+        inputs = keys.Add(new StackPanel { Spacing = 6 });
+        actions = keys.Add(new StackPanel { Spacing = 6 });
+
+        ShowKeys(true);
 
         Selector = new TestSelectorScene(this, tests);
+    }
+
+    /// <summary>Shows or hides the list of keys. The bar always says how to get it back.</summary>
+    private void ShowKeys(bool show)
+    {
+        keys.Visible = show;
+        keysHint.Text = show ? "F1: hide keys" : "F1: show keys";
+    }
+
+    /// <summary>Replaces the list of keys with those of a test, followed by the host's own.</summary>
+    private void ListControls(IReadOnlyList<TestControl> controls)
+    {
+        foreach (var label in inputs.Children.ToArray())
+            inputs.Remove(label);
+        foreach (var label in actions.Children.ToArray())
+            actions.Remove(label);
+
+        foreach (var control in controls)
+            AddControl(control, InputColor, null);
+
+        // Dimmer, as they are the same in every test.
+        foreach (var control in HostControls)
+            AddControl(control, DimColor, DimColor);
+    }
+
+    private void AddControl(TestControl control, Vector4 inputColor, Vector4? actionColor)
+    {
+        inputs.Add(new Label(control.Input) { Anchor = Origin.Left, TextScale = KeysTextScale, Color = inputColor });
+        actions.Add(new Label(control.Action) { Anchor = Origin.Left, TextScale = KeysTextScale, Color = actionColor });
     }
 
     /// <summary>Asks for a test to be started. It happens at the next frame; safe from any thread.</summary>
@@ -106,9 +166,12 @@ internal sealed class TestHost : GameObject
             title.Text = test.Name;
             bar.Enabled = true;
 
-            Console.WriteLine($"Running '{test.Name}'. ESC or Back returns to the selector.");
+            Console.WriteLine($"Running '{test.Name}'.");
             assetsBeforeTest = Engine.ObjectManager.Snapshot();
             Engine.SetScene(scene = test.Create());
+
+            // A test that reacts to nothing still gets the host's keys listed.
+            ListControls(scene is ITestControls interactive ? interactive.Controls : []);
         }
         else
         {
@@ -125,7 +188,16 @@ internal sealed class TestHost : GameObject
     {
         base.UpdateState(dt);
 
-        if (Running is not null && Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Escape))
+        if (Running is null)
+            return;
+
+        var keyboard = Engine.InputManager.KeyboardManager;
+
+        if (keyboard.IsKeyPressed(Key.Escape))
             ShowSelector();
+
+        // Stays as it was left from one test to the next.
+        if (keyboard.IsKeyPressed(Key.F1))
+            ShowKeys(!keys.Visible);
     }
 }

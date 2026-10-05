@@ -16,6 +16,16 @@ public class Environment
     private Dictionary<string, IRuntimeValue> variables = [];
     private List<string> constants = [];
 
+    /// <summary>
+    /// The variables declared in this scope itself, without the ones of its parents or its system variables.
+    /// </summary>
+    public IReadOnlyDictionary<string, IRuntimeValue> Variables => variables;
+
+    /// <summary>
+    /// Whether a variable of this scope was declared as a constant.
+    /// </summary>
+    public bool IsConstant(in string name) => constants.Contains(name);
+
     public Environment(in Environment? parent = null, in bool copy = false)
     {
         if (copy && parent is not null)

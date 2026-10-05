@@ -1,9 +1,7 @@
 using System.Numerics;
 
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Rendering.Spriting;
 using Horizon.Rendering.UIX.Skinning;
 
 using Silk.NET.OpenGL;
@@ -11,71 +9,42 @@ using Silk.NET.OpenGL;
 namespace Horizon.Rendering.UIX.Drawing;
 
 /// <summary>
-/// The GL side of the UI: one vertex buffer, one shader, and a draw call per batch of a <see cref="UIDrawList"/>.
+/// Hands a <see cref="UIDrawList"/> to the sprite renderer: the UI has no shader or buffers of its own, its
+/// quads are <see cref="SpriteItem"/>s and a <see cref="SpriteBatch"/> draws them. What is left to do here
+/// is the GL state a UI needs around that (blending on, depth off) and saying which textures the quads show.
 /// </summary>
 internal sealed class UIRenderer
 {
-    private const string UNIFORM_VIEW_PROJECTION = "uViewProjection";
-    private const string UNIFORM_SKIN = "uSkin";
-    private const string UNIFORM_FONT = "uFont";
-    private const string UNIFORM_IMAGE = "uImage";
-
-    private const int SKIN_UNIT = 0;
-    private const int FONT_UNIT = 1;
-    private const int IMAGE_UNIT = 2;
-
-    private Technique? technique;
-    private VertexBufferObject? buffer;
+    private SpriteBatch? batch;
 
     // One sampler serves every renderer, so making and dropping compositors doesn't pile samplers up.
     private static uint fontSampler;
 
-    // How many quads the element buffer has indices for. The pattern never changes, so it only grows.
-    private int indexedQuads;
+    // The last list that was handed over, as the logic thread is free to reuse its own right away.
+    private SpriteItem[] items = [];
+    private int itemCount;
+    private readonly List<UIDrawList.Run> runs = [];
+    private readonly List<SpriteRun> spriteRuns = [];
+    private UISkin? skin;
 
-    private readonly List<UIDrawList.Batch> batches = [];
-
-    public void Initialize(UISkin skin)
+    public void Initialize()
     {
-        var engine = GameEngine.Instance;
-        var gl = engine.GL;
+        // Not part of any scene: it only ever draws what it is handed here.
+        batch = new SpriteBatch();
+        batch.Initialize();
+        batch.InitializeAll();
 
-        // Failures are logged by the asset managers; without both there is nothing to draw with.
-        if (!engine
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet("uix", ShaderDescription.FromPath("shaders/ui", "ui"), out var shader)
-            || !engine
-                .ObjectManager
-                .VertexArrays
-                .TryCreate(VertexArrayObjectDescription.VertexBuffer, out var vertexArray))
-        {
-            return;
-        }
-
-        technique = new Technique(shader.Asset);
-        buffer = new VertexBufferObject(vertexArray.Asset);
-
-        buffer.Bind();
-        buffer.VertexBuffer.VertexAttributePointer(0, 2, VertexAttribPointerType.Float, UIVertex.SizeInBytes, 0);
-        buffer.VertexBuffer.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, UIVertex.SizeInBytes, 8);
-        buffer.VertexBuffer.VertexAttributeIPointer(2, 1, VertexAttribIType.UnsignedInt, UIVertex.SizeInBytes, 16);
-        buffer.VertexBuffer.VertexAttributeIPointer(3, 1, VertexAttribIType.UnsignedInt, UIVertex.SizeInBytes, 20);
-        buffer.Unbind();
-
-        // Text is nearly always drawn smaller than the atlas, which a nearest filter turns to SHIT, so
-        // the font gets as many mipmaps as can be and is sampled through a smooth sampler. The texture's own filter is
-        // left alone for anything else drawing with the same font image...
-        uint font = skin.Font.Texture.Handle;
-        if (font != 0)
-        {
-            gl.TextureParameter(font, TextureParameterName.TextureMaxLevel, 1000);
-            gl.GenerateTextureMipmap(font);
-        }
+        // Everything the UI has on the GPU exists from here on, rather than from whenever it first has something to show.
+        batch.PrepareItems();
 
         if (fontSampler != 0)
             return;
 
+        var gl = GameEngine.Instance.GL;
+
+        // Text is nearly always drawn smaller than the atlas, which a nearest filter turns to SHIT, so
+        // the font gets as many mipmaps as can be and is sampled through a smooth sampler. The texture's own filter is
+        // left alone for anything else drawing with the same font image...
         fontSampler = gl.CreateSampler();
         gl.SamplerParameter(fontSampler, SamplerParameterI.MinFilter, (int)GLEnum.LinearMipmapLinear);
         gl.SamplerParameter(fontSampler, SamplerParameterI.MagFilter, (int)GLEnum.Linear);
@@ -84,49 +53,53 @@ internal sealed class UIRenderer
     }
 
     /// <summary>
-    /// Copies a finished draw list to the GPU. The list is free to be reused afterwards.
+    /// Gets the font of a skin ready to be drawn small. Has to be done once for every skin.
+    /// </summary>
+    public static void PrepareFont(UIFont font)
+    {
+        if (font.Texture.Handle == 0)
+            return;
+
+        var gl = GameEngine.Instance.GL;
+        gl.TextureParameter(font.Texture.Handle, TextureParameterName.TextureMaxLevel, 1000);
+        gl.GenerateTextureMipmap(font.Texture.Handle);
+    }
+
+    /// <summary>
+    /// Takes a copy of a finished draw list. The list is free to be reused afterwards.
     /// </summary>
     public void Upload(UIDrawList list)
     {
-        if (buffer is null)
-            return;
+        var source = list.Items;
+        if (items.Length < source.Length)
+            items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
 
-        batches.Clear();
-        batches.AddRange(list.Batches);
+        source.CopyTo(items);
+        itemCount = source.Length;
 
-        if (list.QuadCount == 0)
-            return;
+        runs.Clear();
+        runs.AddRange(list.Runs);
 
-        buffer.VertexBuffer.NamedBufferData(list.Vertices);
+        // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
+        skin = list.Skin;
+    }
 
-        if (list.QuadCount > indexedQuads)
-        {
-            indexedQuads = (int)BitOperations.RoundUpToPowerOf2((uint)list.QuadCount);
-
-            uint[] indices = new uint[indexedQuads * 6];
-            for (uint quad = 0; quad < indexedQuads; quad++)
-            {
-                uint vertex = quad * 4;
-                uint index = quad * 6;
-
-                indices[index + 0] = vertex + 0;
-                indices[index + 1] = vertex + 1;
-                indices[index + 2] = vertex + 2;
-                indices[index + 3] = vertex + 0;
-                indices[index + 4] = vertex + 2;
-                indices[index + 5] = vertex + 3;
-            }
-
-            buffer.ElementBuffer.NamedBufferData(indices);
-        }
+    /// <summary>
+    /// Forgets what was uploaded, for when the skin it was painted with is no more.
+    /// </summary>
+    public void Clear()
+    {
+        itemCount = 0;
+        runs.Clear();
+        skin = null;
     }
 
     /// <summary>
     /// Draws what was last uploaded, on top of whatever is already there.
     /// </summary>
-    public unsafe void Draw(Camera camera, UISkin skin)
+    public void Draw(Camera camera)
     {
-        if (technique is null || buffer is null || batches.Count == 0)
+        if (batch is null || skin is null || itemCount == 0)
             return;
 
         var gl = GameEngine.Instance.GL;
@@ -146,35 +119,28 @@ internal sealed class UIRenderer
             BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
         gl.Disable(EnableCap.DepthTest);
 
-        Matrix4x4 viewProjection = camera.ViewProj;
+        // Every run shows the atlas and the font, in the slots the draw list gave them.
+        ReadOnlySpan<SpriteTexture> shared =
+        [
+            new SpriteTexture(skin.Atlas.Texture),
+            new SpriteTexture(skin.Font.Texture, fontSampler)
+        ];
 
-        technique.Bind();
-        technique.SetUniform(UNIFORM_VIEW_PROJECTION, in viewProjection);
-        technique.SetUniform(UNIFORM_SKIN, SKIN_UNIT);
-        technique.SetUniform(UNIFORM_FONT, FONT_UNIT);
-        technique.SetUniform(UNIFORM_IMAGE, IMAGE_UNIT);
-
-        gl.BindTextureUnit(SKIN_UNIT, skin.Texture.Handle);
-        gl.BindTextureUnit(FONT_UNIT, skin.Font.Texture.Handle);
-        gl.BindSampler(FONT_UNIT, fontSampler);
-
-        buffer.Bind();
-
-        foreach (var batch in batches)
+        spriteRuns.Clear();
+        foreach (var run in runs)
         {
-            // A batch without an image of its own still needs something valid behind the sampler.
-            gl.BindTextureUnit(IMAGE_UNIT, batch.Image != 0 ? batch.Image : skin.Texture.Handle);
-
-            gl.DrawElements(
-                PrimitiveType.Triangles,
-                (uint)batch.QuadCount * 6,
-                DrawElementsType.UnsignedInt,
-                (void*)(batch.FirstQuad * 6 * sizeof(uint)));
+            spriteRuns.Add(new SpriteRun(
+                run.First,
+                run.Count,
+                run.Image0 is { } image0 ? new SpriteTexture(image0) : default,
+                run.Image1 is { } image1 ? new SpriteTexture(image1) : default));
         }
 
-        buffer.Unbind();
-        technique.Unbind();
-        gl.BindSampler(FONT_UNIT, 0);
+        batch.Draw(
+            items.AsSpan(0, itemCount),
+            System.Runtime.InteropServices.CollectionsMarshal.AsSpan(spriteRuns),
+            camera,
+            shared);
 
         gl.BlendFuncSeparate(sourceRgb, destinationRgb, sourceAlpha, destinationAlpha);
         if (!blend)

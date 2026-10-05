@@ -8,10 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Scenes\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <None Update="shaders\testing\wall.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

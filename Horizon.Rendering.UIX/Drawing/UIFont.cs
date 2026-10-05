@@ -6,10 +6,27 @@ using Horizon.Rendering.Text;
 namespace Horizon.Rendering.UIX.Drawing;
 
 /// <summary>
+/// Tells text how big the icons in it are. The skin does this for its font.
+/// </summary>
+internal interface IUIIconSource
+{
+    /// <summary>How tall icons are, as a multiple of the height of the line they are in.</summary>
+    float IconScale { get; }
+
+    /// <summary>The size of an icon's art in texels, false if there is no icon by that name.</summary>
+    bool TryGetIconSize(ReadOnlySpan<char> name, out Vector2 texelSize);
+}
+
+/// <summary>
 /// A bitmap font as the UI needs it: enough to measure text and to place its glyphs.
+/// Text can have icons in it: <c>[icon:name]</c> is replaced by the icon of that name (see
+/// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
 /// </summary>
 public sealed class UIFont
 {
+    private const string ICON_TAG = "[icon:";
+    private const char ICON_TAG_END = ']';
+
     private readonly Dictionary<char, CharDefinition> glyphs;
     private readonly int spaceAdvance;
 
@@ -18,6 +35,9 @@ public sealed class UIFont
 
     /// <summary>The height of a line of text at scale 1, in pixels.</summary>
     public float LineHeight { get; }
+
+    /// <summary>Who to ask about the icons in a text. Without one, tags are just text.</summary>
+    internal IUIIconSource? Icons { get; set; }
 
     /// <summary>
     /// Loads a BMFont definition and its atlas. Has to run on the GL thread.
@@ -60,19 +80,62 @@ public sealed class UIFont
     }
 
     /// <summary>
+    /// Tests whether text starts with the tag of an icon that exists.
+    /// </summary>
+    /// <param name="name">The name of the icon.</param>
+    /// <param name="length">How many characters the tag takes up.</param>
+    /// <param name="size">How big the icon is in a line of text at <paramref name="scale"/>.</param>
+    internal bool TryReadIcon(ReadOnlySpan<char> text, float scale, out ReadOnlySpan<char> name, out int length, out Vector2 size)
+    {
+        name = default;
+        length = 0;
+        size = default;
+
+        if (Icons is null || !text.StartsWith(ICON_TAG))
+            return false;
+
+        int end = text.IndexOf(ICON_TAG_END);
+        if (end < 0)
+            return false;
+
+        name = text[ICON_TAG.Length..end];
+        if (!Icons.TryGetIconSize(name, out Vector2 texelSize) || texelSize.Y <= 0.0f)
+            return false;
+
+        length = end + 1;
+        size = IconSize(texelSize, scale);
+        return true;
+    }
+
+    /// <summary>
+    /// How big an icon is drawn in a line of text. Every icon in a line is the same height whatever the
+    /// size of its art (the height of the line, times the skin's icon scale), and as wide as that makes it.
+    /// Both in whole pixels, so its edges stay sharp.
+    /// </summary>
+    private Vector2 IconSize(Vector2 texelSize, float scale)
+    {
+        float height = MathF.Max(1.0f, MathF.Round(LineHeight * scale * (Icons?.IconScale ?? 1.0f)));
+        return new Vector2(MathF.Max(1.0f, MathF.Round(texelSize.X * height / texelSize.Y)), height);
+    }
+
+    /// <summary>
     /// The size of the box a piece of text takes up. Lines are split on '\n'.
     /// </summary>
-    public Vector2 Measure(ReadOnlySpan<char> text, float scale)
+    /// <param name="markup">Whether <c>[icon:name]</c> tags are icons. Off for text somebody typed.</param>
+    public Vector2 Measure(ReadOnlySpan<char> text, float scale, bool markup = true)
     {
         if (text.IsEmpty)
             return Vector2.Zero;
 
+        // Counted in pixels at the scale asked for, as icons don't scale the way glyphs do.
         float widest = 0.0f;
         float width = 0.0f;
         int lines = 1;
 
-        foreach (char character in text)
+        for (int i = 0; i < text.Length; i++)
         {
+            char character = text[i];
+
             if (character == '\n')
             {
                 widest = MathF.Max(widest, width);
@@ -81,10 +144,17 @@ public sealed class UIFont
                 continue;
             }
 
+            if (markup && character == ICON_TAG[0] && TryReadIcon(text[i..], scale, out _, out int length, out Vector2 size))
+            {
+                width += size.X;
+                i += length - 1;
+                continue;
+            }
+
             Resolve(character, out var glyph);
-            width += glyph.XAdvance;
+            width += glyph.XAdvance * scale;
         }
 
-        return new Vector2(MathF.Max(widest, width), lines * LineHeight) * scale;
+        return new Vector2(MathF.Max(widest, width), lines * LineHeight * scale);
     }
 }

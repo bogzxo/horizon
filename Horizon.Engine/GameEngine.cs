@@ -136,6 +136,7 @@ public class GameEngine : Entity
             );
     }
 
+#if DEBUG
     public void DrawWithMetrics(in Entity entity, in float dt)
     {
         var startTime = Stopwatch.GetTimestamp();
@@ -165,6 +166,7 @@ public class GameEngine : Entity
             val
         );
     }
+#endif
 
     public override void UpdatePhysics(float dt)
     {
@@ -201,24 +203,30 @@ public class GameEngine : Entity
         // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
 
+#if DEBUG
         if (Debugger.RenderToContainer)
         {
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
             Debugger.GameContainerDebugger.FrameBuffer.Bind();
             Debugger.GameContainerDebugger.FrameBuffer.Viewport();
         }
-        else GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-        
+        else
+#endif
+        {
+            GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        }
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
         // Render all entities & component
         base.Render(dt);
 
+#if DEBUG
         if (Debugger.RenderToContainer)
         {
             ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
 
             GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         }
+#endif
 
         GL.GetError();
         WindowManager.Egui.Run(this.RenderUi);
@@ -236,6 +244,7 @@ public class GameEngine : Entity
     /// </summary>
     public virtual void Run() => WindowManager.Run();
 
+#if DEBUG
     /// <summary>
     /// Aggregates all metrics to be sent to the web host
     /// </summary>
@@ -248,4 +257,6 @@ public class GameEngine : Entity
             PhysicsRate = Debugger.PerformanceDebugger.PhysicsRate
         };
     }
+    
+#endif
 }

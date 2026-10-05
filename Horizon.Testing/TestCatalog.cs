@@ -5,13 +5,17 @@ namespace Horizon.Testing;
 /// <summary>
 /// Every test the selector offers, in the order it lists them.
 /// To add a test, write a scene for it and give it a line here; nothing else needs to know about it.
+/// If the scene reacts to keys or the mouse, have it implement <see cref="ITestControls"/> and the
+/// host lists them on screen while it runs.
 /// </summary>
 internal static class TestCatalog
 {
     public static readonly TestDefinition[] Tests =
     [
         new("ui", "User interface", "Layout, skinning, pointer input and HIDL scripting.", () => new UITestScene()),
+        new("keyboard", "On Screen Keyboard", "Number and Alphanumeric on screen keyboards.", () => new OnScreenKeyboardTestScene()),
         new("ui-selftest", "UI self-test", "The UI test clicking through itself and checking the results.", () => new UITestScene(selfTest: true)),
+        new("ui-pack", "UI pack", "The Dead Revolver skin: its themes, one atlas and icons in text.", () => new UIPackTestScene()),
         new("particles", "Particles", "CPU and compute shader simulation side by side.", () => new ParticleTestScene()),
         new("fluid", "Fluid particles", "Physics particles that stack, level out and overflow from basin to basin.", () => new FluidTestScene()),
         new("lighting", "Lighting", "Deferred lights, shadows, normal maps and emissive particles.", () => new LightingTestScene()),

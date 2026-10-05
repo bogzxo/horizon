@@ -24,7 +24,7 @@ namespace Horizon.Testing.Scenes;
 /// Started without the lighting this is the test of a plain <see cref="Renderer2D"/> instead: the same wall and particles
 /// drawn into a frame buffer a quarter of the size of the window, and blown up from there.
 /// </summary>
-public class LightingTestScene(bool deferred = true) : Scene
+public class LightingTestScene(bool deferred = true) : Scene, ITestControls
 {
     private const float CellSize = 32.0f;
     private const float StatusInterval = 5.0f;
@@ -76,6 +76,21 @@ public class LightingTestScene(bool deferred = true) : Scene
     }
 
     public override Camera ActiveCamera { get; protected set; }
+
+    // Listed on screen by the test host, all of them are about the lighting so the plain renderer has none
+    public IReadOnlyList<TestControl> Controls { get; } = deferred
+        ?
+        [
+            new("Left click", "leave a light"),
+            new("Right click", "flash"),
+            new("C", "remove the lights that were left"),
+            new("S", "toggle shadows"),
+            new("N", "toggle the normal map"),
+            new("G", "toggle the specular map"),
+            new("P", "toggle lighting in big pixels"),
+            new("A", "next ambient"),
+        ]
+        : [];
 
     private Renderer2D renderer = null!;
     private DeferredRenderer2D? lighting;
@@ -202,8 +217,6 @@ public class LightingTestScene(bool deferred = true) : Scene
         else
         {
             Console.WriteLine("LightingTestScene\r\n\r\n Three lights circle the middle, a fourth follows the mouse. The blocks cast shadows.");
-            Console.WriteLine("Left click: leave a light. Right click: flash. C: remove the lights that were left. S: toggle shadows.");
-            Console.WriteLine("N: toggle the normal map. G: toggle the specular map. P: toggle lighting in big pixels. A: next ambient.");
         }
 
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);

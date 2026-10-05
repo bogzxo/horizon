@@ -12,28 +12,28 @@ using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Spriting.Components;
 
+/// <summary>
+/// The GL side of the sprite renderer: one quad, drawn once for every <see cref="SpriteItem"/> in a buffer.
+/// A <see cref="SpriteBatch"/> has one of these for every sprite sheet (its sprites are turned into items here),
+/// and one for the items it is handed directly.
+/// </summary>
 public class SpriteBatchMesh : GameObject
 {
-    private const string UNIFORM_SINGLE_BUFFER_SIZE = "uSingleFrameSize";
+    /// <summary>
+    /// How many different textures the items of a single draw call can show, see <see cref="SpriteItem.Flags"/>.
+    /// </summary>
+    public const int MaxTextures = 4;
+
     private const string UNIFORM_CAMERA_PROJ_MATRIX = "uCameraProjection";
     private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
     private const string UNIFORM_MODEL_MATRIX = "uModel";
+    private const string UNIFORM_DATA_OFFSET = "uDataOffset";
 
-    // TODO: we'll get back to memory alignment later.
-    // edit: still havent
-    // edit 03/09/25 still havent
-    // edit 27/07/26 still havent
-    // edit 01/09/26 we are now using that bit :   )
-    [StructLayout(LayoutKind.Sequential)]
-    private struct SpriteData
-    {
-        public Matrix4x4 modelMatrix;
-        public Vector2 spriteOffset;
-        public uint frameIndex;
-        public uint spriteSpan;
-    }
+    // uniform arrays are set one element at a time, by name
+    private static readonly string[] UNIFORM_TEXTURES = ["uTextures[0]", "uTextures[1]", "uTextures[2]", "uTextures[3]"];
+    private static readonly string[] UNIFORM_TEXEL_SIZES = ["uTexelSizes[0]", "uTexelSizes[1]", "uTexelSizes[2]", "uTexelSizes[3]"];
 
-    private readonly SpriteSheet sheet;
+    private readonly SpriteSheet? sheet;
 
     public Technique Shader { get; init; }
     public VertexBufferObject Buffer { get; init; }
@@ -45,18 +45,34 @@ public class SpriteBatchMesh : GameObject
     private const int NUM_BUFFERS = 3;
     private int currentFrameIndex = 0;
     private nint[] fences = new nint[NUM_BUFFERS];
-    private int maxSpritesPerFrame = 0; // gets set in ResizeBuffer
+    private int maxItemsPerFrame = 0; // gets set in ResizeBuffer
+
+    // where this frame's items start in the buffer, and how many of them there are
+    private int frameOffset, frameCount;
 
     // eish
-    private unsafe SpriteData* dataPtr;
+    private unsafe SpriteItem* dataPtr;
 
     public uint ElementCount { get; private set; }
 
-    public unsafe SpriteBatchMesh(SpriteSheet sheet, Technique shader)
+    /// <summary>
+    /// A mesh for the sprites of a sprite sheet.
+    /// </summary>
+    public SpriteBatchMesh(SpriteSheet sheet, Technique shader)
+        // 10k sprites (and room for their masks) in there just to be safe at the start
+        : this(shader, 20000)
+    {
+        this.sheet = sheet;
+    }
+
+    /// <summary>
+    /// A mesh for items that bring their own textures.
+    /// </summary>
+    /// <param name="initialItems">How many items to make room for to begin with, it grows when more turn up.</param>
+    public unsafe SpriteBatchMesh(Technique shader, int initialItems = 2048)
         : base()
     {
         this.Shader = shader;
-        this.sheet = sheet;
 
         if (Engine.ObjectManager.VertexArrays.TryCreate(
             VertexArrayObjectDescription.VertexBuffer,
@@ -72,8 +88,7 @@ public class SpriteBatchMesh : GameObject
         SetVboLayout();
         GenerateMesh();
 
-        // 10k sprites in there just to be safe at the start
-        ResizeBuffer(10000);
+        ResizeBuffer(initialItems);
     }
 
     private void SetVboLayout()
@@ -107,14 +122,16 @@ public class SpriteBatchMesh : GameObject
         throw new Exception("Please only draw a SpriteBatchMesh through a SpriteBatch");
     }
 
-    public unsafe void Draw(Matrix4x4 globalModel, in ReadOnlySpan<Sprite> sprites, Camera engineActiveCamera)
+    /// <summary>
+    /// Starts a frame of items: hands over the memory to write them to (straight into the buffer the GPU reads, so
+    /// write only, never read it back), to be drawn with <see cref="DrawItems"/> and finished with <see cref="EndItems"/>.
+    /// </summary>
+    public unsafe Span<SpriteItem> BeginItems(int count)
     {
-        if (!Enabled) return;
-
-        // shit too many sprites, halt the presses and resize
-        if (sprites.Length > maxSpritesPerFrame)
+        // shit too many items, halt the presses and resize
+        if (count > maxItemsPerFrame)
         {
-            ResizeBuffer(sprites.Length);
+            ResizeBuffer(count);
         }
 
         // make sure gpu is actually done with this chunk of memory before we oozing all over it mmmhhhppphhh
@@ -125,12 +142,93 @@ public class SpriteBatchMesh : GameObject
             fences[currentFrameIndex] = 0;
         }
 
-        BindAndSetUniforms(engineActiveCamera, globalModel);
+        frameOffset = maxItemsPerFrame * currentFrameIndex;
+        frameCount = count;
+
+        if (dataPtr == null) // no nullptr c#!!!! woww!!!!
+            return default;
+
+        return new Span<SpriteItem>(dataPtr + frameOffset, count);
+    }
+
+    /// <summary>
+    /// Draws a run of the items of this frame in a single call, in the order they are in.
+    /// </summary>
+    /// <param name="first">The first item of the run, counted from the start of what <see cref="BeginItems"/> returned.</param>
+    /// <param name="textures">The textures the items refer to by slot, <see cref="MaxTextures"/> at the most.</param>
+    public unsafe void DrawItems(int first, int count, ReadOnlySpan<SpriteTexture> textures, in Matrix4x4 globalModel, Camera camera)
+    {
+        if (count < 1 || dataPtr == null || first + count > frameCount) return;
+
+        BindAndSetUniforms(camera, globalModel, textures);
+        Shader.SetUniform(UNIFORM_DATA_OFFSET, frameOffset + first);
 
         Shader.BindBuffer("spriteData", StorageBuffer);
         Buffer.Bind();
         Buffer.VertexBuffer.Bind();
         Buffer.ElementBuffer.Bind();
+
+        Engine.GL.DrawElementsInstanced(
+            PrimitiveType.Triangles,
+            6,
+            DrawElementsType.UnsignedInt,
+            null,
+            (uint)count
+        );
+
+        Buffer.Unbind();
+        Shader.Unbind();
+
+        // leave the units the way we found them, samplers stick to a unit whatever texture is bound there next
+        for (int i = 0; i < textures.Length && i < MaxTextures; i++)
+        {
+            if (textures[i].Sampler != 0) Engine.GL.BindSampler((uint)i, 0);
+        }
+    }
+
+    /// <summary>
+    /// Ends the frame started by <see cref="BeginItems"/>.
+    /// </summary>
+    public void EndItems()
+    {
+        // drop a fence so we know when the gpu finishes this specific frame
+        fences[currentFrameIndex] = Engine.GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+
+        // loop back around
+        currentFrameIndex = (currentFrameIndex + 1) % NUM_BUFFERS;
+        frameCount = 0;
+    }
+
+    /// <summary>
+    /// Draws the sprites of the sprite sheet this mesh was made for.
+    /// </summary>
+    public void Draw(Matrix4x4 globalModel, in ReadOnlySpan<Sprite> sprites, Camera engineActiveCamera)
+    {
+        if (sheet is null) return;
+
+        Draw(globalModel, in sprites, engineActiveCamera, new SpriteTexture(sheet));
+    }
+
+    /// <summary>
+    /// Draws sprites that all show parts of one texture, a sprite sheet or an atlas.
+    /// </summary>
+    public unsafe void Draw(Matrix4x4 globalModel, in ReadOnlySpan<Sprite> sprites, Camera engineActiveCamera, SpriteTexture texture)
+    {
+        if (!Enabled) return;
+
+        // times 2 because we need space for the mask pass AND the color pass
+        Span<SpriteItem> items = BeginItems(sprites.Length * 2);
+        if (items.IsEmpty)
+        {
+            EndItems();
+            return;
+        }
+
+        // pass 1 is the masks, pass 2 the sprites themselves
+        int count = AggregateSpriteData(in sprites, true, items);
+        count = Math.Min(count, AggregateSpriteData(in sprites, false, items[count..]));
+
+        ReadOnlySpan<SpriteTexture> textures = [texture];
 
         // stencil setup
         Engine.GL.Enable(EnableCap.StencilTest);
@@ -145,22 +243,8 @@ public class SpriteBatchMesh : GameObject
         Engine.GL.ColorMask(false, false, false, false);
         Engine.GL.DepthMask(false);
 
-        // times 2 because we need space for the mask pass AND the color pass
-        int maxDataPerFrame = maxSpritesPerFrame * 2;
-        int frameChunkOffset = maxDataPerFrame * currentFrameIndex;
-
         // pass 1: mask write
-        int pass1Offset = frameChunkOffset;
-        Shader.SetUniform("uDataOffset", pass1Offset);
-        AggregateSpriteData(in sprites, true, pass1Offset);
-
-        Engine.GL.DrawElementsInstanced(
-            PrimitiveType.Triangles,
-            6,
-            DrawElementsType.UnsignedInt,
-            null,
-            (uint)sprites.Length
-        );
+        DrawItems(0, count, textures, globalModel, engineActiveCamera);
 
         // pass 2: color draw
         // only draw if the mask equals 1, and don't write to the stencil buffer anymore
@@ -172,44 +256,26 @@ public class SpriteBatchMesh : GameObject
         Engine.GL.ColorMask(true, true, true, true);
         Engine.GL.DepthMask(true);
 
-        int pass2Offset = frameChunkOffset + sprites.Length;
-        Shader.SetUniform("uDataOffset", pass2Offset);
-        AggregateSpriteData(in sprites, false, pass2Offset);
+        DrawItems(count, count, textures, globalModel, engineActiveCamera);
 
-        Engine.GL.DrawElementsInstanced(
-            PrimitiveType.Triangles,
-            6,
-            DrawElementsType.UnsignedInt,
-            null,
-            (uint)sprites.Length
-        );
-
-        // drop a fence so we know when the gpu finishes this specific frame
-        fences[currentFrameIndex] = Engine.GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
-
-        // loop back around
-        currentFrameIndex = (currentFrameIndex + 1) % NUM_BUFFERS;
+        EndItems();
 
         // cleanup state so we don't bleed into other draw calls
         Engine.GL.Disable(EnableCap.StencilTest);
         Engine.GL.StencilMask(0xFF);
-
-        Buffer.Unbind();
-        Shader.Unbind();
     }
 
-    private unsafe void ResizeBuffer(int newRequiredSpriteCount)
+    private unsafe void ResizeBuffer(int newRequiredItemCount)
     {
         // pad by 1.5x so it doesnt keep recreating the buffer if the count is fluctuating
-        maxSpritesPerFrame = (int)(newRequiredSpriteCount * 1.5f);
+        maxItemsPerFrame = (int)(newRequiredItemCount * 1.5f);
 
-        // space for 2 passes per frame * 3 frames
-        int maxDataPerFrame = maxSpritesPerFrame * 2;
-        int totalCapacity = maxDataPerFrame * NUM_BUFFERS;
+        // space for 3 frames
+        int totalCapacity = maxItemsPerFrame * NUM_BUFFERS;
 
         Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(
             Bogz.Logging.LogLevel.Info,
-            $"[SpriteBatchMesh] Sizing persistent SSBO for {maxSpritesPerFrame} max sprites per frame (Total Size: {totalCapacity * sizeof(SpriteData)} bytes)."
+            $"[SpriteBatchMesh] Sizing persistent SSBO for {maxItemsPerFrame} max items per frame (Total Size: {totalCapacity * sizeof(SpriteItem)} bytes)."
         );
 
         // wait for the gpu to literally finish EVERYTHING before we pussynuke the buffer to avoid a crash
@@ -234,7 +300,7 @@ public class SpriteBatchMesh : GameObject
             new BufferObjectDescription
             {
                 IsStorageBuffer = true,
-                Size = (uint)(sizeof(SpriteData) * totalCapacity),
+                Size = (uint)(sizeof(SpriteItem) * totalCapacity),
                 StorageMasks = BufferStorageMask.MapCoherentBit
                              | BufferStorageMask.MapPersistentBit
                              | BufferStorageMask.MapWriteBit,
@@ -250,9 +316,9 @@ public class SpriteBatchMesh : GameObject
             return;
         }
 
-        dataPtr = (SpriteData*)
+        dataPtr = (SpriteItem*)
             StorageBuffer.MapBufferRange(
-                (uint)(totalCapacity * sizeof(SpriteData)),
+                (uint)(totalCapacity * sizeof(SpriteItem)),
                 MapBufferAccessMask.WriteBit
                 | MapBufferAccessMask.PersistentBit
                 | MapBufferAccessMask.CoherentBit
@@ -266,45 +332,47 @@ public class SpriteBatchMesh : GameObject
         }
     }
 
-    protected void BindAndSetUniforms(in Camera? camera, in Matrix4x4 globalModel)
+    protected void BindAndSetUniforms(in Camera? camera, in Matrix4x4 globalModel, ReadOnlySpan<SpriteTexture> textures)
     {
         Shader.Bind();
 
         Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, camera?.Projection ?? Engine.ActiveCamera.Projection);
         Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, camera?.View ?? Engine.ActiveCamera.View);
-        Shader.SetUniform(UNIFORM_SINGLE_BUFFER_SIZE, sheet.SingleSpriteSize);
         Shader.SetUniform(UNIFORM_MODEL_MATRIX, in globalModel);
 
-        Engine.GL.BindTextureUnit(0, sheet.Handle);
-        Shader.SetUniform("uTexture", 0);
+        for (int i = 0; i < MaxTextures; i++)
+        {
+            // a slot nothing was given for still needs something valid behind its sampler
+            SpriteTexture texture = i < textures.Length ? textures[i] : textures.Length > 0 ? textures[0] : default;
+            Vector2 texelSize = texture.Size.X > 0 && texture.Size.Y > 0 ? Vector2.One / texture.Size : Vector2.Zero;
+
+            Engine.GL.BindTextureUnit((uint)i, texture.Handle);
+            if (i < textures.Length && texture.Sampler != 0) Engine.GL.BindSampler((uint)i, texture.Sampler);
+
+            Shader.SetUniform(UNIFORM_TEXTURES[i], i);
+            Shader.SetUniform(UNIFORM_TEXEL_SIZES[i], in texelSize);
+        }
     }
 
-    // TODO: @bogz this is a fuckup and a half my guy
-    private unsafe void AggregateSpriteData(in ReadOnlySpan<Sprite> sprites, bool useStencilBuffer, int memoryOffset)
+    /// <summary>
+    /// Turns every enabled sprite into an item, returns how many there were.
+    /// </summary>
+    /// <param name="mask">Whether this is for the stencil pass, where the sprites that have one are drawn as their mask.</param>
+    private static int AggregateSpriteData(in ReadOnlySpan<Sprite> sprites, bool mask, Span<SpriteItem> items)
     {
-        if (dataPtr == null) // no nullptr c#!!!! woww!!!!
-            return;
-
         int i = 0;
         foreach (var sprite in sprites)
         {
-            if (sprite == null) return;
-            
-            if (!sprite.Enabled)
+            if (sprite == null) break;
+            if (!sprite.Enabled) continue;
+
+            // the sprite knows what it shows, a cell of its sheet or a region of its atlas
+            if (sprite.TryCreateItem(mask, out SpriteItem item) && i < items.Length)
             {
-                i = Math.Max(0, i - 1);
-                continue;
+                items[i++] = item;
             }
-
-            // shift the pointer by memoryOffset so we hit the right third of the buffer
-            dataPtr[memoryOffset + i].modelMatrix = 
-                sprite.UseStencilBuffer && useStencilBuffer 
-                    ? sprite.StencilTransform.ModelMatrix : sprite.Transform.ModelMatrix;
-            dataPtr[memoryOffset + i].spriteOffset = sprite.GetFrameOffset();
-            dataPtr[memoryOffset + i].frameIndex = sprite.GetFrameIndex();
-            dataPtr[memoryOffset + i].spriteSpan = sprite.GetFrameSpan();
-
-            i++;
         }
+
+        return i;
     }
 }

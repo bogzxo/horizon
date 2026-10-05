@@ -19,7 +19,7 @@ namespace Horizon.Testing.Scenes;
 /// Hold left click: pour water. Hold right click: pour sand. P: toggle the spout. R: toggle the rain. Space: shockwave.
 /// B: drop the crate. C: clear. D: toggle the outlines of the physics world.
 /// </summary>
-public class FluidTestScene : Scene
+public class FluidTestScene : Scene, ITestControls
 {
     private const float Wall = 24.0f;           // How thick the floor, the walls and the dividers are
     private const float SpoutRate = 400.0f;     // Particles per second
@@ -32,6 +32,19 @@ public class FluidTestScene : Scene
     private static readonly Vector2 Gravity = new(0, -500);
 
     public override Camera ActiveCamera { get; protected set; }
+
+    // Listed on screen by the test host
+    public IReadOnlyList<TestControl> Controls { get; } =
+    [
+        new("Hold left click", "pour water"),
+        new("Hold right click", "pour sand"),
+        new("P", "toggle the spout"),
+        new("R", "toggle the rain"),
+        new("Space", "shockwave"),
+        new("B", "drop the crate"),
+        new("C", "clear"),
+        new("D", "toggle the outlines of the physics world"),
+    ];
 
     private PhysicsWorld world = null!;
     private PhysicsBodyComponent2D crate = null!;
@@ -138,8 +151,6 @@ public class FluidTestScene : Scene
         base.PostInit();
 
         Console.WriteLine("FluidTestScene\r\n\r\n The spout fills the left basin, which overflows into the next one, and that into the last.");
-        Console.WriteLine("Hold left click: pour water. Hold right click: pour sand. P: toggle the spout. R: toggle the rain. Space: shockwave.");
-        Console.WriteLine("B: drop the crate. C: clear. D: toggle the outlines of the physics world.");
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
     }
 
