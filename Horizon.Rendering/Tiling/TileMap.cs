@@ -93,7 +93,7 @@ public abstract partial class Tiling<TTextureID>
         /// <param name="parent">The gamescreen (necessary if you plan to use Box2D integration).</param>
         /// <param name="tiledMapPath">The path of the tiled map.</param>
         /// <returns>An instance of <see cref="TileMap"/> based off a specified Tiled map. Null if unsuccessful.</returns>
-        public static bool TryFromTiledMap(Entity parent, string tiledMapPath, out TileMap? map)
+        public static bool TryFromTiledMap(Entity parent, string tiledMapPath, Action<TmxObject?> objectCallback, out TileMap? map)
         {
             try
             {
@@ -151,10 +151,18 @@ public abstract partial class Tiling<TTextureID>
                 int chunkWidth = TileMapChunk.WIDTH;
                 int chunkHeight = TileMapChunk.HEIGHT;
 
+                foreach (var objLayer in tiledMap.ObjectGroups)
+                {
+                    foreach (var obj in objLayer.Objects)
+                    {
+                        objectCallback?.Invoke(obj);
+                    }
+                }
+
                 foreach (var layer in tiledMap.Layers)
                 {
                     var layerConfig = GenerateTiledTileConfigFromLayer(layer);
-
+                    
                     foreach (var tile in layer.Tiles)
                     {
                         if (tile.Gid == 0)
@@ -165,6 +173,7 @@ public abstract partial class Tiling<TTextureID>
                             map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].Visible = layerConfig.IsVisible;
                             map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].AlwaysOnTop =
                                 layerConfig.AlwaysOnTop;
+                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].Emissive = layerConfig.Emissive;
                         }
 
                         // invert the tile Y coordinates because one again openGL is weird (read about coordinate system orientations)
@@ -216,16 +225,22 @@ public abstract partial class Tiling<TTextureID>
         {
             layer.Properties.TryGetValue("IsCollidable", out var _stringIsCollidable);
             layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
+            layer.Properties.TryGetValue("Emissive", out var _stringEmissive);
 
             bool isCollidable =
                 bool.TryParse(_stringIsCollidable, out isCollidable) && isCollidable;
             bool isOnTop = bool.TryParse(_stringTop, out isOnTop) && isOnTop;
 
+            // A layer that says nothing about it is lit like everything else
+            if (!float.TryParse(_stringEmissive, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float emissive))
+                emissive = 0.0f;
+
             return new StaticTile.TiledTileConfig
             {
                 IsCollectible = isCollidable,
                 IsVisible = layer.Visible,
-                AlwaysOnTop = isOnTop
+                AlwaysOnTop = isOnTop,
+                Emissive = Math.Clamp(emissive, 0.0f, 1.0f)
             };
         }
 

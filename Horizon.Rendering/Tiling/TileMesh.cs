@@ -33,12 +33,21 @@ public abstract partial class Tiling<TTextureID>
         private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
         protected const string UNIFORM_TEXTURE_ALEBDO = "uTextureAlbedo";
         protected const string UNIFORM_TEXTURE_NORMAL = "uTextureNormal";
+        protected const string UNIFORM_TEXTURE_SPECULAR = "uTextureSpecular";
+        protected const string UNIFORM_HAS_NORMAL = "uHasNormal";
+        protected const string UNIFORM_HAS_SPECULAR = "uHasSpecular";
+        protected const string UNIFORM_EMISSIVE = "uEmissive";
         public uint TileCount { get; private set; }
 
         /// <summary>
         /// If set to TileChunkCullMode.Top, all tiles above the screen midpoint are culled, and vice versa.
         /// </summary>
         public TileChunkCullMode CullMode { get; set; } = TileChunkCullMode.None;
+
+        /// <summary>
+        /// How much of the tiles shows no matter the light (0 to 1), for when they are drawn by a <see cref="DeferredRenderer2D"/>.
+        /// </summary>
+        public float Emissive { get; set; } = 0.0f;
 
         public Technique Shader { get; init; }
         public TileMap Map { get; init; }
@@ -292,6 +301,14 @@ public abstract partial class Tiling<TTextureID>
 
             Set.Material.BindAttachment(MaterialAttachment.Normal, 1);
             Shader.SetUniform(UNIFORM_TEXTURE_NORMAL, 1);
+
+            Set.Material.BindAttachment(MaterialAttachment.Specular, 2);
+            Shader.SetUniform(UNIFORM_TEXTURE_SPECULAR, 2);
+
+            // A tile set that came without a normal or a specular map has nothing to say about its surface
+            Shader.SetUniform(UNIFORM_HAS_NORMAL, Set.Material.GetAttachment(MaterialAttachment.Normal).Handle != 0);
+            Shader.SetUniform(UNIFORM_HAS_SPECULAR, Set.Material.GetAttachment(MaterialAttachment.Specular).Handle != 0);
+            Shader.SetUniform(UNIFORM_EMISSIVE, Emissive);
 
             Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, Engine.ActiveCamera.Projection);
             Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, Engine.ActiveCamera.View);

@@ -26,7 +26,15 @@ public class FrameBufferObjectFactory
             description.Attachments
         );
 
-        var drawBuffers = attachments.Select(x => (ColorBuffer)x.Key).ToArray();
+        // Only the colour attachments can be drawn to: handing over a depth or stencil attachment as well has the
+        // whole call rejected, which leaves the frame buffer drawing to its first colour attachment alone.
+        // They go in order, so that output N of a fragment shader ends up in colour attachment N.
+        var drawBuffers = attachments
+            .Keys
+            .Where(IsColorAttachment)
+            .OrderBy(attachment => (int)attachment)
+            .Select(attachment => (ColorBuffer)attachment)
+            .ToArray();
 
         var buffer = new FrameBufferObject
         {
@@ -57,7 +65,7 @@ public class FrameBufferObjectFactory
             }
         }
 
-        if (attachments.Count == 1 && attachments.ContainsKey(FramebufferAttachment.DepthAttachment))
+        if (drawBuffers.Length == 0)
         {
             ObjectManager.GL.DrawBuffer(DrawBufferMode.None);
             ObjectManager.GL.ReadBuffer(ReadBufferMode.None);
@@ -97,6 +105,9 @@ public class FrameBufferObjectFactory
         return true;
     }
 
+
+    private static bool IsColorAttachment(FramebufferAttachment attachment) =>
+        attachment >= FramebufferAttachment.ColorAttachment0 && attachment <= FramebufferAttachment.ColorAttachment31;
 
     private static Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset> CreateFrameBufferAttachments(
         uint width,

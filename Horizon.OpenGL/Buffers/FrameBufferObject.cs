@@ -35,10 +35,14 @@ public class FrameBufferObject : IGLObject
     public void Bind()
     {
         ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
-        //ObjectManager.GL.DrawBuffers((uint)DrawBuffers.Length, in DrawBuffers[0]);
-        ObjectManager
-            .GL
-            .NamedFramebufferDrawBuffers(Handle, DrawBuffers);
+
+        // A frame buffer with only depth has nothing to list, it was told to draw to nothing when it was made
+        if (DrawBuffers.Length > 0)
+        {
+            ObjectManager
+                .GL
+                .NamedFramebufferDrawBuffers(Handle, DrawBuffers);
+        }
     }
 
     /// <summary>

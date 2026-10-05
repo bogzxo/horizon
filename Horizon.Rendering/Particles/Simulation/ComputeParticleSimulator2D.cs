@@ -8,14 +8,18 @@ using Horizon.OpenGL.Descriptions;
 
 using Silk.NET.OpenGL;
 
+using Shader = Horizon.OpenGL.Assets.Shader;
+
 namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
 /// Simulates particles on the GPU with a compute shader (shaders/particle/simulate.comp).
 /// The particle state never leaves the GPU: the buffer the compute shader updates in place is the
 /// same buffer the renderer reads its instances from, and the CPU only uploads newly spawned particles.
+/// A simulator that does more to its particles derives from this one, hands over its own compute shader
+/// (see <see cref="CreateShader"/>) and feeds it whatever else it needs in <see cref="BindSimulation"/>.
 /// </summary>
-public sealed class ComputeParticleSimulator2D : ParticleSimulator2D
+public class ComputeParticleSimulator2D : ParticleSimulator2D
 {
     /// <summary>Must match local_size_x in simulate.comp.</summary>
     private const uint WorkGroupSize = 256;
@@ -56,17 +60,36 @@ public sealed class ComputeParticleSimulator2D : ParticleSimulator2D
 
     public override uint Count => count;
 
+    /// <summary>
+    /// GL thread, once. The compute shader that moves the particles, null if it couldn't be made.
+    /// It has to take the buffer and the uniforms simulate.comp does, anything on top of those is up to
+    /// <see cref="BindSimulation"/>.
+    /// </summary>
+    protected virtual Shader? CreateShader() =>
+        GameEngine
+            .Instance
+            .ObjectManager
+            .Shaders
+            .TryCreateOrGet(
+                "particle2d_simulate",
+                ShaderDescription.FromPath("shaders/particle", "simulate"),
+                out var shader)
+            ? shader.Asset
+            : null;
+
+    /// <summary>
+    /// GL thread, every time the particles are about to be moved, with <paramref name="technique"/> bound.
+    /// Bind the buffers and set the uniforms the shader of <see cref="CreateShader"/> has of its own.
+    /// </summary>
+    protected virtual void BindSimulation(Technique technique)
+    { }
+
     protected internal override void Initialize(VertexBufferObject mesh)
     {
         var objects = GameEngine.Instance.ObjectManager;
 
         // Failures are logged by the asset managers; without both there is nothing to simulate or draw.
-        if (!objects
-                .Shaders
-                .TryCreateOrGet(
-                    "particle2d_simulate",
-                    ShaderDescription.FromPath("shaders/particle", "simulate"),
-                    out var shader)
+        if (CreateShader() is not Shader shader
             || !objects
                 .Buffers
                 .TryCreate(
@@ -84,7 +107,7 @@ public sealed class ComputeParticleSimulator2D : ParticleSimulator2D
             return;
         }
 
-        compute = new Technique(shader.Asset);
+        compute = new Technique(shader);
         particleBuffer = buffer.Asset;
         AttachInstanceBuffer(mesh, particleBuffer, ParticleState2D.SizeInBytes, 0, sizeof(float) * 4);
     }
@@ -159,6 +182,7 @@ public sealed class ComputeParticleSimulator2D : ParticleSimulator2D
         technique.SetUniform(UNIFORM_DELTA_TIME, dt);
         technique.SetUniform(UNIFORM_INV_MAX_AGE, 1.0f / maxAge);
         technique.SetUniform(UNIFORM_GRAVITY, in gravity);
+        BindSimulation(technique);
 
         gl.DispatchCompute((range.Count + WorkGroupSize - 1) / WorkGroupSize, 1, 1);
 

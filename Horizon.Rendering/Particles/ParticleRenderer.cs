@@ -54,6 +54,24 @@ public class ParticleRenderer2D : GameObject, IDisposable
     public Vector3 EndColor { get; set; } = Vector3.One;
 
     /// <summary>
+    /// How much of a new particle shows no matter the light (0 to 1), for when it is drawn by a <see cref="DeferredRenderer2D"/>:
+    /// sparks, flames and anything else that glows is seen in the dark, dust and water are not.
+    /// </summary>
+    public float StartEmissive { get; set; } = 0.0f;
+
+    /// <summary>How much of a particle shows no matter the light at the end of its life, what glowed can cool off.</summary>
+    public float EndEmissive { get; set; } = 0.0f;
+
+    /// <summary>
+    /// How much of a particle shows no matter the light, all of its life. Sets both <see cref="StartEmissive"/>
+    /// and <see cref="EndEmissive"/>.
+    /// </summary>
+    public float Emissive
+    {
+        set => StartEmissive = EndEmissive = value;
+    }
+
+    /// <summary>
     /// Acceleration applied to every particle, in world units per second squared.
     /// World space is Y-up, so falling is a negative Y.
     /// </summary>
