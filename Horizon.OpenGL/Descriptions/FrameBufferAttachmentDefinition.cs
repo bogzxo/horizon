@@ -28,6 +28,16 @@ public readonly struct FrameBufferAttachmentDefinition
         TextureDefinition = TextureDefinition.RgbaUnsignedByte,
     };
 
+    /// <summary>
+    /// Read back exactly as it was drawn, for frame buffers that are put on screen at another size (pixel art)
+    /// or hold data rather than colour.
+    /// </summary>
+    public static FrameBufferAttachmentDefinition TextureRGBAByteNearest { get; } = new()
+    {
+        IsRenderBuffer = false,
+        TextureDefinition = TextureDefinition.RgbaUnsignedByteNearest,
+    };
+
     public static FrameBufferAttachmentDefinition TextureDepth { get; } = new()
     {
         IsRenderBuffer = false,

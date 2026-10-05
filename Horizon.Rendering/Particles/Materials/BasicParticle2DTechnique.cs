@@ -9,6 +9,8 @@ namespace Horizon.Rendering.Particles.Materials
     {
         private const string UNIFORM_STARTCOLOR = "uStartColor";
         private const string UNIFORM_ENDCOLOR = "uEndColor";
+        private const string UNIFORM_STARTEMISSIVE = "uStartEmissive";
+        private const string UNIFORM_ENDEMISSIVE = "uEndEmissive";
         private ParticleRenderer2D renderer;
         private bool initialized = false;
 
@@ -38,6 +40,8 @@ namespace Horizon.Rendering.Particles.Materials
         {
             SetUniform(UNIFORM_STARTCOLOR, renderer.StartColor);
             SetUniform(UNIFORM_ENDCOLOR, renderer.EndColor);
+            SetUniform(UNIFORM_STARTEMISSIVE, renderer.StartEmissive);
+            SetUniform(UNIFORM_ENDEMISSIVE, renderer.EndEmissive);
         }
     }
 }

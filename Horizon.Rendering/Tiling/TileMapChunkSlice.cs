@@ -29,6 +29,12 @@ public abstract partial class Tiling<TTextureID>
         /// </summary>
         public bool Visible { get; set; } = true;
 
+        /// <summary>
+        /// How much of this slice shows no matter the light (0 to 1), for when it is drawn by a <see cref="DeferredRenderer2D"/>:
+        /// a sky is as bright in a dark map as in any other.
+        /// </summary>
+        public float Emissive { get; set; } = 0.0f;
+
         public TileMapChunkSlice(int width, int height)
         {
             this.Width = width;

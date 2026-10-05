@@ -47,6 +47,26 @@ namespace Horizon.OpenGL.Descriptions
                   ]
           };
 
+        /// <summary>
+        /// A single byte per texel, read back exactly as it was written: for grids of data rather than images.
+        /// </summary>
+        public static TextureDefinition RedUnsignedByteNearest { get; } =
+            new TextureDefinition
+            {
+                InternalFormat = InternalFormat.R8,
+                PixelFormat = PixelFormat.Red,
+                PixelType = PixelType.UnsignedByte,
+                TextureTarget = TextureTarget.Texture2D,
+                Parameters = [
+                    new () { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+                    new () { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Nearest },
+                    new () { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Nearest },
+                    new () { Name = TextureParameterName.TextureBaseLevel, Value = 0 },
+                    new () { Name = TextureParameterName.TextureMaxLevel, Value = 0 },
+                    ]
+            };
+
         public static TextureDefinition RgbaUnsignedByteCubeMap { get; } =
            new TextureDefinition
            {

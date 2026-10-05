@@ -45,7 +45,7 @@ public abstract partial class Tiling<TTextureID>
                 {
                     var tile = Slice[i];
 
-                    if (tile is null)
+                    if (tile is null || tile.Set is null)
                         continue;
 
                     // Check if the tile set is already in the temporary pairs.
@@ -107,6 +107,7 @@ public abstract partial class Tiling<TTextureID>
             {
                 foreach (var (_, mesh) in sliceMeshes.TileMeshPairs)
                 {
+                    mesh.Emissive = sliceMeshes.Slice.Emissive;
                     mesh.Render(dt);
                 }
             }
@@ -204,6 +205,7 @@ public abstract partial class Tiling<TTextureID>
             )
             {
                 mesh.CullMode = cullMode;
+                mesh.Emissive = Chunk.Slices[index].Emissive;
                 mesh.Render(dt);
                 mesh.CullMode = TileChunkCullMode.None;
             }

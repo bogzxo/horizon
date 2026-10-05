@@ -12,9 +12,21 @@ using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Physics.Debug;
 using Horizon.Physics.Fixtures;
+using Horizon.Physics.Simulation;
 using Horizon.Rendering;
 
 namespace Horizon.Physics;
+
+/// <summary>
+/// What a force applied to an area of the world acts on.
+/// </summary>
+[Flags]
+public enum PhysicsRadialTargets
+{
+    Bodies = 1 << 0,        // the dynamic bodies
+    Particles = 1 << 1,     // the particles of every particle group
+    All = Bodies | Particles
+}
 
 public class PhysicsWorld : IGameComponent
 {
@@ -29,6 +41,17 @@ public class PhysicsWorld : IGameComponent
     public Vector2 Gravity { get; set; }
 
     private readonly PhysicsWorldDebugRenderer debugRenderer = new();
+
+    // Particles are simulated by the world too, but as something a lot lighter than a body
+    private readonly List<PhysicsParticleGroup> particleGroups = [];
+
+    // The particles simulated on the GPU can't be stepped from here, they are told what there is to run into instead
+    private readonly List<PhysicsParticleFeed> particleFeeds = [];
+    private readonly PhysicsStaticGrid staticGrid = new();
+    private PhysicsShape[] dynamicShapes = new PhysicsShape[16];
+
+    // Forces act over time, so they wait here to be applied during the next step
+    private readonly List<(Vector2 Centre, float Radius, float Force, PhysicsRadialTargets Targets, PhysicsBodyComponent2D? Except)> radialForces = [];
 
     public PhysicsBodyComponent2D CreateBody(PhysicsBodySimulationType simulationType, Vector2 initialPosition)
     {
@@ -56,6 +79,112 @@ public class PhysicsWorld : IGameComponent
         return body;
     }
 
+    /// <summary>
+    /// Creates a set of particles which are simulated as small dynamic bodies, see <see cref="PhysicsParticleGroup"/>.
+    /// </summary>
+    /// <param name="capacity">How many particles there can be at once.</param>
+    public PhysicsParticleGroup CreateParticleGroup(int capacity)
+    {
+        var group = new PhysicsParticleGroup(capacity);
+        particleGroups.Add(group);
+        return group;
+    }
+
+    /// <summary>
+    /// Creates a set of particles which also collide with one another, so they pile up and run off to fill
+    /// whatever they are poured into, see <see cref="PhysicsFluidParticleGroup"/>.
+    /// </summary>
+    /// <param name="capacity">How many particles there can be at once.</param>
+    public PhysicsFluidParticleGroup CreateFluidParticleGroup(int capacity)
+    {
+        var group = new PhysicsFluidParticleGroup(capacity);
+        particleGroups.Add(group);
+        return group;
+    }
+
+    public bool RemoveParticleGroup(PhysicsParticleGroup group) => particleGroups.Remove(group);
+
+    /// <summary>
+    /// Creates a feed, which is kept up to date with what particles simulated outside of the world can run into.
+    /// </summary>
+    internal PhysicsParticleFeed CreateParticleFeed()
+    {
+        var feed = new PhysicsParticleFeed();
+        particleFeeds.Add(feed);
+        return feed;
+    }
+
+    internal bool RemoveParticleFeed(PhysicsParticleFeed feed) => particleFeeds.Remove(feed);
+
+    /// <summary>
+    /// Launches everything within a radius away from a point all at once (an explosion, a shockwave, a foot coming down).
+    /// The push is at its hardest in the centre and fades to nothing at the edge, how fast something ends up going
+    /// depends on its mass.
+    /// </summary>
+    /// <param name="except">A body to leave alone, usually the one causing all this.</param>
+    public void ApplyRadialImpulse(Vector2 centre, float radius, float impulse,
+        PhysicsRadialTargets targets = PhysicsRadialTargets.All, PhysicsBodyComponent2D? except = null)
+    {
+        if (radius <= 0.0f) return;
+
+        if (targets.HasFlag(PhysicsRadialTargets.Bodies))
+        {
+            foreach (var body in DynamicBodies)
+            {
+                if (body != except && TryGetRadialPush(body.Position, centre, radius, out Vector2 push))
+                {
+                    body.ApplyImpulse(push * impulse);
+                }
+            }
+        }
+
+        if (targets.HasFlag(PhysicsRadialTargets.Particles))
+        {
+            foreach (var group in particleGroups)
+            {
+                group.ApplyRadial(centre, radius, impulse);
+            }
+
+            foreach (var feed in particleFeeds)
+            {
+                feed.AddImpulse(centre, radius, impulse);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pushes everything within a radius away from a point for the length of the next step (wind, a fan, a magnet when negative).
+    /// Has to be called again for every step the force should last.
+    /// </summary>
+    /// <param name="except">A body to leave alone, usually the one causing all this.</param>
+    public void ApplyRadialForce(Vector2 centre, float radius, float force,
+        PhysicsRadialTargets targets = PhysicsRadialTargets.All, PhysicsBodyComponent2D? except = null)
+    {
+        if (radius <= 0.0f) return;
+
+        radialForces.Add((centre, radius, force, targets, except));
+    }
+
+    /// <summary>
+    /// Helper method to work out the direction and falloff of a radial push at a position, false if it is out of reach.
+    /// </summary>
+    private static bool TryGetRadialPush(Vector2 position, Vector2 centre, float radius, out Vector2 push)
+    {
+        Vector2 away = position - centre;
+        float distance = away.Length();
+
+        if (distance >= radius)
+        {
+            push = Vector2.Zero;
+            return false;
+        }
+
+        // Anything sat exactly on the centre goes straight up
+        Vector2 direction = distance > 0.0001f ? away / distance : Vector2.UnitY;
+        push = direction * (1.0f - distance / radius);
+        return true;
+    }
+
     public void Initialize()
     {
         debugRenderer.Initialize();
@@ -65,7 +194,39 @@ public class PhysicsWorld : IGameComponent
         if (!Enabled) return;
 
         var dynamicBodies = CollectionsMarshal.AsSpan<PhysicsBodyComponent2D>(this.DynamicBodies);
-        var staticBodies = CollectionsMarshal.AsSpan<PhysicsBodyComponent2D>(this.StaticBodies);
+
+        // The map is sorted into a grid, so nothing has to be tested against every tile of it
+        staticGrid.Refresh(StaticBodies);
+
+        // 0. Turn the forces that were asked for since the last step into pushes
+        foreach (var (centre, radius, force, targets, except) in radialForces)
+        {
+            if (targets.HasFlag(PhysicsRadialTargets.Bodies))
+            {
+                foreach (var body in dynamicBodies)
+                {
+                    if (body != except && TryGetRadialPush(body.Position, centre, radius, out Vector2 push))
+                    {
+                        body.ApplyForce(push * force);
+                    }
+                }
+            }
+
+            // Particles have no force of their own to add to, for them a force over one step is an impulse
+            if (targets.HasFlag(PhysicsRadialTargets.Particles))
+            {
+                foreach (var group in particleGroups)
+                {
+                    group.ApplyRadial(centre, radius, force * dt);
+                }
+
+                foreach (var feed in particleFeeds)
+                {
+                    feed.AddImpulse(centre, radius, force * dt);
+                }
+            }
+        }
+        radialForces.Clear();
 
         // 1. Reset contact state across dynamic and kinematic fixtures
         foreach (var body in dynamicBodies)
@@ -101,20 +262,18 @@ public class PhysicsWorld : IGameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
-                // Test against static bodies...
-                foreach (var other in staticBodies)
+                // Test against static bodies, the grid hands us only the ones nearby...
+                foreach (int candidate in FindStaticCandidates(fixture, currentPosition, nextPositionX))
                 {
-                    foreach (var otherFixture in other.DynamicFixtures)
+                    var otherFixture = staticGrid.GetFixture(candidate);
+                    if (fixture.TestIntersection(otherFixture, nextPositionX, staticGrid.GetBodyPosition(candidate)))
                     {
-                        if (fixture.TestIntersection(otherFixture, nextPositionX, other.Position))
-                        {
-                            nextPositionX.X = currentPosition.X;
-                            body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+                        nextPositionX.X = currentPosition.X;
+                        body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
 
-                            fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
-                            fixture.ActiveContacts.Add(otherFixture);
-                        }
+                        fixture.IsTouching = true;
+                        otherFixture.IsTouching = true;
+                        fixture.ActiveContacts.Add(otherFixture);
                     }
                 }
 
@@ -146,20 +305,18 @@ public class PhysicsWorld : IGameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
-                // Test against static bodies...
-                foreach (var other in staticBodies)
+                // Test against static bodies, the grid hands us only the ones nearby...
+                foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
                 {
-                    foreach (var otherFixture in other.DynamicFixtures)
+                    var otherFixture = staticGrid.GetFixture(candidate);
+                    if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                     {
-                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
-                        {
-                            nextPositionY.Y = currentPosition.Y;
-                            body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+                        nextPositionY.Y = currentPosition.Y;
+                        body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
 
-                            fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
-                            fixture.ActiveContacts.Add(otherFixture);
-                        }
+                        fixture.IsTouching = true;
+                        otherFixture.IsTouching = true;
+                        fixture.ActiveContacts.Add(otherFixture);
                     }
                 }
 
@@ -189,16 +346,14 @@ public class PhysicsWorld : IGameComponent
             // 5. Update Kinematic Triggers against final position
             foreach (var fixture in body.KinematicFixtures)
             {
-                foreach (var other in staticBodies)
+                foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
                 {
-                    foreach (var otherFixture in other.DynamicFixtures)
+                    var otherFixture = staticGrid.GetFixture(candidate);
+                    if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                     {
-                        if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
-                        {
-                            fixture.IsTouching = true;
-                            otherFixture.IsTouching = true;
-                            fixture.ActiveContacts.Add(otherFixture);
-                        }
+                        fixture.IsTouching = true;
+                        otherFixture.IsTouching = true;
+                        fixture.ActiveContacts.Add(otherFixture);
                     }
                 }
 
@@ -220,6 +375,55 @@ public class PhysicsWorld : IGameComponent
             }
 
             body.Position = nextPositionY;
+        }
+
+        // 6. Step the particles against where everything ended up
+        UpdateParticles(dt);
+    }
+
+    /// <summary>
+    /// Helper method to find the static fixtures a fixture could run into while its body moves from one position to another.
+    /// </summary>
+    private ReadOnlySpan<int> FindStaticCandidates(IPhysicsFixture fixture, Vector2 from, Vector2 to)
+    {
+        if (!PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local)) return default;
+
+        return staticGrid.Query(Vector2.Min(from, to) + local.Min, Vector2.Max(from, to) + local.Max);
+    }
+
+    private void UpdateParticles(float dt)
+    {
+        if (particleGroups.Count == 0 && particleFeeds.Count == 0) return;
+
+        // The bodies are few, so their fixtures are simply placed in the world once and tested by every particle
+        int shapeCount = 0;
+        Vector2 bodiesMin = new(float.MaxValue), bodiesMax = new(float.MinValue);
+        foreach (var body in DynamicBodies)
+        {
+            foreach (var fixture in body.DynamicFixtures)
+            {
+                if (!PhysicsShape.TryCreate(fixture, body.Position, body.Velocity, out var shape)) continue;
+
+                if (shapeCount == dynamicShapes.Length)
+                {
+                    Array.Resize(ref dynamicShapes, dynamicShapes.Length * 2);
+                }
+                dynamicShapes[shapeCount++] = shape;
+
+                // Most particles are nowhere near a body, one box around all of them rules those out in a single test
+                bodiesMin = Vector2.Min(bodiesMin, shape.Min);
+                bodiesMax = Vector2.Max(bodiesMax, shape.Max);
+            }
+        }
+
+        foreach (var group in particleGroups)
+        {
+            group.Step(staticGrid, dynamicShapes.AsSpan(0, shapeCount), bodiesMin, bodiesMax, dt);
+        }
+
+        foreach (var feed in particleFeeds)
+        {
+            feed.Publish(staticGrid, dynamicShapes.AsSpan(0, shapeCount));
         }
     }
     public void UpdateState(float dt)

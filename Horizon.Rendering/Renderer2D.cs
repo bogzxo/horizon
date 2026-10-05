@@ -10,42 +10,54 @@ namespace Horizon.Rendering;
 
 /// <summary>
 /// Class providing a rendering and post processing pipeline for 2D sprite oriented rendering, specializing in extra functionality for pixel art.
-/// "Please be advised that due to poor design you can only instantiate this object with an active GL instance, ie. inside an IInitialize.Initialize() function." - here for historic reasons, no longer the case dw i guess.
+/// Everything that is added to it (with AddEntity) is drawn into its frame buffer rather than straight to the window,
+/// which is then put on screen by a <see cref="Renderer2DTechnique"/>. Whatever is to stay out of that (a HUD) is simply
+/// left outside and drawn after it.
+/// On its own all this gets is a frame buffer of a size of its own choosing, see <see cref="DeferredRenderer2D"/> for lighting.
 /// </summary>
 public class Renderer2D : GameObject
 {
     public FrameBufferObject FrameBuffer { get => frameBuffer; private set => frameBuffer = value; }
     public RenderRectangle RenderRectangle { get => renderRectangle; private set => renderRectangle = value; }
+
+    /// <summary>The size of the frame buffer everything is drawn into, however big it ends up on screen.</summary>
     public Vector2 ViewportSize { get; init; }
+
+    /// <summary>What shows wherever nothing was drawn.</summary>
+    public Vector4 ClearColor { get; set; } = new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
 
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
 
-    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height)
+    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) =>
+        CreateFrameBuffer(
+            new FrameBufferObjectDescription
+            {
+                Width = width,
+                Height = height,
+                Attachments = new() {
+                    { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
+
+                    // Sprite batches cut their sprites out with the stencil
+                    { FramebufferAttachment.DepthStencilAttachment, FrameBufferAttachmentDefinition.DepthStencilComponent },
+                }
+            });
+
+    /// <summary>
+    /// Helper method to make a frame buffer, anything going wrong is logged and thrown: there is no drawing without one.
+    /// </summary>
+    protected static FrameBufferObject CreateFrameBuffer(in FrameBufferObjectDescription description)
     {
         if (GameEngine
             .Instance
             .ObjectManager
             .FrameBuffers
-            .TryCreate(
-                new FrameBufferObjectDescription
-                {
-                    Width = width,
-                    Height = height,
-                    Attachments = new() {
-                        { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByte },
-                        { FramebufferAttachment.DepthStencilAttachment, FrameBufferAttachmentDefinition.DepthStencilComponent},
-                    }
-                },
-                out var result
-            ))
+            .TryCreate(description, out var result))
         {
             return result.Asset;
         }
-        else
-        {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-            throw new Exception(result.Message);
-        }
+
+        Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        throw new Exception(result.Message);
     }
 
     private FrameBufferObject frameBuffer;
@@ -69,28 +81,118 @@ public class Renderer2D : GameObject
 
     public override void Render(float dt, object? obj = null)
     {
+        // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind
+        InitializeAll();
+
+        var gl = Engine.GL;
+
+        // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
+        bool blend = gl.IsEnabled(EnableCap.Blend);
+        bool depthTest = gl.IsEnabled(EnableCap.DepthTest);
+        gl.GetInteger(GetPName.BlendSrcRgb, out int sourceRgb);
+        gl.GetInteger(GetPName.BlendDstRgb, out int destinationRgb);
+        gl.GetInteger(GetPName.BlendSrcAlpha, out int sourceAlpha);
+        gl.GetInteger(GetPName.BlendDstAlpha, out int destinationAlpha);
+
         // Bind the framebuffer and its attachments
         FrameBuffer.Bind();
-        Engine.GL.Disable(EnableCap.Blend);
-
-        // set the viewport & clear screen
         FrameBuffer.Viewport();
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.StencilBufferBit);
+
+        // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something.
+        // What is see-through is blended over what is there already, in every attachment alike: the alpha that comes
+        // out of that is how much of the pixel is covered.
+        gl.Disable(EnableCap.DepthTest);
+        gl.Enable(EnableCap.Blend);
+        gl.BlendFuncSeparate(
+            BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
+            BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+
+        Clear();
 
         // draw all children
-        base.Render(dt);
+        base.Render(dt, obj);
 
-        Engine.GL.Enable(EnableCap.Blend);
+        // set to window frame buffer & restore window viewport
+        BindOutput();
 
-        // set to window frame buffer
-        if (Engine.Debugger.RenderToContainer) Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
-        else FrameBufferObject.Unbind();
-
-        // restore window viewport
-        Engine.GL.Viewport(0, 0, (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Width : Engine.WindowManager.ViewportSize.X), (uint)(Engine.Debugger.RenderToContainer ? Engine.Debugger.GameContainerDebugger.FrameBuffer.Height : Engine.WindowManager.ViewportSize.Y));
-        Engine.GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.StencilBufferBit);
+        // What we put on screen replaces what is there, it isn't laid over it
+        gl.Disable(EnableCap.Blend);
 
         // draw framebuffer to window
         RenderRectangle.Render(dt);
+
+        gl.BlendFuncSeparate(
+            (BlendingFactor)sourceRgb, (BlendingFactor)destinationRgb,
+            (BlendingFactor)sourceAlpha, (BlendingFactor)destinationAlpha);
+
+        if (blend)
+            gl.Enable(EnableCap.Blend);
+        if (depthTest)
+            gl.Enable(EnableCap.DepthTest);
+    }
+
+    /// <summary>
+    /// GL thread, with the frame buffer bound. Empties every attachment for a new frame.
+    /// </summary>
+    protected virtual void Clear()
+    {
+        Clear(0, ClearColor);
+        ClearDepthStencil();
+    }
+
+    /// <summary>
+    /// Helper method to fill a colour attachment of the frame buffer, each one can be emptied to a value of its own.
+    /// </summary>
+    /// <param name="index">Which colour attachment, in the order the frame buffer draws to them.</param>
+    protected unsafe void Clear(int index, Vector4 value)
+    {
+        Engine.GL.ClearNamedFramebuffer(FrameBuffer.Handle, BufferKind.Color, index, (float*)&value);
+    }
+
+    protected void ClearDepthStencil()
+    {
+        var gl = Engine.GL;
+
+        // Only what can be written to gets cleared, and whoever drew last might have left these off
+        gl.DepthMask(true);
+        gl.StencilMask(0xFF);
+        gl.ClearNamedFramebuffer(FrameBuffer.Handle, GLEnum.DepthStencil, 0, 1.0f, 0);
+    }
+
+    /// <summary>
+    /// Helper method to bind whatever the engine is drawing the frame into: the window, or the game container of the debugger.
+    /// </summary>
+    private static void BindOutput()
+    {
+#if DEBUG
+        if (Engine.Debugger.RenderToContainer)
+        {
+            Engine.Debugger.GameContainerDebugger.FrameBuffer.Bind();
+            Engine.Debugger.GameContainerDebugger.FrameBuffer.Viewport();
+            return;
+        }
+#endif
+
+        FrameBufferObject.Unbind();
+        Engine.GL.Viewport(0, 0, (uint)Engine.WindowManager.ViewportSize.X, (uint)Engine.WindowManager.ViewportSize.Y);
+    }
+
+    protected override void DisposeOther()
+    {
+        if (frameBuffer is not null)
+        {
+            // The frame buffer doesn't own what is attached to it, those have to go one by one
+            foreach (var (_, attachment) in frameBuffer.Attachments)
+            {
+                if (attachment.Type == FrameBufferAttachmentType.Texture)
+                    Engine.ObjectManager.Textures.Remove(attachment.Texture);
+                else
+                    Engine.ObjectManager.RenderBuffers.Remove(attachment.RenderBuffer);
+            }
+
+            Engine.ObjectManager.FrameBuffers.Remove(frameBuffer);
+        }
+
+        base.DisposeOther();
     }
 }
