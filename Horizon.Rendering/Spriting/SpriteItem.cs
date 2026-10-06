@@ -26,6 +26,11 @@ public struct SpriteItem
     // with some of its pixels wider than others. At a whole multiple it makes no difference.
     public const uint SmoothFlag = 0x200;
 
+    // Set in Flags for a quad that is a quarter of a disc rather than a square, which is what the corners of a rounded box are made of.
+    // TexMin and TexMax then say how far each corner of the quad is from the middle of the disc (1 is on its edge),
+    // and Ring how much of it is filled. The edge is smoothed over a pixel, whatever size it is drawn at.
+    public const uint CornerFlag = 0x400;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad
@@ -47,11 +52,15 @@ public struct SpriteItem
     // RGBA, 8 bits each with red in the low byte, see PackColor
     public uint Color;
 
-    // The texture slot in the low byte (or NoTexture), CoverageFlag above it
+    // The texture slot in the low byte (or NoTexture), the flags above it
     public uint Flags;
 
     // Where the quad sits along Z, for when the depth test is on
     public float Depth;
+
+    // Only for a quad with the CornerFlag. How far in from the edge of the disc it is filled, as a share of the radius.
+    // 1 is all of it, less leaves a hole in the middle and makes it the corner of an outline
+    public float Ring;
 
     public static readonly uint SizeInBytes = (uint)Unsafe.SizeOf<SpriteItem>();
 

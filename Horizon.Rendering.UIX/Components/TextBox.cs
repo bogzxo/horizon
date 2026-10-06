@@ -33,7 +33,7 @@ public class TextBox : UIComponent
 
     private string text = string.Empty;
 
-    // Where typing happens, and where the selection started: everything between the two is selected. Both count
+    // Where typing happens, and where the selection started. Everything between the two is selected. Both count
     // characters from the start of the text
     private int caret, anchor;
 
@@ -186,7 +186,7 @@ public class TextBox : UIComponent
         blink = 0.0f;
     }
 
-    /// <summary>Helper to find where the word before or after a place starts: across the spaces next to it, then across the word.</summary>
+    /// <summary>Helper to find where the word before or after a place starts. Across the spaces next to it, then across the word.</summary>
     private int WordFrom(int from, int direction)
     {
         int at = from;
@@ -348,10 +348,15 @@ public class TextBox : UIComponent
         }
         else
         {
-            list.Rect(Bounds, skin.TrackColor * tint);
+            list.Box(Bounds, skin.FieldColor * tint);
             if (enabled && IsHovered && !focused)
-                list.Rect(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, 0.4f));
-            list.Outline(Bounds, 2.0f, focused ? skin.HighlightColor : skin.HoverColor);
+                list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, 0.4f));
+
+            // A thin rim that turns into a thick one in the colour of the skin while it is being typed in
+            if (focused)
+                list.Frame(Bounds, 2.0f, skin.HighlightColor);
+            else
+                list.Frame(Bounds, 1.0f, skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 
         UIRect content = Bounds.Shrink(Padding);

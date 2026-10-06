@@ -54,7 +54,7 @@ public class ProgressBar : UIComponent
         bool hasFrame = skin.TryGetRegion(FRAME_REGION, out var frame);
 
         if (!hasFrame)
-            list.Rect(Bounds, skin.ControlColor * tint);
+            list.Box(Bounds, skin.ControlColor * tint);
 
         // Art that is a whole empty bar rather than just the rim of one goes underneath the fill.
         bool frameFirst = hasFrame && skin.ProgressFillOverFrame;

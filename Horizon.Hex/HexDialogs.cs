@@ -5,13 +5,13 @@ namespace Horizon.Hex;
 /// <summary>
 /// The dialogs of Windows for picking a layout to open and a place to save one. They run on a thread of their
 /// own (they need one of a kind the engine doesn't have) while the editor carries on drawing, and hand back
-/// what was picked as a task: null if the dialog was closed without picking anything.
+/// what was picked as a task. Null if the dialog was closed without picking anything.
 /// They are asked for from Windows directly (comdlg32) rather than through Windows Forms, which can be neither
 /// trimmed nor compiled ahead of time and would be most of the editor by size.
 /// </summary>
 internal static unsafe partial class HexDialogs
 {
-    // What the dialog lists: pairs of what it says and what that matches, each ended by a zero and the lot by another
+    // What the dialog lists. Pairs of what it says and what that matches, each ended by a zero and the lot by another
     private const string FILTER = "Layouts (*.hor)\0*.hor\0All files (*.*)\0*.*\0";
     private const string EXTENSION = "hor";
 

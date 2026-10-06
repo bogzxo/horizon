@@ -32,7 +32,7 @@ internal sealed class UIRenderer
 
     public void Initialize()
     {
-        // Not part of any scene: it only ever draws what it is handed here.
+        // Not part of any scene. It only ever draws what it is handed here.
         batch = new SpriteBatch();
         batch.Initialize();
         batch.InitializeAll();

@@ -5,6 +5,7 @@ using System.Threading;
 using Horizon.Core;
 
 using Horizon.Core.Components;
+using Horizon.Core.Tweening;
 
 using Silk.NET.OpenGL;
 
@@ -21,11 +22,21 @@ namespace Horizon.Engine.Components;
 /// was, the frame after it is the new scene whole, and nothing in between is ever shown or updated: no empty
 /// frame, no frame of a scene that is still missing its UI, and no update of a scene that is half set up.
 /// </para>
+/// <para>
+/// A swap doesn't have to be a hard cut. Give the manager a <see cref="Transition"/> and every scene change covers the
+/// old scene up first, swaps while nobody can see and uncovers the new one. See <see cref="SceneTransition"/>.
+/// </para>
 /// </summary>
 public class SceneManager : Entity
 {
     // The most turns a scene that was just set gets to finish itself before it is shown as it is
     private const int MAX_WARM_UP = 8;
+
+    // The longest step a transition takes in one frame. Setting a scene up can take a while, and the fade shouldn't skip to its end because of it
+    private const float MAX_TRANSITION_STEP = 1.0f / 30.0f;
+
+    // Only one tween moves the cover at a time, covering up takes over from uncovering and the other way round
+    private const string COVER_CHANNEL = "cover";
 
     // Absorbed from InstanceManager
     public Scene? CurrentInstance { get; private set; }
@@ -43,6 +54,27 @@ public class SceneManager : Entity
 
     // Whether something that was drawn this frame said it isn't all there yet
     private bool _unfinished;
+
+    // The transition that is covering or uncovering the screen right now, and the one the waiting scene comes in with
+    private readonly TweenContext _tweens = new();
+    private SceneTransition? _running, _incomingTransition;
+
+    // The transition that drew over the last frame, which is how it is known when one has stopped
+    private SceneTransition? _drawn;
+
+    // How much of the screen is covered, 0 is none of it and 1 is all of it. And whether it is on its way to all of it
+    private float _cover;
+    private volatile bool _covering;
+
+    // Whether the scene under the cover is the new one already, and whether the old one is on its very last frame
+    private bool _arriving;
+    private volatile bool _lastFrame;
+
+    /// <summary>
+    /// The transition every scene change goes through, unless it is handed one of its own.
+    /// Null (which is what it is until somebody sets one) for a hard cut.
+    /// </summary>
+    public SceneTransition? Transition { get; set; }
 
     // AOT-friendly registry for dynamic Type lookups
     private readonly Dictionary<Type, Func<Scene>> _sceneFactories = new();
@@ -85,10 +117,18 @@ public class SceneManager : Entity
     }
 
     /// <summary>
-    /// Has a scene take over from the one that is on screen, at the start of the next frame. From any thread.
-    /// Until then <see cref="CurrentInstance"/> is still the scene that is left, which is not updated any more.
+    /// Has a scene take over from the one that is on screen, through the <see cref="Transition"/> if there is one. From any thread.
     /// </summary>
-    public void SetScene(in Scene scene)
+    public void SetScene(in Scene scene) => SetScene(scene, Transition);
+
+    /// <summary>
+    /// Has a scene take over from the one that is on screen. From any thread.
+    /// Without a transition that happens at the start of the next frame, and the scene that is left is not updated any more.
+    /// With one the scene that is left stays on screen (and keeps getting updated) for as long as it takes to cover it up,
+    /// so a scene that has set another one should stop listening to its buttons.
+    /// </summary>
+    /// <param name="transition">How this one change is made, null for a hard cut whatever <see cref="Transition"/> says.</param>
+    public void SetScene(in Scene scene, SceneTransition? transition)
     {
         lock (_changeLock)
         {
@@ -99,7 +139,29 @@ public class SceneManager : Entity
             }
 
             _incoming = scene;
-            _halt = true;
+            _incomingTransition = transition;
+
+            // Nothing to cover up, the scene takes over at the next frame
+            if (transition is null || CurrentInstance is null)
+            {
+                _halt = true;
+                return;
+            }
+
+            // Already on the way to covered, the scene that was just set simply takes the place of the one that was waiting
+            if (_covering) return;
+
+            _covering = true;
+            _arriving = false;
+            _running = transition;
+
+            // Covered all the way is not the moment to swap yet. The old scene is drawn once more like that first,
+            // which is the frame a transition gets to remember it by
+            _tweens.Play(
+                Tween.To(() => _cover, cover => _cover = cover, 1.0f, MathF.Max(0.0f, transition.OutTime))
+                    .SetEasing(transition.OutEasing)
+                    .OnComplete(() => _lastFrame = true),
+                COVER_CHANNEL);
         }
     }
 
@@ -113,6 +175,9 @@ public class SceneManager : Entity
 
     public override void Render(float dt, object? obj = null)
     {
+        // The cover is moved along here rather than with the updates, those stop while a scene is being swapped
+        _tweens.Tick(MathF.Min(dt, MAX_TRANSITION_STEP));
+
         if (_halt)
             Change(dt);
 
@@ -125,6 +190,50 @@ public class SceneManager : Entity
         }
 
         base.Render(dt, obj);
+
+        // Whoever drew over the last frame and doesn't any more is done, and is told so it can let go of what it kept
+        SceneTransition? drawing = _cover > 0.0f ? _running : null;
+        if (!ReferenceEquals(_drawn, drawing))
+        {
+            _drawn?.Finish();
+            _drawn = drawing;
+        }
+
+        // Over everything, whatever the scene drew last
+        drawing?.Render(_cover, _arriving, dt);
+
+        // That was the last frame of the old scene, the new one takes over at the start of the next
+        if (_lastFrame)
+        {
+            _lastFrame = false;
+            _halt = true;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to take the cover off again once the scene under it has been swapped, the way the transition
+    /// the scene came in with wants it. Without one the cover is simply gone.
+    /// </summary>
+    private void Uncover(SceneTransition? transition)
+    {
+        _covering = false;
+        _lastFrame = false;
+
+        if (transition is null)
+        {
+            _tweens.Kill(COVER_CHANNEL);
+            _cover = 0.0f;
+            _running = null;
+            return;
+        }
+
+        // From all the way covered, also for a scene that had nothing before it to cover up (the first one)
+        _running = transition;
+        _arriving = true;
+        _cover = 1.0f;
+        _tweens.Play(
+            Tween.To(() => _cover, cover => _cover = cover, 0.0f, MathF.Max(0.0f, transition.InTime)).SetEasing(transition.InEasing),
+            COVER_CHANNEL);
     }
 
     /// <summary>
@@ -134,16 +243,20 @@ public class SceneManager : Entity
     private void Change(float dt)
     {
         Scene? incoming;
+        SceneTransition? transition;
         lock (_changeLock)
         {
             incoming = _incoming;
+            transition = _incomingTransition;
             _incoming = null;
+            _incomingTransition = null;
             _halt = false;
         }
 
         Scene? left = CurrentInstance;
         if (ReferenceEquals(incoming, left))
         {
+            Uncover(transition);
             DisposeRetired();
             return;
         }
@@ -169,6 +282,9 @@ public class SceneManager : Entity
         }
 
         DisposeRetired();
+
+        // Last, so the time all of the above took is not time the new scene spends half uncovered
+        Uncover(incoming is null ? null : transition);
     }
 
     /// <summary>

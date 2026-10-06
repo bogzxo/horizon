@@ -5,7 +5,7 @@ using Horizon.Rendering.UIX;
 namespace Horizon.Hex;
 
 /// <summary>
-/// A pointer that follows a script rather than the mouse, for the editor to test itself with: moves, presses,
+/// A pointer that follows a script rather than the mouse, for the editor to test itself with. Moves, presses,
 /// things to do and things to check are queued up front and played back one after the other. The checks are
 /// printed as they run, with a tally at the end.
 /// </summary>
@@ -14,7 +14,7 @@ internal sealed class HexPointerScript
     private const float MOVE_TIME = 0.16f;
     private const float PRESS_TIME = 0.08f;
 
-    // One of: glide to a target with the button in a given state, wait for something, run something, check something.
+    // One of these. Glide to a target with the button in a given state, wait for something, run something, check something.
     private readonly record struct Step(
         Func<Vector2>? Target = null,
         bool Down = false,

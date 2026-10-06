@@ -14,6 +14,10 @@ public class Button : UIComponent
 {
     private const string SELECTION_REGION = "selection";
 
+    // What the name of a style ends in when it has no body of its own, and how much of the skin's colour the chosen one of those is filled with
+    private const string FLAT_SUFFIX = "_flat";
+    private const float CHOSEN_FILL = 0.28f;
+
     private string style = "button";
     private string pressedStyle = "button_pressed";
     private string hoverStyle = "button_hover";
@@ -49,7 +53,7 @@ public class Button : UIComponent
     public bool Selected { get; set; }
 
     /// <summary>
-    /// Whether the button gives a little when something happens to it: a bump when it lights up
+    /// Whether the button gives a little when something happens to it. A bump when it lights up
     /// (hovered or <see cref="Selected"/>) and a squeeze when it is pressed.
     /// </summary>
     public bool Animated { get; set; } = true;
@@ -94,9 +98,11 @@ public class Button : UIComponent
         if (stateArt || skin.TryGetRegion(style, out region))
             list.NineSlice(region, Bounds, tint);
         else
-            list.Rect(Bounds, skin.ControlColor * (down ? new Vector4(0.8f, 0.8f, 0.8f, 1.0f) : Vector4.One) * tint);
+            PaintFlat(list, skin, down, hovered, tint);
 
-        if (hovered && !stateArt)
+        // Art that has no look of its own for being lit gets a rim put around it
+        bool flat = !stateArt && !skin.TryGetRegion(style, out _);
+        if (hovered && !stateArt && !flat)
         {
             list.Rect(Bounds.Shrink(new UIEdges(2.0f)), skin.HoverColor);
             list.Outline(Bounds, 2.0f, skin.HighlightColor);
@@ -118,6 +124,35 @@ public class Button : UIComponent
             Origin.Center,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
             skin.ControlTextColor * tint);
+    }
+
+    /// <summary>
+    /// Helper method to draw the button for a skin that has no art for it. A box that darkens when it is held down,
+    /// lights up under the pointer and gets a rim in the colour of the skin when it is the chosen one.
+    /// </summary>
+    private void PaintFlat(UIDrawList list, UISkin skin, bool down, bool hovered, Vector4 tint)
+    {
+        bool chosen = Selected && EnabledInHierarchy;
+
+        // A style that calls itself flat has no body. It is a label that lights up, and stays lit while it is the chosen one
+        if (style.EndsWith(FLAT_SUFFIX))
+        {
+            if (chosen)
+                list.Box(Bounds, skin.AccentColor with { W = CHOSEN_FILL });
+            if (hovered || down)
+                list.Box(Bounds, skin.HoverColor);
+            return;
+        }
+
+        list.Box(Bounds, skin.ControlColor * (down ? new Vector4(0.8f, 0.8f, 0.8f, 1.0f) : Vector4.One) * tint);
+
+        if (hovered)
+            list.Box(Bounds, skin.HoverColor);
+
+        if (chosen)
+            list.Frame(Bounds, 2.0f, skin.HighlightColor);
+        else if (skin.BorderColor.W > 0.0f)
+            list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
     }
 
     protected override void Update(float dt)

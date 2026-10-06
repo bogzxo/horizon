@@ -7,7 +7,7 @@ using Horizon.Rendering.UIX.Skinning;
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// A picture: either a named region of the skin or a whole texture of its own, such as a portrait.
+/// A picture. Either a named region of the skin or a whole texture of its own, such as a portrait.
 /// Unless given a size it is as big as its art. A region that has frames is played as an animation.
 /// </summary>
 public class Image : UIComponent

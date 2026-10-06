@@ -17,7 +17,7 @@ namespace Horizon.Rendering.UIX.Skinning;
 /// <param name="FrameTime">How long each frame of an animation is shown for, in seconds.</param>
 /// <param name="Content">
 /// How far in from each edge (in texels) whatever goes on top of the art sits, for art that isn't the same
-/// on every side: a button with a lip along the bottom has its label on the face above it. Empty for art
+/// on every side. A button with a lip along the bottom has its label on the face above it. Empty for art
 /// that leaves this to the skin.
 /// </param>
 public readonly record struct UIRegion(

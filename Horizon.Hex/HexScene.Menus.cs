@@ -1,0 +1,114 @@
+using System.Numerics;
+
+using Horizon.Engine;
+using Horizon.HIDL.Runtime;
+using Horizon.Rendering;
+using Horizon.Rendering.UIX;
+using Horizon.Rendering.UIX.Components;
+
+using Key = Silk.NET.Input.Key;
+
+namespace Horizon.Hex;
+
+// The palette and the menu bar, which is everything there is to do that isn't done to something on screen directly.
+internal sealed partial class HexScene
+{
+    private void BuildPalette()
+    {
+        // One button per kind of component, each made from the template the palette names
+        var items = layout.Populate("palette", Palette.Length);
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            string kind = Palette[i];
+            var button = items[i].Get<Button>("button");
+
+            button.Label = kind.Replace('_', ' ');
+            button.OnPressed = () => AddComponentOf(kind);
+            paletteButtons.Add(button);
+        }
+    }
+
+    /* The menu bar: everything there is to do that isn't done to something on screen directly */
+
+    /// <summary>
+    /// Helper method to set up the keys of the editor. The ones with control work whatever is going on,
+    /// the others keep out of the way while something is being typed.
+    /// </summary>
+    private void BuildShortcuts()
+    {
+        shortcuts.Add(Key.Z, Undo, control: true, whileTyping: true);
+        shortcuts.Add(Key.Y, Redo, control: true, whileTyping: true);
+        shortcuts.Add(Key.S, Save, control: true, whileTyping: true);
+        shortcuts.Add(Key.O, OpenPressed, control: true, whileTyping: true);
+        shortcuts.Add(Key.N, () => Show(NewDocument()), control: true, whileTyping: true);
+        shortcuts.Add(Key.W, Close, control: true, whileTyping: true);
+
+        shortcuts.Add(Key.Delete, DeleteSelected);
+
+        // The arrows move whatever is selected a pixel at a time, for lining things up by eye
+        shortcuts.Add(Key.Left, () => Nudge(-1, 0));
+        shortcuts.Add(Key.Right, () => Nudge(1, 0));
+        shortcuts.Add(Key.Up, () => Nudge(0, 1));
+        shortcuts.Add(Key.Down, () => Nudge(0, -1));
+    }
+
+    private void BuildMenus()
+    {
+        fileMenu = menu.AddMenu("File");
+        RebuildFileMenu();
+
+        Menu edit = menu.AddMenu("Edit");
+        edit.Add("Undo", Undo, "Ctrl+Z").IsEnabled = () => document.CanUndo || recordPending;
+        edit.Add("Redo", Redo, "Ctrl+Y").IsEnabled = () => document.CanRedo;
+        edit.AddSeparator();
+        edit.Add("Move up", () => MoveSelected(-1)).IsEnabled = () => document.Selected is not null;
+        edit.Add("Move down", () => MoveSelected(1)).IsEnabled = () => document.Selected is not null;
+        edit.Add("Delete", DeleteSelected, "Del").IsEnabled = () => document.Selected is not null;
+
+        Menu view = menu.AddMenu("View");
+        view.Add("Play intros", () => document.PlayIntros());
+        view.AddSeparator();
+        layoutDebugger.AddTo(view, () => Say(layoutDebugger.IsOn ? "layout debugger on: padding is green, gaps are orange" : "layout debugger off"));
+        view.AddSeparator();
+        view.Add("Show all layers", ShowAllLayers).IsEnabled = () => document.Module.HiddenLayers.Count > 0;
+        view.AddSeparator();
+
+        // The sizes it can be are the ones the editor knows how to lay itself out at
+        foreach (float scale in Scales)
+            view.Add(DescribeScale(scale), () => SetScale(scale, remember: true)).IsChecked = () => compositor.Scale == scale;
+    }
+
+    /// <summary>
+    /// Puts the file menu together. What it always has, and under that the layouts that were worked on last.
+    /// Again whenever those change.
+    /// </summary>
+    private void RebuildFileMenu()
+    {
+        fileMenu.Clear();
+
+        fileMenu.Add("New", () => Show(NewDocument()), "Ctrl+N");
+        fileMenu.Add("Open...", OpenPressed, "Ctrl+O");
+        fileMenu.AddSeparator();
+        fileMenu.Add("Save", Save, "Ctrl+S");
+        fileMenu.Add("Save as...", SaveAs);
+        fileMenu.Add("Close", Close, "Ctrl+W");
+
+        if (recent.Count > 0)
+        {
+            fileMenu.AddSeparator();
+
+            for (int i = 0; i < recent.Count; i++)
+            {
+                // Numbered, two of them can well have the same name in different folders
+                string path = recent[i];
+                fileMenu.Add($"{i + 1}  {Path.GetFileName(path)}", () => Open(path));
+            }
+
+            fileMenu.Add("Forget these", ForgetRecent);
+        }
+
+        fileMenu.AddSeparator();
+        fileMenu.Add("The editor's own UI", () => Open(EDITOR_LAYOUT));
+    }
+}

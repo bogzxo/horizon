@@ -1,7 +1,7 @@
 ﻿namespace Horizon.Rendering.UIX;
 
 /// <summary>
-/// What of its layout a UI draws over itself, for whoever is working out why it is laid out the way it is: the
+/// What of its layout a UI draws over itself, for whoever is working out why it is laid out the way it is. The
 /// edges of every component, the padding inside of them, the gaps stacks leave between their children, and what
 /// the pointer is over along with its size. A UI draws all of that while it is handed one of these
 /// (<see cref="UICompositor.LayoutOverlay"/>), in any build: the drawing is the UI's, which is the one that knows

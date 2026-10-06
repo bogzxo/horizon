@@ -185,7 +185,7 @@ public sealed class EngineLoop : IDisposable
     /// <summary>
     /// Helper method to wait for a moment (in seconds of the stopwatch): asleep for most of it, awake for the end.
     /// </summary>
-    private static void WaitUntil(double moment)
+    internal static void WaitUntil(double moment)
     {
         double frequency = Stopwatch.Frequency;
 
