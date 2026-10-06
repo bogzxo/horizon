@@ -52,15 +52,43 @@ public sealed class UIDrawList
     private Vector2 visualScale = Vector2.One;
     private float opacity = 1.0f;
 
+    // How fast what is being painted is going across the screen, for the effects that blur what moves: at a point p
+    // (as the camera sees it) that is motionBase + motionSlope * p. Each component says so for what it paints, see
+    // PushMotion.
+    private readonly Stack<(Vector2 Base, Vector2 Slope)> motions = new();
+    private Vector2 motionBase, motionSlope;
+    private int frame;
+    private float deltaTime;
+
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
+
+    /// <summary>
+    /// Whether the quads are told how fast they are going. Only when something is going to use it: working it out
+    /// takes every component a little memory and a little time.
+    /// </summary>
+    internal bool TracksMotion { get; private set; }
+
+    /// <summary>Whether anything that was painted this frame is going anywhere, as far as <see cref="TracksMotion"/> can tell.</summary>
+    internal bool Moving { get; private set; }
 
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
 
-    internal void Begin(UISkin skin)
+    /// <param name="frame">Which update this is, counting up by one for as long as the UI is painted without a break.</param>
+    /// <param name="dt">How long the update is, in seconds.</param>
+    /// <param name="tracksMotion">See <see cref="TracksMotion"/>.</param>
+    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, bool tracksMotion = false)
     {
         Skin = skin;
+
+        this.frame = frame;
+        deltaTime = dt;
+        TracksMotion = tracksMotion;
+        Moving = false;
+
+        motions.Clear();
+        motionBase = motionSlope = Vector2.Zero;
 
         itemCount = 0;
         runs.Clear();
@@ -79,7 +107,35 @@ public sealed class UIDrawList
         opacity = 1.0f;
     }
 
-    internal void End() => CloseRun();
+    internal void End()
+    {
+        CloseRun();
+
+        // Art that was asked for while painting (or just before, by another UI with the same skin) isn't in
+        // the atlas until the next frame is drawn, so this list may well show less than it should
+        Incomplete = Skin.HasPendingArt;
+    }
+
+    /// <summary>
+    /// Whether another list draws exactly what this one does: the same quads in the same order, showing the same
+    /// textures. Two updates of a UI that nothing happened in paint lists that are, and the second one needn't be drawn.
+    /// </summary>
+    internal bool SameAs(UIDrawList other)
+    {
+        if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete || Moving != other.Moving)
+            return false;
+
+        if (!CollectionsMarshal.AsSpan(runs).SequenceEqual(CollectionsMarshal.AsSpan(other.runs)))
+            return false;
+
+        // Byte for byte, an item is nothing but numbers
+        return MemoryMarshal.AsBytes(items.AsSpan(0, itemCount)).SequenceEqual(MemoryMarshal.AsBytes(other.items.AsSpan(0, itemCount)));
+    }
+
+    /// <summary>
+    /// Whether the list was painted while art of its skin was still on its way into the atlas, and so without it.
+    /// </summary>
+    internal bool Incomplete { get; private set; }
 
     /// <summary>
     /// Everything painted until the matching <see cref="PopVisual"/> is drawn scaled around a point, moved
@@ -97,6 +153,34 @@ public sealed class UIDrawList
     }
 
     internal void PopVisual() => (visualOffset, visualScale, opacity) = visuals.Pop();
+
+    /// <summary>
+    /// Everything painted until the matching <see cref="PopMotion"/> is going as fast as a component is, which is
+    /// worked out here from where its bounds end up being drawn this update and where they were the last.
+    /// Both of its corners are followed, so what is painted near one of them goes as fast as that corner does:
+    /// the far end of something that is growing moves, the end it grows from doesn't.
+    /// </summary>
+    /// <param name="motion">What the component remembers of where it was.</param>
+    /// <param name="bounds">Where the layout put the component.</param>
+    internal void PushMotion(UIMotion motion, UIRect bounds)
+    {
+        Vector2 min = (bounds.Min * visualScale + visualOffset) * scale + origin;
+        Vector2 max = (bounds.Max * visualScale + visualOffset) * scale + origin;
+
+        motion.Track(min, max, bounds.Size, frame, deltaTime);
+        motions.Push((motionBase, motionSlope));
+
+        // From one corner to the other the speed changes evenly. Something without a size goes at one speed
+        Vector2 size = max - min;
+        Vector2 spread = motion.Max - motion.Min;
+
+        motionSlope = new Vector2(
+            size.X != 0.0f ? spread.X / size.X : 0.0f,
+            size.Y != 0.0f ? spread.Y / size.Y : 0.0f);
+        motionBase = motion.Min - motionSlope * min;
+    }
+
+    internal void PopMotion() => (motionBase, motionSlope) = motions.Pop();
 
     /// <summary>
     /// Everything painted from here on is scaled and then moved, which is how a module places itself.
@@ -187,7 +271,15 @@ public sealed class UIDrawList
     }
 
     /// <summary>Draws a whole texture that isn't part of the skin, such as a portrait or an icon.</summary>
-    public void Image(Texture texture, UIRect rect, Vector4 tint)
+    public void Image(Texture texture, UIRect rect, Vector4 tint) =>
+        Image(texture, rect, Vector2.Zero, new Vector2(texture.Width, texture.Height), tint);
+
+    /// <summary>
+    /// Draws a part of a texture that isn't part of the skin, such as one sprite out of a sheet.
+    /// </summary>
+    /// <param name="texTopLeft">The top left corner of the part, in pixels from the top left of the texture.</param>
+    /// <param name="texBottomRight">Its bottom right corner.</param>
+    public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint)
     {
         // Two custom images fit in a run next to the atlas and the font, a third means a new run.
         uint slot;
@@ -212,7 +304,7 @@ public sealed class UIDrawList
             slot = IMAGE_SLOT;
         }
 
-        Quad(rect, Vector2.Zero, new Vector2(texture.Width, texture.Height), SpriteItem.PackColor(tint), slot);
+        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), slot);
     }
 
     /// <summary>
@@ -272,6 +364,9 @@ public sealed class UIDrawList
         position = new Vector2(MathF.Round(position.X), MathF.Round(position.Y));
         Vector2 pen = position;
 
+        // The set of icons the text says it is written in, from where it says so
+        ReadOnlySpan<char> icons = default;
+
         for (int i = 0; i < text.Length; i++)
         {
             char character = text[i];
@@ -282,10 +377,17 @@ public sealed class UIDrawList
                 continue;
             }
 
-            if (markup && character == '[' && font.TryReadIcon(text[i..], scale, out var name, out int length, out Vector2 size))
+            if (markup && character == '[' && font.TryReadIconSet(text[i..], out var set, out int skipped))
+            {
+                icons = set;
+                i += skipped - 1;
+                continue;
+            }
+
+            if (markup && character == '[' && font.TryReadIcon(text[i..], scale, icons, out var name, out int length, out Vector2 size))
             {
                 // Centred on the line. Art that hasn't made it into the atlas yet still takes up its room.
-                if (Skin.TryGetIcon(name, out var icon))
+                if (Skin.TryGetIcon(name, icons, out var icon))
                 {
                     Vector2 corner = new(pen.X, MathF.Round(pen.Y - (lineHeight + size.Y) * 0.5f));
                     Icon(icon, new UIRect(corner, corner + size), new Vector4(1.0f, 1.0f, 1.0f, color.W));
@@ -359,17 +461,26 @@ public sealed class UIDrawList
         }
 
         // Art that is drawn at a size it wasn't made for has its texels blended at the edges, or pixel art
-        // would shimmer its way through an animation. Text has a filter of its own.
-        if (visualScale != Vector2.One && (flags & 0xFF) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
+        // would shimmer its way through an animation and come out uneven in a UI that is scaled to its window.
+        // Text has a filter of its own.
+        Vector2 drawn = visualScale * scale;
+        bool whole = drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
+        if (!whole && (flags & 0xFF) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
             flags |= SpriteItem.SmoothFlag;
 
-        items[itemCount++] = SpriteItem.Rectangle(
-            (visible.Min * visualScale + visualOffset) * scale + origin,
-            (visible.Max * visualScale + visualOffset) * scale + origin,
-            texTopLeft,
-            texBottomRight,
-            color,
-            flags);
+        Vector2 min = (visible.Min * visualScale + visualOffset) * scale + origin;
+        Vector2 max = (visible.Max * visualScale + visualOffset) * scale + origin;
+
+        ref SpriteItem item = ref items[itemCount++];
+        item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
+
+        // A quad goes at one speed all over, the one of its middle. They are small enough for that: a panel is
+        // nine of them and text one a letter
+        if (TracksMotion)
+        {
+            item.Motion = motionBase + motionSlope * ((min + max) * 0.5f);
+            Moving |= item.Motion != Vector2.Zero;
+        }
     }
 
     private void CloseRun()

@@ -28,13 +28,15 @@ public class FrameBufferObjectFactory
 
         // Only the colour attachments can be drawn to: handing over a depth or stencil attachment as well has the
         // whole call rejected, which leaves the frame buffer drawing to its first colour attachment alone.
-        // They go in order, so that output N of a fragment shader ends up in colour attachment N.
-        var drawBuffers = attachments
-            .Keys
-            .Where(IsColorAttachment)
-            .OrderBy(attachment => (int)attachment)
-            .Select(attachment => (ColorBuffer)attachment)
-            .ToArray();
+        // They go by their number, so that output N of a fragment shader ends up in colour attachment N whether or
+        // not the ones before it are there: an output there is no attachment for is thrown away.
+        int[] colours = [.. attachments.Keys.Where(IsColorAttachment).Select(attachment => attachment - FramebufferAttachment.ColorAttachment0)];
+
+        var drawBuffers = new ColorBuffer[colours.Length == 0 ? 0 : colours.Max() + 1];
+        Array.Fill(drawBuffers, ColorBuffer.None);
+
+        foreach (int colour in colours)
+            drawBuffers[colour] = (ColorBuffer)(FramebufferAttachment.ColorAttachment0 + colour);
 
         var buffer = new FrameBufferObject
         {

@@ -9,6 +9,36 @@ public readonly struct WindowManagerConfiguration
 {
     public readonly Vector2 WindowSize { get; init; }
     public readonly string WindowTitle { get; init; }
+    public readonly bool Fullscreen { get; init; }
+
+    /// <summary>
+    /// Whether the window starts out filling the screen it is on, for tools that want all the room there is.
+    /// <see cref="WindowSize"/> is then what it goes back to when it is restored.
+    /// </summary>
+    public readonly bool Maximized { get; init; }
+
+    /// <summary>
+    /// Whether frames wait for the screen to be ready for them, so none is shown torn across two and no more are
+    /// drawn than can be seen. On unless it is switched off.
+    /// </summary>
+    public readonly bool VSync { get; init; } = true;
+
+    /// <summary>
+    /// The most frames that are drawn a second, 0 for no limit (which with <see cref="VSync"/> on is as many as the screen shows).
+    /// </summary>
+    public readonly double FramesPerSecond { get; init; } = 0.0;
+
+    /// <summary>How many times a second the state of the game is updated, on the logic thread.</summary>
+    public readonly double UpdatesPerSecond { get; init; } = 120.0;
+
+    /// <summary>
+    /// How many times a second the physics is stepped, on a thread of its own. Every step is told the same length
+    /// of time (one over this), whatever the machine is busy with.
+    /// </summary>
+    public readonly double PhysicsUpdatesPerSecond { get; init; } = 120.0;
+
+    // What isn't said is as above, which takes a constructor to hold for a struct
+    public WindowManagerConfiguration() { }
 
     public static WindowManagerConfiguration Default1600x900 { get; } =
         new WindowManagerConfiguration

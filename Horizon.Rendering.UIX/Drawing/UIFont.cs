@@ -14,17 +14,21 @@ internal interface IUIIconSource
     float IconScale { get; }
 
     /// <summary>The size of an icon's art in texels, false if there is no icon by that name.</summary>
-    bool TryGetIconSize(ReadOnlySpan<char> name, out Vector2 texelSize);
+    /// <param name="set">The set of icons the text is written in, empty for none.</param>
+    bool TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize);
 }
 
 /// <summary>
 /// A bitmap font as the UI needs it: enough to measure text and to place its glyphs.
 /// Text can have icons in it: <c>[icon:name]</c> is replaced by the icon of that name (see
 /// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
+/// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin:
+/// <c>"[icons:playstation][icon:pad_a] pick"</c> shows whatever the skin says a PlayStation gamepad has for pad_a.
 /// </summary>
 public sealed class UIFont
 {
     private const string ICON_TAG = "[icon:";
+    private const string ICON_SET_TAG = "[icons:";
     private const char ICON_TAG_END = ']';
 
     private readonly Dictionary<char, CharDefinition> glyphs;
@@ -85,7 +89,8 @@ public sealed class UIFont
     /// <param name="name">The name of the icon.</param>
     /// <param name="length">How many characters the tag takes up.</param>
     /// <param name="size">How big the icon is in a line of text at <paramref name="scale"/>.</param>
-    internal bool TryReadIcon(ReadOnlySpan<char> text, float scale, out ReadOnlySpan<char> name, out int length, out Vector2 size)
+    /// <param name="set">The set of icons the text is written in so far, empty for none.</param>
+    internal bool TryReadIcon(ReadOnlySpan<char> text, float scale, ReadOnlySpan<char> set, out ReadOnlySpan<char> name, out int length, out Vector2 size)
     {
         name = default;
         length = 0;
@@ -99,11 +104,33 @@ public sealed class UIFont
             return false;
 
         name = text[ICON_TAG.Length..end];
-        if (!Icons.TryGetIconSize(name, out Vector2 texelSize) || texelSize.Y <= 0.0f)
+        if (!Icons.TryGetIconSize(name, set, out Vector2 texelSize) || texelSize.Y <= 0.0f)
             return false;
 
         length = end + 1;
         size = IconSize(texelSize, scale);
+        return true;
+    }
+
+    /// <summary>
+    /// Tests whether text starts with a tag that says which set of icons the rest of it is written in.
+    /// </summary>
+    /// <param name="set">The name of the set.</param>
+    /// <param name="length">How many characters the tag takes up, none of which are drawn.</param>
+    internal bool TryReadIconSet(ReadOnlySpan<char> text, out ReadOnlySpan<char> set, out int length)
+    {
+        set = default;
+        length = 0;
+
+        if (Icons is null || !text.StartsWith(ICON_SET_TAG))
+            return false;
+
+        int end = text.IndexOf(ICON_TAG_END);
+        if (end < 0)
+            return false;
+
+        set = text[ICON_SET_TAG.Length..end];
+        length = end + 1;
         return true;
     }
 
@@ -131,6 +158,7 @@ public sealed class UIFont
         float widest = 0.0f;
         float width = 0.0f;
         int lines = 1;
+        ReadOnlySpan<char> icons = default;
 
         for (int i = 0; i < text.Length; i++)
         {
@@ -144,11 +172,21 @@ public sealed class UIFont
                 continue;
             }
 
-            if (markup && character == ICON_TAG[0] && TryReadIcon(text[i..], scale, out _, out int length, out Vector2 size))
+            if (markup && character == ICON_TAG[0])
             {
-                width += size.X;
-                i += length - 1;
-                continue;
+                if (TryReadIconSet(text[i..], out var set, out int skipped))
+                {
+                    icons = set;
+                    i += skipped - 1;
+                    continue;
+                }
+
+                if (TryReadIcon(text[i..], scale, icons, out _, out int length, out Vector2 size))
+                {
+                    width += size.X;
+                    i += length - 1;
+                    continue;
+                }
             }
 
             Resolve(character, out var glyph);

@@ -81,6 +81,8 @@ namespace Horizon.Input.Components
         {
             List<XJoystickButton> buttonPresses = [];
 
+            if (Gamepad is null) return;
+
             foreach (var button in Gamepad.Buttons)
             {
                 if (button.Pressed)

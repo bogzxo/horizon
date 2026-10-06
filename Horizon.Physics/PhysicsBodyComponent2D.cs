@@ -16,6 +16,13 @@ public class PhysicsBodyComponent2D : IGameComponent
     public List<IPhysicsFixture> KinematicFixtures { get; init; } = [];
     public List<IPhysicsFixture> DynamicFixtures { get; init; } = [];
 
+    /// <summary>
+    /// What particles run into of this body. Left empty that is its dynamic fixtures, the same things it stands on
+    /// the map with. A body that has something better to offer them (the outline of its sprite, see
+    /// <see cref="OutlinePhysicsFixture"/>) puts it here, and they collide with that instead.
+    /// </summary>
+    public List<IPhysicsFixture> ParticleFixtures { get; init; } = [];
+
     // TODO: this should not be publicly mutable, the physics world simulation loop should change it
     public Vector2 Position { get; set; }
 
@@ -48,6 +55,16 @@ public class PhysicsBodyComponent2D : IGameComponent
         if (kinematic) this.KinematicFixtures.Add(rf);
         else this.DynamicFixtures.Add(rf);
         return rf;
+    }
+
+    /// <summary>
+    /// Gives the body an outline for particles to collide with, empty until it is given one (<see cref="OutlinePhysicsFixture.Set"/>).
+    /// </summary>
+    public OutlinePhysicsFixture CreateOutlineFixture(string tag = "")
+    {
+        var outline = new OutlinePhysicsFixture(tag);
+        this.ParticleFixtures.Add(outline);
+        return outline;
     }
 
     public CirclePhysicsFixture CreateCircleFixture(Vector2 position, float radius, bool kinematic = false, string tag="")

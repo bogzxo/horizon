@@ -18,6 +18,20 @@ public class Camera2D : Camera
     private float _zoom = 1.0f;
     private Vector2 Size { get; set; }
 
+    /// <summary>
+    /// How much of the world the camera sees before its zoom. Set to the size of the window it shows a unit of
+    /// the world per pixel, which is what a camera that draws a UI wants to keep doing when the window is resized.
+    /// </summary>
+    public Vector2 ViewSize
+    {
+        get => Size;
+        set
+        {
+            Size = value;
+            Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
+        }
+    }
+
     public Camera2D(in Vector2 size)
     {
         this.Size = size;

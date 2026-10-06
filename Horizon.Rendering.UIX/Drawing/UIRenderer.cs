@@ -27,6 +27,9 @@ internal sealed class UIRenderer
     private readonly List<SpriteRun> spriteRuns = [];
     private UISkin? skin;
 
+    /// <summary>Whether anything of what was last uploaded is going anywhere, see <see cref="UIDrawList.Moving"/>.</summary>
+    public bool Moving { get; private set; }
+
     public void Initialize()
     {
         // Not part of any scene: it only ever draws what it is handed here.
@@ -82,6 +85,7 @@ internal sealed class UIRenderer
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
+        Moving = list.Moving;
     }
 
     /// <summary>
@@ -92,6 +96,7 @@ internal sealed class UIRenderer
         itemCount = 0;
         runs.Clear();
         skin = null;
+        Moving = false;
     }
 
     /// <summary>

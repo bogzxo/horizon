@@ -1,0 +1,17 @@
+// One row of the list on the left: a component of the layout, or a file when a layout is being opened.
+// The text is on top of the button rather than its label so it can start at the left and step in with the depth.
+
+let row = compositor.button({
+    anchor: "left",
+    style: "button_flat",
+    size: vec(262, 26),
+    animated: false
+});
+let caption = compositor.label({
+    parent: row,
+    pos: vec(10, 0),
+    anchor: "left",
+    text: "name (kind)",
+    text_scale: 0.125,
+    align: "left"
+});

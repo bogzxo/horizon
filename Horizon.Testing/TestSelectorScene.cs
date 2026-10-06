@@ -21,6 +21,9 @@ internal class TestSelectorScene : Scene
 
     public override Camera ActiveCamera { get; protected set; }
 
+    // The host keeps the selector and shows it again as it was left
+    public override bool Persistent => true;
+
     private readonly List<(Button Name, Label Description)> rows = [];
     private readonly Button previousPage, nextPage;
     private readonly Label pageNumber;

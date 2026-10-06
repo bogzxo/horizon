@@ -72,7 +72,7 @@ public abstract class ParticleSimulator2D : IDisposable
                 states[i] = new ParticleState2D
                 {
                     Position = particle.InitialPosition,
-                    Velocity = particle.Direction * (particle.Speed * rate),
+                    Velocity = particle.Direction * (particle.Steady ? particle.Speed : particle.Speed * rate),
                     Life = 1.0f,
                     Rate = rate
                 };
@@ -99,18 +99,22 @@ public abstract class ParticleSimulator2D : IDisposable
     }
 
     /// <summary>
-    /// Feeds the renderer's per-instance attributes (1: offset, 2: alive) from <paramref name="buffer"/>,
-    /// which has to be an array buffer.
+    /// Feeds the renderer's per-instance attributes (1: offset, 2: alive, 3: velocity) from <paramref name="buffer"/>,
+    /// which has to be an array buffer. The velocity is in world units a second: it is what the renderer stretches
+    /// a particle along (<see cref="ParticleRenderer2D.Stretch"/>) and what tells a renderer that blurs motion how
+    /// fast it is going.
     /// </summary>
     protected static void AttachInstanceBuffer(
-        VertexBufferObject mesh, BufferObject buffer, uint stride, int offsetOffset, int aliveOffset)
+        VertexBufferObject mesh, BufferObject buffer, uint stride, int offsetOffset, int aliveOffset, int velocityOffset)
     {
         mesh.Bind();
         buffer.Bind();
         buffer.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, stride, offsetOffset);
         buffer.VertexAttributePointer(2, 1, VertexAttribPointerType.Float, stride, aliveOffset);
+        buffer.VertexAttributePointer(3, 2, VertexAttribPointerType.Float, stride, velocityOffset);
         buffer.VertexAttributeDivisor(1, 1);
         buffer.VertexAttributeDivisor(2, 1);
+        buffer.VertexAttributeDivisor(3, 1);
         mesh.Unbind();
     }
 

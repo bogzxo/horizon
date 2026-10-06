@@ -1,15 +1,29 @@
 ﻿#version 410 core
 
-// Albedo, surface and material are the attachments of a DeferredRenderer2D, see its summary for what goes where.
-// Drawn straight to the window only the first of them goes anywhere.
+// Albedo, surface, material and motion are the attachments of a DeferredRenderer2D, see its summary for what goes
+// where. Drawn straight to the window only the first of them goes anywhere.
 layout(location = 0) out vec4 AlbedoColor;
 layout(location = 1) out vec4 SurfaceColor;
 layout(location = 2) out vec4 MaterialColor;
+layout(location = 3) out vec4 MotionColor;
 
 layout(location = 0) in vec2 texel;
 layout(location = 1) in vec2 fragPos;
 layout(location = 2) in vec4 color;
 layout(location = 3) flat in uint flags;
+layout(location = 4) flat in vec2 motion;
+
+// How near the sprites of this batch are, from 0 (the backdrop) to 1 (right in front): what is nearer blurs over
+// what is further away when it moves, never the other way around.
+uniform float uNearness;
+
+// Motion goes into two bytes: halves of the screen a second, MOTION_RANGE of them either way, with 128 standing for
+// none so that standing still is exact. Must match every other shader that writes or reads it.
+const float MOTION_RANGE = 2.0;
+
+vec2 encodeMotion(vec2 speed) {
+  return (128.0 + clamp(speed / MOTION_RANGE, -1.0, 1.0) * 127.0) / 255.0;
+}
 
 // Must match SpriteItem.cs.
 const uint NO_TEXTURE = 0xFFu;
@@ -84,4 +98,5 @@ void main() {
   // Sprites have no normal map, are lit like everything else and aren't shiny.
   SurfaceColor = vec4(0.5, 0.5, 0.0, result.a);
   MaterialColor = vec4(0.0, 0.0, 0.0, result.a);
+  MotionColor = vec4(encodeMotion(motion), uNearness, result.a);
 }

@@ -1,6 +1,8 @@
 ﻿using System.Drawing;
 using System.Numerics;
 
+using Horizon.Core;
+
 namespace Horizon.Engine;
 
 public abstract class Camera : GameObject
@@ -18,6 +20,22 @@ public abstract class Camera : GameObject
     public RectangleF Bounds { get; protected set; }
     public Vector3 Position { get; set; }
     public Vector3 Direction { get; protected set; }
+
+    private readonly MotionEstimator motion = new();
+
+    /// <summary>
+    /// How fast the camera is moving across the world, in units a second. Worked out from where it is every update
+    /// (see <see cref="MotionEstimator"/>), this is what everything that is drawn measures its own motion on screen
+    /// against: what stands still in the world goes by at this speed the other way.
+    /// </summary>
+    public Vector2 Velocity => motion.Velocity;
+
+    public override void UpdateState(float dt)
+    {
+        base.UpdateState(dt);
+
+        motion.Update(new Vector2(Position.X, Position.Y), dt);
+    }
 
     public override void Render(float dt, object? obj = null)
     {

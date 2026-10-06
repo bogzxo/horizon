@@ -19,12 +19,13 @@ namespace Horizon.Rendering.Particles.Simulation;
 /// </summary>
 public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 {
-    // 12 bytes per particle: offset.xy + alive. Matches attribute 1 (vec2) and 2 (float).
+    // 20 bytes per particle: offset.xy + alive + velocity.xy. Matches attribute 1 (vec2), 2 (float) and 3 (vec2).
     [StructLayout(LayoutKind.Sequential)]
     private struct ParticleRenderData
     {
         public Vector2 offset;
         public float alive;
+        public Vector2 velocity;
 
         public static readonly uint SizeInBytes = (uint)Unsafe.SizeOf<ParticleRenderData>();
     }
@@ -85,7 +86,7 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         }
 
         instanceBuffer = result.Asset;
-        AttachInstanceBuffer(mesh, instanceBuffer, ParticleRenderData.SizeInBytes, 0, sizeof(float) * 2);
+        AttachInstanceBuffer(mesh, instanceBuffer, ParticleRenderData.SizeInBytes, 0, sizeof(float) * 2, sizeof(float) * 3);
 
         // Map the whole ring once.
         renderDataPtr = (ParticleRenderData*)
@@ -132,6 +133,7 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 
             render[i].offset = p.Position;
             render[i].alive = p.Life;
+            render[i].velocity = p.Velocity;
             i++;
         }
 

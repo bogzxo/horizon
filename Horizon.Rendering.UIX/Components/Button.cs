@@ -149,6 +149,7 @@ public class Button : UIComponent
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);
+        Expose("animated", () => Animated, value => Animated = value);
 
         // Scale used to be called spr_scale, and the handler could only be given as on_press up front.
         Expose("spr_scale", () => Scale, value => Scale = value);

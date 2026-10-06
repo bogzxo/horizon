@@ -115,6 +115,11 @@ public sealed class TextureAtlas : IDisposable
     }
 
     /// <summary>
+    /// Whether anything that was asked for is still waiting for <see cref="Update"/> to put it in. Thread-safe.
+    /// </summary>
+    public bool HasPending => !_pending.IsEmpty;
+
+    /// <summary>
     /// Finds where a piece of art is in the atlas, false if it wasn't asked for or hasn't been put in yet. Thread-safe.
     /// </summary>
     public bool TryGet(string key, out AtlasRegion region) => _regions.TryGetValue(key, out region);

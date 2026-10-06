@@ -14,6 +14,9 @@
 // a white round button in green with an A on it is the A button of a gamepad.
 // An icon can also carry a symbol, another sprite drawn small in the middle of it, which is how the buttons of a
 // PlayStation gamepad are made: there is no letter for a triangle.
+//
+// A set of icons (icon_sets) says what some icons are called on another gamepad. A text that starts with
+// [icons:playstation] is written with the names on the left, as always, and shows the icons on the right.
 
 let skin = {
     sprites: "sprites.hor",
@@ -85,6 +88,21 @@ let skin = {
         ps_r2: { sprite: "key@white", label: "R2" },
         ps_l3: { sprite: "key@white", label: "L3" },
         ps_r3: { sprite: "key@white", label: "R3" }
+    },
+
+    icon_sets: {
+        playstation: {
+            pad_a: "ps_cross",
+            pad_b: "ps_circle",
+            pad_x: "ps_square",
+            pad_y: "ps_triangle",
+            pad_lb: "ps_l1",
+            pad_rb: "ps_r1",
+            pad_lt: "ps_l2",
+            pad_rt: "ps_r2",
+            pad_ls: "ps_l3",
+            pad_rs: "ps_r3"
+        }
     },
 
     themes: {

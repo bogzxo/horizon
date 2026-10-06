@@ -400,7 +400,8 @@ public class PhysicsWorld : IGameComponent
         Vector2 bodiesMin = new(float.MaxValue), bodiesMax = new(float.MinValue);
         foreach (var body in DynamicBodies)
         {
-            foreach (var fixture in body.DynamicFixtures)
+            // What the body has for particles in particular, or else what it stands on the map with
+            foreach (var fixture in body.ParticleFixtures.Count > 0 ? body.ParticleFixtures : body.DynamicFixtures)
             {
                 if (!PhysicsShape.TryCreate(fixture, body.Position, body.Velocity, out var shape)) continue;
 
@@ -440,6 +441,14 @@ public class PhysicsWorld : IGameComponent
                 {
                     debugRenderer.DrawCircle(body.Position + c.Position, c.Radius, colour);
                 }
+                else if (fixture is OutlinePhysicsFixture outline)
+                {
+                    var pieces = outline.Segments;
+                    for (int i = 0; i + 1 < pieces.Length; i += 2)
+                    {
+                        debugRenderer.DrawSegment(body.Position + pieces[i], body.Position + pieces[i + 1], colour);
+                    }
+                }
                 else if (fixture is RectanglePhysicsFixture r)
                 {
                     debugRenderer.DrawPolygon(new Vector2[] {
@@ -465,6 +474,7 @@ public class PhysicsWorld : IGameComponent
             {
                 drawBody(body, body.DynamicFixtures, new System.Numerics.Vector3(0, 0, 1));
                 drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(0, 1, 1));
+                drawBody(body, body.ParticleFixtures, new System.Numerics.Vector3(0, 1, 0));
             }
 
 

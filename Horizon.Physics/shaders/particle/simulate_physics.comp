@@ -26,13 +26,14 @@ struct Particle {
   float rate; // per-particle ageing multiplier
 };
 
-// Must match PhysicsGpuShape (32 bytes).
+// Must match PhysicsGpuShape (40 bytes).
 struct Shape {
   vec2 min; // the box around the shape, for rectangles this is the shape itself
   vec2 max;
   vec2 velocity; // how fast the body it belongs to is moving, zero for the map
   float radius;
-  float circle; // 1 for a circle, 0 for a rectangle
+  float circle; // 1 for a circle, 0 for a rectangle, 2 for an outline
+  vec2 range; // for an outline: the first of its pieces in the segments, and how many it has
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
@@ -53,6 +54,11 @@ layout(std430, binding = 3) readonly buffer BodyBuffer {
   Shape bodies[];
 };
 
+// The pieces of the outlines some bodies have (the silhouette of a sprite), each from xy to zw in the world.
+layout(std430, binding = 4) readonly buffer SegmentBuffer {
+  vec4 segments[];
+};
+
 uniform uint uFirst;
 uniform uint uCount;
 
@@ -64,6 +70,13 @@ uniform float uRadius;
 uniform float uRestitution;
 uniform float uFriction;
 uniform float uLinearDrag;
+
+// None of the following is physics, it is there for the look of things. All of it is off at 0.
+uniform vec2 uCruise;       // the speed a particle is brought to while it is in the air (rain falls at one speed, wind and all)
+uniform float uCruiseRate;  // how quickly it is brought there, 0 leaves the air to gravity and drag alone
+uniform float uSplash;      // a hard landing stops a particle dead and sends it off along the surface instead of
+                            // bouncing: either way, at any speed up to this one
+uniform float uSplashFade;  // how much of the life it has left a landing can cost it (0 to 1), a different share for each
 
 // How much of the speed of a body a particle takes on when it is shoved out of the way, and the most that can be.
 uniform float uBodyPush;
@@ -97,6 +110,41 @@ bool overlaps(Shape shape, vec2 position, out vec2 normal, out float depth) {
 
   // Cheap test first, nearly every shape we get asked about is nowhere near.
   if (any(lessThan(position + uRadius, shape.min)) || any(greaterThan(position - uRadius, shape.max))) return false;
+
+  if (shape.circle > 1.5) {
+    // An outline: inside of it is having an odd number of its pieces to one side, and the way out is by the
+    // nearest of them whichever side of it we are on.
+    bool inside = false;
+    vec2 nearest = position;
+    float nearestSquared = 1e30;
+
+    int first = int(shape.range.x), last = first + int(shape.range.y);
+    for (int i = first; i < last; i++) {
+      vec2 a = segments[i].xy, b = segments[i].zw;
+
+      if ((a.y > position.y) != (b.y > position.y) &&
+          position.x < a.x + (position.y - a.y) / (b.y - a.y) * (b.x - a.x)) inside = !inside;
+
+      vec2 along = b - a;
+      float lengthSquared = dot(along, along);
+      float share = lengthSquared > 0.0 ? clamp(dot(position - a, along) / lengthSquared, 0.0, 1.0) : 0.0;
+      vec2 closest = a + along * share;
+
+      vec2 off = position - closest;
+      float found = dot(off, off);
+      if (found < nearestSquared) {
+        nearestSquared = found;
+        nearest = closest;
+      }
+    }
+
+    if (!inside && nearestSquared >= uRadius * uRadius) return false;
+
+    float gap = sqrt(nearestSquared);
+    if (gap > epsilon) normal = inside ? (nearest - position) / gap : (position - nearest) / gap;
+    depth = inside ? gap + uRadius : uRadius - gap;
+    return last > first;
+  }
 
   if (shape.circle > 0.5) {
     vec2 away = position - (shape.min + shape.max) * 0.5;
@@ -140,9 +188,25 @@ bool overlaps(Shape shape, vec2 position, out vec2 normal, out float depth) {
 bool contains(Shape shape, vec2 point) {
   if (any(lessThanEqual(point, shape.min)) || any(greaterThanEqual(point, shape.max))) return false;
 
+  // Only asked of the map, which has no outlines
+  if (shape.circle > 1.5) return false;
+
   vec2 away = point - (shape.min + shape.max) * 0.5;
   return shape.circle < 0.5 || dot(away, away) < shape.radius * shape.radius;
 }
+
+// What tells one particle from the next where something is left to chance, set before anything is done to it.
+uint seed;
+
+// A number from 0 to 1 that is different every time it is asked for, and for every particle.
+float chance() {
+  seed = seed * 747796405u + 2891336453u;
+  uint word = ((seed >> ((seed >> 28u) + 4u)) ^ seed) * 277803737u;
+  return float((word >> 22u) ^ word) / 4294967295.0;
+}
+
+// Whether the particle touched the map this step, which is what being on the ground is.
+bool grounded;
 
 // Gets a particle out of whatever it ran into, and works out the speed it leaves with.
 void respond(inout Particle p, vec2 normal, float depth, vec2 surfaceVelocity, float slide, float restitution) {
@@ -154,6 +218,20 @@ void respond(inout Particle p, vec2 normal, float depth, vec2 surfaceVelocity, f
 
   // Already on our way out.
   if (into >= 0.0) return;
+
+  // What splashes doesn't bounce: it stops dead where it comes down and runs off along the surface, to either side
+  // and at any speed up to the most there is. Which way and how fast is made up from what only this particle has.
+  // Only a real landing counts, not what its own weight presses it into the ground by while it lies there.
+  // Only a real landing counts, not what its own weight presses it into the ground by while it lies there.
+  if (uSplash > 0.0 && -into > max(REST_SPEED, length(uGravity) * uDeltaTime * 2.0)) {
+    // Which way, and how much of the speed there is to be had: most get little of it
+    float way = chance() < 0.5 ? -1.0 : 1.0;
+    float kept = chance();
+
+    p.velocity = vec2(-normal.y, normal.x) * (way * kept * kept * uSplash) + surfaceVelocity;
+    p.life *= 1.0 - uSplashFade * chance();
+    return;
+  }
 
   // Take away the speed going into the surface, and give some back if it was a hard enough hit to bounce.
   float bounce = -into > REST_SPEED ? restitution : 0.0;
@@ -196,6 +274,7 @@ bool collideWithMap(inout Particle p, float slide) {
         if (!overlaps(mapShapes[mapCells[uMapCellCount + 1 + entry]], p.position, normal, depth)) continue;
 
         respond(p, normal, depth, vec2(0.0), slide, uRestitution);
+        grounded = true;
         touched = true;
       }
     }
@@ -248,6 +327,9 @@ void main() {
 
   Particle p = particles[index];
   if (p.life <= 0.0) return;
+
+  seed = index * 2654435761u + floatBitsToUint(p.position.x) + floatBitsToUint(p.life) * 40503u;
+  grounded = false;
 
   p.life -= uDeltaTime * p.rate * uInvMaxAge;
 
@@ -305,6 +387,11 @@ void main() {
       p.velocity = vec2(0.0);
       break;
     }
+  }
+
+  // What is in the air is brought to the speed it is meant to go at, what lies on the ground is left to lie.
+  if (uCruiseRate > 0.0 && !grounded) {
+    p.velocity = mix(p.velocity, uCruise, 1.0 - exp(-uCruiseRate * uDeltaTime));
   }
 
   particles[index] = p;

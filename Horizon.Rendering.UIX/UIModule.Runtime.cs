@@ -8,7 +8,75 @@ public partial class UIModule
 {
     private readonly Dictionary<string, IRuntimeValue> factories = [];
 
+    // What every kind of component is called in a script, and how to make one. Shared by every module.
+    private static readonly Dictionary<string, (Type Type, Func<UIComponent> Create)> kinds = [];
+
+    /// <summary>The names scripts make components by, as in compositor.name({ ... }).</summary>
+    public static IReadOnlyCollection<string> Kinds
+    {
+        get
+        {
+            lock (kinds)
+                return [.. kinds.Keys];
+        }
+    }
+
+    /// <summary>The name scripts make a component like this one by, null if they can't.</summary>
+    public static string? KindOf(UIComponent component)
+    {
+        lock (kinds)
+        {
+            foreach (var (name, kind) in kinds)
+            {
+                if (kind.Type == component.GetType())
+                    return name;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Makes a component of a kind scripts know, with everything about it as it starts out and without
+    /// putting it anywhere. Null for a kind nobody registered.
+    /// </summary>
+    public static UIComponent? CreateDetached(string kind)
+    {
+        lock (kinds)
+            return kinds.TryGetValue(kind, out var known) ? known.Create() : null;
+    }
+
     public HIDLRuntime Runtime { get; init; } = new();
+
+    // While a layout is being built: what the components it doesn't put anywhere go into (the screen if
+    // nothing), and a note of each of them.
+    private readonly Lock captureLock = new();
+    private UIComponent? captureParent;
+    private List<UIComponent>? captured;
+
+    /// <summary>
+    /// Runs something that makes components (a layout script) with the ones it doesn't give a parent going
+    /// into a component of the caller's choosing rather than onto the screen.
+    /// </summary>
+    /// <param name="created">Gets every component that was put there.</param>
+    internal void Capture(UIComponent? parent, List<UIComponent> created, Action build)
+    {
+        lock (captureLock)
+        {
+            // A layout can set off another one (a handler that fills a container), which gets its turn and hands back.
+            var (outerParent, outerCaptured) = (captureParent, captured);
+            (captureParent, captured) = (parent, created);
+
+            try
+            {
+                build();
+            }
+            finally
+            {
+                (captureParent, captured) = (outerParent, outerCaptured);
+            }
+        }
+    }
 
     protected void SetupRuntime()
     {
@@ -23,6 +91,13 @@ public partial class UIModule
         Register<Image>("image");
         Register<Panel>("panel");
         Register<StackPanel>("stack");
+        Register<GridPanel>("grid");
+        Register<ScrollPanel>("scroll");
+        Register<NumberBox>("number_box");
+        Register<Selector>("selector");
+        Register<Dropdown>("dropdown");
+        Register<ColorPicker>("color_picker");
+        Register<MenuBar>("menu_bar");
     }
 
     /// <summary>
@@ -32,6 +107,9 @@ public partial class UIModule
     /// </summary>
     public void Register<T>(string name) where T : UIComponent, new()
     {
+        lock (kinds)
+            kinds[name] = (typeof(T), static () => new T());
+
         factories[name] = new NativeFunctionValue((args, _) =>
         {
             if (args.Length > 1 || (args.Length == 1 && args[0] is not ObjectValue))
@@ -51,7 +129,10 @@ public partial class UIModule
             }
 
             if (component.Parent is null)
-                AddComponent(component);
+            {
+                (captureParent ?? Root).Add(component);
+                captured?.Add(component);
+            }
 
             return component.Object;
         });

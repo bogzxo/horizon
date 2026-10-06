@@ -1,0 +1,72 @@
+// What every theme of the Dead Revolver skin has in common. This isn't a skin to load by itself: load blue.hor,
+// red.hor or one of the others, which inherit from it and only say which colour of the art they are.
+//
+// The art is looked up in sprites.hor by name, in the theme of the skin. Components find the sprites that are named
+// after what they ask for by themselves (a button asks for "button", "button_hover" and "button_pressed"), so only
+// what goes by another name in the pack is listed under regions. A region is the name of a sprite, or an object
+// when there is more to say: { sprite: "bar_fill", tint: vec(r, g, b, a) }.
+//
+// Icons are what [icon:name] in a text draws. Every sprite is an icon by its own name already, the ones listed here
+// are for giving a sprite a shorter name, or for making an icon out of a blank sprite with a tint and a label:
+// a white round button in green with an A on it is the A button of a gamepad.
+
+let skin = {
+    sprites: "sprites.hor",
+    font: { dir: "fonts/klaxon_mono/", file: "klaxon_mono.fnt" },
+
+    art_scale: 3,
+    text_scale: 0.4,
+    text_color: vec(0.93, 0.95, 1.0, 1.0),
+    control_text_color: vec(1.0, 1.0, 1.0, 1.0),
+    panel_color: vec(0.04, 0.04, 0.07, 0.94),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    hover_color: vec(1.0, 1.0, 1.0, 0.1),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.4),
+    icon_label_color: vec(1.0, 1.0, 1.0, 1.0),
+    icon_scale: 1.33,
+
+    button_padding: vec(18, 12),
+    progress_inset: vec(6, 6, 6, 9),
+    progress_fill_over_frame: true,
+    toggle_size: 24,
+    spacing: 12,
+
+    regions: {
+        progress_frame: "bar_frame",
+        progress_fill: "bar_fill",
+        toggle_on: "check_on",
+        toggle_off: "check_off",
+        slider_handle: "slider_knob",
+        textbox: "button_outline",
+        textbox_focused: "button_outline_selected",
+        selection: "selector"
+    },
+
+    icons: {
+        heart: "heart",
+        star: "star_flat",
+        check: "round_check",
+        cross: "round_cross",
+        plus: "round_plus",
+        minus: "round_minus",
+        up: "arrow_up",
+        down: "arrow_down",
+        left: "arrow_left",
+        right: "arrow_right",
+        lock: "icon_lock",
+        sword: "icon_sword",
+        shield: "icon_shield",
+
+        pad_a: { sprite: "round_blank@white", tint: vec(0.33, 0.75, 0.38, 1.0), label: "A" },
+        pad_b: { sprite: "round_blank@white", tint: vec(0.88, 0.3, 0.28, 1.0), label: "B" },
+        pad_x: { sprite: "round_blank@white", tint: vec(0.25, 0.52, 0.93, 1.0), label: "X" },
+        pad_y: { sprite: "round_blank@white", tint: vec(0.95, 0.76, 0.22, 1.0), label: "Y", label_color: vec(0.1, 0.08, 0.02, 1.0) },
+        pad_lb: { sprite: "key@white", label: "LB" },
+        pad_rb: { sprite: "key@white", label: "RB" },
+        pad_lt: { sprite: "key@white", label: "LT" },
+        pad_rt: { sprite: "key@white", label: "RT" },
+        pad_ls: { sprite: "key@white", label: "LS" },
+        pad_rs: { sprite: "key@white", label: "RS" },
+        dpad: "cursor_move@white"
+    }
+}
