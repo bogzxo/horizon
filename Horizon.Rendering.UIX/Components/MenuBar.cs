@@ -19,10 +19,10 @@ public sealed class MenuItem
     /// <summary>What picking the item does.</summary>
     public Action? OnPicked { get; set; }
 
-    /// <summary>Asked whenever the menu is drawn or clicked: whether the item can be picked right now. Always, if nothing is set.</summary>
+    /// <summary>Asked whenever the menu is drawn or clicked. Whether the item can be picked right now. Always, if nothing is set.</summary>
     public Func<bool>? IsEnabled { get; set; }
 
-    /// <summary>Asked whenever the menu is drawn: whether the item has a mark in front of it, for one that switches something on and off.</summary>
+    /// <summary>Asked whenever the menu is drawn. Whether the item has a mark in front of it, for one that switches something on and off.</summary>
     public Func<bool>? IsChecked { get; set; }
 
     /// <summary>Whether this is a rule between two groups of items rather than an item.</summary>
@@ -64,7 +64,7 @@ public sealed class Menu(string title)
 }
 
 /// <summary>
-/// A strip of menus: a row of words, each of which opens a list of things to do under it. Clicking a word opens
+/// A strip of menus. A row of words, each of which opens a list of things to do under it. Clicking a word opens
 /// its menu, clicking an item does what it says and closes it, clicking anywhere else closes it without doing
 /// anything. The menus are put together in code:
 /// <code>
@@ -236,7 +236,7 @@ public class MenuBar : UIComponent
 
             // The word of the open menu stays lit, the others light up under the pointer
             if (shown || (IsHovered && title.Contains(pointer)))
-                list.Rect(title, shown ? skin.AccentColor with { W = 0.35f } : skin.HoverColor);
+                list.Box(title, shown ? skin.AccentColor with { W = 0.35f } : skin.HoverColor);
 
             list.Text(menus[i].Title, title, Origin.Center, scale, shown ? skin.AccentColor : skin.TextColor, markup: false);
         }
@@ -252,8 +252,8 @@ public class MenuBar : UIComponent
 
         // Whatever is under the list must not show through it.
         UIRect bounds = ListBounds;
-        list.Rect(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
-        list.Outline(bounds, BORDER, skin.AccentColor);
+        list.Box(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
+        list.Frame(bounds, BORDER, skin.AccentColor);
 
         Vector2 pointer = Pointer;
         Vector4 dim = skin.TextColor * skin.DisabledTint;
@@ -299,7 +299,7 @@ public class MenuBar : UIComponent
         if (!EnabledInHierarchy)
             return;
 
-        // On the bar: the word that was clicked opens its menu, or closes it if it was open
+        // On the bar. The word that was clicked opens its menu, or closes it if it was open
         if (Bounds.Contains(point))
         {
             for (int i = 0; i < menus.Count; i++)

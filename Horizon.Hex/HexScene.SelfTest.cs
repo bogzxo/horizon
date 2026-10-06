@@ -6,7 +6,7 @@ using Horizon.Rendering.UIX.Components;
 namespace Horizon.Hex;
 
 /// <summary>
-/// The editor testing itself: a scripted pointer adds, selects, edits, drags, saves and opens the way somebody
+/// The editor testing itself. A scripted pointer adds, selects, edits, drags, saves and opens the way somebody
 /// with a mouse would, and every step of the way what the editor ended up with is checked and printed.
 /// Started with <c>--selftest</c>, see <see cref="Program"/>.
 /// </summary>
@@ -57,7 +57,7 @@ internal sealed partial class HexScene
             return last;
         };
 
-        // Something out of one of the menus: a click on its word on the bar, and one on the item in the list that opens
+        // Something out of one of the menus. A click on its word on the bar, and one on the item in the list that opens
         void Pick(string title, Func<string> item)
         {
             test.Click(() => chrome.ToWorld(menu.TitleBounds(title).Center));
@@ -79,8 +79,12 @@ internal sealed partial class HexScene
             UIRect screen = chrome.Root.Bounds;
             float edge = root.Padding.Left;
 
+            // The columns stand on the line the editor talks in, which is along the bottom of the window
+            float gap = root.Spacing >= 0.0f ? root.Spacing : compositor.Skin?.Spacing ?? 0.0f;
+            float floor = screen.Min.Y + root.Padding.Bottom + status.Bounds.Height + gap;
+
             return Near(left.Bounds.Height, center.Bounds.Height, 2) && Near(center.Bounds.Height, right.Bounds.Height, 2)
-                && Near(body.Bounds.Min.Y, screen.Min.Y + edge, 3) && Near(left.Bounds.Min.X, screen.Min.X + edge, 3)
+                && Near(body.Bounds.Min.Y, floor, 3) && Near(left.Bounds.Min.X, screen.Min.X + edge, 3)
                 && (Near(right.Bounds.Max.X, screen.Max.X - edge, 3) || Near(canvas.Bounds.Width, MIN_CENTER, 1));
         }
 
@@ -354,7 +358,7 @@ internal sealed partial class HexScene
         test.Click(Part("name_box"));
         test.Run(() => Type(nameBox, "selftest_menu"));
         test.Wait();
-        test.Check("name: the tab goes by the name of the layout", () => tabButtons.Count == 1 && tabButtons[0].Label == "selftest_menu");
+        test.Check("name: the tab goes by the name of the layout", () => tabButtons.Count == 1 && tabButtons[0].Label.TrimEnd(' ', '*') == "selftest_menu");
 
         test.Run(() => saved = Code());
         Pick("File", () => "Save");

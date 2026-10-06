@@ -1,11 +1,5 @@
 using System.Numerics;
 
-using Horizon.Engine;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-
-using Silk.NET.OpenGL;
-
 using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.Rendering.PostProcessing;
@@ -37,7 +31,6 @@ public sealed class PostProcessor : IDisposable
     private readonly PostTarget?[] targets = new PostTarget?[2];
     private readonly PostContext context = new();
 
-    private VertexBufferObject? screen;
     private PostTechnique? copy;
 
     public IReadOnlyList<PostEffect> Effects => snapshot;
@@ -198,49 +191,9 @@ public sealed class PostProcessor : IDisposable
     }
 
     /// <summary>
-    /// Draws one triangle that covers everything that is bound, with whatever technique is bound. One triangle
-    /// rather than the two of a rectangle: there is no seam down the middle for the pixels along it to be shaded twice.
+    /// Draws one triangle that covers everything that is bound, with whatever technique is bound. See <see cref="ScreenTriangle"/>.
     /// </summary>
-    internal void DrawScreen()
-    {
-        screen ??= CreateScreen();
-        if (screen is null)
-            return;
-
-        screen.Bind();
-        GameEngine.Instance.GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
-        screen.Unbind();
-    }
-
-    private static VertexBufferObject? CreateScreen()
-    {
-        if (!GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(VertexArrayObjectDescription.VertexBuffer, out var result))
-        {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-            return null;
-        }
-
-        var buffers = new VertexBufferObject(result.Asset);
-
-        // Where each corner is on screen and in the picture. It reaches well past two of the edges, what sticks out
-        // is never drawn.
-        var corners = new Vector2[]
-        {
-            new(-1, -1), new(0, 0),
-            new(3, -1), new(2, 0),
-            new(-1, 3), new(0, 2)
-        };
-
-        buffers.Bind();
-        buffers.VertexBuffer.Bind();
-        buffers.VertexBuffer.VertexAttributePointer(0, 2, VertexAttribPointerType.Float, sizeof(float) * 4, 0);
-        buffers.VertexBuffer.VertexAttributePointer(1, 2, VertexAttribPointerType.Float, sizeof(float) * 4, sizeof(float) * 2);
-        buffers.Unbind();
-        buffers.VertexBuffer.Unbind();
-
-        buffers.VertexBuffer.NamedBufferData(corners);
-        return buffers;
-    }
+    internal void DrawScreen() => ScreenTriangle.Draw();
 
     public void Dispose()
     {

@@ -8,7 +8,7 @@ using Horizon.Rendering.UIX.Components;
 namespace Horizon.Hex;
 
 /// <summary>
-/// One layout being edited: a module of the UI holding the real components, the names they go by in the code,
+/// One layout being edited. A module of the UI holding the real components, the names they go by in the code,
 /// and the code itself, which is written out of the components and never kept.
 /// What is on screen is the layout, so there is nothing for the two to disagree about.
 /// </summary>
@@ -26,7 +26,7 @@ internal sealed class HexDocument
 
     private readonly Dictionary<UIComponent, string> names = [];
 
-    // What stands in for the items a program will make: built from the templates the containers of the layout
+    // What stands in for the items a program will make. Built from the templates the containers of the layout
     // name, shown in the canvas and nowhere else. They aren't part of the layout and never get written.
     private readonly HashSet<UIComponent> previews = [];
 
@@ -39,6 +39,12 @@ internal sealed class HexDocument
 
     /// <summary>The file the layout was loaded from or last saved to, null for one that has never been either.</summary>
     public string? Path { get; set; }
+
+    /// <summary>The code of the layout as it was last opened or saved, which is what there is to compare it to.</summary>
+    public string SavedCode { get; set; } = string.Empty;
+
+    /// <summary>Whether the layout has been changed since it was opened or saved. The editor keeps this up, see HexScene.UpdateState.</summary>
+    public bool Modified { get; set; }
 
     /// <summary>Where templates are looked for while the layout has no file of its own to be next to.</summary>
     public string FallbackDirectory { get; set; } = string.Empty;
@@ -62,7 +68,7 @@ internal sealed class HexDocument
         Name = name;
         Module = module;
 
-        // A layout that is being edited is looked at, not used: clicking a button in it selects the button.
+        // A layout that is being edited is looked at, not used. Clicking a button in it selects the button.
         Module.Interactive = false;
     }
 
@@ -88,7 +94,7 @@ internal sealed class HexDocument
     }
 
     /// <summary>
-    /// The component of the layout something in the canvas belongs to: itself, or for a stand-in item the
+    /// The component of the layout something in the canvas belongs to. Itself, or for a stand-in item the
     /// container it stands in.
     /// </summary>
     public UIComponent? OwnerOf(UIComponent? component)
@@ -303,7 +309,7 @@ internal sealed class HexDocument
     }
 
     /// <summary>
-    /// Writes the layout as the script that builds it: one component after the other, each inside of the one
+    /// Writes the layout as the script that builds it. One component after the other, each inside of the one
     /// before it that it belongs to, with everything about it that isn't how it starts out anyway.
     /// </summary>
     public string GenerateCode()
@@ -354,7 +360,7 @@ internal sealed class HexDocument
         return true;
     }
 
-    /// <summary>Forgets every step there was to go back to: the layout as it is now is where it starts.</summary>
+    /// <summary>Forgets every step there was to go back to. The layout as it is now is where it starts.</summary>
     public void ResetHistory()
     {
         undone.Clear();

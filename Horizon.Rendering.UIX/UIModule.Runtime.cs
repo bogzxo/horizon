@@ -98,6 +98,7 @@ public partial class UIModule
         Register<Dropdown>("dropdown");
         Register<ColorPicker>("color_picker");
         Register<MenuBar>("menu_bar");
+        Register<CodeView>("code");
     }
 
     /// <summary>

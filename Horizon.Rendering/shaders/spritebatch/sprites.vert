@@ -26,7 +26,7 @@ struct SpriteItem {
 	uint color;
 	uint flags;
 	float depth;
-	float padding;
+	float ring;
 };
 
 
@@ -42,6 +42,7 @@ layout(location = 1) out vec2 oFragPos;
 layout(location = 2) out vec4 oColor;
 layout(location = 3) flat out uint oFlags;
 layout(location = 4) flat out vec2 oMotion;
+layout(location = 5) flat out float oRing;
 
 
 void main() {
@@ -55,6 +56,7 @@ void main() {
 	oTexel = mix(item.texMin, item.texMax, vec2(corner.x, 1.0 - corner.y));
 	oColor = unpackUnorm4x8(item.color);
 	oFlags = item.flags;
+	oRing = item.ring;
 
 	// Transform the vertex position
 	vec4 worldPos = uModel * vec4(item.origin + item.axisX * corner.x + item.axisY * corner.y, item.depth, 1.0);

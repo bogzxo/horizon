@@ -2,7 +2,6 @@
 
 let button = compositor.button({
     label: "kind",
-    style: "button_flat",
-    size: vec(138, 28),
+    size: vec(138, 26),
     lbl_scale: 0.125
 });

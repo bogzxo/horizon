@@ -61,12 +61,12 @@ public class ToggleButton : UIComponent
 
         // The whole row lights up, as pressing anywhere on it works.
         if (enabled && IsHovered)
-            list.Rect(Bounds.Shrink(new UIEdges(-6.0f, -4.0f)), skin.HoverColor);
+            list.Box(Bounds.Shrink(new UIEdges(-6.0f, -4.0f)), skin.HoverColor);
 
         if (skin.TryGetRegion(State ? ON_REGION : OFF_REGION, out var region))
             list.Region(region, indicator, tint);
         else
-            list.Rect(indicator, (State ? skin.AccentColor : skin.ControlColor) * tint);
+            list.Box(indicator, (State ? skin.AccentColor : skin.ControlColor) * tint);
 
         list.Text(
             Label,

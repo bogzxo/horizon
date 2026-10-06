@@ -51,6 +51,13 @@ public class WindowManager : IGameComponent, IDisposable
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
 
+    // How long (in seconds) there is between two frames at the least, 0 for as many as there is time for. And when the next one is due
+    private double framePeriod, nextFrame;
+
+    // What was asked of the window from another thread and is still to be done. Only the thread the window was made on may touch it
+    private readonly Lock displayLock = new();
+    private DisplaySettings? pendingDisplay;
+
     /// <summary>
     /// How drawing and each of the loops of the engine are doing: how often they come round, how long their turns
     /// take and how unevenly they come. Logic and physics are there once they have been started, which is after
@@ -79,6 +86,16 @@ public class WindowManager : IGameComponent, IDisposable
     /// The window size.
     /// </summary>
     public Vector2 WindowSize { get; private set; }
+
+    /// <summary>
+    /// The size of the screen the window is on, in pixels. A window can't usefully be any bigger than this.
+    /// </summary>
+    public Vector2 ScreenSize { get; private set; }
+
+    /// <summary>
+    /// How the window is shown and how often it is drawn, as it was last set with <see cref="Apply"/> (or by the configuration, before anybody did).
+    /// </summary>
+    public DisplaySettings Display { get; private set; }
 
     /// <summary>
     /// The GL context associated with the windows main render thread.
@@ -139,9 +156,10 @@ public class WindowManager : IGameComponent, IDisposable
                 (int)config.WindowSize.X,
                 (int)config.WindowSize.Y
             ),
-            // The updates are not the window's to pace, they have loops of their own
+            // The updates are not the window's to pace, they have loops of their own. Neither are the frames,
+            // it would spend the wait for the next one spinning (see WaitForFrame)
             UpdatesPerSecond = 0,
-            FramesPerSecond = Math.Max(0.0, config.FramesPerSecond),
+            FramesPerSecond = 0,
             ShouldSwapAutomatically = true,
             VSync = config.VSync,
             PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
@@ -150,7 +168,16 @@ public class WindowManager : IGameComponent, IDisposable
             
         };
 
-        ViewportSize = WindowSize = config.WindowSize;
+        ViewportSize = WindowSize = ScreenSize = config.WindowSize;
+
+        Display = new DisplaySettings
+        {
+            Fullscreen = config.Fullscreen,
+            WindowSize = config.WindowSize,
+            VSync = config.VSync,
+            FramesPerSecond = Math.Max(0.0, config.FramesPerSecond)
+        };
+        framePeriod = PeriodOf(Display.FramesPerSecond);
 
         // Create the window.
         this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
@@ -168,6 +195,9 @@ public class WindowManager : IGameComponent, IDisposable
         {
             lock (simulationGate)
             {
+                // First, so whatever is set up or drawn from here on finds the window the size it was asked to be
+                ApplyPendingDisplay();
+
                 // Whatever the updates added since the last frame is set up before anything is drawn, and the
                 // loops that are holding their turn back for it are told
                 if (EntityLifecycle.HasPending)
@@ -201,6 +231,7 @@ public class WindowManager : IGameComponent, IDisposable
             GL.GetError();
 
             UpdateViewport();
+            UpdateScreenSize();
             Parent.Initialize();
         };
     }
@@ -216,6 +247,99 @@ public class WindowManager : IGameComponent, IDisposable
     {
         //FrameBufferManager.ResizeAll(size.X, size.Y);
         UpdateViewport();
+    }
+
+    private void UpdateScreenSize()
+    {
+        if (_window.Monitor is not { } monitor)
+            return;
+
+        var size = monitor.VideoMode.Resolution ?? monitor.Bounds.Size;
+        ScreenSize = new Vector2(size.X, size.Y);
+    }
+
+    /// <summary>
+    /// Changes how the window is shown and how often it is drawn. From any thread.
+    /// <para>
+    /// It takes hold at the start of the next frame, before anything of that frame is set up or drawn. So a scene that is set in the same
+    /// update as this is called is made for the window as it is going to be, which is the way to do it: nothing that was made for the
+    /// old size (a renderer, a camera) is resized, a scene that is to fit the new one has to be made again.
+    /// </para>
+    /// </summary>
+    public void Apply(in DisplaySettings settings)
+    {
+        lock (displayLock)
+        {
+            Display = settings;
+            pendingDisplay = settings;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to do to the window what <see cref="Apply"/> was asked for. On the thread of the window, at the start of a frame.
+    /// </summary>
+    private void ApplyPendingDisplay()
+    {
+        DisplaySettings settings;
+        lock (displayLock)
+        {
+            if (pendingDisplay is not { } pending)
+                return;
+
+            settings = pending;
+            pendingDisplay = null;
+        }
+
+        framePeriod = PeriodOf(settings.FramesPerSecond);
+        _window.VSync = settings.VSync;
+
+        bool fullscreen = _window.WindowState == WindowState.Fullscreen;
+        if (settings.Fullscreen)
+        {
+            if (!fullscreen)
+                _window.WindowState = WindowState.Fullscreen;
+        }
+        else
+        {
+            if (fullscreen)
+                _window.WindowState = WindowState.Normal;
+
+            var size = new Silk.NET.Maths.Vector2D<int>(Math.Max(1, (int)settings.WindowSize.X), Math.Max(1, (int)settings.WindowSize.Y));
+            if (_window.Size != size)
+            {
+                _window.Size = size;
+                _window.Center();
+            }
+        }
+
+        // The window says so itself when its size changes, but not always in time for the frame that is about to be drawn
+        UpdateViewport();
+        UpdateScreenSize();
+
+        ConcurrentLogger.Instance.Log(
+            Bogz.Logging.LogLevel.Info,
+            $"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
+    }
+
+    private static double PeriodOf(double framesPerSecond) => framesPerSecond > 0.0 ? 1.0 / framesPerSecond : 0.0;
+
+    /// <summary>
+    /// Helper method to hold a frame back until it is due, for a window that has a limit on how many it draws.
+    /// Asleep for most of the wait and awake for the end of it, the way the loops do it.
+    /// </summary>
+    private void WaitForFrame()
+    {
+        double period = framePeriod;
+        if (period <= 0.0)
+            return;
+
+        // Fallen behind (or only just given a limit), in which case it counts from now rather than trying to catch up
+        double now = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+        if (nextFrame < now - period)
+            nextFrame = now;
+
+        EngineLoop.WaitUntil(nextFrame);
+        nextFrame += period;
     }
 
     public void Initialize()
@@ -326,6 +450,8 @@ public class WindowManager : IGameComponent, IDisposable
 
         if (!_window.IsClosing)
         {
+            WaitForFrame();
+
             long started = Stopwatch.GetTimestamp();
             _window.DoRender();
             long ended = Stopwatch.GetTimestamp();

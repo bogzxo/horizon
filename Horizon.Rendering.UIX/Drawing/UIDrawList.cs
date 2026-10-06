@@ -13,7 +13,7 @@ namespace Horizon.Rendering.UIX.Drawing;
 /// (the quads are its <see cref="SpriteItem"/>s), the whole UI in a single call unless more than two
 /// custom images are involved.
 /// </summary>
-public sealed class UIDrawList
+public sealed partial class UIDrawList
 {
     // The slots of the textures every run shares. Custom images take the ones after.
     private const uint ATLAS_SLOT = 0;
@@ -45,14 +45,14 @@ public sealed class UIDrawList
     private Vector2 origin;
     private Vector2 scale = Vector2.One;
 
-    // How components that are being animated are drawn: scaled and then moved, on top of where the layout put
+    // How components that are being animated are drawn. Scaled and then moved, on top of where the layout put
     // them, and faded. Nested, each inside of the one before.
     private readonly Stack<(Vector2 Offset, Vector2 Scale, float Opacity)> visuals = new();
     private Vector2 visualOffset;
     private Vector2 visualScale = Vector2.One;
     private float opacity = 1.0f;
 
-    // How fast what is being painted is going across the screen, for the effects that blur what moves: at a point p
+    // How fast what is being painted is going across the screen, for the effects that blur what moves. At a point p
     // (as the camera sees it) that is motionBase + motionSlope * p. Each component says so for what it paints, see
     // PushMotion.
     private readonly Stack<(Vector2 Base, Vector2 Slope)> motions = new();
@@ -64,7 +64,7 @@ public sealed class UIDrawList
     public UISkin Skin { get; private set; } = null!;
 
     /// <summary>
-    /// Whether the quads are told how fast they are going. Only when something is going to use it: working it out
+    /// Whether the quads are told how fast they are going. Only when something is going to use it. Working it out
     /// takes every component a little memory and a little time.
     /// </summary>
     internal bool TracksMotion { get; private set; }
@@ -117,7 +117,7 @@ public sealed class UIDrawList
     }
 
     /// <summary>
-    /// Whether another list draws exactly what this one does: the same quads in the same order, showing the same
+    /// Whether another list draws exactly what this one does. The same quads in the same order, showing the same
     /// textures. Two updates of a UI that nothing happened in paint lists that are, and the second one needn't be drawn.
     /// </summary>
     internal bool SameAs(UIDrawList other)
@@ -218,12 +218,87 @@ public sealed class UIDrawList
         Quad(new UIRect(new Vector2(max.X - thickness, min.Y + thickness), new Vector2(max.X, max.Y - thickness)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
     }
 
+    /// <summary>
+    /// Fills a rectangle with rounded corners. The corners are worked out for every pixel as they are drawn,
+    /// so they are as crisp at any size as the screen allows and need no art.
+    /// </summary>
+    /// <param name="radius">How big the corners are. No more than half of the shorter side, which makes a pill of it.</param>
+    public void RoundRect(UIRect rect, float radius, Vector4 color)
+    {
+        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
+        if (radius < 0.5f)
+        {
+            Rect(rect, color);
+            return;
+        }
+
+        uint packed = SpriteItem.PackColor(color);
+        var (min, max) = rect;
+
+        // A column down the middle and a strip either side of it between the corners
+        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + radius, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(max.X - radius, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+
+        Corners(rect, radius, 1.0f, packed);
+    }
+
+    /// <summary>Draws the edge of a rectangle with rounded corners, on the inside. See <see cref="RoundRect"/>.</summary>
+    public void RoundOutline(UIRect rect, float radius, float thickness, Vector4 color)
+    {
+        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
+        if (radius < 0.5f)
+        {
+            Outline(rect, thickness, color);
+            return;
+        }
+
+        thickness = MathF.Min(thickness, radius);
+
+        uint packed = SpriteItem.PackColor(color);
+        var (min, max) = rect;
+
+        Quad(new UIRect(new Vector2(min.X + radius, max.Y - thickness), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, min.Y + thickness)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + thickness, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(max.X - thickness, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+
+        Corners(rect, radius, thickness / radius, packed);
+    }
+
+    /// <summary>
+    /// Fills a rectangle the way the skin has its flat controls, which is with rounded corners if it says so (see <see cref="UISkin.CornerRadius"/>).
+    /// What a component draws itself with when the skin has no art for it.
+    /// </summary>
+    public void Box(UIRect rect, Vector4 color) => RoundRect(rect, Skin.CornerRadius, color);
+
+    /// <summary>Draws the edge of what <see cref="Box"/> fills.</summary>
+    public void Frame(UIRect rect, float thickness, Vector4 color) => RoundOutline(rect, Skin.CornerRadius, thickness, color);
+
+    /// <summary>
+    /// Helper method to draw the four corners of a rounded rectangle, each a quarter of a disc with its middle
+    /// at the corner of the quad that points into the rectangle.
+    /// </summary>
+    /// <param name="ring">How much of the discs is filled from their edge inwards, see <see cref="SpriteItem.Ring"/>.</param>
+    private void Corners(UIRect rect, float radius, float ring, uint color)
+    {
+        var (min, max) = rect;
+        Vector2 size = new(radius);
+        uint flags = SpriteItem.NoTexture | SpriteItem.CornerFlag;
+
+        // What the top left and the bottom right of each quad are told is how far they are from the middle of their disc
+        Quad(new UIRect(new Vector2(min.X, max.Y - radius), new Vector2(min.X + radius, max.Y)), Vector2.One, Vector2.Zero, color, flags, ring);
+        Quad(new UIRect(max - size, max), Vector2.UnitY, Vector2.UnitX, color, flags, ring);
+        Quad(new UIRect(min, min + size), Vector2.UnitX, Vector2.UnitY, color, flags, ring);
+        Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, color, flags, ring);
+    }
+
     /// <summary>Draws a region of the skin stretched over a rectangle.</summary>
     public void Region(in UIRegion region, UIRect rect, Vector4 tint) =>
         Quad(rect, region.Position, region.Position + region.TexelSize, SpriteItem.PackColor(tint * RegionTint(region)), ATLAS_SLOT);
 
     /// <summary>
-    /// Draws a region of the skin over a rectangle of any size without distorting its edges: the
+    /// Draws a region of the skin over a rectangle of any size without distorting its edges. The
     /// corners keep their size, the edges stretch along their length and only the middle stretches both ways.
     /// </summary>
     public void NineSlice(in UIRegion region, UIRect rect, Vector4 tint)
@@ -307,132 +382,11 @@ public sealed class UIDrawList
         Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), slot);
     }
 
-    /// <summary>
-    /// Draws an icon over a rectangle: its art, and its label on top if it has one.
-    /// </summary>
-    public void Icon(in UIIcon icon, UIRect rect, Vector4 tint)
-    {
-        // An icon is as big as the text it sits in, which is rarely a whole multiple of its art.
-        Quad(
-            rect,
-            icon.Region.Position,
-            icon.Region.Position + icon.Region.TexelSize,
-            SpriteItem.PackColor(tint * RegionTint(icon.Region)),
-            ATLAS_SLOT | SpriteItem.SmoothFlag);
-
-        if (icon.Symbol is { } symbol)
-        {
-            // As tall as it is told to be, as wide as that makes it, in whole pixels so it stays in the middle.
-            float height = MathF.Round(rect.Height * icon.SymbolSize);
-            Vector2 symbolSize = new(MathF.Round(symbol.TexelSize.X * height / symbol.TexelSize.Y), height);
-            Vector2 corner = rect.Min + Vector2.Round((rect.Size - symbolSize) * 0.5f);
-
-            Quad(
-                new UIRect(corner, corner + symbolSize),
-                symbol.Position,
-                symbol.Position + symbol.TexelSize,
-                SpriteItem.PackColor(icon.SymbolColor * new Vector4(1.0f, 1.0f, 1.0f, tint.W)),
-                ATLAS_SLOT | SpriteItem.SmoothFlag);
-        }
-
-        if (icon.Label.Length == 0)
-            return;
-
-        // The label is sized to the icon rather than to the text around it.
-        float labelScale = rect.Height * ICON_LABEL_HEIGHT / Skin.Font.LineHeight;
-        Vector2 size = Skin.Font.Measure(icon.Label, labelScale, markup: false);
-
-        Text(
-            icon.Label,
-            rect.Center + new Vector2(-0.5f, 0.5f) * size,
-            labelScale,
-            icon.LabelColor * new Vector4(1.0f, 1.0f, 1.0f, tint.W),
-            markup: false);
-    }
-
-    /// <summary>
-    /// Draws text with the top left corner of its first line at <paramref name="position"/>.
-    /// </summary>
-    /// <param name="markup">Whether <c>[icon:name]</c> tags are drawn as icons. Off for text somebody typed.</param>
-    public void Text(ReadOnlySpan<char> text, Vector2 position, float scale, Vector4 color, bool markup = true)
-    {
-        UIFont font = Skin.Font;
-        uint packed = SpriteItem.PackColor(color);
-        float lineHeight = font.LineHeight * scale;
-
-        // Glyphs that start on whole pixels stay sharp.
-        position = new Vector2(MathF.Round(position.X), MathF.Round(position.Y));
-        Vector2 pen = position;
-
-        // The set of icons the text says it is written in, from where it says so
-        ReadOnlySpan<char> icons = default;
-
-        for (int i = 0; i < text.Length; i++)
-        {
-            char character = text[i];
-
-            if (character == '\n')
-            {
-                pen = new Vector2(position.X, pen.Y - lineHeight);
-                continue;
-            }
-
-            if (markup && character == '[' && font.TryReadIconSet(text[i..], out var set, out int skipped))
-            {
-                icons = set;
-                i += skipped - 1;
-                continue;
-            }
-
-            if (markup && character == '[' && font.TryReadIcon(text[i..], scale, icons, out var name, out int length, out Vector2 size))
-            {
-                // Centred on the line. Art that hasn't made it into the atlas yet still takes up its room.
-                if (Skin.TryGetIcon(name, icons, out var icon))
-                {
-                    Vector2 corner = new(pen.X, MathF.Round(pen.Y - (lineHeight + size.Y) * 0.5f));
-                    Icon(icon, new UIRect(corner, corner + size), new Vector4(1.0f, 1.0f, 1.0f, color.W));
-                }
-
-                pen.X += size.X;
-                i += length - 1;
-                continue;
-            }
-
-            if (font.Resolve(character, out var glyph))
-            {
-                // A glyph's offset is measured from the pen to its top left corner, downwards.
-                Vector2 topLeft = new(pen.X + glyph.Offset.X * scale, pen.Y - glyph.Offset.Y * scale);
-                Vector2 glyphSize = glyph.Size * scale;
-
-                Quad(
-                    new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y)),
-                    glyph.Position,
-                    glyph.Position + glyph.Size,
-                    packed,
-                    FONT_SLOT | SpriteItem.CoverageFlag);
-            }
-
-            pen.X += glyph.XAdvance * scale;
-        }
-    }
-
-    /// <summary>
-    /// Draws text lined up inside an area: <see cref="Origin.Center"/> centres it,
-    /// <see cref="Origin.TopLeft"/> pushes it into the top left corner, and so on.
-    /// </summary>
-    public void Text(ReadOnlySpan<char> text, UIRect area, Origin align, float scale, Vector4 color, bool markup = true)
-    {
-        Vector2 size = Skin.Font.Measure(text, scale, markup);
-        Vector2 center = area.PointAt(align) - align.ToVector() * size;
-
-        Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, markup);
-    }
-
     // A region that was made without a tint has none, rather than one that makes it invisible.
     private static Vector4 RegionTint(in UIRegion region) => region.Tint == default ? Vector4.One : region.Tint;
 
     // texTopLeft is the texel the top left corner of the rectangle shows, texBottomRight the bottom right.
-    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags)
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring = 0.0f)
     {
         UIRect visible = rect.Intersect(clip);
         if (visible.IsEmpty)
@@ -473,8 +427,9 @@ public sealed class UIDrawList
 
         ref SpriteItem item = ref items[itemCount++];
         item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
+        item.Ring = ring;
 
-        // A quad goes at one speed all over, the one of its middle. They are small enough for that: a panel is
+        // A quad goes at one speed all over, the one of its middle. They are small enough for that. A panel is
         // nine of them and text one a letter
         if (TracksMotion)
         {

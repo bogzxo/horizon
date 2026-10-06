@@ -21,9 +21,12 @@ public class Panel : UIComponent
     /// </summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>How round the corners of a panel filled with a <see cref="Color"/> are, in pixels. Square unless it says so.</summary>
+    public float Radius { get; set; }
+
     /// <summary>
     /// For a container whose content isn't known until the program runs (a row per save game, a cell per
-    /// character): the layout file each of its items is made from, looked for next to the layout this panel
+    /// character). The layout file each of its items is made from, looked for next to the layout this panel
     /// is in. The program fills it with <see cref="UILayout.Populate(Panel, int)"/>.
     /// </summary>
     public string Template { get; set; } = string.Empty;
@@ -64,7 +67,7 @@ public class Panel : UIComponent
         if (list.Skin.TryGetRegion(Background, out var region))
             list.NineSlice(region, Bounds, Color ?? Vector4.One);
         else
-            list.Rect(Bounds, Color ?? list.Skin.PanelColor);
+            list.RoundRect(Bounds, Radius, Color ?? list.Skin.PanelColor);
     }
 
     protected override void DefineScript()
@@ -76,5 +79,6 @@ public class Panel : UIComponent
         Expose("preview_count", () => PreviewCount, value => PreviewCount = Math.Max(0, (int)value));
         Expose("stagger", () => Stagger, value => Stagger = MathF.Max(0.0f, value));
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
+        Expose("radius", () => Radius, value => Radius = MathF.Max(0.0f, value));
     }
 }

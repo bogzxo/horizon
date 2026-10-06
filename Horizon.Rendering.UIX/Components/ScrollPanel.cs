@@ -6,7 +6,7 @@ using Horizon.Rendering.UIX.Skinning;
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// A window onto something taller than itself: its children are laid out at their full height from the top,
+/// A window onto something taller than itself. Its children are laid out at their full height from the top,
 /// cut off at its edges, and moved up and down with the mouse wheel. A bar along the right shows how far down
 /// it is, and can be dragged.
 /// It has to be given a height, a scroll panel that is as tall as its content has nothing to scroll.
@@ -92,9 +92,13 @@ public class ScrollPanel : Panel
         float length = MathF.Max(MIN_THUMB, track.Height * content.Height / contentHeight);
         float top = track.Max.Y - (track.Height - length) * (offset / MaxOffset);
 
-        list.Rect(track, list.Skin.HoverColor);
-        list.Rect(
+        // Pills, for a skin that has round corners at all
+        float round = list.Skin.CornerRadius > 0.0f ? BAR_WIDTH * 0.5f : 0.0f;
+
+        list.RoundRect(track, round, list.Skin.HoverColor);
+        list.RoundRect(
             new UIRect(new Vector2(track.Min.X, top - length), new Vector2(track.Max.X, top)),
+            round,
             draggingBar ? list.Skin.HighlightColor : list.Skin.AccentColor);
     }
 

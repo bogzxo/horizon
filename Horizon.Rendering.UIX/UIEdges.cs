@@ -3,7 +3,7 @@ using System.Numerics;
 namespace Horizon.Rendering.UIX;
 
 /// <summary>
-/// A distance for each side of a rectangle: padding, or the fixed border of a nine-slice.
+/// A distance for each side of a rectangle. Padding, or the fixed border of a nine-slice.
 /// </summary>
 public readonly record struct UIEdges(float Left, float Top, float Right, float Bottom)
 {

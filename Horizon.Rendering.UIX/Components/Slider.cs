@@ -7,7 +7,7 @@ using Horizon.Rendering.UIX.Skinning;
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// A progress bar the pointer can set: press anywhere along it, or drag, to move the value there.
+/// A progress bar the pointer can set. Press anywhere along it, or drag, to move the value there.
 /// </summary>
 public class Slider : ProgressBar
 {
@@ -69,10 +69,10 @@ public class Slider : ProgressBar
         else if (skin.TryGetRegion(HANDLE_FALLBACK_REGION, out region))
             list.NineSlice(region, handle, tint);
         else
-            list.Rect(handle, skin.ControlColor * tint);
+            list.Box(handle, skin.ControlTextColor * tint);
 
         if (enabled && (IsHovered || IsPressed))
-            list.Outline(handle, 2.0f, skin.HighlightColor);
+            list.Frame(handle, 2.0f, skin.HighlightColor);
     }
 
     protected internal override void OnPointerDown(Vector2 point) => MoveTo(point);

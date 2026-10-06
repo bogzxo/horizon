@@ -12,7 +12,7 @@ public enum UIDirection
 }
 
 /// <summary>
-/// A panel that lines its children up one after another: top to bottom, or left to right.
+/// A panel that lines its children up one after another. Top to bottom, or left to right.
 /// Across the line a child is placed by its <see cref="UIComponent.Anchor"/> (to one side or centred),
 /// or stretched to the full width of the line if it fills that axis or the stack is told to
 /// <see cref="Stretch"/> everything.
@@ -59,7 +59,7 @@ public class StackPanel : Panel
     {
         bool vertical = Direction == UIDirection.Vertical;
 
-        // The edge the next child starts from: the top of a vertical stack, the left of a horizontal one.
+        // The edge the next child starts from. The top of a vertical stack, the left of a horizontal one.
         float cursor = vertical ? content.Max.Y : content.Min.X;
 
         foreach (var child in ChildSpan)

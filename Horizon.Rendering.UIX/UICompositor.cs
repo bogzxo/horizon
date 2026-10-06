@@ -22,7 +22,7 @@ namespace Horizon.Rendering.UIX;
 /// <see cref="MotionBlurEffect"/> what slides, pops or is tweened about is smeared along the way it goes.
 /// </para>
 /// </summary>
-public class UICompositor : IGameComponent, IDisposable
+public partial class UICompositor : IGameComponent, IDisposable
 {
     /// <summary>Where the skin every UI has unless it asks for another one is kept.</summary>
     public const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/dead_revolver/";
@@ -38,7 +38,7 @@ public class UICompositor : IGameComponent, IDisposable
     private string skinFile;
     private string? skinTheme;
 
-    // For the layout debugger: where the pointer was last, and when the UI was last updated.
+    // For the layout debugger. Where the pointer was last, and when the UI was last updated.
     private Vector2 lastPointer;
     private long lastUpdate;
 
@@ -47,7 +47,7 @@ public class UICompositor : IGameComponent, IDisposable
 
     /// <summary>
     /// The size of the screen the UI was laid out for. Set, the whole UI is scaled so that a screen of that
-    /// size just fits into whatever the camera sees: a layout made for 1600 by 900 comes out twice as big in a
+    /// size just fits into whatever the camera sees. A layout made for 1600 by 900 comes out twice as big in a
     /// window of 3200 by 1800, and has the same room to lay itself out in either way. Where the window is
     /// wider or taller than the design the UI gets the extra room, it is never cut off.
     /// Left unset the UI is laid out against the window as it is, a unit per pixel.
@@ -71,7 +71,7 @@ public class UICompositor : IGameComponent, IDisposable
 
     /// <summary>
     /// Scrolls whatever is under the pointer as if the mouse wheel had been turned, for input that isn't a
-    /// wheel: the stick of a gamepad, or a test. Safe from any thread, it happens on the next update.
+    /// wheel. The stick of a gamepad, or a test. Safe from any thread, it happens on the next update.
     /// </summary>
     /// <param name="notches">How far, a notch of the wheel being 1. Positive is up.</param>
     public void Scroll(float notches)
@@ -97,7 +97,7 @@ public class UICompositor : IGameComponent, IDisposable
     private int motionFrame;
     private bool layerWarmed;
 
-    // Whether what is on the layer is what the UI looks like right now, and what it was drawn with: seen
+    // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
     // through another camera the same list is another picture
     private bool pictureCurrent;
     private Matrix4x4 pictureView, pictureProjection;
@@ -117,7 +117,7 @@ public class UICompositor : IGameComponent, IDisposable
     /// </code>
     /// They only ever see the UI and leave what is behind it alone. While any of them is on the UI is drawn onto
     /// a layer of its own first (see <see cref="PostLayer"/>) and every component keeps track of how fast it is
-    /// going across the screen, by where it ends up being drawn: layout, tweens and the place of its module all
+    /// going across the screen, by where it ends up being drawn. Layout, tweens and the place of its module all
     /// count. With none on there is no layer and no keeping track, the UI costs what it does without any of this,
     /// and an effect that is only for what moves is skipped (layer and all) whenever nothing in the UI does.
     /// What a component paints inside of its own bounds (the handle of a slider) goes as fast as the component.
@@ -153,7 +153,7 @@ public class UICompositor : IGameComponent, IDisposable
     public Func<UIPointer>? PointerSource { get; set; }
 
     /// <summary>
-    /// Whether the UI has the pointer: it is over a component that stops it, or it is still held
+    /// Whether the UI has the pointer. It is over a component that stops it, or it is still held
     /// after being pressed on one. The game can use this to keep clicks on the UI to the UI.
     /// </summary>
     public bool IsPointerOverUI { get; private set; }
@@ -287,7 +287,7 @@ public class UICompositor : IGameComponent, IDisposable
             new Vector2(bounds.X, bounds.Y),
             new Vector2(bounds.X + bounds.Width, bounds.Y + bounds.Height));
 
-        // Worked out before anything else uses it: the pointer has to be scaled the same way the layout is.
+        // Worked out before anything else uses it. The pointer has to be scaled the same way the layout is.
         float fit = DesignSize is { X: > 0.0f, Y: > 0.0f } design && !screen.IsEmpty
             ? MathF.Min(screen.Width / design.X, screen.Height / design.Y)
             : 1.0f;
@@ -317,7 +317,7 @@ public class UICompositor : IGameComponent, IDisposable
         }
         back.End();
 
-        // Nothing happened: what was painted is what is on screen already, and nobody needs to hear about it
+        // Nothing happened. What was painted is what is on screen already, and nobody needs to hear about it
         if (paintedFrame > 0 && back.SameAs(front))
             return;
 
@@ -341,7 +341,7 @@ public class UICompositor : IGameComponent, IDisposable
     public UILayoutOverlayOptions? LayoutOverlay { get; set; }
 
     /// <summary>
-    /// A component of this UI that is marked out from the rest, null for none: what an editor has selected.
+    /// A component of this UI that is marked out from the rest, null for none. What an editor has selected.
     /// </summary>
     public UIComponent? Highlighted { get; set; }
 
@@ -373,7 +373,7 @@ public class UICompositor : IGameComponent, IDisposable
                 uploadedFrame = paintedFrame;
             }
 
-            // Nothing painted yet, or what was painted last is still waiting for its art: what is about to be
+            // Nothing painted yet, or what was painted last is still waiting for its art. What is about to be
             // drawn is not the UI as it is meant to look. A scene that was just set isn't shown like that
             if (paintedFrame == 0 || front.Incomplete)
                 GameEngine.Instance.SceneManager.ReportUnfinished();
@@ -381,14 +381,14 @@ public class UICompositor : IGameComponent, IDisposable
 
         // Onto its own layer and through its effects if it has any that are on, straight over the scene if not.
         // A UI that is standing still has nothing for a blur to do, and goes straight there as well
-        // The very first frame goes through the layer whether anything moves or not: making the layer and what its
+        // The very first frame goes through the layer whether anything moves or not. Making the layer and what its
         // effects need takes a moment, which is better spent while the UI is loading than on the first frame
         // something in it moves
         // Seen through a camera that has changed, what was drawn before is not what the UI looks like any more
         if (viewportCamera.View != pictureView || viewportCamera.Projection != pictureProjection)
             pictureCurrent = false;
 
-        // Nothing has changed since the picture on the layer was drawn: that is laid over the frame as it is,
+        // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
         if (Retained && pictureCurrent && layer.Replay(dt))
             return;
@@ -417,135 +417,5 @@ public class UICompositor : IGameComponent, IDisposable
         Skin = null;
 
         GC.SuppressFinalize(this);
-    }
-
-    private UIPointer ReadMouse()
-    {
-        // TODO: @bogz lets do something about this
-        var mouseData = GameEngine.Instance.InputManager.MouseManager.GetData();
-
-        return new UIPointer(
-            viewportCamera.ScreenToWorld(mouseData.Position),
-            (mouseData.Actions & VirtualAction.PrimaryAction) != 0);
-    }
-
-    private void RouteKeyboard()
-    {
-        // A component that left the UI takes the focus with it.
-        if (focus is not null && focus.Module is not { Enabled: true })
-            focus = null;
-
-        if (focus is null)
-            return;
-
-        // A key that edits and is being held is typed again every so often
-        UIKeyboard.Repeat();
-
-        while (focus is not null && UIKeyboard.TryRead(out char character))
-            focus.OnTextInput(character);
-    }
-
-    /// <summary>
-    /// Hands the mouse wheel to whatever is under the pointer that has a use for it: the innermost component
-    /// first, then the ones it is inside of.
-    /// </summary>
-    private void RouteScroll(UIModule[] snapshot, Vector2 pointer)
-    {
-        float delta = UIKeyboard.TakeScroll() + Interlocked.Exchange(ref pendingScroll, 0.0f);
-        if (delta == 0.0f)
-            return;
-
-        for (int i = snapshot.Length - 1; i >= 0; i--)
-        {
-            if (!snapshot[i].Enabled || !snapshot[i].Interactive)
-                continue;
-
-            // Whatever is open on top of the module is asked before what is under it.
-            if (snapshot[i].Popup is { } popup && popup.PopupContains(snapshot[i].ToLocal(pointer)) && popup.OnScroll(delta))
-                return;
-
-            for (UIComponent? component = snapshot[i].FindAt(pointer); component is not null; component = component.Parent)
-            {
-                if (component.OnScroll(delta))
-                    return;
-            }
-        }
-    }
-
-    private void RoutePointer(UIModule[] snapshot)
-    {
-        UIPointer pointer = PointerSource?.Invoke() ?? ReadMouse();
-        lastPointer = pointer.Position;
-        Pointer = pointer;
-
-        RouteScroll(snapshot, pointer.Position);
-
-        // A component that left the UI while it was held is forgotten.
-        if (pressed is not null && pressed.Module is not { Enabled: true })
-        {
-            pressed.IsPressed = false;
-            pressed = null;
-        }
-
-        // Modules are drawn in order, so the last one is on top and gets the first look.
-        UIComponent? over = null;
-        for (int i = snapshot.Length - 1; i >= 0 && over is null; i--)
-        {
-            if (snapshot[i].Enabled)
-                over = snapshot[i].HitTest(pointer.Position);
-        }
-
-        IsPointerOverUI = over is not null || pressed is not null;
-
-        // While something is held nothing else reacts to the pointer passing over it.
-        UIComponent? hover = pressed is null || pressed == over ? over : null;
-        if (hover != hovered)
-        {
-            if (hovered is not null)
-                hovered.IsHovered = false;
-            if (hover is not null)
-                hover.IsHovered = true;
-
-            hovered = hover;
-        }
-
-        if (pointer.Down && !pointerWasDown)
-        {
-            // Pressing anywhere but on what is open closes it.
-            foreach (var module in snapshot)
-            {
-                if (module.Popup is { } popup && popup != over)
-                    module.Popup = null;
-            }
-
-            // Pressing on something that isn't part of the UI at all leaves the focus where it is,
-            // or a click meant for the game would stop the typing.
-            if (over is not null)
-                Focus = over.Focusable && over.EnabledInHierarchy ? over : null;
-
-            if (over is not null && over.EnabledInHierarchy)
-            {
-                pressed = over;
-                pressed.IsPressed = true;
-                pressed.OnPointerDown(pressed.Module!.ToLocal(pointer.Position));
-            }
-        }
-        else if (pointer.Down && pressed is not null)
-        {
-            pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
-        }
-        else if (!pointer.Down && pressed is not null)
-        {
-            var released = pressed;
-            pressed = null;
-
-            released.IsPressed = false;
-            released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
-
-            if (released == over)
-                released.OnClick();
-        }
-
-        pointerWasDown = pointer.Down;
     }
 }

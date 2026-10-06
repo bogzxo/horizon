@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
@@ -26,6 +27,14 @@ public abstract class PostEffect : IDisposable
     /// <summary>Whether the effect is run. One that is off costs nothing, the picture goes straight past it.</summary>
     public bool Enabled { get; set; } = true;
 
+    private TweenContext? tweens;
+
+    /// <summary>
+    /// The tweens that are animating this effect, for easing a setting of it instead of snapping it.
+    /// They are moved along once a frame for as long as the effect is on, so whatever starts one switches the effect on first.
+    /// </summary>
+    public TweenContext Tweens => tweens ?? Interlocked.CompareExchange(ref tweens, new TweenContext(), null) ?? tweens;
+
     /// <summary>
     /// Whether the effect only does anything to what moves. One that says so is left out for as long as whoever
     /// drew the picture knows that nothing in it does, which saves all of its passes.
@@ -50,6 +59,7 @@ public abstract class PostEffect : IDisposable
             Initialize();
         }
 
+        tweens?.Tick(context.DeltaTime);
         Render(context);
     }
 

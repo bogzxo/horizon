@@ -12,6 +12,7 @@ layout(location = 1) in vec2 fragPos;
 layout(location = 2) in vec4 color;
 layout(location = 3) flat in uint flags;
 layout(location = 4) flat in vec2 motion;
+layout(location = 5) flat in float ring;
 
 // How near the sprites of this batch are, from 0 (the backdrop) to 1 (right in front): what is nearer blurs over
 // what is further away when it moves, never the other way around.
@@ -29,6 +30,7 @@ vec2 encodeMotion(vec2 speed) {
 const uint NO_TEXTURE = 0xFFu;
 const uint COVERAGE_FLAG = 0x100u;
 const uint SMOOTH_FLAG = 0x200u;
+const uint CORNER_FLAG = 0x400u;
 
 // Every item says which of these it shows, so things with different textures can be drawn in order in one call.
 uniform sampler2D uTextures[4];
@@ -74,6 +76,11 @@ void main() {
   // How many texels a screen pixel covers. Worked out here for the same reason.
   vec2 box = clamp(fwidth(texel), vec2(0.00001), vec2(1.0));
 
+  // For the corner of a rounded box, where the texel is how far from the middle of the disc this is (1 is its edge).
+  // And how much of that a screen pixel is, which is what the edge gets smoothed over
+  float fromMiddle = length(texel);
+  float cornerPixel = max(fwidth(fromMiddle), 0.00001);
+
   uint slot = flags & 0xFFu;
   vec4 tex = vec4(1.0);
 
@@ -90,6 +97,13 @@ void main() {
 
   // The texture only says where the ink is (fonts), the colour is all the item's.
   if ((flags & COVERAGE_FLAG) != 0u) tex = vec4(1.0, 1.0, 1.0, tex.a);
+
+  // A quarter of a disc. Inside of its edge, and (for the corner of an outline) outside of the hole in it
+  if ((flags & CORNER_FLAG) != 0u) {
+    float inside = clamp((1.0 - fromMiddle) / cornerPixel + 0.5, 0.0, 1.0);
+    float pastHole = ring < 1.0 ? clamp((fromMiddle - (1.0 - ring)) / cornerPixel + 0.5, 0.0, 1.0) : 1.0;
+    tex.a *= inside * pastHole;
+  }
 
   vec4 result = tex * color;
   if (result.a <= 0.0) discard;

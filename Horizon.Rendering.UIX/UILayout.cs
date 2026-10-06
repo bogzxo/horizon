@@ -10,7 +10,7 @@ using Environment = Horizon.HIDL.Runtime.Environment;
 namespace Horizon.Rendering.UIX;
 
 /// <summary>
-/// A piece of UI out of a layout file: the components a HIDL script made, by the names the script gave them.
+/// A piece of UI out of a layout file. The components a HIDL script made, by the names the script gave them.
 /// This is how a program gets its UI from files that can be changed (and drawn up in an editor) without
 /// touching the code:
 /// <code>
@@ -139,7 +139,7 @@ public sealed class UILayout
     /// <inheritdoc cref="Populate(Panel, int)"/>
     public IReadOnlyList<UILayout> Populate(string container, int count) => Populate(Get<Panel>(container), count);
 
-    /// <summary>Where a file named by this layout is: next to it, unless the name says exactly where.</summary>
+    /// <summary>Where a file named by this layout is. Next to it, unless the name says exactly where.</summary>
     public string Resolve(string file) =>
         System.IO.Path.IsPathRooted(file) || Path.Length == 0
             ? file

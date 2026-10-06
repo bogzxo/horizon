@@ -19,7 +19,7 @@ internal interface IUIIconSource
 }
 
 /// <summary>
-/// A bitmap font as the UI needs it: enough to measure text and to place its glyphs.
+/// A bitmap font as the UI needs it. Enough to measure text and to place its glyphs.
 /// Text can have icons in it: <c>[icon:name]</c> is replaced by the icon of that name (see
 /// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
 /// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin:

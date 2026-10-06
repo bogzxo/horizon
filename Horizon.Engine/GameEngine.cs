@@ -74,6 +74,14 @@ public class GameEngine : Entity
         SceneManager.SetScene(scene);
     }
 
+    /// <summary>
+    /// Changes the scene through a transition of its own (or with a hard cut, for null), whatever the scene manager is set to.
+    /// </summary>
+    public void SetScene(in Scene scene, SceneTransition? transition)
+    {
+        SceneManager.SetScene(scene, transition);
+    }
+
     public GameEngine(in GameEngineConfiguration engineConfiguration)
     {
         Name = "Engine";

@@ -56,7 +56,7 @@ namespace Horizon.Rendering.UIX
         public bool IsLayerHidden(string layer) => hiddenLayers.Count > 0 && hiddenLayers.Contains(layer);
 
         /// <summary>
-        /// Shows or hides everything on a layer: the components that name it and whatever is inside of them.
+        /// Shows or hides everything on a layer. The components that name it and whatever is inside of them.
         /// What is hidden this way is neither drawn nor hit by the pointer. Nothing about the components
         /// themselves changes, so this is as good for an editor putting things out of the way while something
         /// under them is worked on as it is for a game switching between the screens of one layout.
@@ -84,7 +84,7 @@ namespace Horizon.Rendering.UIX
         public Vector2 Position { get; set; }
 
         /// <summary>
-        /// Scales the whole module. Components keep their places relative to the screen: one anchored
+        /// Scales the whole module. Components keep their places relative to the screen. One anchored
         /// to a corner stays in that corner and simply gets bigger.
         /// </summary>
         public Vector2 Scale { get; set; } = Vector2.One;
@@ -103,7 +103,7 @@ namespace Horizon.Rendering.UIX
         public UIRect? Clip { get; set; }
 
         /// <summary>
-        /// Whether the pointer reaches the module. Off, it is only looked at: nothing in it hovers, presses or
+        /// Whether the pointer reaches the module. Off, it is only looked at. Nothing in it hovers, presses or
         /// takes the focus.
         /// </summary>
         public bool Interactive { get; set; } = true;

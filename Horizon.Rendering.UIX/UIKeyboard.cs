@@ -13,7 +13,7 @@ namespace Horizon.Rendering.UIX;
 /// characters wait in a queue in between.
 /// <para>
 /// Not everything that is typed is a character. The keys that edit (backspace, the arrows, control with A) are
-/// put in the queue as characters of their own that no keyboard types, see the constants here: whoever reads
+/// put in the queue as characters of their own that no keyboard types, see the constants here. Whoever reads
 /// the queue tells them apart from text by those. A key that edits and is held down is typed again and again
 /// after a moment, the way the system does it for characters.
 /// </para>
@@ -36,7 +36,7 @@ internal static class UIKeyboard
     public const char COPY = '';
     public const char CUT = '';
 
-    /// <summary>The caret goes somewhere: a character or (with control) a word to either side, or to either end.</summary>
+    /// <summary>The caret goes somewhere. A character or (with control) a word to either side, or to either end.</summary>
     public const char LEFT = '';
     public const char RIGHT = '';
     public const char WORD_LEFT = '';
@@ -52,7 +52,7 @@ internal static class UIKeyboard
     public const char SELECT_HOME = '';
     public const char SELECT_END = '';
 
-    /// <summary>Control with backspace and with delete: a whole word goes.</summary>
+    /// <summary>Control with backspace and with delete. A whole word goes.</summary>
     public const char WORD_BACKSPACE = '';
     public const char WORD_DELETE = '';
 
@@ -148,7 +148,7 @@ internal static class UIKeyboard
     }
 
     /// <summary>
-    /// Helper to type what is on the clipboard, as if it had been typed by hand: whoever has the focus takes
+    /// Helper to type what is on the clipboard, as if it had been typed by hand. Whoever has the focus takes
     /// what it can use of it. We are on the thread of the window here, which is the one that may ask for it.
     /// </summary>
     private static void Paste(IKeyboard keyboard)
@@ -166,7 +166,7 @@ internal static class UIKeyboard
 
         foreach (char character in text)
         {
-            // One line of it: a text box has no use for the rest
+            // One line of it. A text box has no use for the rest
             if (character is '\r' or '\n')
                 break;
 

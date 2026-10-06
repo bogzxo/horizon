@@ -92,6 +92,24 @@ public sealed class PostTarget : IDisposable
         frameBuffer.Viewport();
     }
 
+    /// <summary>
+    /// Copies what is in the window right now into this target, which is the frame as far as it has been drawn.
+    /// It is stretched to fit if the two aren't the same size. GL thread, and whatever is bound stays bound.
+    /// </summary>
+    public void CopyFromWindow()
+    {
+        var engine = GameEngine.Instance;
+        Vector2 window = engine.WindowManager.ViewportSize;
+
+        // Zero is the window, the one frame buffer nobody had to make
+        engine.GL.BlitNamedFramebuffer(
+            0, frameBuffer.Handle,
+            0, 0, (int)window.X, (int)window.Y,
+            0, 0, (int)Size.X, (int)Size.Y,
+            ClearBufferMask.ColorBufferBit,
+            BlitFramebufferFilter.Linear);
+    }
+
     public void Dispose()
     {
         var manager = GameEngine.Instance.ObjectManager;

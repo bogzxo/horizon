@@ -7,7 +7,7 @@ using Horizon.Rendering.UIX.Skinning;
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// One out of a list of options, of which only the chosen one is shown until the dropdown is clicked: then
+/// One out of a list of options, of which only the chosen one is shown until the dropdown is clicked. Then
 /// the whole list drops open underneath it (or above, where there is no room underneath), on top of whatever
 /// else is there. Clicking an option chooses it, clicking anywhere else leaves things as they were.
 /// For more options than a <see cref="Selector"/> is any good for.
@@ -87,7 +87,7 @@ public class Dropdown : UIComponent
     private int VisibleRows => Math.Min(options.Length, Math.Max(1, MaxRows));
 
     /// <summary>
-    /// Where the open list is, in the space of the module: under the dropdown, or above it if it would
+    /// Where the open list is, in the space of the module. Under the dropdown, or above it if it would
     /// run off the bottom of the screen there.
     /// </summary>
     public UIRect ListBounds
@@ -143,7 +143,13 @@ public class Dropdown : UIComponent
         if ((enabled && (IsHovered || IsOpen) && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
             list.NineSlice(art, Bounds, tint);
         else
-            list.Rect(Bounds, skin.ControlColor * tint);
+        {
+            list.Box(Bounds, skin.ControlColor * tint);
+            if (enabled && (IsHovered || IsOpen))
+                list.Box(Bounds, skin.HoverColor);
+            if (skin.BorderColor.W > 0.0f)
+                list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
+        }
 
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
 
@@ -158,8 +164,8 @@ public class Dropdown : UIComponent
 
         // Whatever is under the list must not show through it.
         UIRect bounds = ListBounds;
-        list.Rect(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
-        list.Outline(bounds, LIST_BORDER, skin.AccentColor);
+        list.Box(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
+        list.Frame(bounds, LIST_BORDER, skin.AccentColor);
 
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
@@ -180,7 +186,7 @@ public class Dropdown : UIComponent
                 markup: false);
         }
 
-        // More options than fit: a mark on the side says where in the list this is.
+        // More options than fit. A mark on the side says where in the list this is.
         if (options.Length > VisibleRows)
         {
             UIRect track = bounds.Shrink(new UIEdges(LIST_BORDER));
@@ -233,7 +239,7 @@ public class Dropdown : UIComponent
             return;
         }
 
-        // On the dropdown itself, or let go of somewhere else altogether: never mind then.
+        // On the dropdown itself, or let go of somewhere else altogether. Never mind then.
         Close();
     }
 

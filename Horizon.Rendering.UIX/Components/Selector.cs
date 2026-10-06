@@ -9,7 +9,7 @@ namespace Horizon.Rendering.UIX.Components;
 /// <summary>
 /// One out of a handful of options, shown between two arrows. Clicking its right half moves on to the next
 /// option and its left half back to the one before, around and around.
-/// For things there are only a few of: an anchor, a direction, a theme.
+/// For things there are only a few of. An anchor, a direction, a theme.
 /// </summary>
 public class Selector : UIComponent
 {
@@ -89,7 +89,13 @@ public class Selector : UIComponent
         if ((enabled && IsHovered && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
             list.NineSlice(art, Bounds, tint);
         else
-            list.Rect(Bounds, skin.ControlColor * tint);
+        {
+            list.Box(Bounds, skin.ControlColor * tint);
+            if (enabled && IsHovered)
+                list.Box(Bounds, skin.HoverColor);
+            if (skin.BorderColor.W > 0.0f)
+                list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
+        }
 
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
         Vector4 arrows = skin.AccentColor * tint;

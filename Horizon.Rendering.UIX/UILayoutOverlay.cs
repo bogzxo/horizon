@@ -49,7 +49,7 @@ internal static class UILayoutOverlay
 
     /// <summary>
     /// The innermost component a point is in. Unlike the hit test this finds everything, a label as much as a
-    /// button: what is wanted here is what is drawn there, not what reacts to it.
+    /// button. What is wanted here is what is drawn there, not what reacts to it.
     /// </summary>
     public static UIComponent? FindUnder(UIComponent component, Vector2 point, bool hidden)
     {
@@ -157,7 +157,7 @@ internal static class UILayoutOverlay
     }
 
     /// <summary>
-    /// Marks one component out from the rest: a bright edge, its padding, and what it is written above it.
+    /// Marks one component out from the rest. A bright edge, its padding, and what it is written above it.
     /// For whatever an editor has selected.
     /// </summary>
     public static void PaintHighlight(UIDrawList list, UIComponent component)

@@ -7,7 +7,7 @@ using Horizon.Rendering.UIX.Skinning;
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// Picks a colour: a square of every shade of one hue (more colourful to the right, brighter to the top), a
+/// Picks a colour. A square of every shade of one hue (more colourful to the right, brighter to the top), a
 /// strip of the hues next to it and, unless told not to, a strip for how see-through the colour is. Press or
 /// drag in any of them. What is picked shows in the corner, over a checkerboard so its alpha can be seen.
 /// </summary>

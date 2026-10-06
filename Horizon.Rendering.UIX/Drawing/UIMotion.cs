@@ -6,9 +6,9 @@ namespace Horizon.Rendering.UIX.Drawing;
 /// Works out how fast a component is going across the screen from where it is drawn every update, for the effects
 /// that blur what moves (see <see cref="UICompositor.PostProcessing"/>).
 /// It follows two opposite corners of the component rather than its middle, so growing and shrinking are motion
-/// too: something that pops in is going outwards at its edges and nowhere at its middle.
+/// too. Something that pops in is going outwards at its edges and nowhere at its middle.
 /// Not everything that ends up somewhere else has moved there though. A list that jumps a row when the wheel is
-/// turned, a label that gets wider with what it says, a panel that is shown again somewhere new: none of that is
+/// turned, a label that gets wider with what it says, a panel that is shown again somewhere new. None of that is
 /// to be smeared. So a single step counts for nothing, it takes a second one right after it to call it moving, and
 /// so does anything the layout did by giving the component another size.
 /// </summary>

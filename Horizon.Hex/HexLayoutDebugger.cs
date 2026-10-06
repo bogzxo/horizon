@@ -5,7 +5,7 @@ namespace Horizon.Hex;
 
 /// <summary>
 /// Helps with working out why a layout is laid out the way it is. While it is on, the layout that is being edited
-/// draws its own layout over itself: the edges of every component, the padding inside of them, the gaps between
+/// draws its own layout over itself. The edges of every component, the padding inside of them, the gaps between
 /// the children of a stack, and what the pointer is over along with its size.
 /// The drawing is done by the UI the layouts are in (it is the one that knows where its components are on screen),
 /// this decides whether it does and what of it, and puts the switches for that into a menu. It is part of the
