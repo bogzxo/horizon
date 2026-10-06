@@ -1,0 +1,85 @@
+// The layout of Horizon.Hex itself. The editor loads this like any other layout and then looks its parts up by the
+// names they have here, which is all that ties the two together: move things around, restyle them, and the editor
+// carries on as long as the names are still there. What it fills in while it runs (the buttons of the palette, the
+// rows of the tree and of the layers, the tabs, the rows of the inspector) comes out of the templates the containers
+// name. What there is to do is in the menu bar, whose menus the editor puts together itself.
+//
+// The sizes here are what the editor starts from. While it runs it gives the list on the left, the canvas, the code
+// and the inspector whatever room the window has, so only their widths on the left and the right mean anything.
+// Text is at its sharpest at a scale of 0.125 and multiples of it, see skin_plain.hor. It can be opened in itself.
+
+let root = compositor.stack({
+    fill: "both",
+    color: vec(0.07, 0.08, 0.11, 1),
+    padding: vec(10, 26, 10, 10),
+    spacing: 8
+});
+
+let toolbar = compositor.stack({ parent: root, anchor: "left", direction: "horizontal", spacing: 14 });
+let menu = compositor.menu_bar({ parent: toolbar, text_scale: 0.125 });
+let name_box = compositor.textbox({
+    parent: toolbar,
+    size: vec(200, 32),
+    padding: vec(8, 6),
+    text_scale: 0.125,
+    max_length: 40,
+    placeholder: "name of the layout"
+});
+
+let body = compositor.stack({ parent: root, anchor: "left", direction: "horizontal", spacing: 8 });
+
+let left = compositor.stack({ parent: body, anchor: "top", spacing: 6 });
+let add_title = compositor.label({ parent: left, anchor: "left", text: "Add", text_scale: 0.125, color: vec(0, 0.86, 1, 1) });
+let palette = compositor.grid({
+    parent: left,
+    columns: 2,
+    spacing: 4,
+    template: "palette_button.hor",
+    preview_count: 15
+});
+let tree_title = compositor.label({ parent: left, anchor: "left", text: "Layout", text_scale: 0.125, color: vec(0, 0.86, 1, 1) });
+let tree_scroll = compositor.scroll({
+    parent: left,
+    size: vec(280, 380),
+    color: vec(0.03, 0.03, 0.05, 1),
+    padding: 4
+});
+let tree = compositor.stack({ parent: tree_scroll, spacing: 2, template: "tree_row.hor", preview_count: 5 });
+let layers_title = compositor.label({ parent: left, anchor: "left", text: "Layers", text_scale: 0.125, color: vec(0, 0.86, 1, 1) });
+let layers_scroll = compositor.scroll({
+    parent: left,
+    size: vec(280, 96),
+    color: vec(0.03, 0.03, 0.05, 1),
+    padding: 4
+});
+let layers = compositor.stack({ parent: layers_scroll, spacing: 2, template: "tree_row.hor", preview_count: 2 });
+
+let center = compositor.stack({ parent: body, anchor: "top", spacing: 6 });
+let tabs = compositor.stack({
+    parent: center,
+    anchor: "left",
+    direction: "horizontal",
+    spacing: 4,
+    template: "tab.hor",
+    preview_count: 2
+});
+let canvas = compositor.panel({ parent: center, size: vec(884, 497), color: vec(0.02, 0.02, 0.03, 1) });
+let code_title = compositor.label({ parent: center, anchor: "left", text: "Code", text_scale: 0.125, color: vec(0, 0.86, 1, 1) });
+let code_scroll = compositor.scroll({
+    parent: center,
+    size: vec(884, 250),
+    color: vec(0.03, 0.03, 0.05, 1),
+    padding: 8
+});
+let code = compositor.label({ parent: code_scroll, text_scale: 0.125, align: "top_left" });
+
+let right = compositor.stack({ parent: body, anchor: "top", spacing: 6 });
+let inspector_title = compositor.label({ parent: right, anchor: "left", text: "Properties", text_scale: 0.125, color: vec(0, 0.86, 1, 1) });
+let inspector_scroll = compositor.scroll({
+    parent: right,
+    size: vec(400, 770),
+    color: vec(0.03, 0.03, 0.05, 1),
+    padding: 6
+});
+let inspector = compositor.stack({ parent: inspector_scroll, spacing: 4, template: "property_row.hor", preview_count: 6 });
+let status = compositor.label({ parent: right, size: vec(400, 20), text_scale: 0.125, align: "left" });

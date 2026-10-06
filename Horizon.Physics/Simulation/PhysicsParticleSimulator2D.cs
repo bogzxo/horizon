@@ -34,6 +34,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
     private const uint MAP_SHAPE_BINDING = 1;
     private const uint MAP_CELL_BINDING = 2;
     private const uint BODY_BINDING = 3;
+    private const uint SEGMENT_BINDING = 4;
 
     private static readonly string[] ImpulseUniforms = [.. Enumerable.Range(0, MaxImpulses).Select(i => $"uImpulses[{i}]")];
 
@@ -42,6 +43,8 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 
     private readonly PhysicsGpuShape[] bodies = new PhysicsGpuShape[PhysicsParticleFeed.MaxBodies];
     private readonly Vector4[] impulses = new Vector4[MaxImpulses];
+    private readonly Vector4[] segments = new Vector4[PhysicsParticleFeed.MaxSegments];
+    private BufferObject? segmentBuffer;
 
     // The map only changes when the world rebuilds its grid, so it is uploaded once and kept
     private BufferObject? mapShapeBuffer, mapCellBuffer, bodyBuffer;
@@ -61,6 +64,22 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 
     // How quickly a particle slows down in the air
     public float LinearDrag { get; set; } = 0.0f;
+
+    /* None of the following is physics, it is there for the look of things */
+
+    // The speed a particle is brought to for as long as it is in the air, and how quickly (0 for not at all, which
+    // leaves the air to gravity and drag). For what falls at one speed from the moment it shows up, wind and all:
+    // rain, snow. Once it has landed it is left to lie
+    public Vector2 Cruise { get; set; } = Vector2.Zero;
+    public float CruiseRate { get; set; } = 0.0f;
+
+    // For what splashes rather than bounces: a particle that lands hard stops where it comes down and runs off
+    // along the surface instead, to either side and at any speed up to this one. 0 for none of that
+    public float Splash { get; set; } = 0.0f;
+
+    // How much of the life it has left such a landing can cost a particle (0 to 1), a different share for each of
+    // them: what has splashed doesn't all go at the same moment
+    public float SplashFade { get; set; } = 0.0f;
 
     // How much of the speed of a body a particle takes on when the body shoves it out of the way. Bodies are a lot
     // faster than anything a particle does by itself, taking on all of it has them fired off rather than pushed aside.
@@ -89,7 +108,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 
     protected override void BindSimulation(Technique technique)
     {
-        var map = feed.Collect(bodies, out int bodyCount, impulses, out int impulseCount);
+        var map = feed.Collect(bodies, out int bodyCount, impulses, out int impulseCount, segments, out int segmentCount);
 
         if (map is not null && map != uploadedMap)
         {
@@ -123,6 +142,14 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 
         BindBodies(technique, bodyCount);
 
+        // The outlines some of the bodies have, they change with every frame of an animation
+        segmentBuffer ??= CreateBuffer((uint)(PhysicsParticleFeed.MaxSegments * Unsafe.SizeOf<Vector4>()));
+        if (segmentBuffer is not null)
+        {
+            if (segmentCount > 0) segmentBuffer.NamedBufferSubData<Vector4>(segments.AsSpan(0, segmentCount));
+            technique.BindBuffer(SEGMENT_BINDING, segmentBuffer);
+        }
+
         // Heavier particles are harder to launch
         float mass = Mass;
         technique.SetUniform("uImpulseCount", mass > 0.0f ? impulseCount : 0);
@@ -136,6 +163,12 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         technique.SetUniform("uRestitution", Restitution);
         technique.SetUniform("uFriction", Friction);
         technique.SetUniform("uLinearDrag", LinearDrag);
+
+        Vector2 cruise = Cruise;
+        technique.SetUniform("uCruise", in cruise);
+        technique.SetUniform("uCruiseRate", MathF.Max(0.0f, CruiseRate));
+        technique.SetUniform("uSplash", MathF.Max(0.0f, Splash));
+        technique.SetUniform("uSplashFade", Math.Clamp(SplashFade, 0.0f, 1.0f));
         technique.SetUniform("uBodyPush", BodyPush);
         technique.SetUniform("uBodyPushLimit", BodyPushLimit);
     }

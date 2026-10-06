@@ -42,6 +42,15 @@ public class Image : UIComponent
     /// <summary>A texture to show instead of a region of the skin.</summary>
     public Texture? Texture { get; set; }
 
+    /// <summary>
+    /// The part of <see cref="Texture"/> that is shown, in pixels from its top left corner: one sprite of a
+    /// sheet, say. The whole texture while <see cref="SourceSize"/> is zero.
+    /// </summary>
+    public Vector2 SourcePosition { get; set; }
+
+    /// <inheritdoc cref="SourcePosition"/>
+    public Vector2 SourceSize { get; set; }
+
     public Vector4 Tint { get; set; } = Vector4.One;
 
     public Image()
@@ -55,7 +64,7 @@ public class Image : UIComponent
     protected override Vector2 Measure(UISkin skin)
     {
         if (Texture is { } texture)
-            return new Vector2(texture.Width, texture.Height);
+            return SourceSize != Vector2.Zero ? SourceSize : new Vector2(texture.Width, texture.Height);
 
         return skin.TryGetRegion(Region, out var region) ? region.Size : Vector2.Zero;
     }
@@ -70,7 +79,10 @@ public class Image : UIComponent
     {
         if (Texture is { } texture)
         {
-            list.Image(texture, Bounds, Tint);
+            if (SourceSize != Vector2.Zero)
+                list.Image(texture, Bounds, SourcePosition, SourcePosition + SourceSize, Tint);
+            else
+                list.Image(texture, Bounds, Tint);
             return;
         }
 

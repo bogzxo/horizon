@@ -9,7 +9,7 @@ using Bogz.Logging.Loggers;
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Engine.Components;
-using Horizon.Engine.Debugging;
+using Horizon.Engine.Debugging.Debuggers;
 using Horizon.Engine.Webhost;
 using Horizon.Engine.WebHost;
 using Horizon.Input;
@@ -62,7 +62,11 @@ public class GameEngine : Entity
     public InputManager InputManager { get; init; }
 
     //public Horizon.Webhost.WebHost WebHost { get; init; }
-    public SkylineDebugger Debugger { get; init; }
+    /// <summary>
+    /// The console of the engine: a HIDL runtime that whatever talks to the running game from outside (the web
+    /// dashboard) has its commands run by. It has no window of its own.
+    /// </summary>
+    public DeveloperConsole Console { get; init; }
     public float Runtime { get; private set; }
 
     public void SetScene(in Scene scene)
@@ -79,13 +83,26 @@ public class GameEngine : Entity
 
         Enabled = true;
 
+        // What an entity makes on the GPU while it is set up belongs to the scene it is in, and to nobody if
+        // it isn't in one: see Scene.Assets
+        EntityLifecycle.Scope = static entity =>
+        {
+            for (Entity? at = entity; at is not null; at = at.Parent)
+            {
+                if (at is Scene scene)
+                    return scene.Assets.Enter();
+            }
+
+            return Horizon.Content.AssetScope.EnterGlobal();
+        };
+
         // Engine components
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
         InputManager = AddComponent<InputManager>();
 
         // Engine children
-        Debugger = AddEntity<SkylineDebugger>();
+        Console = AddComponent<DeveloperConsole>();
         SceneManager = AddEntity<SceneManager>();
         //WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
         //WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
@@ -136,38 +153,6 @@ public class GameEngine : Entity
             );
     }
 
-#if DEBUG
-    public void DrawWithMetrics(in Entity entity, in float dt)
-    {
-        var startTime = Stopwatch.GetTimestamp();
-        entity.InitializeAll();
-        entity.Render(dt, null);
-        var endTime = Stopwatch.GetTimestamp();
-        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
-        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
-            "EngineComponents",
-            entity.Name,
-            val
-        );
-    }
-
-    public void DrawWithMetrics(in IGameComponent component, in float dt)
-    {
-        var startTime = Stopwatch.GetTimestamp();
-        component.Render(dt, null);
-        var endTime = Stopwatch.GetTimestamp();
-        if (component.Name == "Scene Manager")
-            return;
-
-        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
-        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
-            "EngineComponents",
-            component.Name,
-            val
-        );
-    }
-#endif
-
     public override void UpdatePhysics(float dt)
     {
         EventManager.PrePhysics?.Invoke(dt);
@@ -203,33 +188,12 @@ public class GameEngine : Entity
         // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
 
-#if DEBUG
-        if (Debugger.RenderToContainer)
-        {
-            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
-            Debugger.GameContainerDebugger.FrameBuffer.Bind();
-            Debugger.GameContainerDebugger.FrameBuffer.Viewport();
-        }
-        else
-#endif
-        {
-            GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-        }
+        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
         // Render all entities & component
         base.Render(dt);
 
-#if DEBUG
-        if (Debugger.RenderToContainer)
-        {
-            ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-            GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-        }
-#endif
-
         GL.GetError();
-        WindowManager.Egui.Run(this.RenderUi);
 
         EventManager.PostRender?.Invoke(dt);
     }
@@ -250,11 +214,22 @@ public class GameEngine : Entity
     /// </summary>
     internal TelemetryData CollectTelemetry()
     {
+        // As the window manager measures them
+        double RateOf(string loop)
+        {
+            foreach (var statistics in WindowManager.Loops)
+            {
+                if (statistics.Name == loop) return statistics.Rate;
+            }
+
+            return 0.0;
+        }
+
         return new TelemetryData
         {
-            LogicRate = Debugger.PerformanceDebugger.LogicRate,
-            RenderRate = Debugger.PerformanceDebugger.RenderRate,
-            PhysicsRate = Debugger.PerformanceDebugger.PhysicsRate
+            LogicRate = RateOf("Logic"),
+            RenderRate = RateOf("Render"),
+            PhysicsRate = RateOf("Physics")
         };
     }
     

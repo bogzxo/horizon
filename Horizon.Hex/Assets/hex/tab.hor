@@ -1,0 +1,9 @@
+// One tab above the canvas, there is one for every layout that is open.
+
+let tab = compositor.button({
+    label: "layout",
+    style: "button_flat",
+    size: vec(0, 30),
+    lbl_scale: 0.125,
+    animated: false
+});

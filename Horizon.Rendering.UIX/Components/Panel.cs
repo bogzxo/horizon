@@ -21,6 +21,25 @@ public class Panel : UIComponent
     /// </summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>
+    /// For a container whose content isn't known until the program runs (a row per save game, a cell per
+    /// character): the layout file each of its items is made from, looked for next to the layout this panel
+    /// is in. The program fills it with <see cref="UILayout.Populate(Panel, int)"/>.
+    /// </summary>
+    public string Template { get; set; } = string.Empty;
+
+    /// <summary>
+    /// How many items an editor shows in a container that has a <see cref="Template"/>, to stand in for the
+    /// ones the program will make. It means nothing to the program itself.
+    /// </summary>
+    public int PreviewCount { get; set; }
+
+    /// <summary>
+    /// How many seconds later each child makes its entrance than the one before it (see
+    /// <see cref="UIComponent.Intro"/>), which is what has a list pop up one row after the other.
+    /// </summary>
+    public float Stagger { get; set; }
+
     private bool HasBackdrop => Background.Length > 0 || Color is not null;
 
     protected override bool HitTestVisible => HasBackdrop;
@@ -53,6 +72,9 @@ public class Panel : UIComponent
         base.DefineScript();
 
         Expose("background", () => Background, value => Background = value);
+        Expose("template", () => Template, value => Template = value);
+        Expose("preview_count", () => PreviewCount, value => PreviewCount = Math.Max(0, (int)value));
+        Expose("stagger", () => Stagger, value => Stagger = MathF.Max(0.0f, value));
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
     }
 }

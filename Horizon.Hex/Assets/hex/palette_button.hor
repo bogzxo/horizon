@@ -1,0 +1,8 @@
+// One button of the palette, the editor makes one for every kind of component there is to add.
+
+let button = compositor.button({
+    label: "kind",
+    style: "button_flat",
+    size: vec(138, 28),
+    lbl_scale: 0.125
+});

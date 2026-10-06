@@ -22,8 +22,8 @@ namespace Horizon.Testing.Scenes;
 public class FluidTestScene : Scene, ITestControls
 {
     private const float Wall = 24.0f;           // How thick the floor, the walls and the dividers are
-    private const float SpoutRate = 400.0f;     // Particles per second
-    private const int SpoutLimit = 7000;        // The spout stops by itself here, the basins are about full by then
+    private const float HoseRate = 400.0f;     // Particles per second
+    private const int HoseLimit = 7000;        // The hose stops by itself here, the basins are about full by then
     private const float PourRate = 400.0f;      // Particles per second while a mouse button is held
     private const float RainRate = 300.0f;      // Particles per second
     private const float StatusInterval = 5.0f;
@@ -38,12 +38,12 @@ public class FluidTestScene : Scene, ITestControls
     [
         new("Hold left click", "pour water"),
         new("Hold right click", "pour sand"),
-        new("P", "toggle the spout"),
+        new("P", "toggle the hose"),
         new("R", "toggle the rain"),
         new("Space", "shockwave"),
         new("B", "drop the crate"),
         new("C", "clear"),
-        new("D", "toggle the outlines of the physics world"),
+        new("D", "toggle the debug outlines of the physics world"),
     ];
 
     private PhysicsWorld world = null!;
@@ -183,9 +183,9 @@ public class FluidTestScene : Scene, ITestControls
             crate.SetVelocity(Vector2.Zero);
         }
 
-        if (spoutOpen && water.Count < SpoutLimit)
+        if (spoutOpen && water.Count < HoseLimit)
         {
-            Pour(water, spoutPosition, ref spoutDue, SpoutRate * dt);
+            Pour(water, spoutPosition, ref spoutDue, HoseRate * dt);
         }
 
         if ((mouseData.Actions & VirtualAction.PrimaryAction) != 0)

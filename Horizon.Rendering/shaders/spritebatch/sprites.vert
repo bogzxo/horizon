@@ -10,6 +10,11 @@ uniform mat4 uModel;
 
 uniform int uDataOffset;
 
+// How fast the camera is moving (units a second) and how much of the screen a unit is, for working out how fast
+// an item goes across the screen.
+uniform vec2 uCameraVelocity;
+uniform vec2 uMotionScale;
+
 // Must match SpriteItem.cs.
 struct SpriteItem {
 	vec2 origin;
@@ -17,6 +22,7 @@ struct SpriteItem {
 	vec2 axisY;
 	vec2 texMin;
 	vec2 texMax;
+	vec2 motion;
 	uint color;
 	uint flags;
 	float depth;
@@ -35,6 +41,7 @@ layout(location = 0) out vec2 oTexel;
 layout(location = 1) out vec2 oFragPos;
 layout(location = 2) out vec4 oColor;
 layout(location = 3) flat out uint oFlags;
+layout(location = 4) flat out vec2 oMotion;
 
 
 void main() {
@@ -53,5 +60,8 @@ void main() {
 	vec4 worldPos = uModel * vec4(item.origin + item.axisX * corner.x + item.axisY * corner.y, item.depth, 1.0);
 	gl_Position = uCameraProjection * uCameraView * worldPos;
 	oFragPos = worldPos.xy;
+
+	// Across the screen, in halves of it a second: how fast it goes through the world less how fast the camera does.
+	oMotion = (mat2(uModel) * item.motion - uCameraVelocity) * uMotionScale;
 
 }

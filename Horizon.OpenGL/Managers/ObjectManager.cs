@@ -87,7 +87,9 @@ public class ObjectManager : IGameComponent, IDisposable
         Name = "Content Manager";
 
         Textures = new();
-        Shaders = new();
+
+        // Kept for good once they are made: compiling one takes far longer than keeping it costs
+        Shaders = new() { Scoped = false };
         Queries = new();
         Buffers = new();
         RenderBuffers = new();
@@ -146,6 +148,26 @@ public class ObjectManager : IGameComponent, IDisposable
             + Queries.RemoveUnnamedExcept(snapshot.Queries)
             + VertexArrays.RemoveUnnamedExcept(snapshot.VertexArrays)
             + Buffers.RemoveUnnamedExcept(snapshot.Buffers);
+    }
+
+    /// <summary>
+    /// Frees everything a scope has (see <see cref="Horizon.Content.AssetScope"/>): what was made in it, and what
+    /// it asked for by name that nobody else uses. Has to be called on the GL thread, once nothing draws with
+    /// those assets any more. The scope is done with afterwards.
+    /// </summary>
+    /// <returns>How many assets were freed.</returns>
+    public int Release(Horizon.Content.AssetScope scope)
+    {
+        scope.MarkReleased();
+
+        // The same order as Dispose: what refers to something goes before the thing it refers to.
+        return FrameBuffers.Release(scope)
+            + Textures.Release(scope)
+            + RenderBuffers.Release(scope)
+            + Shaders.Release(scope)
+            + Queries.Release(scope)
+            + VertexArrays.Release(scope)
+            + Buffers.Release(scope);
     }
 
     public void Render(float dt, object? obj = null)

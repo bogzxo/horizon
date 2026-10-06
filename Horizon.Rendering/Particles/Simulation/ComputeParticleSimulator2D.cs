@@ -109,7 +109,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
 
         compute = new Technique(shader);
         particleBuffer = buffer.Asset;
-        AttachInstanceBuffer(mesh, particleBuffer, ParticleState2D.SizeInBytes, 0, sizeof(float) * 4);
+        AttachInstanceBuffer(mesh, particleBuffer, ParticleState2D.SizeInBytes, 0, sizeof(float) * 4, sizeof(float) * 2);
     }
 
     protected internal override void Update(float dt)

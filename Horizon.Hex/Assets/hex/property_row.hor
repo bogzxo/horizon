@@ -1,0 +1,12 @@
+// One row of the inspector: what the property is called, and room for whatever edits it.
+
+let row = compositor.stack({ anchor: "left", direction: "horizontal", spacing: 6 });
+let caption = compositor.label({
+    parent: row,
+    size: vec(128, 0),
+    text: "property",
+    text_scale: 0.125,
+    color: vec(0.58, 0.6, 0.66, 1),
+    align: "left"
+});
+let editor = compositor.stack({ parent: row, direction: "horizontal", spacing: 4 });

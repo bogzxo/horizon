@@ -9,9 +9,9 @@ namespace Horizon.Rendering.Spriting;
 /// This is what every <see cref="Sprite"/> is turned into before it is drawn, and it can be handed to a
 /// <see cref="SpriteBatch"/> directly (see <see cref="SpriteBatch.Draw(ReadOnlySpan{SpriteItem}, ReadOnlySpan{SpriteTexture}, Camera?)"/>)
 /// to draw things that aren't sprites, like the quads of a UI.
-/// 56 bytes, laid out exactly like the std430 <c>SpriteItem</c> struct in shaders/spritebatch/sprites.vert.
+/// 64 bytes, laid out exactly like the std430 <c>SpriteItem</c> struct in shaders/spritebatch/sprites.vert.
 /// </summary>
-[StructLayout(LayoutKind.Sequential, Pack = 4, Size = 56)]
+[StructLayout(LayoutKind.Sequential, Pack = 4, Size = 64)]
 public struct SpriteItem
 {
     /// <summary>The value of the texture slot for a quad that shows no texture, just its colour.</summary>
@@ -39,6 +39,10 @@ public struct SpriteItem
     // The texels (pixels of the texture, counted from its top left) shown at the top left and the bottom right corner
     public Vector2 TexMin;
     public Vector2 TexMax;
+
+    // How fast the quad is moving across the world, in units a second. Nothing is moved by this: it is what a
+    // renderer that blurs motion goes by (see DeferredRenderer2D), anything that doesn't say stands still
+    public Vector2 Motion;
 
     // RGBA, 8 bits each with red in the low byte, see PackColor
     public uint Color;

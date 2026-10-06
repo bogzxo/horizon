@@ -21,6 +21,11 @@ namespace Horizon.Rendering.UIX.Skinning;
 /// pack can be drawn by name without the skin having to list it.
 /// Components ask for regions by name and fall back to flat colours when a skin doesn't have one, so
 /// a skin only needs the art it actually has.
+/// <para>
+/// A skin is shared: every UI that asks for the same file and theme draws with the one skin (see
+/// <see cref="Shared"/>) and so with the one atlas, which is kept for as long as the game runs. Art is stitched in
+/// once, the first time anything anywhere asks for it, rather than all over again by every screen that is opened.
+/// </para>
 /// </summary>
 public sealed class UISkin : IUIIconSource, IDisposable
 {
@@ -46,6 +51,12 @@ public sealed class UISkin : IUIIconSource, IDisposable
 
     private readonly Dictionary<string, RegionSource> sources = [];
     private readonly Dictionary<string, IconSource> icons = [];
+
+    // The sets of icons the skin has: in a set, the name on the left draws the icon on the right
+    private readonly Dictionary<string, Dictionary<string, string>> iconSets = [];
+
+    // The skins that have been loaded, by where they are from and their theme
+    private static readonly Dictionary<(string Path, string? Theme), UISkin> shared = [];
 
     // Filled in as names are asked for. A name that stands for nothing is remembered as null, as
     // components ask for art a skin might not have on every single frame.
@@ -154,7 +165,48 @@ public sealed class UISkin : IUIIconSource, IDisposable
     /// thread; the compositor does, before it draws.
     /// </summary>
     /// <returns>Whether any art arrived.</returns>
-    internal bool Update() => Atlas.Update();
+    internal bool Update()
+    {
+        // Nothing to add, and the atlas has its texture (which it only gets the first time it is updated)
+        if (!Atlas.HasPending && Atlas.Texture.Handle != 0) return false;
+
+        // The atlas belongs to nobody, least of all to the scene that happened to be drawing when it grew
+        using var nobody = Horizon.Content.AssetScope.EnterGlobal();
+        return Atlas.Update();
+    }
+
+    /// <summary>
+    /// Whether art that was asked for is still on its way into the atlas, which it gets the next time a UI with
+    /// this skin is drawn. What is painted in the meantime is painted without it.
+    /// </summary>
+    public bool HasPendingArt => Atlas.HasPending;
+
+    /// <summary>The sets of icons the skin has, see <see cref="TryGetIcon(ReadOnlySpan{char}, ReadOnlySpan{char}, out UIIcon)"/>.</summary>
+    public IReadOnlyCollection<string> IconSets => iconSets.Keys;
+
+    /// <summary>
+    /// Finds an icon by name the way a text that is written in a set of icons does (<c>[icons:playstation]</c>,
+    /// see <see cref="UIFont"/>): if the set has another icon for that name, that is the one. A set is how the
+    /// same text shows the buttons of whichever gamepad is being held: the text says <c>[icon:pad_a]</c>, and the
+    /// set of a gamepad whose buttons aren't called that says what to draw for it. A name the set says nothing
+    /// about is the icon it always is, and so is every name in a set the skin doesn't have.
+    /// </summary>
+    public bool TryGetIcon(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out UIIcon icon) =>
+        TryGetIcon(ResolveIcon(name, set), out icon);
+
+    private ReadOnlySpan<char> ResolveIcon(ReadOnlySpan<char> name, ReadOnlySpan<char> set)
+    {
+        if (set.IsEmpty || iconSets.Count == 0)
+            return name;
+
+        if (iconSets.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(set, out var names)
+            && names.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(name, out string? other))
+        {
+            return other;
+        }
+
+        return name;
+    }
 
     /// <summary>
     /// Finds a piece of art by name: a region the skin declares, or failing that any sprite of its sheet
@@ -199,9 +251,9 @@ public sealed class UISkin : IUIIconSource, IDisposable
 
     float IUIIconSource.IconScale => IconScale;
 
-    bool IUIIconSource.TryGetIconSize(ReadOnlySpan<char> name, out Vector2 texelSize)
+    bool IUIIconSource.TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize)
     {
-        texelSize = DescribeIcon(name)?.TexelSize ?? default;
+        texelSize = DescribeIcon(ResolveIcon(name, set))?.TexelSize ?? default;
         return texelSize != default;
     }
 
@@ -294,8 +346,30 @@ public sealed class UISkin : IUIIconSource, IDisposable
     public void Dispose() => Atlas.Dispose();
 
     /// <summary>
+    /// The skin of a file and a theme, loaded the first time it is asked for and the same one for everybody from
+    /// then on: this is what a UI gets its skin with. Has to run on the GL thread. It is never disposed of,
+    /// whoever asks next (the next screen) finds it as it was left, with all the art that was ever drawn from it
+    /// in its atlas already. Null if the skin can't be loaded, which has been logged, and is tried again the next time.
+    /// </summary>
+    public static UISkin? Shared(string directory, string file, string? theme = null)
+    {
+        var key = (Path.GetFullPath(Path.Combine(directory, file)), theme);
+        if (shared.TryGetValue(key, out UISkin? known))
+            return known;
+
+        // Whatever it makes on the GPU stays for good, whichever scene is being set up right now
+        using var nobody = Horizon.Content.AssetScope.EnterGlobal();
+
+        if (Load(directory, file, theme) is not { } skin)
+            return null;
+
+        return shared[key] = skin;
+    }
+
+    /// <summary>
     /// Loads a skin from a HIDL definition (see Assets/uix/dead_revolver/skin.hor for one that explains
-    /// itself). Has to run on the GL thread. Logs what went wrong and returns null if the skin can't be loaded.
+    /// itself), a new one that is the caller's own and theirs to dispose of: see <see cref="Shared"/> for the one
+    /// a UI normally draws with. Has to run on the GL thread. Logs what went wrong and returns null if the skin can't be loaded.
     /// </summary>
     /// <param name="theme">Which of the skin's themes to load, null for the one the file says is its usual one.</param>
     public static UISkin? Load(string directory, string file, string? theme = null)
@@ -527,6 +601,21 @@ public sealed class UISkin : IUIIconSource, IDisposable
                         skin.ReadIcon(name, icon, texture);
                     break;
 
+                case "icon_sets":
+                    if (value is not ObjectValue sets)
+                        throw new Exception("icon_sets has to be an object.");
+
+                    foreach (var (set, names) in sets.Properties)
+                    {
+                        if (names is not ObjectValue renamed)
+                            throw new Exception($"icon_sets.{set} has to be an object.");
+
+                        var other = skin.iconSets[set] = [];
+                        foreach (var (name, icon) in renamed.Properties)
+                            other[name] = UIScript.ToText(icon, $"icon_sets.{set}.{name}");
+                    }
+                    break;
+
                 default:
                     throw new Exception($"'{key}' isn't something a skin has.");
             }
@@ -542,6 +631,16 @@ public sealed class UISkin : IUIIconSource, IDisposable
         // right away rather than a frame late.
         foreach (string name in skin.sources.Keys)
             skin.TryGetRegion(name, out _);
+
+        // Its icons too, with the symbols some of them carry: they are what a text asks for the moment somebody
+        // picks up a gamepad, which is no time for a screen to be waiting for its art
+        foreach (IconSource icon in skin.icons.Values)
+        {
+            skin.TryGetRegion(icon.Region, out _);
+            if (icon.Symbol is not null)
+                skin.TryGetRegion(icon.Symbol, out _);
+        }
+
         skin.Update();
 
         return skin;

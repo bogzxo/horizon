@@ -3,12 +3,22 @@ using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading;
-using Egui;
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
 
 namespace Horizon.Core;
 
+/// <summary>
+/// The thing a game is made of: it has components that do its work and children that are entities themselves,
+/// and passes drawing and updating on to both.
+/// <para>
+/// An entity is made (its constructor, on any thread, with nothing of the GPU to be had), then set up (its
+/// <see cref="Initialize"/>, on the render thread, where it makes what it needs on the GPU and adds what it is
+/// made of), then drawn and updated, and in the end disposed of. Whatever is added to it is set up after it,
+/// in the order it was added, and before it is first updated or drawn: see <see cref="InitializeAll"/> for what
+/// is added while it is being set up, and <see cref="EntityLifecycle"/> for what is added afterwards.
+/// </para>
+/// </summary>
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
     // Backing store for Thread-Safe Enable/Disable
@@ -45,6 +55,17 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     private int _initialized = 0; // Thread-safe boolean (0 = false, 1 = true)
 
+    // Whether the entity has been set up. What is added to it from then on is set up at the next frame
+    // rather than along with it
+    private volatile bool _live;
+    private volatile bool _disposed;
+
+    /// <summary>Whether the entity has been set up, and everything that was added to it before that with it.</summary>
+    public bool IsInitialized => _live;
+
+    /// <summary>Whether the entity has been disposed of. It is not drawn, updated or added to any more.</summary>
+    public bool IsDisposed => _disposed;
+
     /// <summary>
     /// Called after the constructor, guaranteeing that there will be a valid GL context.
     /// Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
@@ -66,6 +87,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public virtual void Render(float dt, object? obj = null)
     {
+        // Set up by now, all of it, unless whoever draws this made it and never said so
         InitializeAll();
 
         // Lock-free span iteration using the cache array
@@ -73,8 +95,6 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         foreach (var ent in entSpan)
         {
             if (_uninitializedSet.ContainsKey(ent)) continue;
-
-            ent.InitializeAll();
 
             ent.Render(dt, obj);
         }
@@ -87,35 +107,49 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
     }
 
+    /// <summary>
+    /// Sets up everything that was added to the entity and is waiting for it, in the order it was added, and then
+    /// everything those added in turn, all the way down: when this returns there is nothing left in the entity
+    /// that isn't set up. Render thread. Costs nothing when nothing is waiting.
+    /// </summary>
     public void InitializeAll()
     {
-        while (_uninitializedQueue.TryDequeue(out IInstantiable? result))
+        if (_live && _uninitializedQueue.IsEmpty) return;
+        if (_disposed) return;
+
+        _live = true;
+
+        List<Entity>? entities = null;
+        while (!_uninitializedQueue.IsEmpty)
         {
-            result.Initialize();
+            entities?.Clear();
 
-            switch (result)
+            while (_uninitializedQueue.TryDequeue(out IInstantiable? result))
             {
-                case IGameComponent comp:
-                    comp.Enabled = true;
-                    break;
+                result.Initialize();
 
-                case Entity ent:
-                    ent.Enabled = true;
-                    break;
+                switch (result)
+                {
+                    case IGameComponent comp:
+                        comp.Enabled = true;
+                        break;
+
+                    case Entity ent:
+                        ent.Enabled = true;
+                        (entities ??= []).Add(ent);
+                        break;
+                }
+
+                // Remove from the set only AFTER it is fully initialized
+                _uninitializedSet.TryRemove(result, out _);
             }
 
-            // Remove from the set only AFTER it is fully initialized
-            _uninitializedSet.TryRemove(result, out _);
-        }
-    }
-
-    public virtual void RenderUi(Ui root)
-    {
-        var entSpan = _childrenCache.AsSpan();
-        foreach (var entity in entSpan)
-        {
-            if (_uninitializedSet.ContainsKey(entity)) continue;
-            entity.RenderUi(root);
+            // What those added while they were set up comes after all of them, one entity at a time
+            if (entities is not null)
+            {
+                foreach (Entity ent in entities)
+                    ent.InitializeAll();
+            }
         }
     }
 
@@ -241,10 +275,16 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public void PushToInitializationQueue(in IInstantiable entity)
     {
+        // Set up already (it was somewhere else before, or is added a second time): once is enough
+        if (entity is Entity { IsInitialized: true }) return;
+
         // TryAdd prevents double-queuing efficiently
         if (_uninitializedSet.TryAdd(entity, 1))
         {
             _uninitializedQueue.Enqueue(entity);
+
+            // We are set up ourselves, so nobody is going to come by for this on their own
+            if (_live) EntityLifecycle.NoteDirty(this);
         }
     }
 
@@ -256,7 +296,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         PushToInitializationQueue(entity);
 
         entity.Parent = this;
-        entity.Enabled = false;
+
+        // Off until it has been set up, which one that comes from somewhere else has been already
+        if (!entity.IsInitialized) entity.Enabled = false;
         if (entity.Name.Length == 0) entity.Name = entity.GetType().Name;
 
         lock (_structuralLock)
@@ -275,8 +317,22 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     protected virtual void DisposeOther()
     { }
 
+    /// <summary>
+    /// Disposes of the entity and everything in it: its components (the ones that can be disposed of), its
+    /// children, and then whatever it holds itself (<see cref="DisposeOther"/>). Render thread, as what is freed
+    /// is mostly on the GPU. Doing it twice does nothing the second time.
+    /// </summary>
     public void Dispose()
     {
+        if (_disposed) return;
+
+        _disposed = true;
+        _enabled = false;
+
+        // Whatever was still waiting to be set up is in the lists below as well, and goes with them
+        _uninitializedQueue.Clear();
+        _uninitializedSet.Clear();
+
         IGameComponent[] compsToDispose;
         Entity[] childrenToDispose;
 

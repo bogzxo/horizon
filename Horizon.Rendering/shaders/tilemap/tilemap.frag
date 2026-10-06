@@ -1,38 +1,64 @@
-﻿#version 410 core
+#version 410 core
 
-// Albedo, surface and material are the attachments of a DeferredRenderer2D, see its summary for what goes where.
-// Drawn straight to the window only the first of them goes anywhere.
+// Albedo, surface, material and motion are the attachments of a DeferredRenderer2D, see its summary for what goes
+// where. Drawn straight to the window only the first of them goes anywhere.
 layout(location = 0) out vec4 AlbedoColor;
 layout(location = 1) out vec4 SurfaceColor;
 layout(location = 2) out vec4 MaterialColor;
+layout(location = 3) out vec4 MotionColor;
 
 in vec2 texCoords;
-in vec3 color;
-in float shouldDiscard;
-in vec2 fragPos;
+flat in int flip;
 
 uniform sampler2D uTextureAlbedo;
 uniform sampler2D uTextureNormal;
 uniform sampler2D uTextureSpecular;
 
-// Not every tile set comes with a normal map, or with a specular one.
+// Not every image comes with a normal map, or with a specular one.
 uniform bool uHasNormal;
 uniform bool uHasSpecular;
+
+// What the layer multiplies everything in it by: its tint, and in the alpha how much of it there is.
+uniform vec4 uTint;
 
 // How much of the layer shows no matter the light (a sky, a glowing sign).
 uniform float uEmissive;
 
-uniform bool uWireframeEnabled;
+// How fast the layer goes across the screen (halves of it a second), which for one that scrolls at a speed of its
+// own is not how fast the map does, and how near it is: from 0 (the backdrop) to 1 (right in front).
+uniform vec2 uMotion;
+uniform float uNearness;
+
+// Motion goes into two bytes: halves of the screen a second, MOTION_RANGE of them either way, with 128 standing for
+// none so that standing still is exact. Must match every other shader that writes or reads it.
+const float MOTION_RANGE = 2.0;
+
+vec2 encodeMotion(vec2 speed) {
+  return (128.0 + clamp(speed / MOTION_RANGE, -1.0, 1.0) * 127.0) / 255.0;
+}
+
+const int FLIP_HORIZONTAL = 1;
+const int FLIP_VERTICAL = 2;
+const int FLIP_DIAGONAL = 4;
 
 void main() {
-  AlbedoColor = texture(uTextureAlbedo, texCoords) * vec4(color, 1.0);
-
-  if (shouldDiscard == 1.0 || AlbedoColor.a < 0.1)
+  vec4 albedo = texture(uTextureAlbedo, texCoords) * uTint;
+  if (albedo.a <= 0.0)
     discard;
 
+  AlbedoColor = albedo;
+
+  // The way a surface faces turns over along with the tile it is on, or a tile that is mirrored would be lit from
+  // the wrong side. The normal map has Y going up and the image has it going down, which is where the minus of the
+  // diagonal comes from.
   vec2 normal = uHasNormal ? texture(uTextureNormal, texCoords).xy : vec2(0.5);
-  SurfaceColor = vec4(normal, uEmissive, AlbedoColor.a);
+  if ((flip & FLIP_DIAGONAL) != 0) normal = vec2(1.0) - normal.yx;
+  if ((flip & FLIP_HORIZONTAL) != 0) normal.x = 1.0 - normal.x;
+  if ((flip & FLIP_VERTICAL) != 0) normal.y = 1.0 - normal.y;
+
+  SurfaceColor = vec4(normal, uEmissive, albedo.a);
 
   float shine = uHasSpecular ? texture(uTextureSpecular, texCoords).r : 0.0;
-  MaterialColor = vec4(shine, 0.0, 0.0, AlbedoColor.a);
+  MaterialColor = vec4(shine, 0.0, 0.0, albedo.a);
+  MotionColor = vec4(encodeMotion(uMotion), uNearness, albedo.a);
 }

@@ -28,6 +28,9 @@ public class SpriteBatchMesh : GameObject
     private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
     private const string UNIFORM_MODEL_MATRIX = "uModel";
     private const string UNIFORM_DATA_OFFSET = "uDataOffset";
+    private const string UNIFORM_CAMERA_VELOCITY = "uCameraVelocity";
+    private const string UNIFORM_MOTION_SCALE = "uMotionScale";
+    private const string UNIFORM_NEARNESS = "uNearness";
 
     // uniform arrays are set one element at a time, by name
     private static readonly string[] UNIFORM_TEXTURES = ["uTextures[0]", "uTextures[1]", "uTextures[2]", "uTextures[3]"];
@@ -54,6 +57,12 @@ public class SpriteBatchMesh : GameObject
     private unsafe SpriteItem* dataPtr;
 
     public uint ElementCount { get; private set; }
+
+    /// <summary>
+    /// How near what this mesh draws is, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs
+    /// motion goes by it: what is nearer blurs over what is further away, see <see cref="DeferredRenderer2D"/>.
+    /// </summary>
+    public float Nearness { get; set; } = SpriteBatch.DEFAULT_NEARNESS;
 
     /// <summary>
     /// A mesh for the sprites of a sprite sheet.
@@ -339,6 +348,16 @@ public class SpriteBatchMesh : GameObject
         Shader.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, camera?.Projection ?? Engine.ActiveCamera.Projection);
         Shader.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, camera?.View ?? Engine.ActiveCamera.View);
         Shader.SetUniform(UNIFORM_MODEL_MATRIX, in globalModel);
+
+        // What it takes to say how fast an item goes across the screen: how fast the camera goes, and how much of
+        // the screen a unit of the world is
+        Camera motionCamera = camera ?? Engine.ActiveCamera;
+        Vector2 cameraVelocity = motionCamera.Velocity;
+        Vector2 motionScale = new(motionCamera.Projection.M11, motionCamera.Projection.M22);
+
+        Shader.SetUniform(UNIFORM_CAMERA_VELOCITY, in cameraVelocity);
+        Shader.SetUniform(UNIFORM_MOTION_SCALE, in motionScale);
+        Shader.SetUniform(UNIFORM_NEARNESS, Nearness);
 
         for (int i = 0; i < MaxTextures; i++)
         {

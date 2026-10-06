@@ -22,6 +22,7 @@
     <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
     <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
+    <ProjectReference Include="..\Horizon.Input2\Horizon.Input2.csproj" />
     <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
     <ProjectReference Include="..\Horizon.Physics\Horizon.Physics.csproj" />
     <ProjectReference Include="..\Horizon.Rendering.UIX\Horizon.Rendering.UIX.csproj" />

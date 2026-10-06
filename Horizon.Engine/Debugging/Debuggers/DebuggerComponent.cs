@@ -19,7 +19,5 @@ public abstract class DebuggerComponent : IGameComponent, IDisposable
 
     public virtual void Render(float dt, object? obj = null) { }
 
-    public virtual void RenderUi(Egui.Ui root) { }
-
     public abstract void Dispose();
 }

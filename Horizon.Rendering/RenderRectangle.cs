@@ -23,6 +23,9 @@ public class RenderRectangle : GameObject
         base.Initialize();
         if (vbo is null)
         {
+            // Shared by every rectangle there will ever be, not to go with the scene that drew the first one
+            using var nobody = Horizon.Content.AssetScope.EnterGlobal();
+
             var verts = new Vector2[]
             {
                 new Vector2(-1, -1),

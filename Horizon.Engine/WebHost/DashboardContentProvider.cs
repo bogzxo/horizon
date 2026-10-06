@@ -45,14 +45,14 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     public DashboardContentProvider()
     {
-        GameEngine.Instance.Debugger.Console.CommandProcessed += ProcessCommand;
+        GameEngine.Instance.Console.CommandProcessed += ProcessCommand;
         
-        RegisterPacketCallback(2, GameEngine.Instance.Debugger.Console.EvaluateCallback);
+        RegisterPacketCallback(2, GameEngine.Instance.Console.EvaluateCallback);
     }
 
     ~DashboardContentProvider()
     {
-        GameEngine.Instance.Debugger.Console.CommandProcessed -= ProcessCommand;
+        GameEngine.Instance.Console.CommandProcessed -= ProcessCommand;
     }
 
     private HttpListenerWebSocketContext context;

@@ -27,6 +27,16 @@ public class SpriteBatch : GameObject
     /// </summary>
     public TransformComponent2D Transform { get; private set; }
 
+    /// <summary>How near sprites are unless their batch says otherwise: in front of a map, behind its foreground.</summary>
+    public const float DEFAULT_NEARNESS = 0.6f;
+
+    /// <summary>
+    /// How near everything this batch draws is, from 0 (the backdrop) to 1 (right in front). Only a renderer that
+    /// blurs motion goes by it (see <see cref="DeferredRenderer2D"/>): what is nearer blurs over what is further away
+    /// when it moves, and stays sharp when what is behind it does.
+    /// </summary>
+    public float Nearness { get; set; } = DEFAULT_NEARNESS;
+
     /// <summary>
     /// Helper struct to aggregate data related to rendering a series of sprites with a common sprite sheet.
     /// </summary>
@@ -154,6 +164,7 @@ public class SpriteBatch : GameObject
                 if (run.Texture0.Handle != 0 && count < textures.Length) textures[count++] = run.Texture0;
                 if (run.Texture1.Handle != 0 && count < textures.Length) textures[count++] = run.Texture1;
 
+                _itemMesh!.Nearness = Nearness;
                 _itemMesh!.DrawItems(run.First, run.Count, textures[..count], Transform.ModelMatrix, camera);
             }
         }
@@ -267,15 +278,20 @@ public class SpriteBatch : GameObject
         }
 
         foreach (var (_, renderData) in SpritesheetSprites)
+        {
+            renderData.Mesh.Nearness = Nearness;
             renderData
                 .Mesh
                 .Draw( Transform.ModelMatrix,
                     CollectionsMarshal.AsSpan(renderData.Sprites),
                     CustomCamera ?? Engine.ActiveCamera
                 );
+        }
 
         foreach (var (atlas, renderData) in AtlasSprites)
         {
+            renderData.Mesh.Nearness = Nearness;
+
             // Whatever the sprites asked for since the last frame is put into the atlas before they are drawn
             atlas.Update();
 

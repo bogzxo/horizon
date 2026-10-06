@@ -51,6 +51,15 @@ public class Sprite : GameObject
 
     private TweenContext? _tweens;
 
+    // How fast the sprite is going, for a renderer that blurs motion
+    private readonly Horizon.Core.MotionEstimator _motion = new();
+
+    /// <summary>
+    /// How fast the sprite is moving across the world, in units a second. Worked out from where it is every update,
+    /// so only a sprite that is updated (one that was added to something as an entity) ever has any.
+    /// </summary>
+    public Vector2 Velocity => _motion.Velocity;
+
     /// <summary>
     /// The tweens that are animating this sprite, moved along once per update. See <see cref="SpriteTweens"/> for the ones that come ready made.
     /// </summary>
@@ -197,6 +206,7 @@ public class Sprite : GameObject
         base.UpdateState(dt);
 
         _tweens?.Tick(dt);
+        _motion.Update(Transform.Position, dt);
 
         // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager
         if (Atlas is null || !Animated || _atlasFrames.Length < 2 || _atlasFrameTime <= 0.0f) return;
@@ -248,6 +258,7 @@ public class Sprite : GameObject
             texMax,
             SpriteItem.PackColor(Tint),
             Smooth ? SpriteItem.SmoothFlag : 0);
+        item.Motion = _motion.Velocity;
         return true;
     }
 

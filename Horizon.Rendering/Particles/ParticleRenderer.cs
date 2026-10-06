@@ -23,6 +23,11 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
     private const string UNIFORM_CAMERA_PROJ_MATRIX = "uCameraProjection";
     private const string UNIFORM_CAMERA_VIEW_MATRIX = "uCameraView";
+    private const string UNIFORM_CAMERA_VELOCITY = "uCameraVelocity";
+    private const string UNIFORM_MOTION_SCALE = "uMotionScale";
+    private const string UNIFORM_NEARNESS = "uNearness";
+    private const string UNIFORM_STRETCH = "uStretch";
+    private const string UNIFORM_MAX_STRETCH = "uMaxStretch";
 
     private VertexBufferObject buffer;
     private readonly uint[] indices = { 0, 1, 2, 0, 2, 3 };
@@ -76,6 +81,28 @@ public class ParticleRenderer2D : GameObject, IDisposable
     /// World space is Y-up, so falling is a negative Y.
     /// </summary>
     public Vector2 Gravity { get; set; } = Vector2.Zero;
+
+    /// <summary>
+    /// How far every particle is drawn out along the way it moves, in seconds: it is as long as the way it goes in
+    /// that time, whenever that is longer than it is anyway. One that lies still or only creeps along stays the
+    /// square it is. 0 for none.
+    /// <para>
+    /// This is what keeps a stream in one piece. Particles let go one after the other get further apart the faster
+    /// they fall, so what leaves as a jet lands as a string of dots, and letting more of them go only crowds
+    /// wherever they come out. Drawn as long as the time between two of them (1 / the rate they are let go at),
+    /// every one reaches back to the next however fast they have got.
+    /// </para>
+    /// </summary>
+    public float Stretch { get; set; } = 0.0f;
+
+    /// <summary>The longest <see cref="Stretch"/> draws a particle out to, in world units.</summary>
+    public float MaxStretch { get; set; } = 32.0f;
+
+    /// <summary>
+    /// How near the particles are, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs motion
+    /// goes by it (see <see cref="DeferredRenderer2D"/>): what is nearer blurs over what is further away.
+    /// </summary>
+    public float Nearness { get; set; } = 0.7f;
 
     /// <summary>Creates a renderer whose particles are simulated on the CPU.</summary>
     public ParticleRenderer2D(int count)
@@ -202,6 +229,17 @@ public class ParticleRenderer2D : GameObject, IDisposable
         Material.Bind();
         Material.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, Engine.ActiveCamera.Projection);
         Material.SetUniform(UNIFORM_CAMERA_VIEW_MATRIX, Engine.ActiveCamera.View);
+
+        // How fast each of them flies comes with the particles. A renderer that blurs motion wants that as seen
+        // on the screen: less what the camera does, in halves of the screen
+        Vector2 cameraVelocity = Engine.ActiveCamera.Velocity;
+        Vector2 motionScale = new(Engine.ActiveCamera.Projection.M11, Engine.ActiveCamera.Projection.M22);
+        Material.SetUniform(UNIFORM_CAMERA_VELOCITY, in cameraVelocity);
+        Material.SetUniform(UNIFORM_MOTION_SCALE, in motionScale);
+        Material.SetUniform(UNIFORM_NEARNESS, Nearness);
+
+        Material.SetUniform(UNIFORM_STRETCH, MathF.Max(Stretch, 0.0f));
+        Material.SetUniform(UNIFORM_MAX_STRETCH, MathF.Max(MaxStretch, 0.0f));
 
         buffer.Bind();
 

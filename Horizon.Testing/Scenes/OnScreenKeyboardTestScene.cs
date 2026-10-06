@@ -1,7 +1,6 @@
 using System;
 using System.Numerics;
 
-using Egui;
 
 using Horizon.Engine;
 using Horizon.Rendering;
