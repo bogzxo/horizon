@@ -149,6 +149,7 @@ public sealed class SimulationLoop : IDisposable
 
     private void Run()
     {
+        Diagnostics.AllocationLog.NameThisThread(thread?.Name ?? "Simulation");
         LoopTiming.SharpenTimer(true);
 
         try
