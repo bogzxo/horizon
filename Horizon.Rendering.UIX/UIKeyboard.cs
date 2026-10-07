@@ -90,6 +90,9 @@ internal static class UIKeyboard
 
         hooked = true;
 
+        // The clipboard is the window's, it is only ever touched on its thread
+        GameEngine.Instance.WindowManager.EventsProcessed += FlushClipboard;
+
         foreach (var mouse in input.Mice)
             mouse.Scroll += (_, wheel) => Interlocked.Add(ref scrolled, (int)(wheel.Y * 1000.0f));
 
@@ -194,8 +197,8 @@ internal static class UIKeyboard
     }
 
     /// <summary>
-    /// Asks for text to be put on the clipboard, from any thread. It gets there the next time
-    /// <see cref="FlushClipboard"/> runs on the thread of the window.
+    /// Asks for text to be put on the clipboard, from any thread. It gets there the next time the thread of the window
+    /// has heard from the system, which is within a millisecond or so (see <see cref="FlushClipboard"/>).
     /// </summary>
     public static void Copy(string text) => Volatile.Write(ref clipboardPending, text);
 

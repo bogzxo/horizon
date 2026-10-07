@@ -479,9 +479,6 @@ public partial class UICompositor : GameComponent, IDisposable
 
     public override void Render(float dt)
     {
-        // What a text box copied goes to the clipboard here, on the thread that may touch it
-        UIKeyboard.FlushClipboard();
-
         LoadRequestedSkin();
 
         if (Skin is not { } skin)
