@@ -53,6 +53,7 @@ public class HIDLInterpreter
             NodeType.DoWhileExpression => EvaluateDoWhile((DoWhileDeclarationExpression)statement, env),
             NodeType.ForInStatement => EvaluateForIn((ForInStatement)statement, env),
             NodeType.IfExpression => EvaluateIf((IfDeclarationExpression)statement, env),
+            NodeType.Conditional => EvaluateConditional((ConditionalExpression)statement, env),
             NodeType.DeleteStatement => EvaluateDelete((DeleteStatement)statement, env),
             NodeType.VectorDeclaration => EvaluateVector((VectorDeclarationExpression)statement, env),
             NodeType.ReturnStatement => EvaluateReturn((ReturnStatement)statement, env),
@@ -472,6 +473,9 @@ public class HIDLInterpreter
 
         return statement.Else is { } otherwise ? EvaluateBlock(otherwise, env) : Values.Null;
     }
+
+    private IRuntimeValue EvaluateConditional(ConditionalExpression statement, Environment env) =>
+        Evaluate(Values.IsTruthy(Evaluate(statement.Condition, env)) ? statement.Then : statement.Otherwise, env);
 
     private IRuntimeValue EvaluateWhile(WhileDeclarationExpression statement, Environment env)
     {

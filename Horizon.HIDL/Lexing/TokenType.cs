@@ -46,4 +46,7 @@ public enum TokenType : byte
 
     // +=, -=, *=, /=, %=, with the operator as the value
     CompoundEquals,
+
+    // The ? of a ? b : c
+    Question,
 }

@@ -39,6 +39,17 @@ public readonly struct ReturnStatement(in IExpression? value) : IStatement
     public readonly IExpression? Value { get; init; } = value;
 }
 
+/// <summary>
+/// <c>test ? a : b</c>. One or the other, only the one that is picked is evaluated.
+/// </summary>
+public readonly struct ConditionalExpression(in IExpression condition, in IExpression then, in IExpression otherwise) : IExpression
+{
+    public readonly NodeType Type { get; init; } = NodeType.Conditional;
+    public readonly IExpression Condition { get; init; } = condition;
+    public readonly IExpression Then { get; init; } = then;
+    public readonly IExpression Otherwise { get; init; } = otherwise;
+}
+
 public readonly struct BreakStatement() : IStatement
 {
     public readonly NodeType Type { get; init; } = NodeType.BreakStatement;

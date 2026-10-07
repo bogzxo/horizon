@@ -196,6 +196,24 @@ public class HIDLRuntime
     }
 
     /// <summary>
+    /// Calls a function a script handed over (the handler of a button, the behaviour of a dummy) as this runtime's
+    /// program, so the library works inside of it the way it does in a file. Missing arguments are null.
+    /// </summary>
+    public IRuntimeValue Invoke(IRuntimeValue function, params IRuntimeValue[] arguments)
+    {
+        HIDLRuntime? before = current;
+        current = this;
+        try
+        {
+            return Interpreter.Call(function, arguments, UserScope);
+        }
+        finally
+        {
+            current = before;
+        }
+    }
+
+    /// <summary>
     /// Turns source into a syntax tree, which can be run as often as wanted.
     /// </summary>
     public static ProgramStatement Parse(in string input) => new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
