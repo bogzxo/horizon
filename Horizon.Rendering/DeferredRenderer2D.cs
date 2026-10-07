@@ -110,6 +110,7 @@ public class DeferredRenderer2D : Renderer2D
         public Vector3 Ambient;
         public float LightingPixelSize, Shininess, SpecularIntensity;
         public bool Shadows;
+        public OcclusionMap2D? Occlusion;
     }
 
     private readonly SnapshotBuffer<CapturedLighting> captured = new(static () => new CapturedLighting());
@@ -126,6 +127,7 @@ public class DeferredRenderer2D : Renderer2D
     internal float ShownShininess => shownAfter?.Shininess ?? Shininess;
     internal float ShownSpecularIntensity => shownAfter?.SpecularIntensity ?? SpecularIntensity;
     internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
+    internal OcclusionMap2D? ShownOcclusion => shownAfter is null ? Occlusion : shownAfter.Occlusion;
 
     /// <summary>
     /// The light there is everywhere, before any <see cref="Light2D"/>. At 1 everything looks as it was painted,
@@ -257,6 +259,7 @@ public class DeferredRenderer2D : Renderer2D
             into.Shininess = Shininess;
             into.SpecularIntensity = SpecularIntensity;
             into.Shadows = Shadows;
+            into.Occlusion = Occlusion;
 
             lock (lightLock)
             {
@@ -276,6 +279,7 @@ public class DeferredRenderer2D : Renderer2D
             }
         }
 
+        Occlusion?.Capture();
         base.Capture();
     }
 

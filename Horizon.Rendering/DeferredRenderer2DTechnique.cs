@@ -108,7 +108,7 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
 
     private void SetOcclusion()
     {
-        var occlusion = renderer.Occlusion;
+        var occlusion = renderer.ShownOcclusion;
         Texture? texture = renderer.ShownShadows ? occlusion?.GetTexture() : null;
 
         SetUniform(UNIFORM_SHADOWS, texture is not null);
