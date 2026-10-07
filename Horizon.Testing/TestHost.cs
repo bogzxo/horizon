@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering;
@@ -126,10 +126,18 @@ internal sealed class TestHost : GameObject
     }
 
     /// <summary>Asks for a test to be started. It happens at the next frame; safe from any thread.</summary>
-    public void Start(TestDefinition test) => request = test;
+    public void Start(TestDefinition test)
+    {
+        request = test;
+        Engine.WindowManager.RequestExclusive();
+    }
 
     /// <summary>Asks for the selector to be shown. It happens at the next frame; safe from any thread.</summary>
-    public void ShowSelector() => request = Selector;
+    public void ShowSelector()
+    {
+        request = Selector;
+        Engine.WindowManager.RequestExclusive();
+    }
 
     public override void Initialize()
     {
@@ -138,15 +146,14 @@ internal sealed class TestHost : GameObject
         // The bar's own GPU resources have to exist before any test starts, or they would be counted
         // as that test's and freed along with it.
         InitializeAll();
-    }
 
-    public override void Render(float dt)
-    {
-        // Scenes are switched here, on the GL thread, because leaving a test frees what it put on the GPU.
-        if (Interlocked.Exchange(ref request, null) is { } next)
-            Switch(next);
-
-        base.Render(dt);
+        // Scenes are switched on the GL thread, because leaving a test frees what it put on the GPU, and with the
+        // simulation standing still, because the test that is left is still being updated until then
+        Engine.WindowManager.Exclusive += _ =>
+        {
+            if (Interlocked.Exchange(ref request, null) is { } next)
+                Switch(next);
+        };
     }
 
     private void Switch(object next)

@@ -95,8 +95,12 @@ public sealed class InputManager : GameComponent
 
     public override void Initialize()
     {
-        IInputContext context = Parent.GetComponent<WindowManager>()?.Input
+        WindowManager window = Parent.GetComponent<WindowManager>()
             ?? throw new InvalidOperationException("The input manager goes on the entity that has the window manager, which is the engine.");
+        IInputContext context = window.Input;
+
+        // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
+        window.EventsProcessed += Gamepads.SampleDevices;
 
         Native = context;
 

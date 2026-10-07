@@ -10,7 +10,8 @@ namespace Horizon.Input;
 /// <code>
 /// if (Engine.Input.Mouse.WasPressed(MouseButton.Left)) Shoot(Engine.Input.Mouse.Position);
 /// </code>
-/// Clicks are heard as they happen, so one that started and ended between two updates still counts.
+/// Clicks are heard as they happen, so one that started and ended between two updates still counts, and the button is
+/// down for that one update.
 /// </summary>
 public sealed class Mouse
 {
@@ -21,6 +22,9 @@ public sealed class Mouse
     private readonly bool[] _down = new bool[BUTTONS];
     private readonly bool[] _pressed = new bool[BUTTONS];
     private readonly bool[] _released = new bool[BUTTONS];
+
+    // Buttons that went down and up again between two updates, held for the update that hears of them, see Keyboard
+    private readonly bool[] _tapped = new bool[BUTTONS];
 
     // Written by the thread of the window. A vector is two floats, which is read in one piece through this
     private long _latest;
@@ -103,17 +107,44 @@ public sealed class Mouse
             _changed = false;
         }
 
+        // The clicks of the last update are let go of now
+        for (int button = 0; button < BUTTONS; button++)
+        {
+            if (!_tapped[button]) continue;
+
+            _tapped[button] = false;
+            _down[button] = false;
+            _released[button] = true;
+            _changed = true;
+        }
+
         while (_heard.TryDequeue(out var heard))
         {
             if (!Known(heard.Button)) continue;
 
             int button = (int)heard.Button;
-
-            if (heard.Down && !_down[button]) _pressed[button] = true;
-            else if (!heard.Down && _down[button]) _released[button] = true;
-
-            _down[button] = heard.Down;
             _changed = true;
+
+            if (heard.Down)
+            {
+                if (!_down[button])
+                {
+                    _pressed[button] = true;
+                    _down[button] = true;
+                }
+
+                _tapped[button] = false;
+            }
+            else if (_down[button])
+            {
+                // Pressed this very update: held for it, let go of at the next
+                if (_pressed[button]) _tapped[button] = true;
+                else
+                {
+                    _released[button] = true;
+                    _down[button] = false;
+                }
+            }
         }
     }
 }

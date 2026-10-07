@@ -223,7 +223,7 @@ public sealed class EngineLoop : IDisposable
     /// Helper method to have the system wake sleeping threads to the millisecond for as long as any loop runs.
     /// Windows otherwise only looks every 15 or so, which no loop could keep time by.
     /// </summary>
-    private static void SharpenTimer(bool on)
+    internal static void SharpenTimer(bool on)
     {
         if (!OperatingSystem.IsWindows()) return;
 

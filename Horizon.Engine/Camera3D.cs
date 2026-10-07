@@ -36,11 +36,7 @@ public class Camera3D : Camera
         ViewProj = View * Projection;
     }
 
-    protected override void UpdateMatrices()
-    {
-        View = Matrix4x4.CreateLookAt(Position, Position + Front, CameraUp);
-        ViewProj = View * Projection;
-    }
+    protected override Vector3 LookDirection => Front;
 
     private void UpdateMouse()
     {
@@ -71,10 +67,5 @@ public class Camera3D : Camera
     {
         UpdateMouse();
         base.UpdateState(dt);
-    }
-
-    public override void Render(float dt)
-    {
-        base.Render(dt);
     }
 }

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using Silk.NET.Input;
 
 namespace Horizon.Input;
@@ -19,6 +19,13 @@ public sealed class Gamepad
     // Some drivers rest their triggers at -1 rather than at 0. There is no asking which, so a trigger is
     // taken to be one of those from the first time it reads below zero.
     private bool leftTriggerFromMinusOne, rightTriggerFromMinusOne;
+
+    // What the device was last seen holding by the thread of the window, and every button it was seen holding since the
+    // simulation last took a look: a press that came and went between two updates is still a press
+    private readonly Lock sampleLock = new();
+    private GamepadSnapshot sampled;
+    private uint heldSinceTaken;
+    private bool hasSample;
 
     /// <summary>Which gamepad this is, counted from 0. The first player is on slot 0.</summary>
     public int Slot { get; }
@@ -185,17 +192,71 @@ public sealed class Gamepad
     }
 
     /// <summary>
-    /// Reads the device and moves on by one update. A gamepad without a device reads as nothing held.
+    /// Moves on by one update to what the device was seen doing since the last one (see <see cref="Sample"/>), or reads
+    /// it right now if nobody samples it. A gamepad without a device reads as nothing held.
     /// </summary>
-    internal void Poll()
+    internal void Poll(bool sampled)
     {
-        if (Device is not { IsConnected: true } device)
+        if (Device is not { IsConnected: true })
         {
+            lock (sampleLock)
+            {
+                hasSample = false;
+                heldSinceTaken = 0;
+            }
+
             Update(default);
             return;
         }
 
+        if (!sampled)
+        {
+            Update(Read());
+            return;
+        }
+
         GamepadSnapshot raw = default;
+        lock (sampleLock)
+        {
+            if (hasSample)
+            {
+                raw = this.sampled;
+                raw.Buttons |= heldSinceTaken;
+                heldSinceTaken = 0;
+            }
+        }
+
+        Update(raw);
+    }
+
+    /// <summary>
+    /// Looks at the device and keeps what it is doing for the next update. On the thread of the window, every time it
+    /// has heard what the system had to say: that is when the device is refreshed, and reading it from anywhere else
+    /// could catch it halfway.
+    /// </summary>
+    internal void Sample()
+    {
+        if (Device is not { IsConnected: true })
+            return;
+
+        GamepadSnapshot raw = Read();
+
+        lock (sampleLock)
+        {
+            sampled = raw;
+            heldSinceTaken |= raw.Buttons;
+            hasSample = true;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to read what the device is holding right now.
+    /// </summary>
+    private GamepadSnapshot Read()
+    {
+        GamepadSnapshot raw = default;
+        if (Device is not { IsConnected: true } device)
+            return raw;
 
         foreach (var button in device.Buttons)
         {
@@ -212,7 +273,7 @@ public sealed class Gamepad
         if (triggers.Count > 0) raw.LeftTrigger = ReadTrigger(triggers[0].Position, ref leftTriggerFromMinusOne);
         if (triggers.Count > 1) raw.RightTrigger = ReadTrigger(triggers[1].Position, ref rightTriggerFromMinusOne);
 
-        Update(raw);
+        return raw;
     }
 
     /// <summary>Forgets what the device before this one was like.</summary>

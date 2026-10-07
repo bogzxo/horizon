@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Horizon.Core;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -41,6 +41,12 @@ public class GamepadInputManager : Entity
 
     // Devices come and go on the thread of the window, the gamepads are only ever touched during an update.
     private readonly ConcurrentQueue<(IGamepad Device, bool Connected)> _connectionChanges = new();
+
+    // The gamepads that have a device, for the thread of the window to sample. Replaced whole whenever one comes or goes
+    private volatile Gamepad[] _sampled = [];
+
+    // Whether anybody samples the devices (the engine does, on the thread of the window). If not, they are read in the update
+    private volatile bool _sampling;
 
     /// <summary>
     /// Every gamepad there has been a use for so far, by slot: the ones plugged in, the ones that were, and the
@@ -154,11 +160,12 @@ public class GamepadInputManager : Entity
                 Detach(change.Device);
         }
 
+        bool sampling = _sampling;
         foreach (var gamepad in _gamepads)
         {
             // Virtual gamepads are moved on by whoever drives them.
             if (!gamepad.IsVirtual)
-                gamepad.Poll();
+                gamepad.Poll(sampling);
         }
 
         foreach (var gamepad in _gamepads)
@@ -171,6 +178,34 @@ public class GamepadInputManager : Entity
             RaiseActionEvents();
 
         base.UpdateState(dt);
+    }
+
+    /// <summary>
+    /// Looks at every device and keeps what it is doing for the next update. On the thread of the window, every time it
+    /// has heard what the system had to say, which is when the devices are refreshed. The engine does this; a manager
+    /// that nobody samples reads its devices in its update instead.
+    /// </summary>
+    public void SampleDevices()
+    {
+        _sampling = true;
+
+        foreach (Gamepad gamepad in _sampled)
+            gamepad.Sample();
+    }
+
+    /// <summary>
+    /// Helper method to make a new list of the gamepads that have a device, for <see cref="SampleDevices"/>.
+    /// </summary>
+    private void RefreshSampled()
+    {
+        var withDevices = new List<Gamepad>(_gamepads.Count);
+        foreach (Gamepad gamepad in _gamepads)
+        {
+            if (!gamepad.IsVirtual && gamepad.Device is not null)
+                withDevices.Add(gamepad);
+        }
+
+        _sampled = [.. withDevices];
     }
 
     /// <summary>The gamepad in a slot, if there is one.</summary>
@@ -384,6 +419,7 @@ public class GamepadInputManager : Entity
         gamepad.Device = device;
         gamepad.Name = name;
         gamepad.ResetDevice();
+        RefreshSampled();
 
         OnGamepadConnected?.Invoke(gamepad);
     }
@@ -397,6 +433,7 @@ public class GamepadInputManager : Entity
 
             // The slot stays, and reads as nothing held from the next update on.
             gamepad.Device = null;
+            RefreshSampled();
             OnGamepadDisconnected?.Invoke(gamepad);
             return;
         }

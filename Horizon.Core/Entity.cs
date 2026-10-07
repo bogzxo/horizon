@@ -5,6 +5,7 @@ using System.Threading;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
+using Horizon.Core.Threading;
 using Horizon.Core.Tweening;
 
 namespace Horizon.Core;
@@ -71,6 +72,16 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     private TweenContext? _tweens;
 
+    // What the entity is made of as of every snapshot, which is what a frame that is drawn from snapshots walks: the
+    // lists are the copies that are swapped whole, so holding on to them costs nothing and they never change underneath
+    private readonly Snapshot<Node> _node = new();
+
+    /// <summary>
+    /// The children and components of an entity as they were captured, and which of the components were switched on
+    /// (one bit each for the first 64, the ones after that go by whether they are switched on when they are drawn).
+    /// </summary>
+    private readonly record struct Node(Entity[] Children, IGameComponent[] Components, ulong ComponentsOn);
+
     /// <summary>Whether the entity has been set up, and everything that was added to it before that with it.</summary>
     public bool IsInitialized => _live;
 
@@ -104,6 +115,14 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public virtual void Render(float dt)
     {
+        // Drawn alongside the simulation, from what it published: nothing here may be set up or looked at as it is now
+        RenderFrame frame = RenderFrame.Active;
+        if (frame.IsDecoupled)
+        {
+            RenderCaptured(frame, dt);
+            return;
+        }
+
         // Set up by now, all of it, unless whoever draws this made it and never said so
         InitializeAll();
 
@@ -120,6 +139,66 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
             component.Render(dt);
         }
+    }
+
+    /// <summary>
+    /// Helper method to draw the children and components the entity had in the newer snapshot of a frame, the ones of
+    /// them that were captured.
+    /// </summary>
+    private void RenderCaptured(in RenderFrame frame, float dt)
+    {
+        if (!_node.TryGet(frame, out Node node)) return;
+
+        foreach (Entity child in node.Children)
+        {
+            // Gone since (it is freed on this thread, before a frame is drawn), or not there to be drawn when it was captured
+            if (child._disposed || !child.WasCaptured(frame)) continue;
+            child.Render(dt);
+        }
+
+        IGameComponent[] components = node.Components;
+        for (int i = 0; i < components.Length; i++)
+        {
+            bool on = i < 64 ? (node.ComponentsOn & (1UL << i)) != 0 : components[i].Enabled;
+            if (on) components[i].Render(dt);
+        }
+    }
+
+    /// <summary>
+    /// Whether the entity was there to be drawn (set up and switched on) when the newer snapshot of a frame was captured.
+    /// Render thread.
+    /// </summary>
+    public bool WasCaptured(in RenderFrame frame) => _node.TryGet(frame, out _);
+
+    /// <summary>
+    /// Publishes what the entity is made of, and has its children and components publish whatever they draw. Called on
+    /// the simulation thread at the end of every tick, for everything that is set up and switched on, the way
+    /// <see cref="UpdateState"/> is: an entity that draws something of its own publishes it here (and calls this base
+    /// method, or nothing in it is drawn), see <see cref="Snapshot{T}"/>.
+    /// </summary>
+    public virtual void Capture()
+    {
+        bool waiting = Volatile.Read(ref _waiting) > 0;
+
+        IGameComponent[] components = _componentsCache;
+        ulong on = 0;
+        for (int i = 0; i < components.Length; i++)
+        {
+            IGameComponent component = components[i];
+            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+
+            if (i < 64) on |= 1UL << i;
+            if (component is ISnapshotSource source) source.Capture();
+        }
+
+        Entity[] children = _childrenCache;
+        foreach (Entity child in children)
+        {
+            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            child.Capture();
+        }
+
+        _node.Publish(new Node(children, components, on));
     }
 
     /// <summary>

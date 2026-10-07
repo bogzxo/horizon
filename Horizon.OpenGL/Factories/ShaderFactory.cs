@@ -119,11 +119,12 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
         // Attempt to compile the shader.
         ObjectManager.GL.CompileShader(handle);
 
-        // Get the compilation result.
+        // Whether it compiled is what the driver says it is. What it has to say besides is not always an error: some
+        // drivers warn about things others don't mention, and a shader that compiled is not to be thrown away for that
+        ObjectManager.GL.GetShader(handle, ShaderParameterName.CompileStatus, out int compiled);
         string infoLog = ObjectManager.GL.GetShaderInfoLog(handle);
 
-        // If the result is empty then the compilation was a success.
-        if (!string.IsNullOrWhiteSpace(infoLog))
+        if (compiled == 0)
         {
             return result with
             {
@@ -132,7 +133,9 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
             };
         }
 
-        // Return the result.
+        if (!string.IsNullOrWhiteSpace(infoLog))
+            Bogz.Logging.Log.Warning($"[ShaderFactory] The {type} compiled, with something to say: {infoLog.Trim()}");
+
         return result;
     }
 

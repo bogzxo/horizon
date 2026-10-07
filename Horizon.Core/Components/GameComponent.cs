@@ -12,7 +12,7 @@ namespace Horizon.Core.Components;
 /// </code>
 /// <see cref="IGameComponent"/> is still there for whatever has to descend from something else.
 /// </summary>
-public abstract class GameComponent : IGameComponent
+public abstract class GameComponent : IGameComponent, ISnapshotSource
 {
     /// <summary>
     /// Whether the component gets its turns. Off until it has been set up, and whenever somebody switches it off after.
@@ -45,4 +45,10 @@ public abstract class GameComponent : IGameComponent
     public virtual void UpdatePhysics(float dt) { }
 
     public virtual void Render(float dt) { }
+
+    /// <summary>
+    /// Publishes what the component draws, see <see cref="ISnapshotSource.Capture"/>. Nothing unless it draws from
+    /// snapshots of its own. Simulation thread, at the end of every tick.
+    /// </summary>
+    public virtual void Capture() { }
 }
