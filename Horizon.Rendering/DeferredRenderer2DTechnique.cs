@@ -82,11 +82,12 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
         Matrix4x4.Invert(camera.View * camera.Projection, out Matrix4x4 inverseViewProjection);
         SetUniform(UNIFORM_INVERSE_VIEW_PROJECTION, in inverseViewProjection);
 
-        Vector3 ambient = renderer.Ambient;
+        // As of the frame that is drawn: between the last two ticks when it is drawn alongside the simulation
+        Vector3 ambient = renderer.ShownAmbient;
         SetUniform(UNIFORM_AMBIENT, in ambient);
-        SetUniform(UNIFORM_PIXEL_SIZE, renderer.LightingPixelSize);
-        SetUniform(UNIFORM_SHININESS, MathF.Max(renderer.Shininess, 1.0f));
-        SetUniform(UNIFORM_SPECULAR_INTENSITY, MathF.Max(renderer.SpecularIntensity, 0.0f));
+        SetUniform(UNIFORM_PIXEL_SIZE, renderer.ShownLightingPixelSize);
+        SetUniform(UNIFORM_SHININESS, MathF.Max(renderer.ShownShininess, 1.0f));
+        SetUniform(UNIFORM_SPECULAR_INTENSITY, MathF.Max(renderer.ShownSpecularIntensity, 0.0f));
 
         SetLights(camera);
         SetOcclusion();
@@ -108,7 +109,7 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
     private void SetOcclusion()
     {
         var occlusion = renderer.Occlusion;
-        Texture? texture = renderer.Shadows ? occlusion?.GetTexture() : null;
+        Texture? texture = renderer.ShownShadows ? occlusion?.GetTexture() : null;
 
         SetUniform(UNIFORM_SHADOWS, texture is not null);
         SetUniform(UNIFORM_OCCLUSION, (int)OCCLUSION_UNIT);
