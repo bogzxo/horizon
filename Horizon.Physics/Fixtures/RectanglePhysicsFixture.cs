@@ -9,7 +9,8 @@ public class RectanglePhysicsFixture(Vector2 position, Vector2 size, string tag=
     public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Rectangle;
 
-    public PhysicsRectangle Bounds { get; init; } = new(position, size);
+    // Can be moved and resized at any time, for a box that follows something (what of a fighter can be hit right now)
+    public PhysicsRectangle Bounds { get; set; } = new(position, size);
 
     public Vector2 Position => Bounds.Position;
     public Vector2 Size => Bounds.Size;

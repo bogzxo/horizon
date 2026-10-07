@@ -18,6 +18,8 @@ mono_crash.*
 
 # Build results
 [Dd]ebug/
+# ...but not the source folders that happen to be called that
+!Horizon.Physics/Debug/
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
@@ -396,5 +398,7 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
-/Horizon.Physics
-/Fighter2D/Player
+
+
+
+**/*.sync-conflict*

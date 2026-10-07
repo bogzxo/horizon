@@ -1,5 +1,5 @@
-﻿using Bogz.Logging.Loggers;
-
+﻿
+using Bogz.Logging;
 using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -14,7 +14,7 @@ namespace Horizon.OpenGL.Managers;
 /// <summary>
 /// Managed class to create, manage and destroy unmanaged OpenGL assets.
 /// </summary>
-public class ObjectManager : IGameComponent, IDisposable
+public class ObjectManager : GameComponent, IDisposable
 {
     internal static ObjectManager Instance { get; private set; }
 
@@ -52,7 +52,6 @@ public class ObjectManager : IGameComponent, IDisposable
    > Queries
     { get; init; }
 
-
     public AssetManager<
         RenderBufferObject,
         RenderBufferObjectFactory,
@@ -77,17 +76,15 @@ public class ObjectManager : IGameComponent, IDisposable
     > VertexArrays
     { get; init; }
 
-    public string Name { get; set; }
-    public Entity Parent { get; set; }
-    public bool Enabled { get; set; }
-
     public ObjectManager()
     {
         Instance = this;
         Name = "Content Manager";
 
         Textures = new();
-        Shaders = new();
+
+        // Kept for good once they are made: compiling one takes far longer than keeping it costs
+        Shaders = new() { Scoped = false };
         Queries = new();
         Buffers = new();
         RenderBuffers = new();
@@ -95,27 +92,78 @@ public class ObjectManager : IGameComponent, IDisposable
         VertexArrays = new();
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         GL = Parent.GetComponent<WindowManager>().GL;
 
-        Textures.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Shaders.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Buffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        VertexArrays.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        FrameBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        RenderBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Queries.SetMessageCallback(ConcurrentLogger.Instance.Log);
+        Textures.SetMessageCallback(Log.Write);
+        Shaders.SetMessageCallback(Log.Write);
+        Buffers.SetMessageCallback(Log.Write);
+        VertexArrays.SetMessageCallback(Log.Write);
+        FrameBuffers.SetMessageCallback(Log.Write);
+        RenderBuffers.SetMessageCallback(Log.Write);
+        Queries.SetMessageCallback(Log.Write);
     }
 
-    public void Render(float dt, object? obj = null)
-    { }
+    /// <summary>
+    /// What existed at one moment, as taken by <see cref="Snapshot"/>.
+    /// </summary>
+    public sealed class AssetSnapshot
+    {
+        internal HashSet<uint> Textures = [], Shaders = [], Buffers = [], Queries = [], RenderBuffers = [], FrameBuffers = [], VertexArrays = [];
+    }
 
-    public void UpdateState(float dt)
-    { }
+    /// <summary>
+    /// Records which assets exist, so that everything created afterwards can be freed in one go with
+    /// <see cref="ReleaseSince"/>. Has to be called on the GL thread.
+    /// </summary>
+    public AssetSnapshot Snapshot() => new()
+    {
+        Textures = Textures.GetOwnedHandles(),
+        Shaders = Shaders.GetOwnedHandles(),
+        Buffers = Buffers.GetOwnedHandles(),
+        Queries = Queries.GetOwnedHandles(),
+        RenderBuffers = RenderBuffers.GetOwnedHandles(),
+        FrameBuffers = FrameBuffers.GetOwnedHandles(),
+        VertexArrays = VertexArrays.GetOwnedHandles()
+    };
 
-    public void UpdatePhysics(float dt)
-    { }
+    /// <summary>
+    /// Frees every asset created since a snapshot was taken, apart from named ones, which stay cached
+    /// for the next user. Has to be called on the GL thread, once nothing draws with those assets any more.
+    /// </summary>
+    /// <returns>How many assets were freed.</returns>
+    public int ReleaseSince(AssetSnapshot snapshot)
+    {
+        // The same order as Dispose: what refers to something goes before the thing it refers to.
+        return FrameBuffers.RemoveUnnamedExcept(snapshot.FrameBuffers)
+            + Textures.RemoveUnnamedExcept(snapshot.Textures)
+            + RenderBuffers.RemoveUnnamedExcept(snapshot.RenderBuffers)
+            + Shaders.RemoveUnnamedExcept(snapshot.Shaders)
+            + Queries.RemoveUnnamedExcept(snapshot.Queries)
+            + VertexArrays.RemoveUnnamedExcept(snapshot.VertexArrays)
+            + Buffers.RemoveUnnamedExcept(snapshot.Buffers);
+    }
+
+    /// <summary>
+    /// Frees everything a scope has (see <see cref="Horizon.Content.AssetScope"/>): what was made in it, and what
+    /// it asked for by name that nobody else uses. Has to be called on the GL thread, once nothing draws with
+    /// those assets any more. The scope is done with afterwards.
+    /// </summary>
+    /// <returns>How many assets were freed.</returns>
+    public int Release(Horizon.Content.AssetScope scope)
+    {
+        scope.MarkReleased();
+
+        // The same order as Dispose: what refers to something goes before the thing it refers to.
+        return FrameBuffers.Release(scope)
+            + Textures.Release(scope)
+            + RenderBuffers.Release(scope)
+            + Shaders.Release(scope)
+            + Queries.Release(scope)
+            + VertexArrays.Release(scope)
+            + Buffers.Release(scope);
+    }
 
     public void Dispose()
     {

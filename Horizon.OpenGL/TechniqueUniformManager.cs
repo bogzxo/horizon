@@ -5,9 +5,9 @@ namespace Horizon.OpenGL;
 
 internal class TechniqueUniformManager : IndexManager
 {
-    public TechniqueUniformManager(in IGLObject obj)
+    public TechniqueUniformManager(IGLObject obj)
         : base(obj) { }
 
-    protected override uint GetIndex(in string name) =>
+    protected override uint GetIndex(string name) =>
         (uint)ObjectManager.GL.GetUniformLocation(glObject.Handle, name);
 }

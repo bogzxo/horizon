@@ -1,6 +1,6 @@
-﻿using System.Collections.Concurrent;
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -11,13 +11,15 @@ namespace Horizon.Rendering.Spriting;
 /// An internal component used to keep track of animated regions of a spritesheet.
 /// </summary>
 /// <seealso cref="Horizon.GameEntity.Components.IGameComponent" />
-public class SpriteSheetAnimationManager : IGameComponent
+public class SpriteSheetAnimationManager : GameComponent
 {
-    public string Name { get; set; } = "SpriteSheet Animation Manager";
-    public Entity Parent { get; set; }
-    public bool Enabled { get; set; }
+    public bool AnimateFrames { get; set; } = true;
 
-    public ConcurrentDictionary<string, SpriteAnimationDefinition> Animations { get; init; }
+    /// <summary>
+    /// The animations by name. Simulation thread: they are moved along in the updates, and only read by the frames that
+    /// are drawn with the simulation standing still.
+    /// </summary>
+    public Dictionary<string, SpriteAnimationDefinition> Animations { get; init; }
     public Vector2 SpriteSize { get; set; }
 
     public SpriteSheetAnimationManager(in Vector2 spriteSize)
@@ -48,16 +50,27 @@ public class SpriteSheetAnimationManager : IGameComponent
 
         return (value.FirstFrame, value.Index);
     }
+    public uint GetFrameCount(string name)
+    {
+        if (!Animations.TryGetValue(name, out SpriteAnimationDefinition value))
+        {
+            //Entity.ConcurrentLogger.Instance.Log(
+            //    Logging.LogLevel.Error,
+            //    $"Attempt to get animation '{name}' which doesn't exist!"
+            //); TODO: FIX
+            return 0;
+        }
 
-    public void UpdatePhysics(float dt)
-    { }
+        return value.Index;
+    }
 
     public void AddAnimation(
         string name,
         Vector2 position,
         uint length,
         float frameTime = 0.1f,
-        Vector2? inSize = null
+        Vector2? inSize = null,
+        uint span = 0
     )
     {
         if (Animations.ContainsKey(name))
@@ -69,7 +82,7 @@ public class SpriteSheetAnimationManager : IGameComponent
             return;
         }
 
-        this.Animations.TryAdd(
+        this.Animations.Add(
             name,
             new SpriteAnimationDefinition()
             {
@@ -78,7 +91,8 @@ public class SpriteSheetAnimationManager : IGameComponent
                 FirstFrame = new SpriteDefinition
                 {
                     Position = position,
-                    Size = inSize ?? SpriteSize
+                    Size = inSize ?? SpriteSize,
+                    Span = span
                 },
                 FrameTime = frameTime,
                 Fuzz = Random.Shared.NextSingle() * 0.2f + 0.8f
@@ -86,19 +100,15 @@ public class SpriteSheetAnimationManager : IGameComponent
         );
     }
 
-    public void Render(float dt, object? obj = null)
-    { }
-
-    public void Initialize()
-    { }
-
-    public void UpdateState(float dt)
+    public override void UpdateState(float dt)
     {
-        if (!Enabled) return;
+        if (!Enabled || !AnimateFrames) return;
 
-        foreach (var name in Animations.Keys)
+        // Changed where they are, rather than taken out and put back: that was a copy of every key and a new node
+        // for every animation, every tick, for the garbage collector to clear up after
+        foreach (string name in Animations.Keys)
         {
-            var frame = Animations[name];
+            ref SpriteAnimationDefinition frame = ref CollectionsMarshal.GetValueRefOrNullRef(Animations, name);
 
             if (frame.Length < 1)
             {
@@ -107,29 +117,47 @@ public class SpriteSheetAnimationManager : IGameComponent
             }
 
             frame.Timer += dt * frame.Fuzz;
+            if (frame.Timer < frame.FrameTime)
+                continue;
 
-            if (frame.Timer >= frame.FrameTime)
-            {
-                frame.Timer = 0.0f;
-                frame.Index = (frame.Index + 1) % frame.Length;
-            }
-
-            Animations[name] = frame;
+            // Whatever went over carries on into the next frame, or the animation runs slow by however much the
+            // updates overshoot every frame. A long update moves it along as many frames as it took
+            uint steps = frame.FrameTime > 0.0f ? (uint)(frame.Timer / frame.FrameTime) : 1;
+            frame.Timer = frame.FrameTime > 0.0f ? frame.Timer - steps * frame.FrameTime : 0.0f;
+            frame.Index = (frame.Index + steps) % frame.Length;
         }
     }
 
     public (bool reset, uint index) IncrementFrame(string name)
     {
-        var frame = Animations[name ?? ""];
+        ref SpriteAnimationDefinition frame = ref CollectionsMarshal.GetValueRefOrNullRef(Animations, name);
+        if (Unsafe.IsNullRef(ref frame))
+            throw new KeyNotFoundException($"There is no animation '{name}'.");
 
         if (frame.Length < 1)
         {
             frame.Index = 0;
+            return (true, 0);
         }
-        bool finished = frame.Index + 1 >= frame.Length;
 
+        bool finished = frame.Index + 1 >= frame.Length;
         frame.Index = (frame.Index + 1) % frame.Length;
-        Animations[name] = frame;
         return (finished, frame.Index);
+    }
+
+    public bool SetFrame(string name, uint index, bool invert = false)
+    {
+        ref SpriteAnimationDefinition frame = ref CollectionsMarshal.GetValueRefOrNullRef(Animations, name);
+        if (Unsafe.IsNullRef(ref frame))
+            throw new KeyNotFoundException($"There is no animation '{name}'.");
+
+        if (frame.Length < 1)
+        {
+            frame.Index = 0;
+            return true;
+        }
+
+        frame.Index = invert ? frame.Length - index - 1 : index;
+        return frame.Index >= frame.Length - 1;
     }
 }

@@ -113,10 +113,42 @@ public class HIDLInterpreter
 
     private IRuntimeValue EvaluateAssignment(AssignmentExpression statement, Environment env)
     {
-        if (statement.Assignee.Type != NodeType.Identifier)
-            throw new Exception($"Invalid LHS assignee '{statement.Assignee.ToString()}'");
+        if (statement.Assignee.Type == NodeType.Identifier)
+        {
+            return env.Assign(((IdentifierExpression)statement.Assignee).Symbol, Evaluate(statement.Value, env));
+        }
+        else if (statement.Assignee.Type == NodeType.MemberExpression)
+        {
+            var memberExpr = (MemberExpression)statement.Assignee;
+            var objNoType = Evaluate(memberExpr.Object, env);
 
-        return env.Assign(((IdentifierExpression)statement.Assignee).Symbol, Evaluate(statement.Value, env));
+            if (objNoType.Type == ValueType.Object)
+            {
+                var obj = (ObjectValue)objNoType;
+                if (memberExpr.Property.Type == NodeType.Identifier)
+                {
+                    var propName = ((IdentifierExpression)memberExpr.Property).Symbol;
+                    var value = Evaluate(statement.Value, env);
+
+                    if (obj.Properties.TryGetValue(propName, out var propVal) && propVal.Type == ValueType.NativeValue && propVal is NativeValue nativeVal)
+                    {
+                        nativeVal.MutatorCallback?.Invoke(value);
+                    }
+                    else
+                    {
+                        obj.Properties[propName] = value;
+                    }
+                    return value;
+                }
+                else
+                {
+                    throw new Exception("Property assignment with non-identifier property is not implemented");
+                }
+            }
+            throw new Exception("Cannot assign to property of non-object");
+        }
+
+        throw new Exception($"Invalid LHS assignee '{statement.Assignee.ToString()}'");
     }
 
     private IRuntimeValue EvaluateVariableDeclaration(VariableDeclarationExpression statement, Environment env)
@@ -169,8 +201,16 @@ public class HIDLInterpreter
     private IRuntimeValue EvaluateFunctionCallExpression(CallExpression statement, Environment env)
     {
         IRuntimeValue[] args = statement.Arguments.Select<IExpression, IRuntimeValue>((arg) => Evaluate(arg, env)).ToArray();
-        var func = Evaluate(statement.Caller, env);
+        return Call(Evaluate(statement.Caller, env), args, env);
+    }
 
+    /// <summary>
+    /// Calls a function value with arguments that have already been evaluated. This is how native code
+    /// runs a function a script handed to it, such as an event handler.
+    /// </summary>
+    /// <param name="env">The scope a native function is called from; script functions run in the scope they were declared in.</param>
+    public IRuntimeValue Call(IRuntimeValue func, IRuntimeValue[] args, Environment env)
+    {
         if (func.Type == ValueType.NativeFunction)
             return ((NativeFunctionValue)func).Callback.Invoke(args, env);
         else if (func.Type == ValueType.Function)
@@ -218,7 +258,11 @@ public class HIDLInterpreter
                 var propName = ((IdentifierExpression)expression.Property).Symbol;
 
                 if (obj.Properties.TryGetValue(propName, out var value))
+                {
+                    if (value.Type == ValueType.NativeValue && value is NativeValue nativeValue)
+                        return nativeValue.AccessorCallback?.Invoke() ?? new NullValue();
                     return value;
+                }
             }
         }
         else if (objNoType.Type == ValueType.Vector2)

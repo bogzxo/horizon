@@ -22,22 +22,7 @@ public class Renderer2DTechnique : Technique
         : base()
     {
         this.frameBuffer = frameBuffer;
-        if (GameEngine
-                .Instance
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet(
-                    $"renderer2d_{ShaderFileName}",
-                    ShaderDescription.FromPath("shaders/renderer2d", ShaderFileName),
-                    out var result
-                ))
-        {
-            SetShader(result.Asset);
-        }
-        else
-        {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-        }
+        LoadShader("shaders/renderer2d", ShaderFileName);
     }
 
     protected override void SetUniforms()

@@ -1,77 +1,103 @@
-﻿using System.Diagnostics;
-using System.Numerics;
-using System.Reflection.Metadata;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Engine.Components;
-using Horizon.Engine.Debugging;
-using Horizon.Engine.Framework;
+using Horizon.Engine.Debugging.Debuggers;
 using Horizon.Engine.Webhost;
 using Horizon.Engine.WebHost;
 using Horizon.Input;
-using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Managers;
 
-using ImGuiNET;
-
-using Silk.NET.Input.Glfw;
 using Silk.NET.OpenGL;
-using Silk.NET.Windowing.Glfw;
-
-using SixLabors.ImageSharp;
 
 namespace Horizon.Engine;
 
+/// <summary>
+/// The engine. It opens the window, keeps the scene that is on screen updated and drawn, and has everything a game reaches for.
+/// A whole game starts like this:
+/// <code>
+/// using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "My game" });
+/// engine.Run&lt;MainMenuScene&gt;();
+/// </code>
+/// Everything in a scene gets at it through <see cref="GameObject.Engine"/>, everything else through <see cref="Instance"/>.
+/// </summary>
 public class GameEngine : Entity
 {
+    // Things the driver likes to go on about that nobody needs to read. How its buffers are doing, mostly
+    private const int NOTE_BUFFER_DETAILS = 131185;
+    private const int NOTE_INVALID_ENUM = 1280;
+
     /// <summary>
     /// A copy of the game engines initial configuration.
     /// </summary>
     public GameEngineConfiguration Configuration { get; init; }
 
-    public GL GL
-    {
-        get => WindowManager.GL;
-    }
+    public GL GL => WindowManager.GL;
 
-    public static GameEngine Instance { get; private set; }
+    public static GameEngine Instance { get; private set; } = null!;
 
     /// <summary>
-    /// Gets the main active camera associated with the current active Scene.
+    /// The camera of the scene that is on screen, or the one of the engine if the scene hasn't got one.
     /// </summary>
-    public Camera? ActiveCamera
-    {
-        get => SceneManager?.CurrentInstance?.ActiveCamera ?? camera;
-    }
-
-    public Camera camera;
+    public Camera ActiveCamera => SceneManager.CurrentInstance?.ActiveCamera ?? DefaultCamera;
 
     /// <summary>
-    /// Total time in seconds that the window has been open.
+    /// The camera that is used while no scene says otherwise. It looks at the middle of the world, a unit a pixel.
     /// </summary>
-    public float TotalTime { get; private set; } = 0.0f;
+    public Camera DefaultCamera { get; private set; } = null!;
 
-    public EngineEventHandler EventManager { get; init; }
-    public ObjectManager ObjectManager { get; init; }
-    public WindowManager WindowManager { get; init; }
-    public SceneManager SceneManager { get; init; }
-    public InputManager InputManager { get; init; }
+    /// <summary>
+    /// How long (in seconds) frames have been drawn for. This is the clock for anything that only animates what is seen.
+    /// Kept in double precision: in single precision a clock in seconds can't tell milliseconds apart any more after a few hours.
+    /// </summary>
+    public double TotalTime { get; private set; }
 
-    public Horizon.Webhost.WebHost WebHost { get; init; }
-    public SkylineDebugger Debugger { get; init; }
-    public float Runtime { get; private set; }
+    /// <summary>
+    /// How long (in seconds) the game has been updated for. It stands still whenever the updates do.
+    /// </summary>
+    public double Runtime { get; private set; }
 
-    internal CustomImguiController imguiController;
+    public EngineEventHandler EventManager { get; }
+    public ObjectManager ObjectManager { get; }
+    public WindowManager WindowManager { get; }
+    public SceneManager SceneManager { get; }
 
-    public void SetScene(in Scene scene)
-     {
-        SceneManager.SetScene(scene);
-    }
+    /// <summary>
+    /// The keyboard, the mouse and the gamepads.
+    /// </summary>
+    public InputManager Input { get; }
+
+    /// <summary>
+    /// The console of the engine. It is a HIDL runtime that whatever talks to the running game from outside (the web
+    /// dashboard) has its commands run by. It has no window of its own.
+    /// </summary>
+    public DeveloperConsole Console { get; }
+
+    /// <summary>
+    /// The scene that is on screen, null before the first one has been set.
+    /// </summary>
+    public Scene? Scene => SceneManager.CurrentInstance;
+
+    /// <summary>
+    /// How big what is drawn into is, in pixels.
+    /// </summary>
+    public Vector2 ViewportSize => WindowManager.ViewportSize;
+
+    // Kept here for as long as the driver may call it, the garbage collector doesn't know that it does
+    private DebugProc? debugProc;
+
+    public GameEngine()
+        : this(GameEngineConfiguration.Default) { }
+
+    /// <summary>
+    /// An engine with a window made the way a configuration says and everything else left as it comes.
+    /// </summary>
+    public GameEngine(in WindowManagerConfiguration window)
+        : this(new GameEngineConfiguration { WindowConfiguration = window }) { }
 
     public GameEngine(in GameEngineConfiguration engineConfiguration)
     {
@@ -82,153 +108,87 @@ public class GameEngine : Entity
 
         Enabled = true;
 
-        // Engine components
+        // What an entity makes on the GPU while it is set up belongs to the scene it is in, and to nobody if
+        // it isn't in one. See Scene.Assets
+        EntityLifecycle.Scope = static entity =>
+        {
+            for (Entity? at = entity; at is not null; at = at.Parent)
+            {
+                if (at is Scene scene)
+                    return scene.Assets.Enter();
+            }
+
+            return Horizon.Content.AssetScope.EnterGlobal();
+        };
+
+        // In the order they get their turns. The input comes before anything that reads it
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
-        InputManager = AddComponent<InputManager>();
-        SceneManager = AddComponent<SceneManager>();
+        Input = AddComponent<InputManager>();
+        Console = AddComponent<DeveloperConsole>();
+        SceneManager = AddEntity<SceneManager>();
 
-        // Engine children
-        Debugger = AddEntity<SkylineDebugger>();
-        WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
-        WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
-
-        // TryCreate window manager, the window manager will bootstrap and call Initialize(), Render(), UpdateState() and UpdatePhysics()
+        // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+    }
+
+    /// <summary>
+    /// Has a scene take over from the one that is on screen, the way the scene manager is set to do it. From any thread.
+    /// </summary>
+    public void SetScene(Scene scene)
+    {
+        SceneManager.SetScene(scene);
+    }
+
+    /// <summary>
+    /// Changes the scene through a transition of its own (or with a hard cut, for null), whatever the scene manager is set to.
+    /// </summary>
+    public void SetScene(Scene scene, SceneTransition? transition)
+    {
+        SceneManager.SetScene(scene, transition);
+    }
+
+    /// <summary>
+    /// Has a new scene of a kind take over from the one that is on screen.
+    /// </summary>
+    public void SetScene<TScene>() where TScene : Scene, new()
+    {
+        SceneManager.SetScene(new TScene());
     }
 
     public override void Initialize()
     {
         base.Initialize();
+        DefaultCamera = AddEntity(new Camera2D(WindowManager.ViewportSize));
+
         unsafe
         {
-            GL.Enable(EnableCap.Texture2D);
             GL.Enable(EnableCap.DebugOutput);
-
-            for (int i = 0; i < 16; i++)
-            {
-                GL.ActiveTexture(TextureUnit.Texture0 + i);
-            }
-
-            GL.DebugMessageCallback(debugCallback, null);
+            GL.DebugMessageCallback(debugProc = OnDebugMessage, null);
         }
-
-        imguiController = new CustomImguiController(GL, WindowManager.Window, WindowManager.Input);
-        LoadImGuiStyle();
     }
 
-    private void LoadImGuiStyle()
+    /// <summary>
+    /// Called by the driver when it has something to say about what it was asked to do.
+    /// </summary>
+    private void OnDebugMessage(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
     {
-        if (imguiController is null) return;
-
-        ImGuiStylePtr style = ImGui.GetStyle();
-
-        style.AntiAliasedLines = true;
-        style.AntiAliasedFill = true;
-        style.AntiAliasedLinesUseTex = true;
-
-        style.WindowRounding = 5.3f;
-        style.FrameRounding = 2.3f;
-        style.ScrollbarRounding = 0;
-
-        style.Colors[(int)ImGuiCol.Text] = new Vector4(0.90f, 0.90f, 0.90f, 0.90f);
-        style.Colors[(int)ImGuiCol.TextDisabled] = new Vector4(0.60f, 0.60f, 0.60f, 1.00f);
-        style.Colors[(int)ImGuiCol.WindowBg] = new Vector4(0.09f, 0.09f, 0.15f, 1.00f);
-        style.Colors[(int)ImGuiCol.PopupBg] = new Vector4(0.05f, 0.05f, 0.10f, 0.85f);
-        style.Colors[(int)ImGuiCol.Border] = new Vector4(0.70f, 0.70f, 0.70f, 0.65f);
-        style.Colors[(int)ImGuiCol.BorderShadow] = new Vector4(0.00f, 0.00f, 0.00f, 0.00f);
-        style.Colors[(int)ImGuiCol.FrameBg] = new Vector4(0.00f, 0.00f, 0.01f, 1.00f);
-        style.Colors[(int)ImGuiCol.FrameBgHovered] = new Vector4(0.90f, 0.80f, 0.80f, 0.40f);
-        style.Colors[(int)ImGuiCol.FrameBgActive] = new Vector4(0.90f, 0.65f, 0.65f, 0.45f);
-        style.Colors[(int)ImGuiCol.TitleBg] = new Vector4(0.00f, 0.00f, 0.00f, 0.83f);
-        style.Colors[(int)ImGuiCol.TitleBgCollapsed] = new Vector4(0.40f, 0.40f, 0.80f, 0.20f);
-        style.Colors[(int)ImGuiCol.TitleBgActive] = new Vector4(0.00f, 0.00f, 0.00f, 0.87f);
-        style.Colors[(int)ImGuiCol.MenuBarBg] = new Vector4(0.01f, 0.01f, 0.02f, 0.80f);
-        style.Colors[(int)ImGuiCol.ScrollbarBg] = new Vector4(0.20f, 0.25f, 0.30f, 0.60f);
-        style.Colors[(int)ImGuiCol.ScrollbarGrab] = new Vector4(0.55f, 0.53f, 0.55f, 0.51f);
-        style.Colors[(int)ImGuiCol.ScrollbarGrabHovered] = new Vector4(0.56f, 0.56f, 0.56f, 1.00f);
-        style.Colors[(int)ImGuiCol.ScrollbarGrabActive] = new Vector4(0.56f, 0.56f, 0.56f, 0.91f);
-        style.Colors[(int)ImGuiCol.CheckMark] = new Vector4(0.90f, 0.90f, 0.90f, 0.83f);
-        style.Colors[(int)ImGuiCol.SliderGrab] = new Vector4(0.70f, 0.70f, 0.70f, 0.62f);
-        style.Colors[(int)ImGuiCol.SliderGrabActive] = new Vector4(0.30f, 0.30f, 0.30f, 0.84f);
-        style.Colors[(int)ImGuiCol.Button] = new Vector4(0.48f, 0.72f, 0.89f, 0.49f);
-        style.Colors[(int)ImGuiCol.ButtonHovered] = new Vector4(0.50f, 0.69f, 0.99f, 0.68f);
-        style.Colors[(int)ImGuiCol.ButtonActive] = new Vector4(0.80f, 0.50f, 0.50f, 1.00f);
-        style.Colors[(int)ImGuiCol.Header] = new Vector4(0.30f, 0.69f, 1.00f, 0.53f);
-        style.Colors[(int)ImGuiCol.HeaderHovered] = new Vector4(0.44f, 0.61f, 0.86f, 1.00f);
-        style.Colors[(int)ImGuiCol.HeaderActive] = new Vector4(0.38f, 0.62f, 0.83f, 1.00f);
-        style.Colors[(int)ImGuiCol.ResizeGrip] = new Vector4(1.00f, 1.00f, 1.00f, 0.85f);
-        style.Colors[(int)ImGuiCol.ResizeGripHovered] = new Vector4(1.00f, 1.00f, 1.00f, 0.60f);
-        style.Colors[(int)ImGuiCol.ResizeGripActive] = new Vector4(1.00f, 1.00f, 1.00f, 0.90f);
-        style.Colors[(int)ImGuiCol.PlotLines] = new Vector4(1.00f, 1.00f, 1.00f, 1.00f);
-        style.Colors[(int)ImGuiCol.PlotLinesHovered] = new Vector4(0.90f, 0.70f, 0.00f, 1.00f);
-        style.Colors[(int)ImGuiCol.PlotHistogram] = new Vector4(0.90f, 0.70f, 0.00f, 1.00f);
-        style.Colors[(int)ImGuiCol.PlotHistogramHovered] = new Vector4(1.00f, 0.60f, 0.00f, 1.00f);
-        style.Colors[(int)ImGuiCol.TextSelectedBg] = new Vector4(0.00f, 0.00f, 1.00f, 0.35f);
-    }
-
-    private void debugCallback(
-        GLEnum source,
-        GLEnum type,
-        int id,
-        GLEnum severity,
-        int length,
-        nint message,
-        nint userParam
-    )
-    {
-        if (id == 131185 || id == 1280)
+        if (id is NOTE_BUFFER_DETAILS or NOTE_INVALID_ENUM || severity == GLEnum.DebugSeverityNotification)
             return;
 
-        ConcurrentLogger
-            .Instance
-            .Log(
-                LogLevel.Info,
-                $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}"
-            );
-    }
+        LogLevel level = severity switch
+        {
+            GLEnum.DebugSeverityHigh => LogLevel.Error,
+            GLEnum.DebugSeverityMedium => LogLevel.Warning,
+            _ => LogLevel.Info
+        };
 
-    public void DrawWithMetrics(in Entity entity, in float dt)
-    {
-        var startTime = Stopwatch.GetTimestamp();
-        entity.InitializeAll();
-        entity.Render(dt, null);
-        var endTime = Stopwatch.GetTimestamp();
-        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
-        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
-            "EngineComponents",
-            entity.Name,
-            val
-        );
-    }
-
-    public void DrawWithMetrics(in IGameComponent component, in float dt)
-    {
-        var startTime = Stopwatch.GetTimestamp();
-        component.Render(dt, null);
-        var endTime = Stopwatch.GetTimestamp();
-        if (component.Name == "Scene Manager")
-            return;
-
-        var val = (double)(endTime - startTime) / Stopwatch.Frequency;
-        Debugger.PerformanceDebugger.GpuMetrics.Aggregate(
-            "EngineComponents",
-            component.Name,
-            val
-        );
+        Log.Write(level, $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}");
     }
 
     public override void UpdatePhysics(float dt)
     {
         EventManager.PrePhysics?.Invoke(dt);
-        //Debugger.PerformanceDebugger.CpuMetrics.TimeAndTrackMethod(
-        //        () =>
-        //        {
-        //            base.UpdatePhysics(dt);
-        //        },
-        //        "Engine",
-        //        "Physics"
-        //      );
         base.UpdatePhysics(dt);
         EventManager.PostPhysics?.Invoke(dt);
     }
@@ -237,71 +197,79 @@ public class GameEngine : Entity
     {
         Runtime += dt;
 
-        // Run our custom events.
         EventManager.PreState?.Invoke(dt);
         base.UpdateState(dt);
-        //UpdatePhysics(dt);
-
-        // Run our custom events.
         EventManager.PostState?.Invoke(dt);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         TotalTime += dt;
 
-        // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
 
-        // Make sure ImGui is up-to-date before rendering.
-        imguiController.Update(dt);
+        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 
-        if (Debugger.RenderToContainer)
-        {
-            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-            Debugger.GameContainerDebugger.FrameBuffer.Bind();
-            Debugger.GameContainerDebugger.FrameBuffer.Viewport();
-        }
-        else GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-
-        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-
-        // Render all entities & component
         base.Render(dt);
-
-        if (Debugger.RenderToContainer)
-        {
-            ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-
-            GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-        }
-
-        // TODO: resize imgui
-        imguiController.Render();
 
         EventManager.PostRender?.Invoke(dt);
     }
 
     protected override void DisposeOther()
     {
-        ConcurrentLogger.Instance.Dispose();
+        Logger.Dispose();
     }
 
     /// <summary>
-    /// Instantiates a window, and opens it.
+    /// Opens the window and runs the game until it is closed.
     /// </summary>
     public virtual void Run() => WindowManager.Run();
 
+    /// <summary>
+    /// Opens the window with a scene on screen and runs the game until it is closed.
+    /// </summary>
+    /// <param name="transition">How the scene comes in, null for a hard cut.</param>
+    public void Run(Scene scene, SceneTransition? transition = null)
+    {
+        SceneManager.SetScene(scene, transition ?? SceneManager.Transition);
+        Run();
+    }
+
+    /// <summary>
+    /// Opens the window with a new scene of a kind on screen and runs the game until it is closed.
+    /// </summary>
+    public void Run<TScene>() where TScene : Scene, new() => Run(new TScene());
+
+    /// <summary>
+    /// Closes the window, which is the end of <see cref="Run()"/>. From any thread.
+    /// </summary>
+    public void Exit() => WindowManager.Close();
+
+#if DEBUG
     /// <summary>
     /// Aggregates all metrics to be sent to the web host
     /// </summary>
     internal TelemetryData CollectTelemetry()
     {
+        // As the window manager measures them
+        double RateOf(string loop)
+        {
+            foreach (var statistics in WindowManager.Loops)
+            {
+                if (statistics.Name == loop) return statistics.Rate;
+            }
+
+            return 0.0;
+        }
+
         return new TelemetryData
         {
-            LogicRate = Debugger.PerformanceDebugger.LogicRate,
-            RenderRate = Debugger.PerformanceDebugger.RenderRate,
-            PhysicsRate = Debugger.PerformanceDebugger.PhysicsRate
+            LogicRate = RateOf("Logic"),
+            RenderRate = RateOf("Render"),
+            PhysicsRate = RateOf("Physics")
         };
     }
+
+#endif
 }

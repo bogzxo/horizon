@@ -3,12 +3,11 @@
 namespace Horizon.Engine;
 
 /// <summary>
-/// Configuration for <see cref="BaseGameEngine"/> and derived classes.
+/// Configuration for <see cref="GameEngine"/> and derived classes.
 /// </summary>
 public readonly struct GameEngineConfiguration
 {
     public readonly WindowManagerConfiguration WindowConfiguration { get; init; }
-    public readonly Type InitialScene { get; init; }
 
     public static GameEngineConfiguration Default { get; } =
         new GameEngineConfiguration

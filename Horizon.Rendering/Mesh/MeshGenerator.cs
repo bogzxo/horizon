@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
 
-using Horizon.Core.Data;
 
 namespace Horizon.Rendering.Mesh;
 

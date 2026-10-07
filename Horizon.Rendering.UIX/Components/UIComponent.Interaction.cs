@@ -1,0 +1,189 @@
+using System.Numerics;
+using System.Runtime.CompilerServices;
+
+using Bogz.Logging;
+
+using Horizon.Core.Tweening;
+using Horizon.HIDL.Runtime;
+using Horizon.Rendering.UIX.Drawing;
+using Horizon.Rendering.UIX.Scripting;
+using Horizon.Rendering.UIX.Skinning;
+
+namespace Horizon.Rendering.UIX.Components;
+
+// What a component does with the pointer and the keyboard, the popups it can show and the entrance it can make.
+public abstract partial class UIComponent
+{
+    /* The pointer */
+
+    /// <summary>
+    /// Whether the pointer stops at this component. If it doesn't, the pointer goes through to whatever
+    /// is behind, and none of the pointer callbacks are ever called.
+    /// </summary>
+    protected virtual bool HitTestVisible => false;
+
+    /// <summary>
+    /// Whether children are cut off at the edges of this component, which also takes whatever of them sticks
+    /// out away from the pointer.
+    /// </summary>
+    protected virtual bool ClipsChildren => false;
+
+    /// <summary>The topmost component under a point, searching this component and everything inside it.</summary>
+    internal UIComponent? HitTest(Vector2 point)
+    {
+        if (!Visible || IsOnHiddenLayer)
+            return null;
+
+        // The pointer is where things are drawn, which for a component that is being animated isn't where
+        // the layout has them.
+        if (VisualOffset != Vector2.Zero || VisualScale != Vector2.One)
+        {
+            if (VisualScale.X == 0.0f || VisualScale.Y == 0.0f)
+                return null;
+
+            point = Bounds.Center + (point - VisualOffset - Bounds.Center) / VisualScale;
+        }
+
+        if (ClipsChildren && !Bounds.Contains(point))
+            return null;
+
+        var snapshot = children;
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (snapshot[i].HitTest(point) is { } hit)
+                return hit;
+        }
+
+        return HitTestVisible && Bounds.Contains(point) ? this : null;
+    }
+
+    /// <summary>The pointer was pressed on this component.</summary>
+    protected internal virtual void OnPointerDown(Vector2 point)
+    { }
+
+    /// <summary>The pointer is still held after being pressed on this component, wherever it is by now.</summary>
+    protected internal virtual void OnPointerDrag(Vector2 point)
+    { }
+
+    /// <summary>The pointer that was pressed on this component was released, anywhere.</summary>
+    protected internal virtual void OnPointerUp(Vector2 point)
+    { }
+
+    /// <summary>The pointer was pressed and released on this component.</summary>
+    protected internal virtual void OnClick()
+    { }
+
+    /// <summary>
+    /// The mouse wheel was turned over this component or something inside it. Whoever has a use for it says
+    /// so by returning true, otherwise the component it is in gets asked.
+    /// </summary>
+    /// <param name="delta">How many notches, positive away from the user (up).</param>
+    protected internal virtual bool OnScroll(float delta) => false;
+
+    /* Popups: what a component shows on top of everything else in its module for a while, the list of a dropdown say */
+
+    /// <summary>Whether this component is the one that has something open on top of its module.</summary>
+    public bool IsPopupOpen => Module?.Popup == this;
+
+    /// <summary>
+    /// Has the module draw <see cref="PaintPopup"/> on top of everything in it and send the pointer here
+    /// first, until <see cref="ClosePopup"/> or a press anywhere else. A module shows one popup at a time.
+    /// </summary>
+    protected void OpenPopup()
+    {
+        if (Module is { } owner)
+            owner.Popup = this;
+    }
+
+    protected void ClosePopup()
+    {
+        if (Module is { } owner && owner.Popup == this)
+            owner.Popup = null;
+    }
+
+    /// <summary>Draws what the component has open, after everything else in the module and cut off by nothing.</summary>
+    protected internal virtual void PaintPopup(UIDrawList list)
+    { }
+
+    /// <summary>Whether a point is on what the component has open, in which case the pointer is this component's.</summary>
+    protected internal virtual bool PopupContains(Vector2 point) => false;
+
+    /* Tweens a layout asks for */
+
+    /// <summary>How the component makes its entrance when <see cref="PlayIntro"/> is called, which loading a layout does.</summary>
+    public UIIntro Intro { get; set; }
+
+    /// <summary>How long the entrance takes, in seconds.</summary>
+    public float IntroTime { get; set; } = DEFAULT_INTRO_TIME;
+
+    /// <summary>How long the component stays hidden before its entrance starts, in seconds.</summary>
+    public float IntroDelay { get; set; }
+
+    /// <summary>Where a component that slides in comes from, relative to where it belongs: (-300, 0) is from the left.</summary>
+    public Vector2 IntroOffset { get; set; }
+
+    public const float DEFAULT_INTRO_TIME = 0.35f;
+
+    /// <summary>
+    /// Plays the entrance of this component and of everything inside it that has one.
+    /// </summary>
+    /// <param name="delay">Seconds to wait on top of each component's own delay.</param>
+    public void PlayIntro(float delay = 0.0f)
+    {
+        float wait = IntroDelay + delay;
+
+        switch (Intro)
+        {
+            case UIIntro.Pop:
+                this.PopIn(IntroTime, wait);
+                break;
+
+            case UIIntro.Fade:
+                this.FadeIn(IntroTime, wait);
+                break;
+
+            case UIIntro.Slide:
+                this.SlideIn(IntroOffset, IntroTime, wait);
+                break;
+        }
+
+        // One after the other, for a container that says so
+        float step = this is Panel panel ? panel.Stagger : 0.0f;
+        var snapshot = children;
+
+        for (int i = 0; i < snapshot.Length; i++)
+            snapshot[i].PlayIntro(delay + i * step);
+    }
+
+    /* The keyboard */
+
+    /// <summary>
+    /// Whether pressing the pointer on this component gives it the focus. Pressing it anywhere else
+    /// takes the focus away again.
+    /// </summary>
+    protected internal virtual bool Focusable => false;
+
+    /// <summary>
+    /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the
+    /// pointer or not. Does nothing while the component isn't in a module.
+    /// </summary>
+    public void Focus()
+    {
+        if (Module is { } owner)
+            owner.Compositor.Focus = this;
+    }
+
+    /// <summary>Gives the focus up, if this component has it.</summary>
+    public void Unfocus()
+    {
+        if (IsFocused)
+            Module!.Compositor.Focus = null;
+    }
+
+    /// <summary>
+    /// A character was typed while this component had the focus. Backspace arrives as '\b' and
+    /// enter as '\n'.
+    /// </summary>
+    protected internal virtual void OnTextInput(char character)
+    { }
+}

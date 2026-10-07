@@ -10,8 +10,44 @@ using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.OpenGL.Buffers;
 
-public class FrameBufferObject : IGLObject
+public class FrameBufferObject : IGLObject, IDisposable
 {
+    /// <summary>
+    /// Makes a frame buffer with everything a description says is attached to it. Throws if the GPU won't have it.
+    /// </summary>
+    public static FrameBufferObject Create(in FrameBufferObjectDescription description) =>
+        ObjectManager.Instance.FrameBuffers.TryCreate(description, out var result)
+            ? result.Asset
+            : throw new InvalidOperationException(result.Message);
+
+    /// <summary>
+    /// The texture behind one of the attachments.
+    /// </summary>
+    public Texture TextureOf(FramebufferAttachment attachment) => Attachments[attachment].Texture;
+
+    /// <summary>
+    /// The first colour attachment, which is the picture for most frame buffers.
+    /// </summary>
+    public Texture Color => Attachments[FramebufferAttachment.ColorAttachment0].Texture;
+
+    /// <summary>
+    /// Frees the frame buffer and everything that is attached to it. Render thread.
+    /// </summary>
+    public void Dispose()
+    {
+        var manager = ObjectManager.Instance;
+
+        // A frame buffer doesn't own what is attached to it as far as the GPU cares, those go one by one
+        foreach (var (_, attachment) in Attachments)
+        {
+            if (attachment.Type == FrameBufferAttachmentType.Texture) manager.Textures.Remove(attachment.Texture);
+            else manager.RenderBuffers.Remove(attachment.RenderBuffer);
+        }
+
+        manager.FrameBuffers.Remove(this);
+        GC.SuppressFinalize(this);
+    }
+
     public Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset> Attachments { get; init; }
     public ColorBuffer[] DrawBuffers { get; init; }
 
@@ -35,10 +71,14 @@ public class FrameBufferObject : IGLObject
     public void Bind()
     {
         ObjectManager.GL.BindFramebuffer(FramebufferTarget.Framebuffer, Handle);
-        //ObjectManager.GL.DrawBuffers((uint)DrawBuffers.Length, in DrawBuffers[0]);
-        ObjectManager
-            .GL
-            .NamedFramebufferDrawBuffers(Handle, DrawBuffers);
+
+        // A frame buffer with only depth has nothing to list, it was told to draw to nothing when it was made
+        if (DrawBuffers.Length > 0)
+        {
+            ObjectManager
+                .GL
+                .NamedFramebufferDrawBuffers(Handle, DrawBuffers);
+        }
     }
 
     /// <summary>

@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+
+    <!-- The dialogs for opening and saving a layout are asked for from Windows directly, see HexDialogs.cs -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <PublishAot>true</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!--
+    Publishing: dotnet publish -c Release -r win-x64
+    That makes a native Horizon.Hex.exe (trimmed, no .NET needed on the machine it is run on) next to the Assets
+    and shaders it loads, which is the folder to hand out.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <SelfContained>true</SelfContained>
+    <PublishTrimmed>true</PublishTrimmed>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!--
+    The native compiler asks Visual Studio where its linker is (vcvarsall.bat), and newer Visual Studios run
+    vswhere.exe for that without saying where it is: it is only found if its folder is on the PATH, which it isn't
+    outside of a developer prompt. So the folder is put on the PATH of the build before any of that happens.
+  -->
+  <UsingTask TaskName="AddToPath" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Directory ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string path = System.Environment.GetEnvironmentVariable("PATH") ?? "";
+        if (System.IO.Directory.Exists(Directory) && path.IndexOf(Directory, System.StringComparison.OrdinalIgnoreCase) < 0)
+            System.Environment.SetEnvironmentVariable("PATH", Directory + ";" + path);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="FindVisualStudioLocator" BeforeTargets="SetupOSSpecificProps" Condition="'$(OS)' == 'Windows_NT' and '$(PublishAot)' == 'true'">
+    <AddToPath Directory="$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer" />
+  </Target>
+
+  <ItemGroup>
+    <None Update="Assets\hex\*.hor">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
+    <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
+    <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
+    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
+    <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
+    <ProjectReference Include="..\Horizon.Rendering.UIX\Horizon.Rendering.UIX.csproj" />
+    <ProjectReference Include="..\Horizon.Rendering\Horizon.Rendering.csproj" />
+    <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
+  </ItemGroup>
+
+</Project>
