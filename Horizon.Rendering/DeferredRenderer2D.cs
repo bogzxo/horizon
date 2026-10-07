@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
@@ -63,6 +64,68 @@ public class DeferredRenderer2D : Renderer2D
     private readonly Lock lightLock = new();
     private readonly List<Light2D> lights = [];
     private readonly List<Flash> flashes = [];
+
+    /// <summary>A light as it was at the end of a tick, and which light it is.</summary>
+    private struct LightState
+    {
+        public Light2D Light;
+        public Vector2 Position;
+        public Vector3 Color;
+        public float Radius, Intensity, Height, Glow, Size, Flicker;
+        public bool CastsShadows, Enabled;
+
+        public static LightState Of(Light2D light) => new()
+        {
+            Light = light,
+            Position = light.Position,
+            Color = light.Color,
+            Radius = light.Radius,
+            Intensity = light.Intensity,
+            Height = light.Height,
+            Glow = light.Glow,
+            Size = light.Size,
+            Flicker = light.Flicker,
+            CastsShadows = light.CastsShadows,
+            Enabled = light.Enabled
+        };
+
+        /// <summary>Partway from one tick to the next: where it is, how far it reaches, how bright and what colour.</summary>
+        public static LightState Blend(in LightState from, in LightState to, float amount)
+        {
+            LightState light = to;
+            light.Position = Interpolate.Linear(from.Position, to.Position, amount);
+            light.Color = Interpolate.Linear(from.Color, to.Color, amount);
+            light.Radius = Interpolate.Linear(from.Radius, to.Radius, amount);
+            light.Intensity = Interpolate.Linear(from.Intensity, to.Intensity, amount);
+            light.Glow = Interpolate.Linear(from.Glow, to.Glow, amount);
+            return light;
+        }
+    }
+
+    /// <summary>The lights and the settings of the lighting as of one tick, for frames drawn alongside the simulation.</summary>
+    private sealed class CapturedLighting
+    {
+        public LightState[] Lights = new LightState[16];
+        public int Count;
+        public Vector3 Ambient;
+        public float LightingPixelSize, Shininess, SpecularIntensity;
+        public bool Shadows;
+    }
+
+    private readonly SnapshotBuffer<CapturedLighting> captured = new(static () => new CapturedLighting());
+
+    // What the frame that is being drawn goes by, the captured lighting of its two ticks (none when drawn in turns)
+    private CapturedLighting? shownBefore, shownAfter;
+    private bool shownBlends;
+    private float shownAlpha;
+
+    /// <summary>The ambient light of the frame that is being drawn: as it is, or between the last two ticks.</summary>
+    internal Vector3 ShownAmbient => shownAfter is null ? Ambient : shownBlends ? Interpolate.Linear(shownBefore!.Ambient, shownAfter.Ambient, shownAlpha) : shownAfter.Ambient;
+
+    internal float ShownLightingPixelSize => shownAfter?.LightingPixelSize ?? LightingPixelSize;
+    internal float ShownShininess => shownAfter?.Shininess ?? Shininess;
+    internal float ShownSpecularIntensity => shownAfter?.SpecularIntensity ?? SpecularIntensity;
+    internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
 
     /// <summary>
     /// The light there is everywhere, before any <see cref="Light2D"/>. At 1 everything looks as it was painted,
@@ -173,9 +236,60 @@ public class DeferredRenderer2D : Renderer2D
             flashes.Add(new Flash(light, duration));
     }
 
+    public override void UpdateState(float dt)
+    {
+        // Flashes fade by the game's clock: they stand still when it does, and fade as the game goes rather than the frames
+        FadeFlashes(dt);
+
+        base.UpdateState(dt);
+    }
+
+    /// <summary>
+    /// Publishes every light as it is and the settings of the lighting, for frames that are drawn alongside the
+    /// simulation. Simulation thread, at the end of every tick.
+    /// </summary>
+    public override void Capture()
+    {
+        if (captured.BeginPublish() is { } into)
+        {
+            into.Ambient = Ambient;
+            into.LightingPixelSize = LightingPixelSize;
+            into.Shininess = Shininess;
+            into.SpecularIntensity = SpecularIntensity;
+            into.Shadows = Shadows;
+
+            lock (lightLock)
+            {
+                int count = lights.Count + flashes.Count;
+                if (into.Lights.Length < count)
+                    into.Lights = new LightState[Math.Max(count, into.Lights.Length * 2)];
+
+                int at = 0;
+                foreach (Light2D light in lights)
+                    into.Lights[at++] = LightState.Of(light);
+                foreach (Flash flash in flashes)
+                    into.Lights[at++] = LightState.Of(flash.Light);
+
+                // What was there before isn't held on to by a slot that has fewer now
+                Array.Clear(into.Lights, at, into.Lights.Length - at);
+                into.Count = at;
+            }
+        }
+
+        base.Capture();
+    }
+
     public override void Render(float dt)
     {
-        FadeFlashes(dt);
+        RenderFrame frame = RenderFrame.Active;
+        if (frame.IsDecoupled && captured.TryGet(frame, out CapturedLighting before, out CapturedLighting after, out bool continuous))
+        {
+            (shownBefore, shownAfter, shownBlends, shownAlpha) = (before, after, continuous, frame.Alpha);
+        }
+        else
+        {
+            (shownBefore, shownAfter, shownBlends) = (null, null, false);
+        }
 
         base.Render(dt);
     }
@@ -212,25 +326,43 @@ public class DeferredRenderer2D : Renderer2D
         int count = 0;
         double time = Engine.TotalTime;
 
+        // Drawn alongside the simulation: the lights as they were between the last two ticks, a light that is in both
+        // (in the same place among the others) blended, any other as it is
+        if (shownAfter is { } after)
+        {
+            CapturedLighting? before = shownBlends ? shownBefore : null;
+            for (int i = 0; i < after.Count && count < into.Length; i++)
+            {
+                ref readonly LightState now = ref after.Lights[i];
+                LightState light = before is not null && i < before.Count && before.Lights[i].Light == now.Light
+                    ? LightState.Blend(before.Lights[i], now, shownAlpha)
+                    : now;
+
+                if (TryCollect(light, view, time, out into[count])) count++;
+            }
+
+            return count;
+        }
+
         lock (lightLock)
         {
             foreach (var light in lights)
             {
                 if (count == into.Length) return count;
-                if (TryCollect(light, view, time, out into[count])) count++;
+                if (TryCollect(LightState.Of(light), view, time, out into[count])) count++;
             }
 
             foreach (var flash in flashes)
             {
                 if (count == into.Length) return count;
-                if (TryCollect(flash.Light, view, time, out into[count])) count++;
+                if (TryCollect(LightState.Of(flash.Light), view, time, out into[count])) count++;
             }
         }
 
         return count;
     }
 
-    private static bool TryCollect(Light2D light, RectangleF view, double time, out LightData data)
+    private static bool TryCollect(in LightState light, RectangleF view, double time, out LightData data)
     {
         data = default;
 
@@ -243,7 +375,7 @@ public class DeferredRenderer2D : Renderer2D
         if (light.Flicker > 0.0f)
         {
             // A few waves that never line up, started somewhere else for every light so no two waver together
-            float phase = RuntimeHelpers.GetHashCode(light) % 1024;
+            float phase = RuntimeHelpers.GetHashCode(light.Light) % 1024;
             // In double precision, single precision would have every light judder along after a few hours of play
             float waver = (float)(
                 Math.Sin(time * 11.0 + phase) * 0.5 +
