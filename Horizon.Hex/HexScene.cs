@@ -51,7 +51,7 @@ internal sealed partial class HexScene : Scene
     private static readonly string[] Palette =
     [
         "stack", "grid", "panel", "scroll", "label", "button", "toggle", "textbox", "number_box", "selector",
-        "dropdown", "slider", "color_picker", "progress_bar", "image"
+        "dropdown", "slider", "color_picker", "progress_bar", "image", "tabs"
     ];
 
     // The properties that are one of a few words, and the words.
@@ -139,8 +139,11 @@ internal sealed partial class HexScene : Scene
 
     // Dragging a component around the canvas
     private bool pointerWasDown;
-    private bool dragging;
+    private bool dragging, dragMoved;
     private Vector2 dragLast;
+
+    // Something that was selected already and pressed on: it's all that's selected if it isn't dragged
+    private UIComponent? clickedSelected;
 
     // Layouts that are only opened to be tested, and how that went
     private bool checksDone;
@@ -187,7 +190,12 @@ internal sealed partial class HexScene : Scene
 
         recent.AddRange(ReadRecent());
         BuildMenus();
+        BuildLayoutMenu();
         BuildShortcuts();
+        BuildSelectionShortcuts();
+
+        // A right click on the canvas that nothing of the editor took is a menu for what's there
+        compositor.ContextRequested = OnContextRequested;
 
         SetScale(options.Scale ?? ReadScale() ?? ScaleFor(Engine.WindowManager.ViewportSize), remember: false);
 
@@ -279,21 +287,10 @@ internal sealed partial class HexScene : Scene
         }
     }
 
-    /// <summary>Fits the design screen of the layout into the canvas, wherever the editor's layout has put that.</summary>
-    private void PlaceCanvas()
-    {
-        UIRect area = canvas.Bounds;
-        if (area.IsEmpty)
-            return;
-
-        float scale = MathF.Min(area.Width / DesignScreen.Width, area.Height / DesignScreen.Height);
-
-        // In the units of the editor's layout, the UI scales the two of them together
-        document.Module.Scale = new Vector2(scale);
-        document.Module.Position = area.Center;
-    }
-
-    /// <summary>Clicking in the canvas selects what is there, dragging moves it.</summary>
+    /// <summary>
+    /// Clicking in the canvas selects what is there (on top of what already is with ctrl or shift), dragging moves all
+    /// of it. The wheel zooms, the middle button (or space) pans, and a click on a tab opens its page.
+    /// </summary>
     private void UpdateCanvasPointer()
     {
         UIPointer pointer = compositor.Pointer;
@@ -301,23 +298,54 @@ internal sealed partial class HexScene : Scene
         bool released = !pointer.Down && pointerWasDown;
         pointerWasDown = pointer.Down;
 
-        // Where the pointer is in the layout that is being edited, however big that is drawn
+        // Where the pointer is in the editor, and in the layout that is being edited however big that is drawn
+        Vector2 inChrome = chrome.ToLocal(pointer.Position);
         Vector2 inLayout = document.Module.ToLocal(pointer.Position);
 
-        if (pressed && canvas.Bounds.Contains(chrome.ToLocal(pointer.Position)))
+        // Not over the canvas if a menu of the editor is in the way of it
+        bool overCanvas = canvas.Bounds.Contains(inChrome) && chrome.Popup is null;
+
+        if (UpdateCanvasView(inChrome, overCanvas, pressed))
         {
+            dragging = false;
+            return;
+        }
+
+        if (pressed && overCanvas)
+        {
+            UIComponent? under = document.Module.FindAt(pointer.Position);
+
+            // A tab in the canvas opens its page, the way it would in a game, and selects the tabs
+            if (TabUnder(under, inLayout) is var (tabs, index))
+            {
+                tabs.Selected = index;
+                Select(document.OwnerOf(tabs) ?? tabs);
+                return;
+            }
+
             // What stands in for the items of a container is the container as far as selecting goes
-            Select(document.OwnerOf(document.Module.FindAt(pointer.Position)));
-            dragging = document.Selected is not null;
+            UIComponent? hit = ResolveClick(document.OwnerOf(under));
+
+            // Pressing on something that's selected already drags all of the selection, a click without a drag
+            // selects only it (see below)
+            clickedSelected = hit is not null && document.IsSelected(hit) && !Modifier() ? hit : null;
+            if (clickedSelected is null)
+                Pick(hit);
+
+            dragging = document.Selection.Count > 0 && (hit is null || document.IsSelected(hit));
+            dragMoved = false;
             dragLast = inLayout;
         }
-        else if (dragging && pointer.Down && document.Selected is { } selected)
+        else if (dragging && pointer.Down)
         {
             Vector2 moved = inLayout - dragLast;
             if (moved != Vector2.Zero)
             {
-                selected.Position += moved;
+                foreach (var selected in document.TopSelection())
+                    selected.Position += moved;
+
                 dragLast = inLayout;
+                dragMoved = true;
                 codeDirty = true;
             }
         }
@@ -325,6 +353,10 @@ internal sealed partial class HexScene : Scene
         if (released && dragging)
         {
             dragging = false;
+
+            if (!dragMoved && clickedSelected is { } only)
+                Select(only);
+            clickedSelected = null;
 
             // The numbers in the inspector are from before the drag
             inspectorDirty = true;

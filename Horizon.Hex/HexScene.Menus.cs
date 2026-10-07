@@ -44,7 +44,7 @@ internal sealed partial class HexScene
         shortcuts.Add(Key.N, () => Show(NewDocument()), control: true, whileTyping: true);
         shortcuts.Add(Key.W, Close, control: true, whileTyping: true);
 
-        shortcuts.Add(Key.Delete, DeleteSelected);
+        shortcuts.Add(Key.Delete, DeleteAll);
 
         // The arrows move whatever is selected a pixel at a time, for lining things up by eye
         shortcuts.Add(Key.Left, () => Nudge(-1, 0));
@@ -64,10 +64,25 @@ internal sealed partial class HexScene
         edit.AddSeparator();
         edit.Add("Move up", () => MoveSelected(-1)).IsEnabled = () => document.Selected is not null;
         edit.Add("Move down", () => MoveSelected(1)).IsEnabled = () => document.Selected is not null;
-        edit.Add("Delete", DeleteSelected, "Del").IsEnabled = () => document.Selected is not null;
+        edit.Add("Delete", DeleteAll, "Del").IsEnabled = () => document.Selected is not null;
+        edit.Add("Duplicate", DuplicateSelected, "Ctrl+D").IsEnabled = () => document.Selected is not null;
+        edit.AddSeparator();
+        edit.Add("Group", GroupSelected, "Ctrl+G").IsEnabled = () => document.Selected is not null;
+        edit.Add("Ungroup", UngroupSelected, "Ctrl+Shift+G").IsEnabled = () => document.Selection.Any(component => component is Group);
+        edit.AddSeparator();
+        edit.Add("Bring to front", () => ReorderSelected(HexDocument.Order.Front), "Ctrl+]").IsEnabled = () => document.Selected is not null;
+        edit.Add("Send to back", () => ReorderSelected(HexDocument.Order.Back), "Ctrl+[").IsEnabled = () => document.Selected is not null;
+        edit.AddSeparator();
+        edit.Add("Select all", SelectAll, "Ctrl+A");
+        edit.Add("Select nothing", () => Select(null), "Esc").IsEnabled = () => document.Selected is not null;
 
         Menu view = menu.AddMenu("View");
         view.Add("Play intros", () => document.PlayIntros());
+        view.AddSeparator();
+        view.Add("Zoom in", () => ZoomCanvas(ZOOM_STEP * ZOOM_STEP, canvas.Bounds.Center), "Ctrl+=");
+        view.Add("Zoom out", () => ZoomCanvas(1.0f / (ZOOM_STEP * ZOOM_STEP), canvas.Bounds.Center), "Ctrl+-");
+        view.Add("Zoom to fit", ZoomToFit, "Ctrl+0");
+        view.Add("Actual size", ZoomToActualSize, "Ctrl+1");
         view.AddSeparator();
         layoutDebugger.AddTo(view, () => Say(layoutDebugger.IsOn ? "layout debugger on: padding is green, gaps are orange" : "layout debugger off"));
         view.AddSeparator();

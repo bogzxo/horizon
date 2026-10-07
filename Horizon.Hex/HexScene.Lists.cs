@@ -56,8 +56,15 @@ internal sealed partial class HexScene
             caption.Position = new Vector2(10 + depth * 14, 0);
             caption.Color = component.Visible && !component.IsHiddenByLayer ? null : DimColor;
 
-            row.Selected = component == document.Selected;
-            row.OnPressed = () => Select(component);
+            // Ctrl or shift adds a row to what's selected, a right click is the menu for it (and the rest of what's selected)
+            row.Selected = document.IsSelected(component);
+            row.OnPressed = () => Pick(component);
+            row.OnContextMenu = _ =>
+            {
+                if (!document.IsSelected(component))
+                    Select(component);
+                ShowComponentMenu(compositor.Pointer.Position);
+            };
             treeRows[component] = row;
         }
 

@@ -21,6 +21,9 @@ internal sealed partial class HexScene
         // Into whatever is selected if that is something things go into, otherwise next to it
         UIComponent? parent = document.Selected switch
         {
+            // Tabs take it into the page that's open
+            TabPanel { Selected: var page } tabs when page >= 0 && page < tabs.Children.Count => tabs.Children[page],
+            TabPanel tabs => tabs,
             Panel container => container,
             { Parent: { } owner } when owner != document.Module.Root => owner,
             _ => null
@@ -32,16 +35,6 @@ internal sealed partial class HexScene
             Select(added);
             treeDirty = codeDirty = true;
         }
-    }
-
-    private void DeleteSelected()
-    {
-        if (document.Selected is not { } selected)
-            return;
-
-        document.Remove(selected);
-        Select(null);
-        treeDirty = codeDirty = true;
     }
 
     private void MoveSelected(int by)
@@ -66,8 +59,7 @@ internal sealed partial class HexScene
         document.Selected = component;
 
         // The UI marks it out itself, the same way the layout debugger marks what the pointer is over
-        stage.Highlighted = component;
-        treeDirty = inspectorDirty = true;
+        MarkSelection();
     }
 
     /* Undoing */
@@ -91,7 +83,7 @@ internal sealed partial class HexScene
     private void Restored(string what)
     {
         // The layout was built again from what it was, everything on screen that is about it is out of date
-        stage.Highlighted = document.Selected;
+        MarkSelection();
         tabsDirty = treeDirty = inspectorDirty = codeDirty = true;
 
         Say($"{what}, {document.UndoCount} more to undo");
@@ -115,17 +107,19 @@ internal sealed partial class HexScene
     }
 
     /// <summary>
-    /// Helper method to move whatever is selected by a pixel of the layout, or by a good few with shift held.
+    /// Helper method to move everything that's selected by a pixel of the layout, or by a good few with shift held.
     /// </summary>
     private void Nudge(int x, int y)
     {
-        if (document.Selected is not { } selected)
+        var moving = document.TopSelection();
+        if (moving.Count == 0)
             return;
 
         var keyboard = Engine.Input.Keyboard;
         bool far = keyboard.IsDown(Silk.NET.Input.Key.ShiftLeft) || keyboard.IsDown(Silk.NET.Input.Key.ShiftRight);
 
-        selected.Position += new Vector2(x, y) * (far ? BIG_NUDGE : 1.0f);
+        foreach (var selected in moving)
+            selected.Position += new Vector2(x, y) * (far ? BIG_NUDGE : 1.0f);
         codeDirty = inspectorDirty = true;
     }
 }
