@@ -9,7 +9,7 @@ using Horizon.Rendering.UIX.Components;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Engine;
 
 /// <summary>
 /// The tweens of the engine. On the left a marker per easing goes back and forth along a track, which is the
@@ -17,7 +17,7 @@ namespace Horizon.Testing.Scenes;
 /// starts: values, delays, loops, sequences and the rest, each on a tween that is moved along by hand so
 /// nothing about them depends on how fast the test happens to run.
 /// </summary>
-public class TweenTestScene : Scene, ITestControls
+public class TweenExample : Scene, ITestControls
 {
     private static readonly Vector2 DesignSize = new(1600, 900);
 
@@ -45,7 +45,7 @@ public class TweenTestScene : Scene, ITestControls
     private StackPanel _tracks = null!, _results = null!;
     private bool _paused;
 
-    public TweenTestScene()
+    public TweenExample()
     {
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;

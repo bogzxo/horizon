@@ -10,7 +10,7 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.UI;
 
 /// <summary>
 /// The parts of the UI library that are about laying things out: scaling a whole UI to its window, grids,
@@ -18,7 +18,7 @@ namespace Horizon.Testing.Scenes;
 /// items made from templates.
 /// With a self-test a scripted pointer works its way through all of it and the results are printed.
 /// </summary>
-public class UILayoutTestScene : Scene, ITestControls
+public class UILayoutExample : Scene, ITestControls
 {
     private const int ScrollRows = 12;
 
@@ -55,7 +55,7 @@ public class UILayoutTestScene : Scene, ITestControls
     private int _itemPressed = -1;
     private string _layoutDirectory = string.Empty;
 
-    public UILayoutTestScene(bool selfTest = false)
+    public UILayoutExample(bool selfTest = false)
     {
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;

@@ -13,14 +13,14 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Rendering;
 
 /// <summary>
 /// The post processing of the 2D renderers.
 /// The HUD has a blur of its own instead (<see cref="UICompositor.PostProcessing"/>): a button that slides back and
 /// forth and one that grows and shrinks are smeared the way they move, the line of text that stands still is not.
 /// </summary>
-public class PostProcessTestScene : Scene, ITestControls
+public class PostProcessExample : Scene, ITestControls
 {
     private static readonly Vector2 DesignSize = new(1600, 900);
 
@@ -59,7 +59,7 @@ public class PostProcessTestScene : Scene, ITestControls
     private float _time;
     private bool _panning = true;
 
-    public PostProcessTestScene()
+    public PostProcessExample()
     {
         Vector2 viewport = Engine.WindowManager.ViewportSize;
 
@@ -75,7 +75,7 @@ public class PostProcessTestScene : Scene, ITestControls
         _blur = _world.PostProcessing.Add(new VelocityBlurEffect());
 
         string directory = Path.Combine(Path.GetTempPath(), "horizon-tilemap-test");
-        TileMapTestScene.WriteFiles(directory);
+        TileMapExample.WriteFiles(directory);
 
         _map = _world.AddEntity(TileMap.Load(Path.Combine(directory, "town.tmx")));
         _world.AddEntity(_map.Foreground);

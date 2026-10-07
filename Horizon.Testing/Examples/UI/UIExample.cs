@@ -10,7 +10,7 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.UI;
 
 /// <summary>
 /// Showing off the UI library using a HUD pinned to the corners of the screen, a panel built by a HIDL script
@@ -18,7 +18,7 @@ namespace Horizon.Testing.Scenes;
 /// With the aid of Gemini's <c>selfTest</c>, a scripted pointer works its way through the controls instead of the mouse and
 /// the results are printed, so the UI can be tested without touching anything.
 /// </summary>
-public class UITestScene : Scene, ITestControls
+public class UIExample : Scene, ITestControls
 {
     public override Camera ActiveCamera { get; protected set; }
 
@@ -33,7 +33,7 @@ public class UITestScene : Scene, ITestControls
     private Label _status;
     private int _lockedPresses;
 
-    public UITestScene(bool selfTest = false)
+    public UIExample(bool selfTest = false)
     {
         // 1. Setup Camera and Compositor
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
@@ -58,7 +58,7 @@ public class UITestScene : Scene, ITestControls
         if (_selfTest is not null)
             ScriptSelfTest(_selfTest);
 
-        Console.WriteLine("UITestScene Initialized.");
+        Console.WriteLine("UIExample Initialized.");
         Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
     }
 

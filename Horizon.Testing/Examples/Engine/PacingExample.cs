@@ -14,7 +14,7 @@ using Horizon.Rendering.UIX.Components;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Engine;
 
 /// <summary>
 /// How evenly things move on screen. Sprites cross the screen at a steady speed, one moved by the logic and one by
@@ -23,7 +23,7 @@ namespace Horizon.Testing.Scenes;
 /// how far off that it is, frame to frame, is what the meter in the corner shows (and the log, every couple of
 /// seconds, for runs nobody watches). A judder that can hardly be seen is a number here.
 /// </summary>
-public class PacingTestScene : Scene, ITestControls
+public class PacingExample : Scene, ITestControls
 {
     private static readonly Vector2 DesignSize = new(1600, 900);
 
@@ -64,7 +64,7 @@ public class PacingTestScene : Scene, ITestControls
             new(Interpolate.Linear(from.Logic, to.Logic, amount), Interpolate.Linear(from.Physics, to.Physics, amount));
     }
 
-    public PacingTestScene()
+    public PacingExample()
     {
         camera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = camera;
@@ -227,7 +227,7 @@ public class PacingTestScene : Scene, ITestControls
     /// </summary>
     internal sealed class PacingProbe : GameComponent
     {
-        private readonly PacingTestScene scene;
+        private readonly PacingExample scene;
         private readonly Track logic = new(), physics = new(), marker = new(backAndForth: true);
 
         private long lastFrame;
@@ -237,7 +237,7 @@ public class PacingTestScene : Scene, ITestControls
 
         private volatile string summary = "measuring...";
 
-        public PacingProbe(PacingTestScene scene) => this.scene = scene;
+        public PacingProbe(PacingExample scene) => this.scene = scene;
 
         /// <summary>The last read out of the meter, for showing.</summary>
         public string Summary => summary;

@@ -11,9 +11,9 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.UI;
 
-public class OnScreenKeyboardTestScene : Scene, ITestControls
+public class OnScreenKeyboardExample : Scene, ITestControls
 {
     public override Camera ActiveCamera { get; protected set; }
     public IReadOnlyList<TestControl> Controls { get; } = [];
@@ -26,7 +26,7 @@ public class OnScreenKeyboardTestScene : Scene, ITestControls
     private StackPanel _panel;
     private TextBox _textBox;
 
-    public OnScreenKeyboardTestScene(bool selfTest = false)
+    public OnScreenKeyboardExample(bool selfTest = false)
     {
         // 1. Setup Camera and Compositor
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
@@ -41,7 +41,7 @@ public class OnScreenKeyboardTestScene : Scene, ITestControls
 
         BuildHud();
 
-        Console.WriteLine("OnScreenKeyboardTestScene Initialized.");
+        Console.WriteLine("OnScreenKeyboardExample Initialized.");
         Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
