@@ -1,3 +1,4 @@
+using Horizon.Testing.Examples.Basics;
 using Horizon.Testing.Examples.Engine;
 using Horizon.Testing.Examples.Input;
 using Horizon.Testing.Examples.Physics;
@@ -20,11 +21,17 @@ internal static class TestCatalog
     public static readonly TestDefinition[] Tests =
     [
         // Basics: start here if you're new. Entities, sprites and cameras, the stuff every game is made of.
+        new("entities", TestArea.Basics, "Entities and components", "The building blocks: entities, components, which thread does what, and the scene's tree, live.", () => new EntitiesExample()),
+        new("sprites", TestArea.Basics, "Sprites and animation", "Sprite sheets with named animations, flipping, tints, origins, sprite tweens and sprites out of an atlas.", () => new SpritesExample()),
+        new("camera", TestArea.Basics, "Cameras", "Following, zooming, pixel snapping with and without an anchor, hard cuts, and what's on screen.", () => new CameraExample()),
+        new("transitions", TestArea.Basics, "Scenes and transitions", "Hopping between scenes with fades, blurs, rot and hard cuts, preloading and a scene that's kept.", () => new TransitionsExample()),
 
         // Input: what the player is pressing, on whatever they're pressing it with.
+        new("keyboard-mouse", TestArea.Input, "Keyboard and mouse", "Keys that light up, a ring chasing the pointer, click ripples, the wheel and a log of every press.", () => new KeyboardMouseExample()),
         new("gamepads", TestArea.Input, "Gamepads", "What's held on every pad, bindings, combos and saving them out as HIDL.", () => new GamepadExample()),
 
         // Rendering: everything that ends up as pixels that isn't a UI.
+        new("primitives", TestArea.Rendering, "Shapes", "Triangles, rectangles and circles in one draw call: lines, debug overlays, a bar graph and a Mesh2D star.", () => new PrimitivesExample()),
         new("tilemap", TestArea.Rendering, "Tile maps", "A Tiled map with one of everything: turned and animated tiles, parallax, groups, objects and templates.", () => new TileMapExample()),
         new("post", TestArea.Rendering, "Post processing", "A lit world with its motion blurred and a HUD, behind the glass of an old telly.", () => new PostProcessExample()),
         new("particles", TestArea.Rendering, "Particles", "CPU and compute shader particles, side by side.", () => new ParticleExample()),
