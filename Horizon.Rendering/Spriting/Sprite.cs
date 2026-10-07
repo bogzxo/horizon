@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging.Loggers;
@@ -193,7 +194,7 @@ public class Sprite : GameObject
     {
         if (!definition.TryGetSprite(name, theme, out var source))
         {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[Sprite] '{definition.Path}' has no sprite called '{name}'!");
+            Log.Error($"[Sprite] '{definition.Path}' has no sprite called '{name}'!");
             return false;
         }
 

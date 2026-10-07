@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.OpenGL.Buffers;
@@ -93,7 +94,7 @@ public class Renderer2D : GameObject
             return result.Asset;
         }
 
-        Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+        Log.Error(result.Message);
         throw new Exception(result.Message);
     }
 
@@ -119,7 +120,7 @@ public class Renderer2D : GameObject
         PushToInitializationQueue(renderRectangle);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind
         InitializeAll();
@@ -152,7 +153,7 @@ public class Renderer2D : GameObject
         // draw all children. A renderer among them is shown in us, and goes back to whoever we are shown in after
         outer = current;
         current = this;
-        base.Render(dt, obj);
+        base.Render(dt);
         current = outer;
 
         // What we put on screen replaces what is there, it isn't laid over it

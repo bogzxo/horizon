@@ -1,4 +1,5 @@
-﻿using Horizon.Engine;
+﻿using Bogz.Logging;
+using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
@@ -46,7 +47,7 @@ public class Mesh2D : GameObject
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
         SetVboLayout();
@@ -78,8 +79,7 @@ public class Mesh2D : GameObject
     /// </para>
     /// </summary>
     /// <param name="dt">The elapsed time since the last render call.</param>
-    /// <param name="options">Optional render options. If not provided, default options will be used.</param>
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         if (ElementCount < 1)
             return; // SAVOUR THE FRAMES!!!

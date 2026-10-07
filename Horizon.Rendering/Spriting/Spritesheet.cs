@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging.Loggers;
@@ -32,14 +33,14 @@ public class SpriteSheet : Texture
 
         if (!Directory.Exists(dir))
         {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"Failed to find directory '{dir}' to load sprite!");
+            Log.Error($"Failed to find directory '{dir}' to load sprite!");
             return (false, null, null);
         }
 
 
         HIDLRuntime runtime = new();
         var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/" + defFileName));
-        if (!success) { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"Malformed sprite definition!\r\b{msg}"); 
+        if (!success) { Log.Error($"Malformed sprite definition!\r\b{msg}"); 
             return (false, null, null); }
 
         string spriteFilePath = "spritesheet.png";
@@ -51,7 +52,7 @@ public class SpriteSheet : Texture
             {
                 if (!File.Exists(dir + "/" + sprite_file.Value))
                 {
-                    ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to load spritesheet or definition!");
+                    Log.Error("Failed to load spritesheet or definition!");
                     return (false, null, null);
                 }
 
@@ -61,24 +62,24 @@ public class SpriteSheet : Texture
             if (def.Properties["sprite_size"] is ObjectValue sprite_size)
             {
                 if (sprite_size.Properties["w"] is NumberValue sprite_width) spriteSizeX = sprite_width.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite width!"); return (false, null, null); }
+                else { Log.Error("Invalid sprite width!"); return (false, null, null); }
 
                 if (sprite_size.Properties["h"] is NumberValue sprite_height) spriteSizeY = sprite_height.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite height!"); return (false, null, null); }
+                else { Log.Error("Invalid sprite height!"); return (false, null, null); }
             }
             else
             {
-                ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Malformed sprite size def!");
+                Log.Error("Malformed sprite size def!");
                 return (false, null, null);
             }
 
             if (def.Properties["grid_size"] is ObjectValue grid_size)
             {
                 if (grid_size.Properties["w"] is NumberValue grid_width) gridSizeX = grid_width.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite grid width!"); return (false, null, null); }
+                else { Log.Error("Invalid sprite grid width!"); return (false, null, null); }
 
                 if (grid_size.Properties["h"] is NumberValue grid_height) gridSizeY = grid_height.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite grid width!"); return (false, null, null); }
+                else { Log.Error("Invalid sprite grid width!"); return (false, null, null); }
             }
 
             SpriteSheet sheet;
@@ -107,15 +108,15 @@ public class SpriteSheet : Texture
                         uint length = 1, span = 0;
 
                         if (anim.Properties["x"] is NumberValue anim_x) posX = anim_x.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim offset!"); return (false, null, null); }
+                        else { Log.Error("Invalid sprite anim offset!"); return (false, null, null); }
 
                         if (anim.Properties["y"] is NumberValue anim_y) posY = anim_y.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim offset"); return (false, null, null); }
+                        else { Log.Error("Invalid sprite anim offset"); return (false, null, null); }
 
                         if (anim.Properties.TryGetValue("length", out var animProp))
                         {
                             if (animProp is NumberValue anim_l) length = (uint)anim_l.Value;
-                            else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim length!"); return (false, null, null); }
+                            else { Log.Error("Invalid sprite anim length!"); return (false, null, null); }
                         }
 
                         if (anim.Properties.ContainsKey("time") && anim.Properties["time"] is NumberValue anim_t)

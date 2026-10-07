@@ -2,7 +2,6 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
-using Horizon.Core.Data;
 using Horizon.Core.Primitives;
 using Horizon.OpenGL.Managers;
 

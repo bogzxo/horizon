@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Numerics;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -327,9 +326,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             {
                 if (Sheet is null || !Sheet.TryGetSprite(sprite + frame, Theme, out source))
                 {
-                    ConcurrentLogger.Instance.Log(
-                        LogLevel.Error,
-                        $"[UISkin] '{name}' is meant to be the sprite '{sprite + frame}', which the sprite sheet doesn't have.");
+                    Log.Error($"[UISkin] '{name}' is meant to be the sprite '{sprite + frame}', which the sprite sheet doesn't have.");
                     return null;
                 }
             }
@@ -404,9 +401,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         }
         catch (Exception e)
         {
-            ConcurrentLogger.Instance.Log(
-                LogLevel.Error,
-                $"[UISkin] Failed to load '{Path.Combine(directory, file)}': {e.Message}");
+            Log.Error($"[UISkin] Failed to load '{Path.Combine(directory, file)}': {e.Message}");
             return null;
         }
     }

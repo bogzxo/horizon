@@ -1,4 +1,4 @@
-﻿using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
+﻿using Bogz.Logging;
 
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -29,7 +29,7 @@ public class BasicTechnique : Technique
         }
         else
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
     }
 
@@ -67,7 +67,7 @@ public class BasicMaterialTechnique : Technique
         }
         else
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
     }
 

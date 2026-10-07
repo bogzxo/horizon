@@ -6,8 +6,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-using Box2D.NetStandard.Dynamics.Bodies;
-
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Physics.Debug;
@@ -28,15 +26,11 @@ public enum PhysicsRadialTargets
     All = Bodies | Particles
 }
 
-public class PhysicsWorld : IGameComponent
+public class PhysicsWorld : GameComponent
 {
     public bool RenderDebug { get; set; } = false;
     public List<PhysicsBodyComponent2D> StaticBodies { get; init; } = [];
     public List<PhysicsBodyComponent2D> DynamicBodies { get; init; } = new();
-
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Physics World";
-    public Entity Parent { get; set; }
 
     public Vector2 Gravity { get; set; }
 
@@ -62,7 +56,6 @@ public class PhysicsWorld : IGameComponent
     }
     public PhysicsBodyComponent2D CreateBody(PhysicsBodySimulationType simulationType)
         => CreateBody(simulationType, Vector2.Zero);
-
 
     public PhysicsBodyComponent2D AddBody(in PhysicsBodyComponent2D body)
     {
@@ -185,11 +178,11 @@ public class PhysicsWorld : IGameComponent
         return true;
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         debugRenderer.Initialize();
     }
-    public void UpdatePhysics(float dt)
+    public override void UpdatePhysics(float dt)
     {
         if (!Enabled) return;
 
@@ -276,7 +269,6 @@ public class PhysicsWorld : IGameComponent
                         fixture.ActiveContacts.Add(otherFixture);
                     }
                 }
-
 
                 // Test against dynamic bodies...
                 foreach (var other in dynamicBodies)
@@ -431,11 +423,7 @@ public class PhysicsWorld : IGameComponent
             feed.Publish(staticGrid, dynamicShapes.AsSpan(0, shapeCount));
         }
     }
-    public void UpdateState(float dt)
-    {
-        
-    }
-    public void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         void drawBody(in PhysicsBodyComponent2D body, in List<IPhysicsFixture> fixtures, Vector3 colour)
         {
@@ -480,7 +468,6 @@ public class PhysicsWorld : IGameComponent
                 drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(0, 1, 1));
                 drawBody(body, body.ParticleFixtures, new System.Numerics.Vector3(0, 1, 0));
             }
-
 
             debugRenderer.Render(dt);
         }

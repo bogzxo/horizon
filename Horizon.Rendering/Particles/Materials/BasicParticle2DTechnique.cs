@@ -1,4 +1,5 @@
-﻿using Horizon.Engine;
+﻿using Bogz.Logging;
+using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Descriptions;
@@ -32,7 +33,7 @@ namespace Horizon.Rendering.Particles.Materials
             }
             else
             {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+                Log.Error(result.Message);
             }
         }
 

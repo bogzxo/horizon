@@ -108,10 +108,10 @@ internal class TestSelectorScene : Scene
         pageNumber.Text = $"{page + 1} / {PageCount}";
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // Set every frame rather than once: the test that was just left will have changed it.
         Engine.GL.ClearColor(Color.CornflowerBlue);
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 }

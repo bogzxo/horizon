@@ -2,7 +2,6 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;
@@ -114,7 +113,7 @@ public abstract partial class UIComponent
         }
         catch (Exception e)
         {
-            ConcurrentLogger.Instance.Log(LogLevel.Error, $"[UIX] A {GetType().Name} handler failed: {e.Message}");
+            Log.Error($"[UIX] A {GetType().Name} handler failed: {e.Message}");
         }
     }
 }

@@ -1,5 +1,4 @@
-﻿using Horizon.Core.Data;
-using Horizon.OpenGL.Descriptions;
+﻿using Horizon.OpenGL.Descriptions;
 
 namespace Horizon.Rendering.Mesh;
 

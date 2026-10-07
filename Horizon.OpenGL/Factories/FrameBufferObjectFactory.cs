@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.Contracts;
+﻿using Bogz.Logging;
+using System.Diagnostics.Contracts;
 
 using Horizon.Content;
 using Horizon.Content.Descriptions;
@@ -131,12 +132,12 @@ public class FrameBufferObjectFactory
                     },
                     out var renderBuffer))
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, renderBuffer.Message);
+                    Log.Error(renderBuffer.Message);
                 }
 
                 if (renderBuffer.Status == AssetCreationStatus.Failed)
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment render buffer: {renderBuffer.Message}");
+                    Log.Error($"[FrameBufferFactory] Failed to create attachment render buffer: {renderBuffer.Message}");
                 }
 
                 attachments.Add(
@@ -160,12 +161,12 @@ public class FrameBufferObjectFactory
                        Width = width
                    }, out var texture))
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, texture.Message);
+                    Log.Error(texture.Message);
                 }
 
                 if (texture.Status == AssetCreationStatus.Failed)
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment texture: {texture.Message}");
+                    Log.Error($"[FrameBufferFactory] Failed to create attachment texture: {texture.Message}");
                 }
 
                 attachments.Add(

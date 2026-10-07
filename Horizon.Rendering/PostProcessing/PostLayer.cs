@@ -1,3 +1,4 @@
+using Bogz.Logging;
 using System.Numerics;
 
 using Horizon.Engine;
@@ -273,9 +274,7 @@ public sealed class PostLayer : IDisposable
 
         if (!created)
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(
-                Bogz.Logging.LogLevel.Error,
-                $"A layer of {width} by {height} couldn't be made, what was to go onto it is drawn without its effects: {result.Message}");
+            Log.Error($"A layer of {width} by {height} couldn't be made, what was to go onto it is drawn without its effects: {result.Message}");
 
             unavailable = true;
             return false;

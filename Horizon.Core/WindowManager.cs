@@ -1,8 +1,6 @@
-﻿using System.Diagnostics;
+﻿using Bogz.Logging;
+using System.Diagnostics;
 using System.Numerics;
-
-using Bogz.Logging.Loggers;
-
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
@@ -32,7 +30,7 @@ namespace Horizon.Core;
 /// Drawing takes its turn along with them, so every frame shows one moment of the game and never half of a step.
 /// </para>
 /// </summary>
-public class WindowManager : IGameComponent, IDisposable
+public class WindowManager : GameComponent, IDisposable
 {
     private readonly IWindow _window;
     private IInputContext _input;
@@ -102,11 +100,6 @@ public class WindowManager : IGameComponent, IDisposable
     /// </summary>
     public GL GL { get; private set; }
 
-
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Window Manager";
-    public Entity Parent { get; set; }
-
     /// <summary>
     /// Gets the underlying native window.
     /// </summary>
@@ -138,7 +131,6 @@ public class WindowManager : IGameComponent, IDisposable
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
         physicsUpdatesPerSecond = config.PhysicsUpdatesPerSecond > 0.0 ? config.PhysicsUpdatesPerSecond : 120.0;
         Loops = [renderStatistics];
-
 
         // Create a window with the specified options.
         WindowOptions = WindowOptions.Default with
@@ -316,9 +308,7 @@ public class WindowManager : IGameComponent, IDisposable
         UpdateViewport();
         UpdateScreenSize();
 
-        ConcurrentLogger.Instance.Log(
-            Bogz.Logging.LogLevel.Info,
-            $"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
+        Log.Info($"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
     }
 
     private static double PeriodOf(double framesPerSecond) => framesPerSecond > 0.0 ? 1.0 / framesPerSecond : 0.0;
@@ -342,19 +332,10 @@ public class WindowManager : IGameComponent, IDisposable
         nextFrame += period;
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
-        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Created window({WindowOptions.Size})!");
+        Log.Info($"[{Name}] Created window({WindowOptions.Size})!");
     }
-
-    public void Render(float dt, object? obj = null)
-    { }
-
-    public void UpdateState(float dt)
-    { }
-
-    public void UpdatePhysics(float dt)
-    { }
 
     public void Run()
     {
@@ -502,7 +483,7 @@ public class WindowManager : IGameComponent, IDisposable
         _window.Reset();
         _window.Dispose();
 
-        ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Disposed!");
+        Log.Info($"[{Name}] Disposed!");
     }
 
     /// <summary>

@@ -10,7 +10,7 @@ using Horizon.Physics.Fixtures;
 
 namespace Horizon.Physics;
 
-public class PhysicsBodyComponent2D : IGameComponent
+public class PhysicsBodyComponent2D : GameComponent
 {
     public PhysicsBodySimulationType SimulationType { get; init; }
     public List<IPhysicsFixture> KinematicFixtures { get; init; } = [];
@@ -39,10 +39,6 @@ public class PhysicsBodyComponent2D : IGameComponent
     /// </summary>
     public int CollisionGroup { get; set; }
 
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Physics Body";
-    public Entity Parent { get; set; } = null!;
-
     private TransformComponent2D? parentTransform;
 
     public PhysicsBodyComponent2D(Vector2 initialPosition)
@@ -51,7 +47,7 @@ public class PhysicsBodyComponent2D : IGameComponent
     }
     public PhysicsBodyComponent2D() : this(Vector2.Zero) { }
 
-    public void Initialize()
+    public override void Initialize()
     {
         parentTransform = Parent.GetComponent<TransformComponent2D>();
     }
@@ -111,17 +107,12 @@ public class PhysicsBodyComponent2D : IGameComponent
         Force = Vector2.Zero;
     }
 
-    public void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // physics bodies do not render directly; transform is updated in state.
     }
 
-    public void UpdatePhysics(float dt)
-    {
-        
-    }
-
-    public void UpdateState(float dt)
+    public override void UpdateState(float dt)
     {
         if (!Enabled || parentTransform is null)
             return;

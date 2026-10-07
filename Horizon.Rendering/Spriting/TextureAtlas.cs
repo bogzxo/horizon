@@ -3,7 +3,6 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.Engine;
 using Horizon.OpenGL.Assets;
@@ -158,14 +157,13 @@ public sealed class TextureAtlas : IDisposable
                 pending.X < 0 || pending.Y < 0 ||
                 pending.X + pending.Width > source.Width || pending.Y + pending.Height > source.Height)
             {
-                ConcurrentLogger.Instance.Log(LogLevel.Error,
-                    $"[TextureAtlas] '{pending.Key}' is not inside of '{pending.Path}' ({source.Width} by {source.Height}).");
+                Log.Error($"[TextureAtlas] '{pending.Key}' is not inside of '{pending.Path}' ({source.Width} by {source.Height}).");
                 continue;
             }
 
             if (!TryPlace(pending.Width, pending.Height, out int x, out int y, ref grown))
             {
-                ConcurrentLogger.Instance.Log(LogLevel.Error, $"[TextureAtlas] There is no room left for '{pending.Key}'.");
+                Log.Error($"[TextureAtlas] There is no room left for '{pending.Key}'.");
                 continue;
             }
 
@@ -229,7 +227,7 @@ public sealed class TextureAtlas : IDisposable
     {
         if (!File.Exists(path))
         {
-            ConcurrentLogger.Instance.Log(LogLevel.Error, $"[TextureAtlas] Failed to find image '{path}'!");
+            Log.Error($"[TextureAtlas] Failed to find image '{path}'!");
             return null;
         }
 
@@ -243,7 +241,7 @@ public sealed class TextureAtlas : IDisposable
         }
         catch (Exception e)
         {
-            ConcurrentLogger.Instance.Log(LogLevel.Error, $"[TextureAtlas] Failed to load image '{path}': {e.Message}");
+            Log.Error($"[TextureAtlas] Failed to load image '{path}': {e.Message}");
             return null;
         }
     }
@@ -269,7 +267,7 @@ public sealed class TextureAtlas : IDisposable
                     },
                     out var result))
             {
-                ConcurrentLogger.Instance.Log(LogLevel.Error, $"[TextureAtlas] {result.Message}");
+                Log.Error($"[TextureAtlas] {result.Message}");
                 return;
             }
 
