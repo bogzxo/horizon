@@ -43,7 +43,7 @@ internal class Program
     {
         // A 1600 by 900 window with vsync, logic and physics each ticking 120 times a second. Change any of that
         // with a `with` (UpdatesPerSecond, PhysicsUpdatesPerSecond, Presentation, VSync and friends).
-        using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "Horizon examples" });
+        using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "Horizon examples", VSync = false });
 
         // The host goes on the engine itself rather than in a scene, so it outlives every scene it swaps between
         var host = engine.AddEntity(new TestHost(TestCatalog.Tests));
