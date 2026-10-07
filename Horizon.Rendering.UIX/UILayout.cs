@@ -30,6 +30,9 @@ public sealed class UILayout
     private readonly Dictionary<string, UIComponent> parts = [];
     private readonly List<UIComponent> roots = [];
 
+    // What Bind has filled containers with, so the next call can keep them
+    private readonly Dictionary<Panel, List<UILayout>> bound = [];
+
     /// <summary>The module the components are in.</summary>
     public UIModule Module { get; }
 
@@ -147,6 +150,67 @@ public sealed class UILayout
 
     /// <inheritdoc cref="Populate(Panel, int)"/>
     public IReadOnlyList<UILayout> Populate(string container, int count) => Populate(Get<Panel>(container), count);
+
+    /// <summary>
+    /// Fills a container with an item per thing in a list, and has each one filled in. The usual loop, minus the
+    /// bit everybody gets wrong:
+    /// <code>
+    /// layout.Populate("maps", maps, (item, map, i) => item.Get&lt;Label&gt;("name").Text = map.Name);
+    /// </code>
+    /// </summary>
+    public IReadOnlyList<UILayout> Populate<T>(Panel container, IReadOnlyList<T> data, Action<UILayout, T, int> fill)
+    {
+        var items = Populate(container, data.Count);
+        for (int i = 0; i < items.Count; i++)
+            fill(items[i], data[i], i);
+
+        return items;
+    }
+
+    /// <inheritdoc cref="Populate{T}(Panel, IReadOnlyList{T}, Action{UILayout, T, int})"/>
+    public IReadOnlyList<UILayout> Populate<T>(string container, IReadOnlyList<T> data, Action<UILayout, T, int> fill) =>
+        Populate(Get<Panel>(container), data, fill);
+
+    /// <summary>
+    /// Like <see cref="Populate{T}(Panel, IReadOnlyList{T}, Action{UILayout, T, int})"/>, but for a list that keeps
+    /// changing (a lobby, a scoreboard, a load of save games). The items made last time are kept and filled in again,
+    /// and only the difference is made or thrown away, so it's cheap to call every time the list changes and what's
+    /// already on screen doesn't make its entrance all over again. Only new items do, staggered among themselves.
+    /// </summary>
+    public IReadOnlyList<UILayout> Bind<T>(Panel container, IReadOnlyList<T> data, Action<UILayout, T, int> fill)
+    {
+        if (container.Template.Length == 0)
+            throw new Exception($"A container of the layout{Named(Path)} is meant to be filled in but doesn't say what from: it needs a template.");
+
+        // Start again if this is the first time, or something else has been at the container since (Populate, say)
+        if (!bound.TryGetValue(container, out var items) || items.Any(item => item.roots.Any(root => root.Parent != container)))
+        {
+            foreach (var child in container.Children.ToArray())
+                container.Remove(child);
+
+            bound[container] = items = [];
+        }
+
+        while (items.Count > data.Count)
+        {
+            foreach (var root in items[^1].roots)
+                container.Remove(root);
+            items.RemoveAt(items.Count - 1);
+        }
+
+        int kept = items.Count;
+        while (items.Count < data.Count)
+            items.Add(Instantiate(container.Template, container, (items.Count - kept) * container.Stagger));
+
+        for (int i = 0; i < items.Count; i++)
+            fill(items[i], data[i], i);
+
+        return items;
+    }
+
+    /// <inheritdoc cref="Bind{T}(Panel, IReadOnlyList{T}, Action{UILayout, T, int})"/>
+    public IReadOnlyList<UILayout> Bind<T>(string container, IReadOnlyList<T> data, Action<UILayout, T, int> fill) =>
+        Bind(Get<Panel>(container), data, fill);
 
     /// <summary>Where a file named by this layout is. Next to it, unless the name says exactly where.</summary>
     public string Resolve(string file) =>
