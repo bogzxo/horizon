@@ -47,6 +47,10 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     // Which scope every unnamed asset belongs to, by its handle. What belongs to nobody isn't in here
     private readonly Dictionary<uint, AssetScope> owners = [];
 
+    // The unnamed assets made to be shared by everything (see AssetScope.EnterGlobal), by their handles.
+    // RemoveUnnamedExcept never touches them: they'd go with whatever happened to need them first
+    private readonly HashSet<uint> shared = [];
+
     // Which scopes use every named asset, and the names that are used by somebody outside of any scope: those
     // are never freed for want of users
     private readonly Dictionary<string, HashSet<AssetScope>> users = [];
@@ -118,7 +122,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
 
     /// <summary>
     /// Disposes every asset that isn't in <paramref name="keep"/>. Named assets are left alone:
-    /// they are a cache shared by whoever asks for the name next.
+    /// they are a cache shared by whoever asks for the name next. So is what was made to be shared by everything
+    /// (see <see cref="AssetScope.EnterGlobal"/>), which would otherwise go with whoever happened to need it first.
     /// </summary>
     /// <returns>How many assets were disposed.</returns>
     public int RemoveUnnamedExcept(HashSet<uint> keep)
@@ -127,7 +132,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         {
             var named = NamedAssets.Values.Select(asset => asset.Handle).ToHashSet();
             var stale = OwnedAssets
-                .Where(asset => !keep.Contains(asset.Handle) && !named.Contains(asset.Handle))
+                .Where(asset => !keep.Contains(asset.Handle) && !named.Contains(asset.Handle) && !shared.Contains(asset.Handle))
                 .ToArray();
 
             foreach (var asset in stale)
@@ -227,6 +232,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     {
         if (Scoped && AssetScope.Current is { } scope)
             owners[asset.Handle] = scope;
+        else if (AssetScope.IsGlobal)
+            shared.Add(asset.Handle);
     }
 
     /// <summary>
@@ -309,6 +316,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             // Its handle is free for the next asset to be given, which is not to inherit an owner. Before the
             // asset is disposed of, that may well be what clears the handle
             owners.Remove(asset.Handle);
+            shared.Remove(asset.Handle);
 
             var named = NamedAssets.Where((item) => item.Value.Handle == asset.Handle).ToArray();
             AssetDisposerType.Dispose(asset);
@@ -382,6 +390,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             OwnedAssets.Clear();
             NamedAssets.Clear();
             owners.Clear();
+            shared.Clear();
             users.Clear();
             pinned.Clear();
 
