@@ -50,7 +50,7 @@ public abstract class Scene : GameObject
     /// <summary>
     /// How long the scene has been updated for, in seconds. It stands still while the scene does.
     /// </summary>
-    public float Time { get; private set; }
+    public double Time { get; private set; }
 
     /// <summary>
     /// Whether another scene has been set and this one is only still on screen until the transition has covered it up.

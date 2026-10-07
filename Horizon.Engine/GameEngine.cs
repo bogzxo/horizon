@@ -52,13 +52,14 @@ public class GameEngine : Entity
 
     /// <summary>
     /// How long (in seconds) frames have been drawn for. This is the clock for anything that only animates what is seen.
+    /// Kept in double precision: in single precision a clock in seconds can't tell milliseconds apart any more after a few hours.
     /// </summary>
-    public float TotalTime { get; private set; }
+    public double TotalTime { get; private set; }
 
     /// <summary>
     /// How long (in seconds) the game has been updated for. It stands still whenever the updates do.
     /// </summary>
-    public float Runtime { get; private set; }
+    public double Runtime { get; private set; }
 
     public EngineEventHandler EventManager { get; }
     public ObjectManager ObjectManager { get; }
