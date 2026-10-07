@@ -35,16 +35,14 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// <see cref="SimulationLoop"/>): its logic and its physics, one tick after another, each at a rate of its own.
 /// </para>
 /// <para>
-/// How the two share the game is up to <see cref="Threading"/>. Taking turns (<see cref="ThreadingMode.Lockstep"/>)
-/// a frame is drawn while the simulation stands still, from the game as it is. Decoupled
-/// (<see cref="ThreadingMode.Decoupled"/>) neither waits for the other: at the end of every tick the simulation
-/// publishes a snapshot of everything that is drawn (<see cref="Entity.Capture"/>, <see cref="SnapshotClock"/>), and
-/// frames are drawn from the last two of those, at the moment between them the frame is due to show
-/// (<see cref="Presentation"/>). So whatever moves goes the same distance for the same time from frame to frame, however
-/// many frames there are a second. The simulation only stands still for what has to happen on this thread with
-/// nobody touching the game: setting up what was added to it (<see cref="EntityLifecycle"/>), swapping scenes, and
-/// whatever else asks for it (<see cref="RequestExclusive"/>). It does that at the end of a tick, and the next frame
-/// gets it done before it draws.
+/// Neither waits for the other. At the end of every tick the simulation publishes a snapshot of everything that is
+/// drawn (<see cref="Entity.Capture"/>, <see cref="SnapshotClock"/>), and frames are drawn from the last two of those,
+/// at the moment between them the frame is due to show (<see cref="Presentation"/>). So whatever moves goes the same
+/// distance for the same time from frame to frame, however many frames there are a second, and a frame that takes
+/// its time doesn't hold the game up (or the other way round). The simulation only stands still for what has to
+/// happen on this thread with nobody touching the game: setting up what was added to it (<see cref="EntityLifecycle"/>),
+/// swapping scenes, and whatever else asks for it (<see cref="RequestExclusive"/>). It does that at the end of a tick,
+/// and the next frame gets it done before it draws.
 /// </para>
 /// </summary>
 public class WindowManager : GameComponent, IDisposable
@@ -52,33 +50,20 @@ public class WindowManager : GameComponent, IDisposable
     private readonly IWindow _window;
     private IInputContext _input;
 
-    // Taking turns, held by the simulation for a tick and by the drawing for a frame
-    private readonly TurnGate simulationGate = new();
-
     private SimulationLoop? simulation;
     private readonly double updatesPerSecond, physicsUpdatesPerSecond;
 
     // What the simulation publishes at the end of every tick and frames are drawn from
     private readonly SnapshotClock snapshots = new();
 
-    // How drawing and simulating share the game, and what it is to be from the next moment that is safe to change it at
-    private volatile ThreadingMode threading;
-    private ThreadingMode? pendingThreading;
-
-    // Whether the tick that is going on took its turn at the gate, which is what it lets go of at its end
-    private bool tickHoldsGate;
-
-    // Decoupled, the simulation stands still at the end of a tick for whatever has to happen on this thread. It says
+    // The simulation stands still at the end of a tick for whatever has to happen on this thread. It says
     // so with the first, the frame that does the work lets it carry on with the second
     private readonly SemaphoreSlim simulationParked = new(0, 1), simulationResumed = new(0, 1);
     private volatile bool exclusiveRequested;
 
-    // The longest (in milliseconds) the simulation stands still for what was added to the game to be set up. That
+    // The longest (in milliseconds) the simulation waits for a frame to come and do what it stood still for. That
     // happens at the start of the next frame, so this only runs out when no frames are drawn
     private const int LONGEST_SET_UP_WAIT = 250;
-
-    // How long a tick that is waiting for that steps out of the gate at a time, before it looks again
-    private static readonly TimeSpan SET_UP_POLL = TimeSpan.FromMilliseconds(4);
 
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
@@ -89,9 +74,6 @@ public class WindowManager : GameComponent, IDisposable
     // Set this in the environment to a number of seconds and the loops are written to the log that often.
     // For finding out what a game costs without building anything into it
     private const string LOG_LOOPS_VARIABLE = "HORIZON_LOG_LOOPS";
-
-    // Set this in the environment to "decoupled" or "lockstep" to have a game run that way whatever it was made with
-    private const string THREADING_VARIABLE = "HORIZON_THREADING";
 
     private readonly double logLoopsEvery;
     private double nextLoopLog;
@@ -114,22 +96,7 @@ public class WindowManager : GameComponent, IDisposable
     public bool IsRunning { get; private set; }
 
     /// <summary>
-    /// How drawing and simulating share the game, see <see cref="ThreadingMode"/>. Can be changed while the game runs,
-    /// from any thread: it takes hold at the next moment it safely can, which is before the next frame.
-    /// </summary>
-    public ThreadingMode Threading
-    {
-        get => pendingThreading ?? threading;
-        set
-        {
-            lock (displayLock) pendingThreading = value;
-            RequestExclusive();
-        }
-    }
-
-    /// <summary>
-    /// How frames show the simulation while it is decoupled from them, see <see cref="PresentationMode"/>. Taking turns,
-    /// every frame shows the game as it is. From any thread, it takes hold at the next frame.
+    /// How frames show the simulation, see <see cref="PresentationMode"/>. From any thread, it takes hold at the next frame.
     /// </summary>
     public PresentationMode Presentation { get; set; }
 
@@ -253,9 +220,6 @@ public class WindowManager : GameComponent, IDisposable
         physicsUpdatesPerSecond = config.PhysicsUpdatesPerSecond > 0.0 ? config.PhysicsUpdatesPerSecond : 120.0;
         Loops = [renderStatistics];
 
-        threading = Enum.TryParse(Environment.GetEnvironmentVariable(THREADING_VARIABLE), ignoreCase: true, out ThreadingMode forced)
-            ? forced
-            : config.Threading;
         Presentation = config.Presentation;
 
         // Create a window with the specified options.
@@ -338,7 +302,7 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to draw a frame, the way <see cref="Threading"/> says.
+    /// Helper method to draw a frame from what the simulation published, after whatever it stood still for.
     /// </summary>
     private void DrawFrame(float dt)
     {
@@ -347,26 +311,6 @@ public class WindowManager : GameComponent, IDisposable
         // the scene it was covering up is there
         dt = Math.Max(0.0f, dt - stalled);
         stalled = 0.0f;
-
-        if (threading == ThreadingMode.Lockstep)
-        {
-            // In line with the simulation, in the order we asked: without a limit on the frames this asks again the
-            // moment it lets go, and a plain lock would let it straight back in ahead of the simulation every time
-            simulationGate.Enter();
-            try
-            {
-                DoExclusiveWork(dt, always: true);
-
-                // Whatever it was switched to just now, this frame holds the gate and is drawn from the game as it is
-                DrawFrom(snapshots.Acquire(PresentationMode.Latest) with { Threading = ThreadingMode.Lockstep }, dt);
-            }
-            finally
-            {
-                simulationGate.Exit();
-            }
-
-            return;
-        }
 
         // Whatever the simulation stopped for at the end of its last tick, done before anything is drawn
         if (simulationParked.Wait(0))
@@ -387,7 +331,7 @@ public class WindowManager : GameComponent, IDisposable
             DoExclusiveWork(dt, always: simulation is null);
         }
 
-        DrawFrom(snapshots.Acquire(Presentation) with { Threading = ThreadingMode.Decoupled }, dt);
+        DrawFrom(snapshots.Acquire(Presentation), dt);
     }
 
     /// <summary>
@@ -432,34 +376,13 @@ public class WindowManager : GameComponent, IDisposable
         if (!always)
             return;
 
-        ApplyPendingThreading();
-
         // Whatever the updates added since the last frame is set up before anything is drawn (and what they
-        // destroyed is freed), and a simulation that is holding its tick back for it is told
+        // destroyed is freed)
         if (EntityLifecycle.HasWork)
-        {
             EntityLifecycle.Flush();
-            simulationGate.Signal();
-        }
 
         exclusiveRequested = false;
         Exclusive?.Invoke(dt);
-    }
-
-    private void ApplyPendingThreading()
-    {
-        ThreadingMode? wanted;
-        lock (displayLock)
-        {
-            wanted = pendingThreading;
-            pendingThreading = null;
-        }
-
-        if (wanted is not { } mode || mode == threading)
-            return;
-
-        threading = mode;
-        Log.Info($"[{Name}] Drawing and simulating {(mode == ThreadingMode.Decoupled ? "on their own from here on, frames are drawn from snapshots" : "in turns from here on")}.");
     }
 
     private void UpdateViewport()
@@ -564,7 +487,7 @@ public class WindowManager : GameComponent, IDisposable
         if (nextFrame < now - period)
             nextFrame = now;
 
-        EngineLoop.WaitUntil(nextFrame);
+        LoopTiming.WaitUntil(nextFrame);
         nextFrame += period;
     }
 
@@ -602,7 +525,7 @@ public class WindowManager : GameComponent, IDisposable
 
         Loops = [renderStatistics, simulation.Ticks, simulation.Logic, simulation.Physics];
 
-        Log.Info($"[{Name}] Simulating at {simulation.TickRate:0} ticks a second (logic at {simulation.LogicRate:0}, physics at {simulation.PhysicsRate:0}), drawing and simulating {(threading == ThreadingMode.Decoupled ? $"on their own, frames {(Presentation == PresentationMode.Interpolated ? "interpolated" : "showing the newest tick")}" : "in turns")}.");
+        Log.Info($"[{Name}] Simulating at {simulation.TickRate:0} ticks a second (logic at {simulation.LogicRate:0}, physics at {simulation.PhysicsRate:0}), frames {(Presentation == PresentationMode.Interpolated ? "interpolated between ticks" : "showing the newest tick")}.");
         simulation.Start();
     }
 
@@ -611,15 +534,7 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     private sealed class Host(WindowManager window) : ISimulationHost
     {
-        public void BeginTick()
-        {
-            window.tickHoldsGate = window.threading == ThreadingMode.Lockstep;
-            if (!window.tickHoldsGate)
-                return;
-
-            window.simulationGate.Enter();
-            window.AwaitSetUp();
-        }
+        public void BeginTick() { }
 
         public void UpdateState(float dt) => window.Parent.UpdateState(dt);
 
@@ -627,26 +542,18 @@ public class WindowManager : GameComponent, IDisposable
 
         public void EndTick(long tick, long stamp, double time)
         {
+            window.snapshots.BeginCapture();
             try
             {
-                window.snapshots.BeginCapture();
-                try
-                {
-                    window.Parent.Capture();
-                }
-                finally
-                {
-                    window.snapshots.EndCapture(stamp, time);
-                }
+                window.Parent.Capture();
             }
             finally
             {
-                if (window.tickHoldsGate)
-                    window.simulationGate.Exit();
+                window.snapshots.EndCapture(stamp, time);
             }
 
             // Whatever has to be done on the thread of the window without anybody touching the game, done before the next tick
-            if (!window.tickHoldsGate && (window.exclusiveRequested || EntityLifecycle.HasWork))
+            if (window.exclusiveRequested || EntityLifecycle.HasWork)
             {
                 long parked = Stopwatch.GetTimestamp();
                 window.Rendezvous();
@@ -662,7 +569,7 @@ public class WindowManager : GameComponent, IDisposable
 
     /// <summary>
     /// Helper method to have the simulation stand still until the next frame has done what had to be done with nobody
-    /// touching the game. Simulation thread, decoupled, at the end of a tick.
+    /// touching the game. Simulation thread, at the end of a tick.
     /// </summary>
     private void Rendezvous()
     {
@@ -676,19 +583,6 @@ public class WindowManager : GameComponent, IDisposable
             return;
 
         simulationResumed.Wait();
-    }
-
-    /// <summary>
-    /// Helper method to hold the tick of a simulation that takes turns back until everything that was added to the game
-    /// has been set up, which the render thread does at the start of its next frame (see <see cref="EntityLifecycle"/>).
-    /// Called with the gate held, which is let go of for as long as the wait takes.
-    /// </summary>
-    private void AwaitSetUp()
-    {
-        long started = Environment.TickCount64;
-
-        while (EntityLifecycle.HasPending && !_window.IsClosing && Environment.TickCount64 - started < LONGEST_SET_UP_WAIT)
-            simulationGate.Pause(SET_UP_POLL);
     }
 
     /// <summary>

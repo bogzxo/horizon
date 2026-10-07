@@ -949,7 +949,7 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>
-    /// Helper method for what a layer looks like as it is, for a frame that is drawn in turns with the simulation.
+    /// Helper method for what a layer looks like as it is, for a frame that is drawn with the simulation standing still.
     /// </summary>
     private static CapturedLayer Live(TileMapLayer layer) => new()
     {

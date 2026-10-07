@@ -44,7 +44,7 @@ public sealed class PhysicsFluidParticleSimulator2D : ParticleSimulator2D
     private readonly nint[] fences = new nint[BufferCount];
     private int frameIndex;
 
-    // The logic thread fills `back`, then swaps it in as `front` for the render thread to upload,
+    // The simulation thread fills `back`, then swaps it in as `front` for the render thread to upload,
     // so a frame never sees a half-simulated step.
     private readonly Lock frameLock = new();
     private readonly PhysicsWorld world;

@@ -37,7 +37,7 @@ public interface ISimulationHost
 /// </para>
 /// <para>
 /// Between two ticks the thread sleeps for as long as it safely can and only spins for the last stretch, see
-/// <see cref="EngineLoop.WaitUntil"/>. A loop that falls behind makes up for up to a few ticks in a row, and lets the
+/// <see cref="LoopTiming.WaitUntil"/>. A loop that falls behind makes up for up to a few ticks in a row, and lets the
 /// rest go rather than racing to catch up with something it never will.
 /// </para>
 /// </summary>
@@ -149,21 +149,21 @@ public sealed class SimulationLoop : IDisposable
 
     private void Run()
     {
-        EngineLoop.SharpenTimer(true);
+        LoopTiming.SharpenTimer(true);
 
         try
         {
             while (running)
             {
                 if (!double.IsNaN(next))
-                    EngineLoop.WaitUntil(next / frequency);
+                    LoopTiming.WaitUntil(next / frequency);
 
                 Step();
             }
         }
         finally
         {
-            EngineLoop.SharpenTimer(false);
+            LoopTiming.SharpenTimer(false);
         }
     }
 

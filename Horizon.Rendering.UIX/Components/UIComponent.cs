@@ -52,7 +52,7 @@ public abstract partial class UIComponent
     // Finds the component behind an object a script is holding.
     private static readonly ConditionalWeakTable<Dictionary<string, IRuntimeValue>, UIComponent> scripted = new();
 
-    // Children are replaced wholesale on every change, so the logic thread can walk the array it has
+    // Children are replaced wholesale on every change, so the simulation thread can walk the array it has
     // while another thread adds to the tree.
     private readonly Lock childrenLock = new();
     private UIComponent[] children = [];
@@ -413,7 +413,7 @@ public abstract partial class UIComponent
             child.UpdateTree(dt);
     }
 
-    /// <summary>Called once per state update, on the logic thread.</summary>
+    /// <summary>Called once per state update, on the simulation thread.</summary>
     protected virtual void Update(float dt)
     { }
 }

@@ -28,7 +28,7 @@ public class PhysicsWorldDebugRenderer : GameComponent
         public readonly List<uint> Indices = [];
     }
 
-    // What is drawn into: the lines of the frame that is drawn in turns with the simulation, or those of the capture
+    // What is drawn into: the lines of a frame that is drawn with the simulation standing still, or those of the capture
     // that is going on, for frames that are drawn alongside it
     private readonly Lines live = new();
     private readonly SnapshotBuffer<Lines> captured = new(static () => new Lines());

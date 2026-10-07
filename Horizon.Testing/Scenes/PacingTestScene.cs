@@ -40,7 +40,6 @@ public class PacingTestScene : Scene, ITestControls
     public IReadOnlyList<TestControl> Controls { get; } =
     [
         new("C", "camera follows / stands still"),
-        new("F5", "lockstep / decoupled"),
         new("F6", "interpolated / newest tick")
     ];
 
@@ -152,8 +151,6 @@ public class PacingTestScene : Scene, ITestControls
             cameraFollows = !cameraFollows;
 
         var window = Engine.WindowManager;
-        if (Engine.Input.Keyboard.WasPressed(Key.F5))
-            window.Threading = window.Threading == ThreadingMode.Lockstep ? ThreadingMode.Decoupled : ThreadingMode.Lockstep;
         if (Engine.Input.Keyboard.WasPressed(Key.F6))
             window.Presentation = window.Presentation == PresentationMode.Interpolated ? PresentationMode.Latest : PresentationMode.Interpolated;
 
@@ -179,7 +176,7 @@ public class PacingTestScene : Scene, ITestControls
 
     /// <summary>
     /// Where the runners are drawn, as the renderer sees them this frame: between the last two ticks when drawn
-    /// alongside the simulation (the way the sprite batch blends them), as they are when drawn in turns with it.
+    /// alongside the simulation (the way the sprite batch blends them), as they are with it standing still.
     /// Measured on the render thread.
     /// </summary>
     internal float? DrawnX(bool physics)
@@ -220,8 +217,7 @@ public class PacingTestScene : Scene, ITestControls
     {
         get
         {
-            var window = Engine.WindowManager;
-            return window.Threading == ThreadingMode.Lockstep ? "lockstep" : $"decoupled, {(window.Presentation == PresentationMode.Interpolated ? "interpolated" : "newest tick")}";
+            return Engine.WindowManager.Presentation == PresentationMode.Interpolated ? "interpolated" : "newest tick";
         }
     }
 

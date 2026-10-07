@@ -51,7 +51,7 @@ internal sealed class PhysicsParticleMap
 
 /// <summary>
 /// What the world tells particles that are simulated on the GPU, which can't be stepped along with everything else:
-/// the world steps on its own thread and a compute shader can only be run from the GL one. So after every step the
+/// the world steps on the simulation thread and a compute shader can only be run from the GL one. So after every step the
 /// world leaves what there is to run into here (the map, where the bodies are, the pushes that were asked for),
 /// and the simulator comes to collect it when it is about to move its particles.
 /// </summary>

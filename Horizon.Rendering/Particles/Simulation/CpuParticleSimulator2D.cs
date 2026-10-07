@@ -12,7 +12,7 @@ using Silk.NET.OpenGL;
 namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
-/// Simulates particles on the CPU, on the logic thread.
+/// Simulates particles on the CPU, on the simulation thread.
 /// Live particles are always packed in [0, Count), so only live particles are simulated,
 /// uploaded and drawn. GPU data is written through a persistently mapped, triple-buffered
 /// instance buffer guarded by fences.
@@ -40,12 +40,12 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
     private readonly nint[] fences = new nint[BufferCount];
     private int frameIndex;
 
-    // Simulation state, only ever touched by the logic thread. Indices are NOT stable
+    // Simulation state, only ever touched by the simulation thread. Indices are NOT stable
     // (dead particles are removed by swapping the last live particle into their slot).
     private ParticleState2D[] particles = [];
     private int count;
 
-    // The logic thread fills `back`, then swaps it in as `front` for the render thread to upload,
+    // The simulation thread fills `back`, then swaps it in as `front` for the render thread to upload,
     // so a frame never sees a half-simulated step.
     private readonly Lock frameLock = new();
     private ParticleRenderData[] back = [];

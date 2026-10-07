@@ -49,12 +49,6 @@ public readonly record struct RenderFrame(
     private static RenderFrame active;
 
     /// <summary>
-    /// How the frame is drawn. Drawn <see cref="ThreadingMode.Decoupled"/>, the simulation is running while it is and
-    /// nothing that draws may read the game itself, only what was published (see <see cref="IsDecoupled"/>).
-    /// </summary>
-    public ThreadingMode Threading { get; init; }
-
-    /// <summary>
     /// The frame that is being drawn, on the render thread. On any other thread, and on the render thread outside of
     /// a frame, it has no snapshot.
     /// </summary>
@@ -70,10 +64,11 @@ public readonly record struct RenderFrame(
     public bool HasSnapshot => Clock is not null && CurrentSlot >= 0;
 
     /// <summary>
-    /// Whether what draws has to draw from snapshots: the frame has them and the simulation is running alongside it.
-    /// Otherwise (taking turns, setting a scene up, before the first tick) the game itself is there to be read.
+    /// Whether what draws has to draw from snapshots: the frame has them, and the simulation is running alongside it
+    /// so nothing that draws may read the game itself, only what was published. Otherwise (setting a scene up with the
+    /// simulation standing still, before the first tick) the game itself is there to be read.
     /// </summary>
-    public bool IsDecoupled => HasSnapshot && Threading == ThreadingMode.Decoupled;
+    public bool IsDecoupled => HasSnapshot;
 
     /// <summary>Whether the frame shows a moment between two snapshots rather than one of them as it is.</summary>
     public bool Interpolating => HasSnapshot && PreviousSlot != CurrentSlot && Alpha < 1.0f;

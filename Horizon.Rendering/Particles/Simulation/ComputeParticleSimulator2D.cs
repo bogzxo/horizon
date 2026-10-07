@@ -42,7 +42,7 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
     private Technique? compute;
     private BufferObject? particleBuffer;
 
-    // The logic thread only banks time, the simulation itself has to run on the GL thread.
+    // The simulation thread only banks time, the simulation itself has to run on the GL thread.
     private readonly Lock timeLock = new();
     private float pendingTime;
 

@@ -231,7 +231,7 @@ public class Sprite : GameObject
 
         if (Atlas is { } atlas)
         {
-            // The frame can change under us (it is advanced on the logic thread), the array it indexes can't
+            // The frame can change under us (it is advanced on the simulation thread), the array it indexes can't
             string[] frames = _atlasFrames;
             int frame = _atlasFrame;
 

@@ -30,23 +30,17 @@ public readonly struct WindowManagerConfiguration
     /// </summary>
     public readonly double FramesPerSecond { get; init; } = 0.0;
 
-    /// <summary>How many times a second the state of the game is updated, on the logic thread.</summary>
+    /// <summary>How many times a second the state of the game is updated, on the simulation thread.</summary>
     public readonly double UpdatesPerSecond { get; init; } = 120.0;
 
     /// <summary>
-    /// How many times a second the physics is stepped, on a thread of its own. Every step is told the same length
-    /// of time (one over this), whatever the machine is busy with.
+    /// How many times a second the physics is stepped, on the simulation thread along with the updates. Every step is
+    /// told the same length of time (one over this), whatever the machine is busy with.
     /// </summary>
     public readonly double PhysicsUpdatesPerSecond { get; init; } = 120.0;
 
     /// <summary>
-    /// How drawing and simulating share the game, see <see cref="ThreadingMode"/>. Taking turns unless said otherwise,
-    /// until everything that draws draws from snapshots.
-    /// </summary>
-    public readonly ThreadingMode Threading { get; init; } = ThreadingMode.Lockstep;
-
-    /// <summary>
-    /// How frames show the simulation when it is decoupled from them, see <see cref="PresentationMode"/>. Interpolated
+    /// How frames show the simulation, see <see cref="PresentationMode"/>. Interpolated
     /// unless said otherwise: smooth at any frame rate, at most a tick behind.
     /// </summary>
     public readonly PresentationMode Presentation { get; init; } = PresentationMode.Interpolated;
