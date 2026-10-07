@@ -393,7 +393,10 @@ public abstract partial class UIComponent
     protected virtual void PaintChildren(UIDrawList list)
     {
         foreach (var child in children)
-            child.PaintTree(list);
+        {
+            if (ShowsChild(child))
+                child.PaintTree(list);
+        }
     }
 
     /// <summary>

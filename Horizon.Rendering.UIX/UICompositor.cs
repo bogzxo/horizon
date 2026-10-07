@@ -248,6 +248,12 @@ public partial class UICompositor : GameComponent, IDisposable
     public static UICompositor ForScreen(string? theme = null) =>
         new(new Camera2D(GameEngine.Instance.WindowManager.ViewportSize), theme) { ownsCamera = true };
 
+    /// <inheritdoc cref="ForScreen(string?)"/>
+    /// <param name="skinDirectory">The directory holding the skin definition and its art.</param>
+    /// <param name="skinFile">The name of the skin definition in that directory.</param>
+    public static UICompositor ForScreen(string skinDirectory, string skinFile, string? theme = null) =>
+        new(new Camera2D(GameEngine.Instance.WindowManager.ViewportSize), skinDirectory, skinFile, theme) { ownsCamera = true };
+
     public UIModule CreateModule()
     {
         var module = new UIModule(this);
@@ -348,6 +354,10 @@ public partial class UICompositor : GameComponent, IDisposable
             : 1.0f;
         UIScale = MathF.Max(0.01f, fit * Scale);
 
+        // Every module that was designed for a screen of its own works out its own scale the same way
+        foreach (var module in snapshot)
+            module.FitTo(screen);
+
         // The pointer is tested against the layout of the previous update, which is the one on screen.
         RoutePointer(snapshot);
         RouteKeyboard();
@@ -369,6 +379,12 @@ public partial class UICompositor : GameComponent, IDisposable
             // Whatever an editor has picked out is marked whether the debugger is open or not.
             if (Highlighted is { } highlighted && highlighted.Module == module)
                 UILayoutOverlay.PaintHighlight(back, highlighted);
+
+            foreach (var marked in Highlights)
+            {
+                if (marked.Module == module && marked != Highlighted)
+                    UILayoutOverlay.PaintHighlight(back, marked);
+            }
         }
         back.End();
 
@@ -492,6 +508,22 @@ public partial class UICompositor : GameComponent, IDisposable
     /// A component of this UI that is marked out from the rest, null for none. What an editor has selected.
     /// </summary>
     public UIComponent? Highlighted { get; set; }
+
+    /// <summary>
+    /// More components marked out the way <see cref="Highlighted"/> is, for an editor with several selected.
+    /// Replace the collection rather than changing it, it's read while the UI paints.
+    /// </summary>
+    public IReadOnlyCollection<UIComponent> Highlights { get; set; } = [];
+
+    /// <summary>
+    /// Called when the other button of the pointer (right click) goes down and nothing under it handled it with
+    /// <see cref="UIComponent.OnContextMenu"/>: with the innermost component under the pointer (null if none) and
+    /// where the pointer is, in the camera's world. Show a <see cref="ContextMenu"/> from here.
+    /// </summary>
+    public Action<UIComponent?, Vector2>? ContextRequested { get; set; }
+
+    // Whether the other button was down as of the last update
+    private bool secondaryWasDown;
 
     public override void Render(float dt)
     {
