@@ -13,7 +13,7 @@ using Silk.NET.Input;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Rendering;
 
 /// <summary>
 /// The tile maps of the engine. The scene writes two small Tiled maps of its own (and the tile set, the images and
@@ -22,7 +22,7 @@ namespace Horizon.Testing.Scenes;
 /// group that scrolls at half speed, a layer in front of everything and a tile that was put down as an object.
 /// How the checks went that are made as the scene starts is on the right.
 /// </summary>
-public class TileMapTestScene : Scene, ITestControls
+public class TileMapExample : Scene, ITestControls
 {
     private static readonly Vector2 DesignSize = new(1600, 900);
 
@@ -45,7 +45,7 @@ public class TileMapTestScene : Scene, ITestControls
     private TileMap _map = null!;
     private Vector2 _eye;
 
-    public TileMapTestScene()
+    public TileMapExample()
     {
         // Three pixels of the screen to one of the map
         _camera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize / 3.0f));

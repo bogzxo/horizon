@@ -10,7 +10,7 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.UI;
 
 /// <summary>
 /// The controls of the UI library that came after the first ones: the dropdown and the list it opens on top of
@@ -18,7 +18,7 @@ namespace Horizon.Testing.Scenes;
 /// can give its components (one after the other, if their container says so).
 /// With a self-test a scripted pointer works its way through all of it and the results are printed.
 /// </summary>
-public class UIControlsTestScene : Scene, ITestControls
+public class UIControlsExample : Scene, ITestControls
 {
     // The screen the test is laid out for. The window of the tests is that size, so the UI starts at a scale of 1.
     private static readonly Vector2 DesignSize = new(1600, 900);
@@ -74,7 +74,7 @@ public class UIControlsTestScene : Scene, ITestControls
 
     private int _dropdownChanges, _sliderChanges, _pickerChanges;
 
-    public UIControlsTestScene(bool selfTest = false)
+    public UIControlsExample(bool selfTest = false)
     {
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;

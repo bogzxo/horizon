@@ -8,7 +8,7 @@ using Horizon.Rendering.Particles;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Physics;
 
 /// <summary>
 /// Pours the particles of a <see cref="PhysicsFluidParticleSimulator2D"/> into three basins next to each other.
@@ -19,7 +19,7 @@ namespace Horizon.Testing.Scenes;
 /// Hold left click: pour water. Hold right click: pour sand. P: toggle the spout. R: toggle the rain. Space: shockwave.
 /// B: drop the crate. C: clear. D: toggle the outlines of the physics world.
 /// </summary>
-public class FluidTestScene : Scene, ITestControls
+public class FluidExample : Scene, ITestControls
 {
     private const float Wall = 24.0f;           // How thick the floor, the walls and the dividers are
     private const float HoseRate = 400.0f;     // Particles per second
@@ -56,7 +56,7 @@ public class FluidTestScene : Scene, ITestControls
     private float spoutDue, pourDue, rainDue, statusTimer;
     private int updates;
 
-    public FluidTestScene()
+    public FluidExample()
     {
         ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
     }
@@ -150,7 +150,7 @@ public class FluidTestScene : Scene, ITestControls
     {
         base.PostInit();
 
-        Console.WriteLine("FluidTestScene\r\n\r\n The spout fills the left basin, which overflows into the next one, and that into the last.");
+        Console.WriteLine("FluidExample\r\n\r\n The spout fills the left basin, which overflows into the next one, and that into the last.");
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
     }
 

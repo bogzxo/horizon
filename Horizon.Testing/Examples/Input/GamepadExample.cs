@@ -10,7 +10,7 @@ using Horizon.Rendering.UIX.Components;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Input;
 
 /// <summary>
 /// The gamepads of Horizon.Input2. On the left is every gamepad there is with what is held on it and which
@@ -18,7 +18,7 @@ namespace Horizon.Testing.Scenes;
 /// is how the checks went that are made as the scene starts: bindings, combinations, a gamepad that is fed by
 /// hand, and all of it written out as HIDL and read back.
 /// </summary>
-public class GamepadTestScene : Scene, ITestControls
+public class GamepadExample : Scene, ITestControls
 {
     private static readonly Vector2 DesignSize = new(1600, 900);
 
@@ -49,7 +49,7 @@ public class GamepadTestScene : Scene, ITestControls
     private Label _live = null!;
     private readonly List<GamepadInput> _held = [];
 
-    public GamepadTestScene()
+    public GamepadExample()
     {
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;

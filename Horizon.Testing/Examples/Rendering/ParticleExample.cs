@@ -7,14 +7,14 @@ using Horizon.Rendering.Particles.Simulation;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Rendering;
 
 /// <summary>
 /// Runs both particle simulators side by side: the CPU one owns the left half of the screen (orange),
 /// the compute shader one the right half (blue). Each side sets off an explosion every so often.
 /// Left click: explosion. Hold right click: fountain. G: toggle gravity.
 /// </summary>
-public class ParticleTestScene : Scene, ITestControls
+public class ParticleExample : Scene, ITestControls
 {
     private const float BurstInterval = 1.5f;
 
@@ -37,7 +37,7 @@ public class ParticleTestScene : Scene, ITestControls
     private float burstTimer = BurstInterval;
     private bool prevMouseClicked, autoBomb;
 
-    public ParticleTestScene()
+    public ParticleExample()
     {
         ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
     }
@@ -70,7 +70,7 @@ public class ParticleTestScene : Scene, ITestControls
     {
         base.PostInit();
 
-        Console.WriteLine("ParticleTestScene\r\n\r\n CPU simulator on the left, compute shader simulator on the right.");
+        Console.WriteLine("ParticleExample\r\n\r\n CPU simulator on the left, compute shader simulator on the right.");
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
     }
 

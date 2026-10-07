@@ -11,7 +11,7 @@ using Silk.NET.Input;
 
 using Button = Horizon.Rendering.UIX.Components.Button;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.UI;
 
 /// <summary>
 /// Tests the new Dead Revolver UI pack as a skin. Everything on screen is cut out of the pack's sheets by the names
@@ -21,7 +21,7 @@ namespace Horizon.Testing.Scenes;
 /// What drifts about behind the panel isn't UI at all: those are <see cref="Sprite"/>s in a
 /// <see cref="SpriteBatch"/>, showing sprites of the same pack out of an atlas of their own.
 /// </summary>
-public class UIPackTestScene : Scene, ITestControls
+public class UIPackExample : Scene, ITestControls
 {
     private const string SkinDirectory = "Assets/uix/dead_revolver/";
     private const int DrifterCount = 36;
@@ -52,7 +52,7 @@ public class UIPackTestScene : Scene, ITestControls
     private readonly TextureAtlas spriteAtlas = new(512, 512);
     private readonly List<(Sprite Sprite, string Name, Vector2 Velocity, float Spin)> drifters = [];
 
-    public UIPackTestScene()
+    public UIPackExample()
     {
         var camera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = camera;

@@ -12,7 +12,7 @@ using Horizon.Rendering.Particles.Simulation;
 
 using Silk.NET.Input;
 
-namespace Horizon.Testing.Scenes;
+namespace Horizon.Testing.Examples.Rendering;
 
 /// <summary>
 /// A brick wall (with a normal map, and a specular one that has every fourth brick glazed), a few solid blocks in front
@@ -24,7 +24,7 @@ namespace Horizon.Testing.Scenes;
 /// Started without the lighting this is the test of a plain <see cref="Renderer2D"/> instead: the same wall and particles
 /// drawn into a frame buffer a quarter of the size of the window, and blown up from there.
 /// </summary>
-public class LightingTestScene(bool deferred = true) : Scene, ITestControls
+public class LightingExample(bool deferred = true) : Scene, ITestControls
 {
     private const float CellSize = 32.0f;
     private const float StatusInterval = 5.0f;
@@ -205,11 +205,11 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
 
         if (lighting is null)
         {
-            Console.WriteLine("LightingTestScene\r\n\r\n A plain Renderer2D: the wall and the particles are drawn at a quarter of the size and blown up.");
+            Console.WriteLine("LightingExample\r\n\r\n A plain Renderer2D: the wall and the particles are drawn at a quarter of the size and blown up.");
         }
         else
         {
-            Console.WriteLine("LightingTestScene\r\n\r\n Three lights circle the middle, a fourth follows the mouse. The blocks cast shadows.");
+            Console.WriteLine("LightingExample\r\n\r\n Three lights circle the middle, a fourth follows the mouse. The blocks cast shadows.");
         }
 
         Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
