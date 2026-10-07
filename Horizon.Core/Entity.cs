@@ -1,29 +1,36 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading;
+
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
+using Horizon.Core.Tweening;
 
 namespace Horizon.Core;
 
 /// <summary>
-/// The thing a game is made of: it has components that do its work and children that are entities themselves,
+/// The thing a game is made of. It has components that do its work and children that are entities themselves,
 /// and passes drawing and updating on to both.
 /// <para>
 /// An entity is made (its constructor, on any thread, with nothing of the GPU to be had), then set up (its
 /// <see cref="Initialize"/>, on the render thread, where it makes what it needs on the GPU and adds what it is
 /// made of), then drawn and updated, and in the end disposed of. Whatever is added to it is set up after it,
-/// in the order it was added, and before it is first updated or drawn: see <see cref="InitializeAll"/> for what
+/// in the order it was added, and before it is first updated or drawn. See <see cref="InitializeAll"/> for what
 /// is added while it is being set up, and <see cref="EntityLifecycle"/> for what is added afterwards.
+/// </para>
+/// <para>
+/// Children and components that are switched off (<see cref="Enabled"/>) are skipped, with everything in them.
 /// </para>
 /// </summary>
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
-    // Backing store for Thread-Safe Enable/Disable
     private volatile bool _enabled = true;
 
+    /// <summary>
+    /// Whether the entity gets its turns. One that is switched off is not updated and not drawn, and neither is anything in it.
+    /// It is off until it has been set up.
+    /// </summary>
     public bool Enabled
     {
         get => _enabled;
@@ -34,31 +41,35 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public Entity? Parent { get; set; }
 
-    // Use IReadOnlyList so external classes can't bypass our thread-safe Add/Remove methods.
+    // Read only, so nobody adds or removes behind the back of the lock
     public IReadOnlyList<IGameComponent> Components => _componentsCache;
 
     public IReadOnlyList<Entity> Children => _childrenCache;
 
-    // Mutex lock for structural modifications (Add/Remove)
+    // Held while something is added or removed
     private readonly Lock _structuralLock = new();
 
+    // The lists are only touched under the lock. The arrays are copies that are swapped whole, so a turn can walk them without one
     private readonly List<IGameComponent> _components = [];
-    private IGameComponent[] _componentsCache = []; // Fast lock-free iteration cache
+    private IGameComponent[] _componentsCache = [];
 
     private readonly List<Entity> _children = [];
-    private Entity[] _childrenCache = []; // Fast lock-free iteration cache
+    private Entity[] _childrenCache = [];
 
-    // Thread-safe queues and O(1) lookups for initialization
+    // What was added and is still waiting to be set up, in the order it came. And how many of those there are,
+    // which is nearly always none, so a turn only has to look anything up while something is waiting
     private readonly ConcurrentQueue<IInstantiable> _uninitializedQueue = new();
-
     private readonly ConcurrentDictionary<IInstantiable, byte> _uninitializedSet = new();
+    private int _waiting;
 
-    private int _initialized = 0; // Thread-safe boolean (0 = false, 1 = true)
+    private int _initialized;
 
     // Whether the entity has been set up. What is added to it from then on is set up at the next frame
     // rather than along with it
     private volatile bool _live;
     private volatile bool _disposed;
+
+    private TweenContext? _tweens;
 
     /// <summary>Whether the entity has been set up, and everything that was added to it before that with it.</summary>
     public bool IsInitialized => _live;
@@ -67,12 +78,18 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public bool IsDisposed => _disposed;
 
     /// <summary>
+    /// The tweens of the entity, for animating whatever it has. They move along with its updates, and stop when it is switched off.
+    /// Made the first time somebody asks.
+    /// </summary>
+    public TweenContext Tweens => _tweens ?? Interlocked.CompareExchange(ref _tweens, new TweenContext(), null) ?? _tweens;
+
+    /// <summary>
     /// Called after the constructor, guaranteeing that there will be a valid GL context.
     /// Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
     {
-        // Thread-safe initialization guard
+        // Only the first time counts
         if (Interlocked.Exchange(ref _initialized, 1) == 1)
             return;
 
@@ -85,36 +102,34 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public virtual void PostInit()
     { }
 
-    public virtual void Render(float dt, object? obj = null)
+    public virtual void Render(float dt)
     {
         // Set up by now, all of it, unless whoever draws this made it and never said so
         InitializeAll();
 
-        // Lock-free span iteration using the cache array
-        var entSpan = _childrenCache.AsSpan();
-        foreach (var ent in entSpan)
-        {
-            if (_uninitializedSet.ContainsKey(ent)) continue;
+        bool waiting = Volatile.Read(ref _waiting) > 0;
 
-            ent.Render(dt, obj);
+        foreach (Entity child in _childrenCache)
+        {
+            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            child.Render(dt);
         }
 
-        var compSpan = _componentsCache.AsSpan();
-        foreach (var comp in compSpan)
+        foreach (IGameComponent component in _componentsCache)
         {
-            if (_uninitializedSet.ContainsKey(comp)) continue;
-            comp.Render(dt, obj);
+            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+            component.Render(dt);
         }
     }
 
     /// <summary>
     /// Sets up everything that was added to the entity and is waiting for it, in the order it was added, and then
-    /// everything those added in turn, all the way down: when this returns there is nothing left in the entity
+    /// everything those added in turn, all the way down. When this returns there is nothing left in the entity
     /// that isn't set up. Render thread. Costs nothing when nothing is waiting.
     /// </summary>
     public void InitializeAll()
     {
-        if (_live && _uninitializedQueue.IsEmpty) return;
+        if (_live && Volatile.Read(ref _waiting) == 0) return;
         if (_disposed) return;
 
         _live = true;
@@ -130,128 +145,200 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
                 switch (result)
                 {
-                    case IGameComponent comp:
-                        comp.Enabled = true;
+                    case IGameComponent component:
+                        component.Enabled = true;
                         break;
 
-                    case Entity ent:
-                        ent.Enabled = true;
-                        (entities ??= []).Add(ent);
+                    case Entity entity:
+                        entity.Enabled = true;
+                        (entities ??= []).Add(entity);
                         break;
                 }
 
-                // Remove from the set only AFTER it is fully initialized
-                _uninitializedSet.TryRemove(result, out _);
+                // Only once it is all there does it get its turns
+                if (_uninitializedSet.TryRemove(result, out _))
+                    Interlocked.Decrement(ref _waiting);
             }
 
             // What those added while they were set up comes after all of them, one entity at a time
             if (entities is not null)
             {
-                foreach (Entity ent in entities)
-                    ent.InitializeAll();
+                foreach (Entity entity in entities)
+                    entity.InitializeAll();
             }
         }
     }
 
     public virtual void UpdatePhysics(float dt)
     {
-        var compSpan = _componentsCache.AsSpan();
-        foreach (var comp in compSpan)
+        bool waiting = Volatile.Read(ref _waiting) > 0;
+
+        foreach (IGameComponent component in _componentsCache)
         {
-            if (_uninitializedSet.ContainsKey(comp)) continue;
-            comp.UpdatePhysics(dt);
+            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+            component.UpdatePhysics(dt);
         }
 
-        var entSpan = _childrenCache.AsSpan();
-        foreach (var t in entSpan)
+        foreach (Entity child in _childrenCache)
         {
-            if (_uninitializedSet.ContainsKey(t)) continue;
-            t.UpdatePhysics(dt);
+            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            child.UpdatePhysics(dt);
         }
     }
 
     public virtual void UpdateState(float dt)
     {
-        var compSpan = _componentsCache.AsSpan();
-        foreach (var comp in compSpan)
+        _tweens?.Tick(dt);
+
+        bool waiting = Volatile.Read(ref _waiting) > 0;
+
+        foreach (IGameComponent component in _componentsCache)
         {
-            if (_uninitializedSet.ContainsKey(comp)) continue;
-            comp.UpdateState(dt);
+            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+            component.UpdateState(dt);
         }
 
-        var entSpan = _childrenCache.AsSpan();
-        foreach (var ent in entSpan)
+        foreach (Entity child in _childrenCache)
         {
-            if (_uninitializedSet.ContainsKey(ent)) continue;
-            ent.UpdateState(dt);
-        }
-    }
-
-    public void RemoveEntity(in Entity ent)
-    {
-        lock (_structuralLock)
-        {
-            if (_children.Remove(ent))
-            {
-                _childrenCache = [.. _children];
-            }
-        }
-    }
-
-    public void RemoveComponent(IGameComponent comp)
-    {
-        lock (_structuralLock)
-        {
-            if (_components.Remove(comp)) // We remove from the PRIVATE list
-            {
-                // Then we update the cache for the render thread
-                _componentsCache = [.. _components];
-            }
+            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            child.UpdateState(dt);
         }
     }
 
     /// <summary>
-    /// Attempts to return a reference to a specified type of Component lock-free.
+    /// Takes a child out of the entity. It is not disposed of, see <see cref="Destroy"/> for that.
+    /// </summary>
+    /// <returns>Whether it was in there.</returns>
+    public bool RemoveEntity(Entity entity)
+    {
+        lock (_structuralLock)
+        {
+            if (!_children.Remove(entity)) return false;
+
+            _childrenCache = [.. _children];
+        }
+
+        if (ReferenceEquals(entity.Parent, this)) entity.Parent = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Takes a component off the entity. It is not disposed of.
+    /// </summary>
+    /// <returns>Whether it was on there.</returns>
+    public bool RemoveComponent(IGameComponent component)
+    {
+        lock (_structuralLock)
+        {
+            if (!_components.Remove(component)) return false;
+
+            _componentsCache = [.. _components];
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Takes the entity out of whatever it is in and disposes of it. From any thread.
+    /// It gets no more turns from this moment on. What it holds on the GPU is freed on the render thread at the start of the next frame.
+    /// </summary>
+    public void Destroy()
+    {
+        if (_disposed) return;
+
+        _enabled = false;
+        Parent?.RemoveEntity(this);
+
+        EntityLifecycle.Retire(this);
+    }
+
+    /// <summary>
+    /// The first component of a kind, null if the entity has none.
     /// </summary>
     public T? GetComponent<T>() where T : IGameComponent
     {
-        var span = _componentsCache.AsSpan();
-        foreach (var comp in span)
+        foreach (IGameComponent component in _componentsCache)
         {
-            if (comp is T typedComp) return typedComp;
+            if (component is T found) return found;
         }
+
         return default;
     }
 
     /// <summary>
-    /// Attempts to find all references to a specified type of Entity lock-free.
+    /// The first component of a kind, false if the entity has none.
     /// </summary>
-    public List<Entity> GetEntities<T>() where T : Entity
+    public bool TryGetComponent<T>(out T component) where T : IGameComponent
     {
-        var result = new List<Entity>();
-        var span = _childrenCache.AsSpan();
-        foreach (var ent in span)
+        foreach (IGameComponent candidate in _componentsCache)
         {
-            if (ent is T typedEnt) result.Add(typedEnt);
+            if (candidate is not T found) continue;
+
+            component = found;
+            return true;
         }
-        return result;
+
+        component = default!;
+        return false;
     }
 
     /// <summary>
-    /// Attempts to return a reference to a specified type of Entity lock-free.
+    /// Every child of a kind.
+    /// </summary>
+    public List<T> GetEntities<T>() where T : Entity
+    {
+        var found = new List<T>();
+        foreach (Entity child in _childrenCache)
+        {
+            if (child is T match) found.Add(match);
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The first child of a kind, null if there is none. Only the children, see <see cref="FindEntity{T}"/> for all the way down.
     /// </summary>
     public T? GetEntity<T>() where T : Entity
     {
-        var span = _childrenCache.AsSpan();
-        foreach (var ent in span)
+        foreach (Entity child in _childrenCache)
         {
-            if (ent is T typedEnt) return typedEnt;
+            if (child is T match) return match;
         }
+
         return null;
     }
 
     /// <summary>
-    /// Attempts to attach a component to this Entity.
+    /// The first entity of a kind anywhere under this one, null if there is none. Children before grandchildren.
+    /// </summary>
+    public T? FindEntity<T>() where T : Entity
+    {
+        if (GetEntity<T>() is { } child) return child;
+
+        foreach (Entity entity in _childrenCache)
+        {
+            if (entity.FindEntity<T>() is { } found) return found;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The nearest entity of a kind above this one, null if there is none. Handy for finding the scene or the renderer something is in.
+    /// </summary>
+    public T? FindParent<T>() where T : Entity
+    {
+        for (Entity? at = Parent; at is not null; at = at.Parent)
+        {
+            if (at is T found) return found;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Attaches a component to the entity. It is set up before its first turn.
     /// </summary>
     public T AddComponent<T>(T component) where T : IGameComponent
     {
@@ -259,39 +346,41 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         component.Parent = this;
         component.Enabled = false;
-        if (component.Name.Length == 0) component.Name = component.GetType().Name;
+        if (string.IsNullOrEmpty(component.Name)) component.Name = component.GetType().Name;
 
         lock (_structuralLock)
         {
             if (_components.Contains(component)) return component;
+
             _components.Add(component);
-            _componentsCache = [.. _components]; // Update the thread-safe read cache
+            _componentsCache = [.. _components];
         }
+
         return component;
     }
 
     public T AddComponent<T>() where T : IGameComponent, new() =>
         AddComponent(new T());
 
-    public void PushToInitializationQueue(in IInstantiable entity)
+    public void PushToInitializationQueue(IInstantiable entity)
     {
-        // Set up already (it was somewhere else before, or is added a second time): once is enough
+        // Set up already (it was somewhere else before, or is added a second time), once is enough
         if (entity is Entity { IsInitialized: true }) return;
 
-        // TryAdd prevents double-queuing efficiently
-        if (_uninitializedSet.TryAdd(entity, 1))
-        {
-            _uninitializedQueue.Enqueue(entity);
+        // Not twice in the queue either
+        if (!_uninitializedSet.TryAdd(entity, 1)) return;
 
-            // We are set up ourselves, so nobody is going to come by for this on their own
-            if (_live) EntityLifecycle.NoteDirty(this);
-        }
+        Interlocked.Increment(ref _waiting);
+        _uninitializedQueue.Enqueue(entity);
+
+        // We are set up ourselves, so nobody is going to come by for this on their own
+        if (_live) EntityLifecycle.NoteDirty(this);
     }
 
     /// <summary>
-    /// Attempts to attach a child entity to this Entity.
+    /// Adds a child to the entity. It is set up before its first turn.
     /// </summary>
-    public T AddEntity<T>(in T entity) where T : Entity
+    public T AddEntity<T>(T entity) where T : Entity
     {
         PushToInitializationQueue(entity);
 
@@ -304,8 +393,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         lock (_structuralLock)
         {
             if (_children.Contains(entity)) return entity;
+
             _children.Add(entity);
-            _childrenCache = [.. _children]; // Update the thread-safe read cache
+            _childrenCache = [.. _children];
         }
 
         return entity;
@@ -318,7 +408,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     { }
 
     /// <summary>
-    /// Disposes of the entity and everything in it: its components (the ones that can be disposed of), its
+    /// Disposes of the entity and everything in it. That is its components (the ones that can be disposed of), its
     /// children, and then whatever it holds itself (<see cref="DisposeOther"/>). Render thread, as what is freed
     /// is mostly on the GPU. Doing it twice does nothing the second time.
     /// </summary>
@@ -332,33 +422,30 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         // Whatever was still waiting to be set up is in the lists below as well, and goes with them
         _uninitializedQueue.Clear();
         _uninitializedSet.Clear();
+        Volatile.Write(ref _waiting, 0);
 
-        IGameComponent[] compsToDispose;
-        Entity[] childrenToDispose;
+        IGameComponent[] components;
+        Entity[] children;
 
-        // Safely extract all items and clear the collections
         lock (_structuralLock)
         {
-            compsToDispose = _componentsCache;
+            components = _componentsCache;
             _components.Clear();
             _componentsCache = [];
 
-            childrenToDispose = _childrenCache;
+            children = _childrenCache;
             _children.Clear();
             _childrenCache = [];
         }
 
-        foreach (var item in compsToDispose)
+        foreach (IGameComponent component in components)
         {
-            if (item is IDisposable managedItem)
-                managedItem.Dispose();
+            if (component is IDisposable disposable)
+                disposable.Dispose();
         }
 
-        foreach (var item in childrenToDispose)
-        {
-            if (item is IDisposable managedItem)
-                managedItem.Dispose();
-        }
+        foreach (Entity child in children)
+            child.Dispose();
 
         DisposeOther();
         GC.SuppressFinalize(this);

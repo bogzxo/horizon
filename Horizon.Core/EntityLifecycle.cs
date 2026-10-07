@@ -24,10 +24,16 @@ public static class EntityLifecycle
     private static readonly ConcurrentQueue<Entity> dirty = new();
     private static int pending;
 
+    // The entities somebody got rid of (see Entity.Destroy) that still hold whatever they had on the GPU
+    private static readonly ConcurrentQueue<Entity> retired = new();
+
     private static int renderThread = -1;
 
     /// <summary>Whether anything is waiting to be set up. From any thread.</summary>
     public static bool HasPending => Volatile.Read(ref pending) > 0;
+
+    /// <summary>Whether there is anything for <see cref="Flush"/> to do, be it setting up or cleaning up. From any thread.</summary>
+    public static bool HasWork => HasPending || !retired.IsEmpty;
 
     /// <summary>Whether this is the thread that draws, the only one that may set things up.</summary>
     public static bool IsRenderThread => Environment.CurrentManagedThreadId == renderThread;
@@ -46,11 +52,24 @@ public static class EntityLifecycle
         dirty.Enqueue(entity);
     }
 
+    internal static void Retire(Entity entity) => retired.Enqueue(entity);
+
     /// <summary>
-    /// Sets up everything that is waiting, and whatever that adds in turn. Render thread, with nothing else at
-    /// work on the game.
+    /// Sets up everything that is waiting, and whatever that adds in turn. Then disposes of what was destroyed since
+    /// the last time. Render thread, with nothing else at work on the game.
     /// </summary>
     public static void Flush()
+    {
+        FlushPending();
+
+        while (retired.TryDequeue(out Entity? gone))
+        {
+            using IDisposable? scope = Scope?.Invoke(gone);
+            gone.Dispose();
+        }
+    }
+
+    private static void FlushPending()
     {
         while (dirty.TryDequeue(out Entity? entity))
         {

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -48,7 +49,7 @@ public class RenderRectangle : GameObject
             }
             else
             {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+                Log.Error(result.Message);
             }
 
             vbo.Bind();
@@ -82,7 +83,7 @@ public class RenderRectangle : GameObject
         }
     }
 
-    public override unsafe void Render(float dt, object? obj = null)
+    public override unsafe void Render(float dt)
     {
         base.Render(dt);
         Technique.Bind();

@@ -5,7 +5,6 @@ using Bogz.Logging;
 
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Data;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
@@ -131,7 +130,7 @@ public class PrimitiveRenderer : Entity
             }
             else
             {
-                Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+                Log.Error(result.Message);
             }
             this.transform = transform;
         }
@@ -199,7 +198,7 @@ public class PrimitiveRenderer : Entity
         }
         else
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
 
@@ -227,9 +226,9 @@ public class PrimitiveRenderer : Entity
     /// </summary>
     public void UploadAll() => VertexArray.Buffers[VertexArrayBufferAttachmentType.ArrayBuffer].NamedBufferSubData<ShapePrimitive>(CollectionsMarshal.AsSpan(Shapes));
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
-        base.Render(dt, obj);
+        base.Render(dt);
 
         if (uploadMethod == UploadMethod.Automatic && (timer += dt) > uploadTimerInterval)
         {

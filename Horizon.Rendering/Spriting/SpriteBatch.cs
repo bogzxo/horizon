@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+﻿using Bogz.Logging;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Horizon.Core.Components;
 using Horizon.Engine;
@@ -118,7 +119,7 @@ public class SpriteBatch : GameObject
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
         base.Initialize();
@@ -217,8 +218,7 @@ public class SpriteBatch : GameObject
     /// Draws all the sprites commited to this instance.
     /// </summary>
     /// <param name="dt">Delta time.</param>
-    /// <param name="options">Render options (optional).</param>
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         base.Render(dt);
 

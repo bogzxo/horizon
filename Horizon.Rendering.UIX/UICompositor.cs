@@ -22,7 +22,7 @@ namespace Horizon.Rendering.UIX;
 /// <see cref="MotionBlurEffect"/> what slides, pops or is tweened about is smeared along the way it goes.
 /// </para>
 /// </summary>
-public partial class UICompositor : IGameComponent, IDisposable
+public partial class UICompositor : GameComponent, IDisposable
 {
     /// <summary>Where the skin every UI has unless it asks for another one is kept.</summary>
     public const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/dead_revolver/";
@@ -176,10 +176,6 @@ public partial class UICompositor : IGameComponent, IDisposable
         }
     }
 
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "UI Compositor";
-    public Entity Parent { get; set; }
-
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
     /// <param name="theme">Which theme of the usual skin to draw the UI in ("red", "gold"), null for the one the skin says is its usual one.</param>
     public UICompositor(in Camera2D viewportCamera, string? theme = null)
@@ -220,7 +216,7 @@ public partial class UICompositor : IGameComponent, IDisposable
         }
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         // The one every UI with this skin draws with, see UISkin.Shared
         Skin = UISkin.Shared(skinDirectory, skinFile, skinTheme);
@@ -270,7 +266,7 @@ public partial class UICompositor : IGameComponent, IDisposable
         pictureCurrent = false;
     }
 
-    public void UpdateState(float dt)
+    public override void UpdateState(float dt)
     {
         if (Skin is not { } skin)
             return;
@@ -328,9 +324,6 @@ public partial class UICompositor : IGameComponent, IDisposable
         }
     }
 
-    public void UpdatePhysics(float dt)
-    { }
-
     /* For whoever is working on a layout rather than using it, an editor say */
 
     /// <summary>
@@ -345,7 +338,7 @@ public partial class UICompositor : IGameComponent, IDisposable
     /// </summary>
     public UIComponent? Highlighted { get; set; }
 
-    public void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // What a text box copied goes to the clipboard here, on the thread that may touch it
         UIKeyboard.FlushClipboard();

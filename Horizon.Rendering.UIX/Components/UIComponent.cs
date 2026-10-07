@@ -2,7 +2,6 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Bogz.Logging;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -173,7 +174,7 @@ public class SceneManager : Entity
     /// </summary>
     public void ReportUnfinished() => _unfinished = true;
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // The cover is moved along here rather than with the updates, those stop while a scene is being swapped
         _tweens.Tick(MathF.Min(dt, MAX_TRANSITION_STEP));
@@ -189,7 +190,7 @@ public class SceneManager : Entity
                 scene.Render(dt);
         }
 
-        base.Render(dt, obj);
+        base.Render(dt);
 
         // Whoever drew over the last frame and doesn't any more is done, and is told so it can let go of what it kept
         SceneTransition? drawing = _cover > 0.0f ? _running : null;
@@ -352,11 +353,11 @@ public class SceneManager : Entity
             }
             catch (Exception exception)
             {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[SceneManager] '{scene.Name}' didn't go quietly: {exception.Message}");
+                Log.Error($"[SceneManager] '{scene.Name}' didn't go quietly: {exception.Message}");
             }
 
             int freed = GameEngine.Instance.ObjectManager.Release(scene.Assets);
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[SceneManager] Left '{scene.Assets.Name}', freed the {freed} GPU objects it still had.");
+            Log.Info($"[SceneManager] Left '{scene.Assets.Name}', freed the {freed} GPU objects it still had.");
         }
     }
 

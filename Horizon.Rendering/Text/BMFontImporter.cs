@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Bogz.Logging;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -55,7 +56,7 @@ public class BMFontImporter
         {
             if (!File.Exists(bmFile))
             {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[BMFont Parser] Couldn't find file '{bmFile}'!");
+                Log.Error($"[BMFont Parser] Couldn't find file '{bmFile}'!");
                 return (Array.Empty<CharDefinition>(), string.Empty);
             }
             string[] lines = File.ReadAllLines(bmFile);
@@ -68,7 +69,7 @@ public class BMFontImporter
         {
             var node = queue.Dequeue();
             if (node.Type != type)
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[BMFont Parser] Expected token {type} but got {node.Type}!");
+                Log.Error($"[BMFont Parser] Expected token {type} but got {node.Type}!");
             return node;
         }
 
@@ -330,7 +331,7 @@ public class BMFontImporter
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
         Definitions = [];

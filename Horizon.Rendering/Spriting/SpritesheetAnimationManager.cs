@@ -11,11 +11,8 @@ namespace Horizon.Rendering.Spriting;
 /// An internal component used to keep track of animated regions of a spritesheet.
 /// </summary>
 /// <seealso cref="Horizon.GameEntity.Components.IGameComponent" />
-public class SpriteSheetAnimationManager : IGameComponent
+public class SpriteSheetAnimationManager : GameComponent
 {
-    public string Name { get; set; } = "SpriteSheet Animation Manager";
-    public Entity Parent { get; set; }
-    public bool Enabled { get; set; }
     public bool AnimateFrames { get; set; } = true;
 
     public ConcurrentDictionary<string, SpriteAnimationDefinition> Animations { get; init; }
@@ -63,9 +60,6 @@ public class SpriteSheetAnimationManager : IGameComponent
         return value.Index;
     }
 
-    public void UpdatePhysics(float dt)
-    { }
-
     public void AddAnimation(
         string name,
         Vector2 position,
@@ -102,13 +96,7 @@ public class SpriteSheetAnimationManager : IGameComponent
         );
     }
 
-    public void Render(float dt, object? obj = null)
-    { }
-
-    public void Initialize()
-    { }
-
-    public void UpdateState(float dt)
+    public override void UpdateState(float dt)
     {
         if (!Enabled || !AnimateFrames) return;
 

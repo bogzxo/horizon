@@ -6,11 +6,8 @@ namespace Horizon.Core.Components;
 /// <summary>
 /// Represents a component that handles the 2D transformation of a game entity.
 /// </summary>
-public class TransformComponent2D : IGameComponent
+public class TransformComponent2D : GameComponent
 {
-    public string Name { get; set; } = "Transform2D";
-    public bool Enabled { get; set; }
-
     /// <summary>
     /// The position of the game entity in 3D space.
     /// </summary>
@@ -68,7 +65,7 @@ public class TransformComponent2D : IGameComponent
         Vector2 originOffset = GetOriginOffset();
 
         // 2. Convert rotation angles to radians
-        float radiansZ = MathHelper.DegreesToRadians(rot);
+        float radiansZ = float.DegreesToRadians(rot);
         Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, radiansZ);
 
         // 3. Create the model matrix
@@ -133,33 +130,10 @@ public class TransformComponent2D : IGameComponent
     }
 
     /// <summary>
-    /// The parent entity to which this transform component belongs.
-    /// </summary>
-    public Entity Parent { get; set; }
-
-    /// <summary>
     /// Initializes the transform component.
     /// </summary>
-    public void Initialize()
+    public override void Initialize()
     {
         updateModelMatrix();
     }
-
-    /// <summary>
-    /// Updates the transform component based on the elapsed time (dt).
-    /// </summary>
-    /// <param name="dt">The elapsed time since the last update call.</param>
-    public void UpdateState(float dt)
-    { }
-
-    public void UpdatePhysics(float dt)
-    { }
-
-    /// <summary>
-    /// Draws the game entity with the current transformation.
-    /// </summary>
-    /// <param name="dt">The elapsed time since the last draw call.</param>
-    /// <param name="options">Optional render options.</param>
-    public void Render(float dt, object? obj = null)
-    { }
 }

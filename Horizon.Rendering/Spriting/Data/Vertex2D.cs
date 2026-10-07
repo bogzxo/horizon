@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
 
-using Horizon.Core.Data;
 using Horizon.OpenGL;
 
 using Silk.NET.OpenGL;

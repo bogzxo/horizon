@@ -36,7 +36,7 @@ public class Renderer2DTechnique : Technique
         }
         else
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
     }
 

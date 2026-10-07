@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using Horizon.Core.Components;
 using Horizon.Engine;
@@ -91,7 +92,7 @@ public class SpriteBatchMesh : GameObject
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
         SetVboLayout();
@@ -126,7 +127,7 @@ public class SpriteBatchMesh : GameObject
         Buffer.ElementBuffer.BufferData(elements);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         throw new Exception("Please only draw a SpriteBatchMesh through a SpriteBatch");
     }
@@ -282,9 +283,7 @@ public class SpriteBatchMesh : GameObject
         // space for 3 frames
         int totalCapacity = maxItemsPerFrame * NUM_BUFFERS;
 
-        Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(
-            Bogz.Logging.LogLevel.Info,
-            $"[SpriteBatchMesh] Sizing persistent SSBO for {maxItemsPerFrame} max items per frame (Total Size: {totalCapacity * sizeof(SpriteItem)} bytes)."
+        Log.Info($"[SpriteBatchMesh] Sizing persistent SSBO for {maxItemsPerFrame} max items per frame (Total Size: {totalCapacity * sizeof(SpriteItem)} bytes)."
         );
 
         // wait for the gpu to literally finish EVERYTHING before we pussynuke the buffer to avoid a crash
@@ -321,7 +320,7 @@ public class SpriteBatchMesh : GameObject
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, storeResult.Message);
+            Log.Error(storeResult.Message);
             return;
         }
 

@@ -1,7 +1,7 @@
+using Bogz.Logging;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-using Horizon.Core.Data;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
@@ -220,7 +220,7 @@ internal sealed class TileMapBatch(string imagePath)
 
         if (!created)
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
             return false;
         }
 

@@ -1,23 +1,19 @@
-﻿using System.Net;
+﻿using Bogz.Logging;
+using System.Net;
 
 using Horizon.Core;
 using Horizon.Core.Components;
 
 namespace Horizon.Webhost.Server;
 
-using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
-
 /// <summary>
 /// Internal component integrating the HttpListener into the Horizon ECS, providing delegating callbacks to from the WebHost to content providers.
 /// </summary>
-public class HttpServerComponent : IGameComponent, IDisposable
+public class HttpServerComponent : GameComponent, IDisposable
 {
     protected HttpListener Listener { get; init; }
 
-    public bool Enabled { get; set; } = true;
     private bool isRunning = true;
-    public string Name { get; set; } = "HttpServerComponent";
-    public Entity Parent { get; set; }
 
     protected WebHost Host { get; private set; }
 
@@ -30,7 +26,7 @@ public class HttpServerComponent : IGameComponent, IDisposable
     private async Task ListeningLoop()
     {
         // start server
-        Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Starting web listener.");
+        Log.Info($"[{Name}] Starting web listener.");
         Listener.Start();
 
         // event loop
@@ -50,7 +46,7 @@ public class HttpServerComponent : IGameComponent, IDisposable
         Listener.Stop();
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         Host = Parent as WebHost;
 
@@ -60,16 +56,7 @@ public class HttpServerComponent : IGameComponent, IDisposable
 
     public void Dispose()
     {
-        Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Ending web listener.");
+        Log.Info($"[{Name}] Ending web listener.");
         isRunning = false;
     }
-
-    public void Render(float dt, object? obj = null)
-    { }
-
-    public void UpdateState(float dt)
-    { }
-
-    public void UpdatePhysics(float dt)
-    { }
 }

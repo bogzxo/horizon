@@ -37,7 +37,7 @@ public abstract class Camera : GameObject
         motion.Update(new Vector2(Position.X, Position.Y), dt);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         UpdateMatrices();
         base.Render(dt);

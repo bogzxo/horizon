@@ -23,7 +23,7 @@ public class Camera3D : Camera
     public Camera3D(in float fov = 45.0f)
     {
         Projection = Matrix4x4.CreatePerspectiveFieldOfView(
-            MathHelper.DegreesToRadians(fov),
+            float.DegreesToRadians(fov),
             GameEngine.Instance.WindowManager.AspectRatio,
             Near = 0.1f,
             Far = 4000.0f
@@ -59,11 +59,11 @@ public class Camera3D : Camera
         }
 
         Direction = new Vector3(
-            MathF.Cos(MathHelper.DegreesToRadians(CameraYaw))
-                * MathF.Cos(MathHelper.DegreesToRadians(CameraPitch)),
-            MathF.Sin(MathHelper.DegreesToRadians(CameraPitch)),
-            MathF.Sin(MathHelper.DegreesToRadians(CameraYaw))
-                * MathF.Cos(MathHelper.DegreesToRadians(CameraPitch))
+            MathF.Cos(float.DegreesToRadians(CameraYaw))
+                * MathF.Cos(float.DegreesToRadians(CameraPitch)),
+            MathF.Sin(float.DegreesToRadians(CameraPitch)),
+            MathF.Sin(float.DegreesToRadians(CameraYaw))
+                * MathF.Cos(float.DegreesToRadians(CameraPitch))
         );
 
         Front = Vector3.Normalize(Direction);
@@ -75,8 +75,8 @@ public class Camera3D : Camera
         base.UpdateState(dt);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 }

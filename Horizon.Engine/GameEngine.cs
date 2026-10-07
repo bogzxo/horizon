@@ -4,7 +4,6 @@ using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -153,11 +152,7 @@ public class GameEngine : Entity
         if (id == 131185 || id == 1280)
             return;
 
-        ConcurrentLogger
-            .Instance
-            .Log(
-                LogLevel.Info,
-                $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}"
+        Log.Info($"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}"
             );
     }
 
@@ -189,7 +184,7 @@ public class GameEngine : Entity
         EventManager.PostState?.Invoke(dt);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         TotalTime += dt;
 
@@ -208,7 +203,7 @@ public class GameEngine : Entity
 
     protected override void DisposeOther()
     {
-        ConcurrentLogger.Instance.Dispose();
+        Logger.Dispose();
     }
 
     /// <summary>

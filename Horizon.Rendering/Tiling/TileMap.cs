@@ -1,7 +1,6 @@
 using System.Numerics;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
 using DotTiled;
 using DotTiled.Serialization;
@@ -216,7 +215,7 @@ public sealed class TileMap : GameObject
         }
         catch (Exception e)
         {
-            ConcurrentLogger.Instance.Log(LogLevel.Error, $"[TileMap] {e.Message}");
+            Log.Error($"[TileMap] {e.Message}");
             map = null;
             return false;
         }
@@ -734,12 +733,12 @@ public sealed class TileMap : GameObject
             layer.Drift += layer.Scroll * dt;
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // Somebody else draws the foreground if they took it, at a time of their choosing
         Draw(foreground: Foreground.Parent is null ? null : false);
 
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 
     /// <param name="foreground">Whether to draw the layers that are in the foreground or the ones that aren't, null for all of them.</param>
@@ -828,7 +827,7 @@ public sealed class TileMap : GameObject
         // By name, so it is the same one for every map there ever is and nobody frees it from under the others
         if (!Engine.ObjectManager.Shaders.TryCreateOrGet("tilemap", ShaderDescription.FromPath("shaders/tilemap", "tilemap"), out var result))
         {
-            ConcurrentLogger.Instance.Log(LogLevel.Error, result.Message);
+            Log.Error(result.Message);
             return false;
         }
 
@@ -1034,9 +1033,9 @@ public sealed class TileMapForeground : GameObject
         this.map = map;
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         map.Draw(foreground: true);
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 }

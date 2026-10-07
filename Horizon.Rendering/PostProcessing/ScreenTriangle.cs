@@ -1,3 +1,4 @@
+using Bogz.Logging;
 using System.Numerics;
 
 using Horizon.Engine;
@@ -42,7 +43,7 @@ internal static class ScreenTriangle
 
         if (!GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(VertexArrayObjectDescription.VertexBuffer, out var result))
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
             unavailable = true;
             return null;
         }

@@ -1,5 +1,5 @@
-﻿using Bogz.Logging.Loggers;
-
+﻿
+using Bogz.Logging;
 using Horizon.Core;
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -43,7 +43,7 @@ public abstract class Mesh<VertexType> : Entity
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
             throw new Exception(result.Message);
         }
     }
@@ -93,7 +93,7 @@ public abstract class Mesh<VertexType> : Entity
     {
         if (HasUploadQueued)
         {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "An attempt was made to queue mesh data for upload when it already had one queued; as a result it was discarded.");
+            Log.Error("An attempt was made to queue mesh data for upload when it already had one queued; as a result it was discarded.");
             return;
         }
 
@@ -101,7 +101,7 @@ public abstract class Mesh<VertexType> : Entity
         QueuedData = new QueuedMeshData(vertices, indices);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         if (Buffer is null || Technique is null || Material is null)
             return;

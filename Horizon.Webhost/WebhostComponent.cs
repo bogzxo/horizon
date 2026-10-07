@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using Bogz.Logging;
+using System.Net;
 
 using Horizon.Core;
 using Horizon.Webhost.Providers;
@@ -6,7 +7,6 @@ using Horizon.Webhost.Server;
 
 namespace Horizon.Webhost;
 
-using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 /// <summary>
 /// An engine utility providing a seamlessly integrating webhost. The user is expected to provide a <see cref="IWebHostContentProvider"/>, which can serve content of any MIME type, however for simplicity, a web socket request handler is provided separately, allowing bidirectional data transfer, however for the aforementioned system to be able to integrate seemlessly with the users envisioned goal, no packet protocol is provided, and is up to the end user to implement, however a skeleton interface <see cref="IWebSocketPacket"/> is provided. The user should push a content provider key-value pair, where the key is the url directory that the server will respond to.
@@ -21,7 +21,7 @@ public class WebHost : Entity, IDisposable
         Name = "WebHost";
         ContentProviders = [];
 
-        Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Initializing WebHost.");
+        Log.Info($"[{Name}] Initializing WebHost.");
         Server = AddComponent<HttpServerComponent>();
     }
 
@@ -63,9 +63,9 @@ public class WebHost : Entity, IDisposable
 
         if (socketContext.WebSocket.State == System.Net.WebSockets.WebSocketState.Open)
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Established WS connection.");
+            Log.Info($"[{Name}] Established WS connection.");
             await Task.Run(() => provider.HandleSocket(url, context, socketContext));
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[{Name}] Closed WS connection.");
+            Log.Info($"[{Name}] Closed WS connection.");
         }
     }
 }

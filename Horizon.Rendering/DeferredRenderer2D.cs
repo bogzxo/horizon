@@ -173,11 +173,11 @@ public class DeferredRenderer2D : Renderer2D
             flashes.Add(new Flash(light, duration));
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         FadeFlashes(dt);
 
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 
     private void FadeFlashes(float dt)

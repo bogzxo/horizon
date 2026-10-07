@@ -1,5 +1,5 @@
-﻿using Bogz.Logging.Loggers;
-
+﻿
+using Bogz.Logging;
 using Horizon.Content.Managers;
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -14,7 +14,7 @@ namespace Horizon.OpenGL.Managers;
 /// <summary>
 /// Managed class to create, manage and destroy unmanaged OpenGL assets.
 /// </summary>
-public class ObjectManager : IGameComponent, IDisposable
+public class ObjectManager : GameComponent, IDisposable
 {
     internal static ObjectManager Instance { get; private set; }
 
@@ -52,7 +52,6 @@ public class ObjectManager : IGameComponent, IDisposable
    > Queries
     { get; init; }
 
-
     public AssetManager<
         RenderBufferObject,
         RenderBufferObjectFactory,
@@ -77,10 +76,6 @@ public class ObjectManager : IGameComponent, IDisposable
     > VertexArrays
     { get; init; }
 
-    public string Name { get; set; }
-    public Entity Parent { get; set; }
-    public bool Enabled { get; set; }
-
     public ObjectManager()
     {
         Instance = this;
@@ -97,17 +92,17 @@ public class ObjectManager : IGameComponent, IDisposable
         VertexArrays = new();
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         GL = Parent.GetComponent<WindowManager>().GL;
 
-        Textures.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Shaders.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Buffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        VertexArrays.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        FrameBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        RenderBuffers.SetMessageCallback(ConcurrentLogger.Instance.Log);
-        Queries.SetMessageCallback(ConcurrentLogger.Instance.Log);
+        Textures.SetMessageCallback(Log.Write);
+        Shaders.SetMessageCallback(Log.Write);
+        Buffers.SetMessageCallback(Log.Write);
+        VertexArrays.SetMessageCallback(Log.Write);
+        FrameBuffers.SetMessageCallback(Log.Write);
+        RenderBuffers.SetMessageCallback(Log.Write);
+        Queries.SetMessageCallback(Log.Write);
     }
 
     /// <summary>
@@ -169,15 +164,6 @@ public class ObjectManager : IGameComponent, IDisposable
             + VertexArrays.Release(scope)
             + Buffers.Release(scope);
     }
-
-    public void Render(float dt, object? obj = null)
-    { }
-
-    public void UpdateState(float dt)
-    { }
-
-    public void UpdatePhysics(float dt)
-    { }
 
     public void Dispose()
     {

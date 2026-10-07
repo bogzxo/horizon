@@ -217,7 +217,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
         Simulator.Update(dt);
     }
 
-    public override unsafe void Render(float dt, object? obj = null)
+    public override unsafe void Render(float dt)
     {
         base.Render(dt);
 

@@ -1,6 +1,5 @@
 ﻿using System.Text;
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.Webhost;

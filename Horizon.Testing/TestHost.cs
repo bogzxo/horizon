@@ -140,13 +140,13 @@ internal sealed class TestHost : GameObject
         InitializeAll();
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // Scenes are switched here, on the GL thread, because leaving a test frees what it put on the GPU.
         if (Interlocked.Exchange(ref request, null) is { } next)
             Switch(next);
 
-        base.Render(dt, obj);
+        base.Render(dt);
     }
 
     private void Switch(object next)

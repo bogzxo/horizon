@@ -1,11 +1,9 @@
-﻿using System;
+﻿using Bogz.Logging;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
-
-using Box2D.NetStandard.Common;
-using Box2D.NetStandard.Dynamics.World.Callbacks;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -18,16 +16,12 @@ using Silk.NET.OpenGL;
 
 namespace Horizon.Physics.Debug;
 
-public class PhysicsWorldDebugRenderer : IGameComponent
+public class PhysicsWorldDebugRenderer : GameComponent
 {
     private VertexBufferObject _vbo;
     private Technique _technique;
     private readonly List<BasicVertex> vertices = [];
     private readonly List<uint> indices = [];
-
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Physics World Debug Renderer";
-    public Entity Parent { get; set; }
 
     [StructLayout(LayoutKind.Sequential)] // explicitly set sequential layout
     private readonly struct BasicVertex : IVertex
@@ -82,7 +76,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         if (GameObject
                    .Engine
@@ -97,7 +91,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, resultTech.Message);
+            Log.Error(resultTech.Message);
         }
 
         if (
@@ -126,7 +120,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
         _vbo.Bind();
         _vbo.VertexBuffer.Bind();
@@ -134,7 +128,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         _vbo.Unbind();
     }
 
-    public unsafe void Render(float dt, object? obj = null)
+    public unsafe override void Render(float dt)
     {
         if (GameEngine.Instance.ActiveCamera is null) return;
 
@@ -149,16 +143,6 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         GameEngine.Instance.GL.DrawElements(PrimitiveType.Lines, (uint)indices.Count, DrawElementsType.UnsignedInt, null);
 
         _technique.Unbind();
-    }
-
-    public void UpdatePhysics(float dt)
-    {
-
-    }
-
-    public void UpdateState(float dt)
-    {
-
     }
 
     public void DrawPolygon(in Vector2[] _vertices, in Vector3 colour)
@@ -191,7 +175,6 @@ public class PhysicsWorldDebugRenderer : IGameComponent
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % segments));
         }
-
     }
     public void DrawSegment(in Vector2 p1, in Vector2 p2, in Vector3 colour)
     {

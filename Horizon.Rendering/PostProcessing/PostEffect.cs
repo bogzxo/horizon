@@ -1,3 +1,4 @@
+using Bogz.Logging;
 using System.Numerics;
 
 using Horizon.Core.Tweening;
@@ -174,6 +175,6 @@ public class PostTechnique : Technique
         if (created)
             SetShader(result.Asset);
         else
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
     }
 }
