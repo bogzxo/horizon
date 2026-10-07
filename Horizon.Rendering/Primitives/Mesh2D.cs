@@ -59,6 +59,17 @@ public class Mesh2D : GameObject
     }
 
     /// <summary>
+    /// Hands over what the mesh is made of: its vertices, and the triangles between them three indices each. Render
+    /// thread, after it has been set up. Until this is called there is nothing to draw.
+    /// </summary>
+    public void Upload(ReadOnlySpan<Vertex2D> vertices, ReadOnlySpan<uint> indices)
+    {
+        Buffer.VertexBuffer.NamedBufferData(vertices);
+        Buffer.ElementBuffer.NamedBufferData(indices);
+        ElementCount = (uint)indices.Length;
+    }
+
+    /// <summary>
     ///   <para>
     /// Draws the current object using the provided render options.
     /// </para>

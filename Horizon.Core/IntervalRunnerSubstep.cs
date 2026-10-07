@@ -1,4 +1,4 @@
-namespace Horizon.Core;
+﻿namespace Horizon.Core;
 
 public class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
 {
@@ -18,6 +18,9 @@ public class IntervalRunnerSubStep(float timeInterval, Action action) : Entity
             _timer = 0.0f;
             return;
         }
+
+        // Its own tweens, components and children get their turn like anybody else's
+        base.UpdateState(dt);
 
         _timer += dt;
 
