@@ -4,14 +4,15 @@ namespace Horizon.Core.Threading;
 
 /// <summary>
 /// Hands what the simulation looked like at the end of each of its ticks over to whoever draws it, without either of
-/// them ever waiting for the other. This is the double (in fact triple) buffer at the heart of the engine.
+/// them ever waiting for the other. This is the double (well, quadruple) buffer at the heart of the engine.
 /// <para>
-/// There are three slots. At the end of a tick the simulation captures everything that is drawn into a slot nobody is
+/// There are four slots. At the end of a tick the simulation captures everything that is drawn into a slot nobody is
 /// looking at (<see cref="BeginCapture"/>, then every <see cref="Snapshot{T}"/> is published, then
-/// <see cref="EndCapture"/>), which makes it the newest. At the start of a frame the renderer takes the newest slot and
-/// the one before it (<see cref="Acquire"/>) and has them to itself until it lets go (<see cref="Release"/>): nothing
-/// is ever written to a slot that is being drawn from. With the renderer holding two slots the simulation always has
-/// the third to write to. A renderer that is slower than the simulation simply never sees some ticks, the one written
+/// <see cref="EndCapture"/>), which makes it the newest. At the start of a frame the renderer takes the two ticks the
+/// moment it shows lies between (<see cref="Acquire"/>) and has them to itself until it lets go (<see cref="Release"/>):
+/// nothing is ever written to a slot that is being drawn from. That pair is the newest tick and the one before it, or
+/// the one before that and the one before that again; with the renderer holding two of them the simulation always has
+/// another one to write to. A renderer that is slower than the simulation simply never sees some ticks, the one written
 /// over is one it never asked for, and the next pair it gets spans two ticks instead of one, which interpolates just as well.
 /// </para>
 /// <para>
@@ -20,20 +21,43 @@ namespace Horizon.Core.Threading;
 /// frame to frame, however the ticks and the frames line up. How far in the past is worked out from how far apart the
 /// ticks come and how late they are published, which keeps it as short as it can be.
 /// </para>
+/// <para>
+/// Why three ticks to pick a pair from and not just the newest two: ticks are never published equally late. Drawn
+/// between the newest two, a moment far enough back for the next tick to always be there in time is, just after a tick
+/// that came a bit early, before the older of the two. Frames then jump to that tick and stand still until real time
+/// catches up, every single tick. At 60 frames a second that's a sliver of a frame nobody sees; with thousands of frames
+/// a second it's a proper stutter. With the tick before that to fall back on there is a whole tick of room for that.
+/// </para>
 /// The lock in here is only ever held for a handful of instructions, by one side at a time.
 /// </summary>
 public sealed class SnapshotClock
 {
-    /// <summary>How many slots there are: two for the renderer and one for the simulation to write to.</summary>
-    public const int SLOTS = 3;
+    /// <summary>
+    /// How many slots there are: the newest three ticks for the renderer to draw a pair of, and one for the simulation
+    /// to write to.
+    /// </summary>
+    public const int SLOTS = 4;
 
     // Added to how far in the past frames are drawn, for the ticks that come a little later than the ones before them
     private const double MARGIN = 0.0005;
 
-    // How much of a new measurement of the tick interval and of the lag is taken over. The lag goes up a lot faster than
-    // it comes down: a frame that catches up with the newest tick holds still, which is worse than being a bit late
+    // How much of a new measurement of the tick interval is taken over, and of the lag when it's lower than it was. A
+    // tick published later than the lag goes straight up to it: frames that catch up with the newest tick hold still,
+    // which is a lot worse than being a millisecond or two further behind. It comes back down over a second or so
     private const double INTERVAL_SMOOTHING = 0.05;
-    private const double LAG_RISE = 0.25, LAG_FALL = 0.02;
+    private const double LAG_FALL = 0.005;
+
+    // The most the lag is taken to be, as a share of a tick. There's a tick of room between the newest snapshot and the
+    // one two before it to draw from; a tick later than that is a proper hitch whatever is done about it
+    private const double MOST_LAG = 0.75;
+
+    // How hard the moment frames show is pulled towards where the delay says it ought to be, a second: hard when it has
+    // to go further back (or a late tick leaves frames with nothing newer to show), gently when it can come forward.
+    // And the most it is ever pulled, as a share of the real time that went by, so whatever moves never speeds up or
+    // slows down by more than that. Past SNAP_TICKS ticks out (a stall, a scene loading) it just goes there
+    private const double PULL_BACK = 8.0, PULL_FORWARD = 1.0;
+    private const double MAX_PULL = 0.05;
+    private const double SNAP_TICKS = 4.0;
 
     private readonly Lock sync = new();
 
@@ -54,6 +78,10 @@ public sealed class SnapshotClock
     // The renderer's side: when the last frame was, and the time it showed
     private long lastFrame;
     private double lastPresentation = double.NaN;
+
+    // The moment (in seconds of real time) the last interpolated frame showed. Goes forward at the pace of real time
+    // rather than jumping about with every new guess at the delay, see Shown
+    private double shownAt = double.NaN;
 
     /// <summary>
     /// The clock of the running engine, which <see cref="Snapshot{T}"/>s publish to unless they are given another.
@@ -171,30 +199,38 @@ public sealed class SnapshotClock
 
             int current = latest;
             int previous = current;
+            float alpha = 1.0f;
 
-            if (mode == PresentationMode.Interpolated)
+            if (mode != PresentationMode.Interpolated)
+                shownAt = double.NaN;
+            else
             {
-                // The newest whole snapshot before the newest one
-                for (int i = 0; i < SLOTS; i++)
-                {
-                    if (i == current || sequences[i] == 0 || sequences[i] >= sequences[current])
-                        continue;
+                Shown(now / frequency, realDelta);
 
-                    if (previous == current || sequences[i] > sequences[previous])
-                        previous = i;
+                // Past the newest tick there's nothing to show, it's late: wait for it rather than carry on without it
+                // and jump to where the moment got to when it comes. Being that much further behind is eased back out
+                double newest = stamps[current] / frequency;
+                if (shownAt > newest)
+                    shownAt = newest;
+
+                // The newest whole snapshot before the newest one, and the one before that
+                previous = Before(current);
+                int older = previous == current ? current : Before(previous);
+
+                // A tick that came early leaves the moment that's shown before the older of the newest two, it's
+                // between the two before them then
+                if (older != previous && shownAt < stamps[previous] / frequency)
+                    (previous, current) = (older, previous);
+
+                if (previous != current && stamps[current] > stamps[previous])
+                {
+                    double from = stamps[previous] / frequency, to = stamps[current] / frequency;
+                    alpha = (float)Math.Clamp((shownAt - from) / (to - from), 0.0, 1.0);
                 }
             }
 
             pinnedPrevious = previous;
             pinnedCurrent = current;
-
-            float alpha = 1.0f;
-            if (previous != current && stamps[current] > stamps[previous])
-            {
-                double shown = now / frequency - DelayLocked();
-                double from = stamps[previous] / frequency, to = stamps[current] / frequency;
-                alpha = (float)Math.Clamp((shown - from) / (to - from), 0.0, 1.0);
-            }
 
             // The time things that only exist on the renderer's side go by (particles on the GPU, a flash fading). It
             // only ever goes forward, even when the pair that is drawn from moves on a little early
@@ -207,6 +243,48 @@ public sealed class SnapshotClock
 
             return new RenderFrame(this, previous, current, sequences[previous], sequences[current], alpha, presentation, simDelta, realDelta, mode);
         }
+    }
+
+    /// <summary>
+    /// Helper method to find the newest whole snapshot published before the one in a slot, that slot again if there is none.
+    /// </summary>
+    private int Before(int slot)
+    {
+        int found = slot;
+        for (int i = 0; i < SLOTS; i++)
+        {
+            if (i == slot || sequences[i] == 0 || sequences[i] >= sequences[slot])
+                continue;
+
+            if (found == slot || sequences[i] > sequences[found])
+                found = i;
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// Helper method to move the moment frames show on, by as much real time as went by since the last one, pulled a
+    /// little towards <c>now - Delay</c>. The delay is a guess made again on every tick (how far apart they come, how late
+    /// they're published) and it wobbles by a fair few microseconds every time. Shown as it is, that wobble lands on the
+    /// next frame in full: nothing at 60 frames a second, a stutter of a good share of the frame when there are thousands
+    /// of them.
+    /// </summary>
+    private void Shown(double now, float realDelta)
+    {
+        double target = now - DelayLocked();
+        double predicted = shownAt + realDelta;
+        double off = target - predicted;
+
+        if (double.IsNaN(shownAt) || realDelta <= 0.0f || Math.Abs(off) > SNAP_TICKS * Math.Max(interval, 1.0 / 240.0))
+        {
+            shownAt = target;
+            return;
+        }
+
+        double pull = off * Math.Min(1.0, (off < 0.0 ? PULL_BACK : PULL_FORWARD) * realDelta);
+        double most = MAX_PULL * realDelta;
+        shownAt = predicted + Math.Clamp(pull, -most, most);
     }
 
     /// <summary>
@@ -251,7 +329,7 @@ public sealed class SnapshotClock
                 return i;
         }
 
-        throw new UnreachableException("Three slots and at most two of them held, one has to be free.");
+        throw new UnreachableException("Four slots and at most two of them held, one has to be free.");
     }
 
     /// <summary>
@@ -295,8 +373,8 @@ public sealed class SnapshotClock
 
         double late = Math.Max(0.0, (publishedAt - stamp) / frequency);
         if (interval > 0.0)
-            late = Math.Min(late, interval * 4.0);
+            late = Math.Min(late, interval * MOST_LAG);
 
-        lag += (late - lag) * (late > lag ? LAG_RISE : LAG_FALL);
+        lag = late > lag ? late : lag + (late - lag) * LAG_FALL;
     }
 }

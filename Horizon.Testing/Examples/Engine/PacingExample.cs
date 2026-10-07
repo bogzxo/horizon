@@ -342,8 +342,10 @@ public class PacingExample : Scene, ITestControls
             }
 
             /// <summary>
-            /// How far off the steps are, on average, as a share of a steady step. 0% is as smooth as it gets.
-            /// Also how many frames showed no step at all, and how many a step and a half or more.
+            /// How far off the steps are, on average (root mean square), as a share of a steady step and in units of the
+            /// world (a pixel each at this zoom). 0% is as smooth as it gets. The share is what to watch at a refresh rate;
+            /// uncapped the frames are so short that a step a few hundredths of a pixel out is already a fair few percent,
+            /// so look at the pixels too. Also how many frames showed no step at all, and how many a step and a half or more.
             /// </summary>
             public string Describe()
             {
@@ -351,7 +353,7 @@ public class PacingExample : Scene, ITestControls
 
                 double rms = Math.Sqrt(error / count);
                 double mean = expected / count;
-                return $"off by {100.0 * rms / mean:0.0}%, {100.0 * standing / count:0.0}% frames still, {100.0 * doubled / count:0.0}% double steps";
+                return $"off by {100.0 * rms / mean:0.0}% ({rms:0.000} px), {100.0 * standing / count:0.0}% frames still, {100.0 * doubled / count:0.0}% double steps";
             }
 
             public void Reset()

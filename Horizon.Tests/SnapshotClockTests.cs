@@ -125,6 +125,129 @@ public class SnapshotClockTests
         Assert.All(steps, step => Assert.InRange(step, expected * 0.9, expected * 1.1));
     }
 
+    /// <summary>
+    /// Helper method to run frames against ticks that are published a bit late, by however much late the lateness
+    /// says, and measure what the pacing example measures: how far each frame's step of shown time is off the real time
+    /// that went by, as a share of it (root mean square), and how many frames had to stand still for want of a tick.
+    /// </summary>
+    private static (double Off, double Still) Pace(long frame, Func<int, long> lateness, Func<int, long>? frameJitter = null, int ticks = 1200)
+    {
+        var clock = new SnapshotClock();
+        var state = new Snapshot<int>();
+
+        int published = 0, frames = 0, still = 0;
+        double lastShown = double.NaN, error = 0.0, expected = 0.0;
+        long nextLate = lateness(1);
+
+        long now = Tick;
+        for (int i = 0; now < Tick * ticks; i++)
+        {
+            while ((published + 1) * Tick + nextLate <= now)
+            {
+                published++;
+                Publish(clock, state, published, published * Tick, published * Tick + nextLate);
+                nextLate = lateness(published + 1);
+            }
+
+            RenderFrame shown = clock.Acquire(PresentationMode.Interpolated, now);
+
+            // A second in, once the clock has had a chance to settle
+            if (shown.HasSnapshot && published > 120)
+            {
+                if (!double.IsNaN(lastShown) && shown.RealDelta > 0.0f)
+                {
+                    double step = shown.PresentationTime - lastShown;
+                    error += (step - shown.RealDelta) * (step - shown.RealDelta);
+                    expected += shown.RealDelta;
+                    frames++;
+                    if (step == 0.0) still++;
+                }
+
+                lastShown = shown.PresentationTime;
+            }
+
+            clock.Release();
+            now += frame + (frameJitter?.Invoke(i) ?? 0);
+        }
+
+        return (Math.Sqrt(error / frames) / (expected / frames), still / (double)frames);
+    }
+
+    [Fact]
+    public void Uncapped_frames_are_paced_evenly_however_late_the_ticks_come()
+    {
+        // What a real simulation thread looks like: done a few hundred microseconds after its tick was due, give or
+        // take, now and then a lot later (a collection, a busy physics step)
+        var random = new Random(7);
+        long Late(int tick)
+        {
+            double ms = 0.25 + random.NextDouble() * 0.5;
+            if (random.Next(20) == 0) ms += 2.0 + random.NextDouble() * 2.0;
+            return (long)(ms / 1000.0 * Stopwatch.Frequency);
+        }
+
+        // Frames about 2000 times a second, each a little early or late
+        var jitter = new Random(11);
+        long Jitter(int frame) => (long)((jitter.NextDouble() - 0.5) * 0.0001 * Stopwatch.Frequency);
+
+        var (off, still) = Pace(Stopwatch.Frequency / 2000, Late, Jitter);
+
+        Assert.True(off < 0.02, $"uncapped frames are off by {off:P1}");
+        Assert.True(still < 0.001, $"{still:P1} of the frames stood still");
+    }
+
+    [Fact]
+    public void Frames_at_a_refresh_rate_are_paced_evenly_however_late_the_ticks_come()
+    {
+        var random = new Random(3);
+        long Late(int tick) => (long)((0.25 + random.NextDouble() * 1.5) / 1000.0 * Stopwatch.Frequency);
+
+        foreach (int rate in (int[])[60, 144, 240])
+        {
+            var (off, still) = Pace(Stopwatch.Frequency / rate, Late);
+            Assert.True(off < 0.01, $"frames at {rate} Hz are off by {off:P1}");
+            Assert.True(still == 0.0, $"{still:P1} of the frames at {rate} Hz stood still");
+        }
+    }
+
+    [Fact]
+    public void A_tick_that_is_very_late_is_waited_for_and_never_jumped_to()
+    {
+        var clock = new SnapshotClock();
+        var state = new Snapshot<int>();
+
+        // On time, half a millisecond late, except for one that's held up a good 6 milliseconds (a collection, say)
+        long Late(int tick) => (tick == 300 ? 6_000 : 500) * Stopwatch.Frequency / 1_000_000;
+
+        int published = 0;
+        long nextLate = Late(1);
+        double lastShown = double.NaN;
+        long frame = Stopwatch.Frequency / 2000;
+
+        for (long now = Tick; now < Tick * 600; now += frame)
+        {
+            while ((published + 1) * Tick + nextLate <= now)
+            {
+                published++;
+                Publish(clock, state, published, published * Tick, published * Tick + nextLate);
+                nextLate = Late(published + 1);
+            }
+
+            RenderFrame shown = clock.Acquire(PresentationMode.Interpolated, now);
+            if (shown.HasSnapshot && published > 120)
+            {
+                // Held for a bit at worst, then on at the pace of real time (give or take how hard it's being eased),
+                // never a leap to make up for it
+                if (!double.IsNaN(lastShown))
+                    Assert.InRange(shown.PresentationTime - lastShown, 0.0, shown.RealDelta * 1.06);
+
+                lastShown = shown.PresentationTime;
+            }
+
+            clock.Release();
+        }
+    }
+
     [Fact]
     public void A_break_is_not_blended_across()
     {
