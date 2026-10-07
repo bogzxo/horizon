@@ -49,4 +49,7 @@ public enum TokenType : byte
 
     // The ? of a ? b : c
     Question,
+
+    // A character the language has no use for, which only the lenient lexing of an editor hands out
+    Unknown,
 }

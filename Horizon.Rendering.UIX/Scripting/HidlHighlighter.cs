@@ -1,3 +1,5 @@
+using Horizon.HIDL.Lexing;
+
 namespace Horizon.Rendering.UIX.Scripting;
 
 /// <summary>
@@ -8,7 +10,7 @@ public enum HidlToken
     // A name that is nothing more than a name, a variable most of the time
     Name,
 
-    // let, const, func and the rest of the words the language keeps to itself
+    // let, const, func and the rest of the words the language keeps to itself, and true, false and null
     Keyword,
 
     // The key of an object ("padding" in padding: 8) or something reached with a dot
@@ -32,115 +34,102 @@ public enum HidlToken
 public readonly record struct HidlSpan(int Start, int Length, HidlToken Kind);
 
 /// <summary>
-/// Helper class that cuts HIDL code up into the bits a code view colours in differently.
-/// It only looks at one line at a time and never fails. Code that is half typed or plain wrong still gets coloured in, just not all that cleverly.
-/// It is not the lexer of the language (see Horizon.HIDL for that one), which throws comments away and doesn't say where anything was.
+/// Helper class that cuts HIDL code up into the bits a code view colours in differently. It is the language's own
+/// lexer in its lenient mode, so what the editor colours is what the language sees, keywords and all, and code that
+/// is half typed or plain wrong still gets coloured in. Every token knows where it was, so the spans come out per line,
+/// with a comment that runs over several lines coloured on all of them.
 /// </summary>
 public static class HidlHighlighter
 {
-    private static readonly HashSet<string> Keywords =
-    [
-        "let", "const", "func", "if", "else", "while", "do", "for", "in", "delete", "break", "continue", "return", "true", "false", "null"
-    ];
+    // The words that are values rather than keywords to the lexer, but read as keywords
+    private static readonly HashSet<string> Literals = ["true", "false", "null"];
 
     /// <summary>
-    /// Cuts one line of code into spans. Whitespace isn't part of any of them.
+    /// Cuts code into spans, one list per line. The code has to have its lines ended with '\n' alone.
     /// </summary>
-    /// <param name="spans">Where the spans go, after whatever is in there already.</param>
-    public static void Read(ReadOnlySpan<char> line, List<HidlSpan> spans)
+    /// <param name="lineCount">How many lines the code has, which is how many lists come back.</param>
+    public static List<HidlSpan>[] Read(string code, int lineCount)
     {
-        int at = 0;
+        var spans = new List<HidlSpan>[Math.Max(1, lineCount)];
+        for (int i = 0; i < spans.Length; i++)
+            spans[i] = [];
 
-        while (at < line.Length)
+        Token[] tokens = Lexer.Tokenize(code, lenient: true);
+
+        for (int i = 0; i < tokens.Length; i++)
         {
-            char character = line[at];
-
-            if (char.IsWhiteSpace(character))
-            {
-                at++;
+            Token token = tokens[i];
+            if (token.Type == TokenType.EndOfFile || token.Length == 0)
                 continue;
-            }
 
-            int start = at;
+            HidlToken kind = KindOf(tokens, i);
 
-            if (character == '/' && at + 1 < line.Length && line[at + 1] == '/')
+            // Line by line, for the tokens that run over more than one (a block comment)
+            int line = token.Line - 1;
+            int column = token.Col - 1;
+            int from = token.Index;
+            int end = token.Index + token.Length;
+
+            for (int at = from; at <= end && line < spans.Length; at++)
             {
-                // The rest of the line is the comment
-                spans.Add(new HidlSpan(start, line.Length - start, HidlToken.Comment));
-                return;
+                if (at < end && code[at] != '\n')
+                    continue;
+
+                if (at > from)
+                    spans[line].Add(new HidlSpan(column, at - from, kind));
+
+                line++;
+                column = 0;
+                from = at + 1;
             }
-
-            if (character == '"')
-            {
-                // Up to the quote that closes it, or the end of the line for one that was never closed
-                at++;
-                while (at < line.Length && line[at] != '"')
-                    at++;
-                at = Math.Min(at + 1, line.Length);
-
-                spans.Add(new HidlSpan(start, at - start, HidlToken.Text));
-                continue;
-            }
-
-            if (char.IsAsciiDigit(character) || (character == '-' && at + 1 < line.Length && char.IsAsciiDigit(line[at + 1]) && !EndsAValue(line, at)))
-            {
-                at++;
-                while (at < line.Length && (char.IsAsciiDigit(line[at]) || line[at] == '.'))
-                    at++;
-
-                spans.Add(new HidlSpan(start, at - start, HidlToken.Number));
-                continue;
-            }
-
-            if (char.IsLetter(character) || character == '_')
-            {
-                while (at < line.Length && (char.IsLetterOrDigit(line[at]) || line[at] == '_'))
-                    at++;
-
-                spans.Add(new HidlSpan(start, at - start, KindOfWord(line, start, at)));
-                continue;
-            }
-
-            spans.Add(new HidlSpan(start, 1, HidlToken.Punctuation));
-            at++;
         }
+
+        return spans;
     }
 
     /// <summary>
-    /// Helper method to say what a word is, going by the word itself and by what is either side of it.
+    /// Helper method to say what a token is to the colours, which for a name depends on what is next to it.
     /// </summary>
-    private static HidlToken KindOfWord(ReadOnlySpan<char> line, int start, int end)
+    private static HidlToken KindOf(Token[] tokens, int i)
     {
-        if (Keywords.Contains(line[start..end].ToString()))
-            return HidlToken.Keyword;
+        Token token = tokens[i];
 
-        char next = NextAfter(line, end);
+        switch (token.Type)
+        {
+            case TokenType.Comment:
+                return HidlToken.Comment;
 
-        if (next == '(')
-            return HidlToken.Call;
+            case TokenType.TextLiteral:
+                return HidlToken.Text;
 
-        // The key of an object, or something of an object that is reached into
-        if (next == ':' || (start > 0 && line[start - 1] == '.'))
-            return HidlToken.Property;
+            case TokenType.Number:
+                return HidlToken.Number;
 
-        return HidlToken.Name;
-    }
+            case TokenType.Let or TokenType.Const or TokenType.Function or TokenType.If or TokenType.Else or TokenType.While
+                or TokenType.Do or TokenType.For or TokenType.In or TokenType.Return or TokenType.Break or TokenType.Continue
+                or TokenType.Delete or TokenType.Null:
+                return HidlToken.Keyword;
 
-    // The first thing after a place in the line that isn't whitespace, nothing if the line ends first
-    private static char NextAfter(ReadOnlySpan<char> line, int at)
-    {
-        while (at < line.Length && char.IsWhiteSpace(line[at]))
-            at++;
+            case TokenType.Vector:
+                return HidlToken.Call;
 
-        return at < line.Length ? line[at] : '\0';
-    }
+            case TokenType.Identifier:
+                if (Literals.Contains(token.Value))
+                    return HidlToken.Keyword;
 
-    // Whether what comes before a minus is something a number can be taken away from, in which case the minus is not the sign of a number
-    private static bool EndsAValue(ReadOnlySpan<char> line, int at)
-    {
-        while (at > 0 && char.IsWhiteSpace(line[at - 1]))
-            at--;
+                // Called, a key, or reached through a dot
+                TokenType next = i + 1 < tokens.Length ? tokens[i + 1].Type : TokenType.EndOfFile;
+                TokenType before = i > 0 ? tokens[i - 1].Type : TokenType.EndOfFile;
 
-        return at > 0 && (char.IsLetterOrDigit(line[at - 1]) || line[at - 1] is ')' or ']' or '_');
+                if (next == TokenType.OpenParenthesis)
+                    return HidlToken.Call;
+                if (next == TokenType.Colon || before == TokenType.Dot)
+                    return HidlToken.Property;
+
+                return HidlToken.Name;
+
+            default:
+                return HidlToken.Punctuation;
+        }
     }
 }
