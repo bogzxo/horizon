@@ -1,4 +1,5 @@
 using Horizon.HIDL;
+using Horizon.HIDL.Lexing;
 using Horizon.HIDL.Library;
 using Horizon.HIDL.Parsing;
 using Horizon.HIDL.Runtime;
@@ -467,6 +468,35 @@ public class HidlTests
         var error = Assert.Throws<HidlRuntimeException>(() => Run("let o = {}; o.a.b"));
         Assert.Contains("'b'", error.Message);
         Assert.Contains("null", error.Message);
+    }
+
+    /* Lenient lexing, for editors */
+
+    [Fact]
+    public void LenientLexingNeverThrows()
+    {
+        Token[] tokens = Lexer.Tokenize("let x = \"open\n@ 1", lenient: true);
+
+        Assert.Equal(TokenType.TextLiteral, tokens[3].Type);
+        Assert.Equal("open", tokens[3].Value);
+        Assert.Equal(TokenType.Unknown, tokens[4].Type);
+        Assert.Equal("@", tokens[4].Value);
+        Assert.Equal(TokenType.Number, tokens[5].Type);
+        Assert.Throws<ParseException>(() => Lexer.Tokenize("let x = \"open"));
+    }
+
+    [Fact]
+    public void TokensKnowWhereTheyAre()
+    {
+        Token[] tokens = Lexer.Tokenize("let name = \"a\\\"b\"; // hi", lenient: true);
+
+        Assert.Equal((0, 3), (tokens[0].Index, tokens[0].Length));
+        Assert.Equal((4, 4), (tokens[1].Index, tokens[1].Length));
+
+        // A text is as long as its source, escapes and quotes and all
+        Assert.Equal((11, 6), (tokens[3].Index, tokens[3].Length));
+        Assert.Equal(TokenType.Comment, tokens[5].Type);
+        Assert.Equal(19, tokens[5].Index);
     }
 
     /* The writer */

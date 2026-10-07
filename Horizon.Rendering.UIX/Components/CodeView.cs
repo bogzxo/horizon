@@ -32,11 +32,9 @@ public class CodeView : UIComponent
                 return;
 
             text = value;
-            lines = text.Replace("\r\n", "\n").Split('\n');
-            spans = new List<HidlSpan>[lines.Length];
-
-            for (int i = 0; i < lines.Length; i++)
-                HidlHighlighter.Read(lines[i], spans[i] = []);
+            string flat = text.Replace("\r\n", "\n");
+            lines = flat.Split('\n');
+            spans = HidlHighlighter.Read(flat, lines.Length);
         }
     }
 

@@ -33,13 +33,20 @@ public static class Lexer
     /// </summary>
     public static bool IsKeyword(string word) => Keywords.ContainsKey(word);
 
-    public static Token[] Tokenize(in string source)
+    public static Token[] Tokenize(in string source) => Tokenize(source, lenient: false);
+
+    /// <summary>
+    /// Cuts source into tokens. Lenient, it never throws: a character the language has no use for comes out as an
+    /// <see cref="TokenType.Unknown"/> token and a text that is never closed ends with its line, which is what an
+    /// editor wants while somebody is halfway through typing. Strict, either of those is a <see cref="ParseException"/>.
+    /// </summary>
+    public static Token[] Tokenize(string src, bool lenient)
     {
-        string src = source;
         List<Token> tokens = [];
         int index = 0;
         int line = 1;
         int col = 1;
+        int startIndex = 0;
 
         char Peek(int offset = 0) => index + offset < src.Length ? src[index + offset] : '\0';
 
@@ -61,7 +68,8 @@ public static class Lexer
             return c;
         }
 
-        void Add(TokenType type, string value, int startLine, int startCol) => tokens.Add(new Token(type, value, startLine, startCol));
+        void Add(TokenType type, string value, int startLine, int startCol) =>
+            tokens.Add(new Token(type, value, startLine, startCol, startIndex, index - startIndex));
 
         while (index < src.Length)
         {
@@ -75,6 +83,7 @@ public static class Lexer
 
             int startLine = line;
             int startCol = col;
+            startIndex = index;
 
             // Comments, to the end of the line or to the closing star
             if (current == '/' && Peek(1) == '/')
@@ -111,7 +120,7 @@ public static class Lexer
             {
                 Consume();
                 StringBuilder sb = new();
-                while (Peek() != '\0' && Peek() != '"')
+                while (Peek() != '\0' && Peek() != '"' && !(lenient && Peek() == '\n'))
                 {
                     char c = Consume();
                     if (c == '\\')
@@ -132,7 +141,14 @@ public static class Lexer
                 }
 
                 if (Peek() != '"')
-                    throw new ParseException($"The string starting at line {startLine}, column {startCol} is never closed.", startLine, startCol);
+                {
+                    if (!lenient)
+                        throw new ParseException($"The string starting at line {startLine}, column {startCol} is never closed.", startLine, startCol);
+
+                    // Halfway through typing it. What there is of it is a text as far as the colours go
+                    Add(TokenType.TextLiteral, sb.ToString(), startLine, startCol);
+                    continue;
+                }
 
                 Consume();
                 Add(TokenType.TextLiteral, sb.ToString(), startLine, startCol);
@@ -226,10 +242,17 @@ public static class Lexer
                 continue;
             }
 
+            if (lenient)
+            {
+                Consume();
+                Add(TokenType.Unknown, current.ToString(), startLine, startCol);
+                continue;
+            }
+
             throw new ParseException($"There is no making sense of '{current}' at line {startLine}, column {startCol}.", startLine, startCol, 1);
         }
 
-        tokens.Add(new Token(TokenType.EndOfFile, string.Empty, line, col));
+        tokens.Add(new Token(TokenType.EndOfFile, string.Empty, line, col, index, 0));
         return [.. tokens];
     }
 }
