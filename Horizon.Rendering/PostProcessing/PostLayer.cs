@@ -4,6 +4,7 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
+using Horizon.OpenGL;
 
 using Silk.NET.OpenGL;
 
@@ -59,8 +60,7 @@ public sealed class PostLayer : IDisposable
     private bool hasPicture;
 
     // What was set before the layer was begun, put back when it ends
-    private bool blend, depthTest;
-    private int sourceRgb, destinationRgb, sourceAlpha, destinationAlpha;
+    private RenderState.Saved before;
 
     /// <summary>The effects the layer goes through before it is laid over what is under it, none to begin with.</summary>
     public PostProcessor Effects { get; } = new();
@@ -73,9 +73,8 @@ public sealed class PostLayer : IDisposable
 
             // The colours of the layer come multiplied by how much of them there is, so they are added as they are
             // to what is left of what is underneath
-            var gl = GameEngine.Instance.GL;
-            gl.Enable(EnableCap.Blend);
-            gl.BlendFunc(BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+            RenderState.Blend = true;
+            RenderState.BlendMode = BlendMode.Premultiplied;
         };
     }
 
@@ -108,20 +107,18 @@ public sealed class PostLayer : IDisposable
             return false;
 
         target = into;
-        KeepState();
 
-        var gl = GameEngine.Instance.GL;
+        // To be put back by Compose
+        before = RenderState.Save();
 
         frameBuffer!.Bind();
         frameBuffer.Viewport();
 
         // Drawn back to front and blended, like everything flat. With the alpha kept apart what comes out is how
         // much of every pixel is covered, and colours that are multiplied by it.
-        gl.Disable(EnableCap.DepthTest);
-        gl.Enable(EnableCap.Blend);
-        gl.BlendFuncSeparate(
-            BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
-            BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+        RenderState.DepthTest = false;
+        RenderState.Blend = true;
+        RenderState.BlendMode = BlendMode.Alpha;
 
         Clear();
         return true;
@@ -164,7 +161,7 @@ public sealed class PostLayer : IDisposable
             return false;
 
         target = into;
-        KeepState();
+        before = RenderState.Save();
 
         // Nothing in a picture that was kept moves
         effectsActive = Effects.Prepare(false);
@@ -173,31 +170,16 @@ public sealed class PostLayer : IDisposable
     }
 
     /// <summary>
-    /// Helper method to note what is set before the layer changes it, to be put back by <see cref="Compose"/>.
-    /// </summary>
-    private void KeepState()
-    {
-        var gl = GameEngine.Instance.GL;
-        blend = gl.IsEnabled(EnableCap.Blend);
-        depthTest = gl.IsEnabled(EnableCap.DepthTest);
-        gl.GetInteger(GetPName.BlendSrcRgb, out sourceRgb);
-        gl.GetInteger(GetPName.BlendDstRgb, out destinationRgb);
-        gl.GetInteger(GetPName.BlendSrcAlpha, out sourceAlpha);
-        gl.GetInteger(GetPName.BlendDstAlpha, out destinationAlpha);
-    }
-
-    /// <summary>
     /// Helper method to put the picture of the layer over where it goes, through the effects if any are on, and
     /// leave everything the way it was found.
     /// </summary>
     private void Compose(float dt)
     {
-        var gl = GameEngine.Instance.GL;
-        var picture = frameBuffer!.Attachments[FramebufferAttachment.ColorAttachment0].Texture;
+        var picture = frameBuffer!.Color;
 
-        // Effects replace what they draw over, all but the last one: that is blended, see bindOutput
-        gl.Disable(EnableCap.Blend);
-        gl.Disable(EnableCap.DepthTest);
+        // Effects replace what they draw over, all but the last one. That one is blended, see bindOutput
+        RenderState.Blend = false;
+        RenderState.DepthTest = false;
 
         if (effectsActive)
         {
@@ -219,17 +201,7 @@ public sealed class PostLayer : IDisposable
         Renderer2D.BindOutput(target);
         target = null;
 
-        gl.BlendFuncSeparate(
-            (BlendingFactor)sourceRgb, (BlendingFactor)destinationRgb,
-            (BlendingFactor)sourceAlpha, (BlendingFactor)destinationAlpha);
-
-        if (blend)
-            gl.Enable(EnableCap.Blend);
-        else
-            gl.Disable(EnableCap.Blend);
-
-        if (depthTest)
-            gl.Enable(EnableCap.DepthTest);
+        RenderState.Restore(before);
     }
 
     private unsafe void Clear()
@@ -288,21 +260,7 @@ public sealed class PostLayer : IDisposable
 
     private void Release()
     {
-        if (frameBuffer is null)
-            return;
-
-        var manager = GameEngine.Instance.ObjectManager;
-
-        // The frame buffer doesn't own what is attached to it, those have to go one by one
-        foreach (var (_, attachment) in frameBuffer.Attachments)
-        {
-            if (attachment.Type == FrameBufferAttachmentType.Texture)
-                manager.Textures.Remove(attachment.Texture);
-            else
-                manager.RenderBuffers.Remove(attachment.RenderBuffer);
-        }
-
-        manager.FrameBuffers.Remove(frameBuffer);
+        frameBuffer?.Dispose();
         frameBuffer = null;
     }
 

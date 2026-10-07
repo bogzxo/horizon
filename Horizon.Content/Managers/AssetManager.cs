@@ -13,7 +13,7 @@ namespace Horizon.Content.Managers;
 /// </summary>
 public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, AssetDisposerType>
     : IDisposable
-    where AssetType : IGLObject
+    where AssetType : class, IGLObject
     where AssetDescriptionType : IAssetDescription
     where AssetFactoryType : IAssetFactory<AssetType, AssetDescriptionType>
     where AssetDisposerType : IGameAssetFinalizer<AssetType>
@@ -63,6 +63,19 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// <param name="callback"></param>
     public void SetMessageCallback(in Action<LogLevel, string> callback) =>
         this.MessageCallback = callback;
+
+    /// <summary>
+    /// Makes an asset that belongs to whoever asked for it. Null if it couldn't be made, and why is in the log.
+    /// </summary>
+    public AssetType? Create(in AssetDescriptionType description) =>
+        TryCreate(description, out var result) ? result.Asset : null;
+
+    /// <summary>
+    /// The asset of a name, made the first time somebody asks for it and shared by everybody who asks after.
+    /// Null if it couldn't be made, and why is in the log.
+    /// </summary>
+    public AssetType? CreateOrGet(string name, in AssetDescriptionType description) =>
+        TryCreateOrGet(name, description, out var result) ? result.Asset : null;
 
     public bool TryCreateOrGet(in string name, in AssetDescriptionType description, out AssetCreationResult<AssetType> result)
     {
@@ -161,8 +174,6 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             MessageCallback?.Invoke(LogLevel.Error, $"[{name}] {result.Message}");
             return false;
         }
-
-        MessageCallback?.Invoke(LogLevel.Info, $"[{name}] Successfully created a new {assetName}!");
 
         OwnedAssets.Add(result.Asset);
         Own(result.Asset);

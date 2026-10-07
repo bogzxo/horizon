@@ -107,20 +107,7 @@ public class SpriteBatch : GameObject
 
     public override void Initialize()
     {
-        if (Engine
-            .ObjectManager
-            .Shaders
-            .TryCreateOrGet(
-                "sprite",
-                ShaderDescription.FromPath("shaders/spritebatch", "sprites"),
-                out var result))
-        {
-            this.Shader = new Technique(result.Asset);
-        }
-        else
-        {
-            Log.Error(result.Message);
-        }
+        Shader = Technique.Load("shaders/spritebatch", "sprites");
 
         base.Initialize();
     }

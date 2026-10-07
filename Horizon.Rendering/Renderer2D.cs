@@ -5,6 +5,7 @@ using Horizon.Engine;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.PostProcessing;
+using Horizon.OpenGL;
 
 using Silk.NET.OpenGL;
 
@@ -83,20 +84,8 @@ public class Renderer2D : GameObject
     /// <summary>
     /// Helper method to make a frame buffer, anything going wrong is logged and thrown: there is no drawing without one.
     /// </summary>
-    protected static FrameBufferObject CreateFrameBuffer(in FrameBufferObjectDescription description)
-    {
-        if (GameEngine
-            .Instance
-            .ObjectManager
-            .FrameBuffers
-            .TryCreate(description, out var result))
-        {
-            return result.Asset;
-        }
-
-        Log.Error(result.Message);
-        throw new Exception(result.Message);
-    }
+    protected static FrameBufferObject CreateFrameBuffer(in FrameBufferObjectDescription description) =>
+        FrameBufferObject.Create(description);
 
     private FrameBufferObject frameBuffer;
     private RenderRectangle renderRectangle;
@@ -125,15 +114,8 @@ public class Renderer2D : GameObject
         // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind
         InitializeAll();
 
-        var gl = Engine.GL;
-
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
-        bool blend = gl.IsEnabled(EnableCap.Blend);
-        bool depthTest = gl.IsEnabled(EnableCap.DepthTest);
-        gl.GetInteger(GetPName.BlendSrcRgb, out int sourceRgb);
-        gl.GetInteger(GetPName.BlendDstRgb, out int destinationRgb);
-        gl.GetInteger(GetPName.BlendSrcAlpha, out int sourceAlpha);
-        gl.GetInteger(GetPName.BlendDstAlpha, out int destinationAlpha);
+        var before = RenderState.Save();
 
         // Bind the framebuffer and its attachments
         FrameBuffer.Bind();
@@ -142,11 +124,9 @@ public class Renderer2D : GameObject
         // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something.
         // What is see-through is blended over what is there already, in every attachment alike: the alpha that comes
         // out of that is how much of the pixel is covered.
-        gl.Disable(EnableCap.DepthTest);
-        gl.Enable(EnableCap.Blend);
-        gl.BlendFuncSeparate(
-            BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
-            BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
+        RenderState.DepthTest = false;
+        RenderState.Blend = true;
+        RenderState.BlendMode = BlendMode.Alpha;
 
         Clear();
 
@@ -157,7 +137,7 @@ public class Renderer2D : GameObject
         current = outer;
 
         // What we put on screen replaces what is there, it isn't laid over it
-        gl.Disable(EnableCap.Blend);
+        RenderState.Blend = false;
         frameTime = dt;
 
         if (PostProcessing.Prepare())
@@ -167,7 +147,7 @@ public class Renderer2D : GameObject
                 ViewportSize,
                 MotionTexture,
                 dt,
-                HoldsPicture ? FrameBuffer.Attachments[FramebufferAttachment.ColorAttachment0].Texture : null,
+                HoldsPicture ? FrameBuffer.Color : null,
                 resolve,
                 bindOutput,
                 OutputSize(outer));
@@ -179,14 +159,7 @@ public class Renderer2D : GameObject
             RenderRectangle.Render(dt);
         }
 
-        gl.BlendFuncSeparate(
-            (BlendingFactor)sourceRgb, (BlendingFactor)destinationRgb,
-            (BlendingFactor)sourceAlpha, (BlendingFactor)destinationAlpha);
-
-        if (blend)
-            gl.Enable(EnableCap.Blend);
-        if (depthTest)
-            gl.Enable(EnableCap.DepthTest);
+        RenderState.Restore(before);
     }
 
     /// <summary>
@@ -249,19 +222,7 @@ public class Renderer2D : GameObject
     {
         PostProcessing.Dispose();
 
-        if (frameBuffer is not null)
-        {
-            // The frame buffer doesn't own what is attached to it, those have to go one by one
-            foreach (var (_, attachment) in frameBuffer.Attachments)
-            {
-                if (attachment.Type == FrameBufferAttachmentType.Texture)
-                    Engine.ObjectManager.Textures.Remove(attachment.Texture);
-                else
-                    Engine.ObjectManager.RenderBuffers.Remove(attachment.RenderBuffer);
-            }
-
-            Engine.ObjectManager.FrameBuffers.Remove(frameBuffer);
-        }
+        frameBuffer?.Dispose();
 
         base.DisposeOther();
     }

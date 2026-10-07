@@ -125,15 +125,15 @@ public class TweenTestScene : Scene, ITestControls
     {
         base.UpdateState(dt);
 
-        var keyboard = Engine.InputManager.KeyboardManager;
+        var keyboard = Engine.Input.Keyboard;
 
-        if (keyboard.IsKeyPressed(Key.Space))
+        if (keyboard.WasPressed(Key.Space))
         {
             _tracks.PopIn(0.5f);
             _results.SlideIn(new Vector2(300, 0), 0.5f, 0.15f);
         }
 
-        if (keyboard.IsKeyPressed(Key.P))
+        if (keyboard.WasPressed(Key.P))
         {
             _paused = !_paused;
             foreach (Tween travel in _travels)

@@ -85,7 +85,7 @@ internal static class UIKeyboard
     /// </summary>
     public static void Hook()
     {
-        if (hooked || GameEngine.Instance.InputManager.NativeInputContext is not { } input)
+        if (hooked || GameEngine.Instance.Input.Native is not { } input)
             return;
 
         hooked = true;

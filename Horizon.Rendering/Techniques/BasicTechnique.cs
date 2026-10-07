@@ -15,22 +15,7 @@ public class BasicTechnique : Technique
 
     public BasicTechnique()
     {
-        if (GameEngine
-                .Instance
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet(
-                    "basic_technique",
-                    ShaderDescription.FromPath("shaders/basic", "basic_technique"),
-                    out var result
-                ))
-        {
-            SetShader(result.Asset);
-        }
-        else
-        {
-            Log.Error(result.Message);
-        }
+        LoadShader("shaders/basic", "basic_technique");
     }
 
     protected override void SetUniforms()
@@ -53,22 +38,7 @@ public class BasicMaterialTechnique : Technique
 
     public BasicMaterialTechnique()
     {
-        if (GameEngine
-                .Instance
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet(
-                    "basic_material_technique",
-                    ShaderDescription.FromPath("shaders/basic", "basic_material"),
-                    out var result
-                ))
-        {
-            SetShader(result.Asset);
-        }
-        else
-        {
-            Log.Error(result.Message);
-        }
+        LoadShader("shaders/basic", "basic_material");
     }
 
     protected override void SetUniforms()

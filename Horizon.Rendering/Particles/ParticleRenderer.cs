@@ -119,14 +119,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
     public override void Initialize()
     {
-        if (Engine
-                .ObjectManager
-                .VertexArrays
-                .TryCreate(VertexArrayObjectDescription.VertexBuffer, out var result)
-        )
-        {
-            buffer = new VertexBufferObject(result.Asset);
-        }
+        buffer = VertexBufferObject.Create();
 
         var quadVerts = new ParticleVertex[]
         {

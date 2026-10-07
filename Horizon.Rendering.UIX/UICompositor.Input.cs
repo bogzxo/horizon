@@ -8,6 +8,7 @@ using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.UIX.Components;
 using Horizon.Rendering.UIX.Drawing;
 using Horizon.Rendering.UIX.Skinning;
+using Silk.NET.Input;
 
 namespace Horizon.Rendering.UIX;
 
@@ -16,12 +17,12 @@ public partial class UICompositor
 {
     private UIPointer ReadMouse()
     {
-        // TODO: @bogz lets do something about this
-        var mouseData = GameEngine.Instance.InputManager.MouseManager.GetData();
+        var mouse = GameEngine.Instance.Input.Mouse;
 
+        // A click that was over before this update even started still counts as one
         return new UIPointer(
-            viewportCamera.ScreenToWorld(mouseData.Position),
-            (mouseData.Actions & VirtualAction.PrimaryAction) != 0);
+            viewportCamera.ScreenToWorld(mouse.Position),
+            mouse.IsDown(MouseButton.Left) || mouse.WasPressed(MouseButton.Left));
     }
 
     private void RouteKeyboard()

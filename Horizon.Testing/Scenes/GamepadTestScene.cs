@@ -3,7 +3,7 @@ using System.Numerics;
 using System.Text;
 
 using Horizon.Engine;
-using Horizon.Input2;
+using Horizon.Input;
 using Horizon.Rendering;
 using Horizon.Rendering.UIX;
 using Horizon.Rendering.UIX.Components;
@@ -108,12 +108,12 @@ public class GamepadTestScene : Scene, ITestControls
     public override void UpdateState(float dt)
     {
         // The keyboard's gamepad reads as whatever is held on the keyboard, before anybody asks it anything
-        var keyboard = Engine.InputManager.KeyboardManager;
+        var keyboard = Engine.Input.Keyboard;
 
         _held.Clear();
         foreach (var (key, input) in Keys)
         {
-            if (keyboard.IsKeyDown(key))
+            if (keyboard.IsDown(key))
                 _held.Add(input);
         }
         _keyboardPad.Update(GamepadSnapshot.Holding(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_held)));

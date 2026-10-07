@@ -99,6 +99,14 @@ public class SceneManager : Entity
     }
 
     /// <summary>
+    /// Has a new scene of a kind take over from the one that is on screen.
+    /// </summary>
+    public void SetScene<TScene>() where TScene : Scene, new()
+    {
+        SetScene(new TScene());
+    }
+
+    /// <summary>
     /// Drop-in replacement for the old reflection-based method.
     /// Requires you to register the scene via RegisterScene() first.
     /// </summary>
@@ -120,7 +128,7 @@ public class SceneManager : Entity
     /// <summary>
     /// Has a scene take over from the one that is on screen, through the <see cref="Transition"/> if there is one. From any thread.
     /// </summary>
-    public void SetScene(in Scene scene) => SetScene(scene, Transition);
+    public void SetScene(Scene scene) => SetScene(scene, Transition);
 
     /// <summary>
     /// Has a scene take over from the one that is on screen. From any thread.
@@ -129,10 +137,14 @@ public class SceneManager : Entity
     /// so a scene that has set another one should stop listening to its buttons.
     /// </summary>
     /// <param name="transition">How this one change is made, null for a hard cut whatever <see cref="Transition"/> says.</param>
-    public void SetScene(in Scene scene, SceneTransition? transition)
+    public void SetScene(Scene scene, SceneTransition? transition)
     {
         lock (_changeLock)
         {
+            // Whoever is on screen is on their way out from here on, and can tell
+            if (CurrentInstance is { } leaving && !ReferenceEquals(leaving, scene))
+                leaving.IsLeaving = true;
+
             // One that was set and never got as far as being shown
             if (_incoming is not null && !ReferenceEquals(_incoming, scene) && !_incoming.Persistent)
             {
@@ -266,6 +278,9 @@ public class SceneManager : Entity
 
         if (incoming is not null)
         {
+            // One that was kept and is back has been left before
+            incoming.IsLeaving = false;
+
             using (incoming.Assets.Enter())
                 SetUp(incoming, dt);
 

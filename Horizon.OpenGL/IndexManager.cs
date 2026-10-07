@@ -1,4 +1,6 @@
-﻿using Horizon.Core.Primitives;
+﻿using System.Runtime.InteropServices;
+
+using Horizon.Core.Primitives;
 
 namespace Horizon.OpenGL;
 
@@ -10,19 +12,22 @@ internal abstract class IndexManager
     protected readonly Dictionary<string, uint> namedIndices;
     protected readonly IGLObject glObject;
 
-    public IndexManager(in IGLObject obj)
+    public IndexManager(IGLObject obj)
     {
         glObject = obj;
         namedIndices = [];
     }
 
-    public uint GetLocation(in string name)
+    /// <summary>
+    /// Where a name lives in the shader. Only the first time is the GPU asked, uniforms are set many times a frame and this has to be quick.
+    /// </summary>
+    public uint GetLocation(string name)
     {
-        if (!namedIndices.ContainsKey(name))
-            namedIndices.Add(name, GetIndex(name));
+        ref uint index = ref CollectionsMarshal.GetValueRefOrAddDefault(namedIndices, name, out bool known);
+        if (!known) index = GetIndex(name);
 
-        return namedIndices[name];
+        return index;
     }
 
-    protected abstract uint GetIndex(in string name);
+    protected abstract uint GetIndex(string name);
 }

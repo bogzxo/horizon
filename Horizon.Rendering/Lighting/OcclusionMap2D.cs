@@ -122,7 +122,7 @@ public sealed class OcclusionMap2D : IDisposable
     {
         if (texture is null) return;
 
-        GameEngine.Instance.ObjectManager.Textures.Remove(texture);
+        texture.Dispose();
         texture = null;
     }
 }

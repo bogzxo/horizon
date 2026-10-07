@@ -46,13 +46,11 @@ public class Camera3D : Camera
     {
         if (Enabled)
         {
-            var controller = Engine.InputManager.GetVirtualController();
+            // Up on the screen is up in the world, which the mouse counts the other way round
+            Vector2 moved = Engine.Input.Mouse.Delta * lookSensitivity;
 
-            var xOffset = (controller.LookingAxis.X) * lookSensitivity;
-            var yOffset = (controller.LookingAxis.Y) * lookSensitivity;
-
-            CameraYaw -= xOffset;
-            CameraPitch += yOffset;
+            CameraYaw += moved.X;
+            CameraPitch -= moved.Y;
 
             // We don't want to be able to look behind us by going over our head or under our feet so make sure it stays within these bounds
             CameraPitch = Math.Clamp(CameraPitch, -89.0f, 89.0f);

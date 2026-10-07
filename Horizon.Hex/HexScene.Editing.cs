@@ -111,7 +111,7 @@ internal sealed partial class HexScene
 
         // A text box of the editor, or one of the layout that is being tried out in the canvas
         bool typing = compositor.Focus is not null || stage.Focus is not null;
-        shortcuts.Update(Engine.InputManager.KeyboardManager, typing);
+        shortcuts.Update(Engine.Input.Keyboard, typing);
     }
 
     /// <summary>
@@ -122,8 +122,8 @@ internal sealed partial class HexScene
         if (document.Selected is not { } selected)
             return;
 
-        var keyboard = Engine.InputManager.KeyboardManager;
-        bool far = keyboard.IsKeyDown(Silk.NET.Input.Key.ShiftLeft) || keyboard.IsKeyDown(Silk.NET.Input.Key.ShiftRight);
+        var keyboard = Engine.Input.Keyboard;
+        bool far = keyboard.IsDown(Silk.NET.Input.Key.ShiftLeft) || keyboard.IsDown(Silk.NET.Input.Key.ShiftRight);
 
         selected.Position += new Vector2(x, y) * (far ? BIG_NUDGE : 1.0f);
         codeDirty = inspectorDirty = true;

@@ -4,7 +4,7 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 
-namespace Horizon.Input2;
+namespace Horizon.Input;
 
 /// <summary>
 /// Which inputs of a gamepad trigger which actions, and how far a stick or a trigger has to be pushed to count.

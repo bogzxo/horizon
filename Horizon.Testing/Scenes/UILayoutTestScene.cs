@@ -200,9 +200,9 @@ public class UILayoutTestScene : Scene, ITestControls
 
         _status.Text = $"UI scale {_compositor.UIScale:0.00}, laid out for {_built.Root.Bounds.Width:0} x {_built.Root.Bounds.Height:0}";
 
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Up))
+        if (Engine.Input.Keyboard.WasPressed(Key.Up))
             _compositor.Scale = MathF.Min(2.0f, _compositor.Scale + 0.25f);
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Down))
+        if (Engine.Input.Keyboard.WasPressed(Key.Down))
             _compositor.Scale = MathF.Max(0.5f, _compositor.Scale - 0.25f);
     }
 

@@ -1,7 +1,7 @@
 using System.Numerics;
 using Silk.NET.Input;
 
-namespace Horizon.Input2;
+namespace Horizon.Input;
 
 /// <summary>
 /// Everything on a gamepad that can be held down, and so everything an action can be bound to.

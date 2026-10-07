@@ -12,6 +12,8 @@ using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 using Silk.NET.Windowing.Glfw;
 
+using Monitor = System.Threading.Monitor;
+
 namespace Horizon.Core;
 
 /// <summary>
@@ -63,11 +65,6 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     public IReadOnlyList<LoopStatistics> Loops { get; private set; }
 
-    //private Task logicTask;
-    //private Task physicsTask;
-
-    private readonly CancellationTokenSource tokenSource;
-
     public bool IsRunning { get; private set; }
 
     /// <summary>
@@ -101,22 +98,42 @@ public class WindowManager : GameComponent, IDisposable
     public GL GL { get; private set; }
 
     /// <summary>
-    /// Gets the underlying native window.
+    /// The native window underneath, for whoever needs something this class doesn't offer.
     /// </summary>
-    /// <returns>The GLFW IWindow.</returns>
-    public IWindow Window
-    {
-        get => _window;
-    }
+    public IWindow Window => _window;
 
     /// <summary>
-    /// Gets the windows native input context.
+    /// The native input context of the window. Games read their keys, mouse and gamepads through the input manager of the engine instead.
     /// </summary>
-    /// <returns>Native IInputContext</returns>
-    public IInputContext Input
+    public IInputContext Input => _input;
+
+    /// <summary>
+    /// What the title bar of the window says. From any thread, it changes at the start of the next frame.
+    /// </summary>
+    public string Title
     {
-        get => _input;
+        get => title;
+        set
+        {
+            title = value;
+            titleChanged = true;
+        }
     }
+
+    private volatile string title;
+    private volatile bool titleChanged;
+
+    /// <summary>
+    /// Raised on the thread of the window when the size of what is drawn into changes, with the new size in pixels.
+    /// </summary>
+    public event Action<Vector2>? Resized;
+
+    /// <summary>
+    /// Asks the window to close, which ends <see cref="Run"/> once the frame that is being drawn is done. From any thread.
+    /// </summary>
+    public void Close() => closing = true;
+
+    private volatile bool closing;
 
     // copy of initial WindowOptions instance.
     public readonly WindowOptions WindowOptions;
@@ -124,9 +141,10 @@ public class WindowManager : GameComponent, IDisposable
     public WindowManager(in WindowManagerConfiguration config)
     {
         GlfwWindowing.RegisterPlatform();
-        GlfwInput.RegisterPlatform(); 
+        GlfwInput.RegisterPlatform();
 
-        tokenSource = new CancellationTokenSource();
+        Name = "Window Manager";
+        title = config.WindowTitle ?? string.Empty;
 
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
         physicsUpdatesPerSecond = config.PhysicsUpdatesPerSecond > 0.0 ? config.PhysicsUpdatesPerSecond : 120.0;
@@ -157,7 +175,7 @@ public class WindowManager : GameComponent, IDisposable
             PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
             PreferredStencilBufferBits = 8,
             Samples = 0,
-            
+
         };
 
         ViewportSize = WindowSize = ScreenSize = config.WindowSize;
@@ -175,7 +193,6 @@ public class WindowManager : GameComponent, IDisposable
         this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
         SubscribeWindowEvents();
     }
-    
 
     private void SubscribeWindowEvents()
     {
@@ -190,12 +207,12 @@ public class WindowManager : GameComponent, IDisposable
                 // First, so whatever is set up or drawn from here on finds the window the size it was asked to be
                 ApplyPendingDisplay();
 
-                // Whatever the updates added since the last frame is set up before anything is drawn, and the
-                // loops that are holding their turn back for it are told
-                if (EntityLifecycle.HasPending)
+                // Whatever the updates added since the last frame is set up before anything is drawn (and what they
+                // destroyed is freed), and the loops that are holding their turn back for it are told
+                if (EntityLifecycle.HasWork)
                 {
                     EntityLifecycle.Flush();
-                    System.Threading.Monitor.PulseAll(simulationGate);
+                    Monitor.PulseAll(simulationGate);
                 }
 
                 Parent.Render((float)dt);
@@ -203,7 +220,7 @@ public class WindowManager : GameComponent, IDisposable
         };
 
         this._window.Resize += WindowResize;
-        
+
         this._window.Load += () =>
         {
             // A maximised window is where it belongs already, centering it would take it back out of that
@@ -237,8 +254,11 @@ public class WindowManager : GameComponent, IDisposable
 
     private void WindowResize(Silk.NET.Maths.Vector2D<int> size)
     {
-        //FrameBufferManager.ResizeAll(size.X, size.Y);
+        // Minimised windows say they are nothing by nothing, which nobody can draw into
+        if (size.X <= 0 || size.Y <= 0) return;
+
         UpdateViewport();
+        Resized?.Invoke(ViewportSize);
     }
 
     private void UpdateScreenSize()
@@ -369,7 +389,7 @@ public class WindowManager : GameComponent, IDisposable
         long started = Environment.TickCount64;
 
         while (EntityLifecycle.HasPending && !_window.IsClosing && Environment.TickCount64 - started < LONGEST_SET_UP_WAIT)
-            System.Threading.Monitor.Wait(simulationGate, 4);
+            Monitor.Wait(simulationGate, 4);
 
         return !_window.IsClosing;
     }
@@ -401,33 +421,19 @@ public class WindowManager : GameComponent, IDisposable
         physicsLoop.Start();
     }
 
-    //private async Task OnPhysicsFrame()
-    //{
-    //    // PeriodicTimer leverages OS high-resolution timers natively
-    //    //using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
-
-    //    long previousTicks = Stopwatch.GetTimestamp();
-
-    //    while (!(tokenSource.Token.IsCancellationRequested || _window.IsClosing))
-    //    {
-    //        // Await next tick without blocking thread pool resources
-    //        //if (!await timer.WaitForNextTickAsync(tokenSource.Token))
-    //        //    break;
-
-    //        long currentTicks = Stopwatch.GetTimestamp();
-    //        double deltaTime = (currentTicks - previousTicks) / (double)Stopwatch.Frequency;
-    //        previousTicks = currentTicks;
-
-    //        // Handle physics calculation
-    //        Parent.UpdatePhysics((float)deltaTime);
-    //    }
-    //}
-
     private bool needsDispatching = true;
 
     private void OnFrame()
     {
         _window.DoEvents();
+
+        if (closing) _window.Close();
+
+        if (titleChanged)
+        {
+            titleChanged = false;
+            _window.Title = title;
+        }
 
         if (!_window.IsClosing)
         {
@@ -448,18 +454,12 @@ public class WindowManager : GameComponent, IDisposable
             lastFrame = started;
         }
 
-        /* it is important to ensure that atleast one Render pass has happened, before
-         * we dispatch all the threads, as lazy initialization of unmanaged object is done in the render thread. */
-
-        // Dispatch threads.
+        // The loops only start once a frame has been drawn. Everything is set up on this thread, and there has to be something to update
         if (needsDispatching)
         {
             needsDispatching = false;
 
             StartLoops();
-
-            //logicTask ??= Task.Run(OnLogicFrame, tokenSource.Token);
-            //physicsTask ??= Task.Run(OnPhysicsFrame, tokenSource.Token);
         }
     }
 
@@ -467,18 +467,8 @@ public class WindowManager : GameComponent, IDisposable
     {
         GC.SuppressFinalize(this);
 
-        tokenSource.Cancel();
-
         logicLoop?.Dispose();
         physicsLoop?.Dispose();
-
-        //physicsTask.Wait();
-        //logicTask.Wait();
-
-        //physicsTask.Dispose();
-        //logicTask.Dispose();
-
-        tokenSource.Dispose();
 
         _window.Reset();
         _window.Dispose();
@@ -486,12 +476,4 @@ public class WindowManager : GameComponent, IDisposable
         Log.Info($"[{Name}] Disposed!");
     }
 
-    /// <summary>
-    /// Updates the windows title to the specified string <paramref name="title"/>.
-    /// </summary>
-    /// <param name="title">The new window title.</param>
-    public void UpdateTitle(string title)
-    {
-        _window.Title = title;
-    }
 }

@@ -41,16 +41,7 @@ public class RenderRectangle : GameObject
 
             var indices = new uint[] { 0, 1, 2, 0, 2, 3 };
 
-            if (Engine.ObjectManager.VertexArrays.TryCreate(
-                VertexArrayObjectDescription.VertexBuffer,
-                out var result))
-            {
-                vbo = new VertexBufferObject(result.Asset);
-            }
-            else
-            {
-                Log.Error(result.Message);
-            }
+            vbo = VertexBufferObject.Create();
 
             vbo.Bind();
             {

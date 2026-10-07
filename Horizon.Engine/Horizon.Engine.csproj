@@ -40,6 +40,7 @@
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
+    <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
     <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
   </ItemGroup>
 
