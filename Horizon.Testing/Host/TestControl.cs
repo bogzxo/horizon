@@ -8,8 +8,12 @@ namespace Horizon.Testing;
 public sealed record TestControl(string Input, string Action);
 
 /// <summary>
-/// For a test scene that can be interacted with. The host lists whatever it returns on screen, so the
-/// scene has no need to print its keys anywhere. A scene without any just doesn't implement this.
+/// For a test scene you can poke at. The host lists whatever it returns on screen, so the scene never has to
+/// print its own keys anywhere (and they can't go out of date with the code, which they bloody always do).
+/// A scene that only wants to be looked at just doesn't implement this.
+/// <code>
+/// public IReadOnlyList&lt;TestControl&gt; Controls { get; } = [new("G", "toggle gravity")];
+/// </code>
 /// </summary>
 public interface ITestControls
 {
