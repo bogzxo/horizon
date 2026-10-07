@@ -26,21 +26,156 @@ public partial class UICompositor
             mouse.IsDown(MouseButton.Right) || mouse.WasPressed(MouseButton.Right));
     }
 
-    private void RouteKeyboard()
+    private void RouteKeyboard(UIModule[] snapshot)
     {
         // A component that left the UI takes the focus with it.
         if (focus is not null && focus.Module is not { Enabled: true })
-            focus = null;
+            Focus = null;
+
+        var keyboard = GameEngine.Instance.Input.Keyboard;
+
+        // Escape closes whatever is open, top down: a dialog, then a popup, then the focus. One thing a press
+        if (keyboard.WasPressed(Key.Escape))
+            Escape(snapshot);
+
+        // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
+        if (keyboard.WasPressed(Key.Tab) && focus is not null)
+            FocusNext(snapshot, keyboard.Shift ? -1 : 1);
 
         if (focus is null)
+        {
+            // Nothing is typing, so a paste is for whoever asked for those (an editor). Everything else typed into
+            // the void is thrown away with it
+            if (Pasted is not null && focusOwner is null)
+            {
+                while (UIKeyboard.TryRead(out char character))
+                {
+                    if (character == UIKeyboard.PASTE && UIKeyboard.TryTakePaste(out string text))
+                        Pasted(text);
+                }
+            }
+
             return;
+        }
 
         // A key that edits and is being held is typed again every so often
         UIKeyboard.Repeat();
 
         while (focus is not null && UIKeyboard.TryRead(out char character))
+        {
+            if (character == UIKeyboard.PASTE)
+            {
+                if (UIKeyboard.TryTakePaste(out string text))
+                    focus.OnPaste(text);
+                continue;
+            }
+
             focus.OnTextInput(character);
+        }
     }
+
+    /// <summary>
+    /// Helper method for the escape key: a dialog that is up is cancelled, failing that whatever is open on top of a
+    /// module is closed, failing that the focus is given up. Nothing of it, and the key was for the game.
+    /// </summary>
+    private void Escape(UIModule[] snapshot)
+    {
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (!snapshot[i].Enabled)
+                continue;
+
+            if (snapshot[i].Dialog is { } dialog)
+            {
+                dialog.Cancel();
+                return;
+            }
+        }
+
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (snapshot[i].Enabled && snapshot[i].Popup is not null)
+            {
+                snapshot[i].Popup = null;
+                return;
+            }
+        }
+
+        Focus = null;
+    }
+
+    // Scratch for walking the focus along
+    private readonly List<UIComponent> focusable = [];
+
+    /// <summary>
+    /// Moves the keyboard focus to the next component that takes it (a text box), in the order of the layout and
+    /// round past the end, or back with a negative step. What the tab key does. Simulation thread.
+    /// </summary>
+    public void FocusNext(int by = 1) => FocusNext(modules, by);
+
+    /// <summary>
+    /// Helper method to move the focus to the next (or previous) component that takes it, in the order of the layout
+    /// across the modules, round past the end.
+    /// </summary>
+    private void FocusNext(UIModule[] snapshot, int by)
+    {
+        focusable.Clear();
+        foreach (var module in snapshot)
+        {
+            if (module.Enabled && module.Interactive)
+                module.CollectFocusable(focusable);
+        }
+
+        if (focusable.Count == 0)
+            return;
+
+        int index = focus is null ? -1 : focusable.IndexOf(focus);
+        int next = index < 0 ? (by > 0 ? 0 : focusable.Count - 1) : ((index + by) % focusable.Count + focusable.Count) % focusable.Count;
+
+        Focus = focusable[next];
+    }
+
+    /// <summary>
+    /// Helper method to bring the tooltip of whatever the pointer has been resting on up, and take it down again the
+    /// moment the pointer moves on.
+    /// </summary>
+    private void UpdateTooltip(UIModule[] snapshot, float dt)
+    {
+        UIComponent? over = hovered;
+        bool still = Vector2.Distance(lastPointer, restingAt) <= TOOLTIP_DRIFT && !Pointer.Down;
+
+        if (!still)
+        {
+            restingAt = lastPointer;
+            restingFor = 0.0f;
+        }
+        else
+        {
+            restingFor += dt;
+        }
+
+        // The component the pointer is over, or the nearest thing around it that has something to say
+        UIComponent? showing = null;
+        if (still && restingFor >= TOOLTIP_DELAY && over is not null)
+        {
+            for (UIComponent? at = over; at is not null && showing is null; at = at.Parent)
+            {
+                if (at.Tooltip.Length > 0)
+                    showing = at;
+            }
+        }
+
+        UIModule? module = showing?.Module;
+        if (tooltipModule is not null && tooltipModule != module)
+            tooltipModule.ShowTooltip(null, default);
+
+        tooltipModule = module;
+        TooltipOf = showing;
+        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer));
+    }
+
+    /// <summary>The component whose tooltip is up right now, null while none is.</summary>
+    public UIComponent? TooltipOf { get; private set; }
 
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component

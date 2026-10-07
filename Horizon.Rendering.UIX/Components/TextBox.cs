@@ -102,6 +102,11 @@ public class TextBox : UIComponent
 
     protected internal override bool Focusable => true;
 
+    protected internal override bool Navigable => true;
+
+    // Confirming on a text box starts typing into it
+    protected internal override void OnActivate() => Focus();
+
     /// <summary>
     /// Types a character where the caret is (the end of the text, unless it was moved), if it is allowed and there
     /// is room. Whatever is selected is typed over.
@@ -128,6 +133,13 @@ public class TextBox : UIComponent
     {
         foreach (char character in text)
             Insert(character);
+    }
+
+    protected internal override void OnPaste(string text)
+    {
+        // One line of it, a text box has no use for the rest
+        int end = text.AsSpan().IndexOfAny('\r', '\n');
+        Insert(end < 0 ? text : text[..end]);
     }
 
     /// <summary>Removes what is selected, or failing that the character before the caret (the last one, unless the caret was moved).</summary>
@@ -247,6 +259,10 @@ public class TextBox : UIComponent
                 break;
             case UIKeyboard.ENTER:
                 Submit();
+                break;
+
+            // The focus and what is open are the compositor's to deal with, see UICompositor.RouteKeyboard
+            case UIKeyboard.TAB or UIKeyboard.SHIFT_TAB or UIKeyboard.ESCAPE or UIKeyboard.PASTE:
                 break;
 
             case UIKeyboard.SELECT_ALL:
@@ -401,6 +417,9 @@ public class TextBox : UIComponent
             float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X);
             list.Rect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)), skin.TextColor);
         }
+
+        if (!focused)
+            PaintSelection(list);
 
         // How far into the text a gap between two characters is drawn
         float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(text.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;

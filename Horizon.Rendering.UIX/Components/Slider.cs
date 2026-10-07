@@ -48,6 +48,27 @@ public class Slider : ProgressBar
 
     protected override bool HitTestVisible => true;
 
+    protected internal override bool Navigable => true;
+
+    protected internal override bool OnAdjust(int step)
+    {
+        if (!EnabledInHierarchy || Max == Min)
+            return false;
+
+        // A step of its own if it has them, otherwise a twentieth of the way
+        float previous = Value;
+        float by = Step > 0.0f ? Step : (Max - Min) / 20.0f;
+        Value = Math.Clamp(previous + Math.Sign(step) * by, MathF.Min(Min, Max), MathF.Max(Min, Max));
+
+        if (Value != previous)
+        {
+            OnChanged?.Invoke(Value);
+            InvokeScript(changedHandler, new NumberValue(Value));
+        }
+
+        return true;
+    }
+
     protected override void Paint(UIDrawList list)
     {
         base.Paint(list);
@@ -71,8 +92,10 @@ public class Slider : ProgressBar
         else
             list.Box(handle, skin.ControlTextColor * tint);
 
-        if (enabled && (IsHovered || IsPressed))
+        if (enabled && (IsHovered || IsPressed || IsSelected))
             list.Frame(handle, 2.0f, skin.HighlightColor);
+
+        PaintSelection(list);
     }
 
     protected internal override void OnPointerDown(Vector2 point) => MoveTo(point);

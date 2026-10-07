@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 using Horizon.Engine;
@@ -17,6 +17,10 @@ namespace Horizon.Rendering.UIX;
 /// the queue tells them apart from text by those. A key that edits and is held down is typed again and again
 /// after a moment, the way the system does it for characters.
 /// </para>
+/// <para>
+/// What is pasted (control with V) goes in as one <see cref="PASTE"/> mark with the whole text waiting next to it,
+/// see <see cref="TryTakePaste"/>: a text box takes the first line of it, an editor can take a whole file.
+/// </para>
 /// </summary>
 internal static class UIKeyboard
 {
@@ -26,39 +30,48 @@ internal static class UIKeyboard
     /// <summary>Stands for either enter key in the queue.</summary>
     public const char ENTER = '\n';
 
+    /// <summary>Stands for the tab key, which moves the focus on to the next component that takes it, and back with shift.</summary>
+    public const char TAB = '\t';
+    public const char SHIFT_TAB = '\u000B';
+
+    /// <summary>Stands for the escape key, which closes what is open and gives the focus up.</summary>
+    public const char ESCAPE = '\u001B';
+
     /// <summary>Stands for the delete key, which takes what is after the caret.</summary>
     public const char DELETE = '\u007F';
 
     /// <summary>Control with A: everything is selected.</summary>
-    public const char SELECT_ALL = '';
+    public const char SELECT_ALL = '\u0001';
 
     /// <summary>Control with C and with X: what is selected goes to the clipboard, and for X out of the text.</summary>
-    public const char COPY = '';
-    public const char CUT = '';
+    public const char COPY = '\u0003';
+    public const char CUT = '\u0018';
+
+    /// <summary>Control with V: what is on the clipboard is typed, see <see cref="TryTakePaste"/> for the text itself.</summary>
+    public const char PASTE = '\u0016';
 
     /// <summary>The caret goes somewhere. A character or (with control) a word to either side, or to either end.</summary>
-    public const char LEFT = '';
-    public const char RIGHT = '';
-    public const char WORD_LEFT = '';
-    public const char WORD_RIGHT = '';
-    public const char HOME = '';
-    public const char END = '';
+    public const char LEFT = '\u0011';
+    public const char RIGHT = '\u0012';
+    public const char WORD_LEFT = '\u0013';
+    public const char WORD_RIGHT = '\u0014';
+    public const char HOME = '\u0002';
+    public const char END = '\u0005';
 
     /// <summary>The same with shift held, which selects what the caret goes over.</summary>
-    public const char SELECT_LEFT = '';
-    public const char SELECT_RIGHT = '';
-    public const char SELECT_WORD_LEFT = '';
-    public const char SELECT_WORD_RIGHT = '';
-    public const char SELECT_HOME = '';
-    public const char SELECT_END = '';
+    public const char SELECT_LEFT = '\u000E';
+    public const char SELECT_RIGHT = '\u000F';
+    public const char SELECT_WORD_LEFT = '\u0010';
+    public const char SELECT_WORD_RIGHT = '\u0017';
+    public const char SELECT_HOME = '\u0006';
+    public const char SELECT_END = '\u0007';
 
     /// <summary>Control with backspace and with delete. A whole word goes.</summary>
-    public const char WORD_BACKSPACE = '';
-    public const char WORD_DELETE = '';
+    public const char WORD_BACKSPACE = '\u0019';
+    public const char WORD_DELETE = '\u001A';
 
-    // Nobody reads the queue while nothing has the focus, so it has to stop growing by itself. Big enough for
-    // something that is pasted
-    private const int MAX_PENDING = 1024;
+    // Nobody reads the queue while nothing has the focus, so it has to stop growing by itself
+    private const int MAX_PENDING = 256;
 
     // How long (in milliseconds) a key that edits is held before it starts repeating, and how long between two repeats
     private const long REPEAT_DELAY = 420;
@@ -66,6 +79,9 @@ internal static class UIKeyboard
 
     private static readonly ConcurrentQueue<char> typed = new();
     private static bool hooked;
+
+    // The texts that were pasted, one for every PASTE in the queue of characters and in the same order
+    private static readonly ConcurrentQueue<string> pasted = new();
 
     // The key that is being held to have it repeated, as what it puts in the queue (0 for none), and when it is next due
     private static int heldCode;
@@ -118,6 +134,8 @@ internal static class UIKeyboard
             Key.Backspace => (control ? WORD_BACKSPACE : BACKSPACE, true),
             Key.Delete => (control ? WORD_DELETE : DELETE, true),
             Key.Enter or Key.KeypadEnter => (ENTER, false),
+            Key.Tab => (shift ? SHIFT_TAB : TAB, false),
+            Key.Escape => (ESCAPE, false),
             Key.Left => ((shift, control) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
             Key.Right => ((shift, control) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
             Key.Home => (shift ? SELECT_HOME : HOME, false),
@@ -148,8 +166,8 @@ internal static class UIKeyboard
     }
 
     /// <summary>
-    /// Helper to type what is on the clipboard, as if it had been typed by hand. Whoever has the focus takes
-    /// what it can use of it. We are on the thread of the window here, which is the one that may ask for it.
+    /// Helper to queue what is on the clipboard, as one paste. Whoever has the focus takes what it can use of it.
+    /// We are on the thread of the window here, which is the one that may ask for it.
     /// </summary>
     private static void Paste(IKeyboard keyboard)
     {
@@ -164,16 +182,18 @@ internal static class UIKeyboard
             return;
         }
 
-        foreach (char character in text)
-        {
-            // One line of it. A text box has no use for the rest
-            if (character is '\r' or '\n')
-                break;
+        if (text.Length == 0 || typed.Count >= MAX_PENDING)
+            return;
 
-            if (!char.IsControl(character))
-                Push(character);
-        }
+        pasted.Enqueue(text);
+        typed.Enqueue(PASTE);
     }
+
+    /// <summary>
+    /// The text of the paste that is next in line, once a <see cref="PASTE"/> has been read from the queue. Reading the
+    /// mark and taking its text go together, or the two queues drift apart.
+    /// </summary>
+    public static bool TryTakePaste(out string text) => pasted.TryDequeue(out text!);
 
     /// <summary>
     /// Types the key that is being held down again if it is time to, called once per update by every UI. This
@@ -234,12 +254,27 @@ internal static class UIKeyboard
     /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
     public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
 
-    /// <summary>Throws away whatever was typed while nothing was listening.</summary>
-    public static void Clear() => typed.Clear();
+    /// <summary>Throws away whatever was typed while nothing was listening, pastes and all.</summary>
+    public static void Clear()
+    {
+        typed.Clear();
+        pasted.Clear();
+    }
 
     private static void Push(char character)
     {
         if (typed.Count < MAX_PENDING)
             typed.Enqueue(character);
     }
+}
+
+/// <summary>
+/// The clipboard of the system, for whoever has something to put on it that isn't the selection of a text box
+/// (an editor copying components as code). What is on it comes back through control with V, see
+/// <see cref="UICompositor.Pasted"/> and <see cref="Components.UIComponent.OnPaste"/>.
+/// </summary>
+public static class UIClipboard
+{
+    /// <summary>Puts text on the clipboard. From any thread, it is there within a moment.</summary>
+    public static void Copy(string text) => UIKeyboard.Copy(text);
 }

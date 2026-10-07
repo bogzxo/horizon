@@ -154,6 +154,25 @@ public partial class UICompositor : GameComponent, IDisposable
     private UIComponent? pressed;
     private UIComponent? focus;
 
+    // How long (in seconds) the pointer has to rest on a component before its tooltip comes up, and how far it can
+    // drift (in units of the camera) without that counting as moving
+    private const float TOOLTIP_DELAY = 0.55f;
+    private const float TOOLTIP_DRIFT = 3.0f;
+
+    // How long the pointer has been resting, where it came to rest, and which module is showing a tooltip right now
+    private float restingFor;
+    private Vector2 restingAt;
+    private UIModule? tooltipModule;
+
+    // Scratch for cutting a tooltip into lines, see UITooltip
+    internal List<(int Start, int Length)> TooltipLines { get; } = [];
+
+    /// <summary>
+    /// Called with what was pasted (control with V) while nothing in the UI had the focus. For an editor that pastes
+    /// things rather than text. Null for nothing, which is what it is unless somebody sets it.
+    /// </summary>
+    public Action<string>? Pasted { get; set; }
+
     public IReadOnlyList<UIModule> Modules => modules;
 
     /// <summary>The look of the UI, null until <see cref="Initialize"/> has loaded it (or if it failed to).</summary>
@@ -216,8 +235,17 @@ public partial class UICompositor : GameComponent, IDisposable
             // Whatever was typed before now was not meant for this component.
             UIKeyboard.Clear();
             focus = value;
+
+            // So the paste of an editor knows whether a text box somewhere has the keyboard
+            if (value is not null)
+                focusOwner = this;
+            else if (focusOwner == this)
+                focusOwner = null;
         }
     }
+
+    // The compositor whose component has the keyboard, null while none does. There is one keyboard, so one of these
+    private static UICompositor? focusOwner;
 
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
     /// <param name="theme">Which theme of the usual skin to draw the UI in ("red", "gold"), null for the one the skin says is its usual one.</param>
@@ -360,7 +388,8 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // The pointer is tested against the layout of the previous update, which is the one on screen.
         RoutePointer(snapshot);
-        RouteKeyboard();
+        RouteKeyboard(snapshot);
+        UpdateTooltip(snapshot, dt);
 
         back.Begin(skin, motionFrame, dt, layer.Effects.IsActive);
         foreach (var module in snapshot)

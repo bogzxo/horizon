@@ -48,6 +48,8 @@ internal static class TestCatalog
         new("ui-controls", TestArea.UI, "UI controls", "Dropdowns, sliders with ends and steps, the colour picker and entrances out of a layout.", () => new UIControlsExample()),
         new("ui-controls-selftest", TestArea.UI, "UI controls self-test", "The UI controls test clicking through itself and checking the results.", () => new UIControlsExample(selfTest: true)),
         new("ui-screens", TestArea.UI, "UI screens", "A menu made for 16:9 that keeps its shape on any screen, tabs, groups, right click menus, lists that keep changing and the performance overlay.", () => new UIScreensExample()),
+        new("ui-navigation", TestArea.UI, "UI navigation", "Walking a menu with a gamepad or the arrow keys, labels that wrap, tooltips, a dialog, tab and paste.", () => new UINavigationExample()),
+        new("ui-navigation-selftest", TestArea.UI, "UI navigation self-test", "The navigation test driving itself and checking the results.", () => new UINavigationExample(selfTest: true)),
         new("ui-pack", TestArea.UI, "UI pack", "The Dead Revolver skin: its themes, one atlas and icons in text.", () => new UIPackExample()),
 
         // Physics: bodies, and particles that behave like fluid.

@@ -12,8 +12,6 @@ namespace Horizon.Rendering.UIX.Components;
 /// </summary>
 public class Button : UIComponent
 {
-    private const string SELECTION_REGION = "selection";
-
     // What the name of a style ends in when it has no body of its own, and how much of the skin's colour the chosen one of those is filled with
     private const string FLAT_SUFFIX = "_flat";
     private const float CHOSEN_FILL = 0.28f;
@@ -74,6 +72,13 @@ public class Button : UIComponent
 
     protected override bool HitTestVisible => true;
 
+    protected internal override bool Navigable => true;
+
+    protected internal override void OnActivate() => OnClick();
+
+    // Lit as the chosen one, by whoever set it or by a navigator standing on it
+    private bool Chosen => Selected || IsSelected;
+
     protected override Vector2 Measure(UISkin skin)
     {
         Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
@@ -90,7 +95,7 @@ public class Button : UIComponent
 
         bool enabled = EnabledInHierarchy;
         bool down = enabled && IsPressed && IsHovered;
-        bool hovered = enabled && (IsHovered || Selected) && !down;
+        bool hovered = enabled && (IsHovered || Chosen) && !down;
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
 
         // A state the skin has no art of its own for is drawn with the plain button's.
@@ -109,7 +114,7 @@ public class Button : UIComponent
         }
 
         // The marker of the chosen one sits one of its own pixels outside of the button.
-        if (enabled && Selected && skin.TryGetRegion(SELECTION_REGION, out var marker))
+        if (enabled && Chosen && skin.TryGetRegion(SELECTION_REGION, out var marker))
             list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
 
         // The label is centred on what the padding leaves over, which is the face of the button when
@@ -132,7 +137,7 @@ public class Button : UIComponent
     /// </summary>
     private void PaintFlat(UIDrawList list, UISkin skin, bool down, bool hovered, Vector4 tint)
     {
-        bool chosen = Selected && EnabledInHierarchy;
+        bool chosen = Chosen && EnabledInHierarchy;
 
         // A style that calls itself flat has no body. It is a label that lights up, and stays lit while it is the chosen one
         if (style.EndsWith(FLAT_SUFFIX))
@@ -157,7 +162,7 @@ public class Button : UIComponent
 
     protected override void Update(float dt)
     {
-        bool lit = EnabledInHierarchy && (IsHovered || Selected);
+        bool lit = EnabledInHierarchy && (IsHovered || Chosen);
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
         if (lit && !wasLit && updated && Animated)

@@ -38,6 +38,10 @@ public class ToggleButton : UIComponent
 
     protected override bool HitTestVisible => true;
 
+    protected internal override bool Navigable => true;
+
+    protected internal override void OnActivate() => OnClick();
+
     protected override Vector2 Measure(UISkin skin)
     {
         Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
@@ -60,7 +64,7 @@ public class ToggleButton : UIComponent
             new Vector2(side));
 
         // The whole row lights up, as pressing anywhere on it works.
-        if (enabled && IsHovered)
+        if (enabled && (IsHovered || IsSelected))
             list.Box(Bounds.Shrink(new UIEdges(-6.0f, -4.0f)), skin.HoverColor);
 
         if (skin.TryGetRegion(State ? ON_REGION : OFF_REGION, out var region))
@@ -74,6 +78,8 @@ public class ToggleButton : UIComponent
             Origin.Left,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
             skin.TextColor * tint);
+
+        PaintSelection(list);
     }
 
     protected internal override void OnClick()
