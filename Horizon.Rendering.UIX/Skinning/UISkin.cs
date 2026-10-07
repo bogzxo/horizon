@@ -245,6 +245,60 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         return true;
     }
 
+    // How big the image files that are drawn whole are, in pixels, read off the files once. Zero for one that can't be read
+    private readonly ConcurrentDictionary<string, Vector2> imageSizes = new();
+
+    /// <summary>
+    /// How big an image file is, in pixels: what an image drawn out of it whole measures. Zero if it isn't there or
+    /// isn't a PNG. From any thread, the file is only looked at the first time.
+    /// </summary>
+    public Vector2 ImageSize(string path) => imageSizes.GetOrAdd(path, static path =>
+    {
+        try
+        {
+            // Width and height are the first thing in a PNG after its signature and the header's length and name
+            using var file = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[24];
+            if (file.Read(header) < header.Length || header[1] != (byte)'P' || header[2] != (byte)'N' || header[3] != (byte)'G')
+                return Vector2.Zero;
+
+            return new Vector2(
+                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[16..]),
+                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[20..]));
+        }
+        catch (Exception)
+        {
+            return Vector2.Zero;
+        }
+    });
+
+    /// <summary>
+    /// An image file, the whole of it, as a piece of art of the skin: stitched into the atlas the first time it is
+    /// asked for (and there by the next frame), drawn at the scale of the UI like the rest of the skin. For art that
+    /// belongs to a layout rather than the skin, a logo say. PNG only.
+    /// </summary>
+    public bool TryGetImage(string path, out UIRegion region)
+    {
+        string name = "file:" + path;
+        if (regions.TryGetValue(name, out region))
+            return true;
+
+        Vector2 size = ImageSize(path);
+        if (size.X <= 0.0f || size.Y <= 0.0f)
+            return false;
+
+        int width = (int)size.X, height = (int)size.Y;
+        string key = TextureAtlas.KeyFor(path, 0, 0, width, height);
+
+        Atlas.Request(key, path, 0, 0, width, height);
+        if (!Atlas.TryGet(key, out var placed))
+            return false;
+
+        region = new UIRegion(placed.Position, placed.Size);
+        regions[name] = region;
+        return true;
+    }
+
     /// <summary>
     /// Finds an icon by name, the way an <c>[icon:name]</c> tag does: an icon the skin declares, or
     /// failing that the region of that name.
