@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.Contracts;
+﻿using Bogz.Logging;
+using System.Diagnostics.Contracts;
 
 using Horizon.Content;
 using Horizon.Content.Descriptions;
@@ -26,7 +27,17 @@ public class FrameBufferObjectFactory
             description.Attachments
         );
 
-        var drawBuffers = attachments.Select(x => (ColorBuffer)x.Key).ToArray();
+        // Only the colour attachments can be drawn to: handing over a depth or stencil attachment as well has the
+        // whole call rejected, which leaves the frame buffer drawing to its first colour attachment alone.
+        // They go by their number, so that output N of a fragment shader ends up in colour attachment N whether or
+        // not the ones before it are there: an output there is no attachment for is thrown away.
+        int[] colours = [.. attachments.Keys.Where(IsColorAttachment).Select(attachment => attachment - FramebufferAttachment.ColorAttachment0)];
+
+        var drawBuffers = new ColorBuffer[colours.Length == 0 ? 0 : colours.Max() + 1];
+        Array.Fill(drawBuffers, ColorBuffer.None);
+
+        foreach (int colour in colours)
+            drawBuffers[colour] = (ColorBuffer)(FramebufferAttachment.ColorAttachment0 + colour);
 
         var buffer = new FrameBufferObject
         {
@@ -57,7 +68,7 @@ public class FrameBufferObjectFactory
             }
         }
 
-        if (attachments.Count == 1 && attachments.ContainsKey(FramebufferAttachment.DepthAttachment))
+        if (drawBuffers.Length == 0)
         {
             ObjectManager.GL.DrawBuffer(DrawBufferMode.None);
             ObjectManager.GL.ReadBuffer(ReadBufferMode.None);
@@ -98,6 +109,9 @@ public class FrameBufferObjectFactory
     }
 
 
+    private static bool IsColorAttachment(FramebufferAttachment attachment) =>
+        attachment >= FramebufferAttachment.ColorAttachment0 && attachment <= FramebufferAttachment.ColorAttachment31;
+
     private static Dictionary<FramebufferAttachment, FrameBufferAttachmentAsset> CreateFrameBufferAttachments(
         uint width,
         uint height,
@@ -118,12 +132,12 @@ public class FrameBufferObjectFactory
                     },
                     out var renderBuffer))
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, renderBuffer.Message);
+                    Log.Error(renderBuffer.Message);
                 }
 
                 if (renderBuffer.Status == AssetCreationStatus.Failed)
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment render buffer: {renderBuffer.Message}");
+                    Log.Error($"[FrameBufferFactory] Failed to create attachment render buffer: {renderBuffer.Message}");
                 }
 
                 attachments.Add(
@@ -147,12 +161,12 @@ public class FrameBufferObjectFactory
                        Width = width
                    }, out var texture))
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, texture.Message);
+                    Log.Error(texture.Message);
                 }
 
                 if (texture.Status == AssetCreationStatus.Failed)
                 {
-                    Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[FrameBufferFactory] Failed to create attachment texture: {texture.Message}");
+                    Log.Error($"[FrameBufferFactory] Failed to create attachment texture: {texture.Message}");
                 }
 
                 attachments.Add(

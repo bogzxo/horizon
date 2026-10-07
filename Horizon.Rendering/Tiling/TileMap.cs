@@ -1,466 +1,1167 @@
 ﻿using System.Numerics;
-using System.Runtime.CompilerServices;
 
 using Bogz.Logging;
-using Bogz.Logging.Loggers;
 
-using Box2D.NetStandard.Dynamics.World;
+using DotTiled;
+using DotTiled.Serialization;
 
-using Horizon.Core;
+using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.GameEntity.Components.Physics2D;
+using Horizon.OpenGL;
+using Horizon.OpenGL.Descriptions;
 
-using TiledSharp;
+using TiledObject = DotTiled.Object;
 
-namespace Horizon.Rendering;
+namespace Horizon.Rendering.Tiling;
 
-public abstract partial class Tiling<TTextureID>
+/// <summary>
+/// A map made in Tiled, in the world. Orthogonal maps, read with DotTiled, with everything such a map can have in
+/// it: maps with and without edges, layers of tiles, of objects and of images, groups, tiles that are turned over,
+/// bigger than the grid or animated, tile sets cut out of one image or made of many, and layers that are tinted,
+/// see-through, moved, repeated or scrolling at a speed of their own.
+/// <code>
+/// var map = TileMap.Load("Assets/maps/town.tmx", objects => objects
+///     .OfClass("spawn", spawn => spawns.Add(spawn.Position))
+///     .WithProperty("light_radius", light => AddLight(light)));
+///
+/// renderer.AddEntity(map);                // everything behind the players
+/// renderer.AddEntity(players);
+/// renderer.AddEntity(map.Foreground);     // the layers marked Foreground, in front of them
+///
+/// foreach (TileMapBox box in map.BuildColliders())
+///     body.CreateRectangularFixture(box.Min, box.Size);
+/// </code>
+/// The map is laid out in the world's units, one to a pixel of its tiles, with Y going up: its bottom left corner
+/// is at <see cref="Origin"/> and it reaches up and to the right from there. Whatever is asked of it (where an
+/// object is, where a tile is) is answered in those, Tiled's own way of counting stays in the file.
+/// See <see cref="TileMapLayer"/> for the custom properties of a layer the map goes by.
+/// </summary>
+public sealed class TileMap : GameObject
 {
-    /// <summary>
-    /// Represents a 2D tile map with multiple layers in the game world.
-    /// </summary>
-    public class TileMap : GameObject
+    // How many tiles to a side are drawn in one go, which is also what is left out in one go when it is out of view
+    private const int BATCH_TILES = 32;
+
+    // How far inside of its edges a tile is cut out of its image, so its neighbours in the image never show at its seams
+    private const float SOURCE_INSET = 0.01f;
+
+    private const string UNIFORM_CAMERA_PROJECTION = "uCameraProjection";
+    private const string UNIFORM_CAMERA_VIEW = "uCameraView";
+    private const string UNIFORM_OFFSET = "uOffset";
+    private const string UNIFORM_TINT = "uTint";
+    private const string UNIFORM_EMISSIVE = "uEmissive";
+    private const string UNIFORM_MOTION = "uMotion";
+    private const string UNIFORM_NEARNESS = "uNearness";
+
+    // How near the layers are for a renderer that blurs motion: the ordinary ones from the furthest to the nearest
+    // between these two, and the ones in the foreground in front of anything that isn't a map
+    private const float NEARNESS_BACK = 0.1f, NEARNESS_FRONT = 0.5f, NEARNESS_FOREGROUND = 0.9f;
+
+    private static Technique? shader;
+
+    private readonly string directory;
+    private readonly List<TileMapLayer> layers = [];
+    private readonly List<TileMapObject> objects = [];
+
+    // The tile sets in the order of their first numbers, with where their images are looked for and their tiles by number
+    private readonly List<(uint First, Tileset Set, string Directory, Dictionary<uint, Tile> Tiles)> tilesets = [];
+    private readonly Dictionary<uint, TileMapTile?> tiles = [];
+    private readonly Dictionary<string, TileMapTexture> textures = [];
+
+    private float time;
+
+    /// <summary>What a layer looked like at the end of a tick, for frames that are drawn alongside the simulation.</summary>
+    private struct CapturedLayer
     {
-        /// <summary>
-        /// The depth of the tilemap in slices.
-        /// </summary>
-        public int Depth { get; init; }
+        public bool Visible, IsForeground;
+        public float Opacity, Emissive;
+        public Vector3 Tint;
+        public Vector2 WorldOffset, Parallax, Scroll, Drift;
+        public int Version;
+        public uint[] Gids;
+        public TileFlip[] Flips;
+    }
 
-        /// <summary>
-        /// The width of the tile map in chunks.
-        /// </summary>
-        public int Width { get; init; }
+    /// <summary>The whole map at the end of a tick.</summary>
+    private sealed class CapturedMap
+    {
+        public float Time;
+        public Vector2 Origin, ParallaxOrigin;
+        public bool SnapParallax;
+        public CapturedLayer[] Layers = [];
+    }
 
-        /// <summary>
-        /// The height of the tile map in chunks.
-        /// </summary>
-        public int Height { get; init; }
+    private readonly SnapshotBuffer<CapturedMap> captured = new(static () => new CapturedMap());
 
-        /// <summary>
-        /// The lower layer slice in which all children will be rendered in, followed by every layer above it ontop.
-        /// </summary>
-        public int ParallaxIndex { get; set; }
+    /// <summary>The map as DotTiled read it, for whatever isn't offered here.</summary>
+    public Map Data { get; }
 
-        /// <summary>
-        /// Gets or sets the physics world associated with the tile map.
-        /// </summary>
-        public World? World { get; private set; }
+    /// <summary>The file the map was read from.</summary>
+    public string Path { get; }
 
-        /// <summary>
-        /// Gets the chunk manager responsible for managing tilemap chunks.
-        /// </summary>
-        public TileMapChunkManager ChunkManager { get; private set; }
+    /// <summary>Where the bottom left corner of the map is in the world.</summary>
+    public Vector2 Origin { get; set; }
 
-        /// <summary>
-        /// Gets the dictionary of tile sets used in the tile map.
-        /// </summary>
-        public Dictionary<string, TileSet> TileSets { get; init; }
+    /// <summary>The size of the map in tiles. For a map without edges (infinite) that is the box around everything in it.</summary>
+    public int Width { get; }
 
-        /// <summary>
-        /// Tile size in pixels.
-        /// </summary>
-        public Vector2 TileSize { get; init; }
+    /// <inheritdoc cref="Width"/>
+    public int Height { get; }
 
-        private int TileUpdateCount = 0;
-        private bool hasBeenInitialized = false;
+    /// <summary>
+    /// The column and the row the map starts at, the way Tiled counts them. Zero for a map with edges; one without
+    /// can have tiles to the left of and above where it started out, which makes these negative.
+    /// </summary>
+    public int Left { get; }
 
-        /// <summary>
-        /// The offset applied when calculating tilemap clipping.
-        /// </summary>
-        public float ClippingOffset = 0.1f;
+    /// <inheritdoc cref="Left"/>
+    public int Top { get; }
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="TileMap"/> class.
-        /// </summary>
-        /// <param name="width">The width of the tilemap in chunks (32)</param>
-        /// <param name="height"></param>
-        public TileMap(int width, int height, int depth, in int tileWidth, in int tileHeight)
+    /// <summary>The size of a cell of the grid.</summary>
+    public Vector2 TileSize { get; }
+
+    /// <summary>The size of the whole map in the world.</summary>
+    public Vector2 Size => new Vector2(Width, Height) * TileSize;
+
+    /// <summary>The bottom left corner of the map in the world, which is its <see cref="Origin"/>.</summary>
+    public Vector2 Min => Origin;
+
+    /// <summary>The top right corner of the map in the world.</summary>
+    public Vector2 Max => Origin + Size;
+
+    /// <summary>The colour the map has behind everything in Tiled, null if it has none.</summary>
+    public Vector4? BackgroundColor { get; }
+
+    public TileMapProperties Properties { get; }
+
+    /// <summary>Every layer from the back to the front. Groups are gone: what a group says about what is in it is worked into its layers.</summary>
+    public IReadOnlyList<TileMapLayer> Layers => layers;
+
+    /// <summary>Every object of every object layer, see also <see cref="DispatchObjects"/>.</summary>
+    public IReadOnlyList<TileMapObject> Objects => objects;
+
+    /// <summary>
+    /// The point of the world at which every layer is where it was drawn, however it scrolls: the further the camera is
+    /// from it, the further a layer with a <see cref="TileMapLayer.Parallax"/> other than 1 has moved. Starts out as
+    /// what the map says in Tiled, which unless somebody changed it there is its top left corner.
+    /// </summary>
+    public Vector2 ParallaxOrigin { get; set; }
+
+    /// <summary>
+    /// Whether layers are only ever moved by whole units when they scroll at a speed of their own. Pixel art that is
+    /// moved by half a pixel shimmers.
+    /// </summary>
+    public bool SnapParallax { get; set; } = true;
+
+    /// <summary>
+    /// Draws the layers that are marked as being in the foreground (see <see cref="TileMapLayer.IsForeground"/>).
+    /// Add it to whatever draws the map after everything that goes in between, the players for one. Left alone, the
+    /// map draws those layers itself, in their place among the others.
+    /// </summary>
+    public TileMapForeground Foreground { get; }
+
+    private TileMap(Map data, string path)
+    {
+        Name = "Tile Map";
+        Data = data;
+        Path = path;
+        directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? string.Empty;
+
+        TileSize = new Vector2(data.TileWidth, data.TileHeight);
+        Properties = new TileMapProperties(data.Properties, directory);
+        BackgroundColor = data.BackgroundColor is { A: > 0 } background ? TileMapProperties.ToVector(background) : null;
+        Foreground = new TileMapForeground(this);
+
+        foreach (Tileset set in data.Tilesets)
         {
-            Name = "Tilemap";
+            // The images of a tile set in a file of its own are named from where that file is
+            string setDirectory = set.Source.HasValue
+                ? System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, set.Source.Value))) ?? directory
+                : directory;
 
-            this.TileSize = new Vector2(tileWidth, tileHeight);
-            this.Depth = depth;
-            this.Width = width;
-            this.Height = height;
-            this.ParallaxIndex = depth / 2;
+            tilesets.Add((set.FirstGID.GetValueOr(1u), set, setDirectory, set.Tiles.ToDictionary(tile => tile.ID)));
+        }
+        tilesets.Sort((a, b) => a.First.CompareTo(b.First));
 
-            TileSets = new Dictionary<string, TileSet>();
+        (Left, Top, Width, Height) = Measure(data);
+
+        ParallaxOrigin = TiledToWorld(new Vector2(data.ParallaxOriginX, data.ParallaxOriginY));
+
+        AddLayers(data.Layers, string.Empty, true, 1.0f, Vector3.One, Vector2.Zero, Vector2.One);
+    }
+
+    /* Loading */
+
+    /// <summary>
+    /// Reads a map.
+    /// </summary>
+    /// <param name="objects">
+    /// Says who gets which of the map's objects, see <see cref="TileMapObjectDispatcher"/>. They are handed out before
+    /// this returns. The map can be asked for them later as well (<see cref="Objects"/>, <see cref="DispatchObjects"/>).
+    /// </param>
+    /// <param name="origin">Where the bottom left corner of the map goes in the world.</param>
+    /// <exception cref="Exception">The file isn't there, isn't an orthogonal map, or names a file that isn't there.</exception>
+    public static TileMap Load(string path, Action<TileMapObjectDispatcher>? objects = null, Vector2 origin = default)
+    {
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"The map '{path}' doesn't exist.");
+
+        Map data;
+        try
+        {
+            data = Loader.Default().LoadMap(path);
+        }
+        catch (Exception e)
+        {
+            throw new Exception($"The map '{path}' can't be read: {e.Message}", e);
         }
 
-        /// <summary>
-        /// Creates an instance of <see cref="TileMap"/> and poplates its layers, chunks and tilesets from the specified tilemap verbatim.
-        /// </summary>
-        /// <param name="parent">The gamescreen (necessary if you plan to use Box2D integration).</param>
-        /// <param name="tiledMapPath">The path of the tiled map.</param>
-        /// <returns>An instance of <see cref="TileMap"/> based off a specified Tiled map. Null if unsuccessful.</returns>
-        public static bool TryFromTiledMap(Entity parent, string tiledMapPath, out TileMap? map)
+        if (data.Orientation != MapOrientation.Orthogonal)
+            throw new NotSupportedException($"The map '{path}' is {data.Orientation}, only orthogonal maps are supported.");
+
+        var map = new TileMap(data, path) { Origin = origin };
+        map.ParallaxOrigin += origin;
+
+        if (objects is not null)
+            map.DispatchObjects(objects);
+
+        return map;
+    }
+
+    /// <summary>
+    /// Reads a map, see <see cref="Load"/>. What went wrong with one that can't be read goes into the log.
+    /// </summary>
+    public static bool TryLoad(string path, out TileMap? map, Action<TileMapObjectDispatcher>? objects = null, Vector2 origin = default)
+    {
+        try
         {
-            try
+            map = Load(path, objects, origin);
+            return true;
+        }
+        catch (Exception e)
+        {
+            Log.Error($"[TileMap] {e.Message}");
+            map = null;
+            return false;
+        }
+    }
+
+    /// <summary>The box around everything a map without edges has in it. A map with edges is as big as it says.</summary>
+    private static (int Left, int Top, int Width, int Height) Measure(Map data)
+    {
+        if (!data.Infinite)
+            return (0, 0, (int)data.Width, (int)data.Height);
+
+        int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+
+        void Visit(IEnumerable<BaseLayer> found)
+        {
+            foreach (BaseLayer layer in found)
             {
-                var tiledMap = new TmxMap(tiledMapPath);
+                if (layer is Group group)
+                    Visit(group.Layers);
 
-                if (tiledMap.Width <= 0 || tiledMap.Height <= 0)
+                if (layer is not TileLayer { Data.HasValue: true } tileLayer || !tileLayer.Data.Value.Chunks.HasValue)
+                    continue;
+
+                foreach (Chunk chunk in tileLayer.Data.Value.Chunks.Value)
                 {
-                    throw new ArgumentException("Invalid Tiled map dimensions.");
+                    left = Math.Min(left, chunk.X);
+                    top = Math.Min(top, chunk.Y);
+                    right = Math.Max(right, chunk.X + (int)chunk.Width);
+                    bottom = Math.Max(bottom, chunk.Y + (int)chunk.Height);
+                }
+            }
+        }
+
+        Visit(data.Layers);
+
+        // Nothing in it at all
+        return left > right ? (0, 0, 1, 1) : (left, top, right - left, bottom - top);
+    }
+
+    private void AddLayers(IEnumerable<BaseLayer> found, string group, bool visible, float opacity, Vector3 tint, Vector2 offset, Vector2 parallax)
+    {
+        foreach (BaseLayer source in found)
+        {
+            // What the layer says for itself, on top of what the groups it is in say
+            bool ownVisible = visible && source.Visible;
+            float ownOpacity = opacity * source.Opacity;
+            Vector2 ownOffset = offset + new Vector2(source.OffsetX, source.OffsetY);
+            Vector2 ownParallax = parallax * new Vector2(source.ParallaxX, source.ParallaxY);
+
+            Vector3 ownTint = tint;
+            if (source.TintColor.HasValue)
+            {
+                Vector4 colour = TileMapProperties.ToVector(source.TintColor.Value);
+                ownTint *= new Vector3(colour.X, colour.Y, colour.Z);
+                ownOpacity *= colour.W;
+            }
+
+            if (source is Group inner)
+            {
+                AddLayers(inner.Layers, group.Length > 0 ? $"{group}/{inner.Name}" : inner.Name, ownVisible, ownOpacity, ownTint, ownOffset, ownParallax);
+                continue;
+            }
+
+            var layer = new TileMapLayer(this, source, group, new TileMapProperties(source.Properties, directory))
+            {
+                Visible = ownVisible,
+                Opacity = ownOpacity,
+                Tint = ownTint,
+                Parallax = ownParallax,
+
+                // Tiled counts down, the world counts up
+                WorldOffset = new Vector2(ownOffset.X, -ownOffset.Y)
+            };
+            layers.Add(layer);
+
+            switch (source)
+            {
+                case TileLayer tileLayer:
+                    ReadTiles(layer, tileLayer);
+                    break;
+
+                case ObjectLayer objectLayer:
+                    foreach (TiledObject found2 in objectLayer.Objects)
+                        objects.Add(ReadObject(layer, found2));
+                    break;
+            }
+        }
+    }
+
+    private void ReadTiles(TileMapLayer layer, TileLayer source)
+    {
+        layer.Gids = new uint[Width * Height];
+        layer.Flips = new TileFlip[Width * Height];
+
+        if (!source.Data.HasValue)
+            return;
+
+        void Place(uint[] gids, FlippingFlags[]? flags, int x, int y, int width, int height)
+        {
+            for (int row = 0; row < height; row++)
+            {
+                for (int column = 0; column < width; column++)
+                {
+                    int from = row * width + column;
+                    int to = IndexOf(x + column, y + row);
+
+                    if (to < 0 || from >= gids.Length)
+                        continue;
+
+                    layer.Gids[to] = gids[from];
+                    layer.Flips[to] = flags is not null && from < flags.Length ? ToFlip(flags[from]) : TileFlip.None;
+                }
+            }
+        }
+
+        Data data = source.Data.Value;
+
+        if (data.Chunks.HasValue)
+        {
+            foreach (Chunk chunk in data.Chunks.Value)
+                Place(chunk.GlobalTileIDs, chunk.FlippingFlags, chunk.X, chunk.Y, (int)chunk.Width, (int)chunk.Height);
+        }
+        else if (data.GlobalTileIDs.HasValue)
+        {
+            Place(data.GlobalTileIDs.Value, data.FlippingFlags.HasValue ? data.FlippingFlags.Value : null, 0, 0, (int)source.Width, (int)source.Height);
+        }
+    }
+
+    private static TileFlip ToFlip(FlippingFlags flags) =>
+        ((flags & FlippingFlags.FlippedHorizontally) != 0 ? TileFlip.Horizontal : TileFlip.None)
+        | ((flags & FlippingFlags.FlippedVertically) != 0 ? TileFlip.Vertical : TileFlip.None)
+        | ((flags & FlippingFlags.FlippedDiagonally) != 0 ? TileFlip.Diagonal : TileFlip.None);
+
+    /* Where things are */
+
+    // The left and the bottom edge of the map in Tiled's pixels, which is what everything is measured from
+    private float PixelLeft => Left * TileSize.X;
+    private float PixelBottom => (Top + Height) * TileSize.Y;
+
+    /// <summary>Turns a point of the map the way Tiled has it (pixels from its top left corner, Y going down) into where that is in the world.</summary>
+    public Vector2 TiledToWorld(Vector2 pixel) => Origin + new Vector2(pixel.X - PixelLeft, PixelBottom - pixel.Y);
+
+    /// <summary>Turns a point of the world into the pixel of the map it is on the way Tiled counts them.</summary>
+    public Vector2 WorldToTiled(Vector2 world) => new(world.X - Origin.X + PixelLeft, PixelBottom - (world.Y - Origin.Y));
+
+    /// <summary>The middle of a cell in the world, by its column and row the way Tiled counts them (from the top left).</summary>
+    public Vector2 TileToWorld(int x, int y) => TiledToWorld(new Vector2(x + 0.5f, y + 0.5f) * TileSize);
+
+    /// <summary>The column and the row a point of the world is in, the way Tiled counts them. It may well be off the map.</summary>
+    public (int X, int Y) WorldToTile(Vector2 world)
+    {
+        Vector2 pixel = WorldToTiled(world) / TileSize;
+        return ((int)MathF.Floor(pixel.X), (int)MathF.Floor(pixel.Y));
+    }
+
+    /// <summary>Whether a column and a row are on the map.</summary>
+    public bool Contains(int x, int y) => IndexOf(x, y) >= 0;
+
+    internal int IndexOf(int x, int y)
+    {
+        int column = x - Left, row = y - Top;
+        return column >= 0 && row >= 0 && column < Width && row < Height ? row * Width + column : -1;
+    }
+
+    /* Layers and tiles */
+
+    /// <summary>A layer by its name (the case doesn't matter), null if there is none.</summary>
+    public TileMapLayer? FindLayer(string name) =>
+        layers.Find(layer => string.Equals(layer.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Every tile of every tile layer, layer by layer from the back.</summary>
+    public IEnumerable<TileMapCell> Tiles() => layers.SelectMany(layer => layer.Tiles());
+
+    /// <summary>The tiles at a point of the world, one for every tile layer that has one there, from the back to the front.</summary>
+    public IEnumerable<TileMapCell> TilesAt(Vector2 world)
+    {
+        foreach (TileMapLayer layer in layers)
+        {
+            var (x, y) = WorldToTile(world - layer.WorldOffset);
+            if (layer.GetTile(x, y) is { } cell)
+                yield return cell;
+        }
+    }
+
+    /// <summary>
+    /// What a tile number of a layer stands for, null for no tile (0) and for a number no tile set of the map has.
+    /// </summary>
+    public TileMapTile? ResolveTile(uint gid)
+    {
+        if (gid == 0)
+            return null;
+
+        // Asked by the game in its updates and by whoever builds the layers for drawing, which may be at once
+        lock (tiles)
+            return ResolveTileLocked(gid);
+    }
+
+    private TileMapTile? ResolveTileLocked(uint gid)
+    {
+        if (gid == 0)
+            return null;
+
+        if (tiles.TryGetValue(gid, out TileMapTile? known))
+            return known;
+
+        TileMapTile? tile = null;
+
+        for (int i = tilesets.Count - 1; i >= 0; i--)
+        {
+            if (gid >= tilesets[i].First)
+            {
+                tile = DescribeTile(gid, tilesets[i]);
+                break;
+            }
+        }
+
+        // Before its frames are looked up, which may well be the tile itself
+        tiles[gid] = tile;
+
+        if (tile is not null && tilesets.Find(set => set.Set == tile.Tileset).Tiles.TryGetValue((uint)tile.Id, out Tile? definition) && definition.Animation.Count > 0)
+        {
+            var frames = new List<(TileMapTile, float)>();
+            uint first = gid - (uint)tile.Id;
+
+            foreach (Frame frame in definition.Animation)
+            {
+                if (ResolveTileLocked(first + frame.TileID) is { } shown)
+                    frames.Add((shown, MathF.Max(0.001f, (float)frame.Duration / 1000.0f)));
+            }
+
+            tile.Animation = frames;
+            tile.AnimationLength = frames.Sum(frame => frame.Item2);
+        }
+
+        return tile;
+    }
+
+    private TileMapTile? DescribeTile(uint gid, (uint First, Tileset Set, string Directory, Dictionary<uint, Tile> Tiles) found)
+    {
+        Tileset set = found.Set;
+        uint id = gid - found.First;
+        found.Tiles.TryGetValue(id, out Tile? definition);
+
+        string image;
+        float x, y, width, height;
+
+        if (set.Image.HasValue && set.Image.Value.Source.HasValue)
+        {
+            // One image, cut into tiles of the same size
+            if (set.TileCount > 0 && id >= set.TileCount)
+                return null;
+
+            int imageWidth = set.Image.Value.Width.GetValueOr(0);
+            int columns = set.Columns > 0
+                ? (int)set.Columns
+                : Math.Max(1, (imageWidth - (int)set.Margin * 2 + (int)set.Spacing) / Math.Max(1, (int)(set.TileWidth + set.Spacing)));
+
+            image = System.IO.Path.GetFullPath(System.IO.Path.Combine(found.Directory, set.Image.Value.Source.Value));
+            width = set.TileWidth;
+            height = set.TileHeight;
+            x = set.Margin + id % columns * (set.TileWidth + set.Spacing);
+            y = set.Margin + id / columns * (set.TileHeight + set.Spacing);
+        }
+        else if (definition is { Image.HasValue: true } && definition.Image.Value.Source.HasValue)
+        {
+            // A collection of images: the tile is the whole of its own, or the part of it the set says
+            Image own = definition.Image.Value;
+
+            image = System.IO.Path.GetFullPath(System.IO.Path.Combine(found.Directory, own.Source.Value));
+            x = definition.X;
+            y = definition.Y;
+            width = definition.Width > 0 ? definition.Width : own.Width.GetValueOr((int)set.TileWidth);
+            height = definition.Height > 0 ? definition.Height : own.Height.GetValueOr((int)set.TileHeight);
+        }
+        else
+        {
+            return null;
+        }
+
+        var collision = new List<(Vector2, Vector2)>();
+        if (definition is { ObjectLayer.HasValue: true })
+        {
+            foreach (TiledObject shape in definition.ObjectLayer.Value.Objects)
+            {
+                // Only what has a width and a height to it. Measured from the top in Tiled, from the bottom here
+                if (shape is RectangleObject or EllipseObject && shape.Width > 0 && shape.Height > 0)
+                    collision.Add((new Vector2(shape.X, height - shape.Y - shape.Height), new Vector2(shape.Width, shape.Height)));
+            }
+        }
+
+        return new TileMapTile
+        {
+            Gid = gid,
+            Id = (int)id,
+            Tileset = set,
+            Class = definition?.Type ?? string.Empty,
+            Properties = definition is null ? TileMapProperties.Empty : new TileMapProperties(definition.Properties, found.Directory),
+            ImagePath = image,
+            Source = new Vector4(x + SOURCE_INSET, y + SOURCE_INSET, x + width - SOURCE_INSET, y + height - SOURCE_INSET),
+
+            // A tile set can have its tiles squeezed into the grid whatever size they are
+            Size = set.RenderSize == TileRenderSize.Grid ? TileSize : new Vector2(width, height),
+            Offset = set.TileOffset.HasValue ? new Vector2(set.TileOffset.Value.X, -set.TileOffset.Value.Y) : Vector2.Zero,
+            Collision = collision
+        };
+    }
+
+    /* Objects */
+
+    /// <summary>The object with a number, which is how an object property of another object names it. Null if there is none.</summary>
+    public TileMapObject? FindObject(int id) => objects.Find(found => found.Id == id);
+
+    /// <summary>The first object by a name (the case doesn't matter), null if there is none.</summary>
+    public TileMapObject? FindObject(string name) =>
+        objects.Find(found => string.Equals(found.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Hands the objects of the map to whoever wants them, see <see cref="TileMapObjectDispatcher"/> for how to say who that is.
+    /// </summary>
+    public void DispatchObjects(Action<TileMapObjectDispatcher> configure)
+    {
+        var dispatcher = new TileMapObjectDispatcher();
+        configure(dispatcher);
+        dispatcher.Dispatch(objects);
+    }
+
+    private TileMapObject ReadObject(TileMapLayer layer, TiledObject source)
+    {
+        var position = new Vector2(source.X, source.Y);
+        var size = new Vector2(source.Width, source.Height);
+
+        // Tiled turns an object clockwise around where it is, with Y going down
+        float turn = source.Rotation * MathF.PI / 180.0f;
+        Vector2 Turned(Vector2 offset) => position + new Vector2(
+            offset.X * MathF.Cos(turn) - offset.Y * MathF.Sin(turn),
+            offset.X * MathF.Sin(turn) + offset.Y * MathF.Cos(turn));
+
+        TileMapTile? tile = source is TileObject tileObject ? ResolveObjectTile(tileObject) : null;
+
+        TileMapShape shape = source switch
+        {
+            TileObject => TileMapShape.Tile,
+            PointObject => TileMapShape.Point,
+            EllipseObject => TileMapShape.Ellipse,
+            PolygonObject => TileMapShape.Polygon,
+            PolylineObject => TileMapShape.Polyline,
+            TextObject => TileMapShape.Text,
+            _ => TileMapShape.Rectangle
+        };
+
+        // What an object is placed by is its top left corner, except for a tile, which stands on its bottom left one
+        // unless its tile set says otherwise
+        Vector2 centre = shape switch
+        {
+            TileMapShape.Point => position,
+            TileMapShape.Tile => Turned((new Vector2(0.5f) - AnchorOf(tile)) * size),
+            _ => Turned(size / 2.0f)
+        };
+
+        List<Vector2>? corners = source switch
+        {
+            PolygonObject polygon => polygon.Points,
+            PolylineObject polyline => polyline.Points,
+            _ => null
+        };
+
+        return new TileMapObject(this, layer, position, centre, corners is null ? [] : [.. corners.Select(Turned)])
+        {
+            Id = (int)source.ID.GetValueOr(0u),
+            Name = source.Name,
+            Class = source.Type.Length > 0 ? source.Type : tile?.Class ?? string.Empty,
+            Shape = shape,
+            Size = shape == TileMapShape.Point ? Vector2.Zero : size,
+            Rotation = -source.Rotation,
+            Visible = source.Visible,
+            Text = source is TextObject text ? text.Text : string.Empty,
+            Tile = tile,
+            Flip = source is TileObject flipped ? ToFlip(flipped.FlippingFlags) : TileFlip.None,
+            Properties = new TileMapProperties(source.Properties, directory, tile?.Properties)
+        };
+    }
+
+    private TileMapTile? ResolveObjectTile(TileObject source)
+    {
+        uint gid = source.GID;
+
+        // The tile of an object out of a template is counted in the template's own tile set, the map counts differently
+        if (source.TemplateTileset.HasValue)
+        {
+            Tileset template = source.TemplateTileset.Value;
+            int match = tilesets.FindIndex(known => known.Set.Name == template.Name);
+            if (match < 0)
+                return null;
+
+            gid = gid - template.FirstGID.GetValueOr(1u) + tilesets[match].First;
+        }
+
+        return ResolveTile(gid);
+    }
+
+    // The point of a tile object that is where the object is, as a share of its size from its top left corner
+    private static Vector2 AnchorOf(TileMapTile? tile) => (tile?.Tileset.ObjectAlignment ?? ObjectAlignment.Unspecified) switch
+    {
+        ObjectAlignment.TopLeft => new Vector2(0.0f, 0.0f),
+        ObjectAlignment.Top => new Vector2(0.5f, 0.0f),
+        ObjectAlignment.TopRight => new Vector2(1.0f, 0.0f),
+        ObjectAlignment.Left => new Vector2(0.0f, 0.5f),
+        ObjectAlignment.Center => new Vector2(0.5f, 0.5f),
+        ObjectAlignment.Right => new Vector2(1.0f, 0.5f),
+        ObjectAlignment.Bottom => new Vector2(0.5f, 1.0f),
+        ObjectAlignment.BottomRight => new Vector2(1.0f, 1.0f),
+        _ => new Vector2(0.0f, 1.0f)
+    };
+
+    /* What is solid */
+
+    /// <summary>
+    /// Everything of the map there is to bump into, as few rectangles as it takes: the tiles of the layers that are
+    /// collidable (see <see cref="TileMapLayer.IsCollidable"/>), tiles that have a custom property <c>collidable</c>
+    /// set on them in their tile set, the shapes that were drawn onto tiles in Tiled's collision editor, and the
+    /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle.
+    /// </summary>
+    /// <param name="isSolid">Decides for every tile instead, for when being solid depends on something else altogether.</param>
+    public List<TileMapBox> BuildColliders(Func<TileMapCell, bool>? isSolid = null)
+    {
+        var boxes = new List<TileMapBox>();
+        var solid = new bool[Width * Height];
+
+        foreach (TileMapLayer layer in layers)
+        {
+            if (layer.Kind == TileMapLayerKind.Objects && layer.IsCollidable)
+            {
+                boxes.AddRange(objects
+                    .Where(found => found.Layer == layer && found.Shape is TileMapShape.Rectangle or TileMapShape.Tile && found.Size is { X: > 0, Y: > 0 })
+                    .Select(found => new TileMapBox(found.Min, found.Size)));
+                continue;
+            }
+
+            foreach (TileMapCell cell in layer.Tiles())
+            {
+                bool wanted = isSolid?.Invoke(cell) ?? (layer.IsCollidable || cell.Tile.Properties.GetBool("collidable") || cell.Tile.Collision.Count > 0);
+                if (!wanted)
+                    continue;
+
+                Vector2 corner = cell.Centre - TileSize / 2.0f;
+
+                if (cell.Tile.Collision.Count > 0)
+                {
+                    // Only the part of the tile that was drawn as solid
+                    foreach (var (min, size) in cell.Tile.Collision)
+                        boxes.Add(new TileMapBox(corner + min, size));
+                }
+                else if (layer.WorldOffset != Vector2.Zero)
+                {
+                    // Off the grid, so there is nothing to put it together with
+                    boxes.Add(new TileMapBox(corner, TileSize));
+                }
+                else
+                {
+                    solid[IndexOf(cell.X, cell.Y)] = true;
+                }
+            }
+        }
+
+        Merge(solid, boxes);
+        return boxes;
+    }
+
+    /// <summary>
+    /// Turns the cells that are solid into rectangles: every run of them along a row is one, and runs that are right
+    /// underneath each other and just as long are one as well.
+    /// </summary>
+    private void Merge(bool[] solid, List<TileMapBox> boxes)
+    {
+        // A run that is still growing downwards, by the column it starts at and how long it is
+        var open = new Dictionary<(int Start, int Length), int>();
+
+        for (int row = 0; row <= Height; row++)
+        {
+            var runs = new HashSet<(int, int)>();
+
+            for (int column = 0; row < Height && column < Width; column++)
+            {
+                if (!solid[row * Width + column])
+                    continue;
+
+                int start = column;
+                while (column < Width && solid[row * Width + column])
+                    column++;
+
+                runs.Add((start, column - start));
+            }
+
+            // What didn't carry on into this row is done
+            foreach (var (run, firstRow) in open.Where(pair => !runs.Contains(pair.Key)).ToArray())
+            {
+                open.Remove(run);
+
+                // From the bottom of the last row it was in up to the top of the first
+                var min = TiledToWorld(new Vector2((run.Start + Left) * TileSize.X, (row + Top) * TileSize.Y));
+                boxes.Add(new TileMapBox(min, new Vector2(run.Length * TileSize.X, (row - firstRow) * TileSize.Y)));
+            }
+
+            foreach (var run in runs)
+                open.TryAdd(run, row);
+        }
+    }
+
+    /// <summary>
+    /// The middle of every cell that blocks light, for an <see cref="OcclusionMap2D"/> laid over the map
+    /// (<c>new OcclusionMap2D(map.Width, map.Height, map.Origin, map.TileSize)</c>). See <see cref="TileMapLayer.CastsShadows"/>.
+    /// </summary>
+    public IEnumerable<Vector2> ShadowCasters() =>
+        layers.Where(layer => layer.CastsShadows).SelectMany(layer => layer.Tiles()).Select(cell => cell.Centre);
+
+    /* Drawing */
+
+    public override void UpdateState(float dt)
+    {
+        base.UpdateState(dt);
+
+        time += dt;
+
+        foreach (TileMapLayer layer in layers)
+            layer.Drift += layer.Scroll * dt;
+    }
+
+    /// <summary>
+    /// Publishes what every layer looks like, and a copy of the tiles of any layer that changed, for the frames that are
+    /// drawn alongside the simulation. Simulation thread, at the end of every tick.
+    /// </summary>
+    public override void Capture()
+    {
+        if (captured.BeginPublish() is { } into)
+        {
+            into.Time = time;
+            into.Origin = Origin;
+            into.ParallaxOrigin = ParallaxOrigin;
+            into.SnapParallax = SnapParallax;
+
+            if (into.Layers.Length != layers.Count)
+                into.Layers = new CapturedLayer[layers.Count];
+
+            for (int i = 0; i < layers.Count; i++)
+            {
+                TileMapLayer layer = layers[i];
+
+                // A change of the tiles is copied once, and that copy is never written to: every snapshot after it shares it
+                if (layer.CapturedVersion != layer.Version)
+                {
+                    layer.CapturedGids = (uint[])layer.Gids.Clone();
+                    layer.CapturedFlips = (TileFlip[])layer.Flips.Clone();
+                    layer.CapturedVersion = layer.Version;
                 }
 
-                if (
-                    tiledMap.Width % TileMapChunk.WIDTH != 0
-                    || tiledMap.Height % TileMapChunk.HEIGHT != 0
-                )
+                into.Layers[i] = new CapturedLayer
                 {
-                    throw new ArgumentException(
-                        $"Tiled map dimensions must be multiples of {TileMapChunk.WIDTH}x{TileMapChunk.HEIGHT}!"
-                    );
-                }
-
-                int widthInChunks = tiledMap.Width / TileMapChunk.WIDTH;
-                int heightInChunks = tiledMap.Height / TileMapChunk.HEIGHT;
-                int depthInLayers = tiledMap.Layers.Count;
-
-                map = new TileMap(
-                    widthInChunks,
-                    heightInChunks,
-                    depthInLayers,
-                    tiledMap.TileWidth,
-                    tiledMap.TileHeight
-                )
-                {
-                    Parent = parent
+                    Visible = layer.Visible,
+                    IsForeground = layer.IsForeground,
+                    Opacity = layer.Opacity,
+                    Emissive = layer.Emissive,
+                    Tint = layer.Tint,
+                    WorldOffset = layer.WorldOffset,
+                    Parallax = layer.Parallax,
+                    Scroll = layer.Scroll,
+                    Drift = layer.Drift,
+                    Version = layer.Version,
+                    Gids = layer.CapturedGids,
+                    Flips = layer.CapturedFlips
                 };
-                map.Initialize();
-
-                foreach (var tileset in tiledMap.Tilesets)
-                {
-                    if (!string.IsNullOrEmpty(tileset.Image?.Source))
-                    {
-                        var set = new TileSet(
-                            tileset.Image.Source,
-                            new Vector2(tileset.TileWidth, tileset.TileHeight)
-                        )
-                        {
-                            ID = tileset.FirstGid,
-                            TileCount = tileset.TileCount
-                        };
-                        map.AddTileSet(tileset.Name, set);
-                    }
-                }
-
-                int layerIndex = 0;
-
-                int chunkWidth = TileMapChunk.WIDTH;
-                int chunkHeight = TileMapChunk.HEIGHT;
-
-                foreach (var layer in tiledMap.Layers)
-                {
-                    var layerConfig = GenerateTiledTileConfigFromLayer(layer);
-
-                    foreach (var tile in layer.Tiles)
-                    {
-                        if (tile.Gid == 0)
-                            continue;
-
-                        for (int chunkIndex = 0; chunkIndex < map.Width * map.Height; chunkIndex++)
-                        {
-                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].Visible = layerConfig.IsVisible;
-                            map.ChunkManager.Chunks[chunkIndex].Slices[layerIndex].AlwaysOnTop =
-                                layerConfig.AlwaysOnTop;
-                        }
-
-                        // invert the tile Y coordinates because one again openGL is weird (read about coordinate system orientations)
-                        int tileY = tiledMap.Height - tile.Y - 1;
-
-                        float localTileX =
-                            tile.X % chunkWidth
-                            + (float)(layer.OffsetX > 0 ? layer.OffsetX / 16.0f : 0);
-                        float localTileY =
-                            tileY % chunkHeight
-                            - (float)(layer.OffsetY > 0 ? layer.OffsetY / 16.0f : 0);
-
-                        int chunkX = tile.X / chunkWidth;
-                        int chunkY = tileY / chunkHeight;
-
-                        var chunk = map.ChunkManager[chunkX, chunkY]!;
-
-                        var tileConfig = GenerateTiledTileConfigFromTile(layerConfig, map, tile);
-
-                        map[tile.X, tileY, layerIndex] = new StaticTile(
-                            tileConfig,
-                            chunk,
-                            new Vector2(localTileX, localTileY)
-                        );
-                    }
-                    layerIndex++;
-                }
-
-                map.ChunkManager.PostGenerateTiles();
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                ConcurrentLogger
-                    .Instance
-                    .Log(LogLevel.Error, $"Error loading Tiled map: + {ex.Message}");
-                map = null;
-                return false;
             }
         }
 
-        /// <summary>
-        /// Generates the tiled tile configuration from layer.
-        /// </summary>
-        /// <param name="layer">The layer.</param>
-        /// <returns></returns>
-        private static StaticTile.TiledTileConfig GenerateTiledTileConfigFromLayer(TmxLayer layer)
+        base.Capture();
+    }
+
+    public override void Render(float dt)
+    {
+        // Somebody else draws the foreground if they took it, at a time of their choosing
+        Draw(foreground: Foreground.Parent is null ? null : false);
+
+        base.Render(dt);
+    }
+
+    /// <param name="foreground">Whether to draw the layers that are in the foreground or the ones that aren't, null for all of them.</param>
+    internal void Draw(bool? foreground)
+    {
+        if (Engine.ActiveCamera is not { } camera || !EnsureShader())
+            return;
+
+        // Drawn alongside the simulation, the map is drawn as it was between the last two ticks, out of what was published
+        RenderFrame frame = RenderFrame.Active;
+        CapturedMap? before = null, after = null;
+        bool blend = false;
+        if (frame.IsDecoupled)
         {
-            layer.Properties.TryGetValue("IsCollidable", out var _stringIsCollidable);
-            layer.Properties.TryGetValue("IsAlwaysOnTop", out var _stringTop);
-
-            bool isCollidable =
-                bool.TryParse(_stringIsCollidable, out isCollidable) && isCollidable;
-            bool isOnTop = bool.TryParse(_stringTop, out isOnTop) && isOnTop;
-
-            return new StaticTile.TiledTileConfig
-            {
-                IsCollectible = isCollidable,
-                IsVisible = layer.Visible,
-                AlwaysOnTop = isOnTop
-            };
-        }
-
-        /// <summary>
-        /// Generates the tiled tile configuration from tile.
-        /// </summary>
-        /// <param name="layerConfig">The layer configuration.</param>
-        /// <param name="map">The map.</param>
-        /// <param name="tile">The tile.</param>
-        /// <returns></returns>
-        private static StaticTile.TiledTileConfig GenerateTiledTileConfigFromTile(
-            StaticTile.TiledTileConfig layerConfig,
-            TileMap map,
-            TmxLayerTile tile
-        )
-        {
-            var (set, id) = map.FindTilesetFromGUID(tile.Gid);
-
-            return layerConfig with
-            {
-                Set = set!,
-                ID = id
-            };
-        }
-
-        /// <summary>
-        /// Finds the tileset from unique identifier.
-        /// </summary>
-        /// <param name="guid">The unique identifier.</param>
-        /// <returns></returns>
-        private (TileSet? tileSet, int localTileId) FindTilesetFromGUID(int guid)
-        {
-            TileSet? set = null; // Changed the local variable name from "set" to "tileSet" to avoid conflict with the private field name
-            int localTileId = 0; // Removed the unnecessary initialization
-
-            foreach (var tileset in TileSets.Values)
-            {
-                if (guid >= tileset.ID && guid < tileset.ID + tileset.TileCount)
-                {
-                    localTileId = guid - tileset.ID;
-                    set = tileset;
-                    break; // Exit the loop once a matching tileset is found
-                }
-            }
-            return (set, localTileId);
-        }
-
-        /// <summary>
-        /// Initializes the tile map.
-        /// </summary>
-        public override void Initialize()
-        {
-            base.Initialize();
-
-            // Safetly check because TileMpa can be initialized implicitly.
-            if (hasBeenInitialized)
+            if (!captured.TryGet(frame, out before, out after, out blend))
                 return;
-            hasBeenInitialized = true;
 
-            //if (Parent!.HasComponent<Box2DWorldComponent>())
-            World = Parent!.GetComponent<Box2DWorldComponent>();
-            ChunkManager = AddComponent<TileMapChunkManager>(new(this));
-
-            Engine
-                .Debugger
-                .GeneralDebugger
-                .AddWatch("Size", "Tilemap", () => $"{Width}, {Height}, {Depth}");
-            Engine
-                .Debugger
-                .GeneralDebugger
-                .AddWatch("ChunkSize", "Tilemap", () => $"{ChunkManager.Chunks.GetLength(0)}");
-            Engine
-                .Debugger
-                .GeneralDebugger
-                .AddWatch("TileCount", "Tilemap", () => TileUpdateCount);
+            blend &= before.Layers.Length == after.Layers.Length;
         }
 
-        public override void Render(float dt, object? obj = null)
+        float alpha = frame.Alpha;
+        Vector2 origin = after?.Origin ?? Origin;
+        Vector2 parallaxOrigin = after?.ParallaxOrigin ?? ParallaxOrigin;
+        bool snapParallax = after?.SnapParallax ?? SnapParallax;
+        float shownTime = after is null ? time : blend ? Interpolate.Linear(before!.Time, after.Time, alpha) : after.Time;
+
+        var view = camera.Bounds;
+        var viewMin = new Vector2(view.X, view.Y);
+        var viewMax = new Vector2(view.X + view.Width, view.Y + view.Height);
+        var eye = new Vector2(camera.Position.X, camera.Position.Y);
+
+        shader!.Bind();
+
+        Matrix4x4 projection = camera.Projection, cameraView = camera.View;
+        shader.SetUniform(UNIFORM_CAMERA_PROJECTION, in projection);
+        shader.SetUniform(UNIFORM_CAMERA_VIEW, in cameraView);
+
+        // What it takes to say how fast a layer goes across the screen: how fast the camera goes, and how much of the
+        // screen a unit of the world is
+        Vector2 cameraVelocity = camera.Velocity;
+        var motionScale = new Vector2(projection.M11, projection.M22);
+
+        int count = after?.Layers.Length ?? layers.Count;
+        for (int index = 0; index < count && index < layers.Count; index++)
         {
-            if (Children.Count > 0)
+            TileMapLayer layer = layers[index];
+            CapturedLayer state = after is null ? Live(layer) : after.Layers[index];
+
+            if (!state.Visible || state.Opacity <= 0.0f || (foreground is { } wanted && state.IsForeground != wanted))
+                continue;
+
+            Vector2 drift = blend ? Interpolate.Linear(before!.Layers[index].Drift, state.Drift, alpha) : state.Drift;
+
+            // How far the layer has lagged behind the camera (or run ahead of it) on its way from where all layers line up
+            Vector2 scrolled = (eye - parallaxOrigin) * (Vector2.One - state.Parallax);
+            Vector2 moved = state.WorldOffset + drift + scrolled;
+
+            if (snapParallax && state.Parallax != Vector2.One)
+                moved = new Vector2(MathF.Round(moved.X), MathF.Round(moved.Y));
+
+            if (after is null ? layer.IsDirty : layer.BuiltVersion != state.Version)
+                Build(layer, state.Gids ?? layer.Gids, state.Flips ?? layer.Flips, state.Version);
+
+            if (layer.Source is ImageLayer image)
+                PlaceImage(layer, image, viewMin - origin - moved, viewMax - origin - moved);
+
+            Animate(layer, shownTime);
+
+            Vector2 offset = origin + moved;
+            var tint = new Vector4(state.Tint, state.Opacity);
+
+            shader.SetUniform(UNIFORM_OFFSET, in offset);
+            shader.SetUniform(UNIFORM_TINT, in tint);
+            shader.SetUniform(UNIFORM_EMISSIVE, state.Emissive);
+
+            // A layer that is as far away as the map goes by as fast as the camera moves, the other way. One that is
+            // further away keeps up with the camera a little, and one that drifts does that on top
+            Vector2 motion = (state.Scroll - cameraVelocity * state.Parallax) * motionScale;
+            float nearness = state.IsForeground
+                ? NEARNESS_FOREGROUND
+                : NEARNESS_BACK + (NEARNESS_FRONT - NEARNESS_BACK) * index / MathF.Max(1, layers.Count - 1);
+
+            shader.SetUniform(UNIFORM_MOTION, in motion);
+            shader.SetUniform(UNIFORM_NEARNESS, nearness);
+
+            foreach (TileMapBatch batch in layer.Batches)
             {
-                ChunkManager.RenderLower(ParallaxIndex + 2, dt);
-
-                base.Render(dt, obj);
-
-                ChunkManager.RenderUpper(ParallaxIndex, dt);
-                for (int i = 0; i < Width * Height; i++)
-                    ChunkManager.Chunks[i].RenderAlwaysOnTop(dt);
-            }
-            else
-                ChunkManager.RenderLower(Depth, dt);
-        }
-
-        /// <summary>
-        /// Checks if a specific tile location is empty.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile.</param>
-        /// <param name="y">The Y coordinate of the tile.</param>
-        /// <returns>True if the tile location is empty; otherwise, false.</returns>
-        public bool IsEmpty(int x, int y, int z = 0)
-        {
-            return this[x, y, z] is null;
-        }
-
-        /// <summary>
-        /// Returns all the tiles within a half area by half area region around a specified point, within O(area^2) time complexity.
-        /// TODO: use inverse projection to directly sample with normalized device coordinates, maybe faster?
-        /// </summary>
-        public IEnumerable<Tile> FindVisibleTiles(Vector2 position, float area = 10.0f)
-        {
-            var areaSize = new Vector2(area / 2.0f);
-            var playerPos = position + areaSize / 2.0f;
-
-            int startingX = (int)Math.Round(playerPos.X - areaSize.X); // round the value
-            int endingX = (int)Math.Round(playerPos.X + areaSize.X); // round the value
-
-            int startingY = (int)Math.Round(playerPos.Y - areaSize.Y); // round the value
-            int endingY = (int)Math.Round(playerPos.Y + areaSize.Y); // round the value
-
-            for (int x = startingX; x <= endingX; x++) // include the endingX value
-            {
-                for (int y = startingY; y <= endingY; y++) // include the endingY value
+                // Out of sight, out of the frame
+                if (batch.Instances.Count == 0
+                    || batch.Max.X + offset.X < viewMin.X || batch.Min.X + offset.X > viewMax.X
+                    || batch.Max.Y + offset.Y < viewMin.Y || batch.Min.Y + offset.Y > viewMax.Y)
                 {
-                    for (int z = 0; z < Depth; z++)
-                    {
-                        Tile? tile = this[(int)(x), (int)(y), z];
-                        if (tile is null) // handle null case
-                            continue;
-
-                        yield return tile;
-                    }
+                    continue;
                 }
+
+                batch.Draw(shader, TextureOf(batch.ImagePath));
             }
         }
 
-        /// <summary>
-        /// Gets or sets a tile at the specified coordinates. (safely)
-        /// For higher performance please access the ChunkManager.Chunks array directly.
-        /// </summary>
-        /// <param name="x">The X coordinate of the tile.</param>
-        /// <param name="y">The Y coordinate of the tile.</param>
-        /// <returns>The tile at the specified coordinates.</returns>
-        public Tile? this[int x, int y, int z]
+        shader.Unbind();
+    }
+
+    private static bool EnsureShader()
+    {
+        if (shader is not null)
+            return true;
+
+        // By name, so it is the same one for every map there ever is and nobody frees it from under the others
+        if (!Engine.ObjectManager.Shaders.TryCreateOrGet("tilemap", ShaderDescription.FromPath("shaders/tilemap", "tilemap"), out var result))
         {
-            get
-            {
-                int chunkIndexX = x / (TileMapChunk.WIDTH);
-                int chunkIndexY = y / (TileMapChunk.HEIGHT);
-
-                if (
-                    chunkIndexX >= Width
-                    || chunkIndexY >= Height
-                    || x < 0
-                    || y < 0
-                    || z < 0
-                    || z >= Depth
-                )
-                    return null;
-
-                int tileIndexX = x % (TileMapChunk.WIDTH);
-                int tileIndexY = y % (TileMapChunk.HEIGHT);
-
-                return ChunkManager.Chunks[chunkIndexX + chunkIndexY * Width][
-                    tileIndexX,
-                    tileIndexY,
-                    z
-                ];
-            }
-            set
-            {
-                TileUpdateCount++;
-                int chunkIndexX = x / (TileMapChunk.WIDTH);
-                int chunkIndexY = y / (TileMapChunk.HEIGHT);
-
-                if (
-                    chunkIndexX >= Width
-                    || chunkIndexY >= Height
-                    || x < 0
-                    || y < 0
-                    || z < 0
-                    || z >= Depth
-                )
-                    return;
-
-                int tileIndexX = x % (TileMapChunk.WIDTH);
-                int tileIndexY = y % (TileMapChunk.HEIGHT);
-
-                ChunkManager.Chunks[chunkIndexX + chunkIndexY * Width][tileIndexX, tileIndexY, z] =
-                    value;
-            }
+            Log.Error(result.Message);
+            return false;
         }
 
-        /// <summary>
-        /// Adds a tile set to the tile map.
-        /// </summary>
-        /// <param name="name">The name of the tile set.</param>
-        /// <param name="set">The tile set to add.</param>
-        /// <returns>The added tile set.</returns>
-        public TileSet AddTileSet(string name, TileSet set)
-        {
-            TileSets.Add(name, set);
-            PushToInitializationQueue(set);
-            return set;
-        }
+        shader = new Technique(result.Asset);
+        return true;
+    }
 
-        /// <summary>
-        /// Populates tiles in the tile map using a custom action.
-        /// </summary>
-        /// <param name="action">The custom action to populate tiles.</param>
-        public void PopulateTiles(Action<TileMapChunkSlice[], TileMapChunk> action)
-        {
-            ChunkManager.PopulateTiles(action);
-        }
+    private TileMapTexture TextureOf(string path)
+    {
+        if (!textures.TryGetValue(path, out TileMapTexture? texture))
+            textures[path] = texture = TileMapTexture.Load(path);
 
-        /// <summary>
-        /// Gets the tile set associated with a given texture ID.
-        /// </summary>
-        /// <param name="textureID">The texture ID to search for.</param>
-        /// <returns>The tile set associated with the texture ID, or null if not found.</returns>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public TileSet GetTileSetFromTileTextureID(TTextureID textureID)
+        return texture;
+    }
+
+    /// <summary>
+    /// Helper method for what a layer looks like as it is, for a frame that is drawn with the simulation standing still.
+    /// </summary>
+    private static CapturedLayer Live(TileMapLayer layer) => new()
+    {
+        Visible = layer.Visible,
+        IsForeground = layer.IsForeground,
+        Opacity = layer.Opacity,
+        Emissive = layer.Emissive,
+        Tint = layer.Tint,
+        WorldOffset = layer.WorldOffset,
+        Parallax = layer.Parallax,
+        Scroll = layer.Scroll,
+        Drift = layer.Drift,
+        Version = layer.Version
+    };
+
+    /// <summary>
+    /// Puts together what a layer is drawn from. Everything is placed as if the bottom left corner of the map were at
+    /// zero and the layer hadn't moved: where the map is and how far the layer has scrolled is added when it is drawn.
+    /// </summary>
+    /// <param name="gids">The tiles to build from: the layer's own, or a copy of them that was published.</param>
+    /// <param name="version">Which change of the tiles that is.</param>
+    private void Build(TileMapLayer layer, uint[] gids, TileFlip[] flips, int version)
+    {
+        layer.IsDirty = false;
+        layer.BuiltVersion = version;
+        layer.Batches.Clear();
+        layer.Animated.Clear();
+
+        switch (layer.Kind)
         {
-            foreach (TileSet set in TileSets.Values)
+            case TileMapLayerKind.Tiles:
+                BuildTiles(layer, gids, flips);
+                break;
+
+            case TileMapLayerKind.Objects:
+                BuildTileObjects(layer);
+                break;
+
+            case TileMapLayerKind.Image:
+                // One batch that is filled in when it is drawn, there may be any number of the image in view
+                if (layer.Source is ImageLayer { Image.HasValue: true } image && image.Image.Value.Source.HasValue)
+                    layer.Batches.Add(new TileMapBatch(System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, image.Image.Value.Source.Value))));
+                break;
+        }
+    }
+
+    private void BuildTiles(TileMapLayer layer, uint[] gids, TileFlip[] flips)
+    {
+        // By the image and by the part of the map, so what is out of view is left out a part at a time
+        var batches = new Dictionary<(string, int, int), TileMapBatch>();
+
+        for (int row = 0; row < Height; row++)
+        {
+            for (int column = 0; column < Width; column++)
             {
-                if (set.ContainsTextureID(textureID))
+                int index = row * Width + column;
+                if (index >= gids.Length || ResolveTile(gids[index]) is not { } tile)
+                    continue;
+
+                var key = (tile.ImagePath, column / BATCH_TILES, row / BATCH_TILES);
+                if (!batches.TryGetValue(key, out TileMapBatch? batch))
                 {
-                    return set;
+                    batches[key] = batch = new TileMapBatch(tile.ImagePath);
+                    layer.Batches.Add(batch);
                 }
+
+                // A tile that is bigger than a cell stands on the bottom left corner of its cell and sticks out of it
+                var corner = new Vector2(column * TileSize.X, (Height - 1 - row) * TileSize.Y) + tile.Offset;
+
+                int instance = batch.Add(new TileInstance
+                {
+                    Position = corner + tile.Size / 2.0f,
+                    Size = tile.Size,
+                    Source = tile.Source,
+                    Flip = (float)flips[index]
+                });
+
+                if (tile.Animation.Count > 1)
+                    layer.Animated.Add(new TileMapAnimated(batch, instance, tile));
+            }
+        }
+    }
+
+    /// <summary>The tiles that were put down as objects: any size, anywhere, turned any way.</summary>
+    private void BuildTileObjects(TileMapLayer layer)
+    {
+        var batches = new Dictionary<string, TileMapBatch>();
+
+        foreach (TileMapObject found in objects)
+        {
+            if (found.Layer != layer || found.Tile is not { } tile || !found.Visible)
+                continue;
+
+            if (!batches.TryGetValue(tile.ImagePath, out TileMapBatch? batch))
+            {
+                batches[tile.ImagePath] = batch = new TileMapBatch(tile.ImagePath);
+                layer.Batches.Add(batch);
             }
 
-            //ConcurrentLogger.Instance.Log(
-            //    Bogz.Logging.LogLevel.Fatal,
-            //    $"[TileMap] No TileSet is bound to the texture ID '{textureID}'!"
-            //);
-            return null!;
+            int instance = batch.Add(new TileInstance
+            {
+                // Where it is in the world without where the map and the layer are, which are added when it is drawn
+                Position = found.Position - Origin - layer.WorldOffset,
+                Size = found.Size,
+                Source = tile.Source,
+                Rotation = found.Rotation * MathF.PI / 180.0f,
+                Flip = (float)found.Flip
+            });
+
+            if (tile.Animation.Count > 1)
+                layer.Animated.Add(new TileMapAnimated(batch, instance, tile));
         }
+    }
+
+    /// <summary>
+    /// Lays the image of an image layer out for what is in view: once where the layer has it, or as many times as it
+    /// takes to cover the view along the ways it repeats.
+    /// </summary>
+    /// <param name="viewMin">The bottom left corner of what the camera sees, measured the way the layer's batches are.</param>
+    private void PlaceImage(TileMapLayer layer, ImageLayer image, Vector2 viewMin, Vector2 viewMax)
+    {
+        if (layer.Batches.Count == 0)
+            return;
+
+        TileMapBatch batch = layer.Batches[0];
+        Vector2 size = TextureOf(batch.ImagePath).Size;
+        if (size.X <= 0 || size.Y <= 0)
+            return;
+
+        bool repeatX = image.RepeatX.GetValueOr(false), repeatY = image.RepeatY.GetValueOr(false);
+
+        // The bottom left corner of the image where the layer has it
+        Vector2 corner = TiledToWorld(new Vector2(image.X, image.Y + size.Y)) - Origin;
+
+        int firstX = 0, lastX = 0, firstY = 0, lastY = 0;
+        if (repeatX)
+        {
+            firstX = (int)MathF.Floor((viewMin.X - corner.X) / size.X);
+            lastX = (int)MathF.Floor((viewMax.X - corner.X) / size.X);
+        }
+        if (repeatY)
+        {
+            firstY = (int)MathF.Floor((viewMin.Y - corner.Y) / size.Y);
+            lastY = (int)MathF.Floor((viewMax.Y - corner.Y) / size.Y);
+        }
+
+        int count = (lastX - firstX + 1) * (lastY - firstY + 1);
+        Vector2 first = corner + new Vector2(firstX, firstY) * size + size / 2.0f;
+
+        // Nothing has moved far enough to need another copy
+        if (batch.Instances.Count == count && count > 0 && batch.Instances[0].Position == first)
+            return;
+
+        batch.Clear();
+        for (int y = firstY; y <= lastY; y++)
+        {
+            for (int x = firstX; x <= lastX; x++)
+            {
+                batch.Add(new TileInstance
+                {
+                    Position = corner + new Vector2(x, y) * size + size / 2.0f,
+                    Size = size,
+                    Source = new Vector4(0, 0, size.X, size.Y)
+                });
+            }
+        }
+    }
+
+    /// <summary>Moves the tiles of a layer that play through frames on to the frame it is time for.</summary>
+    /// <param name="time">How long the map has been running, as of the frame that is drawn.</param>
+    private static void Animate(TileMapLayer layer, float time)
+    {
+        foreach (TileMapAnimated animated in layer.Animated)
+        {
+            TileMapTile tile = animated.Tile;
+            if (tile.AnimationLength <= 0.0f)
+                continue;
+
+            float at = time % tile.AnimationLength;
+            int frame = 0;
+            while (frame < tile.Animation.Count - 1 && at >= tile.Animation[frame].Duration)
+                at -= tile.Animation[frame++].Duration;
+
+            if (frame == animated.Frame)
+                continue;
+
+            animated.Frame = frame;
+
+            var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(animated.Batch.Instances);
+            span[animated.Index].Source = tile.Animation[frame].Tile.Source;
+            animated.Batch.NeedsUpload = true;
+        }
+    }
+}
+
+/// <summary>
+/// The layers of a <see cref="TileMap"/> that go in front of whatever is drawn after the map: add this to the same
+/// renderer once everything that goes in between is in it. See <see cref="TileMap.Foreground"/>.
+/// </summary>
+public sealed class TileMapForeground : GameObject
+{
+    private readonly TileMap map;
+
+    internal TileMapForeground(TileMap map)
+    {
+        Name = "Tile Map Foreground";
+        this.map = map;
+    }
+
+    public override void Render(float dt)
+    {
+        map.Draw(foreground: true);
+        base.Render(dt);
     }
 }

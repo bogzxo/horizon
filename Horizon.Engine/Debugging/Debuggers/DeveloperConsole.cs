@@ -1,10 +1,10 @@
-﻿using System.Text;
-
+﻿using System.Collections.Concurrent;
+using System.Text;
+using Bogz.Logging;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.Webhost;
 
-using ImGuiNET;
 
 namespace Horizon.Engine.Debugging.Debuggers;
 
@@ -38,71 +38,56 @@ public class DeveloperConsole : DebuggerComponent
     public HIDLRuntime Runtime { get; init; } = new();
 
     private List<CommandLinePacket> commandHistory;
-    private string inputBuffer = string.Empty;
+    private string quickInputBuffer = string.Empty;
+    private string scriptBuffer = string.Empty;
 
     internal delegate void OnCommandProcessed(IWebSocketPacket result);
 
     internal event OnCommandProcessed? CommandProcessed;
 
+    // Commands that came in from somewhere else (the dashboard, on whatever thread its socket feels like), run on the
+    // simulation thread at the next update. Run straight away they'd poke at the game while it's halfway through a tick
+    private readonly ConcurrentQueue<string> _pending = new();
+
     public override void Initialize()
     {
         Name = "Developer Console";
-        commandHistory = new(128);
+        commandHistory = [with(128)];
 
-        Runtime.GlobalScope.DeclareSystem("_PRINT_LN", new NativeFunctionValue((args, env) =>
+        Runtime.GlobalScope.DeclareSystem("eng", new ObjectValue()
         {
-            StringBuilder sb = new();
-            for (int i = 0; i < args.Length; i++)
-                sb.Append(args[i].ToString() + " ");
+            Properties =
+                new Dictionary<string, IRuntimeValue>
+                {
+                    {
+                        "print",
+                        new NativeFunctionValue((values, _) =>
+                        {
+                            var msg =
+                                $"[{Name}] {string.Join(", ", values.Where(x => !string.IsNullOrEmpty(x?.ToString())))}";
+                            SendCommand(msg, true);
+                            return new StringValue(msg);
+                        })
+                    },
+                    {
+                        "clear",
+                        new NativeFunctionValue((args, env) =>
+                        {
+                            commandHistory.Clear();
+                            CommandProcessed?.Invoke(new CommandLinePacket()
+                            {
+                                SpecialPacket = true,
+                                Message = "clear"
+                            });
+                            return new NullValue();
+                        })
+                    }
+                }
+        });
 
-            SendCommand(sb.ToString());
-            return new NullValue();
-        }));
-        Runtime.GlobalScope.DeclareSystem("_CLEAR_SCR", new NativeFunctionValue((args, env) =>
-        {
-            commandHistory.Clear();
-            CommandProcessed?.Invoke(new CommandLinePacket()
-            {
-                SpecialPacket = true,
-                Message = "clear"
-            });
-            return new NullValue();
-        }));
 
-        Runtime.GlobalScope.DeclareSystem("help", new NativeFunctionValue((args, env) =>
-        {
-            return new StringValue("test");
-        }));
-    }
-
-    public override void Render(float dt, object? obj = null)
-    {
-        if (Visible && ImGui.Begin("Developer Console", ImGuiWindowFlags.NoCollapse))
-        {
-            // Draw command history
-            ImGui.BeginChild("CommandHistory", new System.Numerics.Vector2(0, -ImGui.GetTextLineHeightWithSpacing()));
-            for (int i = 0; i < commandHistory.Count; i++)
-            {
-                (bool resp, string msg) = commandHistory[i];
-                ImGui.Text(resp ? ">" : "<");
-                ImGui.SameLine();
-                ImGui.TextWrapped(msg);
-            }
-            ImGui.EndChild();
-
-            // Draw input field
-            ImGui.Text(">");
-            ImGui.SameLine();
-            bool enter = ImGui.InputText("##InputField", ref inputBuffer, 256, ImGuiInputTextFlags.EnterReturnsTrue);
-            ImGui.SameLine();
-            if (enter || ImGui.Button("Execute"))
-            {
-                ExecuteCommand(inputBuffer.ToString());
-                inputBuffer = string.Empty;
-            }
-
-            ImGui.End();
-        }
+        Runtime.GlobalScope.DeclareSystem("help",
+            new NativeFunctionValue((args, env) => { return new StringValue("test"); }));
     }
 
     internal void ExecuteCommand(string input)
@@ -118,7 +103,7 @@ public class DeveloperConsole : DebuggerComponent
         SendCommand(returnVal);
     }
 
-    private void SendCommand(string text)
+    private void SendCommand(string text, bool silent=false)
     {
         CommandLinePacket final = new()
         {
@@ -127,8 +112,9 @@ public class DeveloperConsole : DebuggerComponent
             Message = text.CompareTo("null") == 0 ? "" : text
         };
 
-        commandHistory.Add(final);
         CommandProcessed?.Invoke(final);
+        if (silent) return;
+        commandHistory.Add(final);
     }
 
     public override void UpdatePhysics(float dt)
@@ -137,16 +123,18 @@ public class DeveloperConsole : DebuggerComponent
 
     public override void UpdateState(float dt)
     {
+        while (_pending.TryDequeue(out string? input))
+            ExecuteCommand(input);
     }
 
     public override void Dispose()
     {
     }
 
-    internal void EvaluateCallback(string obj)
-    {
-        ExecuteCommand(obj);
-    }
+    /// <summary>
+    /// Has a command run at the next update, on the simulation thread. From any thread.
+    /// </summary>
+    internal void EvaluateCallback(string obj) => _pending.Enqueue(obj);
 
     public void Log(string text) => SendCommand(text);
 }

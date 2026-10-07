@@ -32,8 +32,7 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.5-beta1" />
-    <PackageReference Include="Twizzle.ImGui.NET" Version="1.89.4" />
-    <PackageReference Include="Twizzle.ImPlot.NET" Version="1.89.4" />
+    <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,6 +40,7 @@
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
+    <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
     <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
   </ItemGroup>
 

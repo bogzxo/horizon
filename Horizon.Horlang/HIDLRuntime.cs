@@ -12,9 +12,8 @@ using Environment = Horizon.HIDL.Runtime.Environment;
 public class HIDLRuntime
 {
     public const string VERSION = "0.0.4";
-    private static readonly NullValue NULL = new();
+    public static readonly NullValue NULL = new();
     private static readonly Parser parser = new();
-    private static readonly Environment scratchEnv = new();
 
     /// <summary>
     /// The user scope for code execution, variables (and by extension function and objects) may be declared here.
@@ -46,23 +45,57 @@ public class HIDLRuntime
             UserScope.Reset();
             return new StringValue("UserScope Reset!");
         }), true);
+
+        // to_text(value) gives a value back as the source that declares it, to_text() the whole user scope.
+        GlobalScope.Declare("to_text", new NativeFunctionValue((args, _) =>
+        {
+            return new StringValue(args.Length > 0 ? HIDLWriter.Write(args[0]) : ToText());
+        }), true);
     }
+
+    /// <summary>
+    /// Writes everything declared in the user scope as source that declares it again when it is evaluated,
+    /// see <see cref="HIDLWriter"/> for what can be written.
+    /// </summary>
+    public string ToText() => HIDLWriter.Write(UserScope);
+
+    /// <summary>
+    /// Saves everything declared in the user scope to a file that <see cref="Evaluate"/> can read back.
+    /// </summary>
+    public void Save(in string path) => File.WriteAllText(path, ToText());
 
     /// <summary>
     /// Creates a valid runtime value without directly modifying the current environment; This can be used to declare a system object by generating a valid runtime value that can be injected into <see cref="Environment.DeclareSystem(in string identifier, in IRuntimeValue value)"/>.
     /// </summary>
-    /// <param name="identifier">The identifier/name.</param>
-    /// <param name="code">The code to evaluate.</param>
-    public IRuntimeValue GenerateValue(in string input)
+    /// <param name="input">The code to evaluate.</param>
+    public (bool success, IRuntimeValue result) GenerateValue(in string input)
     {
-        // TODO: i dont even need to explain
+        return GenerateValue(input, out _);
+    }
 
-        scratchEnv.Copy(UserScope);
+    /// <summary>
+    /// Creates a valid runtime value without directly modifying the current environment and returns all declared runtime values.
+    /// </summary>
+    /// <param name="input">The code to evaluate.</param>
+    /// <param name="declaredValues">The runtime values declared during evaluation in the scratch environment.</param>
+    public (bool success, IRuntimeValue result) GenerateValue(in string input, out Dictionary<string, IRuntimeValue> declaredValues)
+    {
+        Environment scratchEnv = new Environment(UserScope);
+        IRuntimeValue val = NULL;
+        bool success = false;
+        try
+        {
+            ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
+            val = Interpreter.Evaluate(ast, scratchEnv);
+            success = true;
+        }
+        catch
+        {
+        }
 
-        ProgramStatement ast = new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
-        IRuntimeValue val = Interpreter.Evaluate(ast, scratchEnv);
+        declaredValues = scratchEnv.GetAllDeclaredValues(true);
         scratchEnv.Reset(true);
-        return val;
+        return (success, val);
     }
 
 

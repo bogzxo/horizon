@@ -1,14 +1,13 @@
-﻿using System;
+﻿using Bogz.Logging;
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-using Box2D.NetStandard.Common;
-using Box2D.NetStandard.Dynamics.World.Callbacks;
-
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
@@ -18,16 +17,25 @@ using Silk.NET.OpenGL;
 
 namespace Horizon.Physics.Debug;
 
-public class PhysicsWorldDebugRenderer : IGameComponent
+public class PhysicsWorldDebugRenderer : GameComponent
 {
     private VertexBufferObject _vbo;
     private Technique _technique;
-    private readonly List<BasicVertex> vertices = [];
-    private readonly List<uint> indices = [];
+    /// <summary>The lines of one picture of the debug view.</summary>
+    private sealed class Lines
+    {
+        public readonly List<BasicVertex> Vertices = [];
+        public readonly List<uint> Indices = [];
+    }
 
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Physics World Debug Renderer";
-    public Entity Parent { get; set; }
+    // What is drawn into: the lines of a frame that is drawn with the simulation standing still, or those of the capture
+    // that is going on, for frames that are drawn alongside it
+    private readonly Lines live = new();
+    private readonly SnapshotBuffer<Lines> captured = new(static () => new Lines());
+    private Lines target;
+
+    private List<BasicVertex> vertices => target.Vertices;
+    private List<uint> indices => target.Indices;
 
     [StructLayout(LayoutKind.Sequential)] // explicitly set sequential layout
     private readonly struct BasicVertex : IVertex
@@ -82,7 +90,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
     }
 
-    public void Initialize()
+    public override void Initialize()
     {
         if (GameObject
                    .Engine
@@ -97,7 +105,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, resultTech.Message);
+            Log.Error(resultTech.Message);
         }
 
         if (
@@ -126,7 +134,7 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
         _vbo.Bind();
         _vbo.VertexBuffer.Bind();
@@ -134,31 +142,55 @@ public class PhysicsWorldDebugRenderer : IGameComponent
         _vbo.Unbind();
     }
 
-    public unsafe void Render(float dt, object? obj = null)
+    public PhysicsWorldDebugRenderer()
     {
-        if (GameEngine.Instance.ActiveCamera is null) return;
+        target = live;
+    }
 
-        _vbo.VertexBuffer.NamedBufferData(CollectionsMarshal.AsSpan(vertices));
-        _vbo.ElementBuffer.NamedBufferData(CollectionsMarshal.AsSpan(indices));
+    /// <summary>
+    /// Has what is drawn from here on go into the capture that is going on, for frames drawn alongside the simulation,
+    /// until <see cref="EndCapture"/>. Simulation thread. False (and nothing changes) if no capture is going on.
+    /// </summary>
+    internal bool BeginCapture()
+    {
+        if (captured.BeginPublish() is not { } lines)
+            return false;
+
+        target = lines;
+        ClearBuffers();
+        return true;
+    }
+
+    internal void EndCapture() => target = live;
+
+    /// <summary>
+    /// Draws the lines of the newer snapshot of the frame that is being drawn, if any were captured. Render thread.
+    /// </summary>
+    internal void RenderCaptured(float dt)
+    {
+        if (!captured.TryGet(RenderFrame.Active, out Lines lines))
+            return;
+
+        Draw(lines);
+    }
+
+    public override void Render(float dt) => Draw(live);
+
+    private unsafe void Draw(Lines lines)
+    {
+        if (GameEngine.Instance.ActiveCamera is null || lines.Indices.Count == 0) return;
+
+        _vbo.VertexBuffer.NamedBufferData(CollectionsMarshal.AsSpan(lines.Vertices));
+        _vbo.ElementBuffer.NamedBufferData(CollectionsMarshal.AsSpan(lines.Indices));
 
         _technique.Bind();
         _technique.SetUniform("uCameraView", GameEngine.Instance.ActiveCamera.View);
         _technique.SetUniform("uCameraProjection", GameEngine.Instance.ActiveCamera.Projection);
 
         _vbo.Bind();
-        GameEngine.Instance.GL.DrawElements(PrimitiveType.Lines, (uint)indices.Count, DrawElementsType.UnsignedInt, null);
+        GameEngine.Instance.GL.DrawElements(PrimitiveType.Lines, (uint)lines.Indices.Count, DrawElementsType.UnsignedInt, null);
 
         _technique.Unbind();
-    }
-
-    public void UpdatePhysics(float dt)
-    {
-
-    }
-
-    public void UpdateState(float dt)
-    {
-
     }
 
     public void DrawPolygon(in Vector2[] _vertices, in Vector3 colour)
@@ -171,6 +203,23 @@ public class PhysicsWorldDebugRenderer : IGameComponent
             // Connect lines in a loop: 0->1, 1->2 ... (N-1)->0
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % _vertices.Length));
+        }
+    }
+
+    /// <summary>The outline of a rectangle that isn't turned, from its smallest corner to its largest.</summary>
+    public void DrawRectangle(Vector2 min, Vector2 max, in Vector3 colour)
+    {
+        uint baseIndex = (uint)vertices.Count;
+
+        vertices.Add(new BasicVertex(new Vector2(min.X, min.Y), colour));
+        vertices.Add(new BasicVertex(new Vector2(max.X, min.Y), colour));
+        vertices.Add(new BasicVertex(new Vector2(max.X, max.Y), colour));
+        vertices.Add(new BasicVertex(new Vector2(min.X, max.Y), colour));
+
+        for (uint i = 0; i < 4; i++)
+        {
+            indices.Add(baseIndex + i);
+            indices.Add(baseIndex + (i + 1) % 4);
         }
     }
 
@@ -191,7 +240,6 @@ public class PhysicsWorldDebugRenderer : IGameComponent
             indices.Add(baseIndex + (uint)i);
             indices.Add(baseIndex + (uint)((i + 1) % segments));
         }
-
     }
     public void DrawSegment(in Vector2 p1, in Vector2 p2, in Vector3 colour)
     {

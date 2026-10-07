@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Text;
 
 
@@ -55,6 +56,7 @@ internal class Program
      \__\/                         ~~         \__\/"];
 
     private static bool shouldHalt = false;
+
     private static void Main(string[] args)
     {
         Console.Title = "Horizon Integrated Dynamic Language Runtime";
@@ -70,6 +72,32 @@ internal class Program
         {
             promptVal = (StringValue)val;
         }), false);
+
+        runtime.UserScope.Declare("env", new ObjectValue(
+            new Dictionary<string, IRuntimeValue>
+            {
+                {
+                    "print",
+                    new NativeFunctionValue((values, _) =>
+                    {
+                        StringBuilder sb = new();
+                        foreach (var item in values)
+                            sb.Append(item.ToString());
+
+                        Console.WriteLine($"{promptVal.Value} " + sb.ToString());
+                        return new StringValue(sb.ToString().Trim());
+                    })
+                },
+                {
+                    "clear",
+                    new NativeFunctionValue((args, env) =>
+                    {
+                        ClearConsole();
+                        return new StringValue("Cleared!");
+                    })
+                }
+            }
+        ), true );
 
         runtime.UserScope.Declare("exit", new NativeFunctionValue((args, env) =>
         {
@@ -118,6 +146,37 @@ internal class Program
 
             return new StringValue(runtime.Evaluate(File.ReadAllText(fileName)).result);
         }), true);
+
+        // save("file.hor") writes everything declared since the REPL started, save("file.hor", "name", value) one value.
+        HashSet<string> hostNames = [];
+        runtime.UserScope.Declare("save", new NativeFunctionValue((args, env) =>
+        {
+            if (args.Length < 1 || args[0].Type != Runtime.ValueType.String)
+            {
+                Console.WriteLine("Please specify a file to save to.");
+                return new NullValue();
+            }
+
+            string fileName = ((StringValue)args[0]).Value;
+
+            try
+            {
+                string text = args.Length >= 3 && args[1] is StringValue name
+                    ? HIDLWriter.WriteDeclaration(name.Value, args[2])
+                    : HIDLWriter.Write(runtime.UserScope, (variable, _) => !hostNames.Contains(variable));
+
+                File.WriteAllText(fileName, text);
+                return new StringValue($"Saved {fileName}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e.Message);
+                return new NullValue();
+            }
+        }), true);
+
+        // What the REPL declared itself isn't the user's to save, and is there already when the file is loaded again.
+        hostNames.UnionWith(runtime.UserScope.Variables.Keys);
 
         bool startupFile = args.Length > 0 && File.Exists(args[0]);
         Console.WriteLine(runtime.Evaluate(File.ReadAllText("test.hor")).result);

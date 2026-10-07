@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -23,6 +24,9 @@ public class RenderRectangle : GameObject
         base.Initialize();
         if (vbo is null)
         {
+            // Shared by every rectangle there will ever be, not to go with the scene that drew the first one
+            using var nobody = Horizon.Content.AssetScope.EnterGlobal();
+
             var verts = new Vector2[]
             {
                 new Vector2(-1, -1),
@@ -37,16 +41,7 @@ public class RenderRectangle : GameObject
 
             var indices = new uint[] { 0, 1, 2, 0, 2, 3 };
 
-            if (Engine.ObjectManager.VertexArrays.TryCreate(
-                VertexArrayObjectDescription.VertexBuffer,
-                out var result))
-            {
-                vbo = new VertexBufferObject(result.Asset);
-            }
-            else
-            {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-            }
+            vbo = VertexBufferObject.Create();
 
             vbo.Bind();
             {
@@ -79,7 +74,7 @@ public class RenderRectangle : GameObject
         }
     }
 
-    public override unsafe void Render(float dt, object? obj = null)
+    public override unsafe void Render(float dt)
     {
         base.Render(dt);
         Technique.Bind();

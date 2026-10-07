@@ -1,10 +1,11 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Bogz.Logging.Loggers;
 
 using Horizon.Core.Components;
-using Horizon.Core.Components.Physics2D;
+using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -14,14 +15,61 @@ namespace Horizon.Rendering.Spriting;
 
 public class Sprite : GameObject
 {
-    private static int _idCounter = 0;
     private bool _hasBeenSetup = false;
 
-    public SpriteSheet Spritesheet { get; private set; }
-    public SpriteSheetAnimationManager AnimationManager { get; private set; }
+    public SpriteSheet Spritesheet { get; protected set; }
+    public SpriteSheetAnimationManager AnimationManager { get; protected set; }
     public SpriteBatch Batch { get; internal set; }
 
-    public bool ShouldDraw { get; set; } = true;
+    /// <summary>
+    /// The atlas the sprite is drawn out of, null for a sprite that shows a cell of a <see cref="SpriteSheet"/> instead.
+    /// </summary>
+    public TextureAtlas? Atlas { get; private set; }
+
+    // What the frames of the sprite go by in the atlas, and which of them is showing
+    private string[] _atlasFrames = [];
+    private float _atlasFrameTime, _atlasFrameTimer;
+    private int _atlasFrame;
+
+    /// <summary>
+    /// Whether a sprite out of an atlas plays through its frames, off it stays on the one it is on.
+    /// </summary>
+    public bool Animated { get; set; } = true;
+
+    /// <summary>
+    /// Multiplied into the colours of the sprite.
+    /// </summary>
+    public Vector4 Tint { get; set; } = Vector4.One;
+
+    /// <summary>
+    /// The colour the sprite is flashed with and how much of it there is, from 0 for none to 1 for nothing but the colour
+    /// in the shape of the sprite. Unlike a <see cref="Tint"/> this can make a sprite brighter, and it glows in the dark.
+    /// While there is any of it the tint is left out except for its alpha. See <see cref="SpriteTweens.Flash"/>.
+    /// </summary>
+    public Vector4 FlashColor { get; set; } = Vector4.One;
+    public float FlashAmount { get; set; }
+
+    /// <summary>
+    /// Whether the pixels of the sprite are blended where they meet, for pixel art that is drawn at a size that isn't
+    /// a whole multiple of itself (see <see cref="SpriteItem.SmoothFlag"/>).
+    /// </summary>
+    public bool Smooth { get; set; }
+
+    public bool UseStencilBuffer { get; set; } = false;
+
+    // How fast the sprite is going, for a renderer that blurs motion
+    private readonly Horizon.Core.MotionEstimator _motion = new();
+
+    /// <summary>
+    /// How fast the sprite is moving across the world, in units a second. Worked out from where it is every update,
+    /// so only a sprite that is updated (one that was added to something as an entity) ever has any.
+    /// </summary>
+    public Vector2 Velocity => _motion.Velocity;
+
+    /// <summary>
+    /// Whether the sprite has been told what to show, by either <see cref="ConfigureSpriteSheet"/> or <see cref="ConfigureAtlas"/>.
+    /// </summary>
+    internal bool IsConfigured => Atlas is not null || AnimationManager is not null;
 
     public bool Flipped
     {
@@ -37,18 +85,20 @@ public class Sprite : GameObject
         get => Transform.Size.X < 0;
     }
 
-    internal bool ShouldUpdateVbo { get; private set; }
-
-    public bool IsAnimated { get; set; }
+    //public bool IsAnimated { get; set; }
     public string FrameName { get; private set; }
 
     public virtual TransformComponent2D Transform { get; init; }
+    public virtual TransformComponent2D StencilTransform { get; init; }
 
 
     public Sprite(in Vector2 size)
     {
         this.Transform = AddComponent<TransformComponent2D>();
         this.Transform.Size = size;
+
+        this.StencilTransform = new();
+        this.StencilTransform.Size = size;
     }
 
     /// <summary>
@@ -112,94 +162,7 @@ public class Sprite : GameObject
         };
     }
 
-    public bool LoadSpriteSheetFromDirectory(in string dir)
-    {
-        if (!Directory.Exists(dir))
-        {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"Failed to find directory '{dir}' to load sprite!");
-            return false;
-        }
 
-        if (!(File.Exists(dir + "/spritesheet.png") || File.Exists(dir + "/definition.hor")))
-        {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Failed to load spritesheet or definition!");
-            return false;
-        }
-
-        HIDLRuntime runtime = new();
-        var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/definition.hor"));
-        if (!success) { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"Malformed sprite definition!\r\b{msg}");  return false; }
-
-
-        float spriteSizeX = 0, spriteSizeY = 0, gridSizeX = 0, gridSizeY = 0;
-
-        if (runtime.UserScope.Lookup("sprite") is ObjectValue def)
-        {
-            if (def.Properties["sprite_size"] is ObjectValue sprite_size)
-            {
-                if (sprite_size.Properties["w"] is NumberValue sprite_width) spriteSizeX = sprite_width.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite width!"); return false; }
-
-                if (sprite_size.Properties["h"] is NumberValue sprite_height) spriteSizeY = sprite_height.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite height!"); return false; }
-            }
-            else
-            {
-                ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Malformed sprite size def!");
-                return false;
-            }
-
-            if (def.Properties["grid_size"] is ObjectValue grid_size)
-            {
-                if (grid_size.Properties["w"] is NumberValue grid_width) gridSizeX = grid_width.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite grid width!"); return false; }
-
-                if (grid_size.Properties["h"] is NumberValue grid_height) gridSizeY = grid_height.Value;
-                else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite grid width!"); return false; }
-            }
-
-            if (def.Properties["animations"] is ObjectValue animations)
-            {
-                float posX = 0, posY = 0, time = 0.1f;
-                uint length = 0;
-
-                foreach (var (name, anim_raw) in animations.Properties)
-                {
-                    if (anim_raw is ObjectValue anim)
-                    {
-                        if (anim.Properties["x"] is NumberValue anim_x) posX = anim_x.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim offset!"); return false; }
-
-                        if (anim.Properties["y"] is NumberValue anim_y) posY = anim_y.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim offset"); return false; }
-
-                        if (anim.Properties["l"] is NumberValue anim_l) length = (uint)anim_l.Value;
-                        else { ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "Invalid sprite anim length!"); return false; }
-
-                        if (anim.Properties.ContainsKey("t") && anim.Properties["t"] is NumberValue anim_t) 
-                            time = anim_t.Value;
-
-                        AddAnimation(name, new Vector2(posX, posY), length, time, new Vector2(spriteSizeX, spriteSizeY));
-                    }
-                }
-            }
-        }
-        if (Engine.ObjectManager.Textures.TryCreate(new TextureDescription
-        {
-            Paths = [dir + "/spritesheet.png"],
-            Definition = TextureDefinition.RgbaUnsignedByteNearest
-        }, out var result))
-        {
-            ConfigureSpriteSheet(SpriteSheet.FromTexture(result.Asset, new Vector2(spriteSizeX, spriteSizeY)), "player");
-        }
-        else
-        {
-            throw new Exception(result.Message);
-        }
-
-
-        return true;
-    }
     public void ConfigureSpriteSheet(SpriteSheet spriteSheet, string name)
     {
         this.Spritesheet = (spriteSheet);
@@ -207,9 +170,100 @@ public class Sprite : GameObject
 
         this.FrameName = name;
 
-        this.IsAnimated = AnimationManager.Animations.Any();
+        //this.IsAnimated = AnimationManager.Animations.Any();
 
         _hasBeenSetup = true;
+    }
+
+    /// <summary>
+    /// Makes the sprite show a named sprite of a <see cref="SpriteSheetDefinition"/>, drawn out of an atlas that only
+    /// holds the sprites that are used. Sprites that share an atlas are drawn together whichever image their art is from.
+    /// The art is put into the atlas the next time the batch draws, the sprite shows nothing until then.
+    /// </summary>
+    /// <param name="theme">The theme to find the sprite in, for definitions that hold their art in several colours.</param>
+    /// <returns>False if the definition has no sprite by that name, the sprite is left as it was.</returns>
+    public bool ConfigureAtlas(TextureAtlas atlas, SpriteSheetDefinition definition, string name, string? theme = null)
+    {
+        if (!definition.TryGetSprite(name, theme, out var source))
+        {
+            Log.Error($"[Sprite] '{definition.Path}' has no sprite called '{name}'!");
+            return false;
+        }
+
+        _atlasFrames = atlas.Request(source);
+        _atlasFrameTime = source.FrameTime;
+        _atlasFrameTimer = 0.0f;
+        _atlasFrame = 0;
+
+        this.Atlas = atlas;
+        this.FrameName = name;
+
+        _hasBeenSetup = true;
+        return true;
+    }
+
+    public override void UpdateState(float dt)
+    {
+        // The tweens of the sprite move along in here, see SpriteTweens for the ones that come ready made
+        base.UpdateState(dt);
+
+        _motion.Update(Transform.Position, dt);
+
+        // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager
+        if (Atlas is null || !Animated || _atlasFrames.Length < 2 || _atlasFrameTime <= 0.0f) return;
+
+        _atlasFrameTimer += dt;
+        while (_atlasFrameTimer >= _atlasFrameTime)
+        {
+            _atlasFrameTimer -= _atlasFrameTime;
+            _atlasFrame = (_atlasFrame + 1) % _atlasFrames.Length;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to describe the sprite to the renderer as it is right now.
+    /// </summary>
+    /// <param name="mask">Whether this is for the stencil pass, where a sprite that has a mask is drawn as that instead.</param>
+    /// <returns>False while there is nothing to draw, the art of a sprite out of an atlas isn't there until the atlas has been updated.</returns>
+    internal bool TryCreateItem(bool mask, out SpriteItem item)
+    {
+        Vector2 texMin, texMax;
+
+        if (Atlas is { } atlas)
+        {
+            // The frame can change under us (it is advanced on the simulation thread), the array it indexes can't
+            string[] frames = _atlasFrames;
+            int frame = _atlasFrame;
+
+            if (frames.Length == 0 || !atlas.TryGet(frames[frame < frames.Length ? frame : 0], out var region))
+            {
+                item = default;
+                return false;
+            }
+
+            texMin = region.Position;
+            texMax = region.Position + region.Size;
+        }
+        else
+        {
+            // a frame can span several cells of the sheet, the frames of an animation follow each other to the right
+            Vector2 size = Spritesheet.SpriteSize * new Vector2(1 + GetFrameSpan(), 1);
+
+            texMin = GetFrameOffset() * new Vector2(Spritesheet.Width, Spritesheet.Height) + new Vector2(size.X * GetFrameIndex(), 0);
+            texMax = texMin + size;
+        }
+
+        bool flashed = FlashAmount > 0.0f;
+
+        item = SpriteItem.FromModel(
+            UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix,
+            texMin,
+            texMax,
+            SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
+            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0));
+        item.Motion = _motion.Velocity;
+        item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
+        return true;
     }
 
     public void SetAnimation(string name)
@@ -219,22 +273,23 @@ public class Sprite : GameObject
 
     public Vector2 GetFrameOffset()
     {
-        if (IsAnimated)
-        {
-            var (definition, _) = AnimationManager[FrameName];
+        var (definition, _) = AnimationManager[FrameName];
 
-            return (definition.Position * Spritesheet.SingleSpriteSize);
-        }
-        return Vector2.Zero;
+        return (definition.Position * Spritesheet.SingleSpriteSize);
     }
 
+    public Vector2 GetSize() => Spritesheet.SpriteSize * new Vector2(GetFrameSpan(), 1);
+
+    /// <summary>
+    /// This is the amount of tiles in the right direction (+X) that the sprite goes on in the spritesheet.
+    /// </summary>
+    public uint GetFrameSpan()
+    {
+        return AnimationManager[FrameName].definition.Span;
+    }
     public uint GetFrameIndex()
     {
-        if (IsAnimated)
-        {
-            var (_, index) = AnimationManager[FrameName];
-            return index;
-        }
-        return 0;
+        var (_, index) = AnimationManager[FrameName];
+        return index;
     }
 }

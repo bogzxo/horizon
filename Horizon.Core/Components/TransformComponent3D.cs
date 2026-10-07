@@ -5,11 +5,8 @@ namespace Horizon.Core.Components;
 /// <summary>
 /// Represents a component that handles the 3D transformation of a game entity.
 /// </summary>
-public class TransformComponent3D : IGameComponent
+public class TransformComponent3D : GameComponent
 {
-    public string Name { get; set; } = "Transform3D";
-    public bool Enabled { get; set; }
-
     /// <summary>
     /// The position of the game entity in 3D space.
     /// </summary>
@@ -31,7 +28,7 @@ public class TransformComponent3D : IGameComponent
     private void updateModelMatrix()
     {
         // Create quaternions for each rotation axis
-        Quaternion rotation = Quaternion.CreateFromYawPitchRoll(MathHelper.DegreesToRadians(rot.X), MathHelper.DegreesToRadians(rot.Y), MathHelper.DegreesToRadians(rot.Z));
+        Quaternion rotation = Quaternion.CreateFromYawPitchRoll(float.DegreesToRadians(rot.X), float.DegreesToRadians(rot.Y), float.DegreesToRadians(rot.Z));
 
         // Create the model matrix
         ModelMatrix =
@@ -85,33 +82,10 @@ public class TransformComponent3D : IGameComponent
     }
 
     /// <summary>
-    /// The parent entity to which this transform component belongs.
-    /// </summary>
-    public Entity Parent { get; set; }
-
-    /// <summary>
     /// Initializes the transform component.
     /// </summary>
-    public void Initialize()
+    public override void Initialize()
     {
         updateModelMatrix();
     }
-
-    /// <summary>
-    /// Updates the transform component based on the elapsed time (dt).
-    /// </summary>
-    /// <param name="dt">The elapsed time since the last update call.</param>
-    public void UpdateState(float dt)
-    { }
-
-    public void UpdatePhysics(float dt)
-    { }
-
-    /// <summary>
-    /// Draws the game entity with the current transformation.
-    /// </summary>
-    /// <param name="dt">The elapsed time since the last draw call.</param>
-    /// <param name="options">Optional render options.</param>
-    public void Render(float dt, object? obj = null)
-    { }
 }

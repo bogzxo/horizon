@@ -1,5 +1,5 @@
-﻿using Bogz.Logging.Loggers;
-
+﻿
+using Bogz.Logging;
 using Horizon.Core;
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -30,23 +30,15 @@ public abstract class Mesh<VertexType> : Entity
 
     public uint ElementCount { get; protected set; }
 
+    // How many vertices and indices the buffers have room for, as they were last made
+    private int vertexCapacity, indexCapacity;
+
     public Mesh()
     { }
 
     protected abstract VertexArrayObjectDescription ArrayDescription { get; }
 
-    protected virtual VertexBufferObject AcquireBuffer()
-    {
-        if (GameEngine.Instance.ObjectManager.VertexArrays.TryCreate(ArrayDescription, out var result))
-        {
-            return new VertexBufferObject(result.Asset);
-        }
-        else
-        {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-            throw new Exception(result.Message);
-        }
-    }
+    protected virtual VertexBufferObject AcquireBuffer() => VertexBufferObject.Create(ArrayDescription);
 
 
     public override void Initialize()
@@ -93,7 +85,7 @@ public abstract class Mesh<VertexType> : Entity
     {
         if (HasUploadQueued)
         {
-            ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, "An attempt was made to queue mesh data for upload when it already had one queued; as a result it was discarded.");
+            Log.Error("An attempt was made to queue mesh data for upload when it already had one queued; as a result it was discarded.");
             return;
         }
 
@@ -101,7 +93,7 @@ public abstract class Mesh<VertexType> : Entity
         QueuedData = new QueuedMeshData(vertices, indices);
     }
 
-    public override void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         if (Buffer is null || Technique is null || Material is null)
             return;
@@ -110,11 +102,23 @@ public abstract class Mesh<VertexType> : Entity
         {
             HasUploadQueued = false;
 
-            if (ElementCount < QueuedData.Indices.Length) // dont reallocate unless we have to.
+            // Written into what there is when it fits, made anew only when it doesn't. The other way round (as this
+            // used to be) writes past the end of the buffer exactly when the mesh grows
+            if (QueuedData.Vertices.Length <= vertexCapacity)
                 Buffer.VertexBuffer.NamedBufferSubData(QueuedData.Vertices);
-            else Buffer.VertexBuffer.NamedBufferData(QueuedData.Vertices);
+            else
+            {
+                Buffer.VertexBuffer.NamedBufferData(QueuedData.Vertices);
+                vertexCapacity = QueuedData.Vertices.Length;
+            }
 
-            Buffer.ElementBuffer.NamedBufferData(QueuedData.Indices);
+            if (QueuedData.Indices.Length <= indexCapacity)
+                Buffer.ElementBuffer.NamedBufferSubData(QueuedData.Indices);
+            else
+            {
+                Buffer.ElementBuffer.NamedBufferData(QueuedData.Indices);
+                indexCapacity = QueuedData.Indices.Length;
+            }
 
             ElementCount = (uint)QueuedData.Indices.Length;
         }

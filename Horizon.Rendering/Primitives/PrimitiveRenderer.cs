@@ -5,7 +5,6 @@ using Bogz.Logging;
 
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Core.Data;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Assets;
@@ -122,17 +121,7 @@ public class PrimitiveRenderer : Entity
 
         public ShapeRendererTechnique(in TransformComponent2D transform)
         {
-            if (GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet(
-                "ShapeRendererTechnique",
-                ShaderDescription.FromPath("shaders/primitives", "shapes"),
-                out var result))
-            {
-                SetShader(result.Asset);
-            }
-            else
-            {
-                Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
-            }
+            LoadShader("shaders/primitives", "shapes");
             this.transform = transform;
         }
 
@@ -159,7 +148,7 @@ public class PrimitiveRenderer : Entity
 
     public ShapePrimitive this[int index]
     {
-        get => index > 0 && index < Shapes.Count - 1 ? Shapes[index] : default;
+        get => index >= 0 && index < Shapes.Count ? Shapes[index] : default;
         set
         {
             if (index < 0 || index >= Shapes.Count) return;
@@ -199,7 +188,7 @@ public class PrimitiveRenderer : Entity
         }
         else
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
 
@@ -225,11 +214,31 @@ public class PrimitiveRenderer : Entity
     /// <summary>
     /// Calls to BufferSubData to update vertex array.
     /// </summary>
-    public void UploadAll() => VertexArray.Buffers[VertexArrayBufferAttachmentType.ArrayBuffer].NamedBufferSubData<ShapePrimitive>(CollectionsMarshal.AsSpan(Shapes));
-
-    public override void Render(float dt, object? obj = null)
+    public void UploadAll()
     {
-        base.Render(dt, obj);
+        // What doesn't fit into the buffer isn't drawn, rather than written past its end
+        var shapes = CollectionsMarshal.AsSpan(Shapes);
+        if (shapes.Length > Capacity)
+        {
+            if (!warnedFull)
+            {
+                warnedFull = true;
+                Log.Warning($"[PrimitiveRenderer] {shapes.Length} shapes is more than the {Capacity} there is room for, the rest are left out.");
+            }
+
+            shapes = shapes[..Capacity];
+        }
+
+        VertexArray.Buffers[VertexArrayBufferAttachmentType.ArrayBuffer].NamedBufferSubData<ShapePrimitive>(shapes);
+    }
+
+    // How many shapes the buffer has room for, and whether anybody has been told it was too few
+    private unsafe int Capacity => (int)(arrayBufferSize * BufferObject.ALIGNMENT / (uint)sizeof(ShapePrimitive));
+    private bool warnedFull;
+
+    public override void Render(float dt)
+    {
+        base.Render(dt);
 
         if (uploadMethod == UploadMethod.Automatic && (timer += dt) > uploadTimerInterval)
         {
@@ -240,7 +249,7 @@ public class PrimitiveRenderer : Entity
         technique.Bind();
         technique.SetUniform("uView", ViewMatrix);
         VertexArray.Bind();
-        GameEngine.Instance.GL.DrawArrays(Silk.NET.OpenGL.PrimitiveType.Points, 0, (uint)Shapes.Count);
+        GameEngine.Instance.GL.DrawArrays(Silk.NET.OpenGL.PrimitiveType.Points, 0, (uint)Math.Min(Shapes.Count, Capacity));
         VertexArray.Unbind();
         technique.Unbind();
     }

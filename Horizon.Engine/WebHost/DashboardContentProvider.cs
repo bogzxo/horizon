@@ -1,4 +1,5 @@
-﻿using System.Buffers.Text;
+﻿using Bogz.Logging;
+using System.Buffers.Text;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
@@ -12,7 +13,6 @@ using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 
 namespace Horizon.Engine.Webhost;
 
-using Logger = Bogz.Logging.Loggers.ConcurrentLogger;
 
 /// <summary>
 /// Global engine dashboard accessible at localhost:8080/dashboard, providing a backend interface to the executing application.
@@ -38,21 +38,21 @@ public class DashboardContentProvider : IWebHostContentProvider
     public void RegisterPacketCallback(in uint id, Action<string> action)
     {
         if (!packetcallbacks.TryAdd(id, action))
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Packet[{id}] already has a handler.");
+            Log.Info($"[DashboardContentProvider] Packet[{id}] already has a handler.");
     }
 
     private static readonly string filePrefix = "web_host/dashboard/";
 
     public DashboardContentProvider()
     {
-        GameEngine.Instance.Debugger.Console.CommandProcessed += ProcessCommand;
+        GameEngine.Instance.Console.CommandProcessed += ProcessCommand;
         
-        RegisterPacketCallback(2, GameEngine.Instance.Debugger.Console.EvaluateCallback);
+        RegisterPacketCallback(2, GameEngine.Instance.Console.EvaluateCallback);
     }
 
     ~DashboardContentProvider()
     {
-        GameEngine.Instance.Debugger.Console.CommandProcessed -= ProcessCommand;
+        GameEngine.Instance.Console.CommandProcessed -= ProcessCommand;
     }
 
     private HttpListenerWebSocketContext context;
@@ -74,7 +74,7 @@ public class DashboardContentProvider : IWebHostContentProvider
             if (File.Exists(filePath))
             {
                 await ServeFile(response, filePath);
-                Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Serving {filePath}.");
+                Log.Info($"[DashboardContentProvider] Serving {filePath}.");
             }
             else
             {
@@ -83,13 +83,13 @@ public class DashboardContentProvider : IWebHostContentProvider
                 if (IsRedirectRequest(request))
                 {
                     Redirect(response, redirectUrl);
-                    Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Redirecting to {redirectUrl}.");
+                    Log.Info($"[DashboardContentProvider] Redirecting to {redirectUrl}.");
                 }
                 else
                 {
                     // Serve a 404 page
                     await ServeFile(response, filePrefix + redirectUrl);
-                    Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Can't locate resource '{filePath}', serving 404 page.");
+                    Log.Info($"[DashboardContentProvider] Can't locate resource '{filePath}', serving 404 page.");
                 }
             }
         }
@@ -141,11 +141,11 @@ public class DashboardContentProvider : IWebHostContentProvider
             cancellationTokenSource.Cancel(); // Cancel tasks if any one of them completes
             await Task.WhenAll(receive, transmit);
 
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Info, $"[DashboardContentProvider] Closed WS.");
+            Log.Info($"[DashboardContentProvider] Closed WS.");
         }
         catch (Exception ex)
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error handling WebSocket: {ex.Message}");
+            Log.Error($"[DashboardContentProvider] Error handling WebSocket: {ex.Message}");
         }
         finally
         {
@@ -160,6 +160,7 @@ public class DashboardContentProvider : IWebHostContentProvider
 
     private async Task TransmitData(CancellationToken cancellationToken)
     {
+#if DEBUG
         try
         {
             byte[] bytes;
@@ -187,8 +188,10 @@ public class DashboardContentProvider : IWebHostContentProvider
         }
         catch (Exception ex)
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error transmitting data: {ex.Message}");
+            Log.Error($"[DashboardContentProvider] Error transmitting data: {ex.Message}");
         }
+        
+#endif
     }
 
     private async Task ReceiveData(CancellationToken cancellationToken)
@@ -218,7 +221,7 @@ public class DashboardContentProvider : IWebHostContentProvider
                     }
                     else
                     {
-                        Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] No callback for packet [{packet.PacketID}].");
+                        Log.Error($"[DashboardContentProvider] No callback for packet [{packet.PacketID}].");
                     }
                 }
             }
@@ -229,7 +232,7 @@ public class DashboardContentProvider : IWebHostContentProvider
         }
         catch (Exception ex)
         {
-            Logger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[DashboardContentProvider] Error receiving data: {ex.Message}");
+            Log.Error($"[DashboardContentProvider] Error receiving data: {ex.Message}");
         }
     }
 }

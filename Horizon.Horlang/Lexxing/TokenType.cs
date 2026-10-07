@@ -32,4 +32,5 @@ public enum TokenType : byte
     Equality,
     NotEquality,
     Vector,
+    Comment,
 }

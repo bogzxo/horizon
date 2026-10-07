@@ -1,0 +1,262 @@
+// The sprites of Dead Revolver's pixel UI pack, by name.
+//
+// Every image of the pack holds the same art several times over, once for every colour it comes in. A sprite is
+// written down once, for the first copy, and found in the others by the theme it is asked for in:
+//   block:    how wide one copy of the art is, in pixels
+//   themes:   which copy every theme starts at, counted in blocks from the left of the image
+//   fallback: the theme that is used when a sprite is asked for in a theme the image doesn't come in
+//             (the first one listed if it doesn't say)
+//   states:   the other states the art of every theme is followed by, and how many blocks along each of them is:
+//             with states: { hover: 1 } every sprite of the image is there a second time as "name_hover"
+//   size:     how big the sprites of the image are, for images that are a grid of them: a number or
+//             vec(width, height). A sprite can still say otherwise with a w and an h of its own
+// A sprite says where it is inside of its copy, in pixels from the top left:
+//   x, y, w, h: the rectangle of the sprite (of its first frame, if it has several)
+//   block:      how many blocks further along it is, for images that follow every theme with its other states
+//   border:     how much of every edge keeps its size when the sprite is stretched as a nine-slice: a number for
+//               all four sides, vec(horizontal, vertical) or vec(left, top, right, bottom)
+//   content:    how far in from every edge whatever is put on top of the sprite goes, written like a border: the
+//               label of a button sits on its face, not on the lip under it
+//   frames:     how many frames it has, they follow each other to the right ("name#2" is the third on its own)
+//   time:       how long every frame of an animation is shown for, in seconds
+// A sprite can also be asked for in a theme of its own, whatever the skin's theme is: "round_blank@white".
+//
+// Only sprites that are used get loaded, so there is no harm in naming more of the pack here than a UI needs.
+// The rectangles were measured off the images, see the pack itself for what else there is to name.
+
+// Buttons. Every theme is followed by its other states, so every sprite here is there four times over:
+// "button", "button_hover", "button_pressed" and "button_selected".
+let buttons = {
+    file: "buttons.png",
+    block: 208,
+    themes: { white: 14, dark: 18, tan: 22, gold: 26, red: 30, purple: 34, blue: 38 },
+    fallback: "blue",
+    states: { hover: 1, pressed: 2, selected: 3 },
+    sprites: {
+        button:                  { x: 16, y: 171, w: 32, h: 21, border: vec(6, 5, 6, 8), content: vec(6, 4, 6, 9) },
+        button_flat:             { x: 15, y: 15, w: 34, h: 18, border: 4, content: vec(6, 5, 6, 5) },
+        button_outline:          { x: 79, y: 79, w: 34, h: 18, border: 4, content: vec(6, 5, 6, 5) },
+        button_pill:             { x: 47, y: 127, w: 34, h: 18, border: vec(8, 5, 8, 5), content: vec(9, 5, 9, 5) },
+        button_slant:            { x: 16, y: 80, w: 48, h: 16, border: vec(18, 2, 18, 2), content: vec(16, 4, 16, 4) },
+        key:                     { x: 144, y: 122, w: 32, h: 22, border: vec(8, 6, 8, 10), content: vec(8, 3, 8, 10) },
+        tab_left:                { x: 64, y: 177, w: 24, h: 15, border: vec(10, 6, 3, 3) },
+        tab_right:               { x: 96, y: 177, w: 24, h: 15, border: vec(3, 6, 10, 3) },
+        close:                   { x: 31, y: 212, w: 13, h: 13 }
+    }
+};
+
+// Panels and frames.
+let panels = {
+    file: "panels.png",
+    block: 1120,
+    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    fallback: "blue",
+    sprites: {
+        panel:        { x: 16, y: 128, w: 48, h: 48, border: 6 },
+        panel_tall:   { x: 64, y: 240, w: 32, h: 48, border: 5 },
+        panel_card:   { x: 16, y: 235, w: 38, h: 53, border: vec(5, 5, 5, 18) },
+        panel_window: { x: 176, y: 240, w: 80, h: 32, border: vec(8, 6, 8, 12) },
+        frame:        { x: 272, y: 304, w: 42, h: 42, border: 6 },
+        frame_tech:   { x: 272, y: 240, w: 48, h: 48, border: 14 },
+        header:       { x: 112, y: 277, w: 32, h: 11, border: vec(3, 2, 3, 2) },
+        slot:         { x: 160, y: 16, w: 16, h: 16, border: 4 },
+        slot_empty:   { x: 192, y: 16, w: 16, h: 16, border: 3 },
+        slot_filled:  { x: 224, y: 16, w: 16, h: 16, border: 3 },
+        slot_round:   { x: 256, y: 16, w: 16, h: 16, border: 5 }
+    }
+};
+
+// Check boxes, radio buttons, switches, sliders and the small round buttons. There is no tan one,
+// the white one stands in for it.
+let form = {
+    file: "form_elements.png",
+    block: 512,
+    themes: { white: 0, dark: 1, gold: 2, red: 3, purple: 4, blue: 5 },
+    fallback: "white",
+    sprites: {
+        check_off:         { x: 256, y: 40, w: 8, h: 8, border: 2 },
+        check_hover:       { x: 272, y: 38, w: 10, h: 10, border: 3 },
+        check_on:          { x: 288, y: 40, w: 8, h: 8 },
+        check_mixed:       { x: 304, y: 40, w: 8, h: 8 },
+        radio_off:         { x: 256, y: 56, w: 8, h: 8 },
+        radio_hover:       { x: 272, y: 54, w: 10, h: 10 },
+        radio_on:          { x: 288, y: 56, w: 8, h: 8 },
+        radio_mixed:       { x: 304, y: 56, w: 8, h: 8 },
+        switch_off:        { x: 256, y: 150, w: 19, h: 10 },
+        switch_half:       { x: 288, y: 150, w: 19, h: 10 },
+        switch_on:         { x: 320, y: 150, w: 19, h: 10 },
+        slider_track:      { x: 16, y: 24, w: 32, h: 9, border: vec(3, 3, 3, 4) },
+        slider_handle:     { x: 196, y: 23, w: 2, h: 9 },
+        slider_handle_lit: { x: 214, y: 23, w: 2, h: 9 },
+        slider_knob:       { x: 197, y: 88, w: 8, h: 8 },
+        round_minus:       { x: 256, y: 116, w: 11, h: 12 },
+        round_plus:        { x: 272, y: 116, w: 11, h: 12 },
+        round_check:       { x: 288, y: 116, w: 11, h: 12 },
+        round_cross:       { x: 304, y: 116, w: 11, h: 12 },
+        round_dot:         { x: 320, y: 116, w: 11, h: 12 },
+        round_ring:        { x: 336, y: 116, w: 11, h: 12 },
+        round_blank:       { x: 352, y: 116, w: 11, h: 12 },
+        outline_minus:     { x: 256, y: 100, w: 11, h: 12 },
+        outline_plus:      { x: 272, y: 100, w: 11, h: 12 },
+        outline_check:     { x: 288, y: 100, w: 11, h: 12 },
+        outline_cross:     { x: 304, y: 100, w: 11, h: 12 },
+        outline_dot:       { x: 320, y: 100, w: 11, h: 12 },
+        outline_ring:      { x: 336, y: 100, w: 11, h: 12 },
+        outline_blank:     { x: 352, y: 100, w: 11, h: 12 },
+        dropdown:          { x: 336, y: 240, w: 32, h: 16, border: vec(4, 4, 14, 4) },
+        dropdown_lit:      { x: 384, y: 240, w: 32, h: 16, border: vec(4, 4, 14, 4) },
+        focus:             { x: 304, y: 240, w: 16, h: 16, border: 4 },
+        underline:         { x: 256, y: 255, w: 32, h: 1, border: vec(2, 0, 2, 0) },
+        arrow_down:        { x: 292, y: 294, w: 7, h: 6 },
+        arrow_up:          { x: 308, y: 293, w: 7, h: 6 },
+        arrow_right:       { x: 326, y: 293, w: 5, h: 8 },
+        arrow_left:        { x: 341, y: 293, w: 5, h: 8 }
+    }
+};
+
+// Health and progress bars. There is no blue one: skins of the themes this image doesn't come in get the white
+// one, which takes a tint well.
+let bars = {
+    file: "value_bars.png",
+    block: 480,
+    themes: { white: 0, green: 1, gold: 2, red: 3, purple: 4 },
+    fallback: "white",
+    sprites: {
+        bar_frame:      { x: 16, y: 168, w: 32, h: 8, border: vec(4, 2, 4, 3) },
+        bar_fill:       { x: 242, y: 170, w: 12, h: 4, border: vec(2, 1, 2, 1) },
+        bar_fill_alt:   { x: 258, y: 170, w: 12, h: 4, border: vec(2, 1, 2, 1) },
+        bar_flat_frame: { x: 16, y: 184, w: 32, h: 8, border: vec(4, 2, 4, 3) },
+        bar_flat_fill:  { x: 242, y: 186, w: 12, h: 4, border: vec(2, 1, 2, 1) }
+    }
+};
+
+// Cursors and small tool icons, on a grid of 16 by 16.
+let cursors = {
+    file: "cursors.png",
+    block: 288,
+    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    fallback: "blue",
+    size: 16,
+    sprites: {
+        cursor_arrow:    { x: 0, y: 0 },
+        cursor_pointer:  { x: 16, y: 0 },
+        cursor_hand:     { x: 48, y: 0 },
+        cursor_grab:     { x: 112, y: 0 },
+        cursor_zoom:     { x: 144, y: 0 },
+        cursor_zoom_in:  { x: 160, y: 0 },
+        cursor_zoom_out: { x: 176, y: 0 },
+        cursor_move:     { x: 48, y: 16 },
+        cursor_cross:    { x: 80, y: 16 },
+        cursor_text:     { x: 256, y: 16 },
+        icon_pencil:     { x: 0, y: 32 },
+        icon_eraser:     { x: 16, y: 32 },
+        icon_bucket:     { x: 32, y: 32 },
+        icon_eye:        { x: 176, y: 32 },
+        icon_lock:       { x: 208, y: 32 },
+        icon_unlock:     { x: 224, y: 32 },
+        icon_chat:       { x: 240, y: 32 },
+        icon_shield:     { x: 0, y: 48 },
+        icon_sword:      { x: 16, y: 48 },
+        icon_hammer:     { x: 32, y: 48 },
+        cursor_wait:     { x: 224, y: 0, frames: 4, time: 0.15 }
+    }
+};
+
+// Hearts, 16 by 16 each. These come in their own colours rather than in themes.
+let hearts = {
+    file: "hearts.png",
+    size: 16,
+    sprites: {
+        heart_purple:       { x: 0, y: 0 },
+        heart:              { x: 16, y: 0 },
+        heart_blue:         { x: 32, y: 0 },
+        heart_gem_purple:   { x: 48, y: 0 },
+        heart_gem:          { x: 64, y: 0 },
+        heart_gem_blue:     { x: 80, y: 0 },
+        heart_empty_purple: { x: 96, y: 0 },
+        heart_empty:        { x: 112, y: 0 },
+        heart_empty_blue:   { x: 128, y: 0 },
+        heart_dark_purple:  { x: 144, y: 0 },
+        heart_dark:         { x: 160, y: 0 },
+        heart_dark_blue:    { x: 176, y: 0 }
+    }
+};
+
+// Stars, 18 by 15 each. The coloured ones have four frames, the same star glinting, and a flat one without.
+let stars = {
+    file: "stars.png",
+    size: vec(18, 15),
+    sprites: {
+        star_empty:       { x: 0, y: 0 },
+        star:             { x: 90, y: 0, frames: 4, time: 0.12 },
+        star_flat:        { x: 432, y: 0 },
+        star_red:         { x: 180, y: 0, frames: 4, time: 0.12 },
+        star_flat_red:    { x: 450, y: 0 },
+        star_purple:      { x: 270, y: 0, frames: 4, time: 0.12 },
+        star_flat_purple: { x: 468, y: 0 },
+        star_blue:        { x: 360, y: 0, frames: 4, time: 0.12 },
+        star_flat_blue:   { x: 486, y: 0 }
+    }
+};
+
+// Things to put around whatever is selected, 48 by 48 each and white so they can be tinted.
+let selectors = {
+    file: "selectors.png",
+    sprites: {
+        selector:       { x: 13, y: 13, w: 22, h: 22, border: 11 },
+        selector_round: { x: 61, y: 13, w: 22, h: 22, border: 11 },
+        selector_bold:  { x: 110, y: 14, w: 20, h: 20, border: 11 },
+        selector_thin:  { x: 158, y: 14, w: 20, h: 20, border: 11 },
+        selector_box:   { x: 396, y: 12, w: 24, h: 24, border: 4 }
+    }
+};
+
+// An effect for where a click landed, 5 frames of 21 by 21.
+let click_cross = {
+    file: "ClickEffects_Cross.png",
+    size: 21,
+    sprites: {
+        click_cross: { x: 0, y: 0, frames: 5, time: 0.05 }
+    }
+};
+
+// An effect for where a click landed, 5 frames of 21 by 21.
+let click_crosshair = {
+    file: "ClickEffects_Crosshair.png",
+    size: 21,
+    sprites: {
+        click_crosshair: { x: 0, y: 0, frames: 5, time: 0.05 }
+    }
+};
+
+// An effect for where a click landed, 5 frames of 21 by 21.
+let click_ripple = {
+    file: "ClickEffects_Ripple.png",
+    size: 21,
+    sprites: {
+        click_ripple: { x: 0, y: 0, frames: 5, time: 0.05 }
+    }
+};
+
+// An effect for where a click landed, 5 frames of 21 by 21.
+let click_square = {
+    file: "ClickEffects_Square.png",
+    size: 21,
+    sprites: {
+        click_square: { x: 0, y: 0, frames: 5, time: 0.05 }
+    }
+};
+
+// An effect for where a click landed, 9 frames of 21 by 21.
+let click_star = {
+    file: "ClickEffects_Star.png",
+    size: 21,
+    sprites: {
+        click_star: { x: 0, y: 0, frames: 9, time: 0.05 }
+    }
+};
+
+// Everything above, by the name sprites are asked for.
+let sheet = {
+    images: { buttons, panels, form, bars, cursors, hearts, stars, selectors, click_cross, click_crosshair, click_ripple, click_square, click_star }
+}

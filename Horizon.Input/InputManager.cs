@@ -1,180 +1,125 @@
-﻿using System.Numerics;
+﻿using Bogz.Logging;
 
 using Horizon.Core;
 using Horizon.Core.Components;
-using Horizon.Input.Components;
 
 using Silk.NET.Input;
 
-namespace Horizon.Input
+namespace Horizon.Input;
+
+/// <summary>
+/// Everything the player can press, in one place. The engine has one of these, which games get at through <c>Engine.Input</c>.
+/// <code>
+/// if (Engine.Input.Keyboard.WasPressed(Key.Escape)) Pause();
+/// Vector2 aim = Engine.Input.Mouse.Position;
+/// if (Engine.Input.Gamepads.WasPressed("jump")) Jump();
+/// </code>
+/// All of it moves on once an update, before anything else of the game is updated. So everything that reads it in the same
+/// update sees the same thing, and <see cref="Keyboard.WasPressed"/> and its like are true for exactly one of them.
+/// </summary>
+public sealed class InputManager : GameComponent
 {
     /// <summary>
-    /// The InputManager class is responsible for managing input from various sources (keyboard, mouse, joystick)
-    /// and providing a unified VirtualController that aggregates input data from these sources. (well said jesus)
+    /// The input context of the window underneath, for whoever needs something raw (typed text, the clipboard).
     /// </summary>
-    public class InputManager : IGameComponent
+    public IInputContext? Native { get; private set; }
+
+    public Keyboard Keyboard { get; } = new();
+
+    public Mouse Mouse { get; } = new();
+
+    /// <summary>
+    /// Every gamepad that is plugged in, and the bindings each one is played with.
+    /// </summary>
+    public GamepadInputManager Gamepads { get; } = new();
+
+    // The script that is being played, the gamepad it is played on and how far into it we are
+    private InputScript? _script;
+    private Gamepad? _scriptPad;
+    private float _scriptTime;
+
+    public InputManager()
     {
-        /// <summary>
-        /// The window's native input context.
-        /// </summary>
-        public IInputContext? NativeInputContext { get; private set; }
+        Name = "Input Manager";
+    }
 
-        /// <summary>
-        /// All attached PeripheralInputManagers.
-        /// </summary>
-        public PeripheralInputManager[] Peripherals { get; init; }
+    /// <summary>
+    /// Plays a script of button presses on a gamepad of its own from now on, see <see cref="InputScript"/>. Null stops the one that is playing.
+    /// </summary>
+    public void Play(InputScript? script)
+    {
+        _script = script;
+        _scriptTime = 0.0f;
 
-        /// <summary>
-        /// Gets the KeyboardInputManager responsible for handling keyboard input.
-        /// </summary>
-        public KeyboardInputManager KeyboardManager { get; init; }
+        if (script is not null) _scriptPad ??= Gamepads.AddVirtualGamepad("Script");
+        else _scriptPad?.Update(default);
+    }
 
-        /// <summary>
-        /// Gets the MouseInputManager responsible for handling mouse input.
-        /// </summary>
-        public MouseInputManager MouseManager { get; init; }
+    /// <summary>
+    /// Helper method to play the script somebody named in the environment, if they did.
+    /// </summary>
+    private void PlayScriptOfEnvironment()
+    {
+        if (Environment.GetEnvironmentVariable(InputScript.ENVIRONMENT_VARIABLE) is not { Length: > 0 } path) return;
 
-        /// <summary>
-        /// Gets the XInputJoystickManager responsible for handling joystick input.
-        /// </summary>
-        public XInputJoystickInputManager XInputJoystickManager { get; init; }
-
-        /// <summary>
-        /// Gets the DualSenseInputManager responsible for handling joystick input.
-        /// </summary>
-        //public DualSenseInputManager DualSenseInputManager { get; init; }
-
-        /// <summary>
-        /// Gets or sets a value indicating whether input is captured by the InputManager.
-        /// </summary>
-        public bool Enabled { get; set; }
-
-        public string Name { get; set; } = "Horizon Input Manager";
-        public Entity Parent { get; set; }
-
-        private VirtualController VirtualController = new() { Actions = VirtualAction.None };
-        private VirtualController PreviousVirtualController = new() { Actions = VirtualAction.None };
-
-        private EngineEventHandler eventHandler;
-
-        /// <summary>
-        /// Initializes a new instance of the InputManager class with default values.
-        /// </summary>
-        public InputManager()
+        if (!File.Exists(path))
         {
-            // Forwards a reference to this main class to all the components.
-            PeripheralInputManager.SetManager(this);
-
-            // Attach all peripheral managers.
-            Peripherals = new PeripheralInputManager[]
-            {
-                XInputJoystickManager = new XInputJoystickInputManager(),
-                KeyboardManager = new KeyboardInputManager(),
-                MouseManager = new MouseInputManager(),
-                //DualSenseInputManager = new DualSenseInputManager()
-            };
+            Log.Warning($"[{Name}] There is no input script at '{path}'.");
+            return;
         }
 
-        ~InputManager()
+        InputScript script = InputScript.Load(path, out List<string> problems);
+        foreach (string problem in problems)
+            Log.Warning($"[{Name}] {path}: {problem}");
+
+        Log.Info($"[{Name}] Playing the input script '{path}', {script.Length:0.0} seconds of it.");
+        Play(script);
+    }
+
+    /// <summary>
+    /// Helper method to move the script along and have its gamepad hold whatever it says is held right now.
+    /// </summary>
+    private void UpdateScript(float dt)
+    {
+        if (_script is null || _scriptPad is null) return;
+
+        _scriptTime += dt;
+        _scriptPad.Update(_script.At(_scriptTime));
+
+        if (_script.WantsQuit(_scriptTime))
         {
-            // detach events
-            eventHandler.PreState -= AggregateInputs;
-            eventHandler.PostState -= SwapBuffers;
+            _script = null;
+            Parent.GetComponent<WindowManager>()?.Close();
         }
+    }
 
-        public void Initialize()
-        {
-            // TODO: fix assumptions
-            NativeInputContext = Parent.GetComponent<WindowManager>().Input;
-            eventHandler = Parent.GetComponent<EngineEventHandler>();
+    public override void Initialize()
+    {
+        WindowManager window = Parent.GetComponent<WindowManager>()
+            ?? throw new InvalidOperationException("The input manager goes on the entity that has the window manager, which is the engine.");
+        IInputContext context = window.Input;
 
-            // attach events
-            eventHandler.PreState += AggregateInputs;
-            eventHandler.PostState += SwapBuffers;
+        // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
+        window.EventsProcessed += Gamepads.SampleDevices;
 
-            // Initialize peripheral managers
-            for (int i = 0; i < Peripherals.Length; i++)
-                Peripherals[i].Initialize();
-        }
+        Native = context;
 
-        public void Render(float dt, object? obj = null)
-        { }
+        Keyboard.Attach(context);
+        Mouse.Attach(context);
 
-        public void UpdatePhysics(float dt)
-        { }
+        // Before the gamepads of the window are let in, so the one of a script is the first there is
+        PlayScriptOfEnvironment();
+        Gamepads.Attach(context);
+    }
 
-        /// <summary>
-        /// Swap buffers.
-        /// </summary>
-        private void SwapBuffers(float _)
-        {
-            if (!Enabled) return;
-            for (int i = 0; i < Peripherals.Length; i++)
-                Peripherals[i].SwapBuffers();
+    public override void UpdateState(float dt)
+    {
+        // Switched off, nothing is read and whatever was pressed stays where it was (development: "InputManager listens to Enabled")
+        if (!Enabled) return;
 
-            PreviousVirtualController = VirtualController;
-        }
-
-        /// <summary>
-        /// Aggregates all peripherals.
-        /// </summary>
-        private void AggregateInputs(float dt)
-        {
-            if (!Enabled) return;
-
-            for (int i = 0; i < Peripherals.Length; i++)
-                Peripherals[i].AggregateData(dt);
-        }
-
-        /// <summary>
-        /// Updates the InputManager, aggregating input data from various sources into the VirtualController.
-        /// </summary>
-        /// <param name="dt">The time elapsed since the last update.</param>
-        public void UpdateState(float dt)
-        {
-            if (!Enabled) return; 
-
-            var keyboardData = KeyboardManager.GetData();
-            var mouseData = MouseManager.GetData();
-            var xjoystickData = XInputJoystickManager.IsConnected
-                ? XInputJoystickManager.GetData()
-                : JoystickData.Default;
-            //var djoystickData = DualSenseInputManager.GetData();
-
-            VirtualController.Actions =
-                keyboardData.Actions | mouseData.Actions | xjoystickData.Actions;// | djoystickData.Actions;
-
-            VirtualController.MovementAxis =
-                keyboardData.MovementDirection
-                + (XInputJoystickManager.IsConnected ? xjoystickData.PrimaryAxis : Vector2.Zero);
-               // + (DualSenseInputManager.IsConnected ? djoystickData.PrimaryAxis : Vector2.Zero);
-
-            if (VirtualController.MovementAxis.LengthSquared() > 1.0f)
-                VirtualController.MovementAxis = Vector2.Normalize(VirtualController.MovementAxis);
-
-            VirtualController.LookingAxis =
-                mouseData.Direction
-                + (XInputJoystickManager.IsConnected ? xjoystickData.SecondaryAxis : Vector2.Zero);
-               // + (DualSenseInputManager.IsConnected ? djoystickData.SecondaryAxis : Vector2.Zero);
-        }
-
-        /// <summary>
-        /// Gets the VirtualController providing unified input data from various sources.
-        /// </summary>
-        /// <returns>The VirtualController instance.</returns>
-        public VirtualController GetVirtualController() => Enabled ? VirtualController : default;
-
-        /// <summary>
-        /// Gets the last frames VirtualController providing unified input data from various sources.
-        /// </summary>
-        /// <returns>The VirtualController instance.</returns>
-        public VirtualController GetPreviousVirtualController() =>
-            Enabled ? PreviousVirtualController : default;
-
-        public bool IsPressed(VirtualAction action) => GetVirtualController().IsPressed(action);
-
-        public bool WasPressed(VirtualAction action) =>
-            GetVirtualController().IsPressed(action)
-            && !GetPreviousVirtualController().IsPressed(action);
+        Keyboard.Update();
+        Mouse.Update();
+        UpdateScript(dt);
+        Gamepads.UpdateState(dt);
     }
 }

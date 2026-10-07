@@ -10,11 +10,18 @@ using Horizon.Physics.Fixtures;
 
 namespace Horizon.Physics;
 
-public class PhysicsBodyComponent2D : IGameComponent
+public class PhysicsBodyComponent2D : GameComponent
 {
     public PhysicsBodySimulationType SimulationType { get; init; }
     public List<IPhysicsFixture> KinematicFixtures { get; init; } = [];
     public List<IPhysicsFixture> DynamicFixtures { get; init; } = [];
+
+    /// <summary>
+    /// What particles run into of this body. Left empty that is its dynamic fixtures, the same things it stands on
+    /// the map with. A body that has something better to offer them (the outline of its sprite, see
+    /// <see cref="OutlinePhysicsFixture"/>) puts it here, and they collide with that instead.
+    /// </summary>
+    public List<IPhysicsFixture> ParticleFixtures { get; init; } = [];
 
     // TODO: this should not be publicly mutable, the physics world simulation loop should change it
     public Vector2 Position { get; set; }
@@ -25,9 +32,12 @@ public class PhysicsBodyComponent2D : IGameComponent
     public float Restitution { get; set; } = 0.3f;
     public float LinearDrag { get; set; } = 0.0f;
 
-    public bool Enabled { get; set; }
-    public string Name { get; set; } = "Physics Body";
-    public Entity Parent { get; set; } = null!;
+    /// <summary>
+    /// Bodies with the same group pass straight through each other, and don't count as touching either.
+    /// Everything else (the map, bodies of another group or of none) they run into as usual.
+    /// Zero, which is what a body has until it is told otherwise, is no group at all.
+    /// </summary>
+    public int CollisionGroup { get; set; }
 
     private TransformComponent2D? parentTransform;
 
@@ -37,7 +47,7 @@ public class PhysicsBodyComponent2D : IGameComponent
     }
     public PhysicsBodyComponent2D() : this(Vector2.Zero) { }
 
-    public void Initialize()
+    public override void Initialize()
     {
         parentTransform = Parent.GetComponent<TransformComponent2D>();
     }
@@ -48,6 +58,16 @@ public class PhysicsBodyComponent2D : IGameComponent
         if (kinematic) this.KinematicFixtures.Add(rf);
         else this.DynamicFixtures.Add(rf);
         return rf;
+    }
+
+    /// <summary>
+    /// Gives the body an outline for particles to collide with, empty until it is given one (<see cref="OutlinePhysicsFixture.Set"/>).
+    /// </summary>
+    public OutlinePhysicsFixture CreateOutlineFixture(string tag = "")
+    {
+        var outline = new OutlinePhysicsFixture(tag);
+        this.ParticleFixtures.Add(outline);
+        return outline;
     }
 
     public CirclePhysicsFixture CreateCircleFixture(Vector2 position, float radius, bool kinematic = false, string tag="")
@@ -87,19 +107,14 @@ public class PhysicsBodyComponent2D : IGameComponent
         Force = Vector2.Zero;
     }
 
-    public void Render(float dt, object? obj = null)
+    public override void Render(float dt)
     {
         // physics bodies do not render directly; transform is updated in state.
     }
 
-    public void UpdatePhysics(float dt)
+    public override void UpdateState(float dt)
     {
-        
-    }
-
-    public void UpdateState(float dt)
-    {
-        if (parentTransform is null)
+        if (!Enabled || parentTransform is null)
             return;
 
         parentTransform.Position = Position;

@@ -1,24 +1,11 @@
-﻿using System.Diagnostics.CodeAnalysis;
-
-using Horizon.Core;
+﻿using Horizon.Core;
 
 namespace Horizon.Engine;
 
+/// <summary>
+/// An entity that knows the engine it lives in. Scenes, cameras, renderers and most things a game adds to a scene are these.
+/// </summary>
 public abstract class GameObject : Entity
 {
-    public static GameEngine Engine { get; internal set; }
-
-    protected GameObject()
-        :base()
-    {
-        
-    }
-
-    //public override void Initialize()
-    //{
-    //    if (Engine is null && Parent is GameEngine engine)
-    //        Engine = engine;
-
-    //    base.Initialize();
-    //}
+    public static GameEngine Engine { get; internal set; } = null!;
 }

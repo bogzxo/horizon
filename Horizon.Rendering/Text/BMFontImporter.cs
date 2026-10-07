@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Bogz.Logging;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -55,7 +56,7 @@ public class BMFontImporter
         {
             if (!File.Exists(bmFile))
             {
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[BMFont Parser] Couldn't find file '{bmFile}'!");
+                Log.Error($"[BMFont Parser] Couldn't find file '{bmFile}'!");
                 return (Array.Empty<CharDefinition>(), string.Empty);
             }
             string[] lines = File.ReadAllLines(bmFile);
@@ -68,7 +69,7 @@ public class BMFontImporter
         {
             var node = queue.Dequeue();
             if (node.Type != type)
-                Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, $"[BMFont Parser] Expected token {type} but got {node.Type}!");
+                Log.Error($"[BMFont Parser] Expected token {type} but got {node.Type}!");
             return node;
         }
 
@@ -280,8 +281,42 @@ public class BMFontImporter
     public Texture Texture { get; private set; }
     public Dictionary<char, CharDefinition> Definitions { get; init; }
 
+    /// <summary>
+    /// The distance in pixels between the tops of two consecutive lines, 0 if the font doesn't say.
+    /// </summary>
+    public int LineHeight { get; private set; }
+
+    /// <summary>
+    /// The distance in pixels from the top of a line down to its baseline, 0 if the font doesn't say.
+    /// </summary>
+    public int Base { get; private set; }
+
+    // The char parser skips the header, so the "common" line is picked out separately.
+    private void ReadCommon(string bmFile)
+    {
+        if (!File.Exists(bmFile))
+            return;
+
+        foreach (string line in File.ReadLines(bmFile))
+        {
+            if (!line.StartsWith("common"))
+                continue;
+
+            foreach (string pair in line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (pair.StartsWith("lineHeight=") && int.TryParse(pair["lineHeight=".Length..], out int lineHeight))
+                    LineHeight = lineHeight;
+                else if (pair.StartsWith("base=") && int.TryParse(pair["base=".Length..], out int baseline))
+                    Base = baseline;
+            }
+            return;
+        }
+    }
+
     public BMFontImporter(in string dir, in string bmFile)
     {
+        ReadCommon(Path.Combine(dir, bmFile));
+
         (CharDefinition[] defs, string path) = BMParser.Parse(Path.Combine(dir, bmFile));
         if (GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
             path,
@@ -296,7 +331,7 @@ public class BMFontImporter
         }
         else
         {
-            Bogz.Logging.Loggers.ConcurrentLogger.Instance.Log(Bogz.Logging.LogLevel.Error, result.Message);
+            Log.Error(result.Message);
         }
 
         Definitions = [];

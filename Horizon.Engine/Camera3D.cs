@@ -23,7 +23,7 @@ public class Camera3D : Camera
     public Camera3D(in float fov = 45.0f)
     {
         Projection = Matrix4x4.CreatePerspectiveFieldOfView(
-            MathHelper.DegreesToRadians(fov),
+            float.DegreesToRadians(fov),
             GameEngine.Instance.WindowManager.AspectRatio,
             Near = 0.1f,
             Far = 4000.0f
@@ -36,34 +36,28 @@ public class Camera3D : Camera
         ViewProj = View * Projection;
     }
 
-    protected override void UpdateMatrices()
-    {
-        View = Matrix4x4.CreateLookAt(Position, Position + Front, CameraUp);
-        ViewProj = View * Projection;
-    }
+    protected override Vector3 LookDirection => Front;
 
     private void UpdateMouse()
     {
         if (Enabled)
         {
-            var controller = Engine.InputManager.GetVirtualController();
+            // Up on the screen is up in the world, which the mouse counts the other way round
+            Vector2 moved = Engine.Input.Mouse.Delta * lookSensitivity;
 
-            var xOffset = (controller.LookingAxis.X) * lookSensitivity;
-            var yOffset = (controller.LookingAxis.Y) * lookSensitivity;
-
-            CameraYaw -= xOffset;
-            CameraPitch += yOffset;
+            CameraYaw += moved.X;
+            CameraPitch -= moved.Y;
 
             // We don't want to be able to look behind us by going over our head or under our feet so make sure it stays within these bounds
             CameraPitch = Math.Clamp(CameraPitch, -89.0f, 89.0f);
         }
 
         Direction = new Vector3(
-            MathF.Cos(MathHelper.DegreesToRadians(CameraYaw))
-                * MathF.Cos(MathHelper.DegreesToRadians(CameraPitch)),
-            MathF.Sin(MathHelper.DegreesToRadians(CameraPitch)),
-            MathF.Sin(MathHelper.DegreesToRadians(CameraYaw))
-                * MathF.Cos(MathHelper.DegreesToRadians(CameraPitch))
+            MathF.Cos(float.DegreesToRadians(CameraYaw))
+                * MathF.Cos(float.DegreesToRadians(CameraPitch)),
+            MathF.Sin(float.DegreesToRadians(CameraPitch)),
+            MathF.Sin(float.DegreesToRadians(CameraYaw))
+                * MathF.Cos(float.DegreesToRadians(CameraPitch))
         );
 
         Front = Vector3.Normalize(Direction);
@@ -73,10 +67,5 @@ public class Camera3D : Camera
     {
         UpdateMouse();
         base.UpdateState(dt);
-    }
-
-    public override void Render(float dt, object? obj = null)
-    {
-        base.Render(dt, obj);
     }
 }

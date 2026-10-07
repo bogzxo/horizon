@@ -10,6 +10,11 @@ public readonly struct FrameBufferAttachmentDefinition
         IsRenderBuffer = false,
         TextureDefinition = TextureDefinition.RgbaFloat,
     };
+    public static FrameBufferAttachmentDefinition DepthStencilComponent { get; } = new()
+    {
+        IsRenderBuffer = false,
+        TextureDefinition = TextureDefinition.DepthStencil,
+    };
 
     public static FrameBufferAttachmentDefinition RenderBufferRGBA { get; } = new()
     {
@@ -21,6 +26,16 @@ public readonly struct FrameBufferAttachmentDefinition
     {
         IsRenderBuffer = false,
         TextureDefinition = TextureDefinition.RgbaUnsignedByte,
+    };
+
+    /// <summary>
+    /// Read back exactly as it was drawn, for frame buffers that are put on screen at another size (pixel art)
+    /// or hold data rather than colour.
+    /// </summary>
+    public static FrameBufferAttachmentDefinition TextureRGBAByteNearest { get; } = new()
+    {
+        IsRenderBuffer = false,
+        TextureDefinition = TextureDefinition.RgbaUnsignedByteNearest,
     };
 
     public static FrameBufferAttachmentDefinition TextureDepth { get; } = new()
