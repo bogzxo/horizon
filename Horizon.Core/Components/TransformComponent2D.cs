@@ -4,39 +4,62 @@ using Horizon.Rendering;
 namespace Horizon.Core.Components;
 
 /// <summary>
-/// Represents a component that handles the 2D transformation of a game entity.
+/// Where something is in a flat world, which way it is turned and how big it is.
+/// <para>
+/// The model matrix is only worked out when it is asked for after something changed, not on every change: moving
+/// something about a few times in an update costs nothing more than moving it once.
+/// </para>
 /// </summary>
 public class TransformComponent2D : GameComponent
 {
-    /// <summary>
-    /// The position of the game entity in 3D space.
-    /// </summary>
     private Vector2 pos;
 
-    /// <summary>
-    /// The rotation angles of the game entity in degrees around each axis (X, Y, and Z).
-    /// </summary>
+    // In degrees
     private float rot;
 
-    /// <summary>
-    /// The size factors of the game entity along each axis (X and Y).
-    /// </summary>
     private Vector2 size = Vector2.One;
+    private float zOffset;
+    private Origin origin = Origin.Center;
+
+    private Matrix4x4 modelMatrix;
+    private volatile bool dirty = true;
+
+    /// <summary>
+    /// How often something has been put somewhere else rather than moved there, see <see cref="Snap"/>. Whatever draws
+    /// the thing between two ticks doesn't show it on its way across a snap.
+    /// </summary>
+    public int Epoch { get; private set; }
+
     /// <summary>
     /// You may override this as a means to fight Z axis clipping.
     /// </summary>
-    public float ZOffset = 0.0f;
+    public float ZOffset
+    {
+        get => zOffset;
+        set
+        {
+            zOffset = value;
+            dirty = true;
+        }
+    }
 
     /// <summary>
     /// Sets the origin around which the position is considered.
     /// </summary>
-    public Origin Origin { get; set; } = Origin.Center;
+    public Origin Origin
+    {
+        get => origin;
+        set
+        {
+            origin = value;
+            dirty = true;
+        }
+    }
 
-    
     private Vector2 GetOriginOffset()
     {
         // Assuming your base generic box vertices go from -0.5 to +0.5
-        return Origin switch
+        return origin switch
         {
             Origin.Center => new Vector2(0f, 0f),
 
@@ -57,30 +80,43 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// Updates the model matrix based on the current position, rotation, size, and origin.
+    /// Helper method to work the model matrix out from the position, rotation, size and origin as they are.
+    /// Origin offset, then scale, then rotation, then the position in the world.
     /// </summary>
-    private void updateModelMatrix()
+    private Matrix4x4 ComputeModelMatrix()
     {
-        // 1. Get the local space offset based on the selected origin
         Vector2 originOffset = GetOriginOffset();
+        float radians = float.DegreesToRadians(rot);
+        float cos = MathF.Cos(radians), sin = MathF.Sin(radians);
 
-        // 2. Convert rotation angles to radians
-        float radiansZ = float.DegreesToRadians(rot);
-        Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, radiansZ);
+        // The same as translate * scale * rotate * translate, written out: a 2D transform has six numbers worth working out
+        float ax = size.X * cos, ay = size.X * sin;
+        float bx = -size.Y * sin, by = size.Y * cos;
+        float ox = originOffset.X, oy = originOffset.Y;
 
-        // 3. Create the model matrix
-        // Order matters: Origin Offset -> Scale -> Rotation -> World Translation
-        ModelMatrix =
-            Matrix4x4.CreateTranslation(originOffset.X, originOffset.Y, 0f)
-            * Matrix4x4.CreateScale(size.X, size.Y, 1.0f)
-            * Matrix4x4.CreateFromQuaternion(rotation)
-            * Matrix4x4.CreateTranslation(pos.X, pos.Y, ZOffset);
+        return new Matrix4x4(
+            ax, ay, 0.0f, 0.0f,
+            bx, by, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            ox * ax + oy * bx + pos.X, ox * ay + oy * by + pos.Y, zOffset, 1.0f);
     }
 
     /// <summary>
     /// The model matrix representing the transformation of the game entity.
     /// </summary>
-    public Matrix4x4 ModelMatrix { get; private set; }
+    public Matrix4x4 ModelMatrix
+    {
+        get
+        {
+            if (dirty)
+            {
+                dirty = false;
+                modelMatrix = ComputeModelMatrix();
+            }
+
+            return modelMatrix;
+        }
+    }
 
     /// <summary>
     /// Gets or sets the position of the game entity in 3D space.
@@ -91,7 +127,7 @@ public class TransformComponent2D : GameComponent
         set
         {
             pos = value;
-            updateModelMatrix();
+            dirty = true;
         }
     }
 
@@ -104,9 +140,10 @@ public class TransformComponent2D : GameComponent
         set
         {
             rot = value;
-            updateModelMatrix();
+            dirty = true;
         }
     }
+
     /// <summary>
     /// Sets the transform position relative to the center of the object.
     /// </summary>
@@ -125,15 +162,21 @@ public class TransformComponent2D : GameComponent
         set
         {
             size = value;
-            updateModelMatrix();
+            dirty = true;
         }
     }
+
+    /// <summary>
+    /// Says that the thing was put where it is rather than moved there (a respawn, a reset), so it isn't drawn on its way
+    /// from where it was in the frames that show the moment in between. Simulation thread.
+    /// </summary>
+    public void Snap() => Epoch++;
 
     /// <summary>
     /// Initializes the transform component.
     /// </summary>
     public override void Initialize()
     {
-        updateModelMatrix();
+        dirty = true;
     }
 }

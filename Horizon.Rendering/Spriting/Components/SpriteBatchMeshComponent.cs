@@ -217,19 +217,46 @@ public class SpriteBatchMesh : GameObject
     {
         if (!Enabled) return;
 
-        // times 2 because we need space for the mask pass AND the color pass
-        Span<SpriteItem> items = BeginItems(sprites.Length * 2);
+        // Only sprites that are cut out with a mask need the stencil. Without any there is one pass, not three
+        bool masked = false;
+        foreach (var sprite in sprites)
+        {
+            if (sprite is { Enabled: true, UseStencilBuffer: true })
+            {
+                masked = true;
+                break;
+            }
+        }
+
+        Span<SpriteItem> items = BeginItems(sprites.Length * (masked ? 2 : 1));
         if (items.IsEmpty)
         {
             EndItems();
             return;
         }
 
-        // pass 1 is the masks, pass 2 the sprites themselves
-        int count = AggregateSpriteData(in sprites, true, items);
-        count = Math.Min(count, AggregateSpriteData(in sprites, false, items[count..]));
+        // the masks first (if any), then the sprites themselves
+        int masks = masked ? AggregateSpriteData(in sprites, true, items) : 0;
+        int colors = AggregateSpriteData(in sprites, false, items[masks..]);
 
         ReadOnlySpan<SpriteTexture> textures = [texture];
+        DrawPasses(masks, colors, textures, globalModel, engineActiveCamera);
+
+        EndItems();
+    }
+
+    /// <summary>
+    /// Draws the items of this frame (see <see cref="BeginItems"/>): the first <paramref name="masks"/> of them as the
+    /// stencil mask the rest are cut out by, the <paramref name="colors"/> after them as they look. Without masks the
+    /// items are simply drawn, without touching the stencil at all.
+    /// </summary>
+    public void DrawPasses(int masks, int colors, ReadOnlySpan<SpriteTexture> textures, in Matrix4x4 globalModel, Camera camera)
+    {
+        if (masks == 0)
+        {
+            DrawItems(0, colors, textures, globalModel, camera);
+            return;
+        }
 
         // stencil setup
         Engine.GL.Enable(EnableCap.StencilTest);
@@ -245,7 +272,7 @@ public class SpriteBatchMesh : GameObject
         Engine.GL.DepthMask(false);
 
         // pass 1: mask write
-        DrawItems(0, count, textures, globalModel, engineActiveCamera);
+        DrawItems(0, masks, textures, globalModel, camera);
 
         // pass 2: color draw
         // only draw if the mask equals 1, and don't write to the stencil buffer anymore
@@ -257,9 +284,7 @@ public class SpriteBatchMesh : GameObject
         Engine.GL.ColorMask(true, true, true, true);
         Engine.GL.DepthMask(true);
 
-        DrawItems(count, count, textures, globalModel, engineActiveCamera);
-
-        EndItems();
+        DrawItems(masks, colors, textures, globalModel, camera);
 
         // cleanup state so we don't bleed into other draw calls
         Engine.GL.Disable(EnableCap.StencilTest);

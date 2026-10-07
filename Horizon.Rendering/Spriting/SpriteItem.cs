@@ -2,6 +2,8 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+using Horizon.Core.Threading;
+
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
@@ -107,6 +109,46 @@ public struct SpriteItem
             Flags = flags,
             Depth = model.M43
         };
+    }
+
+    // Further than this (in units of the world) between two ticks is being put somewhere else, not moving there
+    private const float TELEPORT = 256.0f;
+
+    /// <summary>
+    /// What a quad looks like partway (0 to 1) from one snapshot of it to the next: where it is, how it is turned and
+    /// stretched, its colour and how fast it is going are mixed; which part of which texture it shows and how it is
+    /// drawn are what they were until the moment is all the way at the newer one. See <see cref="CanBlend"/> for when
+    /// two snapshots are not to be mixed at all.
+    /// </summary>
+    public static SpriteItem Blend(in SpriteItem from, in SpriteItem to, float amount)
+    {
+        if (amount >= 1.0f)
+            return to;
+
+        SpriteItem item = from;
+        item.Origin = Interpolate.Linear(from.Origin, to.Origin, amount);
+        item.AxisX = Interpolate.Linear(from.AxisX, to.AxisX, amount);
+        item.AxisY = Interpolate.Linear(from.AxisY, to.AxisY, amount);
+        item.Motion = Interpolate.Linear(from.Motion, to.Motion, amount);
+        item.Color = Interpolate.PackedColor(from.Color, to.Color, amount);
+        item.Ring = Interpolate.Linear(from.Ring, to.Ring, amount);
+        return item;
+    }
+
+    /// <summary>
+    /// Whether a quad went from one snapshot to the next in a way that can be shown on its way: not flipped over (which
+    /// mixed would squash it flat halfway) and not put somewhere else entirely.
+    /// </summary>
+    public static bool CanBlend(in SpriteItem from, in SpriteItem to)
+    {
+        // Turning keeps the way round the corners go, mirroring reverses it
+        float before = from.AxisX.X * from.AxisY.Y - from.AxisX.Y * from.AxisY.X;
+        float after = to.AxisX.X * to.AxisY.Y - to.AxisX.Y * to.AxisY.X;
+        if (before * after < 0.0f)
+            return false;
+
+        Vector2 moved = (to.Origin + (to.AxisX + to.AxisY) * 0.5f) - (from.Origin + (from.AxisX + from.AxisY) * 0.5f);
+        return moved.LengthSquared() <= TELEPORT * TELEPORT;
     }
 
     /// <summary>
