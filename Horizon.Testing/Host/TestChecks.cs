@@ -3,9 +3,16 @@ using System.Text;
 namespace Horizon.Testing;
 
 /// <summary>
-/// Checks for the parts of the engine that need no pointer to test: each one is a name and whether it held,
-/// printed as it is made the same way <see cref="UISelfTest"/> prints its own, and kept for the scene to put on
-/// screen.
+/// A dead simple checklist, for examples that check the engine does what it says on the tin without needing a
+/// pointer (the UI ones that click about use <see cref="UISelfTest"/>). Every check is a name and whether it held.
+/// It's printed the moment it's made, so a run from the command line shows what broke, and kept for the scene to
+/// put on screen.
+/// <code>
+/// var checks = new TestChecks("Tweens");
+/// checks.Check("ends where it was told to", () => tweened == 10.0f);
+/// checks.Report();
+/// resultsLabel.Text = checks.Describe();
+/// </code>
 /// </summary>
 internal sealed class TestChecks(string title)
 {
@@ -14,6 +21,7 @@ internal sealed class TestChecks(string title)
     public int Passed => results.Count(result => result.Passed);
     public int Count => results.Count;
 
+    /// <summary>Runs a check right now and notes how it went.</summary>
     public void Check(string name, Func<bool> check)
     {
         bool passed;
@@ -23,7 +31,8 @@ internal sealed class TestChecks(string title)
         }
         catch (Exception e)
         {
-            // A check that blows up is a check that failed, and the rest still want their turn.
+            // A check that blows up is a check that failed. Note it and crack on, one shit check shouldn't take
+            // the rest down with it
             Console.WriteLine($"[{title}] {name} threw: {e.Message}");
             passed = false;
         }
@@ -35,7 +44,10 @@ internal sealed class TestChecks(string title)
     /// <summary>Prints how many of the checks held.</summary>
     public void Report() => Console.WriteLine($"[{title}] {Passed} of {Count} checks passed.");
 
-    /// <summary>Every check on a line of its own, for a label. Brackets are left out, a label would draw them as icons.</summary>
+    /// <summary>
+    /// Every check on a line of its own, for a label. No brackets in here on purpose: a label draws [name] as an
+    /// icon whenever the skin has one by that name.
+    /// </summary>
     public string Describe()
     {
         var text = new StringBuilder();

@@ -1,7 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
+
 using Horizon.Engine;
 using Horizon.Rendering;
 using Horizon.Rendering.UIX;
@@ -10,108 +9,145 @@ using Horizon.Rendering.UIX.Components;
 namespace Horizon.Testing;
 
 /// <summary>
-/// The list of tests: a button for each, with what it is about written next to it. Pressing one
-/// hands the test to the <see cref="TestHost"/> to run.
+/// The menu you land on: every test under the heading of its <see cref="TestArea"/>, a button each with a line about
+/// it next to it. Pressing one hands it to the <see cref="TestHost"/> to run.
+/// <para>
+/// It's a UI and nothing else, so it's a decent little example of UIX built straight from C# too: a
+/// <see cref="UICompositor.ForScreen"/> UI laid out for a <see cref="UICompositor.DesignSize"/>, stacks inside stacks,
+/// and a <see cref="ScrollPanel"/> for a list that's taller than the screen.
+/// </para>
 /// </summary>
-internal class TestSelectorScene : Scene
+internal sealed class TestSelectorScene : Scene
 {
-    private const int TestsPerPage = 8;
-    private const float RowHeight = 56.0f;
+    // Laid out for 1600 by 900. A smaller window gets the whole lot shrunk to fit, a bigger one gets it bigger, and
+    // either way nothing falls off the edge
+    private static readonly Vector2 DesignSize = new(1600, 900);
+
+    // The list scrolls inside this much of the screen, which leaves room for the title and the hint at the bottom
+    private const float ListHeight = 620.0f;
+
+    private const float RowHeight = 52.0f;
     private const float RowSpacing = 10.0f;
+    private const float HeadingHeight = 64.0f;
 
-    public override Camera ActiveCamera { get; protected set; }
+    private static readonly Vector4 PanelColor = new(0.1f, 0.12f, 0.17f, 0.92f);
+    private static readonly Vector4 HeadingColor = new(1.0f, 0.8f, 0.45f, 1.0f);
+    private static readonly Vector4 DimColor = new(0.93f, 0.95f, 1.0f, 0.6f);
 
-    // The host keeps the selector and shows it again as it was left
+    // The host keeps the selector, so it comes back exactly as you left it, scrolled to wherever you were
     public override bool Persistent => true;
-
-    private readonly List<(Button Name, Label Description)> rows = [];
-    private readonly Button previousPage, nextPage;
-    private readonly Label pageNumber;
-    private int page;
-
-    private int PageCount => Math.Max(1, (rows.Count + TestsPerPage - 1) / TestsPerPage);
 
     public TestSelectorScene(TestHost host, IReadOnlyList<TestDefinition> tests)
     {
-        // Create a 2d scene camera
-        Camera2D cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
-        ActiveCamera = cam;
+        // No ActiveCamera: there's nothing in the world to look at, and a scene that doesn't set one is seen through
+        // the engine's. The UI brings its own camera with ForScreen and keeps it the size of the window.
+        // And UI components own nothing on the GPU, so the whole screen can be put together right here in the
+        // constructor. The compositor makes what it needs in its own Initialize, on the render thread.
+        var compositor = AddComponent(UICompositor.ForScreen());
+        compositor.DesignSize = DesignSize;
 
-        // Components need nothing from the GPU, so the whole screen can be put together right here.
-        var compositor = AddComponent(new UICompositor(cam));
         var panel = compositor.CreateModule().AddComponent(new StackPanel
         {
-            Color = new Vector4(0.1f, 0.12f, 0.17f, 0.92f),
-            Padding = new UIEdges(32),
-            Spacing = 24,
+            Color = PanelColor,
+            Padding = new UIEdges(32, 28),
+            Spacing = 16,
             Background = "panel"
         });
 
-        panel.Add(new Label("Horizon tests") { TextScale = 0.6f });
+        panel.Add(new Label("Horizon examples") { TextScale = 0.6f });
+        panel.Add(new Label("New here? Start with Basics and work your way down. Every one is a scene in Examples/.")
+        {
+            TextScale = 0.25f,
+            Color = DimColor
+        });
 
-        // Two columns sharing a row height, so every description lines up with its button and the
-        // buttons all come out as wide as the widest of them.
-        var columns = panel.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 20 });
+        // A scroll panel has to be told how tall it is. It never sizes itself to what's in it (then there'd be
+        // nothing to scroll), so left to itself it comes out flat. One notch of the wheel moves it a row.
+        var list = panel.Add(new ScrollPanel
+        {
+            Size = new Vector2(0, ListHeight),
+            WheelStep = RowHeight + RowSpacing
+        });
+
+        // Two columns sharing their row heights, so every description lines up with its button and the buttons all
+        // come out as wide as the widest of them. The headings sit in the same columns: the area's name on the
+        // left, a line about it on the right. The padding on the right keeps the longest line off the scroll bar.
+        var columns = list.Add(new StackPanel
+        {
+            Direction = UIDirection.Horizontal,
+            Spacing = 20,
+            Padding = new UIEdges(0, 0, 24, 0)
+        });
         var names = columns.Add(new StackPanel { Stretch = true, Spacing = RowSpacing });
         var descriptions = columns.Add(new StackPanel { Spacing = RowSpacing });
 
-        // With several pages the list keeps the height of a full one, so a short last page doesn't
-        // pull the page buttons out from under the pointer.
-        if (tests.Count > TestsPerPage)
+        foreach (TestArea area in Enum.GetValues<TestArea>())
         {
-            float fullPage = TestsPerPage * RowHeight + (TestsPerPage - 1) * RowSpacing;
-            names.Size = descriptions.Size = new Vector2(0, fullPage);
-        }
+            // An area with nothing in it yet doesn't get a heading
+            var inArea = tests.Where(test => test.Area == area).ToArray();
+            if (inArea.Length == 0)
+                continue;
 
-        foreach (var test in tests)
-        {
-            rows.Add((
+            // Taller than a row with the text at the bottom, which is what leaves a gap above every heading
+            names.Add(new Label(area.ToString())
+            {
+                Align = Origin.BottomLeft,
+                Size = new Vector2(0, HeadingHeight),
+                TextScale = 0.45f,
+                Color = HeadingColor
+            });
+            descriptions.Add(new Label(Blurb(area))
+            {
+                Anchor = Origin.Left,
+                Align = Origin.BottomLeft,
+                Size = new Vector2(0, HeadingHeight),
+                TextScale = 0.25f,
+                Color = DimColor
+            });
+
+            foreach (var test in inArea)
+            {
+                // Pressed on the simulation thread (that's where the UI is updated). Start is fine with that, the
+                // actual switch waits for the start of the next frame.
                 names.Add(new Button(test.Name)
                 {
                     Size = new Vector2(0, RowHeight),
                     OnPressed = () => host.Start(test)
-                }),
+                });
                 descriptions.Add(new Label(test.Description)
                 {
                     Anchor = Origin.Left,
                     Align = Origin.Left,
                     Size = new Vector2(0, RowHeight),
                     TextScale = 0.3f
-                })));
+                });
+            }
         }
 
-        // Only shown once there are more tests than fit on one page.
-        var pager = panel.Add(new StackPanel { Direction = UIDirection.Horizontal, Visible = PageCount > 0 });
-        previousPage = pager.Add(new Button("<") { LabelScale = 0.3f, Size = new Vector2(96, 44), OnPressed = () => ShowPage(page - 1) });
-        pageNumber = pager.Add(new Label { TextScale = 0.3f });
-        nextPage = pager.Add(new Button(">") { LabelScale = 0.3f, Size = new Vector2(96, 44), OnPressed = () => ShowPage(page + 1) });
-
-        panel.Add(new Label("ESC or Back returns here from a test")
+        panel.Add(new Label("Mouse wheel to scroll. ESC or Back gets you back here from a test.")
         {
             TextScale = 0.25f,
-            Color = new Vector4(0.93f, 0.95f, 1.0f, 0.6f)
+            Color = DimColor
         });
-
-        ShowPage(0);
-    }
-
-    private void ShowPage(int index)
-    {
-        page = Math.Clamp(index, 0, PageCount - 1);
-
-        // Every row exists all along; a page is just the rows that are visible.
-        for (int i = 0; i < rows.Count; i++)
-            rows[i].Name.Visible = rows[i].Description.Visible = i / TestsPerPage == page;
-
-        previousPage.Enabled = page > 0;
-        nextPage.Enabled = page < PageCount - 1;
-        pageNumber.Text = $"{page + 1} / {PageCount}";
     }
 
     public override void Render(float dt)
     {
-        // Set every frame rather than once: the test that was just left will have changed it.
+        // Render thread, so GL is fair game. Every frame rather than once: whatever test you just left has
+        // probably buggered about with it
         Engine.GL.ClearColor(Color.CornflowerBlue);
         base.Render(dt);
     }
+
+    /// <summary>Helper method to say what an area is about, under its heading.</summary>
+    private static string Blurb(TestArea area) => area switch
+    {
+        TestArea.Basics => "Start here. Entities, sprites and cameras, the stuff every game is made of.",
+        TestArea.Input => "Keyboard, mouse and gamepads, read from the simulation thread.",
+        TestArea.Rendering => "Everything that ends up as pixels and isn't a UI.",
+        TestArea.UI => "UIX, from C# and out of layout files. The self-tests click through themselves.",
+        TestArea.Physics => "Bodies, fixtures and particles that act like water.",
+        TestArea.Engine => "The guts: threads, frame pacing, tweens and the like.",
+        _ => string.Empty
+    };
 }
