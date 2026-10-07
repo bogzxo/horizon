@@ -90,6 +90,39 @@ namespace Horizon.Rendering.UIX
         public Vector2 Scale { get; set; } = Vector2.One;
 
         /// <summary>
+        /// The screen the module was designed for, in units of its layout: a layout file says so with
+        /// <c>compositor.design({ size: vec(1600, 900), fit: "contain" })</c>. Null for a module that just takes
+        /// whatever screen it's given at the compositor's scale (and its <see cref="UICompositor.DesignSize"/>).
+        /// How it is fitted to the real screen is <see cref="Fit"/>.
+        /// </summary>
+        public Vector2? DesignSize { get; set; }
+
+        /// <summary>
+        /// How a module with a <see cref="DesignSize"/> is put on a screen that is another shape. See <see cref="UIFit"/>.
+        /// </summary>
+        public UIFit Fit { get; set; } = UIFit.Contain;
+
+        /// <summary>
+        /// How many units of the camera a unit of the layout comes to right now: the compositor's
+        /// <see cref="UICompositor.UIScale"/>, or for a module with a <see cref="DesignSize"/> whatever fits that
+        /// design to the screen times the player's <see cref="UICompositor.Scale"/>. Worked out every update.
+        /// </summary>
+        public float UnitScale { get; private set; } = 1.0f;
+
+        /// <summary>
+        /// The rectangle (in the module's own units) the components were laid out in last: the screen as the
+        /// module sees it, or for a contained design the design itself sitting in the middle of it. What an
+        /// editor draws a box around.
+        /// </summary>
+        public UIRect Frame { get; private set; }
+
+        /// <summary>
+        /// Draws a box around <see cref="Frame"/> in this colour, over everything in the module. For an editor
+        /// that wants the edges of the layout shown; null (no box) for anything else.
+        /// </summary>
+        public Vector4? FrameColor { get; set; }
+
+        /// <summary>
         /// The screen the module is laid out against, in its own space. Left unset that is whatever the camera
         /// sees; set, the module is laid out as if that were the screen whatever the real one is, which is how
         /// an editor shows a layout made for another resolution in a corner of its own.
@@ -136,12 +169,31 @@ namespace Horizon.Rendering.UIX
         public bool RemoveComponent(UIComponent component) => Root.Remove(component);
 
         /// <summary>Turns a point in the camera's world space into the space the components are laid out in.</summary>
-        public Vector2 ToLocal(Vector2 point) => (point - Position * Compositor.UIScale) / (Scale * Compositor.UIScale);
+        public Vector2 ToLocal(Vector2 point) => (point - Position * UnitScale) / (Scale * UnitScale);
 
         /// <summary>Turns a point in the space the components are laid out in into the camera's world space.</summary>
-        public Vector2 ToWorld(Vector2 point) => (point * Scale + Position) * Compositor.UIScale;
+        public Vector2 ToWorld(Vector2 point) => (point * Scale + Position) * UnitScale;
 
         internal void Update(float dt) => Root.UpdateTree(dt);
+
+        /// <summary>
+        /// Works out how big a unit of the layout is on this screen, before the pointer is routed. The pointer has
+        /// to be turned into the module's units the same way the layout is drawn.
+        /// </summary>
+        internal void FitTo(UIRect screen)
+        {
+            // Shown by somebody else (an editor scales and places it itself), or not designed for a screen at all:
+            // the compositor's scale it is
+            if (Viewport is not null || DesignSize is not { X: > 0.0f, Y: > 0.0f } design || screen.IsEmpty)
+            {
+                UnitScale = Compositor.UIScale;
+                return;
+            }
+
+            // Just fits, whichever way round the screen is, and then as big as the player likes their UI
+            float fit = MathF.Min(screen.Width / design.X, screen.Height / design.Y);
+            UnitScale = MathF.Max(0.01f, fit * Compositor.Scale);
+        }
 
         internal void Layout(UIRect screen, UISkin skin)
         {
@@ -149,19 +201,31 @@ namespace Horizon.Rendering.UIX
 
             // The screen as the module sees it once its own scale and that of the whole UI are taken out,
             // so that scaled back up it covers the real screen exactly.
-            Vector2 scale = Scale * Compositor.UIScale;
-            Root.ArrangeTree(Viewport ?? new UIRect(screen.Min / scale, screen.Max / scale));
+            Vector2 scale = Scale * UnitScale;
+            UIRect seen = Viewport ?? new UIRect(screen.Min / scale, screen.Max / scale);
+
+            // A contained design is its own size whatever the screen, smack in the middle of it. On an ultrawide
+            // the sides are left alone instead of the menu being dragged out to the edges of the bloody thing
+            Frame = DesignSize is { X: > 0.0f, Y: > 0.0f } design && Fit == UIFit.Contain
+                ? UIRect.FromCenter(seen.Center, design)
+                : seen;
+
+            Root.ArrangeTree(Frame);
         }
 
         internal void Paint(UIDrawList list)
         {
             // Where a module is counts in units of the layout like everything in it, so it scales along.
-            list.SetTransform(Position * Compositor.UIScale, Scale * Compositor.UIScale);
+            list.SetTransform(Position * UnitScale, Scale * UnitScale);
 
             if (Clip is { } clip)
                 list.PushClip(clip);
 
             Root.PaintTree(list);
+
+            // The edges of the layout, for whoever is editing it
+            if (FrameColor is { } frameColor)
+                list.Outline(Frame, 2.0f / MathF.Max(0.01f, Scale.X), frameColor);
 
             if (Clip is not null)
                 list.PopClip();

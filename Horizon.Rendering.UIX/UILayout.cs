@@ -42,6 +42,15 @@ public sealed class UILayout
     /// <summary>Every component the script kept in a variable, by the name of the variable.</summary>
     public IReadOnlyDictionary<string, UIComponent> Parts => parts;
 
+    /// <summary>
+    /// The screen the layout says it was made for (<c>compositor.design</c>), null if it doesn't say. Loaded as the
+    /// whole of a module it is also what the module goes by, see <see cref="UIModule.DesignSize"/>.
+    /// </summary>
+    public System.Numerics.Vector2? DesignSize { get; private set; }
+
+    /// <summary>How the layout says it goes onto a screen of another shape, see <see cref="UIFit"/>.</summary>
+    public UIFit Fit { get; private set; } = UIFit.Contain;
+
     private UILayout(UIModule module, string path)
     {
         Module = module;
@@ -153,9 +162,14 @@ public sealed class UILayout
         // compositor, whatever the program declared) without leaving its names behind for the next one.
         var scope = new Environment(module.Runtime.UserScope);
 
+        var outerDesign = module.declaredDesign;
+        module.declaredDesign = null;
         try
         {
             module.Capture(parent, layout.roots, () => module.Runtime.Interpreter.Evaluate(program, scope));
+
+            if (module.declaredDesign is { } design)
+                (layout.DesignSize, layout.Fit) = design;
         }
         catch (Exception e)
         {
@@ -164,6 +178,10 @@ public sealed class UILayout
                 root.Parent?.Remove(root);
 
             throw new Exception($"The layout{Named(path)} stopped halfway: {e.Message}", e);
+        }
+        finally
+        {
+            module.declaredDesign = outerDesign;
         }
 
         foreach (var (name, value) in scope.Variables)

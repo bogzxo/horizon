@@ -28,6 +28,13 @@ public abstract partial class UIComponent
     /// </summary>
     protected virtual bool ClipsChildren => false;
 
+    /// <summary>
+    /// Whether a child is part of what is shown right now. Not shown it is neither drawn nor hit by the pointer,
+    /// without anything about the child itself changing (its <see cref="Visible"/> included, which goes into the
+    /// file): how the pages of a <see cref="TabPanel"/> that aren't open stay out of the way.
+    /// </summary>
+    protected internal virtual bool ShowsChild(UIComponent child) => true;
+
     /// <summary>The topmost component under a point, searching this component and everything inside it.</summary>
     internal UIComponent? HitTest(Vector2 point)
     {
@@ -50,7 +57,7 @@ public abstract partial class UIComponent
         var snapshot = children;
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
-            if (snapshot[i].HitTest(point) is { } hit)
+            if (ShowsChild(snapshot[i]) && snapshot[i].HitTest(point) is { } hit)
                 return hit;
         }
 
@@ -79,6 +86,13 @@ public abstract partial class UIComponent
     /// </summary>
     /// <param name="delta">How many notches, positive away from the user (up).</param>
     protected internal virtual bool OnScroll(float delta) => false;
+
+    /// <summary>
+    /// What the other button of the pointer (right click) does on this component, or on anything inside it that has
+    /// nothing of its own: called with where the pointer is, in the layout's units. Usually shows a
+    /// <see cref="ContextMenu"/>. Null for nothing, the compositor's <see cref="UICompositor.ContextRequested"/> gets it then.
+    /// </summary>
+    public Action<Vector2>? OnContextMenu { get; set; }
 
     /* Popups: what a component shows on top of everything else in its module for a while, the list of a dropdown say */
 

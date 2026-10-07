@@ -69,7 +69,7 @@ internal static class UILayoutOverlay
         var children = component.Children;
         for (int i = children.Count - 1; i >= 0; i--)
         {
-            if (FindUnder(children[i], point, hidden) is { } found)
+            if ((hidden || component.ShowsChild(children[i])) && FindUnder(children[i], point, hidden) is { } found)
                 return found;
         }
 

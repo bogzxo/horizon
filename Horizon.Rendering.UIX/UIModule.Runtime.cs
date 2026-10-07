@@ -1,6 +1,7 @@
 ﻿using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering.UIX.Components;
+using Horizon.Rendering.UIX.Scripting;
 
 namespace Horizon.Rendering.UIX;
 
@@ -78,9 +79,38 @@ public partial class UIModule
         }
     }
 
+    // What the layout that is being built said about the screen it was made for, see compositor.design
+    internal (System.Numerics.Vector2 Size, UIFit Fit)? declaredDesign;
+
     protected void SetupRuntime()
     {
         Runtime.UserScope.DeclareSystem("compositor", new ObjectValue(factories));
+
+        // compositor.design({ size: vec(1600, 900), fit: "contain" }): the screen the layout was made for. Only
+        // means something for a layout that is the whole module (not one built inside a component, a template)
+        factories["design"] = new NativeFunctionValue((args, _) =>
+        {
+            if (args.Length != 1 || args[0] is not ObjectValue { Properties: { } properties })
+                throw new Exception("compositor.design expects one object: { size: vec(1600, 900), fit: \"contain\" or \"stretch\" }.");
+
+            if (!properties.TryGetValue("size", out var sizeValue))
+                throw new Exception("compositor.design needs the size of the screen the layout was made for.");
+
+            var size = UIScript.ToVector2(sizeValue, "size");
+            if (size.X <= 0.0f || size.Y <= 0.0f)
+                throw new Exception("compositor.design needs a size bigger than nothing either way.");
+
+            UIFit fit = properties.TryGetValue("fit", out var fitValue) ? UIScript.ToEnum<UIFit>(fitValue, "fit") : UIFit.Contain;
+
+            declaredDesign = (size, fit);
+            if (captureParent is null)
+            {
+                DesignSize = size;
+                Fit = fit;
+            }
+
+            return new NullValue();
+        });
 
         Register<Button>("button");
         Register<ToggleButton>("toggle");
@@ -90,6 +120,8 @@ public partial class UIModule
         Register<Label>("label");
         Register<Image>("image");
         Register<Panel>("panel");
+        Register<Group>("group");
+        Register<TabPanel>("tabs");
         Register<StackPanel>("stack");
         Register<GridPanel>("grid");
         Register<ScrollPanel>("scroll");

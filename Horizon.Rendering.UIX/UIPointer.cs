@@ -8,4 +8,5 @@ namespace Horizon.Rendering.UIX;
 /// </summary>
 /// <param name="Position">Where it points, in the world space of the compositor's camera.</param>
 /// <param name="Down">Whether its primary button is held.</param>
-public readonly record struct UIPointer(Vector2 Position, bool Down);
+// SecondaryDown: whether the other button (the right one of a mouse) is held, which is what opens context menus.
+public readonly record struct UIPointer(Vector2 Position, bool Down, bool SecondaryDown = false);

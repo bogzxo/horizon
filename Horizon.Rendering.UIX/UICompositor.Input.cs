@@ -22,7 +22,8 @@ public partial class UICompositor
         // A click that was over before this update even started still counts as one
         return new UIPointer(
             viewportCamera.ScreenToWorld(mouse.Position),
-            mouse.IsDown(MouseButton.Left) || mouse.WasPressed(MouseButton.Left));
+            mouse.IsDown(MouseButton.Left) || mouse.WasPressed(MouseButton.Left),
+            mouse.IsDown(MouseButton.Right) || mouse.WasPressed(MouseButton.Right));
     }
 
     private void RouteKeyboard()
@@ -99,6 +100,28 @@ public partial class UICompositor
         }
 
         IsPointerOverUI = over is not null || pressed is not null;
+
+        // The other button asks whatever it's over what it has to offer: the innermost component with a handler for
+        // it, then whoever listens on the whole compositor (an editor deciding by what was clicked)
+        if (pointer.SecondaryDown && !secondaryWasDown)
+        {
+            foreach (var module in snapshot)
+                module.Popup = null;
+
+            bool handled = false;
+            for (UIComponent? at = over; at is not null && !handled; at = at.Parent)
+            {
+                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy)
+                {
+                    handler(at.Module!.ToLocal(pointer.Position));
+                    handled = true;
+                }
+            }
+
+            if (!handled)
+                ContextRequested?.Invoke(over, pointer.Position);
+        }
+        secondaryWasDown = pointer.SecondaryDown;
 
         // While something is held nothing else reacts to the pointer passing over it.
         UIComponent? hover = pressed is null || pressed == over ? over : null;
