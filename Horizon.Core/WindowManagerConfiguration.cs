@@ -1,5 +1,7 @@
 ﻿using System.Numerics;
 
+using Horizon.Core.Threading;
+
 namespace Horizon.Core;
 
 /// <summary>
@@ -36,6 +38,18 @@ public readonly struct WindowManagerConfiguration
     /// of time (one over this), whatever the machine is busy with.
     /// </summary>
     public readonly double PhysicsUpdatesPerSecond { get; init; } = 120.0;
+
+    /// <summary>
+    /// How drawing and simulating share the game, see <see cref="ThreadingMode"/>. Taking turns unless said otherwise,
+    /// until everything that draws draws from snapshots.
+    /// </summary>
+    public readonly ThreadingMode Threading { get; init; } = ThreadingMode.Lockstep;
+
+    /// <summary>
+    /// How frames show the simulation when it is decoupled from them, see <see cref="PresentationMode"/>. Interpolated
+    /// unless said otherwise: smooth at any frame rate, at most a tick behind.
+    /// </summary>
+    public readonly PresentationMode Presentation { get; init; } = PresentationMode.Interpolated;
 
     // What isn't said is as above, which takes a constructor to hold for a struct
     public WindowManagerConfiguration() { }

@@ -6,6 +6,7 @@ using System.Threading;
 using Horizon.Core;
 
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Core.Tweening;
 
 using Silk.NET.OpenGL;
@@ -157,7 +158,7 @@ public class SceneManager : Entity
             // Nothing to cover up, the scene takes over at the next frame
             if (transition is null || CurrentInstance is null)
             {
-                _halt = true;
+                Halt();
                 return;
             }
 
@@ -186,15 +187,46 @@ public class SceneManager : Entity
     /// </summary>
     public void ReportUnfinished() => _unfinished = true;
 
+    /// <summary>
+    /// Helper method to stop updating the scene that is on screen and have the one that was set take over, which
+    /// happens at the start of the next frame with the simulation standing still (see <see cref="WindowManager.Exclusive"/>).
+    /// </summary>
+    private void Halt()
+    {
+        _halt = true;
+        GameEngine.Instance?.WindowManager.RequestExclusive();
+    }
+
+    public override void Initialize()
+    {
+        base.Initialize();
+
+        // Swapping scenes sets one up and frees the other, which only the render thread can do and nobody else may watch
+        GameEngine.Instance.WindowManager.Exclusive += dt =>
+        {
+            if (_halt)
+                Change(dt);
+        };
+    }
+
+    public override void Capture()
+    {
+        // The scene is not a child of ours, it is updated and drawn by hand, and published the same way
+        if (CurrentInstance is { Enabled: true } scene)
+            scene.Capture();
+
+        base.Capture();
+    }
+
     public override void Render(float dt)
     {
         // The cover is moved along here rather than with the updates, those stop while a scene is being swapped
         _tweens.Tick(MathF.Min(dt, MAX_TRANSITION_STEP));
 
-        if (_halt)
-            Change(dt);
-
-        if (CurrentInstance is { } scene)
+        // Drawn alongside the simulation, the scene is drawn once it has been published: not the frame it was swapped in
+        // on, before it has had a tick, but every one after
+        RenderFrame frame = RenderFrame.Active;
+        if (CurrentInstance is { IsDisposed: false } scene && (!frame.IsDecoupled || scene.WasCaptured(frame)))
         {
             // Whatever is made while the scene is drawn (most things are only made when they are first needed)
             // is the scene's
@@ -219,7 +251,7 @@ public class SceneManager : Entity
         if (_lastFrame)
         {
             _lastFrame = false;
-            _halt = true;
+            Halt();
         }
     }
 
@@ -250,8 +282,8 @@ public class SceneManager : Entity
     }
 
     /// <summary>
-    /// Helper method to swap the scene on screen for the one that was set. Render thread, with nothing else at
-    /// work on the game: the engine draws and updates in turns.
+    /// Helper method to swap the scene on screen for the one that was set. Render thread, at the start of a frame,
+    /// with the simulation standing still (see <see cref="WindowManager.Exclusive"/>).
     /// </summary>
     private void Change(float dt)
     {

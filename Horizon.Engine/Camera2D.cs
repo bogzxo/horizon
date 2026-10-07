@@ -38,16 +38,15 @@ public class Camera2D : Camera
         Zoom = 1.0f;
     }
 
-    protected override void UpdateMatrices()
+    /// <summary>
+    /// What it sees from a place: as much of the world as the lens is wide and high (an orthographic projection is two
+    /// over that), around where the camera is.
+    /// </summary>
+    protected override RectangleF BoundsAt(Vector3 position, in Matrix4x4 projection)
     {
-        View = Matrix4x4.CreateLookAt(Position, Position + CameraFront, CameraUp);
-        ViewProj = View * Projection;
+        float width = projection.M11 != 0.0f ? 2.0f / projection.M11 : 0.0f;
+        float height = projection.M22 != 0.0f ? 2.0f / projection.M22 : 0.0f;
 
-        Bounds = new RectangleF(
-            Position.X - 0.5f * Size.X * Zoom,
-            Position.Y - 0.5f * Size.Y * Zoom,
-            Zoom * Size.X,
-            Zoom * Size.Y
-        );
+        return new RectangleF(position.X - 0.5f * width, position.Y - 0.5f * height, width, height);
     }
 }

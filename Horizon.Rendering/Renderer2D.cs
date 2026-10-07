@@ -1,6 +1,7 @@
 ﻿using Bogz.Logging;
 using System.Numerics;
 
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
@@ -111,8 +112,10 @@ public class Renderer2D : GameObject
 
     public override void Render(float dt)
     {
-        // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind
-        InitializeAll();
+        // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind.
+        // Drawn alongside the simulation that has happened already, with it standing still, before the frame began
+        if (!RenderFrame.Active.IsDecoupled)
+            InitializeAll();
 
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();

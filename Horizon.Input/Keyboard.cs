@@ -25,6 +25,11 @@ public sealed class Keyboard
     private readonly bool[] _pressed = new bool[KEYS];
     private readonly bool[] _released = new bool[KEYS];
 
+    // Keys that went down and up again between two updates. They are held for the update that hears of them and let
+    // go of at the next, so a tap is a tap however short it was, also for whoever only ever asks whether a key is down
+    private readonly bool[] _tapped = new bool[KEYS];
+    private readonly List<int> _taps = [];
+
     private bool _changed;
 
     /// <summary>
@@ -84,25 +89,55 @@ public sealed class Keyboard
 
         AnyPressed = false;
 
+        // The taps of the last update are let go of now
+        foreach (int key in _taps)
+        {
+            if (!_tapped[key]) continue;
+
+            _tapped[key] = false;
+            _down[key] = false;
+            _released[key] = true;
+            _changed = true;
+        }
+        _taps.Clear();
+
         while (_heard.TryDequeue(out var heard))
         {
             if (!Known(heard.Key)) continue;
 
             int key = (int)heard.Key;
-
-            // A key that is held down says so over and over, only the first time is a press
-            if (heard.Down && !_down[key])
-            {
-                _pressed[key] = true;
-                AnyPressed = true;
-            }
-            else if (!heard.Down && _down[key])
-            {
-                _released[key] = true;
-            }
-
-            _down[key] = heard.Down;
             _changed = true;
+
+            if (heard.Down)
+            {
+                // A key that is held down says so over and over, only the first time is a press
+                if (!_down[key])
+                {
+                    _pressed[key] = true;
+                    _down[key] = true;
+                    AnyPressed = true;
+                }
+
+                // Down again before the tap was let go of, so it isn't let go of
+                _tapped[key] = false;
+            }
+            else if (_down[key])
+            {
+                if (_pressed[key])
+                {
+                    // Pressed this very update: held for it, let go of at the next
+                    if (!_tapped[key])
+                    {
+                        _tapped[key] = true;
+                        _taps.Add(key);
+                    }
+                }
+                else
+                {
+                    _released[key] = true;
+                    _down[key] = false;
+                }
+            }
         }
     }
 }
