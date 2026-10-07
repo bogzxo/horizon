@@ -9,9 +9,10 @@
 // It is drawn with the flat skin (Assets/uix/flat/skin.hor), which is where its colours and its round corners are from.
 // It can be opened in itself.
 
+// The root has no colour of its own. The dark behind the editor is the screen cleared to that colour (HexScene.cs),
+// so the canvas is a hole the layouts are seen through, drawn under the editor
 let root = compositor.stack({
     fill: "both",
-    color: vec(0.065, 0.07, 0.092, 1),
     padding: vec(10, 12, 10, 8),
     spacing: 8
 });
