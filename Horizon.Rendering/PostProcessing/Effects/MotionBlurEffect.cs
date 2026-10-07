@@ -56,7 +56,7 @@ public sealed class MotionBlurEffect : PostEffect
 
     // The picture that was shown last, and the one the next is blended into. They swap every frame
     private PostTarget? history, next;
-    private float lastRun = float.NegativeInfinity;
+    private double lastRun = double.NegativeInfinity;
 
     /// <summary>
     /// How long a trail takes to fade, in seconds. After this long about a third of it is left, after three times this next to nothing.
@@ -138,7 +138,7 @@ public sealed class MotionBlurEffect : PostEffect
         }
 
         // Not run for a while (switched off, or nothing moved), so what is remembered is from back then and nobody wants to see it
-        float now = GameEngine.Instance.TotalTime;
+        double now = GameEngine.Instance.TotalTime;
         if (now - lastRun > MathF.Max(STALE_AFTER, context.DeltaTime * 3.0f)) fresh = true;
         lastRun = now;
 

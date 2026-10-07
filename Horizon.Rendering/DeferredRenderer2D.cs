@@ -210,7 +210,7 @@ public class DeferredRenderer2D : Renderer2D
     internal int CollectLights(Span<LightData> into, RectangleF view)
     {
         int count = 0;
-        float time = Engine.TotalTime;
+        double time = Engine.TotalTime;
 
         lock (lightLock)
         {
@@ -230,7 +230,7 @@ public class DeferredRenderer2D : Renderer2D
         return count;
     }
 
-    private static bool TryCollect(Light2D light, RectangleF view, float time, out LightData data)
+    private static bool TryCollect(Light2D light, RectangleF view, double time, out LightData data)
     {
         data = default;
 
@@ -244,10 +244,11 @@ public class DeferredRenderer2D : Renderer2D
         {
             // A few waves that never line up, started somewhere else for every light so no two waver together
             float phase = RuntimeHelpers.GetHashCode(light) % 1024;
-            float waver =
-                MathF.Sin(time * 11.0f + phase) * 0.5f +
-                MathF.Sin(time * 17.3f + phase * 1.7f) * 0.3f +
-                MathF.Sin(time * 29.1f + phase * 2.3f) * 0.2f;
+            // In double precision, single precision would have every light judder along after a few hours of play
+            float waver = (float)(
+                Math.Sin(time * 11.0 + phase) * 0.5 +
+                Math.Sin(time * 17.3 + phase * 1.7) * 0.3 +
+                Math.Sin(time * 29.1 + phase * 2.3) * 0.2);
 
             intensity *= 1.0f + waver * light.Flicker * 0.5f;
             radius *= 1.0f + waver * light.Flicker * 0.1f;

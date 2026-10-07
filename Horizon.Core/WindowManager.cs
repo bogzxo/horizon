@@ -12,8 +12,6 @@ using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
 using Silk.NET.Windowing.Glfw;
 
-using Monitor = System.Threading.Monitor;
-
 namespace Horizon.Core;
 
 /// <summary>
@@ -47,6 +45,9 @@ public class WindowManager : GameComponent, IDisposable
     // The longest (in milliseconds) a loop holds its turn back for what was added to the game to be set up. That
     // happens at the start of the next frame, so this only runs out when no frames are drawn
     private const int LONGEST_SET_UP_WAIT = 250;
+
+    // How long a loop that is waiting for that steps out of the gate at a time, before it looks again
+    private static readonly TimeSpan SET_UP_POLL = TimeSpan.FromMilliseconds(4);
 
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
@@ -212,11 +213,10 @@ public class WindowManager : GameComponent, IDisposable
         // Only the drawing itself: the wait for the screen that comes after is when the loops get theirs.
         this._window.Render += (dt) =>
         {
-            // The loops go first if they are waiting. Without a limit on the frames this would be asking for the gate again
-            // the moment it let go of it, and the updates would hardly ever get in
-            simulationGate.LetWaitersGoFirst();
-
-            lock (simulationGate)
+            // In line with the loops, in the order everybody asked: without a limit on the frames this asks again the
+            // moment it lets go, and a plain lock would let it straight back in ahead of the loops every time
+            simulationGate.Enter();
+            try
             {
                 // First, so whatever is set up or drawn from here on finds the window the size it was asked to be
                 ApplyPendingDisplay();
@@ -226,10 +226,14 @@ public class WindowManager : GameComponent, IDisposable
                 if (EntityLifecycle.HasWork)
                 {
                     EntityLifecycle.Flush();
-                    Monitor.PulseAll(simulationGate);
+                    simulationGate.Signal();
                 }
 
                 Parent.Render((float)dt);
+            }
+            finally
+            {
+                simulationGate.Exit();
             }
         };
 
@@ -403,7 +407,7 @@ public class WindowManager : GameComponent, IDisposable
         long started = Environment.TickCount64;
 
         while (EntityLifecycle.HasPending && !_window.IsClosing && Environment.TickCount64 - started < LONGEST_SET_UP_WAIT)
-            Monitor.Wait(simulationGate, 4);
+            simulationGate.Pause(SET_UP_POLL);
 
         return !_window.IsClosing;
     }

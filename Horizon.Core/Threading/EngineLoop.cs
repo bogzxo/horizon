@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Horizon.Core.Threading;
@@ -152,15 +152,28 @@ public sealed class EngineLoop : IDisposable
                         continue;
                     }
 
-                    // The wait for whoever else has the gate is not our work. A gate with manners is told that we are waiting,
-                    // so whoever draws doesn't keep walking in ahead of us
+                    // The wait for whoever else has the gate is not our work. A turn gate lets us in in the order we asked,
+                    // so whoever draws can't keep walking in ahead of us
                     long asked = Stopwatch.GetTimestamp();
-                    var polite = gate as TurnGate;
-                    polite?.NoteWaiting(true);
+
+                    if (gate is TurnGate fair)
+                    {
+                        fair.Enter();
+                        try
+                        {
+                            waited += Stopwatch.GetTimestamp() - asked;
+                            turn(dt);
+                        }
+                        finally
+                        {
+                            fair.Exit();
+                        }
+
+                        continue;
+                    }
 
                     lock (gate)
                     {
-                        polite?.NoteWaiting(false);
                         waited += Stopwatch.GetTimestamp() - asked;
                         turn(dt);
                     }
