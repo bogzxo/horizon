@@ -18,8 +18,18 @@ public sealed class AssetScope
     [ThreadStatic]
     private static AssetScope? current;
 
+    // Whether EnterGlobal is in force: what's made now is shared on purpose, not just made outside of a scope
+    [ThreadStatic]
+    private static bool global;
+
     /// <summary>The scope that is entered on this thread right now, null if assets belong to nobody.</summary>
     public static AssetScope? Current => current;
+
+    /// <summary>
+    /// Whether what's made right now is shared on purpose (see <see cref="EnterGlobal"/>). Things that sweep up
+    /// everything made outside of a scope since some moment (the test host does, between tests) leave that alone.
+    /// </summary>
+    public static bool IsGlobal => global;
 
     /// <summary>What the scope is called, for the log.</summary>
     public string Name { get; }
@@ -42,8 +52,9 @@ public sealed class AssetScope
     /// </summary>
     public Guard Enter()
     {
-        var guard = new Guard(current);
+        var guard = new Guard(current, global);
         current = IsReleased ? null : this;
+        global = false;
         return guard;
     }
 
@@ -54,8 +65,9 @@ public sealed class AssetScope
     /// </summary>
     public static Guard EnterGlobal()
     {
-        var guard = new Guard(current);
+        var guard = new Guard(current, global);
         current = null;
+        global = true;
         return guard;
     }
 
@@ -66,12 +78,18 @@ public sealed class AssetScope
     public readonly struct Guard : IDisposable
     {
         private readonly AssetScope? previous;
+        private readonly bool previousGlobal;
 
-        internal Guard(AssetScope? previous)
+        internal Guard(AssetScope? previous, bool previousGlobal)
         {
             this.previous = previous;
+            this.previousGlobal = previousGlobal;
         }
 
-        public void Dispose() => current = previous;
+        public void Dispose()
+        {
+            current = previous;
+            global = previousGlobal;
+        }
     }
 }

@@ -211,7 +211,11 @@ public class GameEngine : Entity
         GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
 
-        base.Render(dt);
+        // Whatever is drawn outside of a scene makes what it makes on the GPU for everybody, the same as when it's
+        // set up (see EntityLifecycle.Scope above): an overlay on the engine that makes its layer the first time it's
+        // drawn mustn't have it count as a leftover of whichever scene was on then. Scenes draw in their own scope
+        using (Horizon.Content.AssetScope.EnterGlobal())
+            base.Render(dt);
 
         EventManager.PostRender?.Invoke(dt);
     }
