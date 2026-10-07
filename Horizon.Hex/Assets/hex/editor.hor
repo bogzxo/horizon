@@ -26,6 +26,7 @@ let name_box = compositor.textbox({
     max_length: 40,
     placeholder: "name of the layout"
 });
+let coords = compositor.label({ parent: toolbar, size: vec(170, 28), text_scale: 0.125, align: "left", color: vec(0.46, 0.52, 0.64, 1) });
 
 let body = compositor.stack({ parent: root, anchor: "left", direction: "horizontal", spacing: 10 });
 

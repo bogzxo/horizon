@@ -264,6 +264,28 @@ internal sealed partial class HexScene
 
     private void Close()
     {
+        // The code on screen is the newest word on whether there is anything to lose
+        if (document.Modified || document.GenerateCode() != document.SavedCode)
+        {
+            HexDocument closing = document;
+            UIDialog.Show(chrome, "Unsaved changes", $"{closing.Name} has changes that aren't in its file.",
+                new DialogChoice("Save", () =>
+                {
+                    Save();
+
+                    // Saved on the spot it can go. Waiting on a dialog of Windows it stays until that is answered
+                    if (document == closing && !document.Modified && document.GenerateCode() == document.SavedCode) CloseNow();
+                }),
+                new DialogChoice("Don't save", () => { if (document == closing) CloseNow(); }),
+                new DialogChoice("Cancel"));
+            return;
+        }
+
+        CloseNow();
+    }
+
+    private void CloseNow()
+    {
         stage.Highlighted = null;
         stage.Highlights = [];
 

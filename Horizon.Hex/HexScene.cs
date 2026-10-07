@@ -105,7 +105,7 @@ internal sealed partial class HexScene : Scene
     private readonly UIModule backdrop;
     private static readonly Vector4 CanvasColor = new(0.02f, 0.02f, 0.03f, 1.0f);
     private readonly ScrollPanel treeScroll, inspectorScroll, codeScroll;
-    private readonly Label status, treeTitle;
+    private readonly Label status, treeTitle, coords;
     private readonly CodeView code;
 
     // The layouts that were opened or saved last, the latest first
@@ -195,6 +195,7 @@ internal sealed partial class HexScene : Scene
         canvas = layout.Get<Panel>("canvas");
         code = layout.Get<CodeView>("code");
         status = layout.Get<Label>("status");
+        coords = layout.Get<Label>("coords");
 
         layoutDebugger = new HexLayoutDebugger(stage);
 
@@ -314,6 +315,9 @@ internal sealed partial class HexScene : Scene
 
         // Not over the canvas if a menu of the editor is in the way of it
         bool overCanvas = canvas.Bounds.Contains(inChrome) && chrome.Popup is null;
+
+        // Where the pointer is in the layout, in its own units, for lining things up by number
+        coords.Text = overCanvas ? $"{inLayout.X:0}, {inLayout.Y:0}" : string.Empty;
 
         if (UpdateCanvasView(inChrome, overCanvas, pressed))
         {

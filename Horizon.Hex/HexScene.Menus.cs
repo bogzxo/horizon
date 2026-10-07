@@ -24,10 +24,38 @@ internal sealed partial class HexScene
             var button = items[i].Get<Button>("button");
 
             button.Label = kind.Replace('_', ' ');
+            button.Tooltip = Describe(kind);
             button.OnPressed = () => AddComponentOf(kind);
             paletteButtons.Add(button);
         }
     }
+
+    /// <summary>
+    /// Helper method for what a kind of component is for, the line the palette shows when the pointer rests on its button.
+    /// </summary>
+    private static string Describe(string kind) => kind switch
+    {
+        "stack" => "A row or a column of things, with a gap between them",
+        "grid" => "Cells in rows and columns, so many across",
+        "panel" => "A box to put things in, or a backdrop",
+        "scroll" => "A panel that scrolls when there is more than fits",
+        "label" => "A piece of text, which can wrap",
+        "button" => "A button with a label, pressed by a click or the navigator",
+        "toggle" => "A box that is ticked or isn't",
+        "textbox" => "A line somebody types into",
+        "number_box" => "A number, dragged across or typed",
+        "selector" => "One of a few options, stepped through with arrows",
+        "dropdown" => "One of a list, which drops down",
+        "list" => "A list of texts in a box, one chosen",
+        "slider" => "A number between two ends, slid along",
+        "color_picker" => "A colour, picked by hue, shade and how solid it is",
+        "progress_bar" => "How full something is, a health bar say",
+        "image" => "A picture, a sprite of the skin or a file",
+        "tabs" => "Pages with a strip of tabs along the top",
+        "divider" => "A line between things",
+        "spacer" => "Nothing, of a size, for a gap",
+        _ => string.Empty
+    };
 
     /* The menu bar: everything there is to do that isn't done to something on screen directly */
 
