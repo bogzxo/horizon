@@ -39,6 +39,19 @@ public static class EntityLifecycle
     public static bool IsRenderThread => Environment.CurrentManagedThreadId == renderThread;
 
     /// <summary>
+    /// Whether this is known not to be the thread that draws: there is one by now, and it's another. For whoever
+    /// wants to say so when something is done on the wrong thread.
+    /// </summary>
+    public static bool IsOffRenderThread
+    {
+        get
+        {
+            int claimed = Volatile.Read(ref renderThread);
+            return claimed != -1 && Environment.CurrentManagedThreadId != claimed;
+        }
+    }
+
+    /// <summary>
     /// Asked for whatever is to hold while an entity is set up, and disposed of afterwards: for an engine that
     /// keeps track of who makes what, so that what a scene's entities make is noted as that scene's.
     /// </summary>
