@@ -67,9 +67,19 @@ public abstract class Camera : GameObject
     /// How far apart (in units of the world) the places the camera is shown at are, 0 for anywhere. A camera that shows
     /// pixel art a unit per pixel wants 1 here, or the art shimmers as the camera glides over it. The camera is rounded
     /// to it once it has been worked out where it is at the moment a frame shows, so it still moves as smoothly as the
-    /// frames let it: rounded before it is shown between two ticks it would stand still and jump.
+    /// frames let it: rounded before it is shown between two ticks it would stand still and jump. Drawn in turns with the
+    /// simulation it is rounded where it is. <see cref="Position"/> itself is never rounded.
     /// </summary>
     public float PixelSnap { get; set; }
+
+    /// <summary>
+    /// What the camera is rounded from (see <see cref="PixelSnap"/>): it is shown a whole number of steps away from
+    /// here. Nothing for the steps of the world itself. A camera that follows somebody can be kept a whole number of
+    /// pixels from them instead, so whoever it follows sits still on screen while the world steps by under them,
+    /// rather than wobbling a pixel every time the camera steps at a different moment than they do, which looks shit.
+    /// Shown between two ticks the way the camera is.
+    /// </summary>
+    public Vector2 PixelSnapAnchor { get; set; }
 
     private readonly MotionEstimator motion = new();
 
@@ -116,7 +126,7 @@ public abstract class Camera : GameObject
         UpdateMatrices();
 
         Vector3 look = LookDirection;
-        pose.Publish(new Pose(Position, look == Vector3.Zero ? CameraFront : look, CameraUp, projection, motion.Velocity));
+        pose.Publish(new Pose(Position, look == Vector3.Zero ? CameraFront : look, CameraUp, projection, motion.Velocity, PixelSnapAnchor));
 
         base.Capture();
     }
@@ -132,10 +142,24 @@ public abstract class Camera : GameObject
     /// </summary>
     protected virtual void UpdateMatrices()
     {
-        Vector3 look = LookDirection;
-        view = Matrix4x4.CreateLookAt(Position, Position + (look == Vector3.Zero ? CameraFront : look), CameraUp);
+        Vector3 look = LookDirection, position = Snapped(Position, PixelSnapAnchor);
+        view = Matrix4x4.CreateLookAt(position, position + (look == Vector3.Zero ? CameraFront : look), CameraUp);
         viewProj = view * projection;
-        bounds = BoundsAt(Position, projection);
+        bounds = BoundsAt(position, projection);
+    }
+
+    /// <summary>
+    /// Helper method to round where the camera is shown to the steps of <see cref="PixelSnap"/>, counted from an anchor.
+    /// </summary>
+    private Vector3 Snapped(Vector3 position, Vector2 anchor)
+    {
+        float step = PixelSnap;
+        if (step <= 0.0f)
+            return position;
+
+        position.X = anchor.X + MathF.Round((position.X - anchor.X) / step) * step;
+        position.Y = anchor.Y + MathF.Round((position.Y - anchor.Y) / step) * step;
+        return position;
     }
 
     /// <summary>
@@ -164,12 +188,7 @@ public abstract class Camera : GameObject
             return false;
         }
 
-        Vector3 position = at.Position;
-        if (PixelSnap > 0.0f)
-        {
-            position.X = MathF.Round(position.X / PixelSnap) * PixelSnap;
-            position.Y = MathF.Round(position.Y / PixelSnap) * PixelSnap;
-        }
+        Vector3 position = Snapped(at.Position, at.Anchor);
 
         Matrix4x4 lookAt = Matrix4x4.CreateLookAt(position, position + at.Front, at.Up);
         shown = new Shown(lookAt, at.Projection, lookAt * at.Projection, BoundsAt(position, at.Projection), at.Velocity);
@@ -180,14 +199,15 @@ public abstract class Camera : GameObject
     }
 
     /// <summary>Where the camera was at the end of a tick, and how it looked from there.</summary>
-    private readonly record struct Pose(Vector3 Position, Vector3 Front, Vector3 Up, Matrix4x4 Projection, Vector2 Velocity) : IBlendable<Pose>
+    private readonly record struct Pose(Vector3 Position, Vector3 Front, Vector3 Up, Matrix4x4 Projection, Vector2 Velocity, Vector2 Anchor) : IBlendable<Pose>
     {
         public static Pose Blend(in Pose from, in Pose to, float amount) => new(
             Interpolate.Linear(from.Position, to.Position, amount),
             Vector3.Normalize(Interpolate.Linear(from.Front, to.Front, amount)),
             Interpolate.Hold(from.Up, to.Up, amount),
             Matrix4x4.Lerp(from.Projection, to.Projection, amount),
-            Interpolate.Linear(from.Velocity, to.Velocity, amount));
+            Interpolate.Linear(from.Velocity, to.Velocity, amount),
+            Interpolate.Linear(from.Anchor, to.Anchor, amount));
     }
 
     /// <summary>The camera as a frame shows it.</summary>

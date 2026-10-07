@@ -88,6 +88,7 @@ public class SpriteBatch : GameObject
     public Technique Shader { get; set; }
 
     // The groups by what they are drawn out of, and in the order they came, which never changes for a group
+    // TODO please remind me to make a custom datastruct for this shit
     private readonly Dictionary<uint, SpriteGroup> _sheetGroups = new();
     private readonly Dictionary<TextureAtlas, SpriteGroup> _atlasGroups = new();
     private readonly List<SpriteGroup> _groups = [];
