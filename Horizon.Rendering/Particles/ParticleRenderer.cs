@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
@@ -27,6 +28,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
     private const string UNIFORM_MOTION_SCALE = "uMotionScale";
     private const string UNIFORM_NEARNESS = "uNearness";
     private const string UNIFORM_STRETCH = "uStretch";
+    private const string UNIFORM_TIME_OFFSET = "uTimeOffset";
     private const string UNIFORM_MAX_STRETCH = "uMaxStretch";
 
     private VertexBufferObject buffer;
@@ -201,23 +203,63 @@ public class ParticleRenderer2D : GameObject, IDisposable
         }
     }
 
+    // How long the particles have been simulated for (as the updates count it), published every tick, and the time the
+    // last frame showed. The particles' own clock: it stands still when they aren't updated (a paused scene)
+    private double clock;
+    private readonly Snapshot<ParticleClock> published = new();
+    private double lastShown = double.NaN;
+
+    private readonly record struct ParticleClock(double Time) : IBlendable<ParticleClock>
+    {
+        public static ParticleClock Blend(in ParticleClock from, in ParticleClock to, float amount) =>
+            new(Interpolate.Linear(from.Time, to.Time, amount));
+    }
+
     public override void UpdateState(float dt)
     {
         base.UpdateState(dt);
         if (!Enabled)
             return;
 
+        clock += dt;
         Simulator.Update(dt);
+    }
+
+    public override void Capture()
+    {
+        published.Publish(new ParticleClock(clock));
+        base.Capture();
     }
 
     public override unsafe void Render(float dt)
     {
         base.Render(dt);
 
+        // Drawn alongside the simulation, the particles keep up with the moment the frame shows, which moves on a
+        // little every frame rather than a tick at a time
+        RenderFrame frame = RenderFrame.Active;
+        double shown = double.NaN;
+        if (frame.IsDecoupled && published.TryBlend(frame, out ParticleClock at))
+        {
+            shown = at.Time;
+            Simulator.FrameStep = double.IsNaN(lastShown) ? 0.0f : (float)Math.Max(0.0, shown - lastShown);
+        }
+        else
+        {
+            Simulator.FrameStep = null;
+        }
+
+        lastShown = shown;
+
         // The simulator uploads (CPU) or steps (GPU) the particles and says which instances to draw.
         var range = Simulator.Prepare();
         if (range.Count < 1)
             return;
+
+        // Particles that were moved in the updates are where they were at the end of the last of them, which can be a
+        // little after the moment the frame shows: they are drawn back along their way by as much
+        double prepared = Simulator.PreparedTime;
+        float timeOffset = double.IsNaN(shown) || double.IsNaN(prepared) ? 0.0f : (float)Math.Clamp(shown - prepared, -0.25, 0.0);
 
         Material.Bind();
         Material.SetUniform(UNIFORM_CAMERA_PROJ_MATRIX, Engine.ActiveCamera.Projection);
@@ -231,6 +273,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
         Material.SetUniform(UNIFORM_MOTION_SCALE, in motionScale);
         Material.SetUniform(UNIFORM_NEARNESS, Nearness);
 
+        Material.SetUniform(UNIFORM_TIME_OFFSET, timeOffset);
         Material.SetUniform(UNIFORM_STRETCH, MathF.Max(Stretch, 0.0f));
         Material.SetUniform(UNIFORM_MAX_STRETCH, MathF.Max(MaxStretch, 0.0f));
 

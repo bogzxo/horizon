@@ -1,4 +1,4 @@
-using Horizon.OpenGL.Assets;
+﻿using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Buffers;
 
 using Silk.NET.OpenGL;
@@ -132,6 +132,22 @@ public abstract class ParticleSimulator2D : IDisposable
     /// instances are worth drawing.
     /// </summary>
     protected internal abstract ParticleRange Prepare();
+
+    /// <summary>
+    /// For a simulator that moves the particles on the render thread: how far (in seconds of the game) to move them for
+    /// this frame instead of by the time the updates banked, null for that. Set by the renderer before
+    /// <see cref="Prepare"/> when the frame is drawn alongside the simulation, where the frames show the game between
+    /// ticks and the particles have to keep up with that rather than jump a tick at a time.
+    /// </summary>
+    protected internal float? FrameStep { get; internal set; }
+
+    /// <summary>
+    /// For a simulator that moves the particles in the updates: how long (in seconds of the game, counted the way the
+    /// renderer counts its updates) it had been simulating for when it made what <see cref="Prepare"/> handed out.
+    /// NaN for one that moves them on the render thread. The renderer draws them back along their way by however much
+    /// earlier than that the frame shows the game.
+    /// </summary>
+    protected internal virtual double PreparedTime => double.NaN;
 
     /// <summary>GL thread, after the range returned by <see cref="Prepare"/> has been drawn.</summary>
     protected internal virtual void Submitted()

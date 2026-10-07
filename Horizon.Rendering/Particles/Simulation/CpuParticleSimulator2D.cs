@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -51,6 +51,11 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
     private ParticleRenderData[] back = [];
     private ParticleRenderData[] front = [];
     private int frontCount;
+
+    // How long the particles have been simulated for, and as of when `front` was made and what was last handed out
+    private double time, frontTime, preparedTime = double.NaN;
+
+    protected internal override double PreparedTime => preparedTime;
 
     public override uint Count => (uint)count;
 
@@ -138,11 +143,13 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         }
 
         count = live;
+        time += dt;
 
         lock (frameLock)
         {
             (front, back) = (back, front);
             frontCount = live;
+            frontTime = time;
         }
     }
 
@@ -163,6 +170,7 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         {
             int live = frontCount;
             front.AsSpan(0, live).CopyTo(new Span<ParticleRenderData>(renderDataPtr + first, live));
+            preparedTime = frontTime;
             return new ParticleRange(first, (uint)live);
         }
     }

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.OpenGL;
@@ -131,6 +131,10 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
             dt = pendingTime;
             pendingTime = 0.0f;
         }
+
+        // Drawn alongside the simulation: as far as the frames have moved on in the game, not a tick at a time
+        if (FrameStep is { } step)
+            dt = step;
 
         if (dt > 0.0f && head != tail)
         {

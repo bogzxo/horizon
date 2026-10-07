@@ -20,6 +20,10 @@ uniform float uMaxStretch;
 uniform vec2 uCameraVelocity;
 uniform vec2 uMotionScale;
 
+// How far (in seconds, back is negative) from where the particles were last moved to the moment the frame shows. Only
+// for particles that are moved a tick at a time, see ParticleRenderer2D. Nothing for those that are moved every frame.
+uniform float uTimeOffset;
+
 out float alive;
 out vec2 fragPos;
 flat out vec2 motion;
@@ -39,7 +43,7 @@ void main() {
     if (dot(vPos, heading) < 0.0) corner -= heading * tail;
   }
 
-  fragPos = vOffset + corner;
+  fragPos = vOffset + vVelocity * uTimeOffset + corner;
 
   // The compute simulator keeps dead particles in its pool, so they still arrive here as instances:
   // push them outside the clip volume so they never reach the rasteriser.
