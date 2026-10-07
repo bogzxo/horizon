@@ -1,113 +1,194 @@
-using System.Numerics;
+﻿using System.Numerics;
+
+using Horizon.Engine;
 
 namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
-/// Smears what moves along the way it is moving, by as much as it moves while the shutter is open: what film does
-/// by itself. For pixel art this is more than a look. Art that is kept on its pixels can't glide, it stands still
-/// for a few frames and then jumps one, and a camera that follows somebody does that with the whole screen. A smear
-/// as long as the jump fills the steps in, and the eye sees it move.
+/// Motion blur the way a camera with a slow shutter (or the phosphor of an old tube) does it. What was on screen a moment ago
+/// is still there, fading, so everything that moves leaves a soft trail behind it. Rain turns into streaks, a fist into a swipe,
+/// and a camera that follows somebody drags the street along behind them.
 /// <para>
-/// It goes by how fast everything in the picture is moving across it and how near it is (<see cref="PostContext.Motion"/>),
-/// which a <see cref="DeferredRenderer2D"/> keeps track of for a world (sprites know how fast they are going, the
-/// layers of a tile map how fast they scroll) and a <see cref="PostLayer"/> for what is laid over it, a UI. On a
-/// plain renderer this does nothing.
-/// Those speeds are worked out over time rather than from one frame to the next (see <see cref="Core.MotionEstimator"/>),
-/// so the blur is as long when the game draws a thousand frames a second as when it draws thirty.
-/// See shaders/post/motion_blur.frag for how the smearing itself is done.
+/// It doesn't need to know what moves or how fast. It keeps the picture it showed last and blends the new one into it, which
+/// is all there is to it. That makes it work the same on anything that can be drawn (sprites, particles, a UI on its own layer)
+/// and at any frame rate, as the fading goes by the clock and not by the frame.
 /// </para>
+/// There is not much to tune:
+/// <code>
+/// renderer.PostProcessing.Add(new MotionBlurEffect
+/// {
+///     Trail = 0.06f,    // how long a trail takes to fade, in seconds. Longer trails for a dreamier picture
+///     Strength = 0.7f,  // how much of the trail shows, 0 is none of it
+///     Solid = 1.0f,     // how much of whatever is moving stays as sharp as it is drawn, with only its trail behind it
+///     Camera = camera   // the camera the picture is seen through, so that panning it doesn't smear what stands still
+/// });
+/// </code>
+/// See <see cref="VelocityBlurEffect"/> for the other way of doing it, which smears along the way things are going.
 /// </summary>
 public sealed class MotionBlurEffect : PostEffect
 {
-    // How many pixels the squares the picture is cut into are wide, nothing is smeared further than that to either
-    // side. Must match TILE in shaders/post/motion_tiles.frag.
-    private const int TILE_SIZE = 16;
-
+    private const string UNIFORM_HISTORY = "uHistory";
+    private const string UNIFORM_KEEP = "uKeep";
+    private const string UNIFORM_SHIFT = "uShift";
+    private const string UNIFORM_STRENGTH = "uStrength";
+    private const string UNIFORM_SOLID = "uSolid";
     private const string UNIFORM_MOTION = "uMotion";
-    private const string UNIFORM_TILES = "uTiles";
-    private const string UNIFORM_SPREAD = "uSpread";
-    private const string UNIFORM_SIZE = "uSize";
-    private const string UNIFORM_REACH = "uReach";
-    private const string UNIFORM_MAX_REACH = "uMaxReach";
+    private const string UNIFORM_HAS_MOTION = "uHasMotion";
+    private const string UNIFORM_STILL = "uStill";
 
-    private PostTechnique fastest = null!, spread = null!, blur = null!;
-    private PostTarget? tiles, spreadTiles;
+    // How motion is written into the picture of a renderer that keeps track of it. So many halves of the screen a second
+    // either way, in so many steps. Must match encodeMotion in the shaders that write it
+    private const float MOTION_RANGE = 2.0f;
+    private const float MOTION_STEPS = 127.0f;
+
+    // How far (in pictures) the camera can move in one frame before it counts as having been put somewhere else.
+    // A camera that jumps leaves nothing worth remembering
+    private const float FURTHEST_SHIFT = 0.25f;
+
+    // How long (in seconds) the effect can go without being run before what it remembers is too old to show.
+    // A UI that stood still for a while must not get a ghost of where it was back then
+    private const float STALE_AFTER = 0.1f;
+
+    private PostTechnique remember = null!, show = null!;
+
+    // Where the middle of the world was on screen the last time, which is how far the camera has moved since is known
+    private Vector2? originBefore;
+
+    // The picture that was shown last, and the one the next is blended into. They swap every frame
+    private PostTarget? history, next;
+    private float lastRun = float.NegativeInfinity;
 
     /// <summary>
-    /// How long the shutter is open, in seconds: everything is smeared over as far as it moves in that time. A
-    /// sixtieth of a second is what a screen shows a frame for, which is about what it takes to hide the stepping
-    /// of pixel art. Longer is dreamier.
+    /// How long a trail takes to fade, in seconds. After this long about a third of it is left, after three times this next to nothing.
+    /// What moves is trailed by as far as it gets in that time, so a drop that falls 600 pixels a second at 0.05 leaves some 30 behind it.
     /// </summary>
-    public float Shutter { get; set; } = 1.0f / 60.0f;
+    public float Trail { get; set; } = 0.05f;
 
-    /// <summary>The furthest anything is smeared, in pixels from one end to the other. No more than 32.</summary>
-    public float MaxLength { get; set; } = 32;
+    /// <summary>
+    /// How much of the trail shows, from 0 (none of it) to 1. At 1 the thing that moves is smeared into its own trail, lower than that
+    /// it stays crisp and the trail is a ghost behind it. Pixel art that is to stay readable wants this well under 1.
+    /// </summary>
+    public float Strength { get; set; } = 0.7f;
 
+    /// <summary>
+    /// How much of whatever is moving right now is shown as sharp as it is drawn, from 0 to 1. At 1 a fighter who dashes stays solid and
+    /// leaves a ghost behind, at 0 they are smeared into their own trail and go see-through the faster they are. It takes a renderer that
+    /// keeps track of what moves (see <see cref="PostContext.Motion"/>), on any other everything is blended the same.
+    /// </summary>
+    public float Solid { get; set; } = 1.0f;
+
+    /// <summary>
+    /// The camera the picture is seen through, null if there isn't one that moves (a UI). With one, what the picture is remembered by
+    /// moves along with the camera. So a pan doesn't smear the scenery, and only what moves through the world leaves a trail.
+    /// </summary>
+    public Camera? Camera { get; set; }
+
+    // Only for what moves. A picture nothing moves in is the same with and without its trails
     protected internal override bool NeedsMotion => true;
 
     protected override void Initialize()
     {
-        fastest = new PostTechnique("motion_tiles");
-        spread = new PostTechnique("motion_spread");
-        blur = new PostTechnique("motion_blur");
+        remember = new PostTechnique("trail");
+        show = new PostTechnique("trail_show");
+    }
+
+    /// <summary>
+    /// Helper method to work out how far what stands still has moved across the picture since the last frame, in pictures.
+    /// Null if the camera has jumped, or was looked through a different lens.
+    /// </summary>
+    private Vector2? MeasureShift()
+    {
+        if (Camera is not { } camera)
+            return Vector2.Zero;
+
+        // Where the middle of the world lands on screen. Everything that stands still moves by as much as that does
+        Vector4 projected = Vector4.Transform(new Vector4(0.0f, 0.0f, 0.0f, 1.0f), camera.ViewProj);
+        var origin = new Vector2(projected.X, projected.Y);
+
+        Vector2? before = originBefore;
+        originBefore = origin;
+
+        if (before is not { } was)
+            return null;
+
+        // The screen is two units across the way the GPU counts it, a picture is one
+        Vector2 shift = (was - origin) * 0.5f;
+        return MathF.Abs(shift.X) > FURTHEST_SHIFT || MathF.Abs(shift.Y) > FURTHEST_SHIFT ? null : shift;
     }
 
     protected override void Render(PostContext context)
     {
-        // Without knowing what moves there is nothing to smear
-        if (context.Motion is not { } motion || Shutter <= 0.0f)
+        float strength = Math.Clamp(Strength, 0.0f, 1.0f);
+        if (Trail <= 0.0f || strength <= 0.0f)
         {
             context.Copy();
             return;
         }
 
-        uint width = (uint)MathF.Ceiling(context.SourceSize.X / TILE_SIZE), height = (uint)MathF.Ceiling(context.SourceSize.Y / TILE_SIZE);
-        if (tiles is null || !tiles.Fits(width, height))
+        uint width = (uint)context.SourceSize.X, height = (uint)context.SourceSize.Y;
+        bool fresh = history is null || !history.Fits(width, height);
+        if (fresh)
         {
-            tiles?.Dispose();
-            spreadTiles?.Dispose();
+            history?.Dispose();
+            next?.Dispose();
 
-            tiles = new PostTarget(width, height, PostTarget.Exact);
-            spreadTiles = new PostTarget(width, height, PostTarget.Exact);
+            // More than a byte a channel. Blended into itself over and over a byte rounds the same way every time, and leaves a stain that never fades
+            history = new PostTarget(width, height, PostTarget.Precise);
+            next = new PostTarget(width, height, PostTarget.Precise);
         }
 
-        // The fastest thing in every square of the picture
-        fastest.Bind();
-        motion.Bind(0);
-        fastest.SetUniform(UNIFORM_MOTION, 0);
-        context.Draw(tiles);
+        // Not run for a while (switched off, or nothing moved), so what is remembered is from back then and nobody wants to see it
+        float now = GameEngine.Instance.TotalTime;
+        if (now - lastRun > MathF.Max(STALE_AFTER, context.DeltaTime * 3.0f)) fresh = true;
+        lastRun = now;
 
-        // ...and in the squares around it
-        spread.Bind();
-        tiles.Texture.Bind(0);
-        spread.SetUniform(UNIFORM_TILES, 0);
-        context.Draw(spreadTiles!);
+        // Measured every frame whether it is used or not, so it is always since the last one
+        Vector2? moved = MeasureShift();
+        if (moved is null) fresh = true;
 
-        // Motion is written in halves of the screen a second (two of them either way, see encodeMotion in the
-        // shaders that write it), which comes to this many pixels of smear to either side
-        Vector2 size = context.SourceSize;
-        Vector2 reach = size * (Shutter * 0.5f);
+        // How much of what was there is kept. By the clock, so the trails are as long at thirty frames a second as at three hundred
+        float keep = fresh ? 0.0f : MathF.Exp(-context.DeltaTime / Trail);
+        Vector2 shift = moved ?? Vector2.Zero;
 
-        blur.Bind();
+        // The new picture into what is left of the old ones
+        remember.Bind();
         context.Source.Bind(0);
-        motion.Bind(1);
-        spreadTiles!.Texture.Bind(2);
-        blur.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
-        blur.SetUniform(UNIFORM_MOTION, 1);
-        blur.SetUniform(UNIFORM_SPREAD, 2);
-        blur.SetUniform(UNIFORM_SIZE, in size);
-        blur.SetUniform(UNIFORM_REACH, in reach);
-        blur.SetUniform(UNIFORM_MAX_REACH, Math.Clamp(MaxLength * 0.5f, 0.5f, TILE_SIZE));
+        history!.Texture.Bind(1);
+        remember.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
+        remember.SetUniform(UNIFORM_HISTORY, 1);
+        remember.SetUniform(UNIFORM_KEEP, keep);
+        remember.SetUniform(UNIFORM_SHIFT, in shift);
+        context.Draw(next!);
+
+        (history, next) = (next, history);
+
+        // And as much of that over the new picture as the strength says, with what is moving itself left alone
+        show.Bind();
+        context.Source.Bind(0);
+        history!.Texture.Bind(1);
+        context.Motion?.Bind(2);
+        show.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
+        show.SetUniform(UNIFORM_HISTORY, 1);
+        show.SetUniform(UNIFORM_MOTION, 2);
+        show.SetUniform(UNIFORM_HAS_MOTION, context.Motion is not null);
+        show.SetUniform(UNIFORM_STRENGTH, strength);
+        show.SetUniform(UNIFORM_SOLID, Math.Clamp(Solid, 0.0f, 1.0f));
+
+        // What stands still in the world goes across the screen as fast as the camera does, the other way. That is not moving
+        Vector2 still = Camera is { } camera
+            ? -camera.Velocity * new Vector2(camera.Projection.M11, camera.Projection.M22) / MOTION_RANGE * MOTION_STEPS
+            : Vector2.Zero;
+        show.SetUniform(UNIFORM_STILL, in still);
         context.Draw();
 
-        blur.Unbind();
+        show.Unbind();
     }
 
     public override void Dispose()
     {
-        tiles?.Dispose();
-        spreadTiles?.Dispose();
-        tiles = spreadTiles = null;
+        history?.Dispose();
+        next?.Dispose();
+        history = next = null;
 
         base.Dispose();
     }

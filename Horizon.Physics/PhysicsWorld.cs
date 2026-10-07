@@ -120,7 +120,7 @@ public class PhysicsWorld : GameComponent
     {
         if (radius <= 0.0f) return;
 
-        if (targets.HasFlag(PhysicsRadialTargets.Bodies))
+        if ((targets & PhysicsRadialTargets.Bodies) != 0)
         {
             foreach (var body in DynamicBodies)
             {
@@ -131,7 +131,7 @@ public class PhysicsWorld : GameComponent
             }
         }
 
-        if (targets.HasFlag(PhysicsRadialTargets.Particles))
+        if ((targets & PhysicsRadialTargets.Particles) != 0)
         {
             foreach (var group in particleGroups)
             {
@@ -194,7 +194,7 @@ public class PhysicsWorld : GameComponent
         // 0. Turn the forces that were asked for since the last step into pushes
         foreach (var (centre, radius, force, targets, except) in radialForces)
         {
-            if (targets.HasFlag(PhysicsRadialTargets.Bodies))
+            if ((targets & PhysicsRadialTargets.Bodies) != 0)
             {
                 foreach (var body in dynamicBodies)
                 {
@@ -206,7 +206,7 @@ public class PhysicsWorld : GameComponent
             }
 
             // Particles have no force of their own to add to, for them a force over one step is an impulse
-            if (targets.HasFlag(PhysicsRadialTargets.Particles))
+            if ((targets & PhysicsRadialTargets.Particles) != 0)
             {
                 foreach (var group in particleGroups)
                 {

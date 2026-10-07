@@ -21,7 +21,7 @@ namespace Horizon.Rendering;
 /// none for anything without one), the other channels are still free. Attachment3 holds the motion: how fast the
 /// fragment is going across the screen in the RG channels (halves of the screen a second, see <c>encodeMotion</c> in
 /// the shaders) and how near it is in the B channel, from 0 for the backdrop to 1 for right in front. Nothing is lit
-/// by those two, they are for whatever comes after the lighting: <see cref="PostProcessing.MotionBlurEffect"/> blurs
+/// by those two, they are for whatever comes after the lighting: <see cref="PostProcessing.VelocityBlurEffect"/> blurs
 /// by the one and decides what blurs over what by the other.
 /// Where a fragment is in the world isn't stored, that follows from where it is on screen.
 /// The alpha of every attachment is how much of what was there before the fragment covers, they are all blended alike.

@@ -72,7 +72,7 @@ public class StackPanel : Panel
 
             if (vertical)
             {
-                if (Stretch || child.Fill.HasFlag(UIFill.Horizontal))
+                if (Stretch || (child.Fill & UIFill.Horizontal) != 0)
                 {
                     size.X = content.Width;
                     side.X = 0.0f;
@@ -86,7 +86,7 @@ public class StackPanel : Panel
             }
             else
             {
-                if (Stretch || child.Fill.HasFlag(UIFill.Vertical))
+                if (Stretch || (child.Fill & UIFill.Vertical) != 0)
                 {
                     size.Y = content.Height;
                     side.Y = 0.0f;

@@ -50,7 +50,7 @@ public class PostProcessTestScene : Scene, ITestControls
     private readonly Camera2D _camera;
     private readonly Renderer2D _screen;
     private readonly DeferredRenderer2D _world;
-    private readonly MotionBlurEffect _blur, _hudBlur;
+    private readonly VelocityBlurEffect _blur, _hudBlur;
     private readonly CrtEffect _tube;
     private readonly TileMap _map;
 
@@ -72,7 +72,7 @@ public class PostProcessTestScene : Scene, ITestControls
 
         // The world, lit and blurred, shown in the glass
         _world = _screen.AddEntity(new DeferredRenderer2D((uint)viewport.X, (uint)viewport.Y) { ClearColor = new Vector4(0.36f, 0.62f, 0.86f, 1.0f) });
-        _blur = _world.PostProcessing.Add(new MotionBlurEffect());
+        _blur = _world.PostProcessing.Add(new VelocityBlurEffect());
 
         string directory = Path.Combine(Path.GetTempPath(), "horizon-tilemap-test");
         TileMapTestScene.WriteFiles(directory);
@@ -83,7 +83,7 @@ public class PostProcessTestScene : Scene, ITestControls
         // The HUD: behind the glass as well, but neither lit nor blurred
         var viewportCamera = AddEntity(new Camera2D(viewport));
         var compositor = _screen.AddComponent(new UICompositor(viewportCamera) { DesignSize = DesignSize });
-        _hudBlur = compositor.PostProcessing.Add(new MotionBlurEffect());
+        _hudBlur = compositor.PostProcessing.Add(new VelocityBlurEffect());
 
         var module = compositor.CreateModule();
         _status = module.AddComponent(new Label

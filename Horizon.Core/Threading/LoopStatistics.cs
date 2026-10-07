@@ -42,6 +42,17 @@ public sealed class LoopStatistics
     public long LateTurns { get; private set; }
     public long DroppedTurns { get; private set; }
 
+    /// <summary>
+    /// How many bytes a turn allocates, averaged the way the rest is. Whatever is allocated every turn is what the
+    /// garbage collector has to stop the game for sooner or later, so the nearer this is to nothing the better.
+    /// </summary>
+    public double AllocatedPerTurn { get; private set; }
+
+    /// <summary>
+    /// How many bytes the loop allocates a second at the rate it is going.
+    /// </summary>
+    public double AllocatedPerSecond => AllocatedPerTurn * Rate;
+
     private double period;
 
     public LoopStatistics(string name, double targetRate)
@@ -58,10 +69,13 @@ public sealed class LoopStatistics
     /// <param name="waitSeconds">How long it waited for something another loop was holding.</param>
     /// <param name="sinceLast">How long it has been since the turn before.</param>
     /// <param name="turns">How many turns this really was, for a loop that makes up for the ones it missed.</param>
-    public void Record(double workSeconds, double waitSeconds, double sinceLast, int turns = 1)
+    /// <param name="allocatedBytes">How much the thread of the loop allocated while it worked, see <see cref="GC.GetAllocatedBytesForCurrentThread"/>.</param>
+    public void Record(double workSeconds, double waitSeconds, double sinceLast, int turns = 1, long allocatedBytes = 0)
     {
         lock (gate)
         {
+            AllocatedPerTurn += (allocatedBytes / (double)Math.Max(1, turns) - AllocatedPerTurn) * SMOOTHING;
+
             double workMs = workSeconds * 1000.0 / Math.Max(1, turns);
 
             period = period <= 0.0 ? sinceLast : period + (sinceLast - period) * SMOOTHING;
