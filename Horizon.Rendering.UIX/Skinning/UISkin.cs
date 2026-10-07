@@ -44,9 +44,13 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// <summary>A name worked out down to the pixels it stands for, which can be done before any of it is loaded.</summary>
     private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key);
 
-    /// <summary>An icon worked out the same way.</summary>
+    /// <summary>An icon worked out the same way. One with frames animates in text, the names of its frames are made once.</summary>
     private sealed record IconArt(
-        string Region, Vector2 TexelSize, string Label, Vector4 LabelColor, string? Symbol, Vector4 SymbolColor, float SymbolSize, float LineTexels);
+        string Region, Vector2 TexelSize, string Label, Vector4 LabelColor, string? Symbol, Vector4 SymbolColor, float SymbolSize, float LineTexels,
+        int Frames, float FrameTime)
+    {
+        public string[]? FrameNames { get; set; }
+    }
 
     private readonly Dictionary<string, RegionSource> sources = [];
     private readonly Dictionary<string, IconSource> icons = [];
@@ -303,12 +307,33 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// Finds an icon by name, the way an <c>[icon:name]</c> tag does: an icon the skin declares, or
     /// failing that the region of that name.
     /// </summary>
-    public bool TryGetIcon(ReadOnlySpan<char> name, out UIIcon icon)
+    public bool TryGetIcon(ReadOnlySpan<char> name, out UIIcon icon) => TryGetIcon(name, 0.0f, out icon);
+
+    /// <summary>
+    /// Finds an icon by name at a moment in time, for the ones that animate: an icon whose art has frames shows
+    /// whichever frame is due at that time, round and round. Zero is the first frame, always.
+    /// </summary>
+    /// <param name="time">Seconds, from whenever. Only how far along the animation is comes out of it.</param>
+    public bool TryGetIcon(ReadOnlySpan<char> name, float time, out UIIcon icon)
     {
         icon = default;
 
         if (DescribeIcon(name) is not { } art || !TryGetRegion(art.Region, out var region))
             return false;
+
+        if (art.Frames > 1 && time > 0.0f && art.FrameTime > 0.0f)
+        {
+            int frame = (int)(time / art.FrameTime) % art.Frames;
+            if (frame > 0)
+            {
+                // The names are made once, this is asked on every draw of every icon
+                art.FrameNames ??= [.. Enumerable.Range(0, art.Frames).Select(i => $"{art.Region}#{i}")];
+
+                // A frame that isn't in the atlas yet is asked for by this, and the first one stands in until it is
+                if (TryGetRegion(art.FrameNames[frame], out var due))
+                    region = due;
+            }
+        }
 
         // A symbol that hasn't made it into the atlas yet is left off for a frame, the icon is still an icon.
         UIRegion? symbol = art.Symbol is not null && TryGetRegion(art.Symbol, out var found) ? found : null;
@@ -316,6 +341,12 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         icon = new UIIcon(region, art.Label, art.LabelColor, symbol, art.SymbolColor, art.SymbolSize);
         return true;
     }
+
+    /// <summary>
+    /// Finds an icon the way a text written in a set of icons does, at a moment in time. See <see cref="TryGetIcon(ReadOnlySpan{char}, float, out UIIcon)"/>.
+    /// </summary>
+    public bool TryGetIcon(ReadOnlySpan<char> name, ReadOnlySpan<char> set, float time, out UIIcon icon) =>
+        TryGetIcon(ResolveIcon(name, set), time, out icon);
 
     float IUIIconSource.IconScale => IconScale;
 
@@ -348,7 +379,9 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
                 source.Symbol,
                 source.SymbolColor,
                 source.SymbolSize,
-                source.Height > 0.0f ? source.Height : art.Source.Height)
+                source.Height > 0.0f ? source.Height : art.Source.Height,
+                art.Source.Frames,
+                art.Source.FrameTime)
             : null;
 
         iconArts[key] = icon;

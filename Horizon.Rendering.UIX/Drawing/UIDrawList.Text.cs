@@ -90,7 +90,7 @@ public sealed partial class UIDrawList
             if (markup && character == '[' && font.TryReadIcon(text[i..], scale, icons, out var name, out int length, out Vector2 size))
             {
                 // Centred on the line. Art that hasn't made it into the atlas yet still takes up its room.
-                if (Skin.TryGetIcon(name, icons, out var icon))
+                if (Skin.TryGetIcon(name, icons, time, out var icon))
                 {
                     Vector2 corner = new(pen.X, MathF.Round(pen.Y - (lineHeight + size.Y) * 0.5f));
                     Icon(icon, new UIRect(corner, corner + size), new Vector4(1.0f, 1.0f, 1.0f, color.W));

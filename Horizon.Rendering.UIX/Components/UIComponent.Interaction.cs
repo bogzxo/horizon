@@ -120,6 +120,15 @@ public abstract partial class UIComponent
     protected internal virtual bool OnAdjust(int step) => false;
 
     /// <summary>
+    /// What a direction does inside of this component while it is selected, before the navigator moves on to another
+    /// one: a list box moves its choice up and down. Whoever has a use for it says so by returning true, and false at
+    /// the end of what it has, so the next press leaves it.
+    /// </summary>
+    /// <param name="right">1 for right, -1 for left, 0 for neither.</param>
+    /// <param name="down">1 for down, -1 for up, 0 for neither.</param>
+    protected internal virtual bool OnNavigate(int right, int down) => false;
+
+    /// <summary>
     /// What is written in a box next to the pointer when it rests on the component for a moment. Empty for nothing.
     /// In a layout file: <c>tooltip: "Starts the fight"</c>.
     /// </summary>

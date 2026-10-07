@@ -22,9 +22,6 @@ public class HIDLRuntime
     public const string VERSION = "0.1.0";
     public static readonly NullValue NULL = Values.Null;
 
-    // The parser keeps no state between programs, one does for all
-    private static readonly Parser parser = new();
-
     // The runtime whose program is running right now on this thread, for library functions that call back into
     // scripts (sort, map). Nested evaluations put the one before back when they are done
     [ThreadStatic]
@@ -201,7 +198,7 @@ public class HIDLRuntime
     /// <summary>
     /// Turns source into a syntax tree, which can be run as often as wanted.
     /// </summary>
-    public static ProgramStatement Parse(in string input) => parser.ProduceSyntaxTree(Lexer.Tokenize(input));
+    public static ProgramStatement Parse(in string input) => new Parser().ProduceSyntaxTree(Lexer.Tokenize(input));
 
     /// <summary>
     /// What include("file.hor") does. The file is run in a scope of its own over the global one and everything it

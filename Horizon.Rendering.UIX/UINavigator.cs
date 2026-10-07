@@ -19,7 +19,8 @@ namespace Horizon.Rendering.UIX;
 /// if (pad.WasPressed(GamepadInput.A)) nav.Activate();
 /// </code>
 /// Moving goes by where things are on screen, so a grid of buttons works as well as a list does. Left and right ask
-/// the selected component first (a selector steps, a slider slides) and only move on if it has no use for them.
+/// the selected component first (a selector steps, a slider slides) and only move on if it has no use for them, and
+/// so does <see cref="Move(int, int)"/> for a component that walks its own rows (a list box).
 /// The arrow keys, enter and space do the same by themselves once something is selected (see <see cref="Keys"/>),
 /// unless a text box has the keyboard.
 /// </summary>
@@ -129,7 +130,14 @@ public sealed class UINavigator
     /// Nothing selected yet, it selects the first thing there is.
     /// </summary>
     /// <returns>Whether the selection moved.</returns>
-    public bool Move(int right, int down) => Move(new Vector2(right, -down));
+    public bool Move(int right, int down)
+    {
+        // Something that has a use for the direction itself (a list box going down its rows) gets it first
+        if (Current is { } current && IsSelectable(current) && current.OnNavigate(Math.Sign(right), Math.Sign(down)))
+            return true;
+
+        return Move(new Vector2(right, -down));
+    }
 
     /// <summary>
     /// Moves the selection to the nearest component in a direction of the layout (Y up), see <see cref="Move(int, int)"/>.

@@ -60,6 +60,10 @@ public sealed partial class UIDrawList
     private int frame;
     private float deltaTime;
 
+    // How long the UI has been drawn for, for the icons that animate. Starts over now and then so it never grows coarse
+    private float time;
+    private const float TIME_WRAP = 3600.0f;
+
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
 
@@ -84,6 +88,7 @@ public sealed partial class UIDrawList
 
         this.frame = frame;
         deltaTime = dt;
+        time = (time + dt) % TIME_WRAP;
         TracksMotion = tracksMotion;
         Moving = false;
 

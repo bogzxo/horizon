@@ -286,6 +286,7 @@ namespace Horizon.Rendering.UIX
                 list.PushClip(clip);
 
             Root.PaintTree(list);
+            PaintRaised(list);
 
             // The edges of the layout, for whoever is editing it
             // and of the screen it's being shown on, fainter, when that's another shape than what it's made for
@@ -326,7 +327,54 @@ namespace Horizon.Rendering.UIX
             if (Popup is { } popup && popup.PopupContains(local))
                 return popup;
 
+            // Then whatever is raised above the rest, the highest first
+            for (int i = raisedShown.Length - 1; i >= 0; i--)
+            {
+                if (raisedShown[i].HitTest(local) is { } hit)
+                    return hit;
+            }
+
             return Root.HitTest(local);
+        }
+
+        // The components with a ZOffset that were put aside while the tree was painted, and the ones that were
+        // painted last time, which is what is on screen for the pointer
+        private readonly List<UIComponent> raised = [];
+        private UIComponent[] raisedShown = [];
+        private bool paintingRaised;
+
+        /// <summary>
+        /// Puts a component aside to be painted after the rest of the module, see <see cref="UIComponent.ZOffset"/>.
+        /// False while the raised ones are being painted themselves, when they paint in their place.
+        /// </summary>
+        internal bool Raise(UIComponent component)
+        {
+            if (paintingRaised)
+                return false;
+
+            raised.Add(component);
+            return true;
+        }
+
+        private void PaintRaised(UIDrawList list)
+        {
+            if (raised.Count == 0)
+            {
+                if (raisedShown.Length > 0)
+                    raisedShown = [];
+                return;
+            }
+
+            // Lowest first, so the highest ends up on top. Stable, so two at the same height keep their order
+            raised.Sort((a, b) => a.ZOffset.CompareTo(b.ZOffset));
+
+            paintingRaised = true;
+            foreach (UIComponent component in raised)
+                component.PaintTree(list);
+            paintingRaised = false;
+
+            raisedShown = [.. raised];
+            raised.Clear();
         }
 
         /// <summary>

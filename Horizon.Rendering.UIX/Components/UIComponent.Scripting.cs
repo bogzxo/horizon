@@ -25,6 +25,7 @@ public abstract partial class UIComponent
         Expose("size", () => Size, value => Size = value);
         Expose("scale", () => Scale, value => Scale = value);
         Expose("visible", () => Visible, value => Visible = value);
+        Expose("z", () => ZOffset, value => ZOffset = Math.Max(0, (int)value));
         Expose("layer", () => Layer, value => Layer = value.Trim());
         Expose("enabled", () => Enabled, value => Enabled = value);
         Expose("tooltip", () => Tooltip, value => Tooltip = value);

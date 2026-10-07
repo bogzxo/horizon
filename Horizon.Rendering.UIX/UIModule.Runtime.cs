@@ -128,6 +128,9 @@ public partial class UIModule
         Register<NumberBox>("number_box");
         Register<Selector>("selector");
         Register<Dropdown>("dropdown");
+        Register<ListBox>("list");
+        Register<Divider>("divider");
+        Register<Spacer>("spacer");
         Register<ColorPicker>("color_picker");
         Register<MenuBar>("menu_bar");
         Register<CodeView>("code");
