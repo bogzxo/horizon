@@ -8,10 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="shaders\testing\wall.frag">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="shaders\testing\wall.vert">
+    <!-- Every shader the examples bring with them, whatever folder of shaders/ it is in -->
+    <None Update="shaders\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
