@@ -79,6 +79,12 @@ public sealed class SimulationLoop : IDisposable
     /// <summary>How long (in seconds) the game has been simulated for. A tick at a time, so it stands still when the loop does.</summary>
     public double Time { get; private set; }
 
+    /// <summary>
+    /// Where whatever is to run on the simulation thread goes, at the start of the next tick: what an <c>await</c> on
+    /// that thread carries on with, and whatever anybody else hands it (see <see cref="SimulationContext"/>).
+    /// </summary>
+    public SimulationContext Context { get; } = new();
+
     /// <summary>How the logic, the physics and the ticks as a whole have been doing lately.</summary>
     public LoopStatistics Logic { get; }
 
@@ -152,6 +158,9 @@ public sealed class SimulationLoop : IDisposable
         Diagnostics.AllocationLog.NameThisThread(thread?.Name ?? "Simulation");
         LoopTiming.SharpenTimer(true);
 
+        // Whatever is awaited on this thread carries on here, see SimulationContext
+        SynchronizationContext.SetSynchronizationContext(Context);
+
         try
         {
             while (running)
@@ -216,6 +225,9 @@ public sealed class SimulationLoop : IDisposable
 
         host.BeginTick();
         long waited = clock() - started;
+
+        // What was waiting for this thread picks up where it left off, before anything of the tick is updated
+        Context.RunPending();
 
         Tick++;
         Time += tickPeriod;

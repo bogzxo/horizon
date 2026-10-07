@@ -211,7 +211,10 @@ public abstract class Tween
         Rewind();
     }
 
-    /// <summary>A task that is done once the tween got to its end or was killed.</summary>
+    /// <summary>
+    /// A task that is done once the tween got to its end or was killed. Awaited on the simulation thread, what comes
+    /// after the await carries on there, at the start of the tick after the tween was done (see SimulationContext).
+    /// </summary>
     public Task AwaitCompleteOrKill()
     {
         if (IsFinished)

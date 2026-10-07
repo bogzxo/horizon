@@ -213,3 +213,103 @@ public class SimulationLoopTests
         Assert.Equal(3, host.Ticks);
     }
 }
+
+public class SimulationContextTests
+{
+    private sealed class Idle : ISimulationHost
+    {
+        public void BeginTick() { }
+        public void UpdateState(float dt) { }
+        public void UpdatePhysics(float dt) { }
+        public void EndTick(long tick, long stamp, double time) { }
+    }
+
+    private static long Seconds(double seconds) => (long)(seconds * System.Diagnostics.Stopwatch.Frequency);
+
+    [Fact]
+    public void What_is_posted_from_elsewhere_runs_at_the_start_of_the_next_tick_on_the_loop()
+    {
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, new Idle(), () => now);
+
+        int ran = 0, ranOn = -1;
+        var poster = new Thread(() => loop.Context.Post(_ =>
+        {
+            ran++;
+            ranOn = Environment.CurrentManagedThreadId;
+        }, null));
+        poster.Start();
+        poster.Join();
+
+        Assert.Equal(0, ran);
+
+        loop.Step();
+        Assert.Equal(1, ran);
+        Assert.Equal(Environment.CurrentManagedThreadId, ranOn);
+
+        // Once, not every tick from then on
+        now += Seconds(0.01);
+        loop.Step();
+        Assert.Equal(1, ran);
+    }
+
+    [Fact]
+    public void What_is_posted_while_running_waits_for_the_tick_after()
+    {
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, new Idle(), () => now);
+
+        int ran = 0;
+        void Again(object? _)
+        {
+            ran++;
+            loop.Context.Post(Again, null);
+        }
+
+        loop.Context.Post(Again, null);
+        loop.Step();
+        Assert.Equal(1, ran);
+
+        now += Seconds(0.01);
+        loop.Step();
+        Assert.Equal(2, ran);
+    }
+
+    [Fact]
+    public async Task Awaiting_a_tween_carries_on_on_the_loop()
+    {
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, new Idle(), () => now);
+
+        float value = 0.0f;
+        var context = new Horizon.Core.Tweening.TweenContext();
+        var tween = context.Play(Horizon.Core.Tweening.Tween.To(() => value, v => value = v, 1.0f, 0.05f));
+
+        int carriedOnAt = -1;
+        bool carriedOn = false;
+        async Task WaitForIt()
+        {
+            await tween.AwaitCompleteOrKill();
+            carriedOn = true;
+            carriedOnAt = Environment.CurrentManagedThreadId;
+        }
+
+        // Started the way the simulation thread would start it: with its context current
+        SynchronizationContext? before = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(loop.Context);
+        Task waiting = WaitForIt();
+        SynchronizationContext.SetSynchronizationContext(before);
+
+        context.Tick(0.1f);
+        Assert.Equal(1.0f, value);
+
+        // Done, but carried on with only when the loop gets to it
+        await Task.Delay(50);
+        Assert.False(carriedOn);
+
+        loop.Step();
+        Assert.True(carriedOn);
+        Assert.Equal(Environment.CurrentManagedThreadId, carriedOnAt);
+        await waiting;
+    }
+}
