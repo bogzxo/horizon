@@ -1,9 +1,10 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Numerics;
 
 using Bogz.Logging;
 
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.Rendering;
@@ -38,7 +39,9 @@ public class PacingTestScene : Scene, ITestControls
 
     public IReadOnlyList<TestControl> Controls { get; } =
     [
-        new("C", "camera follows / stands still")
+        new("C", "camera follows / stands still"),
+        new("F5", "lockstep / decoupled"),
+        new("F6", "interpolated / newest tick")
     ];
 
     private readonly Camera2D camera;
@@ -52,6 +55,15 @@ public class PacingTestScene : Scene, ITestControls
     private bool cameraFollows;
 
     private readonly PacingProbe probe;
+
+    // Where the runners were at the end of every tick, for measuring them where a decoupled frame draws them
+    private readonly Snapshot<Runners> runners = new();
+
+    private readonly record struct Runners(float Logic, float Physics) : IBlendable<Runners>
+    {
+        public static Runners Blend(in Runners from, in Runners to, float amount) =>
+            new(Interpolate.Linear(from.Logic, to.Logic, amount), Interpolate.Linear(from.Physics, to.Physics, amount));
+    }
 
     public PacingTestScene()
     {
@@ -117,10 +129,16 @@ public class PacingTestScene : Scene, ITestControls
         Engine.GL.ClearColor(0.16f, 0.17f, 0.22f, 1.0f);
     }
 
-    private static Vector2 Advance(Vector2 position, float dt)
+    private Vector2 Advance(Vector2 position, float dt)
     {
         position.X += SPEED * dt;
-        if (position.X > SPAN / 2.0f) position.X -= SPAN;
+        if (position.X > SPAN / 2.0f)
+        {
+            // Back in on the other side: put there, not moved there, so no frame shows it on its way across
+            position.X -= SPAN;
+            runners.Break();
+        }
+
         return position;
     }
 
@@ -132,6 +150,12 @@ public class PacingTestScene : Scene, ITestControls
 
         if (Engine.Input.Keyboard.WasPressed(Key.C))
             cameraFollows = !cameraFollows;
+
+        var window = Engine.WindowManager;
+        if (Engine.Input.Keyboard.WasPressed(Key.F5))
+            window.Threading = window.Threading == ThreadingMode.Lockstep ? ThreadingMode.Decoupled : ThreadingMode.Lockstep;
+        if (Engine.Input.Keyboard.WasPressed(Key.F6))
+            window.Presentation = window.Presentation == PresentationMode.Interpolated ? PresentationMode.Latest : PresentationMode.Interpolated;
 
         camera.Position = cameraFollows
             ? new Vector3(logicRunner.Transform.Position.X, 0.0f, camera.Position.Z)
@@ -147,10 +171,41 @@ public class PacingTestScene : Scene, ITestControls
         physicsRunner.Transform.Position = Advance(physicsRunner.Transform.Position, dt);
     }
 
+    public override void Capture()
+    {
+        runners.Publish(new Runners(logicRunner.Transform.Position.X, physicsRunner.Transform.Position.X));
+        base.Capture();
+    }
+
     /// <summary>
-    /// Where the runners are drawn, as the renderer sees them this frame. Measured on the render thread.
+    /// Where the runners are drawn, as the renderer sees them this frame: between the last two ticks when drawn
+    /// alongside the simulation (the way the sprite batch blends them), as they are when drawn in turns with it.
+    /// Measured on the render thread.
     /// </summary>
-    internal float DrawnX(bool physics) => (physics ? physicsRunner : logicRunner).Transform.Position.X;
+    internal float? DrawnX(bool physics)
+    {
+        if (RenderFrame.Active is { IsDecoupled: true } frame)
+        {
+            // Across a wrap nothing is moving steadily, there is nothing to measure
+            if (!runners.TryGet(frame, out _, out _, out bool continuous) || !continuous)
+                return null;
+
+            runners.TryBlend(frame, out Runners shown);
+            return physics ? shown.Physics : shown.Logic;
+        }
+
+        return (physics ? physicsRunner : logicRunner).Transform.Position.X;
+    }
+
+    /// <summary>How the frames are drawn right now, for the meter.</summary>
+    internal string Mode
+    {
+        get
+        {
+            var window = Engine.WindowManager;
+            return window.Threading == ThreadingMode.Lockstep ? "lockstep" : $"decoupled, {(window.Presentation == PresentationMode.Interpolated ? "interpolated" : "newest tick")}";
+        }
+    }
 
     /// <summary>
     /// Watches every frame on the render thread: how far the runners got since the last one against how far a
@@ -178,7 +233,10 @@ public class PacingTestScene : Scene, ITestControls
             long now = Stopwatch.GetTimestamp();
             if (lastFrame != 0)
             {
-                double interval = (now - lastFrame) / (double)Stopwatch.Frequency;
+                // Between the moments the frames were taken (which is what they show), rather than between the moments
+                // this happened to be reached in drawing them, which wanders with whatever was drawn before it
+                RenderFrame frame = RenderFrame.Active;
+                double interval = frame.HasSnapshot && frame.RealDelta > 0.0f ? frame.RealDelta : (now - lastFrame) / (double)Stopwatch.Frequency;
                 frames++;
                 frameTime += interval;
 
@@ -200,12 +258,12 @@ public class PacingTestScene : Scene, ITestControls
             nextReport = seconds + REPORT_EVERY;
 
             string text =
-                $"{frames / frameTime:0} fps\n" +
+                $"{frames / frameTime:0} fps, {scene.Mode}\n" +
                 $"logic runner: {logic.Describe()}\n" +
                 $"physics runner: {physics.Describe()}";
 
             summary = text;
-            Log.Info($"[Pacing] {frames / frameTime:0} fps | logic {logic.Describe()} | physics {physics.Describe()}");
+            Log.Info($"[Pacing] {frames / frameTime:0} fps, {scene.Mode} | logic {logic.Describe()} | physics {physics.Describe()}");
 
             logic.Reset();
             physics.Reset();
@@ -223,8 +281,14 @@ public class PacingTestScene : Scene, ITestControls
             private int count, standing, doubled;
             private double error, expected;
 
-            public void Note(float x, double interval)
+            public void Note(float? drawn, double interval)
             {
+                if (drawn is not { } x)
+                {
+                    hasLast = false;
+                    return;
+                }
+
                 if (hasLast && interval > 0.0)
                 {
                     double step = x - last;

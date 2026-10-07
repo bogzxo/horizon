@@ -1,7 +1,9 @@
 ﻿using Bogz.Logging;
 using System.Collections.Concurrent;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
@@ -13,9 +15,13 @@ namespace Horizon.Rendering.Spriting;
 /// An alternative (high performance) rendering back end for rendering a collection of dynamic sprites.
 /// Besides the sprites added to it, it draws anything that can be described as a list of <see cref="SpriteItem"/>s
 /// through the very same shader and buffers, see <see cref="Draw(ReadOnlySpan{SpriteItem}, ReadOnlySpan{SpriteRun}, Camera?)"/>.
+/// <para>
+/// Drawn alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>), the sprites are turned into quads at the
+/// end of every tick (<see cref="Capture"/>) and every frame draws them between the last two ticks: each quad goes the
+/// same distance for the same time from frame to frame, however many frames there are. A sprite that is flipped over or
+/// put somewhere else (see <see cref="TransformComponent2D.Snap"/>) is not shown on its way.
+/// </para>
 /// </summary>
-/// <seealso cref="Horizon.GameEntity.Entity" />
-/// <seealso cref="Horizon.Rendering.Spriting.I2DBatchedRenderer&lt;Horizon.Rendering.Spriting.Sprite&gt;" />
 public class SpriteBatch : GameObject
 {
     /// <summary>
@@ -39,59 +45,57 @@ public class SpriteBatch : GameObject
     public float Nearness { get; set; } = DEFAULT_NEARNESS;
 
     /// <summary>
-    /// Helper struct to aggregate data related to rendering a series of sprites with a common sprite sheet.
+    /// The sprites that are drawn out of one texture (a sprite sheet, or an atlas), which go in one draw call. They belong
+    /// to the simulation: sprites are added, removed and turned into quads there.
     /// </summary>
-    private class SpriteSheetRenderObject
+    private sealed class SpriteGroup(SpriteSheet? sheet, TextureAtlas? atlas)
     {
-        public SpriteBatchMesh Mesh;
+        public readonly SpriteSheet? Sheet = sheet;
+        public readonly TextureAtlas? Atlas = atlas;
+        public readonly List<Sprite> Sprites = [];
 
-        //public ushort Index;
-        public List<Sprite> Sprites;
-
-        public SpriteSheetRenderObject(in SpriteBatchMesh mesh)
-        {
-            this.Mesh = mesh;
-            this.Sprites = new();
-        }
-
-        /// <summary>
-        /// Adds the specified sprite, performing an additional check to ensure we don't already contain the specified sprite.
-        /// </summary>
-        /// <param name="sprite">The sprite.</param>
-        public void Add(in Sprite sprite)
-        {
-            // Ensure we don't already contain this sprite.
-            if (Sprites.Contains(sprite))
-                return;
-
-            Sprites.Add(sprite);
-        }
-
-        public void AddRange(in Sprite[] sprites)
-        {
-            Sprites.AddRange(sprites);
-        }
-
-        public void AddRange(in List<Sprite> sprites)
-        {
-            Sprites.AddRange(sprites);
-        }
+        public SpriteTexture Texture => Atlas is { } a ? new SpriteTexture(a.Texture) : new SpriteTexture(Sheet!);
     }
+
+    /// <summary>
+    /// What a group drew as of one tick: a quad for every sprite (and one for the mask of every sprite, if any of them is
+    /// cut out with one), and which sprite each quad is, which is how quads are matched up from one tick to the next.
+    /// </summary>
+    private sealed class CapturedGroup
+    {
+        public SpriteGroup Group = null!;
+        public SpriteItem[] Items = new SpriteItem[64];
+        public Sprite[] Sprites = new Sprite[32];
+        public int[] Epochs = new int[32];
+        public int Masks, Colors;
+    }
+
+    /// <summary>
+    /// What the whole batch drew as of one tick.
+    /// </summary>
+    private sealed class CapturedBatch
+    {
+        public readonly List<CapturedGroup> Groups = [];
+        public int GroupCount;
+        public Matrix4x4 Model;
+        public float Nearness;
+        public Camera? Camera;
+    }
+
     /// <summary>
     /// Gets the shader.
     /// </summary>
     public Technique Shader { get; set; }
 
-    /// <summary>
-    /// TODO please remind me to make a custom datastruct for this shit
-    /// </summary>
-    /// <value>
-    private Dictionary<uint, SpriteSheetRenderObject> SpritesheetSprites { get; } = new();
+    // The groups by what they are drawn out of, and in the order they came, which never changes for a group
+    private readonly Dictionary<uint, SpriteGroup> _sheetGroups = new();
+    private readonly Dictionary<TextureAtlas, SpriteGroup> _atlasGroups = new();
+    private readonly List<SpriteGroup> _groups = [];
 
-    /// <summary>
-    /// The sprites that are drawn out of an atlas rather than a sprite sheet of their own, by atlas.
-    /// </summary>
-    private Dictionary<TextureAtlas, SpriteSheetRenderObject> AtlasSprites { get; } = new();
+    // What the GPU draws a group with. The render thread's, made the first time the group is drawn
+    private readonly Dictionary<SpriteGroup, SpriteBatchMesh> _meshes = new();
+
+    private readonly SnapshotBuffer<CapturedBatch> _captured = new(static () => new CapturedBatch());
 
     public int Count { get; private set; }
 
@@ -177,28 +181,167 @@ public class SpriteBatch : GameObject
     /// </summary>
     /// <param name="sprite"></param>
     public void Add(in Sprite sprite) => _queuedSprites.Push(sprite);
-    
+
     /// <summary>
     /// Commits an object to be rendered.
     /// </summary>
     /// <param name="sprite"></param>
     public void AddRange(in Sprite[] sprites) => _queuedSprites.PushRange(sprites);
 
+    /// <summary>
+    /// Stops drawing a sprite. From the updates.
+    /// </summary>
     public void Remove(in Sprite sprite)
     {
-        if (sprite.Atlas is not null)
-        {
-            if (AtlasSprites.TryGetValue(sprite.Atlas, out var atlasSprites))
-                atlasSprites.Sprites.Remove(sprite);
+        if (GroupOf(sprite, create: false) is not { } group)
             return;
+
+        if (group.Sprites.Remove(sprite))
+            Count--;
+    }
+
+    /// <summary>
+    /// Helper method to find the group a sprite is drawn in by what it is drawn out of, made if it isn't there yet and asked to.
+    /// </summary>
+    private SpriteGroup? GroupOf(Sprite sprite, bool create)
+    {
+        if (sprite.Atlas is { } atlas)
+        {
+            if (_atlasGroups.TryGetValue(atlas, out var group) || !create)
+                return group;
+
+            _atlasGroups.Add(atlas, group = new SpriteGroup(null, atlas));
+            _groups.Add(group);
+            return group;
         }
 
-        if (!SpritesheetSprites.ContainsKey(sprite.Spritesheet.Handle))
-            return;
-        if (!SpritesheetSprites[sprite.Spritesheet.Handle].Sprites.Contains(sprite))
+        if (sprite.Spritesheet is not { } sheet)
+            return null;
+
+        if (_sheetGroups.TryGetValue(sheet.Handle, out var sheetGroup) || !create)
+            return sheetGroup;
+
+        _sheetGroups.Add(sheet.Handle, sheetGroup = new SpriteGroup(sheet, null));
+        _groups.Add(sheetGroup);
+        return sheetGroup;
+    }
+
+    /// <summary>
+    /// Helper method to put the sprites that were added since the last time into the groups they are drawn in. The ones
+    /// that don't know yet what they show wait for the next time. Simulation thread (or the render thread taking its
+    /// turn with it).
+    /// </summary>
+    private void TakeQueued()
+    {
+        if (_queuedSprites.IsEmpty)
             return;
 
-        SpritesheetSprites[sprite.Spritesheet.Handle].Sprites.Remove(sprite);
+        int length = _queuedSprites.Count;
+        Sprite[] sprites = new Sprite[length];
+        int taken = _queuedSprites.TryPopRange(sprites);
+
+        // In the order they come off the stack, which is the order they have always been drawn in
+        for (int i = 0; i < taken; i++)
+        {
+            Sprite sprite = sprites[i];
+            sprite.Batch = this;
+
+            if (!sprite.IsConfigured || GroupOf(sprite, create: true) is not { } group)
+            {
+                // Sprite not yet initialized
+                _queuedSprites.Push(sprite);
+                continue;
+            }
+
+            if (group.Sprites.Contains(sprite))
+                continue;
+
+            group.Sprites.Add(sprite);
+            Count++;
+        }
+    }
+
+    /// <summary>
+    /// Turns every sprite into the quads it is drawn as, for the frames that are drawn alongside the simulation. At the
+    /// end of every tick, on the simulation thread.
+    /// </summary>
+    public override void Capture()
+    {
+        TakeQueued();
+
+        if (_captured.BeginPublish() is { } batch)
+        {
+            batch.Model = Transform.ModelMatrix;
+            batch.Nearness = Nearness;
+            batch.Camera = CustomCamera;
+            batch.GroupCount = _groups.Count;
+
+            for (int g = 0; g < _groups.Count; g++)
+            {
+                if (g == batch.Groups.Count)
+                    batch.Groups.Add(new CapturedGroup());
+
+                CaptureGroup(_groups[g], batch.Groups[g]);
+            }
+        }
+
+        base.Capture();
+    }
+
+    /// <summary>
+    /// Helper method to turn the sprites of a group into quads: the masks first, if any sprite is cut out with one, then
+    /// the sprites themselves, each with which sprite it is.
+    /// </summary>
+    private static void CaptureGroup(SpriteGroup group, CapturedGroup into)
+    {
+        List<Sprite> sprites = group.Sprites;
+        into.Group = group;
+
+        bool masked = false;
+        foreach (Sprite sprite in sprites)
+        {
+            if (sprite is { Enabled: true, UseStencilBuffer: true })
+            {
+                masked = true;
+                break;
+            }
+        }
+
+        int most = sprites.Count * (masked ? 2 : 1);
+        if (into.Items.Length < most) into.Items = new SpriteItem[Math.Max(most, into.Items.Length * 2)];
+        if (into.Sprites.Length < sprites.Count)
+        {
+            into.Sprites = new Sprite[Math.Max(sprites.Count, into.Sprites.Length * 2)];
+            into.Epochs = new int[into.Sprites.Length];
+        }
+
+        int masks = 0;
+        if (masked)
+        {
+            foreach (Sprite sprite in sprites)
+            {
+                if (sprite is { Enabled: true } && sprite.TryCreateItem(true, out SpriteItem item))
+                    into.Items[masks++] = item;
+            }
+        }
+
+        int colors = 0;
+        foreach (Sprite sprite in sprites)
+        {
+            if (sprite is not { Enabled: true } || !sprite.TryCreateItem(false, out SpriteItem item))
+                continue;
+
+            into.Items[masks + colors] = item;
+            into.Sprites[colors] = sprite;
+            into.Epochs[colors] = sprite.Transform.Epoch;
+            colors++;
+        }
+
+        // Whatever is left over from a tick that had more sprites is not drawn, but it is let go of
+        Array.Clear(into.Sprites, colors, into.Sprites.Length - colors);
+
+        into.Masks = masks;
+        into.Colors = colors;
     }
 
     /// <summary>
@@ -212,83 +355,96 @@ public class SpriteBatch : GameObject
         if (!Enabled)
             return;
 
-        if (!_queuedSprites.IsEmpty)
+        RenderFrame frame = RenderFrame.Active;
+        if (frame.IsDecoupled)
         {
-            int length = _queuedSprites.Count;
-            Sprite[] sprites = new Sprite[length];
-            if (_queuedSprites.TryPopRange(sprites) == length)
-            {
-                // Sort sprites into groups via their sprite sheet and setup the SpritesheetSprites key/value pair.
-                Dictionary<uint, List<Sprite>> spriteSpriteSheetPairs = new();
-                for (int i = 0; i < sprites.Length; i++)
-                {
-                    sprites[i].Batch = this;
-
-                    if (!sprites[i].IsConfigured)
-                    {
-                        // Sprite not yet initialized
-                        _queuedSprites.Push(sprites[i]);
-                    }
-                    else if (sprites[i].Atlas is { } atlas)
-                    {
-                        // Sprites out of the same atlas are drawn together, whichever image their art came from
-                        if (!AtlasSprites.TryGetValue(atlas, out var atlasSprites))
-                        {
-                            AtlasSprites.Add(atlas, atlasSprites = new SpriteSheetRenderObject(new SpriteBatchMesh(Shader)));
-                        }
-
-                        atlasSprites.Add(sprites[i]);
-                        Count++;
-                    }
-                    else
-                    {
-                        spriteSpriteSheetPairs.TryAdd(sprites[i].Spritesheet.Handle, new());
-                        spriteSpriteSheetPairs[sprites[i].Spritesheet.Handle].Add(sprites[i]);
-
-                        if (!SpritesheetSprites.ContainsKey(sprites[i].Spritesheet.Handle))
-                        {
-                            SpritesheetSprites.TryAdd(
-                                sprites[i].Spritesheet.Handle,
-                                new SpriteSheetRenderObject(new(sprites[i].Spritesheet, Shader))
-                            );
-                        }
-                    }
-                }
-
-                // Ensure the spritebatch is configured to render all the sprite sheets.
-                foreach ((var sheet, var storedSprites) in spriteSpriteSheetPairs)
-                {
-                    SpritesheetSprites[sheet].AddRange(storedSprites);
-                    Count += storedSprites.Count;
-                }
-            }
+            RenderCaptured(frame);
+            return;
         }
 
-        foreach (var (_, renderData) in SpritesheetSprites)
-        {
-            renderData.Mesh.Nearness = Nearness;
-            renderData
-                .Mesh
-                .Draw( Transform.ModelMatrix,
-                    CollectionsMarshal.AsSpan(renderData.Sprites),
-                    CustomCamera ?? Engine.ActiveCamera
-                );
-        }
+        // Taking turns with the simulation, the sprites are there to be read as they are
+        TakeQueued();
 
-        foreach (var (atlas, renderData) in AtlasSprites)
+        Camera camera = CustomCamera ?? Engine.ActiveCamera;
+        foreach (SpriteGroup group in _groups)
         {
-            renderData.Mesh.Nearness = Nearness;
-
             // Whatever the sprites asked for since the last frame is put into the atlas before they are drawn
-            atlas.Update();
+            group.Atlas?.Update();
 
-            renderData
-                .Mesh
-                .Draw( Transform.ModelMatrix,
-                    CollectionsMarshal.AsSpan(renderData.Sprites),
-                    CustomCamera ?? Engine.ActiveCamera,
-                    new SpriteTexture(atlas.Texture)
-                );
+            SpriteBatchMesh mesh = MeshOf(group);
+            mesh.Nearness = Nearness;
+            mesh.Draw(Transform.ModelMatrix, CollectionsMarshal.AsSpan(group.Sprites), camera, group.Texture);
         }
+    }
+
+    /// <summary>
+    /// Helper method to draw the quads of the last two ticks, blended to the moment the frame shows.
+    /// </summary>
+    private void RenderCaptured(in RenderFrame frame)
+    {
+        if (!_captured.TryGet(frame, out CapturedBatch previous, out CapturedBatch current, out bool continuous))
+            return;
+
+        Camera camera = current.Camera ?? Engine.ActiveCamera;
+        float alpha = frame.Alpha;
+
+        for (int g = 0; g < current.GroupCount; g++)
+        {
+            CapturedGroup now = current.Groups[g];
+            if (now.Colors == 0)
+                continue;
+
+            // Groups only ever come after the ones there are, so the same group is in the same place in both
+            CapturedGroup? before = continuous && g < previous.GroupCount && previous.Groups[g].Group == now.Group ? previous.Groups[g] : null;
+
+            now.Group.Atlas?.Update();
+
+            SpriteBatchMesh mesh = MeshOf(now.Group);
+            Span<SpriteItem> items = mesh.BeginItems(now.Masks + now.Colors);
+            if (items.IsEmpty)
+            {
+                mesh.EndItems();
+                continue;
+            }
+
+            // The masks are drawn as they are now, they only say where the sprites may show
+            now.Items.AsSpan(0, now.Masks).CopyTo(items);
+
+            for (int i = 0; i < now.Colors; i++)
+            {
+                ref readonly SpriteItem to = ref now.Items[now.Masks + i];
+
+                if (before is null || i >= before.Colors || before.Sprites[i] != now.Sprites[i])
+                {
+                    // A sprite that wasn't drawn the tick before (or isn't in the same place among the others): as it is
+                    items[now.Masks + i] = to;
+                    continue;
+                }
+
+                ref readonly SpriteItem from = ref before.Items[before.Masks + i];
+                items[now.Masks + i] = before.Epochs[i] == now.Epochs[i] && SpriteItem.CanBlend(from, to)
+                    ? SpriteItem.Blend(from, to, alpha)
+                    : alpha >= 1.0f ? to : from;
+            }
+
+            mesh.Nearness = current.Nearness;
+            ReadOnlySpan<SpriteTexture> textures = [now.Group.Texture];
+            mesh.DrawPasses(now.Masks, now.Colors, textures, current.Model, camera);
+            mesh.EndItems();
+        }
+    }
+
+    /// <summary>
+    /// Helper method to get the mesh a group is drawn with, made the first time. Render thread.
+    /// </summary>
+    private SpriteBatchMesh MeshOf(SpriteGroup group)
+    {
+        if (!_meshes.TryGetValue(group, out var mesh))
+        {
+            mesh = group.Sheet is { } sheet ? new SpriteBatchMesh(sheet, Shader) : new SpriteBatchMesh(Shader);
+            _meshes.Add(group, mesh);
+        }
+
+        return mesh;
     }
 }
