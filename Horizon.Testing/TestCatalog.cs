@@ -28,6 +28,7 @@ internal static class TestCatalog
         new("fluid", "Fluid particles", "Physics particles that stack, level out and overflow from basin to basin.", () => new FluidTestScene()),
         new("lighting", "Lighting", "Deferred lights, shadows, normal maps and emissive particles.", () => new LightingTestScene()),
         new("renderer2d", "Renderer2D", "The same scene unlit, drawn at a quarter of the size and blown up.", () => new LightingTestScene(deferred: false)),
+        new("pacing", "Frame pacing", "Steady movers and a meter of how evenly they move from frame to frame.", () => new PacingTestScene()),
     ];
 
     public static TestDefinition? Find(string id) =>

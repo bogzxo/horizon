@@ -40,6 +40,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.Hex", "Horizon.Hex\
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Horizon.Horlang", "Horizon.Horlang", "{4B6BABC6-9225-0706-D6AB-2BAF913F0573}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.Tests", "Horizon.Tests\Horizon.Tests.csproj", "{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -230,6 +232,18 @@ Global
 		{7C0008B5-EE5A-4AEA-A397-F8F9C6745537}.Release|x64.Build.0 = Release|Any CPU
 		{7C0008B5-EE5A-4AEA-A397-F8F9C6745537}.Release|x86.ActiveCfg = Release|Any CPU
 		{7C0008B5-EE5A-4AEA-A397-F8F9C6745537}.Release|x86.Build.0 = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|x64.Build.0 = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Debug|x86.Build.0 = Debug|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|x64.ActiveCfg = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|x64.Build.0 = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|x86.ActiveCfg = Release|Any CPU
+		{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
