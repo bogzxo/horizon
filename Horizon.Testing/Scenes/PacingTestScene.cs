@@ -197,6 +197,24 @@ public class PacingTestScene : Scene, ITestControls
         return (physics ? physicsRunner : logicRunner).Transform.Position.X;
     }
 
+    // The colour of the marker on its track, which is how its quad is found among the ones the UI draws
+    private static readonly uint MarkerColor = SpriteItem.PackColor(new Vector4(0.0f, 0.86f, 1.0f, 1.0f));
+
+    /// <summary>
+    /// Where the UI draws the marker this frame, as uploaded to be drawn: the real thing, blended or not. Render thread,
+    /// after the UI was drawn.
+    /// </summary>
+    internal float? DrawnMarker()
+    {
+        foreach (SpriteItem item in compositor.Drawn)
+        {
+            if (item.Color == MarkerColor && item.AxisX.X > 0.0f)
+                return item.Origin.X;
+        }
+
+        return null;
+    }
+
     /// <summary>How the frames are drawn right now, for the meter.</summary>
     internal string Mode
     {
@@ -214,7 +232,7 @@ public class PacingTestScene : Scene, ITestControls
     internal sealed class PacingProbe : GameComponent
     {
         private readonly PacingTestScene scene;
-        private readonly Track logic = new(), physics = new();
+        private readonly Track logic = new(), physics = new(), marker = new(backAndForth: true);
 
         private long lastFrame;
         private double nextReport;
@@ -242,11 +260,13 @@ public class PacingTestScene : Scene, ITestControls
 
                 logic.Note(scene.DrawnX(false), interval);
                 physics.Note(scene.DrawnX(true), interval);
+                marker.Note(scene.DrawnMarker(), interval);
             }
             else
             {
                 logic.Note(scene.DrawnX(false), 0.0);
                 physics.Note(scene.DrawnX(true), 0.0);
+                marker.Note(scene.DrawnMarker(), 0.0);
             }
 
             lastFrame = now;
@@ -260,13 +280,15 @@ public class PacingTestScene : Scene, ITestControls
             string text =
                 $"{frames / frameTime:0} fps, {scene.Mode}\n" +
                 $"logic runner: {logic.Describe()}\n" +
-                $"physics runner: {physics.Describe()}";
+                $"physics runner: {physics.Describe()}\n" +
+                $"UI marker: {marker.Describe()}";
 
             summary = text;
-            Log.Info($"[Pacing] {frames / frameTime:0} fps, {scene.Mode} | logic {logic.Describe()} | physics {physics.Describe()}");
+            Log.Info($"[Pacing] {frames / frameTime:0} fps, {scene.Mode} | logic {logic.Describe()} | physics {physics.Describe()} | UI {marker.Describe()}");
 
             logic.Reset();
             physics.Reset();
+            marker.Reset();
             frames = 0;
             frameTime = 0.0;
         }
@@ -274,10 +296,12 @@ public class PacingTestScene : Scene, ITestControls
         /// <summary>
         /// The steps one runner took between frames, against the steps a steady speed takes.
         /// </summary>
-        private sealed class Track
+        /// <param name="backAndForth">For something that turns round at the ends: the steps are measured either way, and the frames it turns round in not at all.</param>
+        private sealed class Track(bool backAndForth = false)
         {
             private float last;
             private bool hasLast;
+            private double lastStep;
             private int count, standing, doubled;
             private double error, expected;
 
@@ -293,6 +317,17 @@ public class PacingTestScene : Scene, ITestControls
                 {
                     double step = x - last;
                     double steady = SPEED * interval;
+
+                    if (backAndForth)
+                    {
+                        // Turned round (or stood at the end) in this frame: nothing steady about it
+                        bool turned = Math.Sign(step) != Math.Sign(lastStep);
+                        lastStep = step;
+                        last = x;
+                        if (turned || step == 0.0) return;
+
+                        step = Math.Abs(step);
+                    }
 
                     // Came back in on the other side, which is no step at all
                     if (Math.Abs(step) < SPAN / 2.0f)

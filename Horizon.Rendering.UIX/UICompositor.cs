@@ -2,9 +2,11 @@
 
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.Input;
 using Horizon.Rendering.PostProcessing;
+using Horizon.Rendering.Spriting;
 using Horizon.Rendering.UIX.Components;
 using Horizon.Rendering.UIX.Drawing;
 using Horizon.Rendering.UIX.Skinning;
@@ -17,6 +19,14 @@ namespace Horizon.Rendering.UIX;
 /// The work is split the way the engine splits it. Input, layout and painting happen in
 /// <see cref="UpdateState"/> on the logic thread and produce a list of quads; <see cref="Render"/>
 /// only hands the latest list to the sprite renderer, so components never touch the GPU.
+/// <para>
+/// Drawn alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>) the list that was painted last is
+/// published at the end of every tick (<see cref="Capture"/>), and every frame draws the UI at the moment between the
+/// last two ticks it shows: what slides, pops or is tweened goes the same distance for the same time from frame to frame
+/// at any frame rate, however the ticks and the frames line up. Quads that are the same in both lists but for where they
+/// are, how big and what colour are blended; whatever changed in steps (the text, which art) changes at the moment it
+/// changed. A UI that is drawn by hand and never published is drawn from its newest list, as it always was.
+/// </para>
 /// <para>
 /// A UI can have effects of its own, see <see cref="PostProcessing"/>: with a
 /// <see cref="MotionBlurEffect"/> what slides, pops or is tweened about is smeared along the way it goes.
@@ -89,6 +99,9 @@ public partial class UICompositor : GameComponent, IDisposable
 
     private readonly UIRenderer renderer = new();
 
+    /// <summary>The quads that are drawn, as they were last uploaded. For tests that look at what is on screen, render thread.</summary>
+    internal ReadOnlySpan<SpriteItem> Drawn => renderer.Uploaded;
+
     // Where the UI is drawn while it has effects that are on, rather than straight over the scene
     private readonly PostLayer layer = new();
 
@@ -144,7 +157,37 @@ public partial class UICompositor : GameComponent, IDisposable
     public IReadOnlyList<UIModule> Modules => modules;
 
     /// <summary>The look of the UI, null until <see cref="Initialize"/> has loaded it (or if it failed to).</summary>
-    public UISkin? Skin { get; private set; }
+    public UISkin? Skin
+    {
+        get => skin;
+        private set => skin = value;
+    }
+
+    // Swapped on the render thread, read by the updates, and only ever swapped for one that is all there
+    private volatile UISkin? skin;
+
+    /// <summary>
+    /// A list as it was at the end of a tick, which frames that are drawn alongside the simulation are drawn from.
+    /// </summary>
+    private sealed class CapturedList
+    {
+        public SpriteItem[] Items = new SpriteItem[256];
+        public readonly List<UIDrawList.Run> Runs = [];
+        public int Count;
+        public int Painted = -1;
+        public UISkin? Skin;
+        public bool Moving, Incomplete;
+
+        public ReadOnlySpan<SpriteItem> Span => Items.AsSpan(0, Count);
+    }
+
+    private readonly SnapshotBuffer<CapturedList> captured = new(static () => new CapturedList());
+
+    // What of the captured lists was uploaded last: which two lists and how far between them, -1 for something else.
+    // And where blended lists are put together
+    private int shownBefore = -1, shownAfter = -1;
+    private float shownAlpha = float.NaN;
+    private SpriteItem[] blended = [];
 
     /// <summary>
     /// Where the pointer comes from. The mouse unless set to something else, which could be a cursor
@@ -324,6 +367,102 @@ public partial class UICompositor : GameComponent, IDisposable
         }
     }
 
+    /// <summary>
+    /// Publishes the list that was painted last, for the frames that are drawn alongside the simulation. Simulation
+    /// thread, at the end of every tick. A UI that is updated and drawn by hand has to call this by hand as well (at the
+    /// end of the tick, from the <c>Capture</c> of whatever owns it), or it is drawn from its newest list as it always was.
+    /// </summary>
+    public override void Capture()
+    {
+        if (captured.BeginPublish() is not { } into)
+            return;
+
+        lock (frameLock)
+        {
+            // Every slot is written to every tick, but a UI that stands still has nothing new to copy
+            if (into.Painted == paintedFrame && into.Skin == front.Skin)
+                return;
+
+            ReadOnlySpan<SpriteItem> items = front.Items;
+            if (into.Items.Length < items.Length)
+                into.Items = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)items.Length)];
+
+            items.CopyTo(into.Items);
+            into.Count = items.Length;
+
+            into.Runs.Clear();
+            foreach (var run in front.Runs)
+                into.Runs.Add(run);
+
+            into.Painted = paintedFrame;
+            into.Skin = front.Skin;
+            into.Moving = front.Moving;
+            into.Incomplete = front.Incomplete;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to upload what a frame that is drawn alongside the simulation shows: the last two captured lists,
+    /// blended to the moment between them. Only when that is something else than what was uploaded last.
+    /// </summary>
+    /// <returns>False if nothing was captured yet, the UI is drawn from its newest list then.</returns>
+    private bool UploadCaptured(in RenderFrame frame, UISkin skin)
+    {
+        if (!captured.TryGet(frame, out CapturedList before, out CapturedList after, out bool continuous))
+            return false;
+
+        // Not to be shown until it is the UI as it is meant to look
+        if (after.Painted == 0 || after.Incomplete || after.Skin != skin)
+        {
+            GameEngine.Instance.SceneManager.ReportUnfinished();
+            return true;
+        }
+
+        bool sameList = before.Painted == after.Painted;
+        bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete && Blendable(before, after);
+
+        // A list that changed in steps is shown as it was until the moment is all the way at the newer one
+        CapturedList shown = sameList || canBlend || frame.Alpha >= 1.0f || before.Skin != skin || before.Incomplete ? after : before;
+        float alpha = canBlend ? frame.Alpha : 1.0f;
+
+        int from = canBlend ? before.Painted : shown.Painted;
+        if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha)
+            return true;
+
+        if (canBlend && alpha < 1.0f)
+        {
+            if (blended.Length < after.Count)
+                blended = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)after.Count)];
+
+            ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
+            for (int i = 0; i < b.Length; i++)
+            {
+                // The same quad if it shows the same thing the same way: then only where it is, how big and what colour moved
+                blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax
+                    ? SpriteItem.Blend(a[i], b[i], alpha)
+                    : a[i];
+            }
+
+            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, before.Moving || after.Moving);
+        }
+        else
+        {
+            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, shown.Moving);
+        }
+
+        (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
+        pictureCurrent = false;
+        return true;
+    }
+
+    /// <summary>
+    /// Helper method to say whether two lists are the same quads (the same many, in the same runs) so that they can be
+    /// blended one quad with the other.
+    /// </summary>
+    private static bool Blendable(CapturedList before, CapturedList after) =>
+        before.Count == after.Count &&
+        System.Runtime.InteropServices.CollectionsMarshal.AsSpan(before.Runs).SequenceEqual(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs));
+
     /* For whoever is working on a layout rather than using it, an editor say */
 
     /// <summary>
@@ -348,13 +487,26 @@ public partial class UICompositor : GameComponent, IDisposable
         if (Skin is not { } skin)
             return;
 
+        RenderFrame frame = RenderFrame.Active;
+        if (frame.IsDecoupled)
+        {
+            // Art that was asked for while painting is stitched into the atlas now, whichever list is shown
+            skin.Update();
+
+            if (UploadCaptured(frame, skin))
+            {
+                DrawUploaded(dt);
+                return;
+            }
+        }
+
         lock (frameLock)
         {
             // Art that was asked for while painting is stitched into the atlas now. A frame that was painted
             // while any was missing is skipped, what was shown before it stays up until the next one has it.
             skin.Update();
 
-            if (uploadedFrame != paintedFrame)
+            if (uploadedFrame != paintedFrame || shownAfter >= 0)
             {
                 // A frame painted with a skin that has been swapped out since is skipped too.
                 if (front.Skin == skin && !front.Incomplete)
@@ -364,6 +516,10 @@ public partial class UICompositor : GameComponent, IDisposable
                 }
 
                 uploadedFrame = paintedFrame;
+
+                // What was uploaded is the newest list, not one that was captured
+                shownBefore = shownAfter = -1;
+                shownAlpha = float.NaN;
             }
 
             // Nothing painted yet, or what was painted last is still waiting for its art. What is about to be
@@ -372,6 +528,15 @@ public partial class UICompositor : GameComponent, IDisposable
                 GameEngine.Instance.SceneManager.ReportUnfinished();
         }
 
+        DrawUploaded(dt);
+    }
+
+    /// <summary>
+    /// Helper method to draw what was uploaded last, or lay the picture of it over the frame once more if it is still
+    /// what the UI looks like.
+    /// </summary>
+    private void DrawUploaded(float dt)
+    {
         // Onto its own layer and through its effects if it has any that are on, straight over the scene if not.
         // A UI that is standing still has nothing for a blur to do, and goes straight there as well
         // The very first frame goes through the layer whether anything moves or not. Making the layer and what its
@@ -383,7 +548,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
-        if (Retained && pictureCurrent && layer.Replay(dt))
+        if (Retained && pictureCurrent && layer.Replay(dt, renderer.Moving))
             return;
 
         bool layered = layer.Begin(renderer.Moving || !layerWarmed, Retained);
