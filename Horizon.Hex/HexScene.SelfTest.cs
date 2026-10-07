@@ -610,6 +610,21 @@ internal sealed partial class HexScene
         test.Check("tabs: what's added goes onto the page that's open", () => document.Selected is Label added && added.Parent == tabbed!.Children[1]);
         test.Check("tabs: and the lot writes back the same", () => CheckRoundTrip(document));
 
+        /* Closing with changes */
+
+        int open = 0;
+        test.Run(() => open = documents.Count);
+        Pick("File", () => "Close");
+        test.Wait();
+        test.Check("close: a layout with changes asks first", () => chrome.Dialog is { IsOpen: true } && documents.Count == open);
+
+        // Where the answer is, remembered while the question is still up (the click takes it down)
+        Vector2 dontSave = Vector2.Zero;
+        test.Run(() => dontSave = chrome.Dialog is { } asked ? chrome.ToWorld(asked.Buttons[1].Bounds.Center) : Vector2.Zero);
+        test.Click(() => dontSave);
+        test.Wait();
+        test.Check("close: and goes without saving when told to", () => chrome.Dialog is null && documents.Count == Math.Max(1, open - 1));
+
         test.Hover(Part("canvas", 0.04f, 0.06f));
     }
 }
