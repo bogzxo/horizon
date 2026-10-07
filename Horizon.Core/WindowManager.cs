@@ -1,6 +1,8 @@
 ﻿using Bogz.Logging;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 
 using Horizon.Core.Components;
 using Horizon.Core.Primitives;
@@ -30,9 +32,12 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// <summary>
 /// Engine component that manages all associated window activities and threads.
 /// <para>
-/// There are two of them. The thread the window was made on draws (it is the only one that may talk to the GPU) and
-/// handles what the system sends the window. The game is simulated on a thread of its own (see
-/// <see cref="SimulationLoop"/>): its logic and its physics, one tick after another, each at a rate of its own.
+/// There are three of them. The thread the window was made on (the one <see cref="Run"/> is called on) hears what the
+/// system has to say about the window and its input, about a thousand times a second whatever the frames are doing,
+/// and is the only one that may change the window. Frames are drawn on a thread of their own, the only one that may
+/// talk to the GPU. The game is simulated on a third (see <see cref="SimulationLoop"/>): its logic and its physics,
+/// one tick after another, each at a rate of its own. So a frame that takes its time doesn't make the input late,
+/// and a window that is being dragged about doesn't stop the drawing.
 /// </para>
 /// <para>
 /// Neither waits for the other. At the end of every tick the simulation publishes a snapshot of everything that is
@@ -67,6 +72,22 @@ public class WindowManager : GameComponent, IDisposable
 
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
+
+    // The thread frames are drawn on, told to stop once the window closes, and what it died of if it did
+    private Thread? renderThread;
+    private volatile bool renderStopping;
+    private ExceptionDispatchInfo? renderFailure;
+
+    // What the thread that draws needs done to the window, which only the thread of the window may do. It is woken
+    // up for it rather than left to get round to it
+    private readonly ConcurrentQueue<Action> windowWork = new();
+    private readonly AutoResetEvent windowWake = new(false);
+
+    // How long (in milliseconds) the thread of the window waits between two looks at what the system has to say
+    private const int EVENT_POLL = 1;
+
+    // Whether the size of what is drawn into changed since the last frame, which is told about at the start of the next
+    private volatile bool resized;
 
     // How long (in seconds) the exclusive work of the last frame took, which the next frame doesn't count as time that went by
     private float stalled;
@@ -172,19 +193,21 @@ public class WindowManager : GameComponent, IDisposable
     private volatile bool titleChanged;
 
     /// <summary>
-    /// Raised on the thread of the window when the size of what is drawn into changes, with the new size in pixels.
+    /// Raised on the thread that draws, at the start of the first frame after the size of what is drawn into changed,
+    /// with the new size in pixels.
     /// </summary>
     public event Action<Vector2>? Resized;
 
     /// <summary>
     /// Raised on the thread of the window every time it has heard what the system had to say (keys, the mouse,
-    /// gamepads coming and going): the moment for whoever samples input to look at the devices.
+    /// gamepads coming and going), about a thousand times a second: the moment for whoever samples input to look at
+    /// the devices, and for whatever else may only be done on this thread (the clipboard).
     /// </summary>
     public event Action? EventsProcessed;
 
     /// <summary>
-    /// Raised on the thread of the window, at the start of a frame, with the simulation standing still: the place for
-    /// whatever has to be done on this thread without anybody touching the game (swapping scenes). Whoever has
+    /// Raised on the thread that draws, at the start of a frame, with the simulation standing still: the place for
+    /// whatever has to be done on that thread without anybody touching the game (swapping scenes). Whoever has
     /// something of the kind says so with <see cref="RequestExclusive"/> and checks whether it is still there to be done.
     /// </summary>
     public event Action<float>? Exclusive;
@@ -268,10 +291,9 @@ public class WindowManager : GameComponent, IDisposable
 
     private void SubscribeWindowEvents()
     {
-        this._window.Render += dt => DrawFrame((float)dt);
-
         this._window.Resize += WindowResize;
 
+        // The window's half of getting going, on its thread. The rest happens on the thread that draws, see SetUpDrawing
         this._window.Load += () =>
         {
             // A maximised window is where it belongs already, centering it would take it back out of that
@@ -280,25 +302,37 @@ public class WindowManager : GameComponent, IDisposable
 
             _window.SetDefaultIcon();
 
-            EntityLifecycle.ClaimRenderThread();
-            SnapshotClock.Active = snapshots;
-
-            GL = _window.CreateOpenGL();
-            GLObject.SetGL(GL);
-
             _input = _window.CreateInput();
-
-            // TODO: @bogz investigate why errors crash the integration
-            GL.GetError();
 
             UpdateViewport();
             UpdateScreenSize();
-            Parent.Initialize();
-
-            // Everything that was added to the engine before the window opened is set up now, before the first frame,
-            // so whatever listens for that frame's exclusive work (the scene manager) is listening by then
-            Parent.InitializeAll();
         };
+    }
+
+    /// <summary>
+    /// Helper method to get everything that draws going, on the thread that draws, before its first frame.
+    /// </summary>
+    private void SetUpDrawing()
+    {
+        _window.GLContext!.MakeCurrent();
+
+        // Whatever the window was made with, it is this thread that swaps now
+        _window.GLContext.SwapInterval(Display.VSync ? 1 : 0);
+
+        EntityLifecycle.ClaimRenderThread();
+        SnapshotClock.Active = snapshots;
+
+        GL = _window.CreateOpenGL();
+        GLObject.SetGL(GL);
+
+        // TODO: @bogz investigate why errors crash the integration
+        GL.GetError();
+
+        Parent.Initialize();
+
+        // Everything that was added to the engine before the window opened is set up now, before the first frame,
+        // so whatever listens for that frame's exclusive work (the scene manager) is listening by then
+        Parent.InitializeAll();
     }
 
     /// <summary>
@@ -311,6 +345,12 @@ public class WindowManager : GameComponent, IDisposable
         // the scene it was covering up is there
         dt = Math.Max(0.0f, dt - stalled);
         stalled = 0.0f;
+
+        if (resized)
+        {
+            resized = false;
+            Resized?.Invoke(ViewportSize);
+        }
 
         // Whatever the simulation stopped for at the end of its last tick, done before anything is drawn
         if (simulationParked.Wait(0))
@@ -397,7 +437,7 @@ public class WindowManager : GameComponent, IDisposable
         if (size.X <= 0 || size.Y <= 0) return;
 
         UpdateViewport();
-        Resized?.Invoke(ViewportSize);
+        resized = true;
     }
 
     private void UpdateScreenSize()
@@ -427,7 +467,9 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to do to the window what <see cref="Apply"/> was asked for. On the thread of the window, at the start of a frame.
+    /// Helper method to do what <see cref="Apply"/> was asked for. On the thread that draws, at the start of a frame:
+    /// how often frames are drawn and swapped is up to that thread, the window itself is changed on its own thread
+    /// while this one waits, so the frame finds it the way it was asked to be.
     /// </summary>
     private void ApplyPendingDisplay()
     {
@@ -442,8 +484,18 @@ public class WindowManager : GameComponent, IDisposable
         }
 
         framePeriod = PeriodOf(settings.FramesPerSecond);
-        _window.VSync = settings.VSync;
+        _window.GLContext?.SwapInterval(settings.VSync ? 1 : 0);
 
+        OnWindowThread(() => ApplyWindow(settings));
+
+        Log.Info($"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
+    }
+
+    /// <summary>
+    /// Helper method to make the window what it was asked to be, fullscreen or the size it was given. Thread of the window.
+    /// </summary>
+    private void ApplyWindow(DisplaySettings settings)
+    {
         bool fullscreen = _window.WindowState == WindowState.Fullscreen;
         if (settings.Fullscreen)
         {
@@ -466,8 +518,52 @@ public class WindowManager : GameComponent, IDisposable
         // The window says so itself when its size changes, but not always in time for the frame that is about to be drawn
         UpdateViewport();
         UpdateScreenSize();
+    }
 
-        Log.Info($"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
+    /// <summary>
+    /// Helper method to have something done to the window on its thread, the only one that may, and wait for it to be
+    /// done. From the thread that draws. Done right there on the thread of the window itself.
+    /// </summary>
+    private void OnWindowThread(Action work)
+    {
+        if (renderThread is null || Thread.CurrentThread != renderThread)
+        {
+            work();
+            return;
+        }
+
+        using var done = new ManualResetEventSlim(false);
+        Exception? failed = null;
+
+        windowWork.Enqueue(() =>
+        {
+            try
+            {
+                work();
+            }
+            catch (Exception e)
+            {
+                failed = e;
+            }
+            finally
+            {
+                done.Set();
+            }
+        });
+        windowWake.Set();
+
+        done.Wait();
+        if (failed is not null)
+            ExceptionDispatchInfo.Throw(failed);
+    }
+
+    /// <summary>
+    /// Helper method to do whatever the thread that draws asked to have done to the window. Thread of the window.
+    /// </summary>
+    private void DoWindowWork()
+    {
+        while (windowWork.TryDequeue(out Action? work))
+            work();
     }
 
     private static double PeriodOf(double framesPerSecond) => framesPerSecond > 0.0 ? 1.0 / framesPerSecond : 0.0;
@@ -503,17 +599,126 @@ public class WindowManager : GameComponent, IDisposable
 
         IsRunning = true;
 
-        // Create the window.
+        // Create the window, which makes its GL context current here. It is the thread that draws that has it from now on
         _window.Initialize();
+        _window.GLContext?.Clear();
 
-        // Run the loop.
-        _window.Run(OnFrame);
+        renderThread = new Thread(DrawFrames)
+        {
+            Name = "Render",
+            Priority = ThreadPriority.AboveNormal,
+            IsBackground = true
+        };
+        renderThread.Start();
+
+        LoopTiming.SharpenTimer(true);
+        try
+        {
+            while (!_window.IsClosing)
+            {
+                HandleEvents();
+
+                // Woken up early for whatever the thread that draws needs done to the window
+                windowWake.WaitOne(EVENT_POLL);
+            }
+        }
+        finally
+        {
+            LoopTiming.SharpenTimer(false);
+        }
+
+        // The last frame is finished, and whatever it may still need done to the window with it
+        renderStopping = true;
+        while (!renderThread.Join(EVENT_POLL))
+            DoWindowWork();
 
         // Nothing is simulated once there is no window left to show it in
         simulation?.Stop();
 
+        // Whatever is let go of from here on is let go of here, GPU and all
+        _window.GLContext?.MakeCurrent();
+        EntityLifecycle.ClaimRenderThread();
+
         // Dispose and unload
         _window.DoEvents();
+
+        renderFailure?.Throw();
+    }
+
+    /// <summary>
+    /// Helper method to hear what the system has to say about the window, and do whatever else may only be done on its
+    /// thread. Thread of the window, about a thousand times a second.
+    /// </summary>
+    private void HandleEvents()
+    {
+        _window.DoEvents();
+        EventsProcessed?.Invoke();
+
+        DoWindowWork();
+
+        if (closing) _window.Close();
+
+        if (titleChanged)
+        {
+            titleChanged = false;
+            _window.Title = title;
+        }
+    }
+
+    /// <summary>
+    /// Helper method to draw frame after frame for as long as the window is open. The thread that draws.
+    /// </summary>
+    private void DrawFrames()
+    {
+        try
+        {
+            SetUpDrawing();
+
+            long previous = 0;
+            while (!renderStopping)
+            {
+                WaitForFrame();
+
+                long started = Stopwatch.GetTimestamp();
+                long allocated = GC.GetAllocatedBytesForCurrentThread();
+
+                float dt = previous == 0 ? 0.0f : (float)((started - previous) / (double)Stopwatch.Frequency);
+                previous = started;
+
+                DrawFrame(dt);
+                _window.GLContext!.SwapBuffers();
+
+                long ended = Stopwatch.GetTimestamp();
+
+                // With the wait for the screen in it, which is part of what a frame takes when frames are kept in step with it
+                if (lastFrame != 0)
+                {
+                    renderStatistics.Record(
+                        (ended - started) / (double)Stopwatch.Frequency,
+                        0.0,
+                        (started - lastFrame) / (double)Stopwatch.Frequency,
+                        1,
+                        GC.GetAllocatedBytesForCurrentThread() - allocated);
+                }
+                lastFrame = started;
+
+                if (logLoopsEvery > 0.0) LogLoops(ended / (double)Stopwatch.Frequency);
+
+                // The simulation only starts once a frame has been drawn. Everything is set up on this thread, and there has to be something to update
+                if (simulation is null) StartSimulation();
+            }
+        }
+        catch (Exception e)
+        {
+            // Thrown again on the thread that runs the window, which is where whoever ran it is waiting
+            renderFailure = ExceptionDispatchInfo.Capture(e);
+            closing = true;
+            windowWake.Set();
+        }
+        finally
+        {
+            _window.GLContext?.Clear();
+        }
     }
 
     /// <summary>
@@ -603,54 +808,6 @@ public class WindowManager : GameComponent, IDisposable
         }
     }
 
-    private bool needsDispatching = true;
-
-    private void OnFrame()
-    {
-        _window.DoEvents();
-        EventsProcessed?.Invoke();
-
-        if (closing) _window.Close();
-
-        if (titleChanged)
-        {
-            titleChanged = false;
-            _window.Title = title;
-        }
-
-        if (!_window.IsClosing)
-        {
-            WaitForFrame();
-
-            long started = Stopwatch.GetTimestamp();
-            long allocated = GC.GetAllocatedBytesForCurrentThread();
-            _window.DoRender();
-            long ended = Stopwatch.GetTimestamp();
-
-            // With the wait for the screen in it, which is part of what a frame takes when frames are kept in step with it
-            if (lastFrame != 0)
-            {
-                renderStatistics.Record(
-                    (ended - started) / (double)Stopwatch.Frequency,
-                    0.0,
-                    (started - lastFrame) / (double)Stopwatch.Frequency,
-                    1,
-                    GC.GetAllocatedBytesForCurrentThread() - allocated);
-            }
-            lastFrame = started;
-
-            if (logLoopsEvery > 0.0) LogLoops(ended / (double)Stopwatch.Frequency);
-        }
-
-        // The simulation only starts once a frame has been drawn. Everything is set up on this thread, and there has to be something to update
-        if (needsDispatching)
-        {
-            needsDispatching = false;
-
-            StartSimulation();
-        }
-    }
-
     public void Dispose()
     {
         GC.SuppressFinalize(this);
@@ -662,6 +819,7 @@ public class WindowManager : GameComponent, IDisposable
 
         _window.Reset();
         _window.Dispose();
+        windowWake.Dispose();
 
         Log.Info($"[{Name}] Disposed!");
     }
