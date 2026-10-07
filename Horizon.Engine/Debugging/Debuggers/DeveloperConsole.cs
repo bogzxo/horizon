@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Collections.Concurrent;
+using System.Text;
 using Bogz.Logging;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -43,6 +44,10 @@ public class DeveloperConsole : DebuggerComponent
     internal delegate void OnCommandProcessed(IWebSocketPacket result);
 
     internal event OnCommandProcessed? CommandProcessed;
+
+    // Commands that came in from somewhere else (the dashboard, on whatever thread its socket feels like), run on the
+    // simulation thread at the next update. Run straight away they'd poke at the game while it's halfway through a tick
+    private readonly ConcurrentQueue<string> _pending = new();
 
     public override void Initialize()
     {
@@ -118,16 +123,18 @@ public class DeveloperConsole : DebuggerComponent
 
     public override void UpdateState(float dt)
     {
+        while (_pending.TryDequeue(out string? input))
+            ExecuteCommand(input);
     }
 
     public override void Dispose()
     {
     }
 
-    internal void EvaluateCallback(string obj)
-    {
-        ExecuteCommand(obj);
-    }
+    /// <summary>
+    /// Has a command run at the next update, on the simulation thread. From any thread.
+    /// </summary>
+    internal void EvaluateCallback(string obj) => _pending.Enqueue(obj);
 
     public void Log(string text) => SendCommand(text);
 }
