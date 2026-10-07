@@ -6,7 +6,6 @@ using Bogz.Logging.Loggers;
 
 using Horizon.Core.Components;
 using Horizon.Core.Tweening;
-using Horizon.Core.Components.Physics2D;
 using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -58,8 +57,6 @@ public class Sprite : GameObject
 
     public bool UseStencilBuffer { get; set; } = false;
 
-    private TweenContext? _tweens;
-
     // How fast the sprite is going, for a renderer that blurs motion
     private readonly Horizon.Core.MotionEstimator _motion = new();
 
@@ -68,11 +65,6 @@ public class Sprite : GameObject
     /// so only a sprite that is updated (one that was added to something as an entity) ever has any.
     /// </summary>
     public Vector2 Velocity => _motion.Velocity;
-
-    /// <summary>
-    /// The tweens that are animating this sprite, moved along once per update. See <see cref="SpriteTweens"/> for the ones that come ready made.
-    /// </summary>
-    public TweenContext Tweens => _tweens ?? Interlocked.CompareExchange(ref _tweens, new TweenContext(), null) ?? _tweens;
 
     /// <summary>
     /// Whether the sprite has been told what to show, by either <see cref="ConfigureSpriteSheet"/> or <see cref="ConfigureAtlas"/>.
@@ -212,9 +204,9 @@ public class Sprite : GameObject
 
     public override void UpdateState(float dt)
     {
+        // The tweens of the sprite move along in here, see SpriteTweens for the ones that come ready made
         base.UpdateState(dt);
 
-        _tweens?.Tick(dt);
         _motion.Update(Transform.Position, dt);
 
         // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager

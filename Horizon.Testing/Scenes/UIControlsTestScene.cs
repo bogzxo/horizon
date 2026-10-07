@@ -160,7 +160,7 @@ public class UIControlsTestScene : Scene, ITestControls
 
         _sliderValue.Text = $"{_slider.Value:0} of {_slider.Min:0} to {_slider.Max:0}, in steps of {_slider.Step:0}";
 
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Space))
+        if (Engine.Input.Keyboard.WasPressed(Key.Space))
             _card.PlayIntros();
     }
 

@@ -198,7 +198,7 @@ public class UIPackTestScene : Scene, ITestControls
 
         MoveDrifters(dt);
 
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.T))
+        if (Engine.Input.Keyboard.WasPressed(Key.T))
         {
             theme = (theme + 1) % Themes.Length;
             compositor.SetTheme(Themes[theme]);

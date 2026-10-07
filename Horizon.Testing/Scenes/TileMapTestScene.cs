@@ -100,19 +100,19 @@ public class TileMapTestScene : Scene, ITestControls
     {
         base.UpdateState(dt);
 
-        var keyboard = Engine.InputManager.KeyboardManager;
+        var keyboard = Engine.Input.Keyboard;
 
         Vector2 pan = new(
-            (keyboard.IsKeyDown(Key.Right) ? 1 : 0) - (keyboard.IsKeyDown(Key.Left) ? 1 : 0),
-            (keyboard.IsKeyDown(Key.Up) ? 1 : 0) - (keyboard.IsKeyDown(Key.Down) ? 1 : 0));
+            (keyboard.IsDown(Key.Right) ? 1 : 0) - (keyboard.IsDown(Key.Left) ? 1 : 0),
+            (keyboard.IsDown(Key.Up) ? 1 : 0) - (keyboard.IsDown(Key.Down) ? 1 : 0));
 
         _eye += pan * PAN_SPEED * dt;
         _camera.Position = new Vector3(MathF.Round(_eye.X), MathF.Round(_eye.Y), 0.0f);
 
-        if (keyboard.IsKeyPressed(Key.F) && _map.FindLayer("front") is { } front)
+        if (keyboard.WasPressed(Key.F) && _map.FindLayer("front") is { } front)
             front.Visible = !front.Visible;
 
-        if (keyboard.IsKeyPressed(Key.T) && _map.FindLayer("decor") is { } decor)
+        if (keyboard.WasPressed(Key.T) && _map.FindLayer("decor") is { } decor)
         {
             var (x, y) = _map.WorldToTile(_eye);
             decor.SetTile(x, y, 2);

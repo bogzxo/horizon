@@ -158,26 +158,26 @@ public class FluidTestScene : Scene, ITestControls
     {
         base.UpdateState(dt);
 
-        var keyboard = Engine.InputManager.KeyboardManager;
-        var mouseData = Engine.InputManager.MouseManager.GetData();
-        var mousePos = ActiveCamera.ScreenToWorld(mouseData.Position);
+        var keyboard = Engine.Input.Keyboard;
+        var mouse = Engine.Input.Mouse;
+        var mousePos = ActiveCamera.ScreenToWorld(mouse.Position);
 
-        if (keyboard.IsKeyPressed(Key.P)) spoutOpen = !spoutOpen;
-        if (keyboard.IsKeyPressed(Key.R)) raining = !raining;
-        if (keyboard.IsKeyPressed(Key.D)) world.RenderDebug = !world.RenderDebug;
+        if (keyboard.WasPressed(Key.P)) spoutOpen = !spoutOpen;
+        if (keyboard.WasPressed(Key.R)) raining = !raining;
+        if (keyboard.WasPressed(Key.D)) world.RenderDebug = !world.RenderDebug;
 
-        if (keyboard.IsKeyPressed(Key.C))
+        if (keyboard.WasPressed(Key.C))
         {
             waterSimulator.Particles.Clear();
             sandSimulator.Particles.Clear();
         }
 
-        if (keyboard.IsKeyPressed(Key.Space))
+        if (keyboard.WasPressed(Key.Space))
         {
             world.ApplyRadialImpulse(mousePos, 160, 500, PhysicsRadialTargets.Particles);
         }
 
-        if (keyboard.IsKeyPressed(Key.B))
+        if (keyboard.WasPressed(Key.B))
         {
             crate.Position = mousePos;
             crate.SetVelocity(Vector2.Zero);
@@ -188,9 +188,9 @@ public class FluidTestScene : Scene, ITestControls
             Pour(water, spoutPosition, ref spoutDue, HoseRate * dt);
         }
 
-        if ((mouseData.Actions & VirtualAction.PrimaryAction) != 0)
+        if (mouse.IsDown(MouseButton.Left))
             Pour(water, mousePos, ref pourDue, PourRate * dt);
-        else if ((mouseData.Actions & VirtualAction.SecondaryAction) != 0)
+        else if (mouse.IsDown(MouseButton.Right))
             Pour(sand, mousePos, ref pourDue, PourRate * dt);
 
         if (raining)

@@ -191,7 +191,7 @@ public class UITestScene : Scene, ITestControls
             ? "The pointer is over the UI"
             : "The pointer is over the game";
 
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.Space))
+        if (Engine.Input.Keyboard.WasPressed(Key.Space))
         {
             _scripted.Scale = _scripted.Scale.X >= 1.5f ? Vector2.One : _scripted.Scale + new Vector2(0.25f);
         }

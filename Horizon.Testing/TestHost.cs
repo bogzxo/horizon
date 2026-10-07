@@ -191,13 +191,13 @@ internal sealed class TestHost : GameObject
         if (Running is null)
             return;
 
-        var keyboard = Engine.InputManager.KeyboardManager;
+        var keyboard = Engine.Input.Keyboard;
 
-        if (keyboard.IsKeyPressed(Key.Escape))
+        if (keyboard.WasPressed(Key.Escape))
             ShowSelector();
 
         // Stays as it was left from one test to the next.
-        if (keyboard.IsKeyPressed(Key.F1))
+        if (keyboard.WasPressed(Key.F1))
             ShowKeys(!keys.Visible);
     }
 }

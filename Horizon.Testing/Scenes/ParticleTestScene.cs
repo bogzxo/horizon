@@ -78,12 +78,12 @@ public class ParticleTestScene : Scene, ITestControls
     {
         base.UpdateState(dt);
 
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.G))
+        if (Engine.Input.Keyboard.WasPressed(Key.G))
         {
             cpuParticles.Gravity = gpuParticles.Gravity =
                 cpuParticles.Gravity == Vector2.Zero ? Gravity : Vector2.Zero;
         }
-        if (Engine.InputManager.KeyboardManager.IsKeyPressed(Key.F))
+        if (Engine.Input.Keyboard.WasPressed(Key.F))
         {
             autoBomb = !autoBomb;
         }
@@ -99,16 +99,16 @@ public class ParticleTestScene : Scene, ITestControls
             gpuParticles.AddBurst(new Vector2(quarter, 100), 4000, 350);
         }
 
-        var mouseData = Engine.InputManager.MouseManager.GetData();
-        var mousePos = ActiveCamera.ScreenToWorld(mouseData.Position);
+        var mouse = Engine.Input.Mouse;
+        var mousePos = ActiveCamera.ScreenToWorld(mouse.Position);
         var particles = mousePos.X < 0 ? cpuParticles : gpuParticles;
 
-        bool mouseClicked = (mouseData.Actions & VirtualAction.PrimaryAction) != 0;
+        bool mouseClicked = mouse.IsDown(MouseButton.Left);
         if (mouseClicked && !prevMouseClicked)
             particles.AddBurst(mousePos, 8000, 500);
         prevMouseClicked = mouseClicked;
 
-        if ((mouseData.Actions & VirtualAction.SecondaryAction) != 0)
+        if (mouse.IsDown(MouseButton.Right))
             particles.AddCone(mousePos, Vector2.UnitY, MathF.PI / 6.0f, 64, 700);
     }
 }

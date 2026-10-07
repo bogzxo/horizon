@@ -127,15 +127,15 @@ public class PostProcessTestScene : Scene, ITestControls
 
     public override void UpdateState(float dt)
     {
-        var keyboard = Engine.InputManager.KeyboardManager;
+        var keyboard = Engine.Input.Keyboard;
 
-        if (keyboard.IsKeyPressed(Key.C)) _tube.Enabled = !_tube.Enabled;
-        if (keyboard.IsKeyPressed(Key.M)) _blur.Enabled = !_blur.Enabled;
-        if (keyboard.IsKeyPressed(Key.U)) _hudBlur.Enabled = !_hudBlur.Enabled;
-        if (keyboard.IsKeyPressed(Key.P)) _panning = !_panning;
-        if (keyboard.IsKeyPressed(Key.W)) _tube.Warp = _tube.Warp == Vector2.Zero ? new Vector2(1.0f / 32.0f, 1.0f / 24.0f) : Vector2.Zero;
-        if (keyboard.IsKeyPressed(Key.Up)) _blur.Shutter = MathF.Min(_blur.Shutter * 1.5f, 0.2f);
-        if (keyboard.IsKeyPressed(Key.Down)) _blur.Shutter = MathF.Max(_blur.Shutter / 1.5f, 1.0f / 480.0f);
+        if (keyboard.WasPressed(Key.C)) _tube.Enabled = !_tube.Enabled;
+        if (keyboard.WasPressed(Key.M)) _blur.Enabled = !_blur.Enabled;
+        if (keyboard.WasPressed(Key.U)) _hudBlur.Enabled = !_hudBlur.Enabled;
+        if (keyboard.WasPressed(Key.P)) _panning = !_panning;
+        if (keyboard.WasPressed(Key.W)) _tube.Warp = _tube.Warp == Vector2.Zero ? new Vector2(1.0f / 32.0f, 1.0f / 24.0f) : Vector2.Zero;
+        if (keyboard.WasPressed(Key.Up)) _blur.Shutter = MathF.Min(_blur.Shutter * 1.5f, 0.2f);
+        if (keyboard.WasPressed(Key.Down)) _blur.Shutter = MathF.Max(_blur.Shutter / 1.5f, 1.0f / 480.0f);
 
         if (_panning)
             _time += dt;

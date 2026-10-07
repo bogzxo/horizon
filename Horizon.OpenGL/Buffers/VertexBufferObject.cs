@@ -21,6 +21,15 @@ public class VertexBufferObject
 
     public VertexArrayObject VertexArrayObject { get; init; }
 
+    /// <summary>
+    /// Makes a vertex buffer. Without a description that is one array buffer and one element buffer, which is what most things want.
+    /// Throws if the GPU won't have it.
+    /// </summary>
+    public static VertexBufferObject Create(VertexArrayObjectDescription? description = null) =>
+        ObjectManager.Instance.VertexArrays.TryCreate(description ?? VertexArrayObjectDescription.VertexBuffer, out var result)
+            ? new VertexBufferObject(result.Asset)
+            : throw new InvalidOperationException(result.Message);
+
     public VertexBufferObject(in VertexArrayObject vao)
     {
         this.VertexArrayObject = vao;

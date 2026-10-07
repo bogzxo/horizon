@@ -78,7 +78,7 @@ public sealed class PostTarget : IDisposable
             throw new Exception($"A post processing target of {width} by {height} couldn't be made: {result.Message}");
 
         frameBuffer = result.Asset;
-        Texture = frameBuffer.Attachments[FramebufferAttachment.ColorAttachment0].Texture;
+        Texture = frameBuffer.Color;
         Size = new Vector2(width, height);
     }
 
@@ -110,12 +110,5 @@ public sealed class PostTarget : IDisposable
             BlitFramebufferFilter.Linear);
     }
 
-    public void Dispose()
-    {
-        var manager = GameEngine.Instance.ObjectManager;
-
-        // The frame buffer doesn't own what is attached to it
-        manager.Textures.Remove(Texture);
-        manager.FrameBuffers.Remove(frameBuffer);
-    }
+    public void Dispose() => frameBuffer.Dispose();
 }

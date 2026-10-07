@@ -2,6 +2,7 @@ using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering.PostProcessing;
+using Horizon.OpenGL;
 
 using Silk.NET.OpenGL;
 
@@ -35,22 +36,19 @@ public abstract class ScreenTransition : SceneTransition
     /// </summary>
     protected abstract void Draw(float cover, bool arriving, float dt);
 
+    private static readonly BlendMode ColoursOnly = new(
+        BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
+        BlendingFactor.Zero, BlendingFactor.One);
+
     public sealed override void Render(float cover, bool arriving, float dt)
     {
         // A transition outlives every scene, what it makes on the GPU isn't the scene's to free
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
-        var gl = GameEngine.Instance.GL;
+        var before = RenderState.Save();
 
-        bool blend = gl.IsEnabled(EnableCap.Blend);
-        bool depthTest = gl.IsEnabled(EnableCap.DepthTest);
-        gl.GetInteger(GetPName.BlendSrcRgb, out int sourceRgb);
-        gl.GetInteger(GetPName.BlendDstRgb, out int destinationRgb);
-        gl.GetInteger(GetPName.BlendSrcAlpha, out int sourceAlpha);
-        gl.GetInteger(GetPName.BlendDstAlpha, out int destinationAlpha);
-
-        gl.Disable(EnableCap.Blend);
-        gl.Disable(EnableCap.DepthTest);
+        RenderState.Blend = false;
+        RenderState.DepthTest = false;
 
         if (!initialized)
         {
@@ -63,14 +61,7 @@ public abstract class ScreenTransition : SceneTransition
         // Back to the window, with everything the way it was found
         Renderer2D.BindOutput(null);
 
-        gl.BlendFuncSeparate(
-            (BlendingFactor)sourceRgb, (BlendingFactor)destinationRgb,
-            (BlendingFactor)sourceAlpha, (BlendingFactor)destinationAlpha);
-
-        if (blend)
-            gl.Enable(EnableCap.Blend);
-        if (depthTest)
-            gl.Enable(EnableCap.DepthTest);
+        RenderState.Restore(before);
     }
 
     /// <summary>
@@ -106,16 +97,12 @@ public abstract class ScreenTransition : SceneTransition
     /// </summary>
     protected static void DrawOverScreen()
     {
-        var gl = GameEngine.Instance.GL;
-
         // The alpha of the window is left the way it is, only the colours are covered
-        gl.Enable(EnableCap.Blend);
-        gl.BlendFuncSeparate(
-            BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
-            BlendingFactor.Zero, BlendingFactor.One);
+        RenderState.Blend = true;
+        RenderState.BlendMode = ColoursOnly;
 
         DrawToScreen();
-        gl.Disable(EnableCap.Blend);
+        RenderState.Blend = false;
     }
 
     /// <summary>

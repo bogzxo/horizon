@@ -7,9 +7,9 @@ namespace Horizon.OpenGL;
 
 internal class TechniqueResourceIndexManager : IndexManager
 {
-    public TechniqueResourceIndexManager(in IGLObject obj)
+    public TechniqueResourceIndexManager(IGLObject obj)
         : base(obj) { }
 
-    protected override uint GetIndex(in string name) =>
+    protected override uint GetIndex(string name) =>
         ObjectManager.GL.GetProgramResourceIndex(glObject.Handle, ProgramInterface.ShaderStorageBlock, name);
 }

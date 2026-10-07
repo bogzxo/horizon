@@ -1,29 +1,30 @@
 using System.Collections.Concurrent;
 using Horizon.Core;
-using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Silk.NET.Input;
 
-namespace Horizon.Input2;
+namespace Horizon.Input;
 
 /// <summary>
 /// Keeps track of every gamepad that is plugged in, and of the bindings each one is played with.
+/// The engine has one of these already (<c>Engine.Input.Gamepads</c>), a game hardly ever needs to make its own.
 /// Every gamepad gets a <see cref="Gamepad.Slot"/> that it keeps when it is unplugged and plugged back in, and
 /// bindings of its own that start out as a copy of <see cref="DefaultBindings"/>. Games ask a gamepad for actions
 /// ("jump") rather than buttons, and change what an action is bound to per gamepad:
 /// <code>
-/// manager.DefaultBindings.Bind("jump", GamepadInput.A).Bind("attack", GamepadInput.X, GamepadInput.RightTrigger);
+/// var gamepads = Engine.Input.Gamepads;
+/// gamepads.DefaultBindings.Bind("jump", GamepadInput.A).Bind("attack", GamepadInput.X, GamepadInput.RightTrigger);
 /// ...
-/// if (manager.Gamepads[0].WasPressed("jump")) Jump();
-/// manager.Gamepads[1].Bindings.Rebind("jump", GamepadInput.B);
-/// manager.Save("gamepads.hor");
+/// if (gamepads[0].WasPressed("jump")) Jump();
+/// gamepads[1].Bindings.Rebind("jump", GamepadInput.B);
+/// gamepads.Save("gamepads.hor");
 /// </code>
 /// All of it is saved to and loaded from a HIDL file, see <see cref="ToValue"/> for what one looks like.
 /// The state of the gamepads moves on once per <see cref="UpdateState"/>, and is meant to be read (and the
 /// bindings changed) from the thread that calls it.
 /// </summary>
-public class GamepadInputManager : GameObject
+public class GamepadInputManager : Entity
 {
     /// <summary>The variable a saved file declares.</summary>
     public const string FILE_VARIABLE = "gamepads";
@@ -46,6 +47,21 @@ public class GamepadInputManager : GameObject
     /// ones a loaded file had bindings for. See <see cref="Gamepad.IsConnected"/> for which is which.
     /// </summary>
     public IReadOnlyList<Gamepad> Gamepads => _gamepads;
+
+    /// <summary>
+    /// The gamepad in a slot. See <see cref="TryGet"/> for a slot that may not have one.
+    /// </summary>
+    public Gamepad this[int slot] => _gamepads[slot];
+
+    /// <summary>
+    /// How many slots there are, plugged in or not.
+    /// </summary>
+    public int Count => _gamepads.Count;
+
+    /// <summary>
+    /// So the manager can be walked with a foreach, which gives every gamepad there is a slot for.
+    /// </summary>
+    public List<Gamepad>.Enumerator GetEnumerator() => _gamepads.GetEnumerator();
 
     /// <summary>
     /// The bindings a gamepad starts out with when it takes a new slot. Changing them afterwards changes nothing
@@ -96,19 +112,31 @@ public class GamepadInputManager : GameObject
     {
         base.Initialize();
 
-        var windowManager = Parent?.GetComponent<WindowManager>() ?? GameEngine.Instance?.WindowManager;
-        if (windowManager == null)
-            throw new Exception("GamepadInputManager requires a WindowManager to function.");
+        // The one of the engine is handed its window. One that somebody made themselves finds it above where it was added
+        if (_inputContext is not null) return;
 
-        _inputContext = windowManager.Input;
+        for (Entity? at = Parent; at is not null; at = at.Parent)
+        {
+            if (at.GetComponent<WindowManager>() is not { Input: { } context }) continue;
 
-        if (_inputContext == null)
-            throw new Exception("InputContext is not initialized on WindowManager.");
+            Attach(context);
+            return;
+        }
 
-        // Subscribe to connection events
+        throw new InvalidOperationException("A gamepad manager has to be added somewhere under the engine, it reads the gamepads of its window.");
+    }
+
+    /// <summary>
+    /// Helper method to start listening to the gamepads of a window. Once is enough.
+    /// </summary>
+    internal void Attach(IInputContext context)
+    {
+        if (_inputContext is not null) return;
+
+        _inputContext = context;
         _inputContext.ConnectionChanged += OnConnectionChanged;
 
-        // Add already connected gamepads
+        // The ones that were plugged in before we got here
         foreach (var gamepad in _inputContext.Gamepads)
         {
             if (gamepad.IsConnected)

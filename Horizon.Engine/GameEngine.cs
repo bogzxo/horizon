@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-using System.Numerics;
-using System.Reflection.Metadata;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Bogz.Logging;
@@ -12,20 +10,27 @@ using Horizon.Engine.Debugging.Debuggers;
 using Horizon.Engine.Webhost;
 using Horizon.Engine.WebHost;
 using Horizon.Input;
-using Horizon.OpenGL.Assets;
 using Horizon.OpenGL.Managers;
 
-using Silk.NET.Input.Glfw;
-using Silk.NET.Maths;
 using Silk.NET.OpenGL;
-using Silk.NET.Windowing.Glfw;
-
-using SixLabors.ImageSharp;
 
 namespace Horizon.Engine;
 
+/// <summary>
+/// The engine. It opens the window, keeps the scene that is on screen updated and drawn, and has everything a game reaches for.
+/// A whole game starts like this:
+/// <code>
+/// using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "My game" });
+/// engine.Run&lt;MainMenuScene&gt;();
+/// </code>
+/// Everything in a scene gets at it through <see cref="GameObject.Engine"/>, everything else through <see cref="Instance"/>.
+/// </summary>
 public class GameEngine : Entity
 {
+    // Things the driver likes to go on about that nobody needs to read. How its buffers are doing, mostly
+    private const int NOTE_BUFFER_DETAILS = 131185;
+    private const int NOTE_INVALID_ENUM = 1280;
+
     /// <summary>
     /// A copy of the game engines initial configuration.
     /// </summary>
@@ -33,53 +38,65 @@ public class GameEngine : Entity
 
     public GL GL => WindowManager.GL;
 
-    public static GameEngine Instance { get; private set; }
+    public static GameEngine Instance { get; private set; } = null!;
 
     /// <summary>
-    /// Gets the main active camera associated with the current active Scene.
+    /// The camera of the scene that is on screen, or the one of the engine if the scene hasn't got one.
     /// </summary>
-    public Camera ActiveCamera
-    {
-        get
-        {
-            var activeCamera = SceneManager.CurrentInstance?.ActiveCamera;
-            return activeCamera ?? camera;
-        }
-    }
-
-    public Camera camera;
+    public Camera ActiveCamera => SceneManager.CurrentInstance?.ActiveCamera ?? DefaultCamera;
 
     /// <summary>
-    /// Total time in seconds that the window has been open.
+    /// The camera that is used while no scene says otherwise. It looks at the middle of the world, a unit a pixel.
     /// </summary>
-    public float TotalTime { get; private set; } = 0.0f;
+    public Camera DefaultCamera { get; private set; } = null!;
 
-    public EngineEventHandler EventManager { get; init; }
-    public ObjectManager ObjectManager { get; init; }
-    public WindowManager WindowManager { get; init; }
-    public SceneManager SceneManager { get; init; }
-    public InputManager InputManager { get; init; }
-
-    //public Horizon.Webhost.WebHost WebHost { get; init; }
     /// <summary>
-    /// The console of the engine: a HIDL runtime that whatever talks to the running game from outside (the web
-    /// dashboard) has its commands run by. It has no window of its own.
+    /// How long (in seconds) frames have been drawn for. This is the clock for anything that only animates what is seen.
     /// </summary>
-    public DeveloperConsole Console { get; init; }
+    public float TotalTime { get; private set; }
+
+    /// <summary>
+    /// How long (in seconds) the game has been updated for. It stands still whenever the updates do.
+    /// </summary>
     public float Runtime { get; private set; }
 
-    public void SetScene(in Scene scene)
-     {
-        SceneManager.SetScene(scene);
-    }
+    public EngineEventHandler EventManager { get; }
+    public ObjectManager ObjectManager { get; }
+    public WindowManager WindowManager { get; }
+    public SceneManager SceneManager { get; }
 
     /// <summary>
-    /// Changes the scene through a transition of its own (or with a hard cut, for null), whatever the scene manager is set to.
+    /// The keyboard, the mouse and the gamepads.
     /// </summary>
-    public void SetScene(in Scene scene, SceneTransition? transition)
-    {
-        SceneManager.SetScene(scene, transition);
-    }
+    public InputManager Input { get; }
+
+    /// <summary>
+    /// The console of the engine. It is a HIDL runtime that whatever talks to the running game from outside (the web
+    /// dashboard) has its commands run by. It has no window of its own.
+    /// </summary>
+    public DeveloperConsole Console { get; }
+
+    /// <summary>
+    /// The scene that is on screen, null before the first one has been set.
+    /// </summary>
+    public Scene? Scene => SceneManager.CurrentInstance;
+
+    /// <summary>
+    /// How big what is drawn into is, in pixels.
+    /// </summary>
+    public Vector2 ViewportSize => WindowManager.ViewportSize;
+
+    // Kept here for as long as the driver may call it, the garbage collector doesn't know that it does
+    private DebugProc? debugProc;
+
+    public GameEngine()
+        : this(GameEngineConfiguration.Default) { }
+
+    /// <summary>
+    /// An engine with a window made the way a configuration says and everything else left as it comes.
+    /// </summary>
+    public GameEngine(in WindowManagerConfiguration window)
+        : this(new GameEngineConfiguration { WindowConfiguration = window }) { }
 
     public GameEngine(in GameEngineConfiguration engineConfiguration)
     {
@@ -91,7 +108,7 @@ public class GameEngine : Entity
         Enabled = true;
 
         // What an entity makes on the GPU while it is set up belongs to the scene it is in, and to nobody if
-        // it isn't in one: see Scene.Assets
+        // it isn't in one. See Scene.Assets
         EntityLifecycle.Scope = static entity =>
         {
             for (Entity? at = entity; at is not null; at = at.Parent)
@@ -103,70 +120,74 @@ public class GameEngine : Entity
             return Horizon.Content.AssetScope.EnterGlobal();
         };
 
-        // Engine components
+        // In the order they get their turns. The input comes before anything that reads it
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
-        InputManager = AddComponent<InputManager>();
-
-        // Engine children
+        Input = AddComponent<InputManager>();
         Console = AddComponent<DeveloperConsole>();
         SceneManager = AddEntity<SceneManager>();
-        //WebHost = AddEntity<Horizon.Webhost.WebHost>(); // initialize default content provider
-        //WebHost.ContentProviders.Add("dash", new DashboardContentProvider());
 
-        // TryCreate window manager, the window manager will bootstrap and call Initialize(), Render(), UpdateState() and UpdatePhysics()
+        // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+    }
+
+    /// <summary>
+    /// Has a scene take over from the one that is on screen, the way the scene manager is set to do it. From any thread.
+    /// </summary>
+    public void SetScene(Scene scene)
+    {
+        SceneManager.SetScene(scene);
+    }
+
+    /// <summary>
+    /// Changes the scene through a transition of its own (or with a hard cut, for null), whatever the scene manager is set to.
+    /// </summary>
+    public void SetScene(Scene scene, SceneTransition? transition)
+    {
+        SceneManager.SetScene(scene, transition);
+    }
+
+    /// <summary>
+    /// Has a new scene of a kind take over from the one that is on screen.
+    /// </summary>
+    public void SetScene<TScene>() where TScene : Scene, new()
+    {
+        SceneManager.SetScene(new TScene());
     }
 
     public override void Initialize()
     {
         base.Initialize();
-        camera = AddEntity(new Camera2D(WindowManager.ViewportSize));
+        DefaultCamera = AddEntity(new Camera2D(WindowManager.ViewportSize));
 
         unsafe
         {
-            GL.Enable(EnableCap.Texture2D);
             GL.Enable(EnableCap.DebugOutput);
-
-            for (int i = 0; i < 16; i++)
-            {
-                GL.ActiveTexture(TextureUnit.Texture0 + i);
-            }
-
-            GL.DebugMessageCallback(debugCallback, null);
+            GL.DebugMessageCallback(debugProc = OnDebugMessage, null);
         }
-
     }
 
-
-    private void debugCallback(
-        GLEnum source,
-        GLEnum type,
-        int id,
-        GLEnum severity,
-        int length,
-        nint message,
-        nint userParam
-    )
+    /// <summary>
+    /// Called by the driver when it has something to say about what it was asked to do.
+    /// </summary>
+    private void OnDebugMessage(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
     {
-        if (id == 131185 || id == 1280)
+        if (id is NOTE_BUFFER_DETAILS or NOTE_INVALID_ENUM || severity == GLEnum.DebugSeverityNotification)
             return;
 
-        Log.Info($"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}"
-            );
+        LogLevel level = severity switch
+        {
+            GLEnum.DebugSeverityHigh => LogLevel.Error,
+            GLEnum.DebugSeverityMedium => LogLevel.Warning,
+            _ => LogLevel.Info
+        };
+
+        Log.Write(level, $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}");
     }
 
     public override void UpdatePhysics(float dt)
     {
         EventManager.PrePhysics?.Invoke(dt);
-        //Debugger.PerformanceDebugger.CpuMetrics.TimeAndTrackMethod(
-        //        () =>
-        //        {
-        //            base.UpdatePhysics(dt);
-        //        },
-        //        "Engine",
-        //        "Physics"
-        //      );
         base.UpdatePhysics(dt);
         EventManager.PostPhysics?.Invoke(dt);
     }
@@ -175,12 +196,8 @@ public class GameEngine : Entity
     {
         Runtime += dt;
 
-        // Run our custom events.
         EventManager.PreState?.Invoke(dt);
         base.UpdateState(dt);
-        //UpdatePhysics(dt);
-
-        // Run our custom events.
         EventManager.PostState?.Invoke(dt);
     }
 
@@ -188,15 +205,12 @@ public class GameEngine : Entity
     {
         TotalTime += dt;
 
-        // Run our custom events.
         EventManager.PreRender?.Invoke(dt);
 
         GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
-        // Render all entities & component
-        base.Render(dt);
 
-        GL.GetError();
+        base.Render(dt);
 
         EventManager.PostRender?.Invoke(dt);
     }
@@ -207,9 +221,29 @@ public class GameEngine : Entity
     }
 
     /// <summary>
-    /// Instantiates a window, and opens it.
+    /// Opens the window and runs the game until it is closed.
     /// </summary>
     public virtual void Run() => WindowManager.Run();
+
+    /// <summary>
+    /// Opens the window with a scene on screen and runs the game until it is closed.
+    /// </summary>
+    /// <param name="transition">How the scene comes in, null for a hard cut.</param>
+    public void Run(Scene scene, SceneTransition? transition = null)
+    {
+        SceneManager.SetScene(scene, transition ?? SceneManager.Transition);
+        Run();
+    }
+
+    /// <summary>
+    /// Opens the window with a new scene of a kind on screen and runs the game until it is closed.
+    /// </summary>
+    public void Run<TScene>() where TScene : Scene, new() => Run(new TScene());
+
+    /// <summary>
+    /// Closes the window, which is the end of <see cref="Run()"/>. From any thread.
+    /// </summary>
+    public void Exit() => WindowManager.Close();
 
 #if DEBUG
     /// <summary>
@@ -235,6 +269,6 @@ public class GameEngine : Entity
             PhysicsRate = RateOf("Physics")
         };
     }
-    
+
 #endif
 }

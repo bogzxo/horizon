@@ -11,10 +11,27 @@ namespace Horizon.OpenGL.Assets;
 
 /* This is an abstraction for a buffer object */
 
-public class BufferObject : GLObject
+public class BufferObject : GLObject, IDisposable
 {
     public BufferTargetARB Type { get; init; }
     public uint Size { get; init; }
+
+    /// <summary>
+    /// Makes a buffer the way a description says. Throws if the GPU won't have it.
+    /// </summary>
+    public static BufferObject Create(in Descriptions.BufferObjectDescription description) =>
+        ObjectManager.Instance.Buffers.TryCreate(description, out var result)
+            ? result.Asset
+            : throw new InvalidOperationException(result.Message);
+
+    /// <summary>
+    /// Frees the buffer right now, for whoever doesn't want to wait for the scene to end. Render thread.
+    /// </summary>
+    public void Dispose()
+    {
+        ObjectManager.Instance.Buffers.Remove(this);
+        GC.SuppressFinalize(this);
+    }
 
     public static long ALIGNMENT = 0;
 

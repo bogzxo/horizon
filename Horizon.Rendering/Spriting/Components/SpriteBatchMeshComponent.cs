@@ -84,16 +84,7 @@ public class SpriteBatchMesh : GameObject
     {
         this.Shader = shader;
 
-        if (Engine.ObjectManager.VertexArrays.TryCreate(
-            VertexArrayObjectDescription.VertexBuffer,
-            out var result))
-        {
-            Buffer = new VertexBufferObject(result.Asset);
-        }
-        else
-        {
-            Log.Error(result.Message);
-        }
+        Buffer = VertexBufferObject.Create();
 
         SetVboLayout();
         GenerateMesh();

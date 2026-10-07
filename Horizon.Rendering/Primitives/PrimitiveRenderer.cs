@@ -121,17 +121,7 @@ public class PrimitiveRenderer : Entity
 
         public ShapeRendererTechnique(in TransformComponent2D transform)
         {
-            if (GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet(
-                "ShapeRendererTechnique",
-                ShaderDescription.FromPath("shaders/primitives", "shapes"),
-                out var result))
-            {
-                SetShader(result.Asset);
-            }
-            else
-            {
-                Log.Error(result.Message);
-            }
+            LoadShader("shaders/primitives", "shapes");
             this.transform = transform;
         }
 

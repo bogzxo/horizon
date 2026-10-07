@@ -19,22 +19,7 @@ namespace Horizon.Rendering.Particles.Materials
         {
             this.renderer = renderer;
 
-            if (GameEngine
-                .Instance
-                .ObjectManager
-                .Shaders
-                .TryCreateOrGet("particle2d",
-                ShaderDescription.FromPath(
-                    "shaders/particle",
-                    "basic"),
-                out var result))
-            {
-                SetShader(result.Asset);
-            }
-            else
-            {
-                Log.Error(result.Message);
-            }
+            LoadShader("shaders/particle", "basic");
         }
 
         protected override void SetUniforms()

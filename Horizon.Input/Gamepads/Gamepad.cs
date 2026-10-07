@@ -1,7 +1,7 @@
 using System.Numerics;
 using Silk.NET.Input;
 
-namespace Horizon.Input2;
+namespace Horizon.Input;
 
 /// <summary>
 /// One gamepad as the game sees it: a slot that stays the same for as long as the game runs, the bindings of whoever

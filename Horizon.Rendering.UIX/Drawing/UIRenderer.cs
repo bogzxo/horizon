@@ -3,6 +3,7 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.UIX.Skinning;
+using Horizon.OpenGL;
 
 using Silk.NET.OpenGL;
 
@@ -107,22 +108,13 @@ internal sealed class UIRenderer
         if (batch is null || skin is null || itemCount == 0)
             return;
 
-        var gl = GameEngine.Instance.GL;
-
         // The UI is painted back to front with alpha blending. The rest of the engine doesn't expect
         // either, so everything touched here is put back afterwards.
-        bool blend = gl.IsEnabled(EnableCap.Blend);
-        bool depthTest = gl.IsEnabled(EnableCap.DepthTest);
-        var sourceRgb = (BlendingFactor)gl.GetInteger(GetPName.BlendSrcRgb);
-        var destinationRgb = (BlendingFactor)gl.GetInteger(GetPName.BlendDstRgb);
-        var sourceAlpha = (BlendingFactor)gl.GetInteger(GetPName.BlendSrcAlpha);
-        var destinationAlpha = (BlendingFactor)gl.GetInteger(GetPName.BlendDstAlpha);
+        var before = RenderState.Save();
 
-        gl.Enable(EnableCap.Blend);
-        gl.BlendFuncSeparate(
-            BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
-            BlendingFactor.One, BlendingFactor.OneMinusSrcAlpha);
-        gl.Disable(EnableCap.DepthTest);
+        RenderState.Blend = true;
+        RenderState.BlendMode = BlendMode.Alpha;
+        RenderState.DepthTest = false;
 
         // Every run shows the atlas and the font, in the slots the draw list gave them.
         ReadOnlySpan<SpriteTexture> shared =
@@ -147,10 +139,6 @@ internal sealed class UIRenderer
             camera,
             shared);
 
-        gl.BlendFuncSeparate(sourceRgb, destinationRgb, sourceAlpha, destinationAlpha);
-        if (!blend)
-            gl.Disable(EnableCap.Blend);
-        if (depthTest)
-            gl.Enable(EnableCap.DepthTest);
+        RenderState.Restore(before);
     }
 }

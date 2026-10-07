@@ -54,14 +54,7 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
 
         public WallTechnique()
         {
-            if (GameEngine
-                    .Instance
-                    .ObjectManager
-                    .Shaders
-                    .TryCreateOrGet("testing_wall", ShaderDescription.FromPath("shaders/testing", "wall"), out var result))
-            {
-                SetShader(result.Asset);
-            }
+            LoadShader("shaders/testing", "wall");
         }
 
         protected override void SetUniforms()
@@ -256,9 +249,9 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
 
     private void UpdateLights()
     {
-        var keyboard = Engine.InputManager.KeyboardManager;
-        var mouseData = Engine.InputManager.MouseManager.GetData();
-        Vector2 mousePos = ActiveCamera.ScreenToWorld(mouseData.Position);
+        var keyboard = Engine.Input.Keyboard;
+        var mouse = Engine.Input.Mouse;
+        Vector2 mousePos = ActiveCamera.ScreenToWorld(mouse.Position);
 
         mouseLight!.Position = mousePos;
 
@@ -269,13 +262,13 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
             orbit[i].Position = new Vector2(cos, sin * 0.7f) * (OrbitRadius + i * 40.0f);
         }
 
-        if (keyboard.IsKeyPressed(Key.S)) lighting!.Shadows = !lighting.Shadows;
-        if (keyboard.IsKeyPressed(Key.N)) wall.Normals = !wall.Normals;
-        if (keyboard.IsKeyPressed(Key.G)) wall.Specular = !wall.Specular;
-        if (keyboard.IsKeyPressed(Key.P)) lighting!.LightingPixelSize = lighting.LightingPixelSize > 0.0f ? 0.0f : 8.0f;
-        if (keyboard.IsKeyPressed(Key.A)) lighting!.Ambient = Ambients[ambient = (ambient + 1) % Ambients.Length];
+        if (keyboard.WasPressed(Key.S)) lighting!.Shadows = !lighting.Shadows;
+        if (keyboard.WasPressed(Key.N)) wall.Normals = !wall.Normals;
+        if (keyboard.WasPressed(Key.G)) wall.Specular = !wall.Specular;
+        if (keyboard.WasPressed(Key.P)) lighting!.LightingPixelSize = lighting.LightingPixelSize > 0.0f ? 0.0f : 8.0f;
+        if (keyboard.WasPressed(Key.A)) lighting!.Ambient = Ambients[ambient = (ambient + 1) % Ambients.Length];
 
-        if (keyboard.IsKeyPressed(Key.C))
+        if (keyboard.WasPressed(Key.C))
         {
             foreach (var light in dropped)
             {
@@ -284,7 +277,7 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
             dropped.Clear();
         }
 
-        bool primary = (mouseData.Actions & VirtualAction.PrimaryAction) != 0;
+        bool primary = mouse.IsDown(MouseButton.Left);
         if (primary && !prevPrimary)
         {
             dropped.Add(lighting!.AddLight(new Light2D
@@ -299,7 +292,7 @@ public class LightingTestScene(bool deferred = true) : Scene, ITestControls
         }
         prevPrimary = primary;
 
-        bool secondary = (mouseData.Actions & VirtualAction.SecondaryAction) != 0;
+        bool secondary = mouse.IsDown(MouseButton.Right);
         if (secondary && !prevSecondary)
         {
             lighting!.AddFlash(new Light2D { Position = mousePos, Radius = 420.0f, Intensity = 3.0f, Glow = 0.3f }, 0.5f);
