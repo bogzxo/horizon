@@ -39,6 +39,12 @@ public class Image : UIComponent
     /// <summary>Whether a region that has frames plays through them. Off, it stays on its first.</summary>
     public bool Animated { get; set; } = true;
 
+    /// <summary>
+    /// An image file to draw the whole of, a PNG, instead of a region of the skin. It goes into the skin's atlas and
+    /// scales with the rest of the UI. Set from a layout with <c>file: "Assets/ui/logo.png"</c>.
+    /// </summary>
+    public string File { get; set; } = string.Empty;
+
     /// <summary>A texture to show instead of a region of the skin.</summary>
     public Texture? Texture { get; set; }
 
@@ -66,6 +72,9 @@ public class Image : UIComponent
         if (Texture is { } texture)
             return SourceSize != Vector2.Zero ? SourceSize : new Vector2(texture.Width, texture.Height);
 
+        if (File.Length > 0)
+            return skin.ImageSize(File);
+
         return skin.TryGetRegion(Region, out var region) ? region.Size : Vector2.Zero;
     }
 
@@ -83,6 +92,14 @@ public class Image : UIComponent
                 list.Image(texture, Bounds, SourcePosition, SourcePosition + SourceSize, Tint);
             else
                 list.Image(texture, Bounds, Tint);
+            return;
+        }
+
+        if (File.Length > 0)
+        {
+            // Asked for here the first time, there by the next frame
+            if (list.Skin.TryGetImage(File, out var whole))
+                list.NineSlice(whole, Bounds, Tint);
             return;
         }
 
@@ -118,6 +135,7 @@ public class Image : UIComponent
         base.DefineScript();
 
         Expose("region", () => Region, value => Region = value);
+        Expose("file", () => File, value => File = value);
         Expose("animated", () => Animated, value => Animated = value);
         Expose("tint", () => Tint, value => Tint = value);
     }
