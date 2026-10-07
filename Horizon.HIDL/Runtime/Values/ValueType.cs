@@ -1,4 +1,4 @@
-﻿namespace Horizon.HIDL.Runtime;
+namespace Horizon.HIDL.Runtime;
 
 public enum ValueType : byte
 {
@@ -13,5 +13,6 @@ public enum ValueType : byte
     String,
     Vector2,
     Vector3,
-    Vector4
+    Vector4,
+    List
 }

@@ -47,7 +47,7 @@ public class UIControlsExample : Scene, ITestControls
 
     // The same controls as the ones built in code, written the way a layout file writes them.
     private const string SCRIPTED_LAYOUT = """
-        let pick = compositor.dropdown({ options: "a, b, c", value: "b", max_rows: 2, visible: false });
+        let pick = compositor.dropdown({ options: ["a", "b", "c"], value: "b", max_rows: 2, visible: false });
         let level = compositor.slider({ min: 10, max: 20, step: 2, value: 15, visible: false });
         let paint = compositor.color_picker({ color: vec(0.2, 0.4, 0.6, 0.8), show_alpha: false, visible: false });
         """;

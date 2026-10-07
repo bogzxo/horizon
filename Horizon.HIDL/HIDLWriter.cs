@@ -1,26 +1,29 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text;
 
-using Horizon.HIDL.Lexxing;
+using Horizon.HIDL.Lexing;
 using Horizon.HIDL.Runtime;
-
-namespace Horizon.HIDL;
 
 using Environment = Horizon.HIDL.Runtime.Environment;
 
+namespace Horizon.HIDL;
+
 /// <summary>
 /// Writes runtime values back out as HIDL source, so that evaluating the text gives the values back.
-/// This is how data that changes while a program runs (settings, key bindings) is saved: build an
+/// This is how data that changes while a program runs (settings, key bindings) is saved. Build an
 /// <see cref="ObjectValue"/>, write it with <see cref="WriteDeclaration"/> and read it back by evaluating the file.
-/// Numbers, strings, booleans, null, vectors and objects can be written. Functions can't, they are left out of
+/// Numbers, texts, booleans, null, vectors, lists and objects can be written. Functions can't, they are left out of
 /// the object or scope they are in. A native value is written as whatever it reads as at the time.
 /// </summary>
 public static class HIDLWriter
 {
     private const string INDENT = "    ";
 
-    // Deeper than any data anyone would write by hand, so getting here means an object contains itself.
+    // Deeper than any data anyone would write by hand, so getting here means an object contains itself
     private const int MAX_DEPTH = 64;
+
+    // How long a list is allowed to be on one line before it goes one item a line
+    private const int SHORT_LIST = 72;
 
     /// <summary>
     /// Writes a value as an expression, e.g. <c>vec(1, 2)</c> or an object literal over several lines.
@@ -34,7 +37,7 @@ public static class HIDLWriter
     }
 
     /// <summary>
-    /// Writes a value as the statement that declares it: <c>let name = value;</c>
+    /// Writes a value as the statement that declares it, <c>let name = value;</c>
     /// </summary>
     /// <exception cref="ArgumentException">The name isn't one a variable can have.</exception>
     /// <exception cref="NotSupportedException">The value has no way of being written, see <see cref="CanWrite"/>.</exception>
@@ -51,7 +54,7 @@ public static class HIDLWriter
     /// <summary>
     /// Writes every variable declared in a scope as a declaration of its own, constants as constants.
     /// The variables of its parents and its system variables aren't written, and neither is anything the host put
-    /// there for scripts to call or to reach into (functions and native values): evaluating the text in a scope
+    /// there for scripts to call or to reach into (functions and native values). Evaluating the text in a scope
     /// set up the same way gives the same state back.
     /// </summary>
     /// <param name="include">Decides per variable whether it is written, for leaving some out. All of them if null.</param>
@@ -75,25 +78,22 @@ public static class HIDLWriter
     }
 
     /// <summary>
-    /// Whether a value can be written. Objects always can, what can't be written in them is left out.
+    /// Whether a value can be written. Objects and lists always can, what can't be written in them is left out.
     /// </summary>
     public static bool CanWrite(IRuntimeValue value) => value.Type switch
     {
         Runtime.ValueType.Function or Runtime.ValueType.AnonymousFunction or Runtime.ValueType.NativeFunction => false,
         Runtime.ValueType.NativeValue => CanWrite(((NativeValue)value).AccessorCallback()),
         Runtime.ValueType.Number => float.IsFinite(((NumberValue)value).Value),
-
-        // There is no way of writing a quote inside of a string.
-        Runtime.ValueType.String => ((StringValue)value).Value?.Contains('"') != true,
         _ => true
     };
 
     /// <summary>
-    /// Whether a text can be the name of a variable or the key of a property: the lexer decides.
+    /// Whether a text can be the name of a variable or the key of a property. The lexer decides.
     /// </summary>
     public static bool IsIdentifier(string? name)
     {
-        if (string.IsNullOrEmpty(name))
+        if (string.IsNullOrEmpty(name) || Lexer.IsKeyword(name))
             return false;
 
         try
@@ -111,8 +111,6 @@ public static class HIDLWriter
     {
         text.Append(isConst ? "const " : "let ").Append(name).Append(" = ");
         Append(text, value, 0);
-
-        // Not optional after an object: the parser would carry on reading the next statement as more properties.
         text.Append(';');
     }
 
@@ -156,6 +154,10 @@ public static class HIDLWriter
                 AppendObject(text, obj, depth);
                 break;
 
+            case ListValue list:
+                AppendList(text, list, depth);
+                break;
+
             default:
                 throw new NotSupportedException($"A value of type {value.Type} can't be written as text.");
         }
@@ -174,13 +176,15 @@ public static class HIDLWriter
                 if (!CanWriteProperty(value))
                     continue;
 
-                if (!IsIdentifier(key))
-                    throw new NotSupportedException($"'{key}' can't be written as the key of a property, keys have to be identifiers.");
-
-                // Commas go between properties only, the parser doesn't take one after the last.
+                // Commas go between properties only, the parser takes one after the last as well but a file reads better without
                 text.Append(any ? "," : "{").AppendLine();
                 AppendIndent(text, depth + 1);
-                text.Append(key).Append(": ");
+
+                // A key that isn't a plain name is written in quotes, which the parser takes too
+                if (IsIdentifier(key)) text.Append(key);
+                else AppendString(text, key);
+
+                text.Append(": ");
                 Append(text, value, depth + 1);
                 any = true;
             }
@@ -197,8 +201,54 @@ public static class HIDLWriter
         text.Append('}');
     }
 
+    private static void AppendList(StringBuilder text, ListValue list, int depth)
+    {
+        if (depth >= MAX_DEPTH)
+            throw new NotSupportedException("A list that contains itself can't be written as text.");
+
+        if (list.Count == 0)
+        {
+            text.Append("[]");
+            return;
+        }
+
+        // Short lists of plain values go on one line, anything else one item a line
+        bool plain = list.Items.TrueForAll(item => item is not (ObjectValue or ListValue));
+        if (plain)
+        {
+            StringBuilder line = new("[");
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (i > 0) line.Append(", ");
+                Append(line, list[i], depth + 1);
+            }
+            line.Append(']');
+
+            if (line.Length <= SHORT_LIST)
+            {
+                text.Append(line);
+                return;
+            }
+        }
+
+        text.Append('[');
+        for (int i = 0; i < list.Count; i++)
+        {
+            if (!CanWriteProperty(list[i]))
+                continue;
+
+            text.Append(i > 0 ? "," : string.Empty).AppendLine();
+            AppendIndent(text, depth + 1);
+            Append(text, list[i], depth + 1);
+        }
+
+        text.AppendLine();
+        AppendIndent(text, depth);
+        text.Append(']');
+    }
+
     // Inside of an object only functions are left out. Anything else that can't be written is a mistake
-    // worth hearing about, and throws when it is written.
+    // worth hearing about, and throws when it is written
     private static bool CanWriteProperty(IRuntimeValue value) =>
         value.Type is not (Runtime.ValueType.Function or Runtime.ValueType.AnonymousFunction or Runtime.ValueType.NativeFunction);
 
@@ -216,11 +266,21 @@ public static class HIDLWriter
 
     private static void AppendString(StringBuilder text, string? value)
     {
-        value ??= string.Empty;
-        if (value.Contains('"'))
-            throw new NotSupportedException($"A string with a quote in it can't be written as text: {value}");
-
-        text.Append('"').Append(value).Append('"');
+        text.Append('"');
+        foreach (char c in value ?? string.Empty)
+        {
+            // The escapes the lexer reads back
+            switch (c)
+            {
+                case '"': text.Append("\\\""); break;
+                case '\\': text.Append("\\\\"); break;
+                case '\n': text.Append("\\n"); break;
+                case '\r': text.Append("\\r"); break;
+                case '\t': text.Append("\\t"); break;
+                default: text.Append(c); break;
+            }
+        }
+        text.Append('"');
     }
 
     private static void AppendNumber(StringBuilder text, float number)
@@ -229,7 +289,7 @@ public static class HIDLWriter
             throw new NotSupportedException($"{number} can't be written as text.");
 
         // The shortest text that reads back as the same number. The lexer only knows digits and a dot,
-        // so the exponent very large and very small numbers come with has to be written out.
+        // so the exponent very large and very small numbers come with has to be written out
         string digits = number.ToString("R", CultureInfo.InvariantCulture);
         int exponentAt = digits.IndexOf('E');
 
@@ -250,7 +310,6 @@ public static class HIDLWriter
             mantissa = mantissa[1..];
         }
 
-        // Where the point is among the digits, and where the exponent moves it to.
         int point = mantissa.IndexOf('.');
         Span<char> digits = stackalloc char[mantissa.Length];
         int count = 0;

@@ -1,4 +1,4 @@
-﻿namespace Horizon.HIDL.Lexxing;
+namespace Horizon.HIDL.Lexing;
 
 public enum TokenType : byte
 {
@@ -33,4 +33,17 @@ public enum TokenType : byte
     NotEquality,
     Vector,
     Comment,
+
+    // else, for (x in list), return, continue
+    Else,
+    For,
+    In,
+    Return,
+    Continue,
+
+    // The three dots that spread an object or a list into another: { ...base, damage: 8 }
+    Spread,
+
+    // +=, -=, *=, /=, %=, with the operator as the value
+    CompoundEquals,
 }

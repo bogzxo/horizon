@@ -1,4 +1,4 @@
-﻿namespace Horizon.HIDL.Parsing;
+namespace Horizon.HIDL.Parsing;
 
 /*  let x = 10 + (foo * bar)
  *  [Let][Assignee][Equals][Number][BinaryOp][BinaryOp]
@@ -23,11 +23,17 @@ public enum NodeType
 
     // Statements
     DeleteStatement,
+    ForInStatement,
+    ReturnStatement,
+    BreakStatement,
+    ContinueStatement,
 
     // Literals
     Property,
 
     ObjectLiteral,
+    ListLiteral,
+    Spread,
     Identifier,
     NumericLiteral,
     BinaryExpression,

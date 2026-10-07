@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using AutocompleteMenuNS;
-using Horizon.HIDL.Lexxing;
+using Horizon.HIDL.Lexing;
 using Horizon.HIDL.Parsing;
 using Horizon.HIDL.Runtime;
 using ScintillaNET;
@@ -122,6 +122,10 @@ namespace Horizon.HIDL.Editor
             AddItem("do", "Keyword", toolTip: "Do-while loop");
             AddItem("delete", "Keyword", toolTip: "Delete variable");
             AddItem("break", "Keyword", toolTip: "Break loop execution");
+            AddItem("continue", "Keyword", toolTip: "Skip to the next turn of the loop");
+            AddItem("else", "Keyword", toolTip: "What happens when the if didn't");
+            AddItem("for", "Keyword", toolTip: "for (item in list) loop");
+            AddItem("return", "Keyword", toolTip: "Hand a value back out of a function");
             AddItem("vec", "Keyword", toolTip: "Vector creation helper vec(...)");
 
             // Add some builtin literals temporarily @bogz make this dynamic
@@ -165,7 +169,7 @@ namespace Horizon.HIDL.Editor
             {
                 try
                 {
-                    Token[] tokens = Horizon.HIDL.Lexxing.Lexer.Tokenize(code);
+                    Token[] tokens = Horizon.HIDL.Lexing.Lexer.Tokenize(code);
                     if (tokens.Length > 0)
                     {
                         var ast = new Parser().ProduceSyntaxTree(tokens);

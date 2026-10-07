@@ -17,7 +17,7 @@ namespace Horizon.Rendering.UIX.Components;
 /// <see cref="NextHint"/>:
 /// </para>
 /// <code>
-/// let tabs = compositor.tabs({ tabs: "Display, Look, Fight", prev_hint: "[icon:pad_lb]", next_hint: "[icon:pad_rb]" });
+/// let tabs = compositor.tabs({ tabs: ["Display", "Look", "Fight"], prev_hint: "[icon:pad_lb]", next_hint: "[icon:pad_rb]" });
 /// let display = compositor.stack({ parent: tabs, spacing: 8 });
 /// let look = compositor.stack({ parent: tabs, spacing: 8 });
 /// let fight = compositor.stack({ parent: tabs, spacing: 8 });
@@ -228,8 +228,8 @@ public class TabPanel : UIComponent
     {
         base.DefineScript();
 
-        // Scripts have no lists, so the names are one text with commas in it (like a selector's options)
-        Expose("tabs", () => string.Join(", ", tabs), value => Tabs = value.Split(',', StringSplitOptions.TrimEntries));
+        // A list of names, or one text with commas in it the way the old layouts wrote it
+        Expose("tabs", () => tabs, value => Tabs = value);
         Expose("selected", () => selected, value => Select((int)value));
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("header_height", () => HeaderHeight, value => HeaderHeight = MathF.Max(0.0f, value));

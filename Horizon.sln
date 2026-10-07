@@ -19,7 +19,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Bogz.Logging", "Bogz.Loggin
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.Webhost", "Horizon.Webhost\Horizon.Webhost.csproj", "{C2C4E0FE-4165-465A-992C-AEEF81014567}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.HIDL", "Horizon.Horlang\Horizon.HIDL.csproj", "{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Horizon.HIDL", "Horizon.HIDL\Horizon.HIDL.csproj", "{A2F0CF5C-8C42-47FE-9B32-5C8D71713F6A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Fighter2D", "..\Fighter2D\Fighter2D.csproj", "{620BC575-3F9C-4D3F-85BA-C42F0846621B}"
 EndProject
@@ -38,7 +38,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.HIDL.Editor", "Hori
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.Hex", "Horizon.Hex\Horizon.Hex.csproj", "{7C0008B5-EE5A-4AEA-A397-F8F9C6745537}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Horizon.Horlang", "Horizon.Horlang", "{4B6BABC6-9225-0706-D6AB-2BAF913F0573}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Scripting", "Scripting", "{4B6BABC6-9225-0706-D6AB-2BAF913F0573}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Horizon.Tests", "Horizon.Tests\Horizon.Tests.csproj", "{27418DC6-7FC2-4BA5-919E-E9D500A2C1BC}"
 EndProject

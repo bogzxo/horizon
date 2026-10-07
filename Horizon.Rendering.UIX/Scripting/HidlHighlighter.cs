@@ -40,7 +40,7 @@ public static class HidlHighlighter
 {
     private static readonly HashSet<string> Keywords =
     [
-        "let", "const", "func", "if", "else", "while", "do", "delete", "break", "return", "true", "false", "null"
+        "let", "const", "func", "if", "else", "while", "do", "for", "in", "delete", "break", "continue", "return", "true", "false", "null"
     ];
 
     /// <summary>

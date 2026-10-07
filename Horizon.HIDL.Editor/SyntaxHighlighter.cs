@@ -4,7 +4,7 @@ using System.Drawing;
 using System.Text.RegularExpressions;
 using ScintillaNET;
 
-using Horizon.HIDL.Lexxing;
+using Horizon.HIDL.Lexing;
 using Horizon.HIDL.Parsing;
 using Horizon.HIDL.Runtime;
 using ValueType = Horizon.HIDL.Runtime.ValueType;
@@ -99,7 +99,7 @@ namespace Horizon.HIDL.Editor
             Token[] tokens = Array.Empty<Token>();
             try
             {
-                tokens = Horizon.HIDL.Lexxing.Lexer.Tokenize(code);
+                tokens = Horizon.HIDL.Lexing.Lexer.Tokenize(code);
             }
             catch (ParseException ex)
             {

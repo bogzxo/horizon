@@ -11,14 +11,4 @@
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PackageReference Include="RiptideNetworking.Riptide" Version="2.2.1" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="test.hor">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>
