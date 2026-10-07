@@ -42,6 +42,14 @@ public class Sprite : GameObject
     public Vector4 Tint { get; set; } = Vector4.One;
 
     /// <summary>
+    /// The colour the sprite is flashed with and how much of it there is, from 0 for none to 1 for nothing but the colour
+    /// in the shape of the sprite. Unlike a <see cref="Tint"/> this can make a sprite brighter, and it glows in the dark.
+    /// While there is any of it the tint is left out except for its alpha. See <see cref="SpriteTweens.Flash"/>.
+    /// </summary>
+    public Vector4 FlashColor { get; set; } = Vector4.One;
+    public float FlashAmount { get; set; }
+
+    /// <summary>
     /// Whether the pixels of the sprite are blended where they meet, for pixel art that is drawn at a size that isn't
     /// a whole multiple of itself (see <see cref="SpriteItem.SmoothFlag"/>).
     /// </summary>
@@ -252,13 +260,16 @@ public class Sprite : GameObject
             texMax = texMin + size;
         }
 
+        bool flashed = FlashAmount > 0.0f;
+
         item = SpriteItem.FromModel(
             UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix,
             texMin,
             texMax,
-            SpriteItem.PackColor(Tint),
-            Smooth ? SpriteItem.SmoothFlag : 0);
+            SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
+            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0));
         item.Motion = _motion.Velocity;
+        item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
         return true;
     }
 

@@ -31,6 +31,7 @@ const uint NO_TEXTURE = 0xFFu;
 const uint COVERAGE_FLAG = 0x100u;
 const uint SMOOTH_FLAG = 0x200u;
 const uint CORNER_FLAG = 0x400u;
+const uint FLASH_FLAG = 0x800u;
 
 // Every item says which of these it shows, so things with different textures can be drawn in order in one call.
 uniform sampler2D uTextures[4];
@@ -106,11 +107,19 @@ void main() {
   }
 
   vec4 result = tex * color;
+  float glow = 0.0;
+
+  // Flashed. The colour is painted over the sprite instead of multiplied into it, and it shows whatever the light is
+  if ((flags & FLASH_FLAG) != 0u) {
+    result = vec4(mix(tex.rgb, color.rgb, ring), tex.a * color.a);
+    glow = ring;
+  }
+
   if (result.a <= 0.0) discard;
   AlbedoColor = result;
 
-  // Sprites have no normal map, are lit like everything else and aren't shiny.
-  SurfaceColor = vec4(0.5, 0.5, 0.0, result.a);
+  // Sprites have no normal map, are lit like everything else (unless they are flashed) and aren't shiny.
+  SurfaceColor = vec4(0.5, 0.5, glow, result.a);
   MaterialColor = vec4(0.0, 0.0, 0.0, result.a);
   MotionColor = vec4(encodeMotion(motion), uNearness, result.a);
 }

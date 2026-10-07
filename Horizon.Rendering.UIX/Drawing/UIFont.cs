@@ -15,7 +15,8 @@ internal interface IUIIconSource
 
     /// <summary>The size of an icon's art in texels, false if there is no icon by that name.</summary>
     /// <param name="set">The set of icons the text is written in, empty for none.</param>
-    bool TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize);
+    /// <param name="lineTexels">How many texels of the art are as tall as a line. The height of the art, unless the icon says otherwise.</param>
+    bool TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize, out float lineTexels);
 }
 
 /// <summary>
@@ -104,11 +105,11 @@ public sealed class UIFont
             return false;
 
         name = text[ICON_TAG.Length..end];
-        if (!Icons.TryGetIconSize(name, set, out Vector2 texelSize) || texelSize.Y <= 0.0f)
+        if (!Icons.TryGetIconSize(name, set, out Vector2 texelSize, out float lineTexels) || texelSize.Y <= 0.0f)
             return false;
 
         length = end + 1;
-        size = IconSize(texelSize, scale);
+        size = IconSize(texelSize, lineTexels, scale);
         return true;
     }
 
@@ -139,10 +140,13 @@ public sealed class UIFont
     /// size of its art (the height of the line, times the skin's icon scale), and as wide as that makes it.
     /// Both in whole pixels, so its edges stay sharp.
     /// </summary>
-    private Vector2 IconSize(Vector2 texelSize, float scale)
+    private Vector2 IconSize(Vector2 texelSize, float lineTexels, float scale)
     {
         float height = MathF.Max(1.0f, MathF.Round(LineHeight * scale * (Icons?.IconScale ?? 1.0f)));
-        return new Vector2(MathF.Max(1.0f, MathF.Round(texelSize.X * height / texelSize.Y)), height);
+
+        // Art that is shorter than what the icon says a line is comes out shorter, at the same scale as its taller mates
+        float unit = height / MathF.Max(1.0f, lineTexels);
+        return new Vector2(MathF.Max(1.0f, MathF.Round(texelSize.X * unit)), MathF.Max(1.0f, MathF.Round(texelSize.Y * unit)));
     }
 
     /// <summary>

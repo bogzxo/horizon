@@ -40,14 +40,14 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>What the skin file says an icon is.</summary>
     private readonly record struct IconSource(
-        string Region, string Label, Vector4? LabelColor, string? Symbol = null, Vector4 SymbolColor = default, float SymbolSize = 0.5f);
+        string Region, string Label, Vector4? LabelColor, string? Symbol = null, Vector4 SymbolColor = default, float SymbolSize = 0.5f, float Height = 0.0f);
 
     /// <summary>A name worked out down to the pixels it stands for, which can be done before any of it is loaded.</summary>
     private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key);
 
     /// <summary>An icon worked out the same way.</summary>
     private sealed record IconArt(
-        string Region, Vector2 TexelSize, string Label, Vector4 LabelColor, string? Symbol, Vector4 SymbolColor, float SymbolSize);
+        string Region, Vector2 TexelSize, string Label, Vector4 LabelColor, string? Symbol, Vector4 SymbolColor, float SymbolSize, float LineTexels);
 
     private readonly Dictionary<string, RegionSource> sources = [];
     private readonly Dictionary<string, IconSource> icons = [];
@@ -266,9 +266,12 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     float IUIIconSource.IconScale => IconScale;
 
-    bool IUIIconSource.TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize)
+    bool IUIIconSource.TryGetIconSize(ReadOnlySpan<char> name, ReadOnlySpan<char> set, out Vector2 texelSize, out float lineTexels)
     {
-        texelSize = DescribeIcon(ResolveIcon(name, set))?.TexelSize ?? default;
+        IconArt? art = DescribeIcon(ResolveIcon(name, set));
+
+        texelSize = art?.TexelSize ?? default;
+        lineTexels = art?.LineTexels ?? 0.0f;
         return texelSize != default;
     }
 
@@ -291,7 +294,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
                 source.LabelColor ?? IconLabelColor,
                 source.Symbol,
                 source.SymbolColor,
-                source.SymbolSize)
+                source.SymbolSize,
+                source.Height > 0.0f ? source.Height : art.Source.Height)
             : null;
 
         iconArts[key] = icon;

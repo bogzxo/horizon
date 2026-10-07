@@ -32,6 +32,13 @@ public class PhysicsBodyComponent2D : IGameComponent
     public float Restitution { get; set; } = 0.3f;
     public float LinearDrag { get; set; } = 0.0f;
 
+    /// <summary>
+    /// Bodies with the same group pass straight through each other, and don't count as touching either.
+    /// Everything else (the map, bodies of another group or of none) they run into as usual.
+    /// Zero, which is what a body has until it is told otherwise, is no group at all.
+    /// </summary>
+    public int CollisionGroup { get; set; }
+
     public bool Enabled { get; set; }
     public string Name { get; set; } = "Physics Body";
     public Entity Parent { get; set; } = null!;
