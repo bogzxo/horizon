@@ -30,6 +30,9 @@ public abstract class Mesh<VertexType> : Entity
 
     public uint ElementCount { get; protected set; }
 
+    // How many vertices and indices the buffers have room for, as they were last made
+    private int vertexCapacity, indexCapacity;
+
     public Mesh()
     { }
 
@@ -99,11 +102,23 @@ public abstract class Mesh<VertexType> : Entity
         {
             HasUploadQueued = false;
 
-            if (ElementCount < QueuedData.Indices.Length) // dont reallocate unless we have to.
+            // Written into what there is when it fits, made anew only when it doesn't. The other way round (as this
+            // used to be) writes past the end of the buffer exactly when the mesh grows
+            if (QueuedData.Vertices.Length <= vertexCapacity)
                 Buffer.VertexBuffer.NamedBufferSubData(QueuedData.Vertices);
-            else Buffer.VertexBuffer.NamedBufferData(QueuedData.Vertices);
+            else
+            {
+                Buffer.VertexBuffer.NamedBufferData(QueuedData.Vertices);
+                vertexCapacity = QueuedData.Vertices.Length;
+            }
 
-            Buffer.ElementBuffer.NamedBufferData(QueuedData.Indices);
+            if (QueuedData.Indices.Length <= indexCapacity)
+                Buffer.ElementBuffer.NamedBufferSubData(QueuedData.Indices);
+            else
+            {
+                Buffer.ElementBuffer.NamedBufferData(QueuedData.Indices);
+                indexCapacity = QueuedData.Indices.Length;
+            }
 
             ElementCount = (uint)QueuedData.Indices.Length;
         }
