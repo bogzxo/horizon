@@ -8,6 +8,7 @@ using System.Text;
 
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Core.Threading;
 using Horizon.Physics.Debug;
 using Horizon.Physics.Fixtures;
 using Horizon.Physics.Simulation;
@@ -423,7 +424,45 @@ public class PhysicsWorld : GameComponent
             feed.Publish(staticGrid, dynamicShapes.AsSpan(0, shapeCount));
         }
     }
+    /// <summary>
+    /// Publishes the outlines of the debug view, if it is on, for frames that are drawn alongside the simulation.
+    /// Simulation thread, at the end of every tick.
+    /// </summary>
+    public override void Capture()
+    {
+        if (RenderDebug && debugRenderer.BeginCapture())
+        {
+            try
+            {
+                OutlineBodies();
+            }
+            finally
+            {
+                debugRenderer.EndCapture();
+            }
+        }
+    }
+
     public override void Render(float dt)
+    {
+        if (!RenderDebug)
+            return;
+
+        // Drawn alongside the simulation, the outlines are the ones it published: the bodies are moving meanwhile
+        if (RenderFrame.Active.IsDecoupled)
+        {
+            debugRenderer.RenderCaptured(dt);
+            return;
+        }
+
+        OutlineBodies();
+        debugRenderer.Render(dt);
+    }
+
+    /// <summary>
+    /// Helper method to put the outline of every fixture of every body into the debug renderer, as the bodies are now.
+    /// </summary>
+    private void OutlineBodies()
     {
         void drawBody(in PhysicsBodyComponent2D body, in List<IPhysicsFixture> fixtures, Vector3 colour)
         {
@@ -443,33 +482,26 @@ public class PhysicsWorld : GameComponent
                 }
                 else if (fixture is RectanglePhysicsFixture r)
                 {
-                    debugRenderer.DrawPolygon(new Vector2[] {
-                            new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Top),
-                            new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Top),
-                            new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Bottom),
-                            new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Bottom),
-                        }, colour);
+                    debugRenderer.DrawRectangle(
+                        new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Top),
+                        new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Bottom),
+                        colour);
                 }
             }
         }
 
-        if (RenderDebug)
+        debugRenderer.ClearBuffers();
+
+        foreach (var body in StaticBodies)
         {
-            debugRenderer.ClearBuffers();
-
-            foreach (var body in StaticBodies)
-            {
-                drawBody(body, body.DynamicFixtures, new System.Numerics.Vector3(1, 0, 0));
-                drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(1, 1, 0));
-            }
-            foreach (var body in DynamicBodies)
-            {
-                drawBody(body, body.DynamicFixtures, new System.Numerics.Vector3(0, 0, 1));
-                drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(0, 1, 1));
-                drawBody(body, body.ParticleFixtures, new System.Numerics.Vector3(0, 1, 0));
-            }
-
-            debugRenderer.Render(dt);
+            drawBody(body, body.DynamicFixtures, new System.Numerics.Vector3(1, 0, 0));
+            drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(1, 1, 0));
+        }
+        foreach (var body in DynamicBodies)
+        {
+            drawBody(body, body.DynamicFixtures, new System.Numerics.Vector3(0, 0, 1));
+            drawBody(body, body.KinematicFixtures, new System.Numerics.Vector3(0, 1, 1));
+            drawBody(body, body.ParticleFixtures, new System.Numerics.Vector3(0, 1, 0));
         }
     }
 }
