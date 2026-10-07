@@ -37,6 +37,7 @@ public readonly struct ShaderDescription : IAssetDescription
                         "frag" or "fs" or "fsh" => ShaderType.FragmentShader,
                         "comp" or "cs" or "csh" => ShaderType.ComputeShader,
                         "geom" or "gs" or "gsh" => ShaderType.GeometryShader,
+                        _ => throw new NotSupportedException($"No idea what kind of shader a .{ext} is."),
                     },
                     File = file
                 }

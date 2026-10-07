@@ -114,15 +114,15 @@ public class MenuBar : UIComponent
 
     private UISkin? Skin => Module?.Compositor.Skin;
 
-    private float Scale(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
+    private float TextScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
-    private float RowHeight(UISkin skin) => MathF.Round(skin.Font.LineHeight * Scale(skin) + skin.ButtonPadding.Total.Y * 0.6f);
+    private float RowHeight(UISkin skin) => MathF.Round(skin.Font.LineHeight * TextScaleOf(skin) + skin.ButtonPadding.Total.Y * 0.6f);
 
     protected override Vector2 Measure(UISkin skin)
     {
         float width = 0.0f;
         foreach (Menu menu in menus)
-            width += skin.Font.Measure(menu.Title, Scale(skin), markup: false).X + TITLE_PADDING * 2.0f;
+            width += skin.Font.Measure(menu.Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
 
         return new Vector2(width, RowHeight(skin));
     }
@@ -135,9 +135,9 @@ public class MenuBar : UIComponent
 
         float left = Bounds.Min.X;
         for (int i = 0; i < index; i++)
-            left += skin.Font.Measure(menus[i].Title, Scale(skin), markup: false).X + TITLE_PADDING * 2.0f;
+            left += skin.Font.Measure(menus[i].Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
 
-        float width = skin.Font.Measure(menus[index].Title, Scale(skin), markup: false).X + TITLE_PADDING * 2.0f;
+        float width = skin.Font.Measure(menus[index].Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
         return new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + width, Bounds.Max.Y));
     }
 
@@ -152,7 +152,7 @@ public class MenuBar : UIComponent
             if (OpenMenu is not { } menu || Skin is not { } skin)
                 return default;
 
-            float scale = Scale(skin), row = RowHeight(skin);
+            float scale = TextScaleOf(skin), row = RowHeight(skin);
             float width = 0.0f, height = 0.0f;
 
             foreach (MenuItem item in menu.Items)
@@ -226,7 +226,7 @@ public class MenuBar : UIComponent
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
-        float scale = Scale(skin);
+        float scale = TextScaleOf(skin);
         Vector2 pointer = Pointer;
 
         for (int i = 0; i < menus.Count; i++)
@@ -248,7 +248,7 @@ public class MenuBar : UIComponent
             return;
 
         UISkin skin = list.Skin;
-        float scale = Scale(skin);
+        float scale = TextScaleOf(skin);
 
         // Whatever is under the list must not show through it.
         UIRect bounds = ListBounds;
