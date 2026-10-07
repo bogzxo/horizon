@@ -64,6 +64,10 @@ public class SceneManager : Entity
     private readonly TweenContext _tweens = new();
     private SceneTransition? _running, _incomingTransition;
 
+    // A scene that is to be set up ahead of being shown at the next chance, and one that has been: set up, warmed up
+    // and waiting, so the swap to it costs nothing (see Preload)
+    private Scene? _toPreload, _preloaded;
+
     // The transition that drew over the last frame, which is how it is known when one has stopped
     private SceneTransition? _drawn;
 
@@ -158,6 +162,9 @@ public class SceneManager : Entity
             _incoming = scene;
             _incomingTransition = transition;
 
+            // Set up ahead for a scene that isn't the one coming after all
+            RetirePreloadedUnless(scene);
+
             // Nothing to cover up, the scene takes over at the next frame
             if (transition is null || CurrentInstance is null)
             {
@@ -171,6 +178,11 @@ public class SceneManager : Entity
             _covering = true;
             _arriving = false;
             _running = transition;
+
+            // Set up now, while the old scene is covered up, rather than at the moment it is all the way covered: the
+            // wait (loading a scene can take a good while) is when the button was pressed, and the transition itself
+            // plays out smoothly with nothing left to do at its height but swap
+            QueuePreload(scene);
 
             // Covered all the way is not the moment to swap yet. The old scene is drawn once more like that first,
             // which is the frame a transition gets to remember it by
@@ -191,6 +203,92 @@ public class SceneManager : Entity
     public void ReportUnfinished() => _unfinished = true;
 
     /// <summary>
+    /// Sets a scene up ahead of it being shown (made, its assets loaded, warmed up), at the start of the next frame,
+    /// so that setting it later swaps to it straight away. For a scene that is pretty sure to come next: the fight
+    /// while the map is being picked, the next level while this one is being played. From any thread.
+    /// <para>
+    /// One scene is kept like that at a time: preloading another, or setting a scene that isn't it, lets go of it
+    /// (unless it is <see cref="Scene.Persistent"/>). Setting a scene with a transition preloads it by itself.
+    /// </para>
+    /// </summary>
+    public void Preload(Scene scene)
+    {
+        lock (_changeLock)
+        {
+            RetirePreloadedUnless(scene);
+            QueuePreload(scene);
+        }
+    }
+
+    // Helper method to have a scene set up at the next chance, unless it is on screen or set up already. With the lock held
+    private void QueuePreload(Scene scene)
+    {
+        if (ReferenceEquals(scene, CurrentInstance) || ReferenceEquals(scene, _preloaded))
+            return;
+
+        _toPreload = scene;
+        GameEngine.Instance?.WindowManager.RequestExclusive();
+    }
+
+    // Helper method to let go of whatever was set up ahead that isn't a scene, with the lock held
+    private void RetirePreloadedUnless(Scene scene)
+    {
+        if (_toPreload is not null && !ReferenceEquals(_toPreload, scene))
+            _toPreload = null;
+
+        if (_preloaded is not { } kept || ReferenceEquals(kept, scene))
+            return;
+
+        _preloaded = null;
+        if (!kept.Persistent)
+        {
+            lock (_retired) _retired.Add(kept);
+        }
+    }
+
+    /// <summary>
+    /// Helper method to set up the scene that is to be preloaded. Render thread, at the start of a frame, with the
+    /// simulation standing still.
+    /// </summary>
+    private void PreloadNow(float dt)
+    {
+        Scene? scene;
+        lock (_changeLock)
+        {
+            scene = _toPreload;
+            _toPreload = null;
+        }
+
+        if (scene is null || ReferenceEquals(scene, CurrentInstance) || ReferenceEquals(scene, _preloaded))
+            return;
+
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        int turns;
+        using (scene.Assets.Enter())
+            turns = SetUp(scene, dt);
+
+        lock (_changeLock)
+        {
+            // Swapped for another while it was being set up, it goes with the rest of what was left
+            if (_incoming is not null && !ReferenceEquals(_incoming, scene) && !scene.Persistent)
+            {
+                lock (_retired) _retired.Add(scene);
+            }
+            else
+            {
+                _preloaded = scene;
+            }
+        }
+
+        Log.Info($"[SceneManager] Set up '{(scene.Name.Length > 0 ? scene.Name : scene.GetType().Name)}' ahead in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
+
+        // What the warm up drew is not for showing
+        var gl = GameEngine.Instance.GL;
+        gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+    }
+
+    /// <summary>
     /// Helper method to stop updating the scene that is on screen and have the one that was set take over, which
     /// happens at the start of the next frame with the simulation standing still (see <see cref="WindowManager.Exclusive"/>).
     /// </summary>
@@ -207,6 +305,9 @@ public class SceneManager : Entity
         // Swapping scenes sets one up and frees the other, which only the render thread can do and nobody else may watch
         GameEngine.Instance.WindowManager.Exclusive += dt =>
         {
+            if (_toPreload is not null)
+                PreloadNow(dt);
+
             if (_halt)
                 Change(dt);
         };
@@ -316,17 +417,28 @@ public class SceneManager : Entity
             // One that was kept and is back has been left before
             incoming.IsLeaving = false;
 
-            long started = System.Diagnostics.Stopwatch.GetTimestamp();
-            int turns;
-            using (incoming.Assets.Enter())
-                turns = SetUp(incoming, dt);
+            bool ready;
+            lock (_changeLock)
+            {
+                ready = ReferenceEquals(_preloaded, incoming);
+                if (ready) _preloaded = null;
+            }
 
-            Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
+            // Set up ahead (see Preload), there is nothing left to do but show it
+            if (!ready)
+            {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                int turns;
+                using (incoming.Assets.Enter())
+                    turns = SetUp(incoming, dt);
 
-            // What the warm up drew is not for showing
-            var gl = GameEngine.Instance.GL;
-            gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-            gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+                Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
+
+                // What the warm up drew is not for showing
+                var gl = GameEngine.Instance.GL;
+                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+                gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+            }
         }
 
         // The scene that is left goes last, once the new one has everything it needs: what the two share by name
