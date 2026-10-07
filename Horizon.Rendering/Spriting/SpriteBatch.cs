@@ -363,7 +363,7 @@ public class SpriteBatch : GameObject
             return;
         }
 
-        // Taking turns with the simulation, the sprites are there to be read as they are
+        // With the simulation standing still (a scene being set up) the sprites are there to be read as they are
         TakeQueued();
 
         Camera camera = CustomCamera ?? Engine.ActiveCamera;

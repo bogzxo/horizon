@@ -8,8 +8,8 @@ namespace Horizon.Rendering.Particles.Simulation;
 /// <summary>
 /// Owns the particles of a <see cref="ParticleRenderer2D"/>: it spawns, moves and kills them, and keeps
 /// the per-instance buffer the renderer draws from up to date.
-/// The engine updates state on the logic thread and renders on the GL thread, so the work is split the
-/// same way: <see cref="Update"/> runs on the logic thread and must not touch GL, everything else that
+/// The engine updates state on the simulation thread and renders on the GL thread, so the work is split the
+/// same way: <see cref="Update"/> runs on the simulation thread and must not touch GL, everything else that
 /// is called by the renderer runs on the GL thread.
 /// </summary>
 public abstract class ParticleSimulator2D : IDisposable
@@ -124,7 +124,7 @@ public abstract class ParticleSimulator2D : IDisposable
     /// </summary>
     protected internal abstract void Initialize(VertexBufferObject mesh);
 
-    /// <summary>Logic thread, every state update.</summary>
+    /// <summary>Simulation thread, every state update.</summary>
     protected internal abstract void Update(float dt);
 
     /// <summary>

@@ -22,7 +22,7 @@ public abstract class Camera : GameObject
     protected Vector3 CameraFront = -Vector3.UnitZ;
     protected Vector3 CameraUp = Vector3.UnitY;
 
-    // The simulation's, which is also what a frame drawn in turns with it goes by
+    // The simulation's, which is also what a frame drawn with the simulation standing still goes by (a scene being set up)
     private Matrix4x4 view, projection, viewProj;
     private RectangleF bounds;
 
@@ -67,8 +67,8 @@ public abstract class Camera : GameObject
     /// How far apart (in units of the world) the places the camera is shown at are, 0 for anywhere. A camera that shows
     /// pixel art a unit per pixel wants 1 here, or the art shimmers as the camera glides over it. The camera is rounded
     /// to it once it has been worked out where it is at the moment a frame shows, so it still moves as smoothly as the
-    /// frames let it: rounded before it is shown between two ticks it would stand still and jump. Drawn in turns with the
-    /// simulation it is rounded where it is. <see cref="Position"/> itself is never rounded.
+    /// frames let it: rounded before it is shown between two ticks it would stand still and jump. Drawn with the
+    /// simulation standing still it is rounded where it is. <see cref="Position"/> itself is never rounded.
     /// </summary>
     public float PixelSnap { get; set; }
 
@@ -113,8 +113,8 @@ public abstract class Camera : GameObject
 
     public override void Render(float dt)
     {
-        // Drawn in turns with the simulation (or while a scene is set up) the camera is there to be read as it is,
-        // moved since the last tick or not. Drawn alongside it, it isn't: the frame goes by what was published
+        // Drawn with the simulation standing still (a scene being set up, before the first tick) the camera is there to
+        // be read as it is, moved since the last tick or not. Drawn alongside it, it isn't: the frame goes by what was published
         if (!RenderFrame.Active.IsDecoupled)
             UpdateMatrices();
 

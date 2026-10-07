@@ -60,7 +60,7 @@ public class DeferredRenderer2D : Renderer2D
         public float Age;
     }
 
-    // Lights come and go from the logic thread while the render thread is collecting them
+    // Lights come and go from the simulation thread while the render thread is collecting them
     private readonly Lock lightLock = new();
     private readonly List<Light2D> lights = [];
     private readonly List<Flash> flashes = [];
@@ -114,7 +114,7 @@ public class DeferredRenderer2D : Renderer2D
 
     private readonly SnapshotBuffer<CapturedLighting> captured = new(static () => new CapturedLighting());
 
-    // What the frame that is being drawn goes by, the captured lighting of its two ticks (none when drawn in turns)
+    // What the frame that is being drawn goes by, the captured lighting of its two ticks (none with the simulation standing still)
     private CapturedLighting? shownBefore, shownAfter;
     private bool shownBlends;
     private float shownAlpha;

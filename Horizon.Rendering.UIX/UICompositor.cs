@@ -17,7 +17,7 @@ namespace Horizon.Rendering.UIX;
 /// Runs a UI: owns the skin and the modules, routes the pointer to the component under it, and draws
 /// everything on top of the scene.
 /// The work is split the way the engine splits it. Input, layout and painting happen in
-/// <see cref="UpdateState"/> on the logic thread and produce a list of quads; <see cref="Render"/>
+/// <see cref="UpdateState"/> on the simulation thread and produce a list of quads; <see cref="Render"/>
 /// only hands the latest list to the sprite renderer, so components never touch the GPU.
 /// <para>
 /// Drawn alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>) the list that was painted last is
@@ -137,12 +137,12 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public PostProcessor PostProcessing => layer.Effects;
 
-    // Replaced wholesale on every change, so the logic thread can walk the array it has while
+    // Replaced wholesale on every change, so the simulation thread can walk the array it has while
     // another thread creates a module.
     private readonly Lock modulesLock = new();
     private UIModule[] modules = [];
 
-    // The logic thread paints into `back`, then swaps it in as `front` for the render thread to upload.
+    // The simulation thread paints into `back`, then swaps it in as `front` for the render thread to upload.
     private readonly Lock frameLock = new();
     private UIDrawList back = new();
     private UIDrawList front = new();

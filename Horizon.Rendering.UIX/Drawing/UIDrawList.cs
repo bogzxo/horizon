@@ -9,7 +9,7 @@ namespace Horizon.Rendering.UIX.Drawing;
 
 /// <summary>
 /// Everything the UI wants on screen this frame, as quads in painter's order: what is added later is
-/// drawn on top. Components paint into it on the logic thread and the sprite renderer draws the result
+/// drawn on top. Components paint into it on the simulation thread and the sprite renderer draws the result
 /// (the quads are its <see cref="SpriteItem"/>s), the whole UI in a single call unless more than two
 /// custom images are involved.
 /// </summary>

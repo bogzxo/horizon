@@ -9,7 +9,7 @@ namespace Horizon.Rendering.UIX;
 
 /// <summary>
 /// What is typed on the real keyboard, for whichever component has the focus.
-/// The keyboard reports on the window's thread while the UI runs on the logic thread, so the
+/// The keyboard reports on the window's thread while the UI runs on the simulation thread, so the
 /// characters wait in a queue in between.
 /// <para>
 /// Not everything that is typed is a character. The keys that edit (backspace, the arrows, control with A) are

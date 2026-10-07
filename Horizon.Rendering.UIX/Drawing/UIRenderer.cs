@@ -21,7 +21,7 @@ internal sealed class UIRenderer
     // One sampler serves every renderer, so making and dropping compositors doesn't pile samplers up.
     private static uint fontSampler;
 
-    // The last list that was handed over, as the logic thread is free to reuse its own right away.
+    // The last list that was handed over, as the simulation thread is free to reuse its own right away.
     private SpriteItem[] items = [];
     private int itemCount;
     private readonly List<UIDrawList.Run> runs = [];
