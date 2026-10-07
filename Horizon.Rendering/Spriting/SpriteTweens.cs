@@ -22,7 +22,8 @@ public static class SpriteTweens
         Position,
         Size,
         Rotation,
-        Tint
+        Tint,
+        Flash
     }
 
     public static Tween TweenPosition(this Sprite sprite, Vector2 to, float duration) =>
@@ -41,6 +42,22 @@ public static class SpriteTweens
         sprite.Tweens.Play(
             Tween.To(() => sprite.Transform.Rotation, value => sprite.Transform.Rotation = value, to, duration),
             Channel.Rotation);
+
+    /// <summary>
+    /// Lights the sprite up in a colour and lets it fade back to how it was, for something that just got hit.
+    /// A tint can't do this (it only ever darkens), see <see cref="Sprite.FlashColor"/>.
+    /// </summary>
+    /// <param name="duration">How long the fade takes, in seconds.</param>
+    /// <param name="amount">How much of the colour there is to begin with, 1 being nothing but the colour.</param>
+    public static Tween Flash(this Sprite sprite, Vector4 color, float duration, float amount = 1.0f)
+    {
+        sprite.FlashColor = color;
+        sprite.FlashAmount = amount;
+
+        return sprite.Tweens.Play(
+            Tween.To(() => sprite.FlashAmount, value => sprite.FlashAmount = value, 0.0f, duration).SetEasing(Easing.OutQuad),
+            Channel.Flash);
+    }
 
     /// <summary>Changes the colour the sprite is multiplied with, alpha included.</summary>
     public static Tween TweenTint(this Sprite sprite, Vector4 to, float duration) =>

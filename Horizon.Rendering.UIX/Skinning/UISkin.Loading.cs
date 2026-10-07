@@ -351,7 +351,8 @@ public sealed partial class UISkin
     /// <summary>
     /// An icon is the name of a region, or an object that is a region of its own (see <see cref="ReadRegion"/>)
     /// with an optional label and label_color on top, or a symbol (the name of a region) with a symbol_color
-    /// and a symbol_size.
+    /// and a symbol_size. An icon is drawn as tall as the line it is in whatever the size of its art, unless it gives
+    /// a height. That is how many pixels of its art make a line, which keeps a set of icons at one scale (the four arrows).
     /// </summary>
     private void ReadIcon(string name, IRuntimeValue value, string? texture)
     {
@@ -381,7 +382,10 @@ public sealed partial class UISkin
             ? UIScript.ToNumber(symbolSizeValue, $"{name}.symbol_size")
             : 0.5f;
 
+        // How many pixels of the art are as tall as a line of text, for icons that belong together but aren't all the same height
+        float height = properties.Remove("height", out var heightValue) ? UIScript.ToNumber(heightValue, $"{name}.height") : 0.0f;
+
         sources[own] = ReadRegion(name, new ObjectValue(properties), texture);
-        icons[name] = new IconSource(own, label, labelColor, symbol, symbolColor, symbolSize);
+        icons[name] = new IconSource(own, label, labelColor, symbol, symbolColor, symbolSize, height);
     }
 }

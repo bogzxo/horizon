@@ -281,8 +281,8 @@ public class PhysicsWorld : IGameComponent
                 // Test against dynamic bodies...
                 foreach (var other in dynamicBodies)
                 {
-                    // Yeah lets not collide with ourselves
-                    if (other == body) continue;
+                    // Yeah lets not collide with ourselves, or with our own kind
+                    if (other == body || SameGroup(body, other)) continue;
 
                     foreach (var otherFixture in other.DynamicFixtures)
                     {
@@ -323,8 +323,8 @@ public class PhysicsWorld : IGameComponent
                 // Test against dynamic bodies...
                 foreach (var other in dynamicBodies)
                 {
-                    // Yeah lets not collide with ourselves
-                    if (other == body) continue;
+                    // Yeah lets not collide with ourselves, or with our own kind
+                    if (other == body || SameGroup(body, other)) continue;
 
                     foreach (var otherFixture in other.DynamicFixtures)
                     {
@@ -359,8 +359,8 @@ public class PhysicsWorld : IGameComponent
 
                 foreach (var other in dynamicBodies)
                 {
-                    // Yeah lets not collide with ourselves
-                    if (other == body) continue;
+                    // Yeah lets not collide with ourselves, or with our own kind
+                    if (other == body || SameGroup(body, other)) continue;
 
                     foreach (var otherFixture in other.DynamicFixtures)
                     {
@@ -380,6 +380,10 @@ public class PhysicsWorld : IGameComponent
         // 6. Step the particles against where everything ended up
         UpdateParticles(dt);
     }
+
+    // Whether two bodies are of a group, in which case they don't collide (see PhysicsBodyComponent2D.CollisionGroup)
+    private static bool SameGroup(PhysicsBodyComponent2D a, PhysicsBodyComponent2D b) =>
+        a.CollisionGroup != 0 && a.CollisionGroup == b.CollisionGroup;
 
     /// <summary>
     /// Helper method to find the static fixtures a fixture could run into while its body moves from one position to another.

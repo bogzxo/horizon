@@ -31,6 +31,11 @@ public struct SpriteItem
     // and Ring how much of it is filled. The edge is smoothed over a pixel, whatever size it is drawn at.
     public const uint CornerFlag = 0x400;
 
+    // Set in Flags for a quad that is being flashed. Its colour is then not multiplied in but painted over the texture,
+    // as much of it as Ring says (1 is nothing but the colour in the shape of the sprite), and it glows whatever the light is.
+    // A tint can't do this, multiplying only ever makes a sprite darker
+    public const uint FlashFlag = 0x800;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad
@@ -58,8 +63,9 @@ public struct SpriteItem
     // Where the quad sits along Z, for when the depth test is on
     public float Depth;
 
-    // Only for a quad with the CornerFlag. How far in from the edge of the disc it is filled, as a share of the radius.
-    // 1 is all of it, less leaves a hole in the middle and makes it the corner of an outline
+    // For a quad with the CornerFlag, how far in from the edge of the disc it is filled as a share of the radius.
+    // 1 is all of it, less leaves a hole in the middle and makes it the corner of an outline.
+    // For one with the FlashFlag, how much of the flash there is from 0 to 1
     public float Ring;
 
     public static readonly uint SizeInBytes = (uint)Unsafe.SizeOf<SpriteItem>();
