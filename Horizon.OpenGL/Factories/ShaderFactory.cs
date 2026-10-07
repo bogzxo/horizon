@@ -24,8 +24,20 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
         // Program compilation result.
         var asset = new Shader { Handle = ObjectManager.GL.CreateProgram() };
 
+        // Every stage as the compiler gets to see it, includes and all: what a program that was kept is looked up by
+        var sources = PreprocessSources(description.Definitions);
+
+        // Made before (by this machine, with this driver) and kept: no compiling, which is what makes a scene that
+        // is set up for the first time hitch
+        string? cached = ShaderCache.KeyFor(sources);
+        if (cached is not null && ShaderCache.TryLoad(asset.Handle, cached))
+        {
+            result = new() { Asset = asset, Status = AssetCreationStatus.Success };
+            return true;
+        }
+
         // Enumerate and compile each program in the source.
-        var aggregatedResults = CompileShaderSources(description.Definitions).ToArray();
+        var aggregatedResults = sources.Select(source => CompileShaderFromSource(source.Type, source.Source)).ToArray();
         var failed = aggregatedResults.Where(res => res.Status == CompilationStatus.Fail).ToArray();
 
         // If any of our shaders failed to compile throw an error.
@@ -48,6 +60,10 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
         // Attach each shader to the program.
         foreach (var res in aggregatedResults)
             ObjectManager.GL.AttachShader(asset.Handle, res.Handle);
+
+        // So what it links to can be kept for next time
+        if (cached is not null)
+            ShaderCache.PrepareToKeep(asset.Handle);
 
         // Attempt to link them together.
         ObjectManager.GL.LinkProgram(asset.Handle);
@@ -73,10 +89,33 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
             return false;
         }
 
+        if (cached is not null)
+            ShaderCache.Keep(asset.Handle, cached);
+
         // Success
-        //ObjectManager.Logger.Log(LogLevel.Debug, $"Shader[{handle}] created!");
         result = new() { Asset = asset, Status = AssetCreationStatus.Success };
         return true;
+    }
+
+    /// <summary>
+    /// Helper method to put every stage of a program through the preprocessor, which is what is compiled.
+    /// </summary>
+    private static (ShaderType Type, string Source)[] PreprocessSources(ShaderDefinition[] shaderDefinitions)
+    {
+        using var preprocessor = new ShaderDirectiveProcessor();
+
+        var sources = new (ShaderType, string)[shaderDefinitions.Length];
+        for (int i = 0; i < shaderDefinitions.Length; i++)
+        {
+            var (type, file, source) = shaderDefinitions[i];
+
+            // If a file is provided we can manually parse #include preprocessor statements for convenience.
+            sources[i] = (type, file is null
+                ? preprocessor.ProcessSource(string.Empty, source.SplitToLines())
+                : preprocessor.ProcessFile(file));
+        }
+
+        return sources;
     }
 
     /* Internal data structures to help transfer state information between stages. */
@@ -137,27 +176,5 @@ public class ShaderFactory : IAssetFactory<Shader, ShaderDescription>
             Bogz.Logging.Log.Warning($"[ShaderFactory] The {type} compiled, with something to say: {infoLog.Trim()}");
 
         return result;
-    }
-
-    /// <summary>
-    /// Helper method to attempt to compile all the shaders in a program with directive support, returning an intermediate <see cref="CompilationResult" />.
-    /// If file paths are provided to any shader, #include directive support is added.
-    /// </summary>
-    /// <param name="shaderDefinitions">The shader definitions.</param>
-    private static IEnumerable<CompilationResult> CompileShaderSources(
-        params ShaderDefinition[] shaderDefinitions
-    )
-    {
-        using var preprocessor = new ShaderDirectiveProcessor();
-        foreach (var (type, file, source) in shaderDefinitions)
-        {
-            // If a file is provided we can manually parse #include preprocessor statements for convenience.
-            yield return file is null
-                ? CompileShaderFromSource(
-                    type,
-                    preprocessor.ProcessSource(string.Empty, source.SplitToLines())
-                )
-                : CompileShaderFromSource(type, preprocessor.ProcessFile(file));
-        }
     }
 }

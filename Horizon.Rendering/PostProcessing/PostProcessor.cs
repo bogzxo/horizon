@@ -150,10 +150,12 @@ public sealed class PostProcessor : IDisposable
             context.OutputSize = last ? outputSize : size;
             context.Into = last ? null : Target(into, size);
             context.Output = bindOutput;
+            context.PassedOn = false;
 
             active[i].Run(context);
 
-            if (!last)
+            // An effect that had nothing to do left the picture where it was, for the next one to read from there
+            if (!last && !context.PassedOn)
             {
                 holding = into;
                 picture = targets[into]!.Texture;

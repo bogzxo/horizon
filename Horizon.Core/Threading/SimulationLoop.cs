@@ -142,7 +142,8 @@ public sealed class SimulationLoop : IDisposable
 
     /// <summary>
     /// Forgets how far behind the loop is. For when it was held up on purpose (a scene being set up) and is to carry on
-    /// from now rather than make up for the time it stood still. Loop thread.
+    /// from now rather than make up for the time it stood still. Loop thread, also from inside of a tick: whatever
+    /// ticks were still to be made to catch up are let go, and the next one is made straight away.
     /// </summary>
     public void Resynchronize() => next = double.NaN;
 
@@ -190,8 +191,16 @@ public sealed class SimulationLoop : IDisposable
             next = now - period * (MAX_CATCH_UP - 1);
         }
 
+        double first = next;
         for (int i = 0; i < due && (running || thread is null); i++)
-            MakeTick((long)next + (long)(period * i));
+        {
+            MakeTick((long)first + (long)(period * i));
+
+            // Held up on purpose at the end of that one (a scene being set up): the rest isn't made up for, the next
+            // tick is from now
+            if (double.IsNaN(next))
+                return;
+        }
 
         next += period * due;
     }
