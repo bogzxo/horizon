@@ -475,6 +475,141 @@ internal sealed partial class HexScene
         test.Wait();
         test.Check("debugger: and off again", () => !layoutDebugger.IsOn && stage.LayoutOverlay is null);
 
+        /* Lots of things at once: selecting more than one, groups, copies, what's on top and the right click menu */
+
+        UIComponent? first = null, second = null, grouped = null;
+        UIRect firstWas = default, secondWas = default;
+
+        // Where something is on the screen, which grouping and ungrouping mustn't change
+        UIRect Seen(UIComponent? component) => component is { Module: { } module }
+            ? new UIRect(module.ToWorld(component.Bounds.Min), module.ToWorld(component.Bounds.Max))
+            : default;
+        bool Same(UIRect a, UIRect b) => Near(a.Center.X, b.Center.X, 1) && Near(a.Center.Y, b.Center.Y, 1) && Near(a.Width, b.Width, 1);
+        Func<Vector2> MenuItem(string item) => () => chrome.ToWorld(contextMenu!.ItemBounds(item).Center);
+        Func<Vector2> Nothing() => Part("canvas", 0.04f, 0.5f);
+
+        Pick("File", () => "New");
+        test.Wait(0.3f);
+        test.Click(Kind("label"));
+        test.Wait();
+        test.Run(() => first = document.Selected);
+        test.Click(Kind("button"));
+        test.Wait();
+        test.Run(() =>
+        {
+            second = document.Selected;
+            second!.Position = new Vector2(0, -120);
+            codeDirty = true;
+        });
+        test.Wait();
+        test.Check("multiselect: two things to play with, next to each other", () => first is Label && second is Button && first.Parent == second.Parent);
+
+        test.Click(At(() => first));
+        test.Run(() => fakeModifier = true);
+        test.Click(At(() => second));
+        test.Run(() => fakeModifier = false);
+        test.Wait();
+        test.Check("multiselect: ctrl and a click adds to what's selected", () =>
+            document.Selection.Count == 2 && stage.Highlights.Count == 2 && treeRows[first!].Selected && treeRows[second!].Selected);
+
+        test.Run(() =>
+        {
+            firstWas = Seen(first);
+            secondWas = Seen(second);
+        });
+        Pick("Edit", () => "Group");
+        test.Wait();
+        test.Check("group: puts what's selected in a group, which is what's selected now", () =>
+            (grouped = document.Selected) is Group && first!.Parent == grouped && second!.Parent == grouped && document.Selection.Count == 1);
+        test.Check("group: and nothing moves on screen", () => Same(Seen(first), firstWas) && Same(Seen(second), secondWas));
+        test.Check("group: which goes in the code", () => Code().Contains("compositor.group("));
+        test.Check("group: and writes back the same", () => CheckRoundTrip(document));
+
+        test.Click(Nothing());
+        test.Click(At(() => first));
+        test.Wait();
+        test.Check("group: a click on what's in it picks the group", () => document.Selected == grouped && document.Selection.Count == 1);
+        test.Click(At(() => first));
+        test.Wait();
+        test.Check("group: and another click goes in", () => document.Selected == first);
+
+        test.Click(Nothing());
+        test.RightClick(At(() => second));
+        test.Wait();
+        test.Check("menu: a right click on the canvas picks what's there and opens the menu", () =>
+            document.Selected == grouped && contextMenu?.Showing is not null && chrome.Popup == contextMenu);
+        test.Click(MenuItem("Ungroup"));
+        test.Wait();
+        test.Check("ungroup: the menu takes the group apart and selects what was in it", () =>
+            grouped!.Parent is null && first!.Parent == document.Module.Root && second!.Parent == first.Parent && document.Selection.Count == 2);
+        test.Check("ungroup: and nothing moves on screen", () => Same(Seen(first), firstWas) && Same(Seen(second), secondWas));
+
+        Pick("Edit", () => "Duplicate");
+        test.Wait();
+        test.Check("duplicate: copies everything selected, and selects the copies", () =>
+            document.Walk().Count() == 4 && document.Selection.Count == 2 && !document.IsSelected(first!) && !document.IsSelected(second!));
+        test.Check("duplicate: with names of their own", () =>
+            document.Selection.Select(document.NameOf).Distinct().Count() == 2 && !document.Selection.Any(copy => document.NameOf(copy) == document.NameOf(first!)));
+
+        test.RightClick(Row(() => first));
+        test.Wait();
+        test.Click(MenuItem("Bring to front"));
+        test.Wait();
+        test.Check("order: the menu of a row of the tree brings it to the front", () =>
+            document.Selected == first && document.Module.Root.Children[^1] == first);
+        test.RightClick(At(() => first));
+        test.Wait();
+        test.Click(MenuItem("Send to back"));
+        test.Wait();
+        test.Check("order: and the one on the canvas sends it to the back, code and all", () =>
+            document.Module.Root.Children[0] == first && Code().IndexOf($"let {document.NameOf(first!)} ") < Code().IndexOf($"let {document.NameOf(second!)} "));
+
+        /* What a layout is made for, and the canvas */
+
+        Pick("Layout", () => DescribeDesign(new Vector2(1600, 900)));
+        test.Wait();
+        test.Check("design: the layout menu says what it's made for, in the code before anything else", () =>
+            document.Design == new Vector2(1600, 900) && Code().Contains("compositor.design({ size: vec(1600, 900), fit: \"contain\" });")
+            && Code().IndexOf("compositor.design") < Code().IndexOf("let "));
+        Pick("Layout", () => "Preview on 21:9, an ultrawide");
+        test.Wait();
+        test.Check("design: on an ultrawide it keeps its shape, in the middle", () =>
+            document.Module.Viewport is { } seen && Near(seen.Width / seen.Height, 21.0f / 9.0f, 0.01f)
+            && Near(document.Module.Frame.Width, 1600) && Near(document.Module.Frame.Height, 900) && Near(document.Module.Frame.Center.X, seen.Center.X));
+        Pick("Layout", () => "Take the whole screen (stretch)");
+        test.Wait();
+        test.Check("design: stretched it takes the lot", () =>
+            document.Fit == UIFit.Stretch && Near(document.Module.Frame.Width, document.Module.Viewport!.Value.Width) && Code().Contains("fit: \"stretch\""));
+        Pick("Layout", () => "Preview on its own shape");
+        Pick("Layout", () => "Made for any screen");
+        test.Wait();
+        test.Check("design: made for any screen there's nothing about it in the code", () => document.Design is null && !Code().Contains("compositor.design"));
+
+        float fitted = 0;
+        test.Run(() => fitted = document.Module.Scale.X);
+        Pick("View", () => "Zoom in");
+        test.Wait();
+        test.Check("zoom: the view menu zooms the canvas in", () => canvasZoom > 1.0f && document.Module.Scale.X > fitted * 1.2f);
+        Pick("View", () => "Zoom to fit");
+        test.Wait();
+        test.Check("zoom: and back to fit", () => canvasZoom == 1.0f && Near(document.Module.Scale.X, fitted, 0.001f));
+
+        /* Tabs */
+
+        TabPanel? tabbed = null;
+        Pick("Edit", () => "Select nothing");
+        test.Click(Kind("tabs"));
+        test.Wait();
+        test.Check("tabs: come with a page for each tab", () =>
+            (tabbed = document.Selected as TabPanel) is { Children.Count: 2 } && string.Join(",", tabbed.Tabs) == "One,Two" && tabbed.Selected == 0);
+        test.Click(() => document.Module.ToWorld(tabbed!.TabBounds(1).Center));
+        test.Wait();
+        test.Check("tabs: a click on a tab in the canvas opens its page", () => tabbed!.Selected == 1 && document.Selected == tabbed);
+        test.Click(Kind("label"));
+        test.Wait();
+        test.Check("tabs: what's added goes onto the page that's open", () => document.Selected is Label added && added.Parent == tabbed!.Children[1]);
+        test.Check("tabs: and the lot writes back the same", () => CheckRoundTrip(document));
+
         test.Hover(Part("canvas", 0.04f, 0.06f));
     }
 }

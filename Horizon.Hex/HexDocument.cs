@@ -1,7 +1,9 @@
+using System.Numerics;
 using System.Text;
 
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
+using Horizon.Rendering;
 using Horizon.Rendering.UIX;
 using Horizon.Rendering.UIX.Components;
 
@@ -52,7 +54,71 @@ internal sealed class HexDocument
     /// <summary>The module the layout lives in, shown in the canvas of the editor.</summary>
     public UIModule Module { get; }
 
-    public UIComponent? Selected { get; set; }
+    // What is selected, in the order it was picked: the last one is the one the inspector shows
+    private readonly List<UIComponent> selection = [];
+
+    /// <summary>Everything that is selected, the one picked last at the end.</summary>
+    public IReadOnlyList<UIComponent> Selection => selection;
+
+    /// <summary>The one component the inspector shows, the last one picked. Setting it selects that and nothing else.</summary>
+    public UIComponent? Selected
+    {
+        get => selection.Count > 0 ? selection[^1] : null;
+        set
+        {
+            selection.Clear();
+            if (value is not null)
+                selection.Add(value);
+        }
+    }
+
+    public bool IsSelected(UIComponent component) => selection.Contains(component);
+
+    /// <summary>Selects a component on top of what is selected, or lets go of it if it already was (ctrl or shift click).</summary>
+    public void ToggleSelected(UIComponent component)
+    {
+        if (!selection.Remove(component))
+            selection.Add(component);
+    }
+
+    /// <summary>
+    /// The selected components that aren't inside of another selected one, in the order they are in the layout: what
+    /// gets moved, deleted or grouped. Dragging a group and something inside of it would move that thing twice.
+    /// </summary>
+    public List<UIComponent> TopSelection()
+    {
+        var order = Walk().Select(pair => pair.Component).ToList();
+        return selection
+            .Where(component => !HasSelectedAncestor(component))
+            .OrderBy(order.IndexOf)
+            .ToList();
+    }
+
+    private bool HasSelectedAncestor(UIComponent component)
+    {
+        for (UIComponent? at = component.Parent; at is not null; at = at.Parent)
+        {
+            if (selection.Contains(at))
+                return true;
+        }
+
+        return false;
+    }
+
+    /* What the layout was made for */
+
+    /// <summary>The screen the layout says it was made for, null if it says nothing (and gets whatever screen it's shown on).</summary>
+    public Vector2? Design => Module.DesignSize;
+
+    /// <summary>How the layout goes onto a screen of another shape, see <see cref="UIFit"/>.</summary>
+    public UIFit Fit => Module.Fit;
+
+    /// <summary>Says what the layout is made for, which goes into the file as compositor.design (null takes it out).</summary>
+    public void SetDesign(Vector2? size, UIFit fit)
+    {
+        Module.DesignSize = size;
+        Module.Fit = fit;
+    }
 
     /// <summary>How many stand-in items are being shown, see <see cref="RefreshPreviews"/>.</summary>
     public int PreviewCount => previews.Count;
@@ -163,11 +229,23 @@ internal sealed class HexDocument
             case ScrollPanel scroll: scroll.Size = new System.Numerics.Vector2(240, 160); scroll.Color = backdrop; break;
             case StackPanel stack: stack.Padding = new UIEdges(16); stack.Color = backdrop; break;
             case GridPanel grid: grid.Padding = new UIEdges(16); grid.Color = backdrop; break;
+            case TabPanel tabs:
+                tabs.Size = new System.Numerics.Vector2(480, 300);
+                tabs.Tabs = ["One", "Two"];
+                break;
             case Panel panel: panel.Size = new System.Numerics.Vector2(240, 160); panel.Color = backdrop; break;
         }
 
         (parent ?? Module.Root).Add(component);
         NameOf(component);
+
+        // Tabs with nothing to switch between are a strip of nothing, they come with a page a tab
+        if (component is TabPanel pages)
+        {
+            for (int i = 0; i < pages.Tabs.Length; i++)
+                Add("stack", pages);
+        }
+
         return component;
     }
 
@@ -180,8 +258,7 @@ internal sealed class HexDocument
         foreach (var (removed, _) in gone)
         {
             names.Remove(removed);
-            if (Selected == removed)
-                Selected = null;
+            selection.Remove(removed);
         }
 
         component.Parent?.Remove(component);
@@ -195,7 +272,11 @@ internal sealed class HexDocument
 
         names.Clear();
         previews.Clear();
-        Selected = null;
+        selection.Clear();
+
+        // What the layout is made for is part of the code, which is about to be built again
+        Module.DesignSize = null;
+        Module.Fit = UIFit.Contain;
     }
 
     /// <summary>
@@ -327,6 +408,13 @@ internal sealed class HexDocument
     {
         var code = new StringBuilder();
 
+        if (Design is { } design)
+        {
+            code.AppendLine();
+            code.Append("compositor.design({ size: ").Append(HIDLWriter.Write(new Vector2Value(design)))
+                .Append(", fit: \"").Append(Fit.ToString().ToLowerInvariant()).AppendLine("\" });");
+        }
+
         foreach (var (component, _) in Walk())
         {
             code.AppendLine();
@@ -390,11 +478,15 @@ internal sealed class HexDocument
         from.RemoveAt(from.Count - 1);
 
         // Whatever was selected is selected again if it is still there, components are found by their names.
-        string? selected = Selected is not null && names.TryGetValue(Selected, out var name) ? name : null;
+        var selected = selection.Select(component => names.GetValueOrDefault(component)).OfType<string>().ToList();
 
         Load(recorded, Path, keepHistory: true);
 
-        Selected = selected is null ? null : names.FirstOrDefault(pair => pair.Value == selected).Key;
+        foreach (string name in selected)
+        {
+            if (Find(name) is { } found)
+                selection.Add(found);
+        }
 
         // Going back and forth is not the time for everything to make its entrance again.
         SettleIntros();
@@ -424,8 +516,10 @@ internal sealed class HexDocument
             Settle(child);
     }
 
-    private void WriteComponent(StringBuilder code, UIComponent component)
+    private void WriteComponent(StringBuilder code, UIComponent component, Func<UIComponent, string>? nameOf = null, UIComponent? top = null)
     {
+        nameOf ??= NameOf;
+
         string? kind = UIModule.KindOf(component);
         if (kind is null)
         {
@@ -435,8 +529,8 @@ internal sealed class HexDocument
 
         var properties = new List<string>();
 
-        if (component.Parent is { } parent && parent != Module.Root)
-            properties.Add($"parent: {NameOf(parent)}");
+        if (component != top && component.Parent is { } parent && parent != Module.Root)
+            properties.Add($"parent: {nameOf(parent)}");
 
         // Only what was changed is written, against a component of the same kind nobody has touched.
         UIComponent untouched = UIModule.CreateDetached(kind)!;
@@ -463,7 +557,7 @@ internal sealed class HexDocument
         if (hasHandlers)
             code.AppendLine("// The handlers this component had were functions, which can't be written back out.");
 
-        code.Append("let ").Append(NameOf(component)).Append(" = compositor.").Append(kind).Append('(');
+        code.Append("let ").Append(nameOf(component)).Append(" = compositor.").Append(kind).Append('(');
 
         if (properties.Count == 0)
         {
@@ -539,13 +633,180 @@ internal sealed class HexDocument
         }
     }
 
-    private string FreeName(string kind)
+    private string FreeName(string kind, ICollection<string>? taken = null)
     {
         for (int number = 1; ; number++)
         {
             string name = $"{kind}{number}";
-            if (!names.ContainsValue(name))
+            if (!names.ContainsValue(name) && taken?.Contains(name) != true)
                 return name;
         }
+    }
+
+    /* Rearranging: grouping, copying, and what goes on top of what */
+
+    /// <summary>
+    /// Puts components into a new <see cref="Group"/>, keeping every one of them exactly where it is on screen. They
+    /// have to be in the same container (or all on the screen). Each one is placed from the middle of the group from
+    /// then on, whatever it was anchored to before, which is what makes the group one thing you can move about.
+    /// </summary>
+    /// <returns>The group, null with the reason why if it can't be done.</returns>
+    public Group? Group(IReadOnlyList<UIComponent> components, out string problem)
+    {
+        problem = string.Empty;
+        if (components.Count == 0)
+        {
+            problem = "select something to group first";
+            return null;
+        }
+
+        UIComponent parent = components[0].Parent ?? Module.Root;
+        if (components.Any(component => (component.Parent ?? Module.Root) != parent))
+        {
+            problem = "only things in the same container can be grouped, they'd jump about otherwise";
+            return null;
+        }
+
+        var ordered = components.OrderBy(component => IndexIn(parent, component)).ToList();
+
+        UIRect union = ordered[0].Bounds;
+        foreach (var component in ordered.Skip(1))
+            union = new UIRect(Vector2.Min(union.Min, component.Bounds.Min), Vector2.Max(union.Max, component.Bounds.Max));
+
+        UIRect area = parent.Bounds.Shrink(parent.Padding);
+        var group = new Group { Anchor = Origin.Center, Position = union.Center - area.Center };
+        parent.Insert(IndexIn(parent, ordered[0]), group);
+
+        foreach (var component in ordered)
+        {
+            Vector2 center = component.Bounds.Center;
+
+            // Stretching to fill the group would make it as big as the group is, which is as big as they are: round and round
+            if (component.Fill != UIFill.None)
+            {
+                component.Size = component.Bounds.Size;
+                component.Fill = UIFill.None;
+            }
+
+            component.Anchor = Origin.Center;
+            component.Pivot = null;
+            component.Position = center - union.Center;
+            group.Add(component);
+        }
+
+        NameOf(group);
+        return group;
+    }
+
+    /// <summary>
+    /// Takes a group apart: what was in it goes into the group's container where the group was, everything staying where
+    /// it is on screen.
+    /// </summary>
+    /// <returns>What was in it.</returns>
+    public List<UIComponent> Ungroup(Group group)
+    {
+        UIComponent parent = group.Parent ?? Module.Root;
+        UIRect area = parent.Bounds.Shrink(parent.Padding);
+        int index = IndexIn(parent, group);
+
+        var freed = group.Children.ToList();
+        foreach (var component in freed)
+        {
+            Vector2 center = component.Bounds.Center;
+
+            component.Anchor = Origin.Center;
+            component.Pivot = null;
+            component.Position = center - area.Center;
+            parent.Insert(index++, component);
+        }
+
+        parent.Remove(group);
+        names.Remove(group);
+        selection.Remove(group);
+        return freed;
+    }
+
+    /// <summary>
+    /// Makes a copy of a component and everything in it, next to it and nudged down and to the right so it can be seen.
+    /// Made the way a layout file is loaded, so the copy is everything the original would be written out as.
+    /// </summary>
+    public UIComponent? Duplicate(UIComponent original, out string problem)
+    {
+        problem = string.Empty;
+
+        var subtree = new List<(UIComponent, int)>();
+        Collect(original, 0, subtree);
+
+        // Fresh names for the lot, none of them taken and none of them the same as each other
+        var fresh = new Dictionary<UIComponent, string>();
+        foreach (var (component, _) in subtree)
+            fresh[component] = FreeName(UIModule.KindOf(component) ?? "component", fresh.Values);
+
+        var code = new StringBuilder();
+        foreach (var (component, _) in subtree)
+            WriteComponent(code, component, component => fresh.TryGetValue(component, out var name) ? name : NameOf(component), top: original);
+
+        UIComponent? parent = original.Parent is { } owner && owner != Module.Root ? owner : null;
+
+        UILayout made;
+        try
+        {
+            made = UILayout.LoadCode(Module, code.ToString(), parent, Path ?? string.Empty);
+        }
+        catch (Exception e)
+        {
+            problem = e.Message;
+            return null;
+        }
+
+        foreach (var (name, part) in made.Parts)
+            names[part] = name;
+
+        if (!made.Parts.TryGetValue(fresh[original], out var copy))
+        {
+            problem = "the copy came out without its top, which shouldn't be possible";
+            return null;
+        }
+
+        UIComponent container = copy.Parent ?? Module.Root;
+        container.MoveChild(copy, IndexIn(container, original) + 1);
+        copy.Position += new Vector2(16, -16);
+
+        SettleIntros();
+        RefreshPreviews();
+        return copy;
+    }
+
+    /// <summary>Where a component goes among its siblings, which is the order they're drawn in (the last one on top).</summary>
+    public enum Order { Front, Forward, Backward, Back }
+
+    /// <summary>Moves a component up or down the order it is drawn in among its siblings.</summary>
+    public bool Reorder(UIComponent component, Order order)
+    {
+        if (component.Parent is not { } parent)
+            return false;
+
+        int index = IndexIn(parent, component);
+        int last = parent.Children.Count - 1;
+
+        return parent.MoveChild(component, order switch
+        {
+            Order.Front => last,
+            Order.Forward => Math.Min(last, index + 1),
+            Order.Backward => Math.Max(0, index - 1),
+            _ => 0
+        });
+    }
+
+    private static int IndexIn(UIComponent parent, UIComponent child)
+    {
+        var children = parent.Children;
+        for (int i = 0; i < children.Count; i++)
+        {
+            if (children[i] == child)
+                return i;
+        }
+
+        return -1;
     }
 }

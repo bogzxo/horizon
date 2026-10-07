@@ -22,7 +22,8 @@ internal sealed class HexPointerScript
         string? Name = null,
         Func<bool>? Check = null,
         Action? Action = null,
-        Func<bool>? Until = null);
+        Func<bool>? Until = null,
+        bool Secondary = false);
 
     private readonly Queue<Step> steps = new();
     private Step? current;
@@ -30,7 +31,7 @@ internal sealed class HexPointerScript
     private Vector2 from;
 
     private Vector2 position;
-    private bool down;
+    private bool down, secondary;
 
     public int Passed { get; private set; }
     public int Failed { get; private set; }
@@ -38,7 +39,7 @@ internal sealed class HexPointerScript
     /// <summary>Whether everything that was queued has played out.</summary>
     public bool IsFinished { get; private set; }
 
-    public UIPointer Pointer => new(position, down);
+    public UIPointer Pointer => new(position, down, secondary);
 
     /// <summary>Moves to a target and stays there for a while.</summary>
     public void Hover(Func<Vector2> target, float duration = MOVE_TIME)
@@ -55,6 +56,14 @@ internal sealed class HexPointerScript
     }
 
     /// <summary>Presses at one place, moves to another with the button held and lets go there.</summary>
+    /// <summary>A click with the other button, which is what opens a context menu.</summary>
+    public void RightClick(Func<Vector2> target)
+    {
+        Glide(target, false, MOVE_TIME);
+        steps.Enqueue(new Step(target, false, PRESS_TIME, Secondary: true));
+        Glide(target, false, PRESS_TIME);
+    }
+
     public void Drag(Func<Vector2> start, Func<Vector2> end)
     {
         Glide(start, false, MOVE_TIME);
@@ -144,6 +153,7 @@ internal sealed class HexPointerScript
 
         position = Vector2.Lerp(from, step.Target(), progress);
         down = step.Down;
+        secondary = step.Secondary;
 
         if (progress >= 1.0f)
             current = null;

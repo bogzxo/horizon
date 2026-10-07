@@ -224,8 +224,15 @@ namespace Horizon.Rendering.UIX
             Root.PaintTree(list);
 
             // The edges of the layout, for whoever is editing it
+            // and of the screen it's being shown on, fainter, when that's another shape than what it's made for
             if (FrameColor is { } frameColor)
-                list.Outline(Frame, 2.0f / MathF.Max(0.01f, Scale.X), frameColor);
+            {
+                float width = 2.0f / MathF.Max(0.01f, Scale.X);
+                list.Outline(Frame, width, frameColor);
+
+                if (Viewport is { } screen && screen != Frame)
+                    list.Outline(screen, width * 0.5f, frameColor with { W = frameColor.W * 0.4f });
+            }
 
             if (Clip is not null)
                 list.PopClip();

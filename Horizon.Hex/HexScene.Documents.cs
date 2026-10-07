@@ -58,7 +58,7 @@ internal sealed partial class HexScene
             other.Module.Enabled = other == shown;
 
         nameBox.Text = shown.Name;
-        stage.Highlighted = shown.Selected;
+        MarkSelection();
         browsing = false;
         tabsDirty = treeDirty = inspectorDirty = codeDirty = true;
     }
@@ -264,8 +264,8 @@ internal sealed partial class HexScene
 
     private void Close()
     {
-        if (stage.Highlighted == document.Selected)
-            stage.Highlighted = null;
+        stage.Highlighted = null;
+        stage.Highlights = [];
 
         stage.RemoveModule(document.Module);
         documents.Remove(document);
