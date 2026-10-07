@@ -26,8 +26,13 @@ namespace Horizon.Rendering.UIX;
 /// </summary>
 public sealed class UINavigator
 {
-    // How much worse a candidate off to the side is than one straight ahead at the same distance
-    private const float ASIDE_PENALTY = 2.5f;
+    // How much worse a candidate off to the side is than one straight ahead at the same distance. Enough that the cell
+    // under this one beats the one over from it, not so much that the selector of the next row (whose label pushes it
+    // off to the side) loses to a button three rows down
+    private const float ASIDE_PENALTY = 1.0f;
+
+    // Coming round past the edge is about the row furthest back, so there being off to the side counts for more
+    private const float WRAP_ASIDE_PENALTY = 2.5f;
 
     private readonly UIModule module;
     private readonly List<UIComponent> candidates = [];
@@ -183,7 +188,7 @@ public sealed class UINavigator
             else if (!ahead)
             {
                 // The one furthest back (and least off to the side) is where going past the edge comes round to
-                float back = forward + aside * ASIDE_PENALTY;
+                float back = forward + aside * WRAP_ASIDE_PENALTY;
                 if (back < aroundScore)
                 {
                     around = candidate;
