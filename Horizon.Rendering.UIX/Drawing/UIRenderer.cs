@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering.Spriting;
@@ -27,6 +27,9 @@ internal sealed class UIRenderer
     private readonly List<UIDrawList.Run> runs = [];
     private readonly List<SpriteRun> spriteRuns = [];
     private UISkin? skin;
+
+    /// <summary>The quads that were uploaded last, which is what is drawn. For tests that look at what is on screen.</summary>
+    internal ReadOnlySpan<SpriteItem> Uploaded => items.AsSpan(0, itemCount);
 
     /// <summary>Whether anything of what was last uploaded is going anywhere, see <see cref="UIDrawList.Moving"/>.</summary>
     public bool Moving { get; private set; }
@@ -87,6 +90,26 @@ internal sealed class UIRenderer
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
         Moving = list.Moving;
+    }
+
+    /// <summary>
+    /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own: a list as
+    /// it was captured at the end of a tick, or two of those blended. They are free to be reused afterwards.
+    /// </summary>
+    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, bool moving)
+    {
+        if (items.Length < source.Length)
+            items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
+
+        source.CopyTo(items);
+        itemCount = source.Length;
+
+        runs.Clear();
+        foreach (var run in sourceRuns)
+            runs.Add(run);
+
+        skin = listSkin;
+        Moving = moving;
     }
 
     /// <summary>

@@ -1,4 +1,4 @@
-using Bogz.Logging;
+﻿using Bogz.Logging;
 using System.Numerics;
 
 using Horizon.Engine;
@@ -143,11 +143,16 @@ public sealed class PostLayer : IDisposable
     /// are on, without anything being drawn onto the layer: for a frame in which nothing of it has changed.
     /// </summary>
     /// <param name="dt">How long the frame is, in seconds.</param>
+    /// <param name="moving">
+    /// Whether what is in the picture was moving when it was drawn, which the effects that are only for what moves go
+    /// by. A picture that is shown once more because nothing new came along in time (a tick that was late) is still in
+    /// the middle of whatever it was doing, and its trails don't stop and start again for it.
+    /// </param>
     /// <returns>
     /// False if there is no picture to lay over, or what it would be laid over is another size by now: nothing
     /// was done then, and the layer has to be drawn onto again.
     /// </returns>
-    public bool Replay(float dt)
+    public bool Replay(float dt, bool moving = false)
     {
         if (!hasPicture || frameBuffer is null)
             return false;
@@ -163,8 +168,7 @@ public sealed class PostLayer : IDisposable
         target = into;
         before = RenderState.Save();
 
-        // Nothing in a picture that was kept moves
-        effectsActive = Effects.Prepare(false);
+        effectsActive = Effects.Prepare(moving);
         Compose(dt);
         return true;
     }

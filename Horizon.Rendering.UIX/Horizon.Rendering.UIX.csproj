@@ -39,4 +39,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Testing" />
+  </ItemGroup>
+
 </Project>
