@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using DotTiled;
 
@@ -171,6 +171,15 @@ public sealed class TileMapLayer
     // Where the layer has drifted to, and whether what is on the GPU is out of date
     internal Vector2 Drift;
     internal bool IsDirty = true;
+
+    // How often the tiles have been changed, and a copy of them as of the last change that was published: frames drawn
+    // alongside the simulation build from that, never from the arrays the simulation goes on changing. And which change
+    // the render thread built the layer from last
+    internal int Version;
+    internal int CapturedVersion = -1;
+    internal uint[] CapturedGids = [];
+    internal TileFlip[] CapturedFlips = [];
+    internal int BuiltVersion = -1;
     internal readonly List<TileMapBatch> Batches = [];
     internal readonly List<TileMapAnimated> Animated = [];
 
@@ -201,6 +210,7 @@ public sealed class TileMapLayer
         Gids[index] = gid;
         Flips[index] = flip;
         IsDirty = true;
+        Version++;
         return true;
     }
 
