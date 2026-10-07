@@ -65,6 +65,11 @@ internal sealed partial class HexScene
         if (area.IsEmpty)
             return;
 
+        // The dark behind the layouts, exactly the canvas
+        backdrop.Viewport = UIRect.FromCenter(Vector2.Zero, area.Size);
+        backdrop.Position = area.Center;
+        backdrop.Scale = Vector2.One;
+
         UIRect screen = PreviewScreen();
         float scale = CanvasFit(area, screen) * canvasZoom;
 

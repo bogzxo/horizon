@@ -57,16 +57,29 @@ let skin = {
         sword: "icon_sword",
         shield: "icon_shield",
 
-        pad_a: { sprite: "round_blank@white", tint: vec(0.33, 0.75, 0.38, 1.0), label: "A" },
-        pad_b: { sprite: "round_blank@white", tint: vec(0.88, 0.3, 0.28, 1.0), label: "B" },
-        pad_x: { sprite: "round_blank@white", tint: vec(0.25, 0.52, 0.93, 1.0), label: "X" },
-        pad_y: { sprite: "round_blank@white", tint: vec(0.95, 0.76, 0.22, 1.0), label: "Y", label_color: vec(0.1, 0.08, 0.02, 1.0) },
-        pad_lb: { sprite: "key@white", label: "LB" },
-        pad_rb: { sprite: "key@white", label: "RB" },
-        pad_lt: { sprite: "key@white", label: "LT" },
-        pad_rt: { sprite: "key@white", label: "RT" },
-        pad_ls: { sprite: "key@white", label: "LS" },
-        pad_rs: { sprite: "key@white", label: "RS" },
-        dpad: "cursor_move@white"
+        // The gamepads, out of the gdb art. Written with the names of an Xbox gamepad, a text that starts with
+        // [icons:playstation] shows the PlayStation ones instead (see icon_sets)
+        pad_a: "xbox_a",
+        pad_b: "xbox_b",
+        pad_x: "xbox_x",
+        pad_y: "xbox_y",
+        pad_lb: "xbox_lb",
+        pad_rb: "xbox_rb",
+        pad_lt: "xbox_lt",
+        pad_rt: "xbox_rt",
+        pad_ls: "xbox_ls",
+        pad_rs: "xbox_rs",
+        pad_view: "xbox_view",
+        pad_menu: "xbox_menu",
+        pad_home: "xbox_home",
+        dpad: "xbox_dpad",
+        dpad_up: "xbox_dpad_up",
+        dpad_down: "xbox_dpad_down",
+        dpad_left: "xbox_dpad_left",
+        dpad_right: "xbox_dpad_right",
+        stick_up: { sprite: "xbox_stick_up", height: 12 },
+        stick_down: { sprite: "xbox_stick_down", height: 12 },
+        stick_left: { sprite: "xbox_stick_left", height: 12 },
+        stick_right: { sprite: "xbox_stick_right", height: 12 }
     }
 }

@@ -37,7 +37,7 @@ let palette = compositor.grid({
     columns: 2,
     spacing: 4,
     template: "palette_button.hor",
-    preview_count: 15
+    preview_count: 19
 });
 let tree_title = compositor.label({ parent: left, anchor: "left", text: "LAYOUT", text_scale: 0.125, color: vec(0.46, 0.52, 0.64, 1) });
 let tree_scroll = compositor.scroll({
@@ -68,7 +68,7 @@ let tabs = compositor.stack({
     template: "tab.hor",
     preview_count: 2
 });
-let canvas = compositor.panel({ parent: center, size: vec(884, 497), color: vec(0.02, 0.02, 0.03, 1) });
+let canvas = compositor.panel({ parent: center, size: vec(884, 497) });
 let code_title = compositor.label({ parent: center, anchor: "left", text: "CODE", text_scale: 0.125, color: vec(0.46, 0.52, 0.64, 1) });
 let code_scroll = compositor.scroll({
     parent: center,

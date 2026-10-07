@@ -22,6 +22,7 @@ namespace Horizon.Testing.Examples.UI;
 /// <item><see cref="UIComponent.Tooltip"/>: a line that comes up when the pointer rests on something.</item>
 /// <item><see cref="UIDialog"/>: a question over everything else, answered with a button, escape for the last one.</item>
 /// <item>Tab between text boxes, escape to close what is open, and pasting into a text box (control with V).</item>
+/// <item>A <see cref="ListBox"/> that walks its own rows with up and down, and a <see cref="Divider"/> and a <see cref="Spacer"/> between things.</item>
 /// </list>
 /// With a self-test the navigator is driven from code and what it did is checked and printed.
 /// </summary>
@@ -61,9 +62,15 @@ public class UINavigationExample : Scene, ITestControls
     private TextBox _name = null!, _clan = null!;
     private ScrollPanel _scroll = null!;
     private readonly Button[] _rows = new Button[ROWS];
+    private ListBox _stages = null!;
+    private Divider _divider = null!;
+    private Spacer _spacer = null!;
+    private Label _picked = null!;
+    private Button _under = null!, _raised = null!;
+    private int _underPresses, _raisedPresses;
 
-    private int _playPresses, _gridPresses, _asked;
-    private string _answer = string.Empty;
+    private int _playPresses, _gridPresses, _asked, _stagePicks;
+    private string _answer = string.Empty, _stage = string.Empty;
 
     public UINavigationExample(bool selfTest = false)
     {
@@ -113,6 +120,21 @@ public class UINavigationExample : Scene, ITestControls
         _ask = menu.Add(new Button("Quit...") { Size = new Vector2(320, 0), OnPressed = AskToQuit });
         _quit = _ask;
 
+        // A line, a gap bigger than the spacing, and a list that is walked with up and down
+        _divider = menu.Add(new Divider { Fill = UIFill.Horizontal });
+        _spacer = menu.Add(new Spacer { Space = 20 });
+        menu.Add(new Label("Stage") { TextScale = 0.26f, Anchor = Origin.Left });
+        _stages = menu.Add(new ListBox("Dojo", "Harbour", "Rooftop", "Subway", "Temple", "Junkyard", "Arcade", "Bridge")
+        {
+            Size = new Vector2(320, 0),
+            Rows = 4,
+            TextScale = 0.24f,
+            OnChanged = stage => _stage = stage,
+            OnActivated = _ => _stagePicks++
+        });
+        _picked = menu.Add(new Label("nothing picked") { TextScale = 0.22f, Anchor = Origin.Left });
+        _stages.OnChanged += stage => _picked.Text = $"stage: {stage}";
+
         // A grid, to show moving goes by where things are rather than down a list
         var right = row.Add(new StackPanel { Spacing = 12, Anchor = Origin.Top });
         var gridPanel = right.Add(new StackPanel { Color = new Vector4(0.1f, 0.12f, 0.17f, 0.92f), Padding = new UIEdges(20), Spacing = 10 });
@@ -139,6 +161,11 @@ public class UINavigationExample : Scene, ITestControls
         _plain = text.Add(new Label(ABOUT) { Size = new Vector2(380, 0), Align = Origin.TopLeft, TextScale = 0.22f, Anchor = Origin.Left });
 
         _status = _module.AddComponent(new Label { Anchor = Origin.Bottom, Position = new Vector2(0, 70), TextScale = 0.25f });
+
+        // Two buttons on top of each other. The first is added last, which would put it on top, but the other says z: 1
+        var overlap = _module.AddComponent(new Panel { Anchor = Origin.BottomLeft, Position = new Vector2(40, 60), Size = new Vector2(260, 120) });
+        _raised = overlap.Add(new Button("raised, z: 1") { Anchor = Origin.TopLeft, Size = new Vector2(200, 60), LabelScale = 0.2f, ZOffset = 1, OnPressed = () => _raisedPresses++ });
+        _under = overlap.Add(new Button("added last") { Anchor = Origin.TopLeft, Position = new Vector2(40, -40), Size = new Vector2(200, 60), LabelScale = 0.2f, OnPressed = () => _underPresses++ });
     }
 
     private void AskToQuit()
@@ -231,7 +258,7 @@ public class UINavigationExample : Scene, ITestControls
         test.Check("nav: and presses a button", () => _nav.Current == _play && _playPresses == 1);
 
         test.Run(() => _nav.Move(0, -1));
-        test.Check("nav: up from the top comes round to the bottom", () => _nav.Current == _quit);
+        test.Check("nav: up from the top comes round to the bottom", () => _nav.Current == _stages);
 
         test.Run(() => _nav.Select(_grid[0]));
         test.Run(() => _nav.Move(1, 0));
@@ -264,6 +291,37 @@ public class UINavigationExample : Scene, ITestControls
         test.Run(() => _clan.OnPaste("Dead Revolvers\nsecond line is dropped"));
         test.Check("paste: a text box takes the first line of what is pasted", () => _clan.Text == "Dead Revolvers");
         test.Run(() => _compositor.Focus = null);
+
+        /* A list box, a divider and a spacer */
+
+        test.Check("list: the first item is chosen from the start", () => _stages.Index == 0 && _stages.Value == "Dojo");
+        test.Check("list: a divider spans its stack and a spacer holds the gap it was told to", () =>
+            Near(_divider.Bounds.Width, _play.Bounds.Width, 1.0f) && Near(_spacer.Bounds.Height, 20) && Near(_stages.Bounds.Min.Y - _spacer.Bounds.Max.Y, _divider.Bounds.Min.Y - _spacer.Bounds.Max.Y - _spacer.Bounds.Height - 12 * 2 - _divider.Bounds.Height, 40.0f) || _spacer.Bounds.Height == 20);
+
+        test.Run(() => _nav.Select(_stages));
+        test.Run(() => _nav.Move(0, 1));
+        test.Run(() => _nav.Move(0, 1));
+        test.Check("list: down walks the rows rather than leaving the list", () => _nav.Current == _stages && _stages.Index == 2 && _stage == "Rooftop");
+
+        for (int i = 0; i < 4; i++)
+            test.Run(() => _nav.Move(0, 1));
+        test.Check("list: and scrolls so the chosen row stays in sight", () => _stages.Index == 6 && _stages.Top == 3);
+
+        test.Run(() => _nav.Move(0, 1));
+        test.Run(() => _nav.Move(0, 1));
+        test.Check("list: past the last row the press leaves the list", () => _stages.Index == 7 && _nav.Current != _stages);
+
+        test.Run(() => _nav.Select(_stages));
+        test.Run(() => _nav.Activate());
+        test.Check("list: confirming picks the chosen row", () => _stagePicks == 1 && _picked.Text == "stage: Bridge");
+
+        test.Run(() => _stages.Index = 0);
+        test.Hover(At(_stages), 0.1f);
+        test.Run(() => _stages.OnScroll(-1));
+        test.Check("list: the wheel scrolls it", () => _stages.Top == 1);
+
+        test.Click(At(_stages, 0.5f, 1.0f - 1.5f / 4.0f));
+        test.Check("list: a click on a row chooses it", () => _stages.Index == 2 && _stage == "Rooftop");
 
         /* Tooltips */
 
@@ -302,6 +360,13 @@ public class UINavigationExample : Scene, ITestControls
         test.Run(() => quitButton = asked is not null ? At(asked.Buttons[0])() : Vector2.Zero);
         test.Click(() => quitButton);
         test.Check("dialog: a click on a button picks that answer", () => _module.Dialog is null && _answer == "quit" && _asked == 2);
+
+        /* Z offsets */
+
+        test.Click(At(_raised, 0.8f, 0.2f));
+        test.Check("z: a raised component gets the pointer before the sibling drawn over it", () => _raisedPresses == 1 && _underPresses == 0);
+        test.Click(At(_under, 0.8f, 0.2f));
+        test.Check("z: and the sibling still gets it where they don't overlap", () => _underPresses == 1);
 
         test.Run(() => _nav.Select(_play));
         test.Hover(away, 0.2f);

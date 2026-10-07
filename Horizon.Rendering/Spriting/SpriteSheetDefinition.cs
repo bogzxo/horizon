@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -19,10 +19,28 @@ namespace Horizon.Rendering.Spriting;
 /// How far in from every edge (left, top, right, bottom) whatever is put on top of the sprite goes, like the label of a
 /// button whose art has a lip along the bottom. Zero for sprites that leave it to whoever draws them.
 /// </param>
-/// <param name="Frames">How many frames there are, they follow each other to the right.</param>
+/// <param name="Frames">How many frames there are. Where each one is comes out of <see cref="FrameAt"/>.</param>
 /// <param name="FrameTime">How long every frame of an animation is shown for, in seconds.</param>
+/// <param name="Step">How far the next frame is from the one before, when the frames are laid out evenly. One sprite's width to the right unless the sheet says.</param>
+/// <param name="FramePositions">Where every frame after the first is, for frames that aren't laid out evenly. Null when they are.</param>
 public readonly record struct SpriteSource(
-    string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime);
+    string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
+    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null)
+{
+    /// <summary>
+    /// The top left corner of a frame, the first being where the sprite is.
+    /// </summary>
+    public (int X, int Y) FrameAt(int frame)
+    {
+        if (frame <= 0) return (X, Y);
+
+        if (FramePositions is { } positions)
+            return frame - 1 < positions.Length ? positions[frame - 1] : (X, Y);
+
+        (int stepX, int stepY) = Step == default ? (Width, 0) : Step;
+        return (X + frame * stepX, Y + frame * stepY);
+    }
+}
 
 /// <summary>
 /// The names of the sprites in a set of images, as written down in a HIDL file (see Assets/uix/dead_revolver/sprites.hor
@@ -32,6 +50,8 @@ public readonly record struct SpriteSource(
 /// once, for the first copy of the art, and looked up in whichever theme is wanted.
 /// The same goes for art that is repeated for its states (a button, the same button hovered, the same button pressed):
 /// an image names its states and every sprite in it can be asked for as "name_hover" without being written down again.
+/// A sheet file is a program, so what is written down over and over (a key for every key of a keyboard) can be written
+/// as a loop instead, see the keyboard of the Dead Revolver pack.
 /// </summary>
 public sealed class SpriteSheetDefinition
 {
@@ -41,15 +61,18 @@ public sealed class SpriteSheetDefinition
     private sealed class ImageDefinition
     {
         public string Path = string.Empty;
-        public int Block;                                       // How wide one copy of the art is, 0 for images without themes
+        public (int X, int Y) Block;                            // How far one copy of the art is from the next, zero for images with one copy
         public Dictionary<string, int> Themes = [];             // Which copy every theme starts at
         public string Fallback = string.Empty;                  // The theme to show for themes the image doesn't have
         public Vector2 Size;                                    // How big a sprite is unless it says so itself, zero if they all have to
+        public Vector2 Cell;                                    // How big a cell of the grid is, for sprites written by their cell. Zero for no grid
+        public Vector2 Origin;                                  // Where the grid starts
         public Dictionary<string, int> States = [];             // The other states every sprite comes in, and how many blocks along they are
     }
 
     private readonly record struct SpriteDefinition(
-        ImageDefinition Image, int Block, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime);
+        ImageDefinition Image, int Block, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
+        (int X, int Y) Step, (int X, int Y)[]? FramePositions);
 
     private readonly Dictionary<string, SpriteDefinition> _sprites = [];
     private readonly HashSet<string> _themes = [];
@@ -106,7 +129,7 @@ public sealed class SpriteSheetDefinition
         var image = sprite.Image;
         int block = sprite.Block;
 
-        if (image.Block > 0)
+        if (image.Block != default)
         {
             if (theme is null || !image.Themes.TryGetValue(theme, out int themeBlock))
             {
@@ -115,17 +138,40 @@ public sealed class SpriteSheetDefinition
             block += themeBlock;
         }
 
-        source = new SpriteSource(
+        var whole = new SpriteSource(
             image.Path,
-            block * image.Block + sprite.X + Math.Max(frame, 0) * sprite.Width,
-            sprite.Y,
+            block * image.Block.X + sprite.X,
+            block * image.Block.Y + sprite.Y,
             sprite.Width,
             sprite.Height,
             sprite.Border,
             sprite.Content,
-            frame >= 0 ? 1 : sprite.Frames,
-            sprite.FrameTime);
+            sprite.Frames,
+            sprite.FrameTime,
+            sprite.Step,
+            Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y));
+
+        if (frame < 0)
+        {
+            source = whole;
+            return true;
+        }
+
+        // One frame on its own, as a sprite of one frame
+        (int x, int y) = whole.FrameAt(frame);
+        source = whole with { X = x, Y = y, Frames = 1, FramePositions = null };
         return true;
+    }
+
+    private static (int X, int Y)[]? Shift((int X, int Y)[]? positions, int byX, int byY)
+    {
+        if (positions is null || (byX == 0 && byY == 0)) return positions;
+
+        var shifted = new (int X, int Y)[positions.Length];
+        for (int i = 0; i < positions.Length; i++)
+            shifted[i] = (positions[i].X + byX, positions[i].Y + byY);
+
+        return shifted;
     }
 
     /// <summary>
@@ -137,7 +183,7 @@ public sealed class SpriteSheetDefinition
         if (!File.Exists(path))
             throw new FileNotFoundException($"The sprite definition '{path}' doesn't exist.");
 
-        HIDLRuntime runtime = new();
+        HIDLRuntime runtime = new() { BaseDirectory = directory, Output = null };
         var (success, message) = runtime.Evaluate(File.ReadAllText(path));
         if (!success)
             throw new Exception($"'{path}': {message}");
@@ -167,15 +213,23 @@ public sealed class SpriteSheetDefinition
 
         var image = new ImageDefinition { Path = System.IO.Path.Combine(directory, fileName.Value) };
 
+        // How far the next copy of the art is. A number is so many pixels to the right, a vector goes any way
         if (properties.TryGetValue("block", out var block))
-            image.Block = (int)Number(block, $"{name}.block");
+        {
+            image.Block = block switch
+            {
+                NumberValue number => ((int)number.Value, 0),
+                Vector2Value vector => ((int)vector.Value.X, (int)vector.Value.Y),
+                _ => throw new Exception($"{name}.block has to be a number or a vec(right, down).")
+            };
+        }
 
         if (properties.TryGetValue("themes", out var themesValue))
         {
             if (themesValue is not ObjectValue themes)
                 throw new Exception($"{name}.themes has to be an object.");
-            if (image.Block < 1)
-                throw new Exception($"Image '{name}' has themes, so it has to say how wide a block of it is.");
+            if (image.Block == default)
+                throw new Exception($"Image '{name}' has themes, so it has to say how far apart its blocks are.");
 
             foreach (var (theme, index) in themes.Properties)
             {
@@ -196,21 +250,24 @@ public sealed class SpriteSheetDefinition
         }
 
         if (properties.TryGetValue("size", out var size))
+            image.Size = Pair(size, $"{name}.size");
+
+        // A grid the sprites sit in, so they can be written by their cell rather than in pixels
+        if (properties.TryGetValue("cell", out var cell))
         {
-            image.Size = size switch
-            {
-                NumberValue number => new Vector2(number.Value),
-                Vector2Value vector => vector.Value,
-                _ => throw new Exception($"{name}.size has to be a number or a vec(width, height).")
-            };
+            image.Cell = Pair(cell, $"{name}.cell");
+            if (image.Size == default) image.Size = image.Cell;
         }
+
+        if (properties.TryGetValue("origin", out var origin))
+            image.Origin = Pair(origin, $"{name}.origin");
 
         if (properties.TryGetValue("states", out var statesValue))
         {
             if (statesValue is not ObjectValue states)
                 throw new Exception($"{name}.states has to be an object.");
-            if (image.Block < 1)
-                throw new Exception($"Image '{name}' has states, so it has to say how wide a block of it is.");
+            if (image.Block == default)
+                throw new Exception($"Image '{name}' has states, so it has to say how far apart its blocks are.");
 
             foreach (var (state, index) in states.Properties)
                 image.States[state] = (int)Number(index, $"{name}.states.{state}");
@@ -241,11 +298,6 @@ public sealed class SpriteSheetDefinition
 
     private static SpriteDefinition ReadSprite(ImageDefinition image, string name, Dictionary<string, IRuntimeValue> properties)
     {
-        float Required(string key) =>
-            properties.TryGetValue(key, out var value)
-                ? Number(value, $"{name}.{key}")
-                : throw new Exception($"Sprite '{name}' is missing its {key}.");
-
         float Optional(string key, float otherwise) =>
             properties.TryGetValue(key, out var value) ? Number(value, $"{name}.{key}") : otherwise;
 
@@ -259,19 +311,83 @@ public sealed class SpriteSheetDefinition
                 _ => throw new Exception($"{name}.{key} has to be a number, a vec(horizontal, vertical) or a vec(left, top, right, bottom).")
             };
 
+        // Where it is. In pixels, or by its cell of the grid the image has
+        int x, y;
+        if (properties.TryGetValue("cell", out var cellValue))
+        {
+            if (image.Cell == default)
+                throw new Exception($"Sprite '{name}' is written by its cell, but its image has no cell size.");
+
+            Vector2 cell = Pair(cellValue, $"{name}.cell");
+            x = (int)(image.Origin.X + cell.X * image.Cell.X);
+            y = (int)(image.Origin.Y + cell.Y * image.Cell.Y);
+        }
+        else
+        {
+            x = (int)(properties.TryGetValue("x", out var xValue) ? Number(xValue, $"{name}.x") : throw new Exception($"Sprite '{name}' is missing its x."));
+            y = (int)(properties.TryGetValue("y", out var yValue) ? Number(yValue, $"{name}.y") : throw new Exception($"Sprite '{name}' is missing its y."));
+        }
+
+        int width = (int)(image.Size.X > 0 ? Optional("w", image.Size.X) : properties.ContainsKey("w") ? Optional("w", 0) : throw new Exception($"Sprite '{name}' is missing its w."));
+        int height = (int)(image.Size.Y > 0 ? Optional("h", image.Size.Y) : properties.ContainsKey("h") ? Optional("h", 0) : throw new Exception($"Sprite '{name}' is missing its h."));
+
+        // The frames. A number of them laid out evenly (to the right unless a step says otherwise), or a list of
+        // where every frame after the first is, for frames that are scattered about the image
+        int frames = 1;
+        (int X, int Y)[]? positions = null;
+        if (properties.TryGetValue("frames", out var framesValue))
+        {
+            switch (framesValue)
+            {
+                case NumberValue number:
+                    frames = Math.Max(1, (int)number.Value);
+                    break;
+
+                case ListValue list:
+                    positions = new (int X, int Y)[list.Count];
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        Vector2 at = Pair(list[i], $"{name}.frames[{i}]");
+                        positions[i] = ((int)at.X, (int)at.Y);
+                    }
+                    frames = positions.Length + 1;
+                    break;
+
+                default:
+                    throw new Exception($"{name}.frames has to be a number or a list of vec(x, y).");
+            }
+        }
+
+        (int X, int Y) step = default;
+        if (properties.TryGetValue("step", out var stepValue))
+        {
+            Vector2 by = Pair(stepValue, $"{name}.step");
+            step = ((int)by.X, (int)by.Y);
+        }
+
         return new SpriteDefinition(
             image,
             (int)Optional("block", 0),
-            (int)Required("x"),
-            (int)Required("y"),
-            (int)(image.Size.X > 0 ? Optional("w", image.Size.X) : Required("w")),
-            (int)(image.Size.Y > 0 ? Optional("h", image.Size.Y) : Required("h")),
+            x,
+            y,
+            width,
+            height,
             Edges("border"),
             Edges("content"),
-            Math.Max(1, (int)Optional("frames", 1)),
-            Optional("time", 0.1f));
+            frames,
+            Optional("time", 0.1f),
+            step,
+            positions);
     }
 
     private static float Number(IRuntimeValue value, string what) =>
         value is NumberValue number ? number.Value : throw new Exception($"{what} has to be a number.");
+
+    // A number for both ways, or a vec(x, y)
+    private static Vector2 Pair(IRuntimeValue value, string what) => value switch
+    {
+        NumberValue number => new Vector2(number.Value),
+        Vector2Value vector => vector.Value,
+        _ => throw new Exception($"{what} has to be a number or a vec(x, y).")
+    };
 }

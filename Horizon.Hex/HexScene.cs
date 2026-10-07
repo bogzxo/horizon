@@ -51,7 +51,7 @@ internal sealed partial class HexScene : Scene
     private static readonly string[] Palette =
     [
         "stack", "grid", "panel", "scroll", "label", "button", "toggle", "textbox", "number_box", "selector",
-        "dropdown", "slider", "color_picker", "progress_bar", "image", "tabs"
+        "dropdown", "list", "slider", "color_picker", "progress_bar", "image", "tabs", "divider", "spacer"
     ];
 
     // The properties that are one of a few words, and the words.
@@ -100,6 +100,10 @@ internal sealed partial class HexScene : Scene
     private readonly HexLayoutDebugger layoutDebugger;
     private Menu fileMenu = null!;
     private readonly Panel canvas;
+
+    // What is behind the layouts in the canvas, a module of the stage as big as the canvas
+    private readonly UIModule backdrop;
+    private static readonly Vector4 CanvasColor = new(0.02f, 0.02f, 0.03f, 1.0f);
     private readonly ScrollPanel treeScroll, inspectorScroll, codeScroll;
     private readonly Label status, treeTitle;
     private readonly CodeView code;
@@ -156,9 +160,15 @@ internal sealed partial class HexScene : Scene
         camera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = camera;
 
-        // The editor first and the layouts on top of it. The canvas is a hole in the editor they are seen through
-        compositor = AddComponent(new UICompositor(camera, TOOL_SKIN_DIRECTORY, TOOL_SKIN));
+        // The layouts first and the editor over them. The canvas is a hole in the editor they are seen through, so the
+        // menus, lists and dialogs of the editor come out on top of them rather than under. What is dark behind the
+        // layouts is a module of the stage itself, the first one, see PlaceCanvas
         stage = AddComponent(new UICompositor(camera));
+        compositor = AddComponent(new UICompositor(camera, TOOL_SKIN_DIRECTORY, TOOL_SKIN));
+        backdrop = stage.CreateModule();
+        backdrop.ShowInLayoutDebugger = false;
+        backdrop.Interactive = false;
+        backdrop.AddComponent(new Panel { Fill = UIFill.Both, Color = CanvasColor });
 
         // Bootstrapping. The editor is made of the same thing it makes
         chrome = compositor.CreateModule();

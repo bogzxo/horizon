@@ -226,6 +226,9 @@ internal sealed class HexDocument
             case ToggleButton toggle: toggle.Label = "Toggle"; break;
             case Selector selector: selector.Options = ["one", "two", "three"]; break;
             case Dropdown dropdown: dropdown.Options = ["one", "two", "three"]; break;
+            case ListBox list: list.Items = ["one", "two", "three", "four"]; break;
+            case Divider divider: divider.Size = new System.Numerics.Vector2(240, 0); break;
+            case Spacer spacer: spacer.Space = 24; break;
             case ScrollPanel scroll: scroll.Size = new System.Numerics.Vector2(240, 160); scroll.Color = backdrop; break;
             case StackPanel stack: stack.Padding = new UIEdges(16); stack.Color = backdrop; break;
             case GridPanel grid: grid.Padding = new UIEdges(16); grid.Color = backdrop; break;

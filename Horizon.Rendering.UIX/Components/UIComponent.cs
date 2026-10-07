@@ -363,9 +363,22 @@ public abstract partial class UIComponent
 
     /* Painting */
 
+    /// <summary>
+    /// How far above the rest of its module the component is drawn. Zero, for nearly everything, is in its place
+    /// among its siblings, painter's order. Anything above zero is drawn after everything else in the module (the
+    /// higher the later, so the more on top) and gets the pointer first, which is for the odd thing that has to sit
+    /// over its neighbours whatever order the layout has them in: a badge over a card, a drag handle. It isn't cut off
+    /// by what it is inside of any more. In a layout file: <c>z: 1</c>.
+    /// </summary>
+    public int ZOffset { get; set; }
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
+            return;
+
+        // Put aside for after the rest of the module, see ZOffset
+        if (ZOffset > 0 && Module is { } owner && owner.Raise(this))
             return;
 
         bool animated = VisualOffset != Vector2.Zero || VisualScale != Vector2.One || Opacity < 1.0f;

@@ -18,8 +18,9 @@
 // same height (the arrows, up and down are flatter than left and right) say how many pixels of art make a line with
 // height, which draws them all at the one scale.
 //
-// A set of icons (icon_sets) says what some icons are called on another gamepad. A text that starts with
-// [icons:playstation] is written with the names on the left, as always, and shows the icons on the right.
+// A set of icons (icon_sets) says what some icons are called on another gamepad, or on a keyboard. A text that starts
+// with [icons:playstation] is written with the names on the left, as always, and shows the icons on the right.
+// An icon whose sprite has frames animates in the text, which is how the buttons blink a press now and then.
 
 let skin = {
     sprites: "sprites.hor",
@@ -69,28 +70,36 @@ let skin = {
         sword: "icon_sword",
         shield: "icon_shield",
 
-        pad_a: { sprite: "round_blank@white", tint: vec(0.33, 0.75, 0.38, 1.0), label: "A" },
-        pad_b: { sprite: "round_blank@white", tint: vec(0.88, 0.3, 0.28, 1.0), label: "B" },
-        pad_x: { sprite: "round_blank@white", tint: vec(0.25, 0.52, 0.93, 1.0), label: "X" },
-        pad_y: { sprite: "round_blank@white", tint: vec(0.95, 0.76, 0.22, 1.0), label: "Y", label_color: vec(0.1, 0.08, 0.02, 1.0) },
-        pad_lb: { sprite: "key@white", label: "LB" },
-        pad_rb: { sprite: "key@white", label: "RB" },
-        pad_lt: { sprite: "key@white", label: "LT" },
-        pad_rt: { sprite: "key@white", label: "RT" },
-        pad_ls: { sprite: "key@white", label: "LS" },
-        pad_rs: { sprite: "key@white", label: "RS" },
-        dpad: "cursor_move@white",
+        // The gamepads, out of the gdb art. Written with the names of an Xbox gamepad, a text that starts with
+        // [icons:playstation] shows the PlayStation ones instead (see icon_sets)
+        pad_a: "xbox_a",
+        pad_b: "xbox_b",
+        pad_x: "xbox_x",
+        pad_y: "xbox_y",
+        pad_lb: "xbox_lb",
+        pad_rb: "xbox_rb",
+        pad_lt: "xbox_lt",
+        pad_rt: "xbox_rt",
+        pad_ls: "xbox_ls",
+        pad_rs: "xbox_rs",
+        pad_view: "xbox_view",
+        pad_menu: "xbox_menu",
+        pad_home: "xbox_home",
+        dpad: "xbox_dpad",
+        dpad_up: "xbox_dpad_up",
+        dpad_down: "xbox_dpad_down",
+        dpad_left: "xbox_dpad_left",
+        dpad_right: "xbox_dpad_right",
+        stick_up: { sprite: "xbox_stick_up", height: 12 },
+        stick_down: { sprite: "xbox_stick_down", height: 12 },
+        stick_left: { sprite: "xbox_stick_left", height: 12 },
+        stick_right: { sprite: "xbox_stick_right", height: 12 },
 
-        ps_cross: { sprite: "round_blank@white", tint: vec(0.25, 0.28, 0.37, 1.0), label: "X", label_color: vec(0.49, 0.7, 0.91, 1.0) },
-        ps_circle: { sprite: "round_blank@white", tint: vec(0.25, 0.28, 0.37, 1.0), label: "O", label_color: vec(1.0, 0.4, 0.4, 1.0) },
-        ps_square: { sprite: "round_blank@white", tint: vec(0.25, 0.28, 0.37, 1.0), symbol: "check_off@white", symbol_color: vec(1.0, 0.41, 0.97, 1.0), symbol_size: 0.5 },
-        ps_triangle: { sprite: "round_blank@white", tint: vec(0.25, 0.28, 0.37, 1.0), symbol: "arrow_up@white", symbol_color: vec(0.25, 0.89, 0.63, 1.0), symbol_size: 0.5 },
-        ps_l1: { sprite: "key@white", label: "L1" },
-        ps_r1: { sprite: "key@white", label: "R1" },
-        ps_l2: { sprite: "key@white", label: "L2" },
-        ps_r2: { sprite: "key@white", label: "R2" },
-        ps_l3: { sprite: "key@white", label: "L3" },
-        ps_r3: { sprite: "key@white", label: "R3" }
+        // The mouse, for prompts on a PC. The keys of the keyboard are icons by their own names, [icon:key_w] and so on
+        mouse_left: { sprite: "mouse_left", height: 28 },
+        mouse_right: { sprite: "mouse_right", height: 28 },
+        mouse_middle: { sprite: "mouse_middle", height: 28 },
+        mouse_wheel: "mouse_wheel"
     },
 
     icon_sets: {
@@ -104,7 +113,34 @@ let skin = {
             pad_lt: "ps_l2",
             pad_rt: "ps_r2",
             pad_ls: "ps_l3",
-            pad_rs: "ps_r3"
+            pad_rs: "ps_r3",
+            pad_view: "ps_share",
+            pad_menu: "ps_options",
+            pad_home: "ps_touchpad"
+        },
+
+        // A keyboard player, where the buttons of a gamepad usually end up
+        keyboard: {
+            pad_a: "key_space",
+            pad_b: "key_esc",
+            pad_x: "key_e",
+            pad_y: "key_tab",
+            pad_lb: "key_q",
+            pad_rb: "key_r",
+            pad_lt: "mouse_right",
+            pad_rt: "mouse_left",
+            pad_ls: "key_shift",
+            pad_rs: "key_ctrl",
+            pad_view: "key_backspace",
+            pad_menu: "key_enter",
+            dpad_up: "key_w",
+            dpad_down: "key_s",
+            dpad_left: "key_a",
+            dpad_right: "key_d",
+            stick_up: "key_up",
+            stick_down: "key_down",
+            stick_left: "key_left",
+            stick_right: "key_right"
         }
     },
 

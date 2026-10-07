@@ -103,11 +103,11 @@ public sealed class TextureAtlas : IDisposable
         string[] keys = new string[Math.Max(sprite.Frames, 1)];
         for (int frame = 0; frame < keys.Length; frame++)
         {
-            // The frames of a sprite follow each other to the right
-            int x = sprite.X + frame * sprite.Width;
+            // Wherever the sheet says the frame is, to the right of the one before unless it says otherwise
+            (int x, int y) = sprite.FrameAt(frame);
 
-            keys[frame] = KeyFor(sprite.Path, x, sprite.Y, sprite.Width, sprite.Height);
-            Request(keys[frame], sprite.Path, x, sprite.Y, sprite.Width, sprite.Height);
+            keys[frame] = KeyFor(sprite.Path, x, y, sprite.Width, sprite.Height);
+            Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height);
         }
 
         return keys;

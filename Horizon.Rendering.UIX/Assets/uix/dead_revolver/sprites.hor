@@ -17,10 +17,16 @@
 //               all four sides, vec(horizontal, vertical) or vec(left, top, right, bottom)
 //   content:    how far in from every edge whatever is put on top of the sprite goes, written like a border: the
 //               label of a button sits on its face, not on the lip under it
-//   frames:     how many frames it has, they follow each other to the right ("name#2" is the third on its own)
+//   frames:     how many frames it has, they follow each other to the right ("name#2" is the third on its own),
+//               or a list of where every frame after the first is, vec(x, y) each, for frames scattered about the image
+//   step:       how far the next frame is from the one before, for frames that aren't simply side by side: vec(right, down)
 //   time:       how long every frame of an animation is shown for, in seconds
+//   cell:       where it is as a cell of the grid of its image, vec(column, row), instead of x and y
+// An image can have a grid: cell: 16 (or vec(w, h)) is how big a cell is, origin: vec(x, y) where the grid starts, and
+// then its sprites can be written by their cell. block can be a vec(right, down) as well, for copies that go down.
 // A sprite can also be asked for in a theme of its own, whatever the skin's theme is: "round_blank@white".
 //
+// This file is a program. Anything written down over and over is better written as a loop, see the keyboard below.
 // Only sprites that are used get loaded, so there is no harm in naming more of the pack here than a UI needs.
 // The rectangles were measured off the images, see the pack itself for what else there is to name.
 
@@ -256,7 +262,129 @@ let click_star = {
     }
 };
 
+// The gamepads and the keyboard, by greatdocbrown (the gdb images). Every button comes as it sits and then as four
+// frames of being pressed, which is what a sprite of five frames is, so an icon of one blinks a press now and then.
+// "name_pressed" is the button held down, for a key of a keyboard on screen.
+// Where a button sits, and where its four frames start
+func pressable(sprites, name, x, y, frames_x, w, h) {
+    sprites[name] = { x: x, y: y, w: w, h: h, frames: [vec(frames_x, y), vec(frames_x + w, y), vec(frames_x + w * 2, y), vec(frames_x + w * 3, y)], time: 0.12 };
+    sprites[name + "_pressed"] = { x: frames_x + w, y: y, w: w, h: h };
+}
+
+// The Xbox gamepad. The round buttons, the bumpers and the triggers are 16 by 16 and the d-pad is bigger.
+let xbox = {
+    file: "gdb-xbox.png",
+    sprites: {
+        xbox_dpad:       { x: 132, y: 52, w: 24, h: 24 },
+        xbox_dpad_up:    { x: 51, y: 499, w: 26, h: 26 },
+        xbox_dpad_left:  { x: 51, y: 531, w: 26, h: 26 },
+        xbox_dpad_right: { x: 51, y: 563, w: 26, h: 26 },
+        xbox_dpad_down:  { x: 51, y: 595, w: 26, h: 26 },
+        xbox_stick_up:    { x: 164, y: 50, w: 8, h: 12 },
+        xbox_stick_down:  { x: 180, y: 50, w: 8, h: 12 },
+        xbox_stick_left:  { x: 162, y: 67, w: 12, h: 8 },
+        xbox_stick_right: { x: 178, y: 67, w: 12, h: 8 },
+        xbox_ls:   { x: 197, y: 53, w: 18, h: 18 },
+        xbox_rs:   { x: 261, y: 53, w: 18, h: 18 },
+        xbox_home: { x: 337, y: 113, w: 14, h: 14 }
+    }
+};
+pressable(xbox.sprites, "xbox_x", 16, 32, 48, 16, 16);
+pressable(xbox.sprites, "xbox_a", 16, 48, 48, 16, 16);
+pressable(xbox.sprites, "xbox_y", 16, 64, 48, 16, 16);
+pressable(xbox.sprites, "xbox_b", 16, 80, 48, 16, 16);
+pressable(xbox.sprites, "xbox_view", 16, 96, 48, 16, 16);
+pressable(xbox.sprites, "xbox_menu", 16, 112, 48, 16, 16);
+pressable(xbox.sprites, "xbox_lt", 112, 496, 144, 16, 16);
+pressable(xbox.sprites, "xbox_rt", 112, 512, 144, 16, 16);
+pressable(xbox.sprites, "xbox_lb", 112, 528, 144, 16, 16);
+pressable(xbox.sprites, "xbox_rb", 112, 544, 144, 16, 16);
+
+// The PlayStation gamepad, the same way.
+let playstation = {
+    file: "gdb-playstation.png",
+    sprites: {
+        ps_l3: { x: 80, y: 304, w: 16, h: 16 },
+        ps_r3: { x: 192, y: 304, w: 16, h: 16 },
+        ps_touchpad: { x: 20, y: 50, w: 23, h: 11 }
+    }
+};
+pressable(playstation.sprites, "ps_triangle", 16, 160, 48, 16, 16);
+pressable(playstation.sprites, "ps_circle", 16, 176, 48, 16, 16);
+pressable(playstation.sprites, "ps_cross", 16, 192, 48, 16, 16);
+pressable(playstation.sprites, "ps_square", 16, 208, 48, 16, 16);
+pressable(playstation.sprites, "ps_l2", 128, 80, 160, 16, 16);
+pressable(playstation.sprites, "ps_r2", 128, 96, 160, 16, 16);
+pressable(playstation.sprites, "ps_l1", 128, 112, 160, 16, 16);
+pressable(playstation.sprites, "ps_r1", 128, 128, 160, 16, 16);
+pressable(playstation.sprites, "ps_share", 16, 240, 48, 16, 16);
+pressable(playstation.sprites, "ps_options", 16, 256, 48, 16, 16);
+
+// The keyboard and the mouse. The sheet has the whole keyboard four times, one under the other, as the frames of a
+// key being pressed: the key as it sits, going down, down, and back up. A key is 16 by 16 in a grid of 16, the wide
+// ones 24 and the space bar 104. The four keyboards aren't quite the same distance apart, so every key lists its frames.
+let keyboard = {
+    file: "gdb-keyboard.png",
+    sprites: {
+        mouse:        { x: 505, y: 146, w: 15, h: 28 },
+        mouse_left:   { x: 537, y: 146, w: 15, h: 28 },
+        mouse_middle: { x: 505, y: 178, w: 15, h: 28 },
+        mouse_right:  { x: 537, y: 178, w: 15, h: 28 },
+        mouse_wheel:  { x: 453, y: 193, w: 22, h: 15 },
+        scroll_up:    { x: 462, y: 161, w: 4, h: 15 },
+        scroll_down:  { x: 462, y: 177, w: 4, h: 15 },
+        pointer:      { x: 432, y: 16, w: 8, h: 10 },
+        pointer_hand: { x: 448, y: 16, w: 12, h: 16 },
+        pointer_no:   { x: 466, y: 19, w: 9, h: 8 },
+        pointer_yes:  { x: 482, y: 19, w: 12, h: 9 },
+
+        // Blank keys to put a label on, the plain one, a wide one and a space bar
+        key_blank: { x: 32, y: 592, w: 16, h: 16, frames: 4, border: vec(3, 3, 3, 5), content: vec(3, 2, 3, 5) },
+        key_wide:  { x: 36, y: 576, w: 24, h: 16, frames: 4, step: vec(32, 0), border: vec(3, 3, 3, 5), content: vec(3, 2, 3, 5) },
+        key_long:  { x: 36, y: 608, w: 104, h: 16, frames: 4, step: vec(112, 0), border: vec(3, 3, 3, 5), content: vec(3, 2, 3, 5) }
+    }
+};
+let keyboard_rows = [16, 129, 242, 353];
+func key(name, x, w, row) {
+    let frames = [];
+    for (i in range(1, 4)) { frames.push(vec(x, keyboard_rows[i] + row * 16)); }
+    keyboard.sprites["key_" + name] = { x: x, y: keyboard_rows[0] + row * 16, w: w, h: 16, frames: frames, time: 0.12 };
+    keyboard.sprites["key_" + name + "_pressed"] = { x: x, y: keyboard_rows[2] + row * 16, w: w, h: 16 };
+}
+func keys_along(names, x, row) {
+    for (i in range(names.count)) { key(names[i], x + i * 16, 16, row); }
+}
+key("esc", 32, 16, 0);
+keys_along(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"], 64, 0);
+keys_along(["grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equals"], 48, 1);
+key("backspace", 260, 24, 1);
+key("tab", 36, 24, 2);
+keys_along(["q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "lbracket", "rbracket", "backslash"], 64, 2);
+key("caps", 36, 24, 3);
+keys_along(["a", "s", "d", "f", "g", "h", "j", "k", "l", "semicolon", "quote"], 64, 3);
+key("enter", 244, 24, 3);
+key("shift", 36, 24, 4);
+keys_along(["z", "x", "c", "v", "b", "n", "m", "comma", "period", "slash"], 64, 4);
+key("rshift", 244, 24, 4);
+key("up", 320, 16, 4);
+key("ctrl", 36, 24, 5);
+key("alt", 68, 24, 5);
+key("space", 100, 104, 5);
+key("ralt", 212, 24, 5);
+key("rctrl", 244, 24, 5);
+keys_along(["left", "down", "right"], 304, 5);
+
+// The keys to the side, whose frames go to the right
+let side_keys = ["insert", "home", "delete", "end", "pageup", "pagedown"];
+for (i in range(side_keys.count)) {
+    keyboard.sprites["key_" + side_keys[i]] = { x: 416, y: 224 + i * 16, w: 16, h: 16, frames: 4, time: 0.12 };
+    keyboard.sprites["key_" + side_keys[i] + "_pressed"] = { x: 448, y: 224 + i * 16, w: 16, h: 16 };
+}
+
 // Everything above, by the name sprites are asked for.
 let sheet = {
-    images: { buttons, panels, form, bars, cursors, hearts, stars, selectors, click_cross, click_crosshair, click_ripple, click_square, click_star }
+    images: {
+        buttons, panels, form, bars, cursors, hearts, stars, selectors, click_cross, click_crosshair, click_ripple, click_square, click_star,
+        xbox, playstation, keyboard
+    }
 }

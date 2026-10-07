@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.Rendering\Horizon.Rendering.csproj" />
   </ItemGroup>
 
 </Project>

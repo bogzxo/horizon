@@ -60,7 +60,10 @@ public class OnScreenKeyboardExample : Scene, ITestControls
         });
 
         // The textbox to preview entered text
-        _textBox = _panel.Add<TextBox>(new TextBox());
+        _textBox = _panel.Add<TextBox>(new TextBox { Size = new Vector2(900, 0) });
+
+        // The real thing, drawn with the keys of the pack
+        _panel.Add(new OnScreenKeyboard(OnScreenKeyboard.Full) { Target = _textBox });
 
         // A panel to contain the keyboards
         var keyboardPanel = _panel.Add<StackPanel>(new ()

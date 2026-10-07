@@ -78,6 +78,12 @@ public class UIPackExample : Scene, ITestControls
 
         themeName = panel.Add(new Label { TextScale = 0.3f });
 
+        // The same prompt three ways. The icons are the art of the pack, the buttons of a gamepad blink a press now and then
+        const string prompt = "[icon:pad_a] jump   [icon:pad_x] attack   [icon:pad_rt] aim   [icon:dpad_left][icon:dpad_right] move   [icon:pad_menu] pause";
+        panel.Add(new Label(prompt) { TextScale = 0.28f });
+        panel.Add(new Label("[icons:playstation]" + prompt) { TextScale = 0.28f });
+        panel.Add(new Label("[icons:keyboard]" + prompt) { TextScale = 0.28f });
+
         // Buttons take their three states from the pack, the last one is drawn with different art altogether.
         var buttons = panel.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 14 });
         buttons.Add(new Button("Play") { Size = new Vector2(150, 0), OnPressed = () => progress!.Progress += 0.1f });
