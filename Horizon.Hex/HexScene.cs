@@ -160,6 +160,7 @@ internal sealed partial class HexScene : Scene
         camera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = camera;
 
+
         // The layouts first and the editor over them. The canvas is a hole in the editor they are seen through, so the
         // menus, lists and dialogs of the editor come out on top of them rather than under. What is dark behind the
         // layouts is a module of the stage itself, the first one, see PlaceCanvas
@@ -226,6 +227,14 @@ internal sealed partial class HexScene : Scene
             StartSelfTest();
         else if (options.Browse)
             OpenPressed();
+    }
+
+    public override void PostInit()
+    {
+        base.PostInit();
+
+        // The dark the editor sits on. Its root has no colour of its own, so the layouts drawn under it show through the canvas
+        Engine.GL.ClearColor(0.065f, 0.07f, 0.092f, 1.0f);
     }
 
     private void ToggleBrowsing()
