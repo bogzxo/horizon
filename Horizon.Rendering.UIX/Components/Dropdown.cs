@@ -84,6 +84,40 @@ public class Dropdown : UIComponent
 
     protected override bool HitTestVisible => true;
 
+    protected internal override bool Navigable => true;
+
+    protected internal override void OnActivate()
+    {
+        if (IsOpen)
+            Close();
+        else
+            Open();
+    }
+
+    protected internal override bool OnAdjust(int step)
+    {
+        // Left and right step through the options without opening the list, the way a selector does
+        if (options.Length < 2 || !EnabledInHierarchy)
+            return false;
+
+        int chosen = Math.Clamp(index + Math.Sign(step), 0, options.Length - 1);
+        if (chosen != index)
+            Choose(chosen);
+
+        return true;
+    }
+
+    /// <summary>Helper method to make an option the chosen one and tell whoever listens, if it is another one.</summary>
+    private void Choose(int chosen)
+    {
+        if (chosen == index)
+            return;
+
+        index = chosen;
+        OnChanged?.Invoke(Value);
+        InvokeScript(changedHandler, new StringValue(Value));
+    }
+
     private int VisibleRows => Math.Min(options.Length, Math.Max(1, MaxRows));
 
     /// <summary>
@@ -140,12 +174,13 @@ public class Dropdown : UIComponent
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
 
-        if ((enabled && (IsHovered || IsOpen) && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
+        bool lit = enabled && (IsHovered || IsOpen || IsSelected);
+        if ((lit && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
             list.NineSlice(art, Bounds, tint);
         else
         {
             list.Box(Bounds, skin.ControlColor * tint);
-            if (enabled && (IsHovered || IsOpen))
+            if (lit)
                 list.Box(Bounds, skin.HoverColor);
             if (skin.BorderColor.W > 0.0f)
                 list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
@@ -155,6 +190,8 @@ public class Dropdown : UIComponent
 
         list.Text(Value, content, Origin.Left, scale, skin.TextColor * tint, markup: false);
         list.Text(IsOpen ? "^" : "v", content, Origin.Right, scale, skin.AccentColor * tint, markup: false);
+
+        PaintSelection(list);
     }
 
     protected internal override void PaintPopup(UIDrawList list)
@@ -229,13 +266,7 @@ public class Dropdown : UIComponent
 
             int chosen = firstRow + row;
             Close();
-
-            if (chosen != index)
-            {
-                index = chosen;
-                OnChanged?.Invoke(Value);
-                InvokeScript(changedHandler, new StringValue(Value));
-            }
+            Choose(chosen);
             return;
         }
 

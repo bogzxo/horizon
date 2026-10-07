@@ -36,6 +36,25 @@ public class ScrollPanel : Panel
     /// <summary>Scrolls all the way down, for content that grows at its end (a log).</summary>
     public void ScrollToEnd() => offset = float.MaxValue;
 
+    /// <summary>
+    /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
+    /// if it is in view already. For a list that is walked with a gamepad, or an editor showing what was picked.
+    /// </summary>
+    public void ScrollIntoView(UIComponent component)
+    {
+        UIRect content = Bounds.Shrink(Padding);
+        UIRect target = component.Bounds;
+
+        if (content.IsEmpty || target.IsEmpty)
+            return;
+
+        // Up for something above the window, down for something below it. Something taller than the window shows its top
+        if (target.Max.Y > content.Max.Y)
+            Offset -= target.Max.Y - content.Max.Y;
+        else if (target.Min.Y < content.Min.Y)
+            Offset += MathF.Min(content.Min.Y - target.Min.Y, content.Max.Y - target.Max.Y);
+    }
+
     protected override bool HitTestVisible => true;
 
     protected override bool ClipsChildren => true;

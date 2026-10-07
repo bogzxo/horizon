@@ -70,6 +70,31 @@ public class Selector : UIComponent
 
     protected override bool HitTestVisible => true;
 
+    protected internal override bool Navigable => true;
+
+    protected internal override void OnActivate() => Step(1);
+
+    protected internal override bool OnAdjust(int step)
+    {
+        Step(step);
+        return true;
+    }
+
+    /// <summary>
+    /// Moves on to the next option (1) or back to the one before (-1), around the ends, the way a click on either half
+    /// does. For a gamepad, see <see cref="UINavigator.Adjust"/>.
+    /// </summary>
+    public void Step(int by)
+    {
+        if (options.Length < 2 || by == 0 || !EnabledInHierarchy)
+            return;
+
+        index = ((index + Math.Sign(by)) % options.Length + options.Length) % options.Length;
+
+        OnChanged?.Invoke(Value);
+        InvokeScript(changedHandler, new StringValue(Value));
+    }
+
     protected override Vector2 Measure(UISkin skin)
     {
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
@@ -86,12 +111,13 @@ public class Selector : UIComponent
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
 
-        if ((enabled && IsHovered && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
+        bool lit = enabled && (IsHovered || IsSelected);
+        if ((lit && skin.TryGetRegion(HOVER_REGION, out var art)) || skin.TryGetRegion(REGION, out art))
             list.NineSlice(art, Bounds, tint);
         else
         {
             list.Box(Bounds, skin.ControlColor * tint);
-            if (enabled && IsHovered)
+            if (lit)
                 list.Box(Bounds, skin.HoverColor);
             if (skin.BorderColor.W > 0.0f)
                 list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
@@ -103,19 +129,17 @@ public class Selector : UIComponent
         list.Text("<", content, Origin.Left, scale, arrows, markup: false);
         list.Text(">", content, Origin.Right, scale, arrows, markup: false);
         list.Text(Value, content, Origin.Center, scale, skin.TextColor * tint, markup: false);
+
+        PaintSelection(list);
     }
 
     protected internal override void OnPointerUp(Vector2 point)
     {
-        if (options.Length < 2 || !Bounds.Contains(point) || !EnabledInHierarchy)
+        if (!Bounds.Contains(point))
             return;
 
         // Left of the middle goes back, right of it goes on.
-        int step = point.X < Bounds.Center.X ? -1 : 1;
-        index = (index + step + options.Length) % options.Length;
-
-        OnChanged?.Invoke(Value);
-        InvokeScript(changedHandler, new StringValue(Value));
+        Step(point.X < Bounds.Center.X ? -1 : 1);
     }
 
     protected override void DefineScript()

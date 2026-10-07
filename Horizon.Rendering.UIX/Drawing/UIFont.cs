@@ -199,4 +199,135 @@ public sealed class UIFont
 
         return new Vector2(MathF.Max(widest, width), lines * LineHeight * scale);
     }
+
+    /// <summary>
+    /// Cuts text into lines no wider than a width, breaking between words. A word that is wider than the whole
+    /// width on its own is broken wherever it has to be. A '\n' is a line of its own whatever the width.
+    /// Nothing is allocated past the list growing, so a label can do this every update.
+    /// </summary>
+    /// <param name="lines">Where the lines go, each as where it starts in the text and how long it is. Emptied first.</param>
+    /// <param name="markup">Whether <c>[icon:name]</c> tags are icons (one piece of a word, as wide as the icon).</param>
+    public void Wrap(ReadOnlySpan<char> text, float scale, float maxWidth, List<(int Start, int Length)> lines, bool markup = true)
+    {
+        lines.Clear();
+        if (text.IsEmpty)
+            return;
+
+        ReadOnlySpan<char> icons = default;
+
+        int lineStart = 0;
+        int lineEnd = 0;
+        float lineWidth = 0.0f;
+        int at = 0;
+
+        while (at < text.Length)
+        {
+            // The gap in front of the next word, which is left out if the word starts a line
+            float gapWidth = 0.0f;
+            while (at < text.Length && text[at] != '\n' && char.IsWhiteSpace(text[at]))
+                gapWidth += Advance(text, ref at, scale, ref icons, markup);
+
+            // The end of the line, with or without a line break: what was placed so far is the line
+            if (at >= text.Length || text[at] == '\n')
+            {
+                lines.Add((lineStart, lineEnd - lineStart));
+
+                if (at < text.Length)
+                    at++;
+
+                lineStart = lineEnd = at;
+                lineWidth = 0.0f;
+                continue;
+            }
+
+            int wordStart = at;
+            float wordWidth = 0.0f;
+            while (at < text.Length && text[at] != '\n' && !char.IsWhiteSpace(text[at]))
+                wordWidth += Advance(text, ref at, scale, ref icons, markup);
+
+            if (lineWidth > 0.0f && lineWidth + gapWidth + wordWidth > maxWidth)
+            {
+                // Doesn't fit after what is there, so it goes on a line of its own
+                lines.Add((lineStart, lineEnd - lineStart));
+                lineStart = wordStart;
+                lineWidth = 0.0f;
+            }
+
+            if (lineWidth == 0.0f && wordWidth > maxWidth)
+            {
+                // Wider than a whole line by itself, so it is cut wherever it runs out of room
+                int cut = wordStart;
+                float cutWidth = 0.0f;
+                ReadOnlySpan<char> cutIcons = icons;
+
+                while (cut < at)
+                {
+                    int before = cut;
+                    float advance = Advance(text, ref cut, scale, ref cutIcons, markup);
+
+                    if (cutWidth > 0.0f && cutWidth + advance > maxWidth)
+                    {
+                        lines.Add((lineStart, before - lineStart));
+                        lineStart = before;
+                        cutWidth = 0.0f;
+                    }
+
+                    cutWidth += advance;
+                }
+
+                lineWidth = cutWidth;
+                lineEnd = at;
+                continue;
+            }
+
+            // Onto the line, with the gap in front of it if it isn't the first word there
+            lineWidth += (lineWidth > 0.0f ? gapWidth : 0.0f) + wordWidth;
+            lineEnd = at;
+        }
+
+        // Text that ends without a line break still has its last line
+        if (lineEnd > lineStart || lines.Count == 0)
+            lines.Add((lineStart, lineEnd - lineStart));
+    }
+
+    /// <summary>
+    /// How wide the widest of a set of lines is, for the box wrapped text takes up.
+    /// </summary>
+    public Vector2 Measure(ReadOnlySpan<char> text, ReadOnlySpan<(int Start, int Length)> lines, float scale, bool markup = true)
+    {
+        float widest = 0.0f;
+        foreach (var (start, length) in lines)
+            widest = MathF.Max(widest, Measure(text.Slice(start, length), scale, markup).X);
+
+        return new Vector2(widest, Math.Max(1, lines.Length) * LineHeight * scale);
+    }
+
+    /// <summary>
+    /// Helper method to step over one piece of a text (a character, or a whole icon tag) and say how wide it is.
+    /// A tag that only says which set of icons the text is written in is stepped over and is as wide as nothing.
+    /// </summary>
+    private float Advance(ReadOnlySpan<char> text, ref int at, float scale, ref ReadOnlySpan<char> icons, bool markup)
+    {
+        char character = text[at];
+
+        if (markup && character == ICON_TAG[0])
+        {
+            if (TryReadIconSet(text[at..], out var set, out int skipped))
+            {
+                icons = set;
+                at += skipped;
+                return 0.0f;
+            }
+
+            if (TryReadIcon(text[at..], scale, icons, out _, out int length, out Vector2 size))
+            {
+                at += length;
+                return size.X;
+            }
+        }
+
+        Resolve(character, out var glyph);
+        at++;
+        return glyph.XAdvance * scale;
+    }
 }

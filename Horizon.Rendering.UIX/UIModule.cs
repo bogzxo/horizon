@@ -150,12 +150,72 @@ namespace Horizon.Rendering.UIX
         /// </summary>
         public UIComponent? Popup { get; internal set; }
 
+        private UINavigator? navigation;
+
+        /// <summary>
+        /// Walks the module without a pointer, for a gamepad or the keyboard: see <see cref="UINavigator"/>. Made the
+        /// first time somebody asks, and nothing until they do.
+        /// </summary>
+        public UINavigator Navigation => navigation ??= new UINavigator(this);
+
+        /// <summary>The dialog that is up over the module (see <see cref="UIDialog"/>), null for none.</summary>
+        public UIDialog? Dialog
+        {
+            get
+            {
+                // On top of everything, which is the end of the list
+                var children = Root.Children;
+                for (int i = children.Count - 1; i >= 0; i--)
+                {
+                    if (children[i] is UIDialog dialog)
+                        return dialog;
+                }
+
+                return null;
+            }
+        }
+
+        // What a tooltip says and where it goes, set by the compositor for the module the pointer is resting in
+        private string? tooltip;
+        private Vector2 tooltipAt;
+
         public UIModule(UICompositor compositor)
         {
             Compositor = compositor;
             Root.Module = this;
 
             SetupRuntime();
+        }
+
+        /// <summary>
+        /// Has the module draw a tooltip on top of everything in it on its next paint, null for none. Compositor.
+        /// </summary>
+        /// <param name="point">Where the pointer is, in the module's units.</param>
+        internal void ShowTooltip(string? text, Vector2 point)
+        {
+            tooltip = text;
+            tooltipAt = point;
+        }
+
+        /// <summary>
+        /// Lists the components the keyboard focus can go to (see <see cref="UIComponent.Focusable"/>) in the order of
+        /// the layout, the shown and switched on ones.
+        /// </summary>
+        internal void CollectFocusable(List<UIComponent> into) => CollectFocusable(Root, into);
+
+        private static void CollectFocusable(UIComponent component, List<UIComponent> into)
+        {
+            if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled)
+                return;
+
+            if (component.Focusable)
+                into.Add(component);
+
+            foreach (UIComponent child in component.Children)
+            {
+                if (component.ShowsChild(child))
+                    CollectFocusable(child, into);
+            }
         }
 
         public T AddComponent<T>(T component) where T : UIComponent => Root.Add(component);
@@ -174,7 +234,11 @@ namespace Horizon.Rendering.UIX
         /// <summary>Turns a point in the space the components are laid out in into the camera's world space.</summary>
         public Vector2 ToWorld(Vector2 point) => (point * Scale + Position) * UnitScale;
 
-        internal void Update(float dt) => Root.UpdateTree(dt);
+        internal void Update(float dt)
+        {
+            Root.UpdateTree(dt);
+            navigation?.Update();
+        }
 
         /// <summary>
         /// Works out how big a unit of the layout is on this screen, before the pointer is routed. The pointer has
@@ -245,6 +309,10 @@ namespace Horizon.Rendering.UIX
                 else
                     Popup = null;
             }
+
+            // And a tooltip over everything, popups included
+            if (tooltip is { Length: > 0 } text)
+                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines);
         }
 
         internal UIComponent? HitTest(Vector2 point)

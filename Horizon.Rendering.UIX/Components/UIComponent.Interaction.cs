@@ -94,6 +94,57 @@ public abstract partial class UIComponent
     /// </summary>
     public Action<Vector2>? OnContextMenu { get; set; }
 
+    /* Driving the UI without a pointer: a gamepad or the keyboard walking from one component to the next, see UINavigator */
+
+    /// <summary>
+    /// Whether the component is the one a <see cref="UINavigator"/> is on. It is drawn lit the way the pointer lights
+    /// it, and pressing the confirm button does what a click would (<see cref="OnActivate"/>).
+    /// </summary>
+    public bool IsSelected { get; internal set; }
+
+    /// <summary>
+    /// Whether a navigator stops at this component. Buttons, toggles, selectors, sliders and text boxes do, labels
+    /// and panels don't.
+    /// </summary>
+    protected internal virtual bool Navigable => false;
+
+    /// <summary>What the confirm button does to this component while it is selected. A click, for most things.</summary>
+    protected internal virtual void OnActivate()
+    { }
+
+    /// <summary>
+    /// What left and right (or a stick) do to this component while it is selected: a selector steps through its
+    /// options, a slider moves. Whoever has a use for it says so by returning true, otherwise the navigator moves on.
+    /// </summary>
+    /// <param name="step">-1 for left, 1 for right.</param>
+    protected internal virtual bool OnAdjust(int step) => false;
+
+    /// <summary>
+    /// What is written in a box next to the pointer when it rests on the component for a moment. Empty for nothing.
+    /// In a layout file: <c>tooltip: "Starts the fight"</c>.
+    /// </summary>
+    public string Tooltip { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Helper method to draw the rim that says "this one" around a component a navigator is on. Called by the
+    /// components that have no look of their own for it, after they have painted themselves.
+    /// </summary>
+    protected void PaintSelection(UIDrawList list)
+    {
+        if (!IsSelected || !EnabledInHierarchy)
+            return;
+
+        var skin = list.Skin;
+        if (skin.TryGetRegion(SELECTION_REGION, out var marker))
+            list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
+        else
+            list.Frame(Bounds.Shrink(new UIEdges(-SELECTION_RIM)), 2.0f, skin.HighlightColor);
+    }
+
+    // The art a skin draws around the chosen one of a group, and how far outside of a component the rim goes without it
+    internal const string SELECTION_REGION = "selection";
+    private const float SELECTION_RIM = 3.0f;
+
     /* Popups: what a component shows on top of everything else in its module for a while, the list of a dropdown say */
 
     /// <summary>Whether this component is the one that has something open on top of its module.</summary>
@@ -199,5 +250,12 @@ public abstract partial class UIComponent
     /// enter as '\n'.
     /// </summary>
     protected internal virtual void OnTextInput(char character)
+    { }
+
+    /// <summary>
+    /// Text was pasted (control with V) while this component had the focus. A text box types what fits of it,
+    /// anything else does nothing with it unless it says otherwise.
+    /// </summary>
+    protected internal virtual void OnPaste(string text)
     { }
 }

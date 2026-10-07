@@ -130,4 +130,29 @@ public sealed partial class UIDrawList
 
         Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, markup);
     }
+
+    /// <summary>
+    /// Draws text that was cut into lines (see <see cref="UIFont.Wrap"/>) lined up inside an area, the block of
+    /// lines placed by the alignment and every line lined up the same way inside of the block.
+    /// </summary>
+    /// <param name="lines">Where each line starts in the text and how long it is.</param>
+    public void Text(ReadOnlySpan<char> text, ReadOnlySpan<(int Start, int Length)> lines, UIRect area, Origin align, float scale, Vector4 color, bool markup = true)
+    {
+        UIFont font = Skin.Font;
+        float lineHeight = font.LineHeight * scale;
+
+        Vector2 size = font.Measure(text, lines, scale, markup);
+        Vector2 center = area.PointAt(align) - align.ToVector() * size;
+        Vector2 topLeft = center + new Vector2(-0.5f, 0.5f) * size;
+
+        // A line is as wide as itself, and slides along the block by how the text is lined up
+        float side = align.ToVector().X;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            ReadOnlySpan<char> line = text.Slice(lines[i].Start, lines[i].Length);
+            float width = font.Measure(line, scale, markup).X;
+
+            Text(line, new Vector2(topLeft.X + (side + 0.5f) * (size.X - width), topLeft.Y - i * lineHeight), scale, color, markup);
+        }
+    }
 }

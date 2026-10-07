@@ -27,6 +27,7 @@ public abstract partial class UIComponent
         Expose("visible", () => Visible, value => Visible = value);
         Expose("layer", () => Layer, value => Layer = value.Trim());
         Expose("enabled", () => Enabled, value => Enabled = value);
+        Expose("tooltip", () => Tooltip, value => Tooltip = value);
 
         Expose(
             "anchor",
