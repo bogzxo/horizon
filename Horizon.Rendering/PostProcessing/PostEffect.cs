@@ -129,9 +129,23 @@ public sealed class PostContext
         Processor.DrawScreen();
     }
 
+    /// <summary>
+    /// Whether the effect passed the picture on as it was without drawing anything (see <see cref="Copy"/>): the next
+    /// effect reads the same picture this one was handed.
+    /// </summary>
+    internal bool PassedOn { get; set; }
+
     /// <summary>Passes the picture on as it is, for an effect that finds it has nothing to do this frame.</summary>
     public void Copy()
     {
+        // Another effect comes after this one: it simply reads the picture this one was handed, which costs nothing.
+        // Only the last effect has to put the picture where it is shown
+        if (Into is not null)
+        {
+            PassedOn = true;
+            return;
+        }
+
         PostTechnique copy = Processor.CopyTechnique;
 
         copy.Bind();

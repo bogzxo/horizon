@@ -164,4 +164,52 @@ public class SimulationLoopTests
         Assert.Equal(1, host.LogicDeltas.Count - before);
         Assert.Equal(0, loop.Ticks.DroppedTurns);
     }
+
+    private sealed class StandsStill(Func<SimulationLoop> loop, Action standStill) : ISimulationHost
+    {
+        public int Ticks;
+        public bool Once = true;
+
+        public void BeginTick() { }
+        public void UpdateState(float dt) { }
+        public void UpdatePhysics(float dt) { }
+
+        public void EndTick(long tick, long stamp, double time)
+        {
+            Ticks++;
+            if (!Once) return;
+
+            // A scene set up at the end of the tick, which the loop is told it stood still for
+            Once = false;
+            standStill();
+            loop().Resynchronize();
+        }
+    }
+
+    [Fact]
+    public void Resynchronizing_inside_of_a_tick_lets_the_catching_up_go()
+    {
+        long now = Seconds(1.0);
+        SimulationLoop loop = null!;
+        var host = new StandsStill(() => loop, () => now += Seconds(1.0)) { Once = false };
+        loop = new SimulationLoop(100, 100, host, () => now);
+
+        loop.Step();
+
+        // Behind by a few ticks, and the first of them stands still for a second
+        now += Seconds(0.035);
+        host.Once = true;
+        host.Ticks = 0;
+        loop.Step();
+        Assert.Equal(1, host.Ticks);
+
+        // Carried on from after the stand still, one tick and then at the rate again
+        loop.Step();
+        Assert.Equal(2, host.Ticks);
+        Assert.Equal(0, loop.Ticks.DroppedTurns);
+
+        now += Seconds(0.01);
+        loop.Step();
+        Assert.Equal(3, host.Ticks);
+    }
 }

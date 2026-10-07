@@ -57,6 +57,9 @@ public class SceneManager : Entity
     // Whether something that was drawn this frame said it isn't all there yet
     private bool _unfinished;
 
+    // How long the last scene took to be made and to be warmed up, for the log
+    private double _setUpMs, _warmUpMs;
+
     // The transition that is covering or uncovering the screen right now, and the one the waiting scene comes in with
     private readonly TweenContext _tweens = new();
     private SceneTransition? _running, _incomingTransition;
@@ -313,8 +316,12 @@ public class SceneManager : Entity
             // One that was kept and is back has been left before
             incoming.IsLeaving = false;
 
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
+            int turns;
             using (incoming.Assets.Enter())
-                SetUp(incoming, dt);
+                turns = SetUp(incoming, dt);
+
+            Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
 
             // What the warm up drew is not for showing
             var gl = GameEngine.Instance.GL;
@@ -338,22 +345,27 @@ public class SceneManager : Entity
     /// <summary>
     /// Helper method to set a scene up until it is ready to be shown, with everything it makes noted as its own.
     /// </summary>
-    private void SetUp(Scene scene, float dt)
+    /// <returns>How many turns it took to warm the scene up.</returns>
+    private int SetUp(Scene scene, float dt)
     {
         scene.Enabled = false;
         scene.Parent = Parent; // pass through the engine.
 
         // The scene, and then everything it added while it was at it, all the way down
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         scene.Initialize();
         scene.InitializeAll();
         scene.Enabled = true;
+        _setUpMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        started = System.Diagnostics.Stopwatch.GetTimestamp();
 
         // Everything in the scene exists now, but a scene isn't whole the moment it does. A lot is only made on
         // the GPU the first time it is drawn, a UI has nothing to draw before it has been updated, and art that
         // is asked for while painting arrives a frame later. Shown right away that is a few frames of a
         // background without its UI. So it is drawn and updated here, unseen, until nothing in it says it is
         // still missing something: all of this ends up in one frame, which is drawn over afterwards
-        for (int turn = 0; turn < MAX_WARM_UP; turn++)
+        int turn = 0;
+        for (; turn < MAX_WARM_UP; turn++)
         {
             _unfinished = false;
             scene.Render(dt);
@@ -373,6 +385,8 @@ public class SceneManager : Entity
         }
 
         _unfinished = false;
+        _warmUpMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        return Math.Min(turn + 1, MAX_WARM_UP);
     }
 
     /// <summary>

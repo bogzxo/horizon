@@ -19,6 +19,12 @@ internal sealed class GaussianBlur : IDisposable
     public const float FULL_RADIUS = 2.0f;
 
     private const string UNIFORM_STEP = "uStep";
+    private const string UNIFORM_TEXEL = "uTexel";
+
+    // From this radius on (in pixels of the picture) the blur is worked out at a quarter of the size instead of half of it,
+    // then blown up to half: a sixteenth of the pixels and one round where half the size would take two. Nobody can tell
+    // on a blur this big, but the first few pixels of a blur that is barely there would turn blocky
+    private const float QUARTER_FROM = 12.0f;
 
     // The furthest read of the shader is this many steps from the middle, which is what a radius gets divided by to get the step
     private const float TAP_REACH = 3.25f;
@@ -27,8 +33,8 @@ internal sealed class GaussianBlur : IDisposable
     private const float RADIUS_PER_ROUND = 8.0f;
     private const int MAX_ROUNDS = 3;
 
-    private PostTechnique? copy, blur;
-    private PostTarget? scratch;
+    private PostTechnique? copy, blur, downsample;
+    private PostTarget? scratch, quarter, quarterScratch;
 
     /// <summary>
     /// How much of the blurred picture to show over the sharp one for a radius, from 0 for none of it to 1 for nothing else.
@@ -46,6 +52,9 @@ internal sealed class GaussianBlur : IDisposable
     {
         copy ??= new PostTechnique("copy");
         blur ??= new PostTechnique("blur");
+
+        if (radius >= QUARTER_FROM)
+            return BlurAtQuarter(source, sourceSize, radius, ref into);
 
         PostTarget result = Fit(ref into, sourceSize), other = Fit(ref scratch, sourceSize);
 
@@ -84,6 +93,57 @@ internal sealed class GaussianBlur : IDisposable
     }
 
     /// <summary>
+    /// Helper method to blur a picture at a quarter of its size, for a blur that is big enough for that not to show:
+    /// averaged down to a quarter, blurred there in rounds the way it is at half, and blown up into the half sized result.
+    /// </summary>
+    private PostTarget BlurAtQuarter(Texture source, Vector2 sourceSize, float radius, ref PostTarget? into)
+    {
+        downsample ??= new PostTechnique("downsample");
+
+        PostTarget result = Fit(ref into, sourceSize);
+        PostTarget small = Fit(ref quarter, sourceSize / 2.0f), other = Fit(ref quarterScratch, sourceSize / 2.0f);
+
+        downsample.Bind();
+        source.Bind(0);
+        downsample.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
+        Vector2 texel = Vector2.One / sourceSize;
+        downsample.SetUniform(UNIFORM_TEXEL, in texel);
+        small.Bind();
+        ScreenTriangle.Draw();
+
+        // A pixel here is four of the picture, so a round reaches twice as far as it does at half the size
+        int rounds = Math.Clamp((int)MathF.Ceiling(radius / (RADIUS_PER_ROUND * 2.0f)), 1, MAX_ROUNDS);
+        float step = radius * 0.25f / MathF.Sqrt(rounds) / TAP_REACH;
+        Vector2 sideways = new(step / small.Size.X, 0.0f), upwards = new(0.0f, step / small.Size.Y);
+
+        blur!.Bind();
+        blur.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
+
+        for (int round = 0; round < rounds; round++)
+        {
+            small.Texture.Bind(0);
+            blur.SetUniform(UNIFORM_STEP, in sideways);
+            other.Bind();
+            ScreenTriangle.Draw();
+
+            other.Texture.Bind(0);
+            blur.SetUniform(UNIFORM_STEP, in upwards);
+            small.Bind();
+            ScreenTriangle.Draw();
+        }
+
+        // Blown up to half the size, which is what whoever asked reads it at. Smooth already, the GPU blends the rest
+        copy!.Bind();
+        small.Texture.Bind(0);
+        copy.SetUniform(PostTechnique.UNIFORM_SOURCE, 0);
+        result.Bind();
+        ScreenTriangle.Draw();
+
+        copy.Unbind();
+        return result;
+    }
+
+    /// <summary>
     /// Helper method to make sure a target is the size a picture gets blurred into (half of it), which it is made anew for if it isn't.
     /// </summary>
     public static PostTarget Fit(ref PostTarget? target, Vector2 pictureSize)
@@ -102,6 +162,8 @@ internal sealed class GaussianBlur : IDisposable
     public void Dispose()
     {
         scratch?.Dispose();
-        scratch = null;
+        quarter?.Dispose();
+        quarterScratch?.Dispose();
+        scratch = quarter = quarterScratch = null;
     }
 }

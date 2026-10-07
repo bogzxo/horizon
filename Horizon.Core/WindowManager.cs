@@ -83,6 +83,9 @@ public class WindowManager : GameComponent, IDisposable
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
 
+    // How long (in seconds) the exclusive work of the last frame took, which the next frame doesn't count as time that went by
+    private float stalled;
+
     // Set this in the environment to a number of seconds and the loops are written to the log that often.
     // For finding out what a game costs without building anything into it
     private const string LOG_LOOPS_VARIABLE = "HORIZON_LOG_LOOPS";
@@ -339,6 +342,12 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void DrawFrame(float dt)
     {
+        // The time the last frame spent on exclusive work (setting a scene up can take a good while) is time the game
+        // stood still: it isn't time for what moves by the frames to move on by, or a transition would jump the moment
+        // the scene it was covering up is there
+        dt = Math.Max(0.0f, dt - stalled);
+        stalled = 0.0f;
+
         if (threading == ThreadingMode.Lockstep)
         {
             // In line with the simulation, in the order we asked: without a limit on the frames this asks again the
@@ -403,6 +412,19 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     /// <param name="always">Whether the simulation is standing still for it: if not, only what doesn't touch the game is done.</param>
     private void DoExclusiveWork(float dt, bool always)
+    {
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            DoExclusiveWorkTimed(dt, always);
+        }
+        finally
+        {
+            stalled += (float)((Stopwatch.GetTimestamp() - started) / (double)Stopwatch.Frequency);
+        }
+    }
+
+    private void DoExclusiveWorkTimed(float dt, bool always)
     {
         // First, so whatever is set up or drawn from here on finds the window the size it was asked to be
         ApplyPendingDisplay();
@@ -625,7 +647,16 @@ public class WindowManager : GameComponent, IDisposable
 
             // Whatever has to be done on the thread of the window without anybody touching the game, done before the next tick
             if (!window.tickHoldsGate && (window.exclusiveRequested || EntityLifecycle.HasWork))
+            {
+                long parked = Stopwatch.GetTimestamp();
                 window.Rendezvous();
+
+                // Stood still for longer than a tick (a scene was set up): carried on from now rather than raced
+                // through the ticks that were missed, which would be published all at once and late, and have the
+                // frames drawn further in the past for a while just as the new scene is uncovered
+                if (window.simulation is { } loop && Stopwatch.GetTimestamp() - parked > Stopwatch.Frequency / loop.TickRate)
+                    loop.Resynchronize();
+            }
         }
     }
 

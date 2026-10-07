@@ -69,8 +69,9 @@ public class SpriteBatchMesh : GameObject
     /// A mesh for the sprites of a sprite sheet.
     /// </summary>
     public SpriteBatchMesh(SpriteSheet sheet, Technique shader)
-        // 10k sprites (and room for their masks) in there just to be safe at the start
-        : this(shader, 20000)
+        // Room for a fair few sprites (and their masks) to begin with, it grows when more turn up. Making room for tens of
+        // thousands up front cost every sheet five and a half megabytes of mapped memory, and a scene the time to map it
+        : this(shader, 256)
     {
         this.sheet = sheet;
     }

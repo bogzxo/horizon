@@ -18,7 +18,7 @@ namespace Horizon.Rendering.Transitions;
 /// </para>
 /// Whatever was blended and tested when the scene was done drawing is put back afterwards, the rest of the frame doesn't notice.
 /// </summary>
-public abstract class ScreenTransition : SceneTransition
+public abstract class ScreenTransition : SceneTransition, IDisposable
 {
     private bool initialized;
     private PostTarget? frame;
@@ -115,9 +115,18 @@ public abstract class ScreenTransition : SceneTransition
     }
 
     /// <summary>
-    /// Lets go of what was kept for the transition that just ended. Whoever overrides this to let go of more calls this one as well.
+    /// Told the transition that just ended is over. The copy of the frame is kept for the next time (it is made anew
+    /// when the window is another size): making it at the start of every transition is a hitch right when the player
+    /// pressed something. See <see cref="Dispose"/> for letting go of it. Whoever overrides this calls this one as well.
     /// </summary>
     public override void Finish()
+    { }
+
+    /// <summary>
+    /// Lets go of every picture the transition keeps between one time and the next, for a transition that isn't going
+    /// to be used again. GL thread, and not while it runs. Whoever overrides this to let go of more calls this one as well.
+    /// </summary>
+    public virtual void Dispose()
     {
         frame?.Dispose();
         frame = null;

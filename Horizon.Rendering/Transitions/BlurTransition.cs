@@ -109,14 +109,22 @@ public sealed class BlurTransition : ScreenTransition
 
     public override void Finish()
     {
+        // The pictures it blurs into are kept for the next time: making them anew is a hitch at the start of every
+        // transition, keeping them is a few pictures of half the size of the screen
+        oldShare = 0.0f;
+
+        base.Finish();
+    }
+
+    public override void Dispose()
+    {
         gaussian.Dispose();
 
         current?.Dispose();
         outgoing?.Dispose();
         blended?.Dispose();
         current = outgoing = blended = null;
-        oldShare = 0.0f;
 
-        base.Finish();
+        base.Dispose();
     }
 }
