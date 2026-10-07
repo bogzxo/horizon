@@ -76,8 +76,8 @@ internal static class UIKeyboard
     private static string? clipboardPending;
     private static IKeyboard? clipboardOwner;
 
-    // The notches the mouse wheel has turned since anybody last asked, in thousandths so they can be swapped whole.
-    private static int scrolled;
+    // The tick whose turn of the mouse wheel somebody already used, -1 for none
+    private static long scrollUsedOn = -1;
 
     /// <summary>
     /// Starts listening to the keyboards. Only the first call does anything; has to be made once
@@ -92,9 +92,6 @@ internal static class UIKeyboard
 
         // The clipboard is the window's, it is only ever touched on its thread
         GameEngine.Instance.WindowManager.EventsProcessed += FlushClipboard;
-
-        foreach (var mouse in input.Mice)
-            mouse.Scroll += (_, wheel) => Interlocked.Add(ref scrolled, (int)(wheel.Y * 1000.0f));
 
         foreach (var keyboard in input.Keyboards)
         {
@@ -226,10 +223,16 @@ internal static class UIKeyboard
     public static bool TryRead(out char character) => typed.TryDequeue(out character);
 
     /// <summary>
-    /// Takes how far the mouse wheel has turned since the last time this was asked, in notches. Positive is
-    /// away from the user.
+    /// How far the mouse wheel turned for this update, in notches (positive is away from the user), or nothing if
+    /// another UI already used it. Every UI gets to look at it, the first one with a use for it says so with
+    /// <see cref="UseScroll"/>: a UI that has nothing under the pointer used to take it anyway and leave the one that
+    /// did with sod all. Simulation thread.
     /// </summary>
-    public static float TakeScroll() => Interlocked.Exchange(ref scrolled, 0) / 1000.0f;
+    public static float PeekScroll() =>
+        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.Scroll;
+
+    /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
+    public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
 
     /// <summary>Throws away whatever was typed while nothing was listening.</summary>
     public static void Clear() => typed.Clear();

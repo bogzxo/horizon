@@ -47,7 +47,8 @@ public partial class UICompositor
     /// </summary>
     private void RouteScroll(UIModule[] snapshot, Vector2 pointer)
     {
-        float delta = UIKeyboard.TakeScroll() + Interlocked.Exchange(ref pendingScroll, 0.0f);
+        float wheel = UIKeyboard.PeekScroll();
+        float delta = wheel + Interlocked.Exchange(ref pendingScroll, 0.0f);
         if (delta == 0.0f)
             return;
 
@@ -58,12 +59,18 @@ public partial class UICompositor
 
             // Whatever is open on top of the module is asked before what is under it.
             if (snapshot[i].Popup is { } popup && popup.PopupContains(snapshot[i].ToLocal(pointer)) && popup.OnScroll(delta))
+            {
+                if (wheel != 0.0f) UIKeyboard.UseScroll();
                 return;
+            }
 
             for (UIComponent? component = snapshot[i].FindAt(pointer); component is not null; component = component.Parent)
             {
                 if (component.OnScroll(delta))
+                {
+                    if (wheel != 0.0f) UIKeyboard.UseScroll();
                     return;
+                }
             }
         }
     }
