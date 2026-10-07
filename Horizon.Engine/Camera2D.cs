@@ -11,7 +11,7 @@ public class Camera2D : Camera
         set
         {
             _zoom = value;
-            Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
+            UpdateLens();
         }
     }
 
@@ -28,14 +28,28 @@ public class Camera2D : Camera
         set
         {
             Size = value;
-            Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
+            UpdateLens();
         }
     }
 
+    /// <summary>
+    /// A camera that can be drawn through straight away, also one that is never added to anything (one a UI is laid
+    /// out by): its matrices are there from the start and kept up with its lens.
+    /// </summary>
     public Camera2D(in Vector2 size)
     {
         this.Size = size;
         Zoom = 1.0f;
+    }
+
+    /// <summary>
+    /// Helper method to work the projection out from the size and the zoom, and the matrices that go with it, for a
+    /// camera that isn't in the scene and so is never brought up to date by it.
+    /// </summary>
+    private void UpdateLens()
+    {
+        Projection = Matrix4x4.CreateOrthographic(Size.X * Zoom, Size.Y * Zoom, 0.1f, 1000.0f);
+        UpdateMatrices();
     }
 
     /// <summary>
