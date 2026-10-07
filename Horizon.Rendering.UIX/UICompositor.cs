@@ -236,6 +236,18 @@ public partial class UICompositor : GameComponent, IDisposable
         this.skinTheme = theme;
     }
 
+    // Whether the camera is the compositor's own (see ForScreen), which it keeps the size of the window
+    private bool ownsCamera;
+
+    /// <summary>
+    /// A UI laid out against the whole window, with a camera of its own that it keeps the size of the window: for a
+    /// UI that isn't drawn through any camera of the scene (a HUD, a menu laid over everything), which saves making
+    /// one and remembering to resize it. The window can be resized under it, it follows on the next update.
+    /// </summary>
+    /// <param name="theme">Which theme of the usual skin to draw the UI in, null for the one the skin says is its usual one.</param>
+    public static UICompositor ForScreen(string? theme = null) =>
+        new(new Camera2D(GameEngine.Instance.WindowManager.ViewportSize), theme) { ownsCamera = true };
+
     public UIModule CreateModule()
     {
         var module = new UIModule(this);
@@ -311,6 +323,10 @@ public partial class UICompositor : GameComponent, IDisposable
 
     public override void UpdateState(float dt)
     {
+        // A camera of its own is kept the size of the window, here on the simulation thread where it is read
+        if (ownsCamera && GameEngine.Instance.WindowManager.ViewportSize is { X: > 0.0f, Y: > 0.0f } window && viewportCamera.ViewSize != window)
+            viewportCamera.ViewSize = window;
+
         if (Skin is not { } skin)
             return;
 
