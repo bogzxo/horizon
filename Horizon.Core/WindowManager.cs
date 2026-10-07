@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.ExceptionServices;
 
 using Horizon.Core.Components;
+using Horizon.Core.Diagnostics;
 using Horizon.Core.Primitives;
 using Horizon.Core.Threading;
 
@@ -98,6 +99,14 @@ public class WindowManager : GameComponent, IDisposable
 
     private readonly double logLoopsEvery;
     private double nextLoopLog;
+
+    // Set this in the environment to a number of seconds and what every thread allocates is written to the log that
+    // often, by type. For finding out where the garbage comes from without a profiler
+    private const string LOG_ALLOCATIONS_VARIABLE = "HORIZON_LOG_ALLOCATIONS";
+
+    private readonly AllocationLog? allocations;
+    private readonly double logAllocationsEvery;
+    private double nextAllocationLog;
 
     // How long (in seconds) there is between two frames at the least, 0 for as many as there is time for. And when the next one is due
     private double framePeriod, nextFrame;
@@ -237,6 +246,19 @@ public class WindowManager : GameComponent, IDisposable
 
         if (double.TryParse(Environment.GetEnvironmentVariable(LOG_LOOPS_VARIABLE), System.Globalization.CultureInfo.InvariantCulture, out double every) && every > 0.0)
             logLoopsEvery = every;
+        if (double.TryParse(Environment.GetEnvironmentVariable(LOG_ALLOCATIONS_VARIABLE), System.Globalization.CultureInfo.InvariantCulture, out double allocationsEvery) && allocationsEvery > 0.0)
+        {
+            // A trimmed game has no events to count them by, see EventSourceSupport
+            if (AppContext.TryGetSwitch("System.Diagnostics.Tracing.EventSource.IsSupported", out bool events) && !events)
+            {
+                Log.Warning($"[{Name}] Allocations can't be counted in this build, its event sources are trimmed out. Build it with <EventSourceSupport>true</EventSourceSupport> to.");
+            }
+            else
+            {
+                logAllocationsEvery = allocationsEvery;
+                allocations = new AllocationLog();
+            }
+        }
         title = config.WindowTitle ?? string.Empty;
 
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
@@ -611,6 +633,7 @@ public class WindowManager : GameComponent, IDisposable
         };
         renderThread.Start();
 
+        AllocationLog.NameThisThread("Window");
         LoopTiming.SharpenTimer(true);
         try
         {
@@ -672,6 +695,7 @@ public class WindowManager : GameComponent, IDisposable
     {
         try
         {
+            AllocationLog.NameThisThread("Render");
             SetUpDrawing();
 
             long previous = 0;
@@ -703,6 +727,7 @@ public class WindowManager : GameComponent, IDisposable
                 lastFrame = started;
 
                 if (logLoopsEvery > 0.0) LogLoops(ended / (double)Stopwatch.Frequency);
+                if (allocations is not null) LogAllocations(ended / (double)Stopwatch.Frequency);
 
                 // The simulation only starts once a frame has been drawn. Everything is set up on this thread, and there has to be something to update
                 if (simulation is null) StartSimulation();
@@ -791,6 +816,21 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
+    /// Helper method to write what every thread allocates to the log, every so often. Only if somebody asked for it, see <see cref="LOG_ALLOCATIONS_VARIABLE"/>.
+    /// </summary>
+    private void LogAllocations(double now)
+    {
+        if (now < nextAllocationLog) return;
+
+        // The first look is only where the counting starts from, setting the game up is no fair measure
+        bool first = nextAllocationLog == 0.0;
+        nextAllocationLog = now + logAllocationsEvery;
+
+        string report = allocations!.Report();
+        if (!first) Log.Info($"[{Name}] {report}");
+    }
+
+    /// <summary>
     /// Helper method to write how every loop is doing to the log, every so often. Only if somebody asked for it, see <see cref="LOG_LOOPS_VARIABLE"/>.
     /// </summary>
     private void LogLoops(double now)
@@ -820,6 +860,7 @@ public class WindowManager : GameComponent, IDisposable
         _window.Reset();
         _window.Dispose();
         windowWake.Dispose();
+        allocations?.Dispose();
 
         Log.Info($"[{Name}] Disposed!");
     }
