@@ -1,10 +1,11 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Bogz.Logging;
 
 using DotTiled;
 using DotTiled.Serialization;
 
+using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Descriptions;
@@ -67,6 +68,29 @@ public sealed class TileMap : GameObject
     private readonly Dictionary<string, TileMapTexture> textures = [];
 
     private float time;
+
+    /// <summary>What a layer looked like at the end of a tick, for frames that are drawn alongside the simulation.</summary>
+    private struct CapturedLayer
+    {
+        public bool Visible, IsForeground;
+        public float Opacity, Emissive;
+        public Vector3 Tint;
+        public Vector2 WorldOffset, Parallax, Scroll, Drift;
+        public int Version;
+        public uint[] Gids;
+        public TileFlip[] Flips;
+    }
+
+    /// <summary>The whole map at the end of a tick.</summary>
+    private sealed class CapturedMap
+    {
+        public float Time;
+        public Vector2 Origin, ParallaxOrigin;
+        public bool SnapParallax;
+        public CapturedLayer[] Layers = [];
+    }
+
+    private readonly SnapshotBuffer<CapturedMap> captured = new(static () => new CapturedMap());
 
     /// <summary>The map as DotTiled read it, for whatever isn't offered here.</summary>
     public Map Data { get; }
@@ -408,6 +432,16 @@ public sealed class TileMap : GameObject
         if (gid == 0)
             return null;
 
+        // Asked by the game in its updates and by whoever builds the layers for drawing, which may be at once
+        lock (tiles)
+            return ResolveTileLocked(gid);
+    }
+
+    private TileMapTile? ResolveTileLocked(uint gid)
+    {
+        if (gid == 0)
+            return null;
+
         if (tiles.TryGetValue(gid, out TileMapTile? known))
             return known;
 
@@ -432,7 +466,7 @@ public sealed class TileMap : GameObject
 
             foreach (Frame frame in definition.Animation)
             {
-                if (ResolveTile(first + frame.TileID) is { } shown)
+                if (ResolveTileLocked(first + frame.TileID) is { } shown)
                     frames.Add((shown, MathF.Max(0.001f, (float)frame.Duration / 1000.0f)));
             }
 
@@ -733,6 +767,55 @@ public sealed class TileMap : GameObject
             layer.Drift += layer.Scroll * dt;
     }
 
+    /// <summary>
+    /// Publishes what every layer looks like, and a copy of the tiles of any layer that changed, for the frames that are
+    /// drawn alongside the simulation. Simulation thread, at the end of every tick.
+    /// </summary>
+    public override void Capture()
+    {
+        if (captured.BeginPublish() is { } into)
+        {
+            into.Time = time;
+            into.Origin = Origin;
+            into.ParallaxOrigin = ParallaxOrigin;
+            into.SnapParallax = SnapParallax;
+
+            if (into.Layers.Length != layers.Count)
+                into.Layers = new CapturedLayer[layers.Count];
+
+            for (int i = 0; i < layers.Count; i++)
+            {
+                TileMapLayer layer = layers[i];
+
+                // A change of the tiles is copied once, and that copy is never written to: every snapshot after it shares it
+                if (layer.CapturedVersion != layer.Version)
+                {
+                    layer.CapturedGids = (uint[])layer.Gids.Clone();
+                    layer.CapturedFlips = (TileFlip[])layer.Flips.Clone();
+                    layer.CapturedVersion = layer.Version;
+                }
+
+                into.Layers[i] = new CapturedLayer
+                {
+                    Visible = layer.Visible,
+                    IsForeground = layer.IsForeground,
+                    Opacity = layer.Opacity,
+                    Emissive = layer.Emissive,
+                    Tint = layer.Tint,
+                    WorldOffset = layer.WorldOffset,
+                    Parallax = layer.Parallax,
+                    Scroll = layer.Scroll,
+                    Drift = layer.Drift,
+                    Version = layer.Version,
+                    Gids = layer.CapturedGids,
+                    Flips = layer.CapturedFlips
+                };
+            }
+        }
+
+        base.Capture();
+    }
+
     public override void Render(float dt)
     {
         // Somebody else draws the foreground if they took it, at a time of their choosing
@@ -746,6 +829,24 @@ public sealed class TileMap : GameObject
     {
         if (Engine.ActiveCamera is not { } camera || !EnsureShader())
             return;
+
+        // Drawn alongside the simulation, the map is drawn as it was between the last two ticks, out of what was published
+        RenderFrame frame = RenderFrame.Active;
+        CapturedMap? before = null, after = null;
+        bool blend = false;
+        if (frame.IsDecoupled)
+        {
+            if (!captured.TryGet(frame, out before, out after, out blend))
+                return;
+
+            blend &= before.Layers.Length == after.Layers.Length;
+        }
+
+        float alpha = frame.Alpha;
+        Vector2 origin = after?.Origin ?? Origin;
+        Vector2 parallaxOrigin = after?.ParallaxOrigin ?? ParallaxOrigin;
+        bool snapParallax = after?.SnapParallax ?? SnapParallax;
+        float shownTime = after is null ? time : blend ? Interpolate.Linear(before!.Time, after.Time, alpha) : after.Time;
 
         var view = camera.Bounds;
         var viewMin = new Vector2(view.X, view.Y);
@@ -763,39 +864,43 @@ public sealed class TileMap : GameObject
         Vector2 cameraVelocity = camera.Velocity;
         var motionScale = new Vector2(projection.M11, projection.M22);
 
-        for (int index = 0; index < layers.Count; index++)
+        int count = after?.Layers.Length ?? layers.Count;
+        for (int index = 0; index < count && index < layers.Count; index++)
         {
             TileMapLayer layer = layers[index];
+            CapturedLayer state = after is null ? Live(layer) : after.Layers[index];
 
-            if (!layer.Visible || layer.Opacity <= 0.0f || (foreground is { } wanted && layer.IsForeground != wanted))
+            if (!state.Visible || state.Opacity <= 0.0f || (foreground is { } wanted && state.IsForeground != wanted))
                 continue;
 
-            // How far the layer has lagged behind the camera (or run ahead of it) on its way from where all layers line up
-            Vector2 scrolled = (eye - ParallaxOrigin) * (Vector2.One - layer.Parallax);
-            Vector2 moved = layer.WorldOffset + layer.Drift + scrolled;
+            Vector2 drift = blend ? Interpolate.Linear(before!.Layers[index].Drift, state.Drift, alpha) : state.Drift;
 
-            if (SnapParallax && layer.Parallax != Vector2.One)
+            // How far the layer has lagged behind the camera (or run ahead of it) on its way from where all layers line up
+            Vector2 scrolled = (eye - parallaxOrigin) * (Vector2.One - state.Parallax);
+            Vector2 moved = state.WorldOffset + drift + scrolled;
+
+            if (snapParallax && state.Parallax != Vector2.One)
                 moved = new Vector2(MathF.Round(moved.X), MathF.Round(moved.Y));
 
-            if (layer.IsDirty)
-                Build(layer);
+            if (after is null ? layer.IsDirty : layer.BuiltVersion != state.Version)
+                Build(layer, state.Gids ?? layer.Gids, state.Flips ?? layer.Flips, state.Version);
 
             if (layer.Source is ImageLayer image)
-                PlaceImage(layer, image, viewMin - Origin - moved, viewMax - Origin - moved);
+                PlaceImage(layer, image, viewMin - origin - moved, viewMax - origin - moved);
 
-            Animate(layer);
+            Animate(layer, shownTime);
 
-            Vector2 offset = Origin + moved;
-            var tint = new Vector4(layer.Tint, layer.Opacity);
+            Vector2 offset = origin + moved;
+            var tint = new Vector4(state.Tint, state.Opacity);
 
             shader.SetUniform(UNIFORM_OFFSET, in offset);
             shader.SetUniform(UNIFORM_TINT, in tint);
-            shader.SetUniform(UNIFORM_EMISSIVE, layer.Emissive);
+            shader.SetUniform(UNIFORM_EMISSIVE, state.Emissive);
 
             // A layer that is as far away as the map goes by as fast as the camera moves, the other way. One that is
             // further away keeps up with the camera a little, and one that drifts does that on top
-            Vector2 motion = (layer.Scroll - cameraVelocity * layer.Parallax) * motionScale;
-            float nearness = layer.IsForeground
+            Vector2 motion = (state.Scroll - cameraVelocity * state.Parallax) * motionScale;
+            float nearness = state.IsForeground
                 ? NEARNESS_FOREGROUND
                 : NEARNESS_BACK + (NEARNESS_FRONT - NEARNESS_BACK) * index / MathF.Max(1, layers.Count - 1);
 
@@ -844,19 +949,39 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>
+    /// Helper method for what a layer looks like as it is, for a frame that is drawn in turns with the simulation.
+    /// </summary>
+    private static CapturedLayer Live(TileMapLayer layer) => new()
+    {
+        Visible = layer.Visible,
+        IsForeground = layer.IsForeground,
+        Opacity = layer.Opacity,
+        Emissive = layer.Emissive,
+        Tint = layer.Tint,
+        WorldOffset = layer.WorldOffset,
+        Parallax = layer.Parallax,
+        Scroll = layer.Scroll,
+        Drift = layer.Drift,
+        Version = layer.Version
+    };
+
+    /// <summary>
     /// Puts together what a layer is drawn from. Everything is placed as if the bottom left corner of the map were at
     /// zero and the layer hadn't moved: where the map is and how far the layer has scrolled is added when it is drawn.
     /// </summary>
-    private void Build(TileMapLayer layer)
+    /// <param name="gids">The tiles to build from: the layer's own, or a copy of them that was published.</param>
+    /// <param name="version">Which change of the tiles that is.</param>
+    private void Build(TileMapLayer layer, uint[] gids, TileFlip[] flips, int version)
     {
         layer.IsDirty = false;
+        layer.BuiltVersion = version;
         layer.Batches.Clear();
         layer.Animated.Clear();
 
         switch (layer.Kind)
         {
             case TileMapLayerKind.Tiles:
-                BuildTiles(layer);
+                BuildTiles(layer, gids, flips);
                 break;
 
             case TileMapLayerKind.Objects:
@@ -871,7 +996,7 @@ public sealed class TileMap : GameObject
         }
     }
 
-    private void BuildTiles(TileMapLayer layer)
+    private void BuildTiles(TileMapLayer layer, uint[] gids, TileFlip[] flips)
     {
         // By the image and by the part of the map, so what is out of view is left out a part at a time
         var batches = new Dictionary<(string, int, int), TileMapBatch>();
@@ -881,7 +1006,7 @@ public sealed class TileMap : GameObject
             for (int column = 0; column < Width; column++)
             {
                 int index = row * Width + column;
-                if (ResolveTile(layer.Gids[index]) is not { } tile)
+                if (index >= gids.Length || ResolveTile(gids[index]) is not { } tile)
                     continue;
 
                 var key = (tile.ImagePath, column / BATCH_TILES, row / BATCH_TILES);
@@ -899,7 +1024,7 @@ public sealed class TileMap : GameObject
                     Position = corner + tile.Size / 2.0f,
                     Size = tile.Size,
                     Source = tile.Source,
-                    Flip = (float)layer.Flips[index]
+                    Flip = (float)flips[index]
                 });
 
                 if (tile.Animation.Count > 1)
@@ -994,7 +1119,8 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>Moves the tiles of a layer that play through frames on to the frame it is time for.</summary>
-    private void Animate(TileMapLayer layer)
+    /// <param name="time">How long the map has been running, as of the frame that is drawn.</param>
+    private static void Animate(TileMapLayer layer, float time)
     {
         foreach (TileMapAnimated animated in layer.Animated)
         {
