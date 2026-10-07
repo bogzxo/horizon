@@ -24,6 +24,16 @@ internal static class UIScript
         _ => throw new Exception($"{what} has to be a string.")
     };
 
+    /// <summary>A list of texts, or one text with commas in it for the old layouts, "a, b, c".</summary>
+    public static string[] ToTexts(IRuntimeValue value, string what) => value switch
+    {
+        ListValue list => [.. list.Items.Select(item => ToText(item, what))],
+        StringValue text => text.Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+        _ => throw new Exception($"{what} has to be a list of texts.")
+    };
+
+    public static ListValue FromTexts(IEnumerable<string> texts) => new([.. texts.Select(text => (IRuntimeValue)new StringValue(text))]);
+
     /// <summary>A vec(x, y), or a single number for both.</summary>
     public static Vector2 ToVector2(IRuntimeValue value, string what) => value switch
     {

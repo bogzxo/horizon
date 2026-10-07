@@ -8,7 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 
 using Horizon.Engine;
-using Horizon.HIDL.Lexxing;
+using Horizon.HIDL.Lexing;
 using Horizon.OpenGL.Assets;
 
 namespace Horizon.Rendering.Text;

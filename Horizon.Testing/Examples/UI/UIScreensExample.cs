@@ -44,7 +44,7 @@ public class UIScreensExample : Scene, ITestControls
         let title = compositor.label({ parent: panel, text: "Settings, sort of", text_scale: 0.5 });
 
         // A page per child, named in order. The hints are just text either end of the strip
-        let tabs = compositor.tabs({ parent: panel, tabs: "Sound, Video, Mates", text_scale: 0.3, spacing: 40, prev_hint: "Q", next_hint: "E" });
+        let tabs = compositor.tabs({ parent: panel, tabs: ["Sound", "Video", "Mates"], text_scale: 0.3, spacing: 40, prev_hint: "Q", next_hint: "E" });
 
         let sound = compositor.stack({ parent: tabs, spacing: 10 });
         let volume = compositor.selector({ parent: sound, size: vec(440, 44), text_scale: 0.26 });

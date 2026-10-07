@@ -1,4 +1,4 @@
-﻿namespace Horizon.HIDL.Lexxing;
+﻿namespace Horizon.HIDL.Lexing;
 
 public readonly struct Token(in TokenType type, in string value, in int line = 1, in int col = 1)
 {

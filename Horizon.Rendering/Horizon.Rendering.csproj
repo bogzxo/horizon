@@ -46,7 +46,7 @@
     <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
-    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
   </ItemGroup>
 

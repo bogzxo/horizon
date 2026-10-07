@@ -77,6 +77,9 @@ public abstract partial class UIComponent
     protected void Expose(string name, Func<string> get, Action<string> set) =>
         Expose(name, () => new StringValue(get()), value => set(UIScript.ToText(value, name)));
 
+    protected void Expose(string name, Func<string[]> get, Action<string[]> set) =>
+        Expose(name, () => UIScript.FromTexts(get()), value => set(UIScript.ToTexts(value, name)));
+
     protected void Expose(string name, Func<Vector2> get, Action<Vector2> set) =>
         Expose(name, () => new Vector2Value(get()), value => set(UIScript.ToVector2(value, name)));
 

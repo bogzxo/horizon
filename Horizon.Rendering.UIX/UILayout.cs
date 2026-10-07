@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
-using Horizon.HIDL.Lexxing;
+using Horizon.HIDL.Lexing;
 using Horizon.HIDL.Parsing;
 using Horizon.Rendering.UIX.Components;
 

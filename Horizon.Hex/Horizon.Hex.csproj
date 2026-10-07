@@ -57,7 +57,7 @@
     <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
     <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
     <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
-    <ProjectReference Include="..\Horizon.Horlang\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
     <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
     <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
     <ProjectReference Include="..\Horizon.Rendering.UIX\Horizon.Rendering.UIX.csproj" />

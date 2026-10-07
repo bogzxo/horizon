@@ -146,11 +146,8 @@ public class Selector : UIComponent
     {
         base.DefineScript();
 
-        // Scripts have no lists, so the options are one text with commas in it.
-        Expose(
-            "options",
-            () => string.Join(", ", options),
-            value => Options = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        // A list of texts, or one text with commas in it the way the old layouts wrote it
+        Expose("options", () => options, value => Options = value);
         Expose("value", () => Value, value => Value = value);
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("on_changed", () => changedHandler ?? new NullValue(), value => changedHandler = value);
