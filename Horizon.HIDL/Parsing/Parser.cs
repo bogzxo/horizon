@@ -280,7 +280,7 @@ public class Parser
 
     private IExpression ParseAssignment()
     {
-        IExpression left = ParseOr();
+        IExpression left = ParseConditional();
 
         if (Next(TokenType.Equals))
         {
@@ -295,6 +295,21 @@ public class Parser
         }
 
         return left;
+    }
+
+    // a ? b : c, with either side allowed to be another one
+    private IExpression ParseConditional()
+    {
+        IExpression condition = ParseOr();
+        if (!Next(TokenType.Question))
+            return condition;
+
+        Consume();
+        IExpression then = ParseAssignment();
+        Consume(TokenType.Colon, "':' between the two sides of the ?");
+        IExpression otherwise = ParseAssignment();
+
+        return new ConditionalExpression(condition, then, otherwise);
     }
 
     private IExpression ParseOr()

@@ -34,6 +34,7 @@ public enum NodeType
     ObjectLiteral,
     ListLiteral,
     Spread,
+    Conditional,
     Identifier,
     NumericLiteral,
     BinaryExpression,

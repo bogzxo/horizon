@@ -172,6 +172,7 @@ public static class Lexer
                 // .5 is a number, see below
                 case '.' when !char.IsDigit(Peek(1)): Consume(); Add(TokenType.Dot, ".", startLine, startCol); break;
                 case '!': Consume(); Add(TokenType.Exclamation, "!", startLine, startCol); break;
+                case '?': Consume(); Add(TokenType.Question, "?", startLine, startCol); break;
                 case '{': Consume(); Add(TokenType.OpenBracket, "{", startLine, startCol); break;
                 case '}': Consume(); Add(TokenType.CloseBracket, "}", startLine, startCol); break;
                 case '[': Consume(); Add(TokenType.OpenBrace, "[", startLine, startCol); break;

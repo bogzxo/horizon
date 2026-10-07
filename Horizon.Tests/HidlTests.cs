@@ -209,6 +209,18 @@ public class HidlTests
     }
 
     [Fact]
+    public void Conditional()
+    {
+        Assert.Equal("big", Text("let x = 7; x > 5 ? \"big\" : \"small\""));
+        Assert.Equal("small", Text("let x = 2; x > 5 ? \"big\" : \"small\""));
+        Assert.Equal(2, Number("true ? false ? 1 : 2 : 3 + 0 == 3 ? 3 : 4"));
+        Assert.Equal(4, Number("false ? 1 : 3 + 0 == 2 ? 3 : 4"));
+
+        // Only the side that is picked is looked at
+        Assert.Equal(1, Number("let o = null; true ? 1 : o.missing"));
+    }
+
+    [Fact]
     public void Truthiness()
     {
         Assert.Equal(1, Number("if ([1]) { 1 } else { 0 }"));
