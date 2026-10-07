@@ -396,8 +396,6 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
-/Horizon.Physics
-/Fighter2D/Player
 
 
 
