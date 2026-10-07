@@ -316,10 +316,11 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     /// </summary>
     public void Dispose()
     {
-        int count = OwnedAssets.Count + NamedAssets.Count + DisposeOther();
+        // Everything that has a name is among the owned ones as well. Freeing those twice is an error as far as the GPU is concerned
+        var all = OwnedAssets.Concat(NamedAssets.Values).DistinctBy(asset => asset.Handle).ToArray();
+        int count = all.Length + DisposeOther();
 
-        AssetDisposerType.DisposeAll(OwnedAssets);
-        AssetDisposerType.DisposeAll(NamedAssets.Values);
+        AssetDisposerType.DisposeAll(all);
 
         OwnedAssets.Clear();
         NamedAssets.Clear();

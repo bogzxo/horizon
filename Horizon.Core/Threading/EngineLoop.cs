@@ -139,6 +139,7 @@ public sealed class EngineLoop : IDisposable
                 }
 
                 long started = Stopwatch.GetTimestamp();
+                long allocated = GC.GetAllocatedBytesForCurrentThread();
                 long waited = 0;
 
                 for (int i = 0; i < turns && running; i++)
@@ -151,10 +152,15 @@ public sealed class EngineLoop : IDisposable
                         continue;
                     }
 
-                    // The wait for whoever else has the gate is not our work
+                    // The wait for whoever else has the gate is not our work. A gate with manners is told that we are waiting,
+                    // so whoever draws doesn't keep walking in ahead of us
                     long asked = Stopwatch.GetTimestamp();
+                    var polite = gate as TurnGate;
+                    polite?.NoteWaiting(true);
+
                     lock (gate)
                     {
+                        polite?.NoteWaiting(false);
                         waited += Stopwatch.GetTimestamp() - asked;
                         turn(dt);
                     }
@@ -167,7 +173,8 @@ public sealed class EngineLoop : IDisposable
                     (ended - started - waited) / (double)frequency,
                     waited / (double)frequency,
                     elapsed,
-                    turns);
+                    turns,
+                    GC.GetAllocatedBytesForCurrentThread() - allocated);
 
                 // The next turn is one period after this one was due. A loop that has fallen hopelessly behind
                 // starts counting from now instead of trying to make up for all of it

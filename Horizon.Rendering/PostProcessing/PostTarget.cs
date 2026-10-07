@@ -44,6 +44,27 @@ public sealed class PostTarget : IDisposable
         ]
     };
 
+    /// <summary>
+    /// Sixteen bits a channel instead of eight, for a picture that is blended into itself frame after frame (a trail, a glow that builds up).
+    /// Read between its pixels like <see cref="Smooth"/>.
+    /// </summary>
+    public static TextureDefinition Precise { get; } = new()
+    {
+        InternalFormat = InternalFormat.Rgba16f,
+        PixelFormat = PixelFormat.Rgba,
+        PixelType = PixelType.Float,
+        TextureTarget = TextureTarget.Texture2D,
+        Parameters =
+        [
+            new() { Name = TextureParameterName.TextureWrapS, Value = (int)GLEnum.ClampToEdge },
+            new() { Name = TextureParameterName.TextureWrapT, Value = (int)GLEnum.ClampToEdge },
+            new() { Name = TextureParameterName.TextureMinFilter, Value = (int)GLEnum.Linear },
+            new() { Name = TextureParameterName.TextureMagFilter, Value = (int)GLEnum.Linear },
+            new() { Name = TextureParameterName.TextureBaseLevel, Value = 0 },
+            new() { Name = TextureParameterName.TextureMaxLevel, Value = 0 }
+        ]
+    };
+
     private readonly FrameBufferObject frameBuffer;
 
     public Texture Texture { get; }

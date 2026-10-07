@@ -345,9 +345,9 @@ public sealed class TileMap : GameObject
     }
 
     private static TileFlip ToFlip(FlippingFlags flags) =>
-        (flags.HasFlag(FlippingFlags.FlippedHorizontally) ? TileFlip.Horizontal : TileFlip.None)
-        | (flags.HasFlag(FlippingFlags.FlippedVertically) ? TileFlip.Vertical : TileFlip.None)
-        | (flags.HasFlag(FlippingFlags.FlippedDiagonally) ? TileFlip.Diagonal : TileFlip.None);
+        ((flags & FlippingFlags.FlippedHorizontally) != 0 ? TileFlip.Horizontal : TileFlip.None)
+        | ((flags & FlippingFlags.FlippedVertically) != 0 ? TileFlip.Vertical : TileFlip.None)
+        | ((flags & FlippingFlags.FlippedDiagonally) != 0 ? TileFlip.Diagonal : TileFlip.None);
 
     /* Where things are */
 

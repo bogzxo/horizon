@@ -346,12 +346,12 @@ public abstract partial class UIComponent
         Vector2 pivot = (Pivot ?? Anchor).ToVector();
 
         // Stretching along an axis leaves nothing to anchor on it.
-        if (Fill.HasFlag(UIFill.Horizontal))
+        if ((Fill & UIFill.Horizontal) != 0)
         {
             size.X = area.Width;
             anchor.X = pivot.X = 0.0f;
         }
-        if (Fill.HasFlag(UIFill.Vertical))
+        if ((Fill & UIFill.Vertical) != 0)
         {
             size.Y = area.Height;
             anchor.Y = pivot.Y = 0.0f;

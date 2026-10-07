@@ -24,7 +24,7 @@ namespace Horizon.Rendering.PostProcessing;
 /// layer costs nothing, not even the memory. The layer is colours and nothing else, it has no depth and no stencil:
 /// sprites that are cut out with a mask are drawn whole on it.
 /// The layer keeps track of what moves on it the way a <see cref="DeferredRenderer2D"/> does (whatever draws with
-/// the sprite, tile map or particle shaders says how fast it is going), so a <see cref="MotionBlurEffect"/> works
+/// the sprite, tile map or particle shaders says how fast it is going), so a <see cref="VelocityBlurEffect"/> works
 /// here as it does there. An effect has to pass the alpha of the picture on to be of any use on a layer, see
 /// <see cref="PostContext.Source"/>: one that makes all of the picture solid (<see cref="CrtEffect"/>) hides
 /// everything under it.

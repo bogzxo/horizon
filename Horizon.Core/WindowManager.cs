@@ -39,7 +39,7 @@ public class WindowManager : GameComponent, IDisposable
 
     // Held by whichever of the logic loop, the physics loop and the drawing is at work on the game, so the
     // others wait their turn
-    private readonly object simulationGate = new();
+    private readonly TurnGate simulationGate = new();
 
     private EngineLoop? logicLoop, physicsLoop;
     private readonly double updatesPerSecond, physicsUpdatesPerSecond;
@@ -50,6 +50,13 @@ public class WindowManager : GameComponent, IDisposable
 
     private readonly LoopStatistics renderStatistics = new("Render", 0.0);
     private long lastFrame;
+
+    // Set this in the environment to a number of seconds and the loops are written to the log that often.
+    // For finding out what a game costs without building anything into it
+    private const string LOG_LOOPS_VARIABLE = "HORIZON_LOG_LOOPS";
+
+    private readonly double logLoopsEvery;
+    private double nextLoopLog;
 
     // How long (in seconds) there is between two frames at the least, 0 for as many as there is time for. And when the next one is due
     private double framePeriod, nextFrame;
@@ -144,6 +151,9 @@ public class WindowManager : GameComponent, IDisposable
         GlfwInput.RegisterPlatform();
 
         Name = "Window Manager";
+
+        if (double.TryParse(Environment.GetEnvironmentVariable(LOG_LOOPS_VARIABLE), System.Globalization.CultureInfo.InvariantCulture, out double every) && every > 0.0)
+            logLoopsEvery = every;
         title = config.WindowTitle ?? string.Empty;
 
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
@@ -202,6 +212,10 @@ public class WindowManager : GameComponent, IDisposable
         // Only the drawing itself: the wait for the screen that comes after is when the loops get theirs.
         this._window.Render += (dt) =>
         {
+            // The loops go first if they are waiting. Without a limit on the frames this would be asking for the gate again
+            // the moment it let go of it, and the updates would hardly ever get in
+            simulationGate.LetWaitersGoFirst();
+
             lock (simulationGate)
             {
                 // First, so whatever is set up or drawn from here on finds the window the size it was asked to be
@@ -421,6 +435,24 @@ public class WindowManager : GameComponent, IDisposable
         physicsLoop.Start();
     }
 
+    /// <summary>
+    /// Helper method to write how every loop is doing to the log, every so often. Only if somebody asked for it, see <see cref="LOG_LOOPS_VARIABLE"/>.
+    /// </summary>
+    private void LogLoops(double now)
+    {
+        if (now < nextLoopLog) return;
+
+        nextLoopLog = now + logLoopsEvery;
+
+        foreach (LoopStatistics loop in Loops)
+        {
+            Log.Info(
+                $"[{Name}] {loop.Name} at {loop.Rate:0} a second, {loop.WorkMs:0.00} ms a turn ({loop.PeakWorkMs:0.00} at worst), " +
+                $"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. " +
+                $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far.");
+        }
+    }
+
     private bool needsDispatching = true;
 
     private void OnFrame()
@@ -440,6 +472,7 @@ public class WindowManager : GameComponent, IDisposable
             WaitForFrame();
 
             long started = Stopwatch.GetTimestamp();
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
             _window.DoRender();
             long ended = Stopwatch.GetTimestamp();
 
@@ -449,9 +482,13 @@ public class WindowManager : GameComponent, IDisposable
                 renderStatistics.Record(
                     (ended - started) / (double)Stopwatch.Frequency,
                     0.0,
-                    (started - lastFrame) / (double)Stopwatch.Frequency);
+                    (started - lastFrame) / (double)Stopwatch.Frequency,
+                    1,
+                    GC.GetAllocatedBytesForCurrentThread() - allocated);
             }
             lastFrame = started;
+
+            if (logLoopsEvery > 0.0) LogLoops(ended / (double)Stopwatch.Frequency);
         }
 
         // The loops only start once a frame has been drawn. Everything is set up on this thread, and there has to be something to update

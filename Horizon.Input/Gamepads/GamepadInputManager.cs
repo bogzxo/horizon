@@ -46,7 +46,7 @@ public class GamepadInputManager : Entity
     /// Every gamepad there has been a use for so far, by slot: the ones plugged in, the ones that were, and the
     /// ones a loaded file had bindings for. See <see cref="Gamepad.IsConnected"/> for which is which.
     /// </summary>
-    public IReadOnlyList<Gamepad> Gamepads => _gamepads;
+    public GamepadList Gamepads => new(_gamepads);
 
     /// <summary>
     /// The gamepad in a slot. See <see cref="TryGet"/> for a slot that may not have one.
