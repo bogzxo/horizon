@@ -829,6 +829,8 @@ public sealed class TileMap : GameObject
         if (Engine.ActiveCamera is not { } camera)
             return;
 
+        using var scope = GraphicsDevice.Current.BeginGpuScope("tile map");
+
         // Drawn alongside the simulation, the map is drawn as it was between the last two ticks, out of what was published
         RenderFrame frame = RenderFrame.Active;
         CapturedMap? before = null, after = null;

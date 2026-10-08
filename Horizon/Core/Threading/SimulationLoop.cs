@@ -166,13 +166,17 @@ public sealed class SimulationLoop : IDisposable
             while (running)
             {
                 if (!double.IsNaN(next))
+                {
+                    Ticks.SetState(LoopStatistics.LoopState.Sleeping);
                     LoopTiming.WaitUntil(next / frequency);
+                }
 
                 Step();
             }
         }
         finally
         {
+            Ticks.SetState(LoopStatistics.LoopState.Stopped);
             LoopTiming.SharpenTimer(false);
         }
     }
@@ -223,8 +227,10 @@ public sealed class SimulationLoop : IDisposable
         long started = clock();
         long allocated = GC.GetAllocatedBytesForCurrentThread();
 
+        Ticks.SetState(LoopStatistics.LoopState.Blocked);
         host.BeginTick();
         long waited = clock() - started;
+        Ticks.SetState(LoopStatistics.LoopState.Working);
 
         // What was waiting for this thread picks up where it left off, before anything of the tick is updated
         Context.RunPending();

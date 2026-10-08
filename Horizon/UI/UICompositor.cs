@@ -618,6 +618,8 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
+        using var scope = GameEngine.Instance.Graphics.BeginGpuScope("ui");
+
         // A UI with nothing on it (an overlay that's switched off, say) draws nothing, and in particular doesn't lay an
         // empty picture over the whole screen every frame, which is a full screen pass for fuck all. It's painted
         // afresh the moment it has something again

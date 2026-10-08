@@ -70,6 +70,17 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     private QueryPool timestamps;
     private readonly double[] frameGpuMs = new double[FRAMES_IN_FLIGHT];
 
+    // The scopes of every frame in flight, named as they are opened and read back when the frame is done. Two
+    // queries for the frame itself and two for every scope
+    private const int MAX_SCOPES = 48;
+    private const int QUERIES_PER_FRAME = 2 + MAX_SCOPES * 2;
+    private readonly string[][] scopeNames = new string[FRAMES_IN_FLIGHT][];
+    private readonly int[][] scopeDepths = new int[FRAMES_IN_FLIGHT][];
+    private readonly int[] scopeCounts = new int[FRAMES_IN_FLIGHT];
+    private readonly Stack<int> openScopes = new();
+    private GpuScope[] gpuScopes = new GpuScope[MAX_SCOPES];
+    private int gpuScopeCount;
+
     private readonly Dictionary<SamplerSettings, Sampler> samplersBySettings = [];
     private readonly Dictionary<uint, Sampler> samplersById = [];
     private uint nextSamplerId = 1;
@@ -112,6 +123,12 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
     /// <summary>How long (in milliseconds) the GPU spent on the last frame it finished, 0 where the card doesn't say.</summary>
     public double GpuFrameMilliseconds { get; private set; }
+
+    /// <summary>
+    /// How long the named stretches of the last frame the GPU finished took, in the order they were opened, see
+    /// <see cref="BeginGpuScope"/>. Empty without timestamps.
+    /// </summary>
+    public ReadOnlySpan<GpuScope> GpuScopes => gpuScopes.AsSpan(0, gpuScopeCount);
 
     /// <summary>
     /// Vulkan's clip space has Y going down and depth from 0 to 1, the engine's cameras are built the OpenGL way
@@ -164,9 +181,15 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
             {
                 SType = StructureType.QueryPoolCreateInfo,
                 QueryType = QueryType.Timestamp,
-                QueryCount = FRAMES_IN_FLIGHT * 2
+                QueryCount = FRAMES_IN_FLIGHT * QUERIES_PER_FRAME
             };
             VulkanContext.Check(Vk.CreateQueryPool(Device, in queryInfo, null, out timestamps), "making the timestamp queries");
+        }
+
+        for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
+        {
+            scopeNames[i] = new string[MAX_SCOPES];
+            scopeDepths[i] = new int[MAX_SCOPES];
         }
 
         Description = $"Vulkan {Context.Properties.ApiVersion >> 22}.{(Context.Properties.ApiVersion >> 12) & 0x3FF} on {Context.DeviceName} (driver {Context.DriverVersion})";
@@ -277,8 +300,11 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
             TransitionSwapchainImage(swapchain.Current, ImageLayout.PresentSrcKhr, PipelineStageFlags2.BottomOfPipeBit, AccessFlags2.None);
         }
 
+        // Whatever was left open is closed with the frame
+        while (openScopes.Count > 0) EndGpuScope();
+
         if (timestamps.Handle != 0)
-            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * 2 + 1));
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 1));
 
         Submit(final: true);
 
@@ -316,10 +342,13 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         // Nothing of the last frame is to be read while this one writes, see the summary
         GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit);
 
+        scopeCounts[frameIndex] = 0;
+        openScopes.Clear();
+
         if (timestamps.Handle != 0)
         {
-            Vk.CmdResetQueryPool(cmd, timestamps, (uint)(frameIndex * 2), 2);
-            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.TopOfPipeBit, timestamps, (uint)(frameIndex * 2));
+            Vk.CmdResetQueryPool(cmd, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME), QUERIES_PER_FRAME);
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.TopOfPipeBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME));
         }
     }
 
@@ -327,12 +356,53 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     {
         if (timestamps.Handle == 0) return;
 
-        var results = stackalloc ulong[2];
-        Result result = Vk.GetQueryPoolResults(Device, timestamps, (uint)(frameIndex * 2), 2, (nuint)(sizeof(ulong) * 2), results, sizeof(ulong), QueryResultFlags.Result64Bit);
+        int scopes = scopeCounts[frameIndex];
+        uint count = (uint)(2 + scopes * 2);
+        var results = stackalloc ulong[QUERIES_PER_FRAME];
+        Result result = Vk.GetQueryPoolResults(Device, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME), count, (nuint)(sizeof(ulong) * count), results, sizeof(ulong), QueryResultFlags.Result64Bit);
         if (result != Result.Success) return;
 
-        double ms = (results[1] - results[0]) * Context.TimestampPeriod / 1_000_000.0;
+        double period = Context.TimestampPeriod / 1_000_000.0;
+        double ms = (results[1] - results[0]) * period;
         if (ms >= 0.0 && ms < 10_000.0) GpuFrameMilliseconds = ms;
+
+        gpuScopeCount = 0;
+        for (int i = 0; i < scopes; i++)
+        {
+            ulong from = results[2 + i * 2], to = results[3 + i * 2];
+            double took = to >= from ? (to - from) * period : 0.0;
+            gpuScopes[gpuScopeCount++] = new GpuScope(scopeNames[frameIndex][i], took, scopeDepths[frameIndex][i]);
+        }
+    }
+
+    /// <summary>
+    /// Opens a named stretch of the frame on the GPU, timed from here to where the token is disposed of (or the end
+    /// of the frame). What it took shows up in <see cref="GpuScopes"/> once the GPU has finished the frame, a frame
+    /// or two later. Scopes nest. Past a few dozen in a frame the rest aren't timed.
+    /// </summary>
+    public GpuScopeToken BeginGpuScope(string name)
+    {
+        if (timestamps.Handle == 0 || !IsAvailable) return default;
+
+        int index = scopeCounts[frameIndex];
+        if (index >= MAX_SCOPES) return default;
+
+        scopeNames[frameIndex][index] = name;
+        scopeDepths[frameIndex][index] = openScopes.Count;
+        scopeCounts[frameIndex] = index + 1;
+        openScopes.Push(index);
+
+        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
+        return new GpuScopeToken(this);
+    }
+
+    /// <summary>Closes the scope opened last, see <see cref="BeginGpuScope"/>.</summary>
+    public void EndGpuScope()
+    {
+        if (timestamps.Handle == 0 || openScopes.Count == 0) return;
+
+        int index = openScopes.Pop();
+        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
     }
 
     private ulong QueryCompleted()

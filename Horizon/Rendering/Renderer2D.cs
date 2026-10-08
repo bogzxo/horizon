@@ -68,6 +68,9 @@ public class Renderer2D : GameObject
     private Renderer2D? outer;
     private float frameTime;
 
+    // What the GPU timings call this renderer, see GraphicsDevice.BeginGpuScope
+    private string? scopeLabel;
+
     /// <summary>Makes what puts the picture on screen, once the render target is there. Render thread.</summary>
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
 
@@ -154,6 +157,8 @@ public class Renderer2D : GameObject
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();
 
+        using var scope = Engine.Graphics.BeginGpuScope(scopeLabel ??= string.IsNullOrEmpty(Name) ? GetType().Name : Name);
+
         FrameBuffer.Bind();
 
         // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something.
@@ -181,6 +186,7 @@ public class Renderer2D : GameObject
         if (PostProcessing.Prepare())
         {
             // Through the effects, the last of which draws to where we are shown
+            using var effects = Engine.Graphics.BeginGpuScope("post effects");
             PostProcessing.Run(
                 ViewportSize,
                 MotionTexture,
@@ -193,6 +199,7 @@ public class Renderer2D : GameObject
         else
         {
             // Straight to where we are shown
+            using var shown = Engine.Graphics.BeginGpuScope("resolve");
             BindOutput(outer);
             Resolve();
         }
