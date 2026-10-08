@@ -239,6 +239,7 @@ public class WindowManager : GameComponent, IDisposable
 
     public WindowManager(in WindowManagerConfiguration config)
     {
+        LoadMoltenVK();
         GlfwWindowing.RegisterPlatform();
         GlfwInput.RegisterPlatform();
 
@@ -301,6 +302,32 @@ public class WindowManager : GameComponent, IDisposable
         // Create the window.
         this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
         SubscribeWindowEvents();
+    }
+
+    /// <summary>
+    /// Helper method to get MoltenVK, which the engine brings with it (Silk.NET.MoltenVK.Native), loaded on a Mac
+    /// before GLFW goes looking for a Vulkan. GLFW asks for it by its bare name, which only finds it where dyld
+    /// looks, so it is loaded by its full path first and the one next to the exe is then the one that is loaded.
+    /// With the Vulkan SDK installed its loader is found first and MoltenVK comes through that instead.
+    /// </summary>
+    private static void LoadMoltenVK()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+
+        foreach (string candidate in new[] { Path.Combine(AppContext.BaseDirectory, "libMoltenVK.dylib"), Path.Combine(AppContext.BaseDirectory, "runtimes", "osx", "native", "libMoltenVK.dylib") })
+        {
+            if (!File.Exists(candidate)) continue;
+            try
+            {
+                System.Runtime.InteropServices.NativeLibrary.Load(candidate);
+                Log.Info($"[Window Manager] MoltenVK loaded from {candidate}.");
+                return;
+            }
+            catch (Exception e)
+            {
+                Log.Warning($"[Window Manager] MoltenVK at {candidate} would not load, {e.Message}");
+            }
+        }
     }
 
     private void SubscribeWindowEvents()
