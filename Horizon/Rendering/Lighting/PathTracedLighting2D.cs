@@ -288,6 +288,7 @@ public sealed class PathTracedLighting2D : IDisposable
         for (int i = 0; i < cascadeCount; i++)
         {
             if (!objects.Textures.TryCreate(new TextureDescription { Width = cascadeWidth, Height = cascadeHeight, Definition = CascadeTexture }, out var made)) return;
+            made.Asset.Name = $"cascade {i}";
             cascades.Add(made.Asset);
         }
 
@@ -297,6 +298,9 @@ public sealed class PathTracedLighting2D : IDisposable
         resultA = a.Asset;
         resultB = b.Asset;
         radiance = r.Asset;
+        resultA.Name = "path traced result a";
+        resultB.Name = "path traced result b";
+        radiance.Name = "wall radiance";
 
         originBefore = null;
         Result = null;

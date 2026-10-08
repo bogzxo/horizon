@@ -148,3 +148,12 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
 - `options.hor` next to the exe holds the options, `fancy: true` is the path traced one.
 - Commits end with the Co-Authored-By and Claude-Session lines, no model names anywhere in the code.
 - Don't touch Build History in Fighter2D, it's tracked on purpose.
+
+## Debugger names
+
+Every Vulkan object gets a name through VK_EXT_debug_utils in a Debug build (`VulkanContext.Name`, `LabelsEnabled`),
+and `BeginGpuScope` is also a `vkCmdBeginDebugUtilsLabelEXT`, so RenderDoc folds a frame up the way the performance
+overlay does. `GpuResource.Name` has a `Named()` hook the texture, buffer and render target use to tell the driver,
+so naming a resource after it is made works too, and a named render target names its attachments after itself.
+What nobody named is told by what it is ("Storage buffer of 4096 bytes", "640 by 360 Rgba16F"). Lavapipe takes the
+names without complaint, nobody has looked at them in RenderDoc yet, that wants a real GPU.

@@ -82,6 +82,9 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
         pool = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleState2D.SizeInBytes));
         instances = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleInstance.SizeInBytes));
         command = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 16));
+        pool.Name = "particle pool";
+        instances.Name = "particle instances";
+        command.Name = "particle draw command";
 
         // A draw of the quad, with the instance count for the GPU to fill in every frame
         command.Update<uint>([6, 0, 0, 0]);

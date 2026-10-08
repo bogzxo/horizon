@@ -58,6 +58,8 @@ public sealed class Shader : GpuResource
                 if (stage.ThreadGroupSize.Length == 3) WorkGroupSize = stage.ThreadGroupSize;
             }
         }
+
+        device.LabelShader(this);
     }
 
     /// <summary>

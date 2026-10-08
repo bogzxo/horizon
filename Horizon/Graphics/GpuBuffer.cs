@@ -48,6 +48,11 @@ public sealed unsafe class GpuBuffer : GpuResource, IDisposable
     }
 
     /// <summary>Makes a buffer the way a description says. Throws if the GPU won't have it.</summary>
+    protected override void Named()
+    {
+        if (Buffer.Handle != 0) device.LabelBuffer(this);
+    }
+
     public static GpuBuffer Create(in BufferDescription description) =>
         ObjectManager.Instance.Buffers.TryCreate(description, out var result)
             ? result.Asset

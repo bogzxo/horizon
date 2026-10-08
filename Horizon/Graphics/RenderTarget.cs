@@ -189,5 +189,15 @@ public sealed class RenderTarget : GpuResource, IDisposable
         return true;
     }
 
+    // The attachments go by the name of the target in the debugger, "ui colour 0"
+    protected override void Named()
+    {
+        if (Name is null) return;
+
+        for (int i = 0; i < ColorTextures.Length; i++)
+            if (ColorTextures[i] is { } color) color.Name = $"{Name} colour {i}";
+        if (DepthTexture is { } depth) depth.Name = $"{Name} depth";
+    }
+
     protected override void DestroyCore() => device.DestroyRenderTarget(this);
 }

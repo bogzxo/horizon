@@ -132,6 +132,7 @@ public sealed class OcclusionMap2D : IDisposable
             }
 
             texture = result.Asset;
+            texture.Name = "occlusion map";
             uploadedVersion = -1;
         }
 
@@ -170,10 +171,12 @@ public sealed class OcclusionMap2D : IDisposable
             if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = TextureDefinition.DistanceField }, out var made))
                 return null;
             field = made.Asset;
+            field.Name = "occlusion distance field";
 
             if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = new TextureDefinition(PixelFormat.Rg16F, Smooth: false, Usage: TextureUsage.Storage) }, out var temp))
                 return null;
             rows = temp.Asset;
+            rows.Name = "occlusion distance rows";
         }
 
         var device = GraphicsDevice.Current;

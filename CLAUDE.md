@@ -86,7 +86,10 @@ actual Mac yet, it was all worked out by reading, so the first run there is the 
 - `Horizon.Testing <scene>` from its output folder runs one example, `HORIZON_INPUT_SCRIPT` (a file of lines like
   `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers (the loops and the GPU passes),
   `HORIZON_SCREENSHOT=file.png@3` to see what was drawn (`file.png@3+8x0.5` for eight of them half a second apart), `HORIZON_VULKAN_VALIDATION=1` for the validation layer (when the SDK is installed), `HORIZON_SHADER_CACHE=off`
-  to compile every shader anew. Headless on Linux wants a Vulkan driver, lavapipe does.
+  to compile every shader anew. A Debug build tells the driver what every Vulkan object is called and labels the GPU
+  scopes, so RenderDoc reads "sprites.slang pipeline" and "path tracing" rather than handles
+  (`VulkanContext.Name`, `HORIZON_VULKAN_LABELS=on` for the same in Release, `off` to go without). Name a texture,
+  buffer or render target (`Name`) and the debugger shows that. Headless on Linux wants a Vulkan driver, lavapipe does.
 - `docs/metrics/raw/run_scenes_windows.py <bin> <label> <out.json>` runs every scene and collects the loop numbers,
   `make_vulkan_workbook.py` turns two of those into the OpenGL against Vulkan workbook. `run_passes.py` collects what
   the GPU spent on every pass (headless on lavapipe does) and `make_passes_workbook.py` makes the lighting

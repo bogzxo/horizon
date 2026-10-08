@@ -235,6 +235,7 @@ public sealed class PostLayer : IDisposable
         }
 
         frameBuffer = result.Asset;
+        frameBuffer.Name = "layer";
         size = new Vector2(width, height);
         hasPicture = false;
         return true;

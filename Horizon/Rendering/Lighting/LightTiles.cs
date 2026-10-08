@@ -51,6 +51,7 @@ internal sealed class LightTiles : IDisposable
             buffer?.Dispose();
             capacityTiles = Math.Max(tiles, capacityTiles * 2);
             buffer = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(capacityTiles * TILE_WORDS * sizeof(uint))));
+            buffer.Name = "light tiles";
         }
 
         Counts = new Vector2(tilesX, tilesY);

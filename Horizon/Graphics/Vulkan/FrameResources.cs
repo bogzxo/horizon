@@ -28,11 +28,14 @@ internal sealed unsafe class LinearArena
     // What is to be let go of once the frame this arena belongs to is done
     public readonly List<(Buffer Buffer, VulkanMemory.Allocation Memory)> Retired = [];
 
-    public LinearArena(VulkanContext context, VulkanMemory memory, BufferUsageFlags usage, ulong capacity)
+    private readonly string name;
+
+    public LinearArena(VulkanContext context, VulkanMemory memory, BufferUsageFlags usage, ulong capacity, string name)
     {
         this.context = context;
         this.memory = memory;
         this.usage = usage;
+        this.name = name;
         Make(capacity);
     }
 
@@ -47,6 +50,7 @@ internal sealed unsafe class LinearArena
         };
 
         VulkanContext.Check(context.Vk.CreateBuffer(context.Device, in info, null, out Buffer buffer), "making an arena");
+        context.Name(ObjectType.Buffer, buffer.Handle, $"{name} of {capacity} bytes");
         context.Vk.GetBufferMemoryRequirements(context.Device, buffer, out MemoryRequirements requirements);
 
         var allocation = memory.Allocate(requirements, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, MemoryPropertyFlags.DeviceLocalBit, forImage: false);
@@ -129,9 +133,13 @@ internal sealed unsafe class FrameResources : IDisposable
     /// <summary>Whether a swapchain image was acquired for this frame at all.</summary>
     public bool HasImage { get; set; }
 
-    public FrameResources(VulkanContext context, VulkanMemory memory)
+    // Which of the frames in flight this is, for the names
+    private readonly int index;
+
+    public FrameResources(VulkanContext context, VulkanMemory memory, int index)
     {
         this.context = context;
+        this.index = index;
 
         var poolInfo = new CommandPoolCreateInfo
         {
@@ -141,16 +149,19 @@ internal sealed unsafe class FrameResources : IDisposable
         };
         VulkanContext.Check(context.Vk.CreateCommandPool(context.Device, in poolInfo, null, out CommandPool pool), "making a command pool");
         CommandPool = pool;
+        context.Name(ObjectType.CommandPool, pool.Handle, $"frame {index} commands");
 
         var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
         VulkanContext.Check(context.Vk.CreateSemaphore(context.Device, in semaphoreInfo, null, out Semaphore available), "making a semaphore");
         VulkanContext.Check(context.Vk.CreateSemaphore(context.Device, in semaphoreInfo, null, out Semaphore finished), "making a semaphore");
         ImageAvailable = available;
         RenderFinished = finished;
+        context.Name(ObjectType.Semaphore, available.Handle, $"frame {index} image available");
+        context.Name(ObjectType.Semaphore, finished.Handle, $"frame {index} render finished");
 
-        Descriptors = new DescriptorAllocator(context);
-        Uniforms = new LinearArena(context, memory, BufferUsageFlags.UniformBufferBit, 1024 * 1024);
-        Staging = new LinearArena(context, memory, BufferUsageFlags.TransferSrcBit, 8 * 1024 * 1024);
+        Descriptors = new DescriptorAllocator(context, index);
+        Uniforms = new LinearArena(context, memory, BufferUsageFlags.UniformBufferBit, 1024 * 1024, $"frame {index} uniforms");
+        Staging = new LinearArena(context, memory, BufferUsageFlags.TransferSrcBit, 8 * 1024 * 1024, $"frame {index} staging");
     }
 
     /// <summary>A fresh command buffer, begun. The pool is reset by <see cref="Reset"/>, so the buffers are reused.</summary>
@@ -167,6 +178,7 @@ internal sealed unsafe class FrameResources : IDisposable
             };
 
             VulkanContext.Check(context.Vk.AllocateCommandBuffers(context.Device, in info, out CommandBuffer made), "allocating a command buffer");
+            context.Name(ObjectType.CommandBuffer, (ulong)made.Handle, $"frame {index} commands {CommandBuffers.Count}");
             CommandBuffers.Add(made);
         }
 

@@ -56,6 +56,7 @@ public sealed class PostTarget : IDisposable
             throw new Exception($"A post processing target of {width} by {height} couldn't be made: {result.Message}");
 
         frameBuffer = result.Asset;
+        frameBuffer.Name = "post target";
         Texture = frameBuffer.Color;
         Size = new Vector2(width, height);
     }

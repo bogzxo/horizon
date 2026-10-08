@@ -813,6 +813,7 @@ public sealed unsafe partial class GraphicsDevice
         };
 
         VulkanContext.Check(Vk.CreateBuffer(Device, in info, null, out Buffer buffer), "making a read back buffer");
+        Context.Name(ObjectType.Buffer, buffer.Handle, $"read back of {bytes} bytes");
         Vk.GetBufferMemoryRequirements(Device, buffer, out MemoryRequirements requirements);
         var memory = Memory.Allocate(requirements, MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit, MemoryPropertyFlags.HostCachedBit, forImage: false);
         VulkanContext.Check(Vk.BindBufferMemory(Device, buffer, memory.Memory, memory.Offset), "binding a read back buffer");

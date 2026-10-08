@@ -439,6 +439,7 @@ public class DeferredRenderer2D : Renderer2D
 
         // Never mapped, the lights of a frame are simply written over those of the last
         lightBuffer ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(MaxLights * Unsafe.SizeOf<LightData>())));
+        lightBuffer.Name = "lights";
 
         uploadedLights = CollectLights(lightData, camera.Bounds);
         if (uploadedLights > 0)

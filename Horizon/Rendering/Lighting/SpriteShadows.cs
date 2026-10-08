@@ -123,6 +123,9 @@ internal sealed class SpriteShadows : IDisposable
         if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var a)) return false;
         if (!textures.TryCreate(new TextureDescription { Width = cells, Height = rows, Definition = Seeds }, out var b)) return false;
         if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Fields }, out var f)) return false;
+        a.Asset.Name = "sprite shadow seeds a";
+        b.Asset.Name = "sprite shadow seeds b";
+        f.Asset.Name = "sprite shadow field";
 
         seedsA = a.Asset;
         seedsB = b.Asset;

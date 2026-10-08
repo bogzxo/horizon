@@ -107,6 +107,7 @@ internal sealed unsafe class Swapchain : IDisposable
 
         VulkanContext.Check(context.KhrSwapchain.CreateSwapchain(context.Device, in createInfo, null, out SwapchainKHR handle), "making the swapchain");
         Handle = handle;
+        context.Name(ObjectType.SwapchainKhr, handle.Handle, $"swapchain {extent.Width} by {extent.Height}");
         Format = chosen.Format;
         Extent = extent;
         VSync = vsync;
@@ -131,6 +132,8 @@ internal sealed unsafe class Swapchain : IDisposable
             };
 
             VulkanContext.Check(vk.CreateImageView(context.Device, in viewInfo, null, out Views[i]), "making a swapchain image view");
+            context.Name(ObjectType.Image, Images[i].Handle, $"swapchain picture {i}");
+            context.Name(ObjectType.ImageView, Views[i].Handle, $"swapchain picture {i} view");
             Layouts[i] = ImageLayout.Undefined;
         }
 
