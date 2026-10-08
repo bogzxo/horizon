@@ -38,9 +38,9 @@ internal sealed class TileMapAnimated(TileMapBatch batch, int index, TileMapTile
 }
 
 /// <summary>
-/// The images a map draws with. An image can come with a normal map and a specular map, which are the files next to
-/// it that are called the same with <c>_normal</c> and <c>_specular</c> at the end (in place of <c>_albedo</c>, for
-/// an image that has that at the end of its own name).
+/// The images a map draws with. An image can come with a normal map, a specular map and an ambient occlusion map,
+/// which are the files next to it that are called the same with <c>_normal</c>, <c>_specular</c> and <c>_ao</c> at
+/// the end (in place of <c>_albedo</c>, for an image that has that at the end of its own name).
 /// </summary>
 internal sealed class TileMapTexture
 {
@@ -49,6 +49,9 @@ internal sealed class TileMapTexture
     public Texture Albedo { get; private init; } = Texture.Invalid;
     public Texture Normal { get; private init; } = Texture.Invalid;
     public Texture Specular { get; private init; } = Texture.Invalid;
+
+    /// <summary>How much of the ambient light gets to every texel, white for all of it. See DeferredRenderer2D.AmbientOcclusion.</summary>
+    public Texture Occlusion { get; private init; } = Texture.Invalid;
 
     public Vector2 Size => new(Albedo.Width, Albedo.Height);
 
@@ -66,7 +69,8 @@ internal sealed class TileMapTexture
         {
             Albedo = LoadImage(path),
             Normal = LoadImage(Path.Combine(directory, $"{name}_normal{extension}")),
-            Specular = LoadImage(Path.Combine(directory, $"{name}_specular{extension}"))
+            Specular = LoadImage(Path.Combine(directory, $"{name}_specular{extension}")),
+            Occlusion = LoadImage(Path.Combine(directory, $"{name}_ao{extension}"))
         };
     }
 
@@ -150,7 +154,7 @@ internal sealed class TileMapGpu : IDisposable
         public Vector4 Tint;
     }
 
-    /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (56 bytes).</summary>
+    /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (80 bytes, a whole number of 16, see there).</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct Tile
     {
@@ -164,6 +168,8 @@ internal sealed class TileMapGpu : IDisposable
         public uint Normal;
         public uint Specular;
         public Vector2 TexelSize;
+        public uint Occlusion;
+        public uint Padding0, Padding1, Padding2;
     }
 
     /// <summary>Must match Chunk in shaders/tilemap/tilemap_cull.slang (32 bytes).</summary>
@@ -326,6 +332,7 @@ internal sealed class TileMapGpu : IDisposable
         Albedo = texture.Albedo.BindlessIndex,
         Normal = texture.Normal.IsValid ? texture.Normal.BindlessIndex : SpriteItemNoTexture,
         Specular = texture.Specular.IsValid ? texture.Specular.BindlessIndex : SpriteItemNoTexture,
+        Occlusion = texture.Occlusion.IsValid ? texture.Occlusion.BindlessIndex : SpriteItemNoTexture,
         TexelSize = Vector2.One / Vector2.Max(Vector2.One, texture.Size)
     };
 

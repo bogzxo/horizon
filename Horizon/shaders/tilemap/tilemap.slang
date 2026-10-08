@@ -24,9 +24,11 @@ struct Layer
     float4 tint;
 };
 
-// Must match TileMapGpu.Tile in TileMapBatch.cs (48 bytes). Where its middle is and how big it is, the part of the
+// Must match TileMapGpu.Tile in TileMapBatch.cs (80 bytes, a whole number of 16, the stride a block's layout
+// rounds a struct up to, or the tiles read as a shifted mess). Where its middle is and how big it is, the part of the
 // image it is cut out of (in pixels, left, top, right, bottom), how it is turned (radians) and turned over (a TileFlip),
-// which layer it is on and the bindless slots of its image, normal map and specular map (NO_TEXTURE for none).
+// which layer it is on and the bindless slots of its image, normal map, specular map and ambient occlusion map
+// (NO_TEXTURE for none).
 struct Tile
 {
     float2 position;
@@ -39,6 +41,10 @@ struct Tile
     uint normal;
     uint specular;
     float2 texelSize;
+    uint occlusion;
+    uint padding0;
+    uint padding1;
+    uint padding2;
 };
 
 BIND_BUFFER(2) StructuredBuffer<Layer> layers;
@@ -58,6 +64,7 @@ struct Varyings
     nointerpolation uint albedo : ALBEDO;
     nointerpolation uint normal : NORMALMAP;
     nointerpolation uint specular : SPECULARMAP;
+    nointerpolation uint occlusion : OCCLUSIONMAP;
 };
 
 [shader("vertex")]
@@ -86,6 +93,7 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
     output.albedo = tile.albedo;
     output.normal = tile.normal;
     output.specular = tile.specular;
+    output.occlusion = tile.occlusion;
     output.texCoords = lerp(tile.source.xy, tile.source.zw, at) * tile.texelSize;
     output.position = toClip(float4(world, 0.0, 1.0));
     return output;
@@ -109,9 +117,12 @@ GBuffer fsMain(Varyings input)
 
     float shine = input.specular != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.specular)].Sample(input.texCoords).r : 0.0;
 
+    // How much of the ambient light the artist painted into the corners, 1 wherever there is no map to say
+    float occlusion = input.occlusion != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.occlusion)].Sample(input.texCoords).r : 1.0;
+
     GBuffer output;
     output.albedo = albedo;
     output.surface = float4(normal, layer.emissive, albedo.a);
-    output.material = float4(shine, 0.0, layer.emissive, albedo.a);
+    output.material = float4(shine, packOcclusion(occlusion), layer.emissive, albedo.a);
     return output;
 }

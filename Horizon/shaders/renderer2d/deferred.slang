@@ -3,6 +3,7 @@
 // uTexGi when it is on.
 
 #include <common/screen.slang>
+#include <common/gbuffer.slang>
 #include <lighting/direct.slang>
 
 struct Params
@@ -20,6 +21,15 @@ struct Params
     // Whether the lighting was worked out per square already (see light_cells.slang), and where that grid starts
     int uHasCells;
     float2 uCellOrigin;
+
+    // The ambient occlusion, see DeferredRenderer2D.AmbientOcclusion. How far it looks (world units), how many
+    // directions, how dark it goes, how much the baked maps count and how much of the direct light it takes too
+    int uAoEnabled;
+    int uAoSamples;
+    float uAoRadius;
+    float uAoStrength;
+    float uAoBaked;
+    float uAoDirect;
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -30,7 +40,7 @@ BIND_TEXTURE(0) Sampler2D uTexAlbedo;
 // rg the normal (0.5 being none), b how emissive it is.
 BIND_TEXTURE(1) Sampler2D uTexSurface;
 
-// r how shiny it is.
+// r how shiny it is, g the baked occlusion under what blocks light, see gbuffer.slang.
 BIND_TEXTURE(2) Sampler2D uTexMaterial;
 
 // What the path traced lighting found, see PathTracedLighting2D. Only read when uLightingMode is 1.
@@ -39,6 +49,64 @@ BIND_TEXTURE(4) Sampler2D uTexGi;
 // The lighting per square, see light_cells.slang. Only read when uHasCells says so.
 BIND_TEXTURE(6) Sampler2D uTexCells;
 BIND_TEXTURE(7) Sampler2D uTexCellsExtra;
+
+// How open to the ambient light a point of the world is, 1 for wide open, down to 1 minus the strength in a corner.
+// Ambient light comes from everywhere, so what is hemmed in by walls and sprites gets less of it, the corner where
+// the floor meets a wall, the ground under a fighter's feet, the air right next to a pillar. A few rays are
+// marched a short way through the distance field, every one that meets something within the radius takes a share
+// of the light, the sooner it meets it the bigger the share. A point inside something solid is its face, the rays
+// start just outside and only go the way the face looks, a flat floor is wide open and its corners are not. Deep
+// inside a wall there is no face to speak of and it is left open, that is lit as its face anyway, see shadow().
+float ambientOcclusion(float2 position, Field field, float radius, int samples, float strength)
+{
+    if (!hasAnything(field) || samples <= 0 || radius <= 0.0 || strength <= 0.0) return 1.0;
+
+    float texel = fieldTexel(field);
+    float2 at = position;
+    float from = 0.0, span = 6.2831853;
+
+    float d = wallDistance(at, field);
+    if (d < texel)
+    {
+        float2 slope = float2(
+            wallDistance(at + float2(texel, 0.0), field) - wallDistance(at - float2(texel, 0.0), field),
+            wallDistance(at + float2(0.0, texel), field) - wallDistance(at - float2(0.0, texel), field));
+        if (dot(slope, slope) < 1e-8 || -d > radius) return 1.0;
+
+        float2 outward = normalize(slope);
+        if (d < 0.0) at += outward * (-d + 0.5 * texel);
+
+        // The half of the directions the face looks towards
+        from = atan2(outward.y, outward.x) - 1.5707963;
+        span = 3.1415927;
+    }
+
+    float occluded = 0.0;
+    for (int i = 0; i < samples; i++)
+    {
+        float angle = from + (float(i) + 0.5) * span / float(samples);
+        float2 direction = float2(cos(angle), sin(angle));
+
+        float t = 0.5 * texel;
+        float hit = radius;
+        for (int step = 0; step < 4; step++)
+        {
+            float ahead = wallDistance(at + direction * t, field);
+            if (ahead < 0.05)
+            {
+                hit = t;
+                break;
+            }
+
+            t += max(ahead, 0.5 * texel);
+            if (t >= radius) break;
+        }
+
+        occluded += 1.0 - hit / radius;
+    }
+
+    return 1.0 - strength * occluded / float(samples);
+}
 
 // Leaves a colour as it is up to here, and rolls whatever is over off towards 1. Lights can be a lot brighter
 // than white without everything they touch turning into a flat patch. It is the colour as a whole that is brought
@@ -95,15 +163,32 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     if (params.uLightingMode == 2)
         return float4(uTexGi.Sample(texCoords).rgb, 1.0);
 
+    // How much of the light that comes from everywhere gets here, out of the field round the point and out of what
+    // the artist painted into the corners of the tiles
+    float occlusion = 1.0;
+    if (params.uAoEnabled != 0)
+    {
+        float traced = ambientOcclusion(position, LIGHTING_FIELD(params), params.uAoRadius, params.uAoSamples, params.uAoStrength);
+        float baked = unpackOcclusion(uTexMaterial.Sample(texCoords).g);
+        occlusion = traced * lerp(1.0, baked, params.uAoBaked);
+    }
+
+    // For looking at the occlusion on its own, see AmbientOcclusion2D.Show
+    if (params.uLightingMode == 3)
+        return float4(occlusion, occlusion, occlusion, 1.0);
+
+    // The lights themselves only take as much of it as asked, a lamp shines into a corner all the same
+    light *= lerp(1.0, occlusion, params.uAoDirect);
+
     if (params.uLightingMode == 1)
     {
         // Bounced light and what the lamps throw as things with a size, gathered by the cascades. The ambient makes
         // way for it, the dark corners get their light round the corner now instead of out of nowhere
-        light += params.uAmbient * params.uGiAmbientScale + uTexGi.Sample(texCoords).rgb * params.uGiStrength;
+        light += (params.uAmbient * params.uGiAmbientScale + uTexGi.Sample(texCoords).rgb * params.uGiStrength) * occlusion;
     }
     else
     {
-        light += params.uAmbient;
+        light += params.uAmbient * occlusion;
     }
 
     // What is emissive shows as it was drawn no matter the light

@@ -17,6 +17,12 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
     private const string UNIFORM_LIGHTING_MODE = "uLightingMode";
     private const string UNIFORM_GI_STRENGTH = "uGiStrength";
     private const string UNIFORM_GI_AMBIENT_SCALE = "uGiAmbientScale";
+    private const string UNIFORM_AO_ENABLED = "uAoEnabled";
+    private const string UNIFORM_AO_SAMPLES = "uAoSamples";
+    private const string UNIFORM_AO_RADIUS = "uAoRadius";
+    private const string UNIFORM_AO_STRENGTH = "uAoStrength";
+    private const string UNIFORM_AO_BAKED = "uAoBaked";
+    private const string UNIFORM_AO_DIRECT = "uAoDirect";
 
     private const string UNIFORM_HAS_CELLS = "uHasCells";
     private const string UNIFORM_CELL_ORIGIN = "uCellOrigin";
@@ -61,12 +67,28 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
         }
 
         bool traced = renderer.Lighting == LightingMode.PathTraced && renderer.PathTracing.Result is { } found;
-        SetUniform(UNIFORM_LIGHTING_MODE, traced ? renderer.ShowTracedLight ? 2 : 1 : 0);
+        int mode = traced ? renderer.ShowTracedLight ? 2 : 1 : 0;
         if (traced)
         {
             renderer.PathTracing.Result!.Bind(GI_UNIT);
             SetUniform(UNIFORM_GI_STRENGTH, MathF.Max(renderer.PathTracing.Strength, 0.0f));
             SetUniform(UNIFORM_GI_AMBIENT_SCALE, Math.Clamp(renderer.PathTracing.AmbientScale, 0.0f, 1.0f));
         }
+
+        // The ambient occlusion, the baked maps come along in the material attachment
+        var occlusion = renderer.ShownAmbientOcclusion;
+        bool occluding = occlusion.Enabled && occlusion.Strength > 0.0f;
+        SetUniform(UNIFORM_AO_ENABLED, occluding);
+        if (occluding)
+        {
+            SetUniform(UNIFORM_AO_SAMPLES, Math.Clamp(occlusion.Samples, 1, 32));
+            SetUniform(UNIFORM_AO_RADIUS, MathF.Max(occlusion.Radius, 1.0f));
+            SetUniform(UNIFORM_AO_STRENGTH, Math.Clamp(occlusion.Strength, 0.0f, 1.0f));
+            SetUniform(UNIFORM_AO_BAKED, Math.Clamp(occlusion.BakedStrength, 0.0f, 1.0f));
+            SetUniform(UNIFORM_AO_DIRECT, Math.Clamp(occlusion.DirectStrength, 0.0f, 1.0f));
+            if (occlusion.Show) mode = 3;
+        }
+
+        SetUniform(UNIFORM_LIGHTING_MODE, mode);
     }
 }

@@ -120,8 +120,9 @@ public class DeferredRenderer2D : Renderer2D
         public int Count;
         public Vector3 Ambient;
         public float LightingPixelSize, Shininess, SpecularIntensity, ShadowSoftness;
-        public bool Shadows, SpriteShadows;
+        public bool Shadows, SpriteShadows, ShadowsInsideWalls;
         public OcclusionMap2D? Occlusion;
+        public AmbientOcclusion2D.State AmbientOcclusion;
     }
 
     private readonly SnapshotBuffer<CapturedLighting> captured = new(static () => new CapturedLighting());
@@ -141,6 +142,8 @@ public class DeferredRenderer2D : Renderer2D
     internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
     internal bool ShownSpriteShadows => shownAfter?.SpriteShadows ?? SpriteShadows;
     internal OcclusionMap2D? ShownOcclusion => shownAfter is null ? Occlusion : shownAfter.Occlusion;
+    internal bool ShownShadowsInsideWalls => shownAfter?.ShadowsInsideWalls ?? ShadowsInsideWalls;
+    internal AmbientOcclusion2D.State ShownAmbientOcclusion => shownAfter?.AmbientOcclusion ?? AmbientOcclusion.Capture();
 
     /// <summary>
     /// The light there is everywhere, before any <see cref="Light2D"/>. At 1 everything looks as it was painted,
@@ -159,6 +162,19 @@ public class DeferredRenderer2D : Renderer2D
 
     /// <summary>Shows what the tracer found instead of the picture, for seeing what it is up to. Only with the path tracing on.</summary>
     public bool ShowTracedLight { get; set; }
+
+    /// <summary>
+    /// The settings of the ambient occlusion, the corners going darker, off to begin with. See <see cref="AmbientOcclusion2D"/>.
+    /// </summary>
+    public AmbientOcclusion2D AmbientOcclusion { get; } = new();
+
+    /// <summary>
+    /// Whether a point inside something that blocks light (the body of the ground, which is drawn and lit as the
+    /// face of it) takes the shadows its face does. Off, which is the default, the floor stops every shadow at
+    /// its edge and its body is lit by whatever reaches its face, nothing runs on down through it. On, the shadows
+    /// of the walls fall across it the way they fall on its face (the sprites never shadow it either way).
+    /// </summary>
+    public bool ShadowsInsideWalls { get; set; }
 
     /* The lights as the shaders get them, uploaded once a frame for every pass that lights */
 
@@ -325,7 +341,9 @@ public class DeferredRenderer2D : Renderer2D
             into.ShadowSoftness = ShadowSoftness;
             into.Shadows = Shadows;
             into.SpriteShadows = SpriteShadows;
+            into.ShadowsInsideWalls = ShadowsInsideWalls;
             into.Occlusion = Occlusion;
+            into.AmbientOcclusion = AmbientOcclusion.Capture();
 
             lock (lightLock)
             {
@@ -471,6 +489,7 @@ public class DeferredRenderer2D : Renderer2D
         Texture? field = occlusion?.GetField();
 
         technique.SetUniform("uShadows", ShownShadows && (field is not null || spriteField is not null));
+        technique.SetUniform("uShadowsInside", ShownShadowsInsideWalls);
         technique.SetUniform("uHasSprites", spriteField is not null);
         technique.SetUniform("uSpritePixelWorld", spritePixelWorld);
         spriteField?.Bind(SPRITE_FIELD_UNIT);
@@ -627,8 +646,8 @@ public class DeferredRenderer2D : Renderer2D
         // No normal, not emissive, and nothing covering the pixel yet
         Clear(1, new Vector4(0.5f, 0.5f, 0.0f, 0.0f));
 
-        // Not shiny either
-        Clear(2, Vector4.Zero);
+        // Not shiny either, and wide open to the ambient light (the green, see packOcclusion in gbuffer.slang)
+        Clear(2, new Vector4(0.0f, 0.4f, 0.0f, 0.0f));
         ClearDepthStencil();
     }
 }

@@ -181,7 +181,8 @@ GBuffer fsMain(Varyings input)
     GBuffer output = writeFlat(result, glow);
 
     // One that blocks light leaves its shape in the material for the lights to go by, see SpriteShadows
-    output.material.g = (input.flags & SHADOW_FLAG) != 0u ? result.a : 0.0;
+    // What blocks light says how much of the pixel it covers, and never less than wide open to the ambient light
+    output.material.g = (input.flags & SHADOW_FLAG) != 0u ? max(result.a, packOcclusion(1.0)) : packOcclusion(1.0);
 
     // A flash is for looks, it shows bright whatever the light is but lights nothing round it, unless the sprite
     // says it is a lamp (Sprite.FlashLights). A fighter flashing white on every hit would otherwise light the

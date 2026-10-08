@@ -81,6 +81,6 @@ GBuffer fsMain(Varyings input)
     GBuffer output;
     output.albedo = float4(colour, 1.0);
     output.surface = float4(params.uNormals != 0 ? normal * 0.5 + 0.5 : float2(0.5, 0.5), 0.0, 1.0);
-    output.material = float4(params.uSpecular != 0 ? shine : 0.0, 0.0, 0.0, 1.0);
+    output.material = float4(params.uSpecular != 0 ? shine : 0.0, packOcclusion(1.0), 0.0, 1.0);
     return output;
 }

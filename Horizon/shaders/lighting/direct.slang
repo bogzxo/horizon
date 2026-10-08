@@ -39,6 +39,7 @@ static const uint TILE_LIGHTS = TILE_WORDS - 1u;
     int uLightCount; \
     int uShadows; \
     int uHasField; \
+    int uShadowsInside; \
     float uShininess; \
     float uSpecularIntensity; \
     float uShadowSoftness; \
@@ -59,9 +60,10 @@ struct Field
     float2 size;             // how many texels it is
     bool hasSprites;         // whether the sprites that block light left a field of their own
     float spritePixelWorld;  // the size of a texel of that, in world units
+    bool insideShadows;      // whether a point inside a wall takes the shadows its face does, see DeferredRenderer2D.ShadowsInsideWalls
 };
 
-Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int hasSprites, float spritePixelWorld)
+Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int hasSprites, float spritePixelWorld, int insideShadows)
 {
     Field field;
     field.hasWalls = hasWalls != 0;
@@ -70,11 +72,12 @@ Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int h
     field.size = size;
     field.hasSprites = hasSprites != 0;
     field.spritePixelWorld = spritePixelWorld;
+    field.insideShadows = insideShadows != 0;
     return field;
 }
 
 // The field out of a Params that has LIGHTING_PARAMS in it.
-#define LIGHTING_FIELD(p) makeField(p.uHasField, p.uFieldOrigin, p.uFieldCellSize, p.uFieldSize, p.uHasSprites, p.uSpritePixelWorld)
+#define LIGHTING_FIELD(p) makeField(p.uHasField, p.uFieldOrigin, p.uFieldCellSize, p.uFieldSize, p.uHasSprites, p.uSpritePixelWorld, p.uShadowsInside)
 
 // Whether there is anything to march at all.
 bool hasAnything(Field field)
@@ -210,10 +213,16 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     float texel = fieldTexel(field);
     if (t > 0.0) t += 0.5 * texel;
 
+    // The body of something solid (the ground under a fighter) is lit as its face and, unless asked, takes no
+    // shadows at all, the floor stops every shadow at its edge rather than showing it running on down through it.
+    // Asked, it takes the shadows of the walls its face does and still none of the sprites
+    bool inWall = wallsDistance(from, field) < 0.0;
+    if (inWall && !field.insideShadows) return 1.0;
+
     float visible = 1.0;
     float through = 1.0;
     float previous = 1e9;
-    bool sprites = field.hasSprites && wallsDistance(from, field) >= 0.0;
+    bool sprites = field.hasSprites && !inWall;
     bool inside = false;
     for (int step = 0; step < 32; step++)
     {

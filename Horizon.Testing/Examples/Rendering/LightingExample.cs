@@ -90,6 +90,8 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
             new("B", "show what the path tracer found, on its own"),
             new("D", "the moon on (a directional light)"),
             new("T", "the swinging spot on"),
+            new("O", "toggle the ambient occlusion"),
+            new("V", "show the ambient occlusion on its own"),
         ]
         : [];
 
@@ -343,6 +345,8 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
         if (keyboard.WasPressed(Key.B)) lighting!.ShowTracedLight = !lighting.ShowTracedLight;
         if (keyboard.WasPressed(Key.D) && moon is not null) moon.Enabled = !moon.Enabled;
         if (keyboard.WasPressed(Key.T) && spot is not null) spot.Enabled = !spot.Enabled;
+        if (keyboard.WasPressed(Key.O)) lighting!.AmbientOcclusion.Enabled = !lighting.AmbientOcclusion.Enabled;
+        if (keyboard.WasPressed(Key.V)) lighting!.AmbientOcclusion.Show = !lighting.AmbientOcclusion.Show;
 
         // Swinging to and fro, straight down in the middle of the swing
         if (spot is not null) spot.Direction = -MathF.PI / 2.0f + MathF.Sin(time * 1.3f) * 0.45f;
