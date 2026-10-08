@@ -154,6 +154,7 @@ public class BMFontImporter
                         Id = id,
                         Offset = new Vector2(xOffset, yOffset),
                         Position = new Vector2(xPos, yPos),
+                        TexelSize = new Vector2(width, height),
                         Size = new Vector2(width, height),
                         XAdvance = xAdvance
                     });
@@ -278,7 +279,8 @@ public class BMFontImporter
         }
     }
 
-    public Texture Texture { get; private set; }
+    /// <summary>The picture of the glyphs, as the file names it. The font turns it into a distance field, see DistanceFieldFont.</summary>
+    public string ImagePath { get; private set; } = string.Empty;
     public Dictionary<char, CharDefinition> Definitions { get; init; }
 
     /// <summary>
@@ -318,21 +320,7 @@ public class BMFontImporter
         ReadCommon(Path.Combine(dir, bmFile));
 
         (CharDefinition[] defs, string path) = BMParser.Parse(Path.Combine(dir, bmFile));
-        if (GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
-            path,
-            new TextureDescription
-            {
-                Definition = TextureDefinition.RgbaUnsignedByteNearest,
-                Paths = [Path.Combine(dir, path)]
-            },
-            out var result))
-        {
-            Texture = result.Asset;
-        }
-        else
-        {
-            Log.Error(result.Message);
-        }
+        ImagePath = path.Length > 0 ? Path.Combine(dir, path) : string.Empty;
 
         Definitions = [];
         foreach (var item in defs)

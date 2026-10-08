@@ -57,6 +57,14 @@ light is in view), the light tiles (only with lights), the lighting per lighting
 `LightingPixelSize`), the path tracer (the wall radiance once, then the cascades, then the resolve), and the
 deferred pass that puts it on screen. `HORIZON_LOG_LOOPS` prints what each of those cost the GPU.
 
+## Text
+
+Fonts are signed distance fields (`Rendering/Text/DistanceFieldFont.cs`), one R8 atlas a skin's text is drawn out
+of at any size, crisp, no mipmaps. A skin names a TrueType file (`font: { dir, file, size }`, the size being pixels
+to the em the metrics come out at, 96 like the bitmap fonts were baked) and stb_truetype draws the field, kerning
+and all, or a BMFont `.fnt` and the picture's coverage is turned into a field at load. Built fonts are cached next
+to the shaders. Cascadia Mono ships as its `.ttf` (OFL), Klaxon and VCR as the bitmaps they always were.
+
 ## Running on a Mac
 
 Vulkan on a Mac is MoltenVK, which comes with the engine (Silk.NET.MoltenVK.Native, next to the exe) and is loaded

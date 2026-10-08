@@ -64,7 +64,7 @@ public sealed partial class UIDrawList
         uint packed = SpriteItem.PackColor(color);
         float lineHeight = font.LineHeight * scale;
 
-        // Glyphs that start on whole pixels stay sharp.
+        // A line that starts on a whole pixel keeps every glyph's edge where the field says it is.
         position = new Vector2(MathF.Round(position.X), MathF.Round(position.Y));
         Vector2 pen = position;
 
@@ -111,12 +111,13 @@ public sealed partial class UIDrawList
                 Quad(
                     new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y)),
                     glyph.Position,
-                    glyph.Position + glyph.Size,
+                    glyph.Position + glyph.TexelSize,
                     packed,
-                    FONT_SLOT | SpriteItem.CoverageFlag);
+                    FONT_SLOT | SpriteItem.FieldFlag);
             }
 
             pen.X += glyph.XAdvance * scale;
+            if (i + 1 < text.Length) pen.X += font.Kerning(character, text[i + 1]) * scale;
         }
     }
 

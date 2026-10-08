@@ -95,6 +95,20 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
   flood's 63 to 74 ms is eight passes of 360 thousand threads, nothing on a GPU. The real after is a run of
   run_scenes_windows.py on bogz's machine.
 
+## Text
+
+- Fonts are signed distance fields now (`Rendering/Text/DistanceFieldFont.cs`). A TrueType file goes through
+  stb_truetype (StbTrueTypeSharp, pure managed, MIT) straight into distances at 48 px to the em, packed on shelves
+  into an R8 atlas, kerning kept. A BMFont bitmap (the pixel fonts the dead_revolver skin uses) has its picture's
+  coverage turned into distances by an exact transform, halved if it is a big one. Both give metrics at 96 px to
+  the em (`font: { dir, file, size }` in a skin, the size for TrueType), so text_scale means what it did. The
+  sprite shader's FIELD_FLAG turns the field into an edge smoothed over one screen pixel, crisp at any size, no
+  mipmaps. What was built is kept under the shader cache's parent in `Fonts/` by a hash of the file.
+- Cascadia Mono is shipped as its .ttf now (OFL, README in its folder), the bitmap of it is gone. Klaxon and VCR
+  stay as bitmaps and come out as fields at load.
+- Ideas not done. Outlines and drop shadows are one more threshold on the same field (the spread is kept for
+  that). Multi channel fields (MSDF) would keep sharp corners sharper at big sizes, that needs msdfgen which is C++.
+
 ## Hints to self
 
 - Shell cwd drifts between calls, use absolute paths and `git -C`.
