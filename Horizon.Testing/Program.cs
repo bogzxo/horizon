@@ -1,5 +1,5 @@
 /*
- * G'day, and welcome to Horizon!
+ * Good day, and welcome to Horizon!
  *
  * Horizon.Testing is a pile of example scenes, one per feature of the engine, plus a little host that lets you pick
  * one and flick between them. Every example is a plain old Scene, the same kind you'd write for your own game, so
@@ -49,9 +49,6 @@ internal class Program
 
         // The host goes on the engine itself rather than in a scene, so it outlives every scene it swaps between
         var host = engine.AddEntity(new TestHost(TestCatalog.Tests));
-
-        // The engine's console over everything, F4 shows it: the log as it comes in, and HIDL to type at the engine
-        engine.AddEntity(new Horizon.Engine.Debugging.ConsoleOverlay());
 
         // `dotnet run -- particles` starts straight in a test, by its id. Without one, or with one that doesn't
         // exist, you get the selector.
