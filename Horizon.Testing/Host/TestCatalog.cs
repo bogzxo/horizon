@@ -21,6 +21,7 @@ internal static class TestCatalog
     public static readonly TestDefinition[] Tests =
     [
         // Basics: start here if you're new. Entities, sprites and cameras, the stuff every game is made of.
+        new("quickstart", TestArea.Basics, "Quick start", "The least a scene can be, Scene2D with a lit world, a bouncing ball with a lamp on it, a couple of walls and a label, in forty lines.", () => new QuickStartExample()),
         new("entities", TestArea.Basics, "Entities and components", "The building blocks: entities, components, which thread does what, and the scene's tree, live.", () => new EntitiesExample()),
         new("sprites", TestArea.Basics, "Sprites and animation", "Sprite sheets with named animations, flipping, tints, origins, sprite tweens and sprites out of an atlas.", () => new SpritesExample()),
         new("camera", TestArea.Basics, "Cameras", "Following, zooming, pixel snapping with and without an anchor, hard cuts, and what's on screen.", () => new CameraExample()),
@@ -37,6 +38,8 @@ internal static class TestCatalog
         new("particles", TestArea.Rendering, "Particles", "CPU and compute shader particles, side by side.", () => new ParticleExample()),
         new("lighting", TestArea.Rendering, "Lighting", "Deferred lights, shadows, normal maps and particles that glow.", () => new LightingExample()),
         new("renderer2d", TestArea.Rendering, "Renderer2D", "The lighting scene unlit, drawn at a quarter of the size and blown up.", () => new LightingExample(deferred: false)),
+        new("pathtraced", TestArea.Rendering, "Path traced lighting", "The lighting scene with the fancy lighting on, light bouncing off the blocks and spilling round them.", () => new LightingExample(pathTraced: true)),
+        new("pathtraced-buffer", TestArea.Rendering, "Path tracer's buffer", "What the path tracer found, on its own, for seeing what it is up to.", () => new LightingExample(pathTraced: true, showTraced: true)),
 
         // UI: UIX, in C# and out of layout files. The self-tests drive the pointer themselves and check the results,
         // so run them after you've been mucking about in UIX.

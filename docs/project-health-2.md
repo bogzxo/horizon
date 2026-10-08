@@ -1,6 +1,7 @@
-# Project Health 2: one engine library, one way of talking to the GPU
+# Project Health 2, one engine library and one way of talking to the GPU
 
 This is what the `project-health-2` branch does to Horizon and to Fighter2D, and what a game has to change to come along.
+The numbers are in `docs/metrics/project-health-2-metrics.xlsx`.
 
 ## The layout
 
@@ -38,6 +39,31 @@ Dead or superseded code went: the 3D leftovers (`Mesh`, `Mesh3D`, `MeshGenerator
 compiles ahead of time), and a stray `Fighter2D/Player` folder that was checked into the engine repository.
 
 ## The GPU layer
+
+There are two halves to it now. `Horizon.Graphics.GraphicsDevice` is the GPU as far as the renderers are concerned,
+and `Horizon.OpenGL` is the one backend there is. Nothing outside `Horizon/OpenGL` calls GL. The renderers draw, clear,
+set the stencil, bind their textures, read pixels and wait on fences through `GraphicsDevice.Current`, and get their
+buffers, textures, vertex arrays and techniques from the resource classes, which do the GL. The window makes the device
+along with its context, and the engine's log gets the backend's debug output through it.
+
+### Towards a second backend
+
+The device is the seam a Vulkan (or whatever) backend goes behind, and it is not all the way there yet. What is still
+OpenGL shaped and would have to move before a second backend is real, in the order it would bite:
+
+- The resource classes (`BufferObject`, `Texture`, `FrameBufferObject`, `VertexArrayObject`, `Shader`/`Technique`) are
+  concrete GL classes that the renderers hold directly, and their descriptions use Silk's enums (`BufferTargetARB`,
+  `InternalFormat`, `FramebufferAttachment`, `TextureUnit`). They would become interfaces the device hands out, with
+  enums of our own.
+- `RenderState` (blending and the depth test) sets GL itself. It would go through the device like the stencil does.
+- Techniques set uniforms by name. A second backend wants everything in blocks (`CameraBlock` is the start of that),
+  with push constants for the handful a draw changes.
+- The shaders are GLSL 460 with `layout(binding = N)` everywhere, which is most of the way to SPIR-V already. The
+  `#include` preprocessor would stay, it is ours.
+- `ObjectManager` is where the GL context lives and the factories are GL. The device would own the factories.
+
+The rule in the meantime (it is in CLAUDE.md too): a renderer that needs something the device hasn't got adds it to
+the device, it does not reach for `GL`.
 
 Everything goes through direct state access (OpenGL 4.5) and nothing binds to be filled or described any more.
 
@@ -83,7 +109,28 @@ Everything goes through direct state access (OpenGL 4.5) and nothing binds to be
 - **Physics debug**: `PhysicsWorld.DebugRenderer` is a `PrimitiveRenderer`; set `RenderDebug` and the outlines come
   out through it (and `DebugLineWidth` says how thick). The separate line renderer, its shader and its VAO are gone.
 - **Renderer2D / post processing**: the picture goes to screen through `Renderer2D.Technique` and the screen triangle;
-  `PostTechnique` is a `ScreenTechnique`; the effects no longer set sampler uniforms every frame.
+  `PostTechnique` is a `ScreenTechnique`; the effects no longer set sampler uniforms every frame. A renderer with
+  `FollowWindow` set is remade at the window's size whenever that changes, so a game doesn't have to watch for it.
+
+### Lighting
+
+`DeferredRenderer2D` has a `Lighting` mode. `Direct` is what it did before, lights with normal maps, specular and the
+shadows of an `OcclusionMap2D`, now in `shaders/lighting/direct.glsl` where both modes share it. `PathTraced` is the
+fancy one. Every frame it draws the scene as the tracer sees it at half size (what gives off light and what stops it),
+floods that into a distance field (jump flooding, two seed sets so a wall knows where the nearest open texel is), and
+then sphere traces a couple of dozen rays out of every texel, bouncing what it hits back through the previous frame's
+result so light goes round more than one corner. The result is accumulated over frames (reprojected when the camera
+moves), blurred edge-aware, and composed with the direct lighting, so the normal maps and the specular still show
+through. `PathTracedLighting2D` holds the knobs (rays, steps, reach, bounce, smoothing, how big and bright a light is
+as a thing to hit, strength) and `ShowTracedLight` shows the tracer's buffer on its own. On llvmpipe it is slow, on a
+GPU it is a few milliseconds at half size, and it is off unless asked for.
+
+### Scene2D
+
+`Scene2D` is a scene with the usual lot in it, for a game that wants to draw something rather than wire a renderer up
+first. A camera the size of the window, a renderer that follows the window (lit if asked, with the fancy lighting if
+asked), a sprite batch and a primitive renderer inside it, and a UI over the top. `Fancy` flips the lighting mode.
+`Horizon.Testing`'s `quickstart` scene is the whole of it in forty lines.
 
 ## Debugging through the UI
 
@@ -97,6 +144,11 @@ With the UI in the same assembly as the engine, the engine's own debugging can u
 
 ## Also in the branch
 
+- Screenshots. F12 saves one to `screenshots/`, and `HORIZON_SCREENSHOT=path@seconds` takes one on its own at that
+  time, which is how every scene in this branch was checked headless (Xvfb, llvmpipe with the GL 4.6 override).
+- `shaders/particle/simulate_physics.comp` is beside the other particle shaders again, where
+  `PhysicsParticleSimulator2D` looks for it. The merge had left it in a `physics` folder, and the rain of the fluid
+  scene (and the embers of a fight) went with it.
 - `TileMap.CreatePathfinder()` and `TileMapPathfinder`: the way across a map over its solid tiles for whoever walks it
   without a thumb steering them (walks, jumps up and across, drops off ledges), which Fighter2D's `StageRoute` uses.
 - The one compile error on `development` (`[with(128)]` in `DeveloperConsole`) is fixed, the nullable warnings of the
@@ -117,7 +169,13 @@ With the UI in the same assembly as the engine, the engine's own debugging can u
 6. Buffers: `NamedBufferData` is `Upload`, `NamedBufferSubData` is `Update`, `MapBufferRange` is `Map`; a vertex layout
    is `vertexBuffer.SetLayout<T>()` with nothing bound.
 
-## Known state of Fighter2D
+## Fighter2D
+
+The migration is in Fighter2D's `project-health-2` branch, with a `Fancy lighting` switch on the look tab of the options
+(`GameOptions.Fancy`, off by default) that puts both the fight and the map preview on the path traced lighting. It
+takes straight away from the options screen like the CRT switch does.
+
+### Known state of Fighter2D
 
 Fighter2D's `development` head (`d48e0bc`, the Aseprite characters) depends on engine work that is not on Horizon's
 `development` branch (`AsepriteDocument`, `SpriteSheetDefinition.Open/Has/FrameCount`, `TextureAtlas(shared:)`,
