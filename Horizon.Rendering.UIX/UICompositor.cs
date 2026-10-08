@@ -146,6 +146,9 @@ public partial class UICompositor : GameComponent, IDisposable
     private readonly Lock frameLock = new();
     private UIDrawList back = new();
     private UIDrawList front = new();
+
+    // How long the UI has been painted for, in seconds. What the icons that animate go by, whichever list they are painted into
+    private float paintClock;
     private int paintedFrame;
     private int uploadedFrame;
 
@@ -391,7 +394,10 @@ public partial class UICompositor : GameComponent, IDisposable
         RouteKeyboard(snapshot);
         UpdateTooltip(snapshot, dt);
 
-        back.Begin(skin, motionFrame, dt, layer.Effects.IsActive);
+        // One clock for both lists. They take turns being painted, and not evenly: a UI that stands still paints the same
+        // one over and over. Each counting for itself had the icons that animate stepping back a frame every so often
+        paintClock = (paintClock + dt) % UIDrawList.TIME_WRAP;
+        back.Begin(skin, motionFrame, dt, layer.Effects.IsActive, paintClock);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)

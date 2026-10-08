@@ -1,14 +1,15 @@
 using System.Numerics;
 
 using Horizon.OpenGL.Assets;
+using Horizon.Rendering.Spriting;
 using Horizon.Rendering.UIX.Drawing;
 using Horizon.Rendering.UIX.Skinning;
 
 namespace Horizon.Rendering.UIX.Components;
 
 /// <summary>
-/// A picture. Either a named region of the skin or a whole texture of its own, such as a portrait.
-/// Unless given a size it is as big as its art. A region that has frames is played as an animation.
+/// A picture. Either a named region of the skin, a whole texture of its own or a piece of somebody else's atlas,
+/// such as a portrait. Unless given a size it is as big as its art. A region that has frames is played as an animation.
 /// </summary>
 public class Image : UIComponent
 {
@@ -57,6 +58,24 @@ public class Image : UIComponent
     /// <inheritdoc cref="SourcePosition"/>
     public Vector2 SourceSize { get; set; }
 
+    /// <summary>
+    /// An atlas to show a piece of instead of a region of the skin, which piece is up to <see cref="AtlasKey"/>.
+    /// For art that isn't the skin's but lives in an atlas of its own, one frame of a character say. The UI keeps the
+    /// atlas up to date while it is drawn, a piece that isn't in it yet shows up a frame later. Art that was trimmed
+    /// going into the atlas is drawn where it was in its frame, the picture measures the whole frame.
+    /// </summary>
+    public TextureAtlas? Atlas { get; set; }
+
+    /// <summary>
+    /// What the piece of <see cref="Atlas"/> to show goes by in it, see <see cref="SpriteSource.KeyOf"/>.
+    /// </summary>
+    public string AtlasKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether a piece of an <see cref="Atlas"/> is shown the other way round, left to right.
+    /// </summary>
+    public bool Mirrored { get; set; }
+
     public Vector4 Tint { get; set; } = Vector4.One;
 
     public Image()
@@ -69,6 +88,9 @@ public class Image : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
+        if (Atlas is { } atlas)
+            return atlas.TryGet(AtlasKey, out var piece) ? piece.FullSize : Vector2.Zero;
+
         if (Texture is { } texture)
             return SourceSize != Vector2.Zero ? SourceSize : new Vector2(texture.Width, texture.Height);
 
@@ -86,6 +108,12 @@ public class Image : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
+        if (Atlas is { } atlas)
+        {
+            PaintAtlas(list, atlas);
+            return;
+        }
+
         if (Texture is { } texture)
         {
             if (SourceSize != Vector2.Zero)
@@ -128,6 +156,36 @@ public class Image : UIComponent
         }
 
         list.NineSlice(first, Bounds, Tint);
+    }
+
+    /// <summary>
+    /// Helper method to draw the piece of an atlas that isn't the skin's.
+    /// </summary>
+    private void PaintAtlas(UIDrawList list, TextureAtlas atlas)
+    {
+        // Asked for by whoever set the key, put in by the skin the next time the UI is drawn
+        list.Skin.Track(atlas);
+
+        if (!atlas.TryGet(AtlasKey, out var piece) || piece.IsEmpty || atlas.Texture.Handle == 0)
+            return;
+
+        // What is left of a trimmed piece only takes up its part of the frame, measured from the top left
+        Vector2 full = piece.FullSize;
+        float left = piece.Offset.X / full.X, top = piece.Offset.Y / full.Y;
+        float width = piece.Size.X / full.X, height = piece.Size.Y / full.Y;
+
+        if (Mirrored) left = 1.0f - left - width;
+
+        UIRect bounds = Bounds;
+        var rect = new UIRect(
+            new Vector2(bounds.Min.X + bounds.Width * left, bounds.Max.Y - bounds.Height * (top + height)),
+            new Vector2(bounds.Min.X + bounds.Width * (left + width), bounds.Max.Y - bounds.Height * top));
+
+        // Mirrored is the same piece read from its right edge back to its left one
+        Vector2 texMin = piece.Position, texMax = piece.Position + piece.Size;
+        if (Mirrored) (texMin.X, texMax.X) = (texMax.X, texMin.X);
+
+        list.Image(atlas.Texture, rect, texMin, texMax, Tint);
     }
 
     protected override void DefineScript()

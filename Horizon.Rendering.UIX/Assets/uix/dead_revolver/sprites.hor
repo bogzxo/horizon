@@ -1,41 +1,49 @@
 // The sprites of Dead Revolver's pixel UI pack, by name.
 //
-// Every image of the pack holds the same art several times over, once for every colour it comes in. A sprite is
-// written down once, for the first copy, and found in the others by the theme it is asked for in:
-//   block:    how wide one copy of the art is, in pixels
-//   themes:   which copy every theme starts at, counted in blocks from the left of the image
+// The art is in the Aseprite files of the pack as they come, nothing was exported from them. Every file holds the same art
+// once for every colour it comes in, a layer (or a group of layers) to a colour, and what a sheet file has to say about
+// an image that is an Aseprite file is mostly which layer and which frame:
+//   themes:   the layer every theme is drawn on, whatever layer the file was saved showing
 //   fallback: the theme that is used when a sprite is asked for in a theme the image doesn't come in
 //             (the first one listed if it doesn't say)
-//   states:   the other states the art of every theme is followed by, and how many blocks along each of them is:
+//   states:   the frame of the file the other states of every sprite are on, by its number or by the name of its tag:
 //             with states: { hover: 1 } every sprite of the image is there a second time as "name_hover"
+//   hide:     layers that are never drawn. Most of these files have a Background layer that is only there to draw against
 //   size:     how big the sprites of the image are, for images that are a grid of them: a number or
 //             vec(width, height). A sprite can still say otherwise with a w and an h of its own
-// A sprite says where it is inside of its copy, in pixels from the top left:
+// A sprite says where it is on the canvas of the file, in pixels from the top left:
 //   x, y, w, h: the rectangle of the sprite (of its first frame, if it has several)
-//   block:      how many blocks further along it is, for images that follow every theme with its other states
+//   slice:      the name of a slice of the file to be the rectangle instead, which brings its nine-slice border along
+//   tag:        the name of a tag of the file, whose frames are the frames of the sprite: played the way the tag says
+//               and for as long as the file says every frame takes. skip: 2 leaves the first two of them out
+//   frame:      the frame of the file it is on (by its number or the name of a tag), for one that isn't an animation
+//   layer:      the one layer it is drawn on whatever the theme, for files whose layers aren't colours of the same thing
+//   crop:       true shrinks the rectangle to what is actually drawn in it over all of its frames
 //   border:     how much of every edge keeps its size when the sprite is stretched as a nine-slice: a number for
 //               all four sides, vec(horizontal, vertical) or vec(left, top, right, bottom)
 //   content:    how far in from every edge whatever is put on top of the sprite goes, written like a border: the
 //               label of a button sits on its face, not on the lip under it
-//   frames:     how many frames it has, they follow each other to the right ("name#2" is the third on its own),
-//               or a list of where every frame after the first is, vec(x, y) each, for frames scattered about the image
+//   frames:     how many frames it has side by side on the canvas ("name#2" is the third on its own), or a list of
+//               where every frame after the first is, vec(x, y) each, for frames scattered about the image
 //   step:       how far the next frame is from the one before, for frames that aren't simply side by side: vec(right, down)
 //   time:       how long every frame of an animation is shown for, in seconds
 //   cell:       where it is as a cell of the grid of its image, vec(column, row), instead of x and y
 // An image can have a grid: cell: 16 (or vec(w, h)) is how big a cell is, origin: vec(x, y) where the grid starts, and
-// then its sprites can be written by their cell. block can be a vec(right, down) as well, for copies that go down.
+// then its sprites can be written by their cell.
 // A sprite can also be asked for in a theme of its own, whatever the skin's theme is: "round_blank@white".
+//
+// An image can still be a plain picture (the gamepads and the keyboard at the bottom are). Then the art of every theme
+// is side by side in it, see SpriteSheetDefinition for how that is written down (block, and themes and states as numbers).
 //
 // This file is a program. Anything written down over and over is better written as a loop, see the keyboard below.
 // Only sprites that are used get loaded, so there is no harm in naming more of the pack here than a UI needs.
-// The rectangles were measured off the images, see the pack itself for what else there is to name.
+// The rectangles were measured off the art, see the files themselves (in Aseprite) for what else there is to name.
 
-// Buttons. Every theme is followed by its other states, so every sprite here is there four times over:
+// Buttons. The file has a frame for every state, so every sprite here is there four times over:
 // "button", "button_hover", "button_pressed" and "button_selected".
 let buttons = {
-    file: "buttons.png",
-    block: 208,
-    themes: { white: 14, dark: 18, tan: 22, gold: 26, red: 30, purple: 34, blue: 38 },
+    file: "Buttons.aseprite",
+    themes: { white: "White", dark: "Black", tan: "Gold", gold: "Orange", red: "Red", purple: "Purple", blue: "Blue" },
     fallback: "blue",
     states: { hover: 1, pressed: 2, selected: 3 },
     sprites: {
@@ -53,9 +61,8 @@ let buttons = {
 
 // Panels and frames.
 let panels = {
-    file: "panels.png",
-    block: 1120,
-    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    file: "Panels.aseprite",
+    themes: { white: "White", dark: "Black", tan: "Wood", gold: "Gold", red: "Red", purple: "Purple", blue: "Blue" },
     fallback: "blue",
     sprites: {
         panel:        { x: 16, y: 128, w: 48, h: 48, border: 6 },
@@ -75,9 +82,8 @@ let panels = {
 // Check boxes, radio buttons, switches, sliders and the small round buttons. There is no tan one,
 // the white one stands in for it.
 let form = {
-    file: "form_elements.png",
-    block: 512,
-    themes: { white: 0, dark: 1, gold: 2, red: 3, purple: 4, blue: 5 },
+    file: "FormElements.aseprite",
+    themes: { white: "White", dark: "Black", gold: "Orange", red: "Red", purple: "Purple", blue: "Blue" },
     fallback: "white",
     sprites: {
         check_off:         { x: 256, y: 40, w: 8, h: 8, border: 2 },
@@ -120,13 +126,13 @@ let form = {
     }
 };
 
-// Health and progress bars. There is no blue one: skins of the themes this image doesn't come in get the white
-// one, which takes a tint well.
+// Health and progress bars. Skins of the themes this image isn't listed in get the white one, which takes a tint well
+// (the blue skin tints it with its own accent, so the blue layer of the file is left alone on purpose).
 let bars = {
-    file: "value_bars.png",
-    block: 480,
-    themes: { white: 0, green: 1, gold: 2, red: 3, purple: 4 },
+    file: "ValueBars.aseprite",
+    themes: { white: "White", green: "Green", gold: "Orange", red: "Red", purple: "Purple" },
     fallback: "white",
+    hide: "Background",
     sprites: {
         bar_frame:      { x: 16, y: 168, w: 32, h: 8, border: vec(4, 2, 4, 3) },
         bar_fill:       { x: 242, y: 170, w: 12, h: 4, border: vec(2, 1, 2, 1) },
@@ -138,10 +144,10 @@ let bars = {
 
 // Cursors and small tool icons, on a grid of 16 by 16.
 let cursors = {
-    file: "cursors.png",
-    block: 288,
-    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    file: "Cursors.aseprite",
+    themes: { white: "White", dark: "Black", tan: "Gold", gold: "Orange", red: "Red", purple: "Purple", blue: "Blue" },
     fallback: "blue",
+    hide: "Background",
     size: 16,
     sprites: {
         cursor_arrow:    { x: 0, y: 0 },
@@ -168,97 +174,83 @@ let cursors = {
     }
 };
 
-// Hearts, 16 by 16 each. These come in their own colours rather than in themes.
+// Hearts, 16 by 16. The file has a layer for every kind of heart rather than for every theme, and tags for what a heart
+// does: sitting there full or empty, losing its health, getting it back and bouncing.
 let hearts = {
-    file: "hearts.png",
-    size: 16,
+    file: "Hearts.aseprite",
+    hide: "Background",
     sprites: {
-        heart_purple:       { x: 0, y: 0 },
-        heart:              { x: 16, y: 0 },
-        heart_blue:         { x: 32, y: 0 },
-        heart_gem_purple:   { x: 48, y: 0 },
-        heart_gem:          { x: 64, y: 0 },
-        heart_gem_blue:     { x: 80, y: 0 },
-        heart_empty_purple: { x: 96, y: 0 },
-        heart_empty:        { x: 112, y: 0 },
-        heart_empty_blue:   { x: 128, y: 0 },
-        heart_dark_purple:  { x: 144, y: 0 },
-        heart_dark:         { x: 160, y: 0 },
-        heart_dark_blue:    { x: 176, y: 0 }
+        heart_purple:       { layer: "PurpleMinimal", frame: "Full" },
+        heart:              { layer: "RedMinimal", frame: "Full" },
+        heart_blue:         { layer: "BlueMinimal", frame: "Full" },
+        heart_gem_purple:   { layer: "PurpleDetailed", frame: "Full" },
+        heart_gem:          { layer: "RedDetailed", frame: "Full" },
+        heart_gem_blue:     { layer: "BlueDetailed", frame: "Full" },
+        heart_empty_purple: { layer: "PurpleMinimal", frame: "Empty" },
+        heart_empty:        { layer: "RedMinimal", frame: "Empty" },
+        heart_empty_blue:   { layer: "BlueMinimal", frame: "Empty" },
+        heart_dark_purple:  { layer: "PurpleDetailed", frame: "Empty" },
+        heart_dark:         { layer: "RedDetailed", frame: "Empty" },
+        heart_dark_blue:    { layer: "BlueDetailed", frame: "Empty" },
+
+        // What the red one does, straight off the tags of the file
+        heart_damage:       { layer: "RedMinimal", tag: "Damage" },
+        heart_heal:         { layer: "RedMinimal", tag: "Heal" },
+        heart_bounce:       { layer: "RedMinimal", tag: "Bounce" },
+        heart_gem_damage:   { layer: "RedDetailed", tag: "Damage" },
+        heart_gem_heal:     { layer: "RedDetailed", tag: "Heal" },
+        heart_gem_bounce:   { layer: "RedDetailed", tag: "Bounce" }
     }
 };
 
-// Stars, 18 by 15 each. The coloured ones have four frames, the same star glinting, and a flat one without.
+// Stars. The file is a canvas of 48 by 48 with the star in the middle of it, 18 by 15. A layer to a colour, and the tags
+// are an empty star, the same star lighting up (which is what "star" glints with) and a full one.
 let stars = {
-    file: "stars.png",
-    size: vec(18, 15),
+    file: "Stars.aseprite",
     sprites: {
-        star_empty:       { x: 0, y: 0 },
-        star:             { x: 90, y: 0, frames: 4, time: 0.12 },
-        star_flat:        { x: 432, y: 0 },
-        star_red:         { x: 180, y: 0, frames: 4, time: 0.12 },
-        star_flat_red:    { x: 450, y: 0 },
-        star_purple:      { x: 270, y: 0, frames: 4, time: 0.12 },
-        star_flat_purple: { x: 468, y: 0 },
-        star_blue:        { x: 360, y: 0, frames: 4, time: 0.12 },
-        star_flat_blue:   { x: 486, y: 0 }
+        star_empty:       { layer: "Gold", frame: "Empty", x: 15, y: 16, w: 18, h: 15 },
+        star:             { layer: "Gold", tag: "Activate", skip: 1, x: 15, y: 16, w: 18, h: 15 },
+        star_flat:        { layer: "Gold", frame: "Full", x: 15, y: 16, w: 18, h: 15 },
+        star_red:         { layer: "Red", tag: "Activate", skip: 1, x: 15, y: 16, w: 18, h: 15 },
+        star_flat_red:    { layer: "Red", frame: "Full", x: 15, y: 16, w: 18, h: 15 },
+        star_purple:      { layer: "Purple", tag: "Activate", skip: 1, x: 15, y: 16, w: 18, h: 15 },
+        star_flat_purple: { layer: "Purple", frame: "Full", x: 15, y: 16, w: 18, h: 15 },
+        star_blue:        { layer: "Blue", tag: "Activate", skip: 1, x: 15, y: 16, w: 18, h: 15 },
+        star_flat_blue:   { layer: "Blue", frame: "Full", x: 15, y: 16, w: 18, h: 15 }
     }
 };
 
-// Things to put around whatever is selected, 48 by 48 each and white so they can be tinted.
+// Things to put around whatever is selected, white so they can be tinted. The file is a canvas of 48 by 48 with a layer to
+// a shape, and two tags: the shape closing in on what the pointer is over (Hover) and snapping shut on it (Select).
+// The four frames of the reticle closing in are four selectors in their own right.
 let selectors = {
-    file: "selectors.png",
+    file: "Selectors.aseprite",
+    hide: "Background",
     sprites: {
-        selector:       { x: 13, y: 13, w: 22, h: 22, border: 11 },
-        selector_round: { x: 61, y: 13, w: 22, h: 22, border: 11 },
-        selector_bold:  { x: 110, y: 14, w: 20, h: 20, border: 11 },
-        selector_thin:  { x: 158, y: 14, w: 20, h: 20, border: 11 },
-        selector_box:   { x: 396, y: 12, w: 24, h: 24, border: 4 }
+        selector:        { layer: "Reticle", frame: 0, x: 13, y: 13, w: 22, h: 22, border: 11 },
+        selector_round:  { layer: "Reticle", frame: 1, x: 13, y: 13, w: 22, h: 22, border: 11 },
+        selector_bold:   { layer: "Reticle", frame: 2, x: 14, y: 14, w: 20, h: 20, border: 11 },
+        selector_thin:   { layer: "Reticle", frame: 3, x: 14, y: 14, w: 20, h: 20, border: 11 },
+        selector_box:    { layer: "Square", frame: 0, x: 12, y: 12, w: 24, h: 24, border: 4 },
+
+        // The animations, each the whole canvas so the shapes stay where they are from frame to frame
+        selector_hover:  { layer: "Reticle", tag: "Hover" },
+        selector_select: { layer: "Reticle", tag: "Select" },
+        selector_angled: { layer: "Angled", tag: "Hover" },
+        selector_square: { layer: "Square", tag: "Hover" },
+        selector_dashed: { layer: "Dashed", tag: "Hover" }
     }
 };
 
-// An effect for where a click landed, 5 frames of 21 by 21.
-let click_cross = {
-    file: "ClickEffects_Cross.png",
-    size: 21,
+// Effects for where a click landed. One file, a tag to an effect, each 21 by 21 in the middle of a canvas of 32.
+let clicks = {
+    file: "ClickEffects.aseprite",
     sprites: {
-        click_cross: { x: 0, y: 0, frames: 5, time: 0.05 }
-    }
-};
-
-// An effect for where a click landed, 5 frames of 21 by 21.
-let click_crosshair = {
-    file: "ClickEffects_Crosshair.png",
-    size: 21,
-    sprites: {
-        click_crosshair: { x: 0, y: 0, frames: 5, time: 0.05 }
-    }
-};
-
-// An effect for where a click landed, 5 frames of 21 by 21.
-let click_ripple = {
-    file: "ClickEffects_Ripple.png",
-    size: 21,
-    sprites: {
-        click_ripple: { x: 0, y: 0, frames: 5, time: 0.05 }
-    }
-};
-
-// An effect for where a click landed, 5 frames of 21 by 21.
-let click_square = {
-    file: "ClickEffects_Square.png",
-    size: 21,
-    sprites: {
-        click_square: { x: 0, y: 0, frames: 5, time: 0.05 }
-    }
-};
-
-// An effect for where a click landed, 9 frames of 21 by 21.
-let click_star = {
-    file: "ClickEffects_Star.png",
-    size: 21,
-    sprites: {
-        click_star: { x: 0, y: 0, frames: 9, time: 0.05 }
+        click_cross:     { tag: "Cross", x: 6, y: 5, w: 21, h: 21 },
+        click_crosshair: { tag: "Crosshair", x: 6, y: 5, w: 21, h: 21 },
+        click_ripple:    { tag: "Ripple", x: 6, y: 5, w: 21, h: 21 },
+        click_square:    { tag: "Square", x: 6, y: 5, w: 21, h: 21 },
+        click_star:      { tag: "Star", x: 6, y: 5, w: 21, h: 21 }
     }
 };
 
@@ -384,7 +376,7 @@ for (i in range(side_keys.count)) {
 // Everything above, by the name sprites are asked for.
 let sheet = {
     images: {
-        buttons, panels, form, bars, cursors, hearts, stars, selectors, click_cross, click_crosshair, click_ripple, click_square, click_star,
+        buttons, panels, form, bars, cursors, hearts, stars, selectors, clicks,
         xbox, playstation, keyboard
     }
 }

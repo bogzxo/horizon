@@ -6,43 +6,6 @@ using Horizon.HIDL.Runtime;
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
-/// Where a named sprite is to be found: which image it is in and which part of it.
-/// </summary>
-/// <param name="Path">The image file.</param>
-/// <param name="X">The left edge of the first frame, in pixels from the left of the image.</param>
-/// <param name="Y">The top edge, in pixels from the top of the image.</param>
-/// <param name="Border">
-/// How much of every edge (left, top, right, bottom) keeps its size when the sprite is stretched as a nine-slice,
-/// zero for sprites that are simply scaled.
-/// </param>
-/// <param name="Content">
-/// How far in from every edge (left, top, right, bottom) whatever is put on top of the sprite goes, like the label of a
-/// button whose art has a lip along the bottom. Zero for sprites that leave it to whoever draws them.
-/// </param>
-/// <param name="Frames">How many frames there are. Where each one is comes out of <see cref="FrameAt"/>.</param>
-/// <param name="FrameTime">How long every frame of an animation is shown for, in seconds.</param>
-/// <param name="Step">How far the next frame is from the one before, when the frames are laid out evenly. One sprite's width to the right unless the sheet says.</param>
-/// <param name="FramePositions">Where every frame after the first is, for frames that aren't laid out evenly. Null when they are.</param>
-public readonly record struct SpriteSource(
-    string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
-    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null)
-{
-    /// <summary>
-    /// The top left corner of a frame, the first being where the sprite is.
-    /// </summary>
-    public (int X, int Y) FrameAt(int frame)
-    {
-        if (frame <= 0) return (X, Y);
-
-        if (FramePositions is { } positions)
-            return frame - 1 < positions.Length ? positions[frame - 1] : (X, Y);
-
-        (int stepX, int stepY) = Step == default ? (Width, 0) : Step;
-        return (X + frame * stepX, Y + frame * stepY);
-    }
-}
-
-/// <summary>
 /// The names of the sprites in a set of images, as written down in a HIDL file (see Assets/uix/dead_revolver/sprites.hor
 /// for one that explains itself). It only says where everything is, nothing is loaded: pair it with a
 /// <see cref="TextureAtlas"/> to have the sprites that are actually used stitched together.
@@ -52,8 +15,14 @@ public readonly record struct SpriteSource(
 /// an image names its states and every sprite in it can be asked for as "name_hover" without being written down again.
 /// A sheet file is a program, so what is written down over and over (a key for every key of a keyboard) can be written
 /// as a loop instead, see the keyboard of the Dead Revolver pack.
+/// <para>
+/// An image can be an Aseprite file (.ase or .aseprite), and then the file itself says most of it: a theme is one of
+/// its layers, a state is one of its frames, a sprite can be one of its slices (which brings its nine-slice border
+/// along) and an animation one of its tags. See <see cref="ReadAsepriteImage"/> for how that is written down, and
+/// <see cref="FromAseprite"/> for a definition straight off a file with no sheet file at all.
+/// </para>
 /// </summary>
-public sealed class SpriteSheetDefinition
+public sealed partial class SpriteSheetDefinition
 {
     private const char FRAME_SEPARATOR = '#';
     private const char THEME_SEPARATOR = '@';
@@ -68,14 +37,25 @@ public sealed class SpriteSheetDefinition
         public Vector2 Cell;                                    // How big a cell of the grid is, for sprites written by their cell. Zero for no grid
         public Vector2 Origin;                                  // Where the grid starts
         public Dictionary<string, int> States = [];             // The other states every sprite comes in, and how many blocks along they are
+
+        // For an image that is an Aseprite file
+        public AsepriteDocument? Document;
+        public Dictionary<string, string> ThemeLayers = [];     // The layer (or group) every theme is drawn on
+        public Dictionary<string, int> StateFrames = [];        // Which frame of the file the other states of every sprite are on
+        public string[] Hidden = [];                            // Layers that are never drawn, whatever the file says
     }
 
     private readonly record struct SpriteDefinition(
         ImageDefinition Image, int Block, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
-        (int X, int Y) Step, (int X, int Y)[]? FramePositions);
+        (int X, int Y) Step, (int X, int Y)[]? FramePositions,
+        int ImageFrame = 0, int[]? ImageFrames = null, float[]? FrameTimes = null,
+        bool Trim = false, bool Crop = false, bool Loops = true, Vector2? Pivot = null, string? Layer = null);
 
     private readonly Dictionary<string, SpriteDefinition> _sprites = [];
     private readonly HashSet<string> _themes = [];
+
+    // What the sprites that are cropped to their art came to, which takes painting their frames to find out
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Name, string Layers), (int X, int Y, int Width, int Height)> _cropped = new();
 
     /// <summary>
     /// The file this was loaded from, for telling definitions apart.
@@ -149,7 +129,16 @@ public sealed class SpriteSheetDefinition
             sprite.Frames,
             sprite.FrameTime,
             sprite.Step,
-            Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y));
+            Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y),
+            LayersOf(image, theme, sprite.Layer),
+            sprite.ImageFrame,
+            sprite.ImageFrames,
+            sprite.FrameTimes,
+            sprite.Trim,
+            sprite.Loops,
+            sprite.Pivot);
+
+        if (sprite.Crop) whole = Crop(name, whole, image);
 
         if (frame < 0)
         {
@@ -159,8 +148,73 @@ public sealed class SpriteSheetDefinition
 
         // One frame on its own, as a sprite of one frame
         (int x, int y) = whole.FrameAt(frame);
-        source = whole with { X = x, Y = y, Frames = 1, FramePositions = null };
+        source = whole with
+        {
+            X = x, Y = y, Frames = 1, FramePositions = null,
+            ImageFrame = whole.ImageFrameAt(frame), ImageFrames = null, FrameTime = whole.TimeOf(frame), FrameTimes = null
+        };
         return true;
+    }
+
+    /// <summary>
+    /// How many frames a sprite has, 0 for a sprite the definition doesn't have.
+    /// </summary>
+    public int FrameCount(string name) => _sprites.TryGetValue(name, out var sprite) ? sprite.Frames : 0;
+
+    /// <summary>
+    /// Test if there is a sprite by this name.
+    /// </summary>
+    public bool Has(string name) => _sprites.ContainsKey(name);
+
+    /// <summary>
+    /// Helper method to say which layers of an Aseprite image a theme is drawn with: the layer of the theme (or of the
+    /// image's fallback) and none of the other themes' layers. Everything else is drawn the way the file was saved.
+    /// </summary>
+    /// <param name="own">The one layer a sprite is drawn on whatever the theme, null for a sprite that goes by the theme.</param>
+    private static LayerSelection LayersOf(ImageDefinition image, string? theme, string? own)
+    {
+        if (image.Document is not { } document) return default;
+
+        string? spec = null;
+        if (own is not null)
+        {
+            // That layer and none of the ones next to it, whatever they are
+            spec = LayerSelection.Only(own, document.Layers.Where(layer => layer.Depth == 0).Select(layer => layer.Name)).Spec;
+        }
+        else if (image.ThemeLayers.Count > 0)
+        {
+            if (theme is null || !image.ThemeLayers.TryGetValue(theme, out string? layer))
+                image.ThemeLayers.TryGetValue(image.Fallback, out layer);
+
+            if (layer is not null) spec = LayerSelection.Only(layer, image.ThemeLayers.Values).Spec;
+        }
+
+        if (image.Hidden.Length > 0)
+        {
+            string hidden = LayerSelection.Hiding(image.Hidden).Spec!;
+            spec = spec is null ? hidden : spec + "," + hidden;
+        }
+
+        return new LayerSelection(spec);
+    }
+
+    /// <summary>
+    /// Helper method to shrink a sprite to what is actually drawn of it, over all of its frames. Worked out once for every
+    /// theme, the colours of a pack aren't promised to be drawn the same to the pixel.
+    /// </summary>
+    private SpriteSource Crop(string name, in SpriteSource whole, ImageDefinition image)
+    {
+        if (image.Document is not { } document) return whole;
+
+        var key = (name, whole.Layers.Spec ?? string.Empty);
+        if (!_cropped.TryGetValue(key, out var bounds))
+        {
+            int[] frames = whole.ImageFrames ?? [whole.ImageFrame];
+            bounds = _cropped[key] = document.BoundsOf(frames, whole.Layers, whole.X, whole.Y, whole.Width, whole.Height);
+        }
+
+        // Nothing drawn at all, it stays the size it was given
+        return bounds.Width == 0 ? whole : whole with { X = bounds.X, Y = bounds.Y, Width = bounds.Width, Height = bounds.Height };
     }
 
     private static (int X, int Y)[]? Shift((int X, int Y)[]? positions, int byX, int byY)
@@ -212,6 +266,12 @@ public sealed class SpriteSheetDefinition
             throw new Exception($"Image '{name}' has to name its file.");
 
         var image = new ImageDefinition { Path = System.IO.Path.Combine(directory, fileName.Value) };
+
+        if (AsepriteDocument.IsAseprite(image.Path))
+        {
+            ReadAsepriteImage(name, image, properties);
+            return;
+        }
 
         // How far the next copy of the art is. A number is so many pixels to the right, a vector goes any way
         if (properties.TryGetValue("block", out var block))
@@ -298,6 +358,9 @@ public sealed class SpriteSheetDefinition
 
     private static SpriteDefinition ReadSprite(ImageDefinition image, string name, Dictionary<string, IRuntimeValue> properties)
     {
+        if (image.Document is not null)
+            return ReadAsepriteSprite(image, name, properties);
+
         float Optional(string key, float otherwise) =>
             properties.TryGetValue(key, out var value) ? Number(value, $"{name}.{key}") : otherwise;
 
@@ -331,10 +394,32 @@ public sealed class SpriteSheetDefinition
         int width = (int)(image.Size.X > 0 ? Optional("w", image.Size.X) : properties.ContainsKey("w") ? Optional("w", 0) : throw new Exception($"Sprite '{name}' is missing its w."));
         int height = (int)(image.Size.Y > 0 ? Optional("h", image.Size.Y) : properties.ContainsKey("h") ? Optional("h", 0) : throw new Exception($"Sprite '{name}' is missing its h."));
 
-        // The frames. A number of them laid out evenly (to the right unless a step says otherwise), or a list of
-        // where every frame after the first is, for frames that are scattered about the image
-        int frames = 1;
-        (int X, int Y)[]? positions = null;
+        ReadFrames(name, properties, out int frames, out (int X, int Y)[]? positions, out (int X, int Y) step);
+
+        return new SpriteDefinition(
+            image,
+            (int)Optional("block", 0),
+            x,
+            y,
+            width,
+            height,
+            Edges("border"),
+            Edges("content"),
+            frames,
+            Optional("time", 0.1f),
+            step,
+            positions);
+    }
+
+    /// <summary>
+    /// Helper method to read the frames of a sprite that are laid out on its image. A number of them laid out evenly (to
+    /// the right unless a step says otherwise), or a list of where every frame after the first is, for frames that are
+    /// scattered about the image.
+    /// </summary>
+    private static void ReadFrames(string name, Dictionary<string, IRuntimeValue> properties, out int frames, out (int X, int Y)[]? positions, out (int X, int Y) step)
+    {
+        frames = 1;
+        positions = null;
         if (properties.TryGetValue("frames", out var framesValue))
         {
             switch (framesValue)
@@ -358,27 +443,23 @@ public sealed class SpriteSheetDefinition
             }
         }
 
-        (int X, int Y) step = default;
+        step = default;
         if (properties.TryGetValue("step", out var stepValue))
         {
             Vector2 by = Pair(stepValue, $"{name}.step");
             step = ((int)by.X, (int)by.Y);
         }
-
-        return new SpriteDefinition(
-            image,
-            (int)Optional("block", 0),
-            x,
-            y,
-            width,
-            height,
-            Edges("border"),
-            Edges("content"),
-            frames,
-            Optional("time", 0.1f),
-            step,
-            positions);
     }
+
+    // A number for all four sides, vec(horizontal, vertical) or vec(left, top, right, bottom). Null if the sprite doesn't say
+    private static Vector4? EdgesOf(string name, Dictionary<string, IRuntimeValue> properties, string key) =>
+        !properties.TryGetValue(key, out var value) ? null : value switch
+        {
+            NumberValue number => new Vector4(number.Value),
+            Vector2Value vector => new Vector4(vector.Value.X, vector.Value.Y, vector.Value.X, vector.Value.Y),
+            Vector4Value vector => vector.Value,
+            _ => throw new Exception($"{name}.{key} has to be a number, a vec(horizontal, vertical) or a vec(left, top, right, bottom).")
+        };
 
     private static float Number(IRuntimeValue value, string what) =>
         value is NumberValue number ? number.Value : throw new Exception($"{what} has to be a number.");

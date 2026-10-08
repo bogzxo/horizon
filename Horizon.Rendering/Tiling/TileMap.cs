@@ -749,6 +749,71 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>
+    /// Makes something that finds the way from one place of the map to another around whatever is solid, see
+    /// <see cref="TileMapPathfinder"/>. Solid is what <see cref="BuildColliders"/> makes boxes of.
+    /// <code>
+    /// var paths = map.CreatePathfinder();
+    /// var walker = new TileMapAgent(new Vector2(30, 70), Walks: true, JumpHeight: 48, JumpDistance: 64);
+    /// if (paths.TryFindPath(from, to, walker, steps)) { /* walk to steps[0].Position, then the next */ }
+    /// </code>
+    /// </summary>
+    /// <param name="isSolid">Decides for every tile instead, for when being solid depends on something else altogether.</param>
+    public TileMapPathfinder CreatePathfinder(Func<TileMapCell, bool>? isSolid = null) => new(this, isSolid);
+
+    /// <summary>
+    /// Helper method to say which cells of the map have anything solid in them, a row after the other from the top
+    /// left (see <see cref="IndexOf"/>). Rougher than <see cref="BuildColliders"/>: a tile that is solid in part is
+    /// solid, and so is every cell a rectangle of a collidable object layer reaches into.
+    /// </summary>
+    internal bool[] BuildSolidGrid(Func<TileMapCell, bool>? isSolid = null)
+    {
+        var solid = new bool[Width * Height];
+
+        foreach (TileMapLayer layer in layers)
+        {
+            if (layer.Kind == TileMapLayerKind.Objects)
+            {
+                if (!layer.IsCollidable) continue;
+
+                foreach (TileMapObject found in objects)
+                {
+                    if (found.Layer != layer || found.Shape is not (TileMapShape.Rectangle or TileMapShape.Tile) || found.Size is not { X: > 0, Y: > 0 })
+                        continue;
+
+                    // Every cell the rectangle reaches into, less a hair so one that ends on a grid line doesn't spill over it
+                    (int left, int bottom) = WorldToTile(found.Min + new Vector2(0.01f));
+                    (int right, int top) = WorldToTile(found.Min + found.Size - new Vector2(0.01f));
+
+                    for (int y = top; y <= bottom; y++)
+                    {
+                        for (int x = left; x <= right; x++)
+                        {
+                            int index = IndexOf(x, y);
+                            if (index >= 0) solid[index] = true;
+                        }
+                    }
+                }
+
+                continue;
+            }
+
+            foreach (TileMapCell cell in layer.Tiles())
+            {
+                bool wanted = isSolid?.Invoke(cell) ?? (layer.IsCollidable || cell.Tile.Properties.GetBool("collidable") || cell.Tile.Collision.Count > 0);
+                if (!wanted) continue;
+
+                // A layer that was shoved off the grid is solid wherever its tiles ended up
+                (int x, int y) = layer.WorldOffset != Vector2.Zero ? WorldToTile(cell.Centre) : (cell.X, cell.Y);
+
+                int index = IndexOf(x, y);
+                if (index >= 0) solid[index] = true;
+            }
+        }
+
+        return solid;
+    }
+
+    /// <summary>
     /// The middle of every cell that blocks light, for an <see cref="OcclusionMap2D"/> laid over the map
     /// (<c>new OcclusionMap2D(map.Width, map.Height, map.Origin, map.TileSize)</c>). See <see cref="TileMapLayer.CastsShadows"/>.
     /// </summary>

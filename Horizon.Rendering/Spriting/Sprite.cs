@@ -26,15 +26,54 @@ public class Sprite : GameObject
     /// </summary>
     public TextureAtlas? Atlas { get; private set; }
 
-    // What the frames of the sprite go by in the atlas, and which of them is showing
-    private string[] _atlasFrames = [];
-    private float _atlasFrameTime, _atlasFrameTimer;
-    private int _atlasFrame;
+    /// <summary>
+    /// One animation of a sprite out of an atlas: what its frames go by in the atlas and how it plays.
+    /// </summary>
+    private sealed record AtlasAnimation(string Name, string[] Frames, float FrameTime, float[]? FrameTimes, bool Loops)
+    {
+        public float TimeOf(int frame) => FrameTimes is { } times && frame < times.Length ? times[frame] : FrameTime;
+    }
+
+    private static readonly AtlasAnimation NoAnimation = new(string.Empty, [], 0.0f, null, true);
+
+    // Where the art of a sprite out of an atlas is written down, and the animations of it that have been asked for so far
+    private SpriteSheetDefinition? _definition;
+    private string? _theme;
+    private readonly Dictionary<string, AtlasAnimation> _animations = [];
+
+    // The animation that is showing and which of its frames. Swapped whole, the render thread reads it while it plays
+    private volatile AtlasAnimation _animation = NoAnimation;
+    private float _atlasFrameTimer;
+    private volatile int _atlasFrame;
 
     /// <summary>
-    /// Whether a sprite out of an atlas plays through its frames, off it stays on the one it is on.
+    /// Whether a sprite out of an atlas plays through its frames, off it stays on the one it is on. Off is for whoever
+    /// decides the frame themselves, see <see cref="Frame"/>.
     /// </summary>
     public bool Animated { get; set; } = true;
+
+    /// <summary>
+    /// Which frame of its animation a sprite out of an atlas is showing, counted from 0. Setting one past the end shows the last.
+    /// </summary>
+    public int Frame
+    {
+        get => _atlasFrame;
+        set
+        {
+            _atlasFrame = Math.Clamp(value, 0, Math.Max(0, _animation.Frames.Length - 1));
+            _atlasFrameTimer = 0.0f;
+        }
+    }
+
+    /// <summary>
+    /// How many frames the animation that is showing has.
+    /// </summary>
+    public int FrameCount => _animation.Frames.Length;
+
+    /// <summary>
+    /// Whether an animation that doesn't go round and round has got to its last frame. Always false for one that does.
+    /// </summary>
+    public bool IsFinished => _animation is { Loops: false } animation && _atlasFrame >= animation.Frames.Length - 1;
 
     /// <summary>
     /// Multiplied into the colours of the sprite.
@@ -190,17 +229,65 @@ public class Sprite : GameObject
             return false;
         }
 
-        _atlasFrames = atlas.Request(source);
-        _atlasFrameTime = source.FrameTime;
-        _atlasFrameTimer = 0.0f;
-        _atlasFrame = 0;
+        // Another atlas or another definition, whatever was asked for before is no good any more
+        if (!ReferenceEquals(Atlas, atlas) || !ReferenceEquals(_definition, definition) || _theme != theme)
+            _animations.Clear();
 
         this.Atlas = atlas;
-        this.FrameName = name;
+        _definition = definition;
+        _theme = theme;
+
+        Show(_animations[name] = new AtlasAnimation(name, atlas.Request(source), source.FrameTime, source.FrameTimes, source.Loops));
 
         _hasBeenSetup = true;
         return true;
     }
+
+    /// <summary>
+    /// Helper method to find an animation of a sprite out of an atlas by name, and ask the atlas for its frames the first
+    /// time. Null for a name the definition doesn't have.
+    /// </summary>
+    private AtlasAnimation? AnimationOf(string name)
+    {
+        if (_animations.TryGetValue(name, out var known)) return known;
+        if (Atlas is null || _definition is null || !_definition.TryGetSprite(name, _theme, out var source)) return null;
+
+        return _animations[name] = new AtlasAnimation(name, Atlas.Request(source), source.FrameTime, source.FrameTimes, source.Loops);
+    }
+
+    private void Show(AtlasAnimation animation)
+    {
+        _atlasFrame = 0;
+        _atlasFrameTimer = 0.0f;
+        _animation = animation;
+        this.FrameName = animation.Name;
+    }
+
+    /// <summary>
+    /// Asks the atlas for the frames of these sprites of the definition now, rather than the first time each of them is
+    /// shown. Art that is asked for isn't there until the atlas has been updated, which a sprite in the middle of a fight
+    /// can't wait for. Only for a sprite out of an atlas, after <see cref="ConfigureAtlas"/>.
+    /// </summary>
+    public void Preload(IEnumerable<string> names)
+    {
+        foreach (string name in names) AnimationOf(name);
+    }
+
+    /// <summary>
+    /// How many frames an animation of the sprite has, 0 for one it doesn't have.
+    /// </summary>
+    public int GetFrameCount(string name)
+    {
+        if (Atlas is not null) return AnimationOf(name)?.Frames.Length ?? 0;
+
+        return AnimationManager is not null && AnimationManager.Animations.TryGetValue(name, out var animation) ? (int)animation.Length : 0;
+    }
+
+    /// <summary>
+    /// Test if the sprite has an animation by this name.
+    /// </summary>
+    public bool HasAnimation(string name) =>
+        Atlas is not null ? _definition?.Has(name) == true : AnimationManager?.Animations.ContainsKey(name) == true;
 
     public override void UpdateState(float dt)
     {
@@ -210,13 +297,25 @@ public class Sprite : GameObject
         _motion.Update(Transform.Position, dt);
 
         // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager
-        if (Atlas is null || !Animated || _atlasFrames.Length < 2 || _atlasFrameTime <= 0.0f) return;
+        AtlasAnimation animation = _animation;
+        if (Atlas is null || !Animated || animation.Frames.Length < 2) return;
 
         _atlasFrameTimer += dt;
-        while (_atlasFrameTimer >= _atlasFrameTime)
+        while (true)
         {
-            _atlasFrameTimer -= _atlasFrameTime;
-            _atlasFrame = (_atlasFrame + 1) % _atlasFrames.Length;
+            int frame = _atlasFrame;
+            float time = animation.TimeOf(frame);
+            if (time <= 0.0f || _atlasFrameTimer < time) break;
+
+            // One that plays once stays on its last frame
+            if (!animation.Loops && frame >= animation.Frames.Length - 1)
+            {
+                _atlasFrameTimer = 0.0f;
+                break;
+            }
+
+            _atlasFrameTimer -= time;
+            _atlasFrame = (frame + 1) % animation.Frames.Length;
         }
     }
 
@@ -229,13 +328,16 @@ public class Sprite : GameObject
     {
         Vector2 texMin, texMax;
 
+        // For art that had its see-through edges left out of the atlas, the part of the sprite that is left of it
+        AtlasRegion trimmed = default;
+
         if (Atlas is { } atlas)
         {
             // The frame can change under us (it is advanced on the simulation thread), the array it indexes can't
-            string[] frames = _atlasFrames;
+            string[] frames = _animation.Frames;
             int frame = _atlasFrame;
 
-            if (frames.Length == 0 || !atlas.TryGet(frames[frame < frames.Length ? frame : 0], out var region))
+            if (frames.Length == 0 || !atlas.TryGet(frames[frame < frames.Length ? frame : 0], out var region) || region.IsEmpty)
             {
                 item = default;
                 return false;
@@ -243,6 +345,8 @@ public class Sprite : GameObject
 
             texMin = region.Position;
             texMax = region.Position + region.Size;
+
+            if (region.SourceSize != default) trimmed = region;
         }
         else
         {
@@ -263,12 +367,42 @@ public class Sprite : GameObject
             (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0));
         item.Motion = _motion.Velocity;
         item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
+
+        if (trimmed.SourceSize != default)
+        {
+            // The quad is the whole frame. What is drawn is the part of it the art takes up, which is counted from the
+            // top left in the atlas and from the bottom left in the world
+            Vector2 full = trimmed.SourceSize;
+            float left = trimmed.Offset.X / full.X;
+            float bottom = (full.Y - trimmed.Offset.Y - trimmed.Size.Y) / full.Y;
+
+            item.Origin += item.AxisX * left + item.AxisY * bottom;
+            item.AxisX *= trimmed.Size.X / full.X;
+            item.AxisY *= trimmed.Size.Y / full.Y;
+        }
+
         return true;
     }
 
-    public void SetAnimation(string name)
+    /// <summary>
+    /// Changes the animation the sprite shows. For a sprite out of an atlas that is any sprite of the definition it was
+    /// configured with, started from its first frame (asking for the one that is showing already changes nothing).
+    /// For a sprite of a sprite sheet it is one of the animations of its animation manager.
+    /// </summary>
+    /// <returns>False if a sprite out of an atlas has no animation by that name, it carries on with the one it has.</returns>
+    public bool SetAnimation(string name)
     {
+        if (Atlas is not null && _definition is not null)
+        {
+            if (_animation.Name == name) return true;
+            if (AnimationOf(name) is not { } animation) return false;
+
+            Show(animation);
+            return true;
+        }
+
         this.FrameName = name;
+        return true;
     }
 
     public Vector2 GetFrameOffset()

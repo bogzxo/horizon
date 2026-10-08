@@ -60,9 +60,11 @@ public sealed partial class UIDrawList
     private int frame;
     private float deltaTime;
 
-    // How long the UI has been drawn for, for the icons that animate. Starts over now and then so it never grows coarse
+    // How long the UI has been drawn for, for the icons that animate. Starts over now and then so it never grows coarse.
+    // Whoever paints with more than one list hands the time in (see Begin): a list that counts for itself only counts
+    // the updates it was painted on, and two lists taking turns each run at half speed and out of step with the other
     private float time;
-    private const float TIME_WRAP = 3600.0f;
+    internal const float TIME_WRAP = 3600.0f;
 
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
@@ -82,13 +84,14 @@ public sealed partial class UIDrawList
     /// <param name="frame">Which update this is, counting up by one for as long as the UI is painted without a break.</param>
     /// <param name="dt">How long the update is, in seconds.</param>
     /// <param name="tracksMotion">See <see cref="TracksMotion"/>.</param>
-    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, bool tracksMotion = false)
+    /// <param name="clock">How long the UI has been drawn for, in seconds, kept by whoever owns the list. Null for a list that keeps count itself.</param>
+    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, bool tracksMotion = false, float? clock = null)
     {
         Skin = skin;
 
         this.frame = frame;
         deltaTime = dt;
-        time = (time + dt) % TIME_WRAP;
+        time = clock ?? (time + dt) % TIME_WRAP;
         TracksMotion = tracksMotion;
         Moving = false;
 
