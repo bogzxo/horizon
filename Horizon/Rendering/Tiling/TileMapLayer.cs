@@ -84,7 +84,7 @@ public readonly record struct TileMapBox(Vector2 Min, Vector2 Size)
 /// A few custom properties of a layer mean something to the map (their names don't mind their case):
 /// <list type="bullet">
 /// <item><c>IsCollidable</c> (bool): its tiles are solid, see <see cref="TileMap.BuildColliders"/>.</item>
-/// <item><c>CastsShadows</c> (bool): its tiles block light. A layer that doesn't say does if it is collidable.</item>
+/// <item><c>CastsShadows</c> (bool): its tiles block light. Only a layer that says so does, the colliders of a map are usually not what the light should see.</item>
 /// <item><c>Emissive</c> (float, 0 to 1): how much of it shows no matter the light. A sky is 1.</item>
 /// <item><c>Foreground</c> (bool, <c>IsAlwaysOnTop</c> works too): it is drawn by <see cref="TileMap.Foreground"/>, in front of whatever is added between the two.</item>
 /// <item><c>ScrollX</c>, <c>ScrollY</c> (float): it drifts by itself, in pixels a second. For clouds, with an image layer that repeats.</item>
@@ -112,7 +112,7 @@ public sealed class TileMapLayer
         };
 
         IsCollidable = properties.GetBool("IsCollidable", properties.GetBool("Collidable"));
-        CastsShadows = properties.GetBool("CastsShadows", IsCollidable);
+        CastsShadows = properties.GetBool("CastsShadows");
         Emissive = Math.Clamp(properties.GetFloat("Emissive"), 0.0f, 1.0f);
         IsForeground = properties.GetBool("Foreground", properties.GetBool("IsAlwaysOnTop"));
 
