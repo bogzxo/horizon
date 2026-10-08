@@ -1,10 +1,14 @@
-﻿using System.Drawing;
+using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
+using Horizon.OpenGL;
+using Horizon.OpenGL.Assets;
+
+using Texture = Horizon.OpenGL.Assets.Texture;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering.Lighting;
@@ -134,6 +138,29 @@ public class DeferredRenderer2D : Renderer2D
     /// the lower it is the more the lights are what there is to see by.
     /// </summary>
     public Vector3 Ambient { get; set; } = Vector3.One;
+
+    /// <summary>
+    /// How the picture is lit, see <see cref="LightingMode"/>. Direct unless asked, path traced is the fancy one.
+    /// From any thread, it takes at the next frame.
+    /// </summary>
+    public LightingMode Lighting { get; set; } = LightingMode.Direct;
+
+    /// <summary>The settings of the path traced lighting, used when <see cref="Lighting"/> says so.</summary>
+    public PathTracedLighting2D PathTracing { get; } = new();
+
+    /// <summary>Shows what the tracer found instead of the picture, for seeing what it is up to. Only with the path tracing on.</summary>
+    public bool ShowTracedLight { get; set; }
+
+    /* The lights as the shaders get them, uploaded once a frame for every pass that lights */
+
+    // Must match the binding of LightBuffer in lighting/direct.glsl
+    private const uint LIGHT_BINDING = 0;
+    private const uint OCCLUSION_UNIT = 3;
+
+    private readonly LightData[] lightData = new LightData[MaxLights];
+    private BufferObject? lightBuffer;
+    private int uploadedLights;
+    private bool lightsUploaded;
 
     /// <summary>
     /// What blocks the lights, null for nothing at all (no shadows). Whoever sets it is the one to dispose of it.
@@ -295,7 +322,82 @@ public class DeferredRenderer2D : Renderer2D
             (shownBefore, shownAfter, shownBlends) = (null, null, false);
         }
 
+        lightsUploaded = false;
         base.Render(dt);
+    }
+
+    /// <summary>
+    /// The lights of this frame go to the GPU, and the tracer runs if it is on. The deferred pass that follows reads both.
+    /// </summary>
+    protected override void BeforeResolve(float dt)
+    {
+        Camera camera = Engine.ActiveCamera;
+        UploadLights(camera);
+
+        if (Lighting != LightingMode.PathTraced) return;
+
+        CameraBlock.Use(camera);
+        PathTracing.Run(this, camera, dt);
+    }
+
+    /// <summary>
+    /// Helper method to collect the lights that are in view and hand them to the GPU, once a frame.
+    /// </summary>
+    private void UploadLights(Camera camera)
+    {
+        if (lightsUploaded) return;
+        lightsUploaded = true;
+
+        if (lightBuffer is null)
+        {
+            lightBuffer = BufferObject.Create(new BufferObjectDescription
+            {
+                IsStorageBuffer = true,
+                // Never mapped, the lights of a frame are simply written over those of the last
+                StorageMasks = BufferStorageMask.DynamicStorageBit,
+                Type = BufferTargetARB.ShaderStorageBuffer,
+                Size = (uint)(MaxLights * Unsafe.SizeOf<LightData>())
+            });
+        }
+
+        uploadedLights = CollectLights(lightData, camera.Bounds);
+        if (uploadedLights > 0)
+            lightBuffer.Update<LightData>(lightData.AsSpan(0, uploadedLights));
+    }
+
+    /// <summary>
+    /// Sets everything a technique that includes shaders/lighting/direct.glsl needs, with the technique bound, the
+    /// lights of the frame, what blocks them and how shiny things are. Render thread, in or after <see cref="BeforeResolve"/>.
+    /// </summary>
+    internal void BindLighting(Technique technique)
+    {
+        UploadLights(Engine.ActiveCamera);
+
+        if (lightBuffer is not null && uploadedLights > 0)
+            technique.BindBuffer(LIGHT_BINDING, lightBuffer);
+
+        technique.SetUniform("uLightCount", uploadedLights);
+        technique.SetUniform("uShininess", MathF.Max(ShownShininess, 1.0f));
+        technique.SetUniform("uSpecularIntensity", MathF.Max(ShownSpecularIntensity, 0.0f));
+
+        OcclusionMap2D? occlusion = ShownOcclusion;
+        Texture? texture = ShownShadows ? occlusion?.GetTexture() : null;
+
+        technique.SetUniform("uShadows", texture is not null);
+        if (texture is null || occlusion is null) return;
+
+        texture.Bind(OCCLUSION_UNIT);
+
+        Vector2 origin = occlusion.Origin, cellSize = occlusion.CellSize, size = new(occlusion.Width, occlusion.Height);
+        technique.SetUniform("uOcclusionOrigin", in origin);
+        technique.SetUniform("uOcclusionCellSize", in cellSize);
+        technique.SetUniform("uOcclusionSize", in size);
+    }
+
+    protected override void DisposeOther()
+    {
+        PathTracing.Dispose();
+        base.DisposeOther();
     }
 
     private void FadeFlashes(float dt)

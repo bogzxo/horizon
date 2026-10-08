@@ -24,7 +24,7 @@ namespace Horizon.Testing.Examples.Rendering;
 /// Started without the lighting this is the test of a plain <see cref="Renderer2D"/> instead: the same wall and particles
 /// drawn into a frame buffer a quarter of the size of the window, and blown up from there.
 /// </summary>
-public class LightingExample(bool deferred = true) : Scene, ITestControls
+public class LightingExample(bool deferred = true, bool pathTraced = false, bool showTraced = false) : Scene, ITestControls
 {
     private const float CellSize = 32.0f;
     private const float StatusInterval = 5.0f;
@@ -81,6 +81,8 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
             new("G", "toggle the specular map"),
             new("P", "toggle lighting in big pixels"),
             new("A", "next ambient"),
+            new("F", "toggle the path traced lighting (the fancy one)"),
+            new("B", "show what the path tracer found, on its own"),
         ]
         : [];
 
@@ -107,7 +109,7 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
 
         // Either way everything below is drawn into a frame buffer first
         renderer = AddEntity(deferred
-            ? lighting = new DeferredRenderer2D(width, height) { Ambient = Ambients[ambient] }
+            ? lighting = new DeferredRenderer2D(width, height) { Ambient = Ambients[ambient], Lighting = pathTraced ? LightingMode.PathTraced : LightingMode.Direct, ShowTracedLight = showTraced }
             : new Renderer2D(width / 4, height / 4));
 
         // The renderers compile their shaders as they are constructed, so they need the GL context.
@@ -211,7 +213,7 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
             Console.WriteLine("LightingExample\r\n\r\n Three lights circle the middle, a fourth follows the mouse. The blocks cast shadows.");
         }
 
-        Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.02f, 0.02f, 0.04f, 1.0f);
     }
 
     public override void UpdateState(float dt)
@@ -242,7 +244,7 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
             statusTimer = 0.0f;
             Console.WriteLine(lighting is null
                 ? $"plain renderer, frame buffer {renderer.ViewportSize.X}x{renderer.ViewportSize.Y}"
-                : $"lights: {4 + dropped.Count}, shadows: {lighting.Shadows}, normals: {wall.Normals}, specular: {wall.Specular}, pixel size: {lighting.LightingPixelSize}, ambient: {lighting.Ambient}");
+                : $"lights: {4 + dropped.Count}, shadows: {lighting.Shadows}, normals: {wall.Normals}, specular: {wall.Specular}, pixel size: {lighting.LightingPixelSize}, ambient: {lighting.Ambient}, lighting: {lighting.Lighting}");
         }
     }
 
@@ -266,6 +268,8 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
         if (keyboard.WasPressed(Key.G)) wall.Specular = !wall.Specular;
         if (keyboard.WasPressed(Key.P)) lighting!.LightingPixelSize = lighting.LightingPixelSize > 0.0f ? 0.0f : 8.0f;
         if (keyboard.WasPressed(Key.A)) lighting!.Ambient = Ambients[ambient = (ambient + 1) % Ambients.Length];
+        if (keyboard.WasPressed(Key.F)) lighting!.Lighting = lighting.Lighting == LightingMode.Direct ? LightingMode.PathTraced : LightingMode.Direct;
+        if (keyboard.WasPressed(Key.B)) lighting!.ShowTracedLight = !lighting.ShowTracedLight;
 
         if (keyboard.WasPressed(Key.C))
         {
