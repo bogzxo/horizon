@@ -503,8 +503,10 @@ public partial class UICompositor : GameComponent, IDisposable
             ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
             for (int i = 0; i < b.Length; i++)
             {
-                // The same quad if it shows the same thing the same way: then only where it is, how big and what colour moved
-                blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax
+                // The same quad if it shows the same thing the same way, then only where it is, how big and what colour
+                // moved. One that is suddenly somewhere else entirely (a menu that was folded away off screen and
+                // popped up) is not shown flying over, it was put there, see SpriteItem.CanBlend
+                blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[i], b[i])
                     ? SpriteItem.Blend(a[i], b[i], alpha)
                     : a[i];
             }
@@ -616,6 +618,8 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
+        using var scope = GameEngine.Instance.Graphics.BeginGpuScope("ui");
+
         // A UI with nothing on it (an overlay that's switched off, say) draws nothing, and in particular doesn't lay an
         // empty picture over the whole screen every frame, which is a full screen pass for fuck all. It's painted
         // afresh the moment it has something again

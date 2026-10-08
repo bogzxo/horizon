@@ -2,7 +2,7 @@ using System;
 using System.IO.Compression;
 using System.Numerics;
 
-using Horizon.OpenGL;
+using Horizon.Graphics;
 
 using Horizon.Engine;
 using Horizon.Rendering;

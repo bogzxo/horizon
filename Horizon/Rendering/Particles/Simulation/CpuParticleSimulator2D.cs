@@ -1,48 +1,30 @@
 using System.Numerics;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
-using Horizon.Engine;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
 /// Simulates particles on the CPU, on the simulation thread.
 /// Live particles are always packed in [0, Count), so only live particles are simulated,
-/// uploaded and drawn. GPU data is written through a persistently mapped, triple-buffered
-/// instance buffer, see <see cref="StreamBuffer{T}"/>.
+/// uploaded and drawn. The instances are written straight into a persistently mapped, triple-buffered
+/// buffer the renderer reads, see <see cref="StreamBuffer{T}"/>.
 /// </summary>
 public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 {
-    // 20 bytes per particle: offset.xy + alive + velocity.xy. Matches attribute 1 (vec2), 2 (float) and 3 (vec2).
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ParticleRenderData
-    {
-        public Vector2 offset;
-        public float alive;
-        public Vector2 velocity;
-
-        public static readonly uint SizeInBytes = (uint)Unsafe.SizeOf<ParticleRenderData>();
-    }
-
-    // The instances of the frames, written straight into memory the GPU reads: three frames' worth that take turns, see StreamBuffer
-    private StreamBuffer<ParticleRenderData>? instances;
+    // The instances of the frames, written straight into memory the GPU reads, three frames' worth that take turns
+    private StreamBuffer<ParticleInstance>? instances;
 
     // Simulation state, only ever touched by the simulation thread. Indices are NOT stable
-    // (dead particles are removed by swapping the last live particle into their slot).
+    // (dead particles are removed by swapping the last live particle into their slot)
     private ParticleState2D[] particles = [];
     private int count;
 
     // The simulation thread fills `back`, then swaps it in as `front` for the render thread to upload,
-    // so a frame never sees a half-simulated step.
+    // so a frame never sees a half-simulated step
     private readonly Lock frameLock = new();
-    private ParticleRenderData[] back = [];
-    private ParticleRenderData[] front = [];
+    private ParticleInstance[] back = [];
+    private ParticleInstance[] front = [];
     private int frontCount;
 
     // How long the particles have been simulated for, and as of when `front` was made and what was last handed out
@@ -52,17 +34,13 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 
     public override uint Count => (uint)count;
 
-    protected internal override unsafe void Initialize(VertexBufferObject mesh)
+    protected internal override void Initialize()
     {
         particles = new ParticleState2D[Maximum];
-        back = new ParticleRenderData[Maximum];
-        front = new ParticleRenderData[Maximum];
+        back = new ParticleInstance[Maximum];
+        front = new ParticleInstance[Maximum];
 
-        instances = new StreamBuffer<ParticleRenderData>(BufferTargetARB.ArrayBuffer, (int)Maximum, "particle instances");
-        if (instances.Buffer is null)
-            return;
-
-        AttachInstanceBuffer(mesh, instances.Buffer, ParticleRenderData.SizeInBytes, 0, sizeof(float) * 2, sizeof(float) * 3);
+        instances = new StreamBuffer<ParticleInstance>(BufferUsage.Storage, (int)Maximum, "particle instances");
     }
 
     protected internal override void Update(float dt)
@@ -71,7 +49,7 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         var render = back;
         int live = count;
 
-        // Anything that doesn't fit exceeds capacity this frame: drop it.
+        // Anything that doesn't fit exceeds capacity this frame, so it is dropped
         var spawned = TakePending();
         int room = Math.Min(spawned.Length, state.Length - live);
         spawned[..room].CopyTo(state.AsSpan(live));
@@ -87,8 +65,8 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 
             if (p.Life <= 0.0f)
             {
-                // Swap-remove: the last live particle (not yet updated this frame) takes this slot,
-                // then we re-process index i without advancing.
+                // Swap-remove, the last live particle (not yet updated this frame) takes this slot,
+                // then index i is done again without advancing
                 live--;
                 if (i != live)
                     p = state[live];
@@ -98,9 +76,9 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
             p.Velocity += gravityStep;
             p.Position += p.Velocity * dt;
 
-            render[i].offset = p.Position;
-            render[i].alive = p.Life;
-            render[i].velocity = p.Velocity;
+            render[i].Offset = p.Position;
+            render[i].Alive = p.Life;
+            render[i].Velocity = p.Velocity;
             i++;
         }
 
@@ -115,24 +93,28 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         }
     }
 
-    protected internal override ParticleRange Prepare()
+    protected internal override bool Prepare(out ParticleDraw draw)
     {
+        draw = default;
         if (instances is null || frontCount < 1)
-            return default;
+            return false;
 
         // One bulk copy of only the live particles into this frame's region of the stream, which waits for the GPU
         // to be done reading it (three frames on, it is)
         lock (frameLock)
         {
             int live = frontCount;
-            Span<ParticleRenderData> into = instances.Begin(live);
+            Span<ParticleInstance> into = instances.Begin(live);
             if (into.IsEmpty)
-                return default;
+                return false;
 
             front.AsSpan(0, live).CopyTo(into);
             preparedTime = frontTime;
-            return new ParticleRange((uint)instances.Offset, (uint)live);
         }
+
+        instances.BindRange(INSTANCES_BINDING);
+        draw = new ParticleDraw((uint)frontCount, 0);
+        return true;
     }
 
     protected internal override void Submitted() => instances?.End();

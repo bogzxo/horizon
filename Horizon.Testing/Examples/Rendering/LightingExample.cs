@@ -2,13 +2,13 @@ using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Input;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Physics;
 using Horizon.Rendering;
 using Horizon.Rendering.Lighting;
 using Horizon.Rendering.Particles;
 using Horizon.Rendering.Particles.Simulation;
+using Horizon.Rendering.Spriting;
 
 using Silk.NET.Input;
 
@@ -88,6 +88,9 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
 
     private Renderer2D renderer = null!;
     private DeferredRenderer2D? lighting;
+
+    // A sprite that blocks light the way it is drawn, pixel for pixel
+    private Sprite? blob;
     private OcclusionMap2D? occlusion;
     private WallTechnique wall = null!;
     private ParticleRenderer2D dust = null!, sparks = null!;
@@ -115,6 +118,19 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
         // The renderers compile their shaders as they are constructed, so they need the GL context.
         wall = new WallTechnique();
         renderer.AddEntity(new FullScreenPass(wall));
+
+        // A sprite that casts a shadow as sharp as its pixels (see Sprite.CastsShadows), wandering about the lights
+        var casters = renderer.AddEntity(new SpriteBatch());
+        if (Engine.ObjectManager.Textures.TryCreate(
+                new TextureDescription { Paths = [Basics.SpritesExample.BlobSheet()], Definition = TextureDefinition.RgbaUnsignedByteNearest },
+                out var blobArt))
+        {
+            var sheet = SpriteSheet.FromTexture(blobArt.Asset, new Vector2(Basics.SpritesExample.CELL));
+            blob = casters.AddEntity(new Sprite(new Vector2(Basics.SpritesExample.CELL * 6)) { CastsShadows = true });
+            blob.ConfigureSpriteSheet(sheet, "idle");
+            blob.AddAnimation("idle", Vector2.Zero, 4, 0.25f);
+            casters.Add(blob);
+        }
 
         // Lit like everything else, it only shows where there is light
         dust = renderer.AddEntity(
@@ -255,6 +271,9 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
         Vector2 mousePos = ActiveCamera.ScreenToWorld(mouse.Position);
 
         mouseLight!.Position = mousePos;
+
+        if (blob is not null)
+            blob.Transform.Position = new Vector2(MathF.Cos(time * 0.35f) * 260.0f, MathF.Sin(time * 0.5f) * 140.0f);
 
         for (int i = 0; i < orbit.Length; i++)
         {

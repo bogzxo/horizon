@@ -11,7 +11,7 @@ using Horizon.Core.Threading;
 
 using Silk.NET.Input;
 using Silk.NET.Input.Glfw;
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 using Silk.NET.Windowing;
 using Silk.NET.Windowing.Glfw;
 
@@ -171,9 +171,9 @@ public class WindowManager : GameComponent, IDisposable
     public DisplaySettings Display { get; private set; }
 
     /// <summary>
-    /// The GL context associated with the windows main render thread.
+    /// The GPU, made on the thread that draws before its first frame. Null until then.
     /// </summary>
-    public GL GL { get; private set; }
+    public GraphicsDevice? Graphics { get; private set; }
 
     /// <summary>
     /// The native window underneath, for whoever needs something this class doesn't offer.
@@ -270,13 +270,8 @@ public class WindowManager : GameComponent, IDisposable
         // Create a window with the specified options.
         WindowOptions = WindowOptions.Default with
         {
-            API = new GraphicsAPI()
-            {
-                Flags = ContextFlags.ForwardCompatible,
-                API = ContextAPI.OpenGL,
-                Profile = ContextProfile.Core,
-                Version = new APIVersion(4, 6),
-            },
+            // Vulkan, so the window only has a surface to offer and the device does the rest
+            API = GraphicsAPI.DefaultVulkan,
             Title = config.WindowTitle ?? string.Empty,
             WindowState = config.Fullscreen ? WindowState.Fullscreen : config.Maximized ? WindowState.Maximized : WindowState.Normal,
             Size = new Silk.NET.Maths.Vector2D<int>(
@@ -287,12 +282,9 @@ public class WindowManager : GameComponent, IDisposable
             // it would spend the wait for the next one spinning (see WaitForFrame)
             UpdatesPerSecond = 0,
             FramesPerSecond = 0,
-            ShouldSwapAutomatically = true,
+            ShouldSwapAutomatically = false,
             VSync = config.VSync,
-            PreferredBitDepth = new Silk.NET.Maths.Vector4D<int>(8, 8, 8, 8),
-            PreferredStencilBufferBits = 8,
             Samples = 0,
-
         };
 
         display = new DisplayState(config.WindowSize, config.WindowSize, config.WindowSize);
@@ -336,19 +328,15 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void SetUpDrawing()
     {
-        _window.GLContext!.MakeCurrent();
-
-        // Whatever the window was made with, it is this thread that swaps now
-        _window.GLContext.SwapInterval(Display.VSync ? 1 : 0);
-
         EntityLifecycle.ClaimRenderThread();
         SnapshotClock.Active = snapshots;
 
-        GL = _window.CreateOpenGL();
-        Horizon.OpenGL.Managers.ObjectManager.SetGL(GL);
-
-        // TODO: @bogz investigate why errors crash the integration
-        GL.GetError();
+        // The device belongs to this thread from here on, it is the one that records and submits every frame
+        Graphics = new GraphicsDevice(
+            _window.VkSurface ?? throw new InvalidOperationException("The window has no Vulkan surface, is the Vulkan loader installed?"),
+            (uint)ViewportSize.X,
+            (uint)ViewportSize.Y,
+            Display.VSync);
 
         Parent.Initialize();
 
@@ -506,7 +494,7 @@ public class WindowManager : GameComponent, IDisposable
         }
 
         framePeriod = PeriodOf(settings.FramesPerSecond);
-        _window.GLContext?.SwapInterval(settings.VSync ? 1 : 0);
+        Graphics?.SetVSync(settings.VSync);
 
         OnWindowThread(() => ApplyWindow(settings));
 
@@ -621,9 +609,8 @@ public class WindowManager : GameComponent, IDisposable
 
         IsRunning = true;
 
-        // Create the window, which makes its GL context current here. It is the thread that draws that has it from now on
+        // Create the window. Everything that draws happens on a thread of its own, see DrawFrames
         _window.Initialize();
-        _window.GLContext?.Clear();
 
         renderThread = new Thread(DrawFrames)
         {
@@ -659,7 +646,6 @@ public class WindowManager : GameComponent, IDisposable
         simulation?.Stop();
 
         // Whatever is let go of from here on is let go of here, GPU and all
-        _window.GLContext?.MakeCurrent();
         EntityLifecycle.ClaimRenderThread();
 
         // Dispose and unload
@@ -701,7 +687,9 @@ public class WindowManager : GameComponent, IDisposable
             long previous = 0;
             while (!renderStopping)
             {
+                renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
                 WaitForFrame();
+                renderStatistics.SetState(LoopStatistics.LoopState.Working);
 
                 long started = Stopwatch.GetTimestamp();
                 long allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -709,8 +697,9 @@ public class WindowManager : GameComponent, IDisposable
                 float dt = previous == 0 ? 0.0f : (float)((started - previous) / (double)Stopwatch.Frequency);
                 previous = started;
 
+                Graphics!.BeginFrame((uint)ViewportSize.X, (uint)ViewportSize.Y);
                 DrawFrame(dt);
-                _window.GLContext!.SwapBuffers();
+                Graphics.EndFrame();
 
                 long ended = Stopwatch.GetTimestamp();
 
@@ -742,7 +731,10 @@ public class WindowManager : GameComponent, IDisposable
         }
         finally
         {
-            _window.GLContext?.Clear();
+            renderStatistics.SetState(LoopStatistics.LoopState.Stopped);
+
+            // Nothing is on its way to the GPU once the frames stop, whatever gets freed afterwards is free to go
+            Graphics?.WaitIdle();
         }
     }
 
@@ -856,6 +848,10 @@ public class WindowManager : GameComponent, IDisposable
 
         if (SnapshotClock.Active == snapshots)
             SnapshotClock.Active = null;
+
+        // Last, everything on the GPU has gone by now
+        Graphics?.Dispose();
+        Graphics = null;
 
         _window.Reset();
         _window.Dispose();

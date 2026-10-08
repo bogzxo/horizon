@@ -1,83 +1,51 @@
-﻿using System.Numerics;
+using System.Numerics;
 
-using Horizon.OpenGL;
-
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Spriting.Data
 {
+    /// <summary>A position and a texture coordinate, what a <see cref="Primitives.Mesh2D"/> is made of.</summary>
     public struct Vertex2D : IVertex
     {
         private Vector2 position;
 
         private Vector2 texCoords;
 
-        public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => new VertexLayoutDescription[]
-        {
-            new() {
-                Index = 0,
-                Size = sizeof(float) * 2,
-                Count = 2,
-                Offset = 0,
-                Type = VertexAttribPointerType.Float,
-                Instanced = false
-            },
-            new() {
-                Index = 1,
-                Size = sizeof(float) * 2,
-                Count = 2,
-                Offset = sizeof(float) * 2, // Previous offset + previous size
-                Type = VertexAttribPointerType.Float,
-                Instanced = false
-            }
-        };
+        private static readonly VertexLayoutDescription[] Layout =
+        [
+            VertexLayoutDescription.Float(0, 2, 0),
+            VertexLayoutDescription.Float(1, 2, sizeof(float) * 2)
+        ];
 
-        /// <summary>
-        /// Gets or sets the position of the vertex in 2D world space.
-        /// </summary>
+        public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => Layout;
+
+        /// <summary>The position of the vertex in 2D world space.</summary>
         public Vector2 Position
         {
             get => position;
             set => position = value;
         }
 
-        /// <summary>
-        /// Gets or sets the texture coordinates (UV) of the vertex, used for texture mapping.
-        /// </summary>
+        /// <summary>The texture coordinates (UV) of the vertex.</summary>
         public Vector2 TexCoords
         {
             get => texCoords;
             set => texCoords = value;
         }
 
-        /// <summary>
-        /// Initializes a new instance of the Vertex struct.
-        /// </summary>
-        /// <param name="pos">The position of the vertex in 2D world space.</param>
-        /// <param name="norm">The normal vector for the vertex.</param>
-        /// <param name="coords">The texture coordinates (UV) of the vertex.</param>
         public Vertex2D(Vector2 pos, Vector2 coords)
         {
             this.TexCoords = coords;
             this.Position = pos;
         }
 
-        /// <summary>
-        /// Initializes a new instance of the Vertex struct with separate coordinates.
-        /// </summary>
-        /// <param name="x">The x-coordinate of the vertex position.</param>
-        /// <param name="y">The y-coordinate of the vertex position.</param>
-        /// <param name="uvX">The x-coordinate of the texture coordinates (UV).</param>
-        /// <param name="uvY">The y-coordinate of the texture coordinates (UV).</param>
         public Vertex2D(float x, float y, float uvX, float uvY)
         {
             this.TexCoords = new Vector2(uvX, uvY);
             this.Position = new Vector2(x, y);
         }
 
-        /// <summary>
-        /// The size of the vertex in bytes, used for defining the vertex array object's memory layout for use in shaders.
-        /// </summary>
+        /// <summary>The size of the vertex in bytes.</summary>
         public static uint SizeInBytes { get; } = (sizeof(float) * 4);
     }
 }

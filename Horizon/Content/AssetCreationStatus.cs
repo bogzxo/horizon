@@ -1,4 +1,4 @@
-﻿using Horizon.Core.Primitives;
+using Horizon.Graphics;
 
 namespace Horizon.Content;
 
@@ -9,7 +9,7 @@ public enum AssetCreationStatus
 }
 
 public struct AssetCreationResult<AssetType>
-    where AssetType : IGLObject
+    where AssetType : IGpuObject
 {
     public AssetType Asset { get; set; }
     public AssetCreationStatus Status { get; set; }

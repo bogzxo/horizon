@@ -6,6 +6,6 @@
 
 let skin = {
     inherit: "skin.hor",
-    font: { dir: "fonts/vcr_mono/", file: "vcr_mono.fnt" },
+    font: { dir: "Assets/fonts/vcr_mono/", file: "vcr_mono.fnt" },
     text_scale: 0.25
 };

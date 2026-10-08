@@ -1,233 +1,567 @@
 using System.Numerics;
 
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
+using Horizon.Graphics.Vulkan;
+using Horizon.Logging;
+
+using Silk.NET.Core.Contexts;
+using Silk.NET.Vulkan;
+
+using PipelineCache = Horizon.Graphics.Vulkan.PipelineCache;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace Horizon.Graphics;
 
-/// <summary>What a run of vertices is drawn as.</summary>
-public enum Topology
-{
-    Triangles,
-    TriangleStrip,
-    Lines,
-    LineStrip,
-    Points
-}
-
-/// <summary>What a clear of the window (or a frame buffer) wipes.</summary>
-[Flags]
-public enum ClearTargets
-{
-    Color = 1,
-    Depth = 2,
-    Stencil = 4,
-    All = Color | Depth | Stencil
-}
-
-/// <summary>How a stencil (or depth) test compares.</summary>
-public enum CompareFunction
-{
-    Never,
-    Always,
-    Less,
-    LessEqual,
-    Equal,
-    NotEqual,
-    Greater,
-    GreaterEqual
-}
-
-/// <summary>What happens to a stencil value when a test goes one way or the other.</summary>
-public enum StencilAction
-{
-    Keep,
-    Zero,
-    Replace,
-    Increment,
-    Decrement,
-    Invert
-}
-
-/// <summary>How the texels handed to <see cref="GraphicsDevice.UploadTexels"/> are laid out in memory.</summary>
-public enum TexelFormat
-{
-    /// <summary>Four bytes a texel, red first.</summary>
-    Rgba8,
-
-    /// <summary>One byte a texel.</summary>
-    R8
-}
-
-/// <summary>What a memory barrier has to wait for before the next thing reads it.</summary>
-[Flags]
-public enum BarrierTargets
-{
-    /// <summary>Storage buffers written by a shader.</summary>
-    ShaderStorage = 1,
-
-    /// <summary>Buffers written through uploads.</summary>
-    BufferUpdate = 2,
-
-    /// <summary>Vertex and index buffers about to be drawn from.</summary>
-    VertexAttributes = 4,
-
-    /// <summary>Images written by a shader.</summary>
-    ShaderImages = 8
-}
-
-/// <summary>How much the backend's own debugging is worried about something it was asked to do.</summary>
-public enum DebugLevel
-{
-    Note,
-    Low,
-    Medium,
-    High
-}
-
-/// <summary>How a sampler reads a texture, see <see cref="GraphicsDevice.CreateSampler"/>.</summary>
-/// <param name="Smooth">Blended between the texels, nearest texel otherwise.</param>
-/// <param name="Mipmaps">Read from the mip levels when drawn smaller, for a texture that has them.</param>
-/// <param name="Repeat">Wrap around at the edges, clamp to them otherwise.</param>
-public readonly record struct SamplerSettings(bool Smooth, bool Mipmaps = false, bool Repeat = false);
-
 /// <summary>
-/// The GPU, as far as the renderers are concerned. Everything that draws goes through here (and through the resource
-/// classes, buffers, textures, vertex arrays, techniques), never through the API underneath, so another backend can be
-/// put behind it later. There is one, <see cref="Current"/>, made by the window along with its context.
+/// The GPU. Everything that draws goes through here and through the resource classes (buffers, textures, render
+/// targets, vertex arrays, shaders and techniques), which are thin and Vulkan all the way down. There is one of it,
+/// <see cref="Current"/>, made by the window along with its surface.
 /// <code>
 /// var device = GraphicsDevice.Current;
-/// mesh.Bind();
+/// technique.Bind();
 /// device.DrawIndexedInstanced(Topology.Triangles, 6, count);
 /// </code>
-/// Render thread only, like everything that touches the GPU. What is not in here yet goes in here, not around it,
-/// see CLAUDE.md.
+/// A frame runs from <see cref="BeginFrame"/> to <see cref="EndFrame"/>, which is when the picture goes to the
+/// screen. In between, binding things and drawing records into the frame's command buffer; rendering into a target
+/// is begun the moment something is drawn into it and ended the moment something else is needed (a clear of another
+/// target, an upload, a compute dispatch), so the renderers never have to think about render passes. Two frames are
+/// in flight, so while the GPU draws one the CPU records the next, and whatever a frame writes from the CPU (the uniform
+/// blocks of its draws, what it uploads) goes into memory that frame alone owns.
+/// Render thread only, like everything that touches the GPU, except for what says it isn't.
+/// <para>
+/// For whoever wants to go underneath, <see cref="Vk"/>, <see cref="Device"/> and <see cref="CommandBuffer"/> are
+/// the real things, and <see cref="EndRendering"/> gets you out of the rendering instance so you can record your own
+/// barriers and copies. The engine won't notice as long as everything is back the way it was found.
+/// </para>
 /// </summary>
-public abstract class GraphicsDevice
+public sealed unsafe partial class GraphicsDevice : IDisposable
 {
+    /// <summary>How many frames are in flight at once, one being drawn by the GPU while the other is recorded.</summary>
+    public const int FRAMES_IN_FLIGHT = 2;
+
     private static GraphicsDevice? current;
 
     /// <summary>The device there is. Throws before the window has made one.</summary>
-    public static GraphicsDevice Current => current ?? throw new InvalidOperationException("There is no graphics device yet, the window makes it along with its context.");
+    public static GraphicsDevice Current => current ?? throw new InvalidOperationException("There is no graphics device yet, the window makes it along with its surface.");
 
     /// <summary>Whether there is a device to be had yet.</summary>
     public static bool IsAvailable => current is not null;
 
-    protected static void Install(GraphicsDevice device) => current = device;
+    internal readonly VulkanContext Context;
+    internal readonly VulkanMemory Memory;
+    internal readonly BindlessTextures Bindless;
+    internal readonly DescriptorLayouts Layouts;
+    internal readonly PipelineCache Pipelines;
 
-    /// <summary>What the backend calls itself, with the version it got, for the log and the overlays.</summary>
-    public abstract string Description { get; }
+    private readonly Swapchain swapchain;
+    private readonly FrameResources[] frames = new FrameResources[FRAMES_IN_FLIGHT];
+    private int frameIndex;
+
+    // The timeline every submission signals, counting up. A resource used in a submission is free again once the
+    // timeline has got past that submission's value
+    private readonly Semaphore timeline;
+    private ulong submitted;
+    private ulong completed;
+
+    private CommandBuffer cmd;
+    private bool swapchainStale;
+    private bool vsync;
+    private Vector4 clearColor;
+
+    private QueryPool timestamps;
+    private readonly double[] frameGpuMs = new double[FRAMES_IN_FLIGHT];
+
+    // The scopes of every frame in flight, named as they are opened and read back when the frame is done. Two
+    // queries for the frame itself and two for every scope
+    private const int MAX_SCOPES = 48;
+    private const int QUERIES_PER_FRAME = 2 + MAX_SCOPES * 2;
+    private readonly string[][] scopeNames = new string[FRAMES_IN_FLIGHT][];
+    private readonly int[][] scopeDepths = new int[FRAMES_IN_FLIGHT][];
+    private readonly int[] scopeCounts = new int[FRAMES_IN_FLIGHT];
+    private readonly Stack<int> openScopes = new();
+    private GpuScope[] gpuScopes = new GpuScope[MAX_SCOPES];
+    private int gpuScopeCount;
+
+    private readonly Dictionary<SamplerSettings, Sampler> samplersBySettings = [];
+    private readonly Dictionary<uint, Sampler> samplersById = [];
+    private uint nextSamplerId = 1;
+
+    /// <summary>The Vulkan API, for whoever goes underneath.</summary>
+    public Vk Vk => Context.Vk;
+
+    /// <summary>The logical device.</summary>
+    public Device Device => Context.Device;
+
+    /// <summary>The physical device, the card.</summary>
+    public PhysicalDevice PhysicalDevice => Context.PhysicalDevice;
+
+    /// <summary>The command buffer of the frame, as it is being recorded.</summary>
+    public CommandBuffer CommandBuffer => cmd;
+
+    /// <summary>The queue frames are submitted to. Take <see cref="QueueLock"/> before using it.</summary>
+    public Queue GraphicsQueue => Context.GraphicsQueue;
+
+    /// <summary>Held for every submission, on every queue.</summary>
+    public Lock QueueLock => Context.QueueLock;
+
+    /// <summary>What the device calls itself, with the card and the driver, for the log and the overlays.</summary>
+    public string Description { get; }
 
     /// <summary>The widest (and tallest) a texture can be, in texels.</summary>
-    public abstract uint MaxTextureSize { get; }
+    public uint MaxTextureSize => Context.Limits.MaxImageDimension2D;
 
-    /* Drawing */
+    /// <summary>The alignment (in bytes) an offset into a storage buffer has to have to be bound as a range.</summary>
+    public uint StorageOffsetAlignment => (uint)Math.Max(1, Context.Limits.MinStorageBufferOffsetAlignment);
 
-    /// <summary>Draws vertices out of the bound vertex array, by their indices.</summary>
-    public abstract void DrawIndexed(Topology topology, uint indexCount, uint firstIndex = 0);
+    /// <summary>The alignment (in bytes) an offset into a uniform buffer has to have to be bound as a range.</summary>
+    public uint UniformOffsetAlignment => (uint)Math.Max(1, Context.Limits.MinUniformBufferOffsetAlignment);
 
-    /// <summary>Draws the bound vertex array's indices so many times, each with its instance number, starting at a first instance.</summary>
-    public abstract void DrawIndexedInstanced(Topology topology, uint indexCount, uint instanceCount, uint firstInstance = 0);
+    /// <summary>How many frames have been begun.</summary>
+    public ulong FrameNumber { get; private set; }
 
-    /// <summary>Draws vertices out of the bound vertex array in order, without indices.</summary>
-    public abstract void Draw(Topology topology, uint vertexCount, uint firstVertex = 0);
+    /// <summary>What the device did over the last frame.</summary>
+    public GraphicsStatistics Statistics { get; } = new();
 
-    /* Compute */
-
-    /// <summary>Runs the bound compute technique over so many work groups.</summary>
-    public abstract void Dispatch(uint groupsX, uint groupsY = 1, uint groupsZ = 1);
-
-    /// <summary>Has what shaders wrote be there for whoever reads it next.</summary>
-    public abstract void Barrier(BarrierTargets targets);
-
-    /* What is drawn into */
-
-    /// <summary>Makes the window what is drawn into.</summary>
-    public abstract void BindWindow();
-
-    /// <summary>Sets what of the bound target is drawn to, in pixels from its bottom left.</summary>
-    public abstract void SetViewport(int x, int y, uint width, uint height);
-
-    /// <summary>What <see cref="Clear"/> fills the window with.</summary>
-    public abstract Vector4 ClearColor { get; set; }
-
-    /// <summary>Wipes the bound target (the window, or a frame buffer bound by somebody else).</summary>
-    public abstract void Clear(ClearTargets targets);
-
-    /// <summary>Fills one colour attachment of a frame buffer, whatever is bound.</summary>
-    public abstract void ClearColorAttachment(FrameBufferObject frameBuffer, int attachment, Vector4 color);
-
-    /// <summary>Wipes the depth and the stencil of a frame buffer, whatever is bound. Writes to both are switched on first.</summary>
-    public abstract void ClearDepthStencil(FrameBufferObject frameBuffer, float depth = 1.0f, int stencil = 0);
+    /// <summary>How long (in milliseconds) the GPU spent on the last frame it finished, 0 where the card doesn't say.</summary>
+    public double GpuFrameMilliseconds { get; private set; }
 
     /// <summary>
-    /// Copies the colours of the window as they are right now into the first attachment of a frame buffer, stretched to
-    /// fit if the two aren't the same size. Whatever is bound stays bound.
+    /// How long the named stretches of the last frame the GPU finished took, in the order they were opened, see
+    /// <see cref="BeginGpuScope"/>. Empty without timestamps.
     /// </summary>
-    public abstract void CopyWindow(FrameBufferObject into, uint windowWidth, uint windowHeight, uint width, uint height);
-
-    /* State the renderers set around their draws (blending and the depth test are RenderState's) */
-
-    public abstract void SetColorWrite(bool enabled);
-    public abstract void SetDepthWrite(bool enabled);
-    public abstract void SetStencilTest(bool enabled);
-    public abstract void SetStencilWrite(uint mask);
-    public abstract void SetStencilFunction(CompareFunction function, int reference, uint mask);
-    public abstract void SetStencilOperation(StencilAction onFail, StencilAction onDepthFail, StencilAction onPass);
-
-    /* Textures and samplers */
-
-    /// <summary>Binds textures to a run of units in one go, the first to <paramref name="firstUnit"/>. A handle of 0 leaves nothing on its unit.</summary>
-    public abstract void BindTextures(ReadOnlySpan<uint> handles, uint firstUnit = 0);
-
-    /// <summary>Binds samplers to a run of units in one go. A handle of 0 has the unit go by the texture's own settings.</summary>
-    public abstract void BindSamplers(ReadOnlySpan<uint> samplers, uint firstUnit = 0);
-
-    /// <summary>Makes a sampler, for drawing a texture with other settings than its own.</summary>
-    public abstract uint CreateSampler(SamplerSettings settings);
-
-    public abstract void DeleteSampler(uint sampler);
-
-    /// <summary>Gives a texture every mip level it can have and fills them in from the top one.</summary>
-    public abstract void GenerateMipmaps(Texture texture);
+    public ReadOnlySpan<GpuScope> GpuScopes => gpuScopes.AsSpan(0, gpuScopeCount);
 
     /// <summary>
-    /// Writes texels into part of a texture. The rows follow each other with nothing in between (<paramref name="format"/> says how wide a texel is).
+    /// Vulkan's clip space has Y going down and depth from 0 to 1, the engine's cameras are built the OpenGL way
+    /// (Y up, depth -1 to 1). Every projection is multiplied by this on its way into the camera block, and nothing
+    /// else has to know.
     /// </summary>
-    public abstract unsafe void UploadTexels(Texture texture, int x, int y, uint width, uint height, TexelFormat format, void* texels);
+    public static Matrix4x4 ClipCorrection { get; } = new(
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, -1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 0.5f, 0.0f,
+        0.0f, 0.0f, 0.5f, 1.0f);
 
-    /// <inheritdoc cref="UploadTexels(Texture, int, int, uint, uint, TexelFormat, void*)"/>
-    public unsafe void UploadTexels(Texture texture, int x, int y, uint width, uint height, TexelFormat format, ReadOnlySpan<byte> texels)
+    /// <summary>The value the next submission signals on the timeline, which is what a fence made now stands for.</summary>
+    internal ulong NextSubmission => submitted + 1;
+
+    /// <summary>Whether the GPU is done with a submission.</summary>
+    internal bool IsDone(ulong submission) => submission <= completed;
+
+    private FrameResources Frame => frames[frameIndex];
+
+    /// <summary>
+    /// Makes the device for a window's surface. The window has to have been made for Vulkan.
+    /// </summary>
+    public GraphicsDevice(IVkSurface surface, uint width, uint height, bool vsync)
     {
-        int needed = (int)(width * height * (format == TexelFormat.R8 ? 1 : 4));
-        if (texels.Length < needed)
-            throw new ArgumentException($"{texels.Length} bytes of texels for a {width} by {height} upload that wants {needed}.", nameof(texels));
+        Context = new VulkanContext(surface);
+        Memory = new VulkanMemory(Context);
+        Bindless = new BindlessTextures(Context);
+        Layouts = new DescriptorLayouts(Context, Bindless);
+        Pipelines = new PipelineCache(Context, Layouts);
 
-        fixed (byte* pointer = texels)
-            UploadTexels(texture, x, y, width, height, format, pointer);
+        this.vsync = vsync;
+        swapchain = new Swapchain(Context, Math.Max(1, width), Math.Max(1, height), vsync);
+
+        var timelineType = new SemaphoreTypeCreateInfo
+        {
+            SType = StructureType.SemaphoreTypeCreateInfo,
+            SemaphoreType = SemaphoreType.Timeline,
+            InitialValue = 0
+        };
+        var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo, PNext = &timelineType };
+        VulkanContext.Check(Vk.CreateSemaphore(Device, in semaphoreInfo, null, out timeline), "making the timeline");
+
+        for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
+            frames[i] = new FrameResources(Context, Memory);
+
+        if (Context.TimestampsSupported)
+        {
+            var queryInfo = new QueryPoolCreateInfo
+            {
+                SType = StructureType.QueryPoolCreateInfo,
+                QueryType = QueryType.Timestamp,
+                QueryCount = FRAMES_IN_FLIGHT * QUERIES_PER_FRAME
+            };
+            VulkanContext.Check(Vk.CreateQueryPool(Device, in queryInfo, null, out timestamps), "making the timestamp queries");
+        }
+
+        for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
+        {
+            scopeNames[i] = new string[MAX_SCOPES];
+            scopeDepths[i] = new int[MAX_SCOPES];
+        }
+
+        Description = $"Vulkan {Context.Properties.ApiVersion >> 22}.{(Context.Properties.ApiVersion >> 12) & 0x3FF} on {Context.DeviceName} (driver {Context.DriverVersion})";
+
+        // The first frame is open from here on, so whatever is made before the first BeginFrame has somewhere to go
+        frameIndex = 0;
+        OpenFrame();
+
+        current = this;
+        Log.Info($"[Graphics] {Description}.");
+    }
+
+    /// <summary>Whether this machine has a feature, see <see cref="GraphicsFeature"/>.</summary>
+    public bool Supports(GraphicsFeature feature) => feature switch
+    {
+        GraphicsFeature.PathTracedLighting => Context.SupportsStorageImage(Format.R16G16B16A16Sfloat) && Context.SupportsStorageImage(Format.R32G32B32A32Sfloat),
+        GraphicsFeature.AsyncCompute => Context.HasAsyncCompute,
+        GraphicsFeature.AsyncUploads => Context.HasTransferQueue,
+        GraphicsFeature.GpuTimer => Context.TimestampsSupported,
+        _ => false
+    };
+
+    /// <summary>
+    /// Says in the log (once per feature) that something asked for a feature this machine hasn't got and what it is
+    /// doing instead, for the places that fall back rather than fail.
+    /// </summary>
+    public void WarnUnsupported(GraphicsFeature feature, string fallback)
+    {
+        lock (warnedFeatures)
+        {
+            if (!warnedFeatures.Add(feature)) return;
+        }
+
+        Log.Warning($"[Graphics] {feature} isn't there on {Context.DeviceName}. {fallback}");
+    }
+
+    private readonly HashSet<GraphicsFeature> warnedFeatures = [];
+
+    /// <summary>
+    /// Has the device say what it (or the validation layer) makes of what it is asked to do, through a callback (the
+    /// message, how worried it is, and its number for telling the known ones apart).
+    /// </summary>
+    public void OnDebugMessage(Action<string, DebugLevel, int> handler) => Context.DebugMessage = handler;
+
+    /* The frame */
+
+    /// <summary>
+    /// Starts a frame for a window of a size. Takes the next picture of the swapchain (made anew if the window
+    /// changed size) and starts the clocks. Nothing is drawn into the window until this has been called.
+    /// </summary>
+    public void BeginFrame(uint width, uint height)
+    {
+        FrameNumber++;
+
+        if (width == 0 || height == 0)
+        {
+            Frame.HasImage = false;
+            return;
+        }
+
+        if (swapchainStale || swapchain.Width != width || swapchain.Height != height || swapchain.VSync != vsync)
+        {
+            Context.WaitIdle();
+            swapchain.Recreate(width, height, vsync);
+            swapchainStale = false;
+        }
+
+        if (!swapchain.Acquire(Frame.ImageAvailable, out bool suboptimal))
+        {
+            // Out of date, so it is made anew and tried once more
+            Context.WaitIdle();
+            swapchain.Recreate(width, height, vsync);
+            if (!swapchain.Acquire(Frame.ImageAvailable, out suboptimal))
+            {
+                Frame.HasImage = false;
+                return;
+            }
+        }
+
+        swapchainStale = suboptimal;
+        Frame.HasImage = true;
+        Frame.AcquireWaited = false;
+        windowPendingClear = null;
     }
 
     /// <summary>
-    /// Reads the colours of the window as it is right now (or the bound frame buffer's first attachment), four bytes a pixel, bottom row first.
-    /// Slow, the GPU is caught up with first. For screenshots and tests.
+    /// Ends the frame. Whatever was recorded goes to the GPU, the picture goes to the screen, and the next frame is
+    /// opened (waiting for the GPU to be done with the one before it, which is what keeps two in flight).
     /// </summary>
-    public abstract void ReadPixels(int x, int y, uint width, uint height, Span<byte> rgba);
+    public void EndFrame()
+    {
+        EndRendering();
 
-    /* The backend's own debugging */
+        FrameResources frame = Frame;
+        if (frame.HasImage && swapchain.Current >= 0)
+        {
+            if (windowPendingClear is { } pending)
+            {
+                // Cleared and then never drawn into, which is a frame of one colour
+                int index = swapchain.Current;
+                TransitionSwapchainImage(index, ImageLayout.TransferDstOptimal, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit);
+                var value = new ClearColorValue(pending.X, pending.Y, pending.Z, pending.W);
+                var range = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, 1);
+                Vk.CmdClearColorImage(cmd, swapchain.Images[index], ImageLayout.TransferDstOptimal, in value, 1, in range);
+                windowPendingClear = null;
+            }
+
+            TransitionSwapchainImage(swapchain.Current, ImageLayout.PresentSrcKhr, PipelineStageFlags2.BottomOfPipeBit, AccessFlags2.None);
+        }
+
+        // Whatever was left open is closed with the frame
+        while (openScopes.Count > 0) EndGpuScope();
+
+        if (timestamps.Handle != 0)
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 1));
+
+        Submit(final: true);
+
+        if (frame.HasImage && !swapchain.Present(frame.RenderFinished))
+            swapchainStale = true;
+
+        Statistics.Pipelines = Pipelines.Count;
+        Statistics.MemoryInUse = (long)Memory.InUse;
+        Statistics.MemoryBlocks = Memory.BlockCount;
+        Statistics.EndFrame();
+
+        frameIndex = (frameIndex + 1) % FRAMES_IN_FLIGHT;
+        OpenFrame();
+    }
 
     /// <summary>
-    /// Has the backend say what it makes of what it is asked to do, through a callback (the message, how worried it is,
-    /// and its number for telling the known ones apart). Nothing happens on a backend that has no such thing.
+    /// Helper method to make a frame's resources free to use again (waiting for the GPU to be done with the frame
+    /// that last used them), read its GPU time, and begin recording into it.
     /// </summary>
-    public abstract void OnDebugMessage(Action<string, DebugLevel, int> handler);
+    private void OpenFrame()
+    {
+        FrameResources frame = Frame;
+        if (frame.TimelineValue != 0)
+        {
+            WaitTimeline(frame.TimelineValue, ulong.MaxValue);
+            ReadGpuTime();
+        }
 
-    /* Fences */
+        completed = Math.Max(completed, QueryCompleted());
+        frame.Reset();
+
+        cmd = frame.BeginCommandBuffer();
+        ResetRecordingState();
+
+        // Nothing of the last frame is to be read while this one writes, see the summary
+        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit | AccessFlags2.MemoryReadBit);
+
+        scopeCounts[frameIndex] = 0;
+        openScopes.Clear();
+
+        if (timestamps.Handle != 0)
+        {
+            Vk.CmdResetQueryPool(cmd, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME), QUERIES_PER_FRAME);
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.TopOfPipeBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME));
+        }
+    }
+
+    private void ReadGpuTime()
+    {
+        if (timestamps.Handle == 0) return;
+
+        int scopes = scopeCounts[frameIndex];
+        uint count = (uint)(2 + scopes * 2);
+        var results = stackalloc ulong[QUERIES_PER_FRAME];
+        Result result = Vk.GetQueryPoolResults(Device, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME), count, (nuint)(sizeof(ulong) * count), results, sizeof(ulong), QueryResultFlags.Result64Bit);
+        if (result != Result.Success) return;
+
+        double period = Context.TimestampPeriod / 1_000_000.0;
+        double ms = (results[1] - results[0]) * period;
+        if (ms >= 0.0 && ms < 10_000.0) GpuFrameMilliseconds = ms;
+
+        gpuScopeCount = 0;
+        for (int i = 0; i < scopes; i++)
+        {
+            ulong from = results[2 + i * 2], to = results[3 + i * 2];
+            double took = to >= from ? (to - from) * period : 0.0;
+            gpuScopes[gpuScopeCount++] = new GpuScope(scopeNames[frameIndex][i], took, scopeDepths[frameIndex][i]);
+        }
+    }
+
+    /// <summary>
+    /// Opens a named stretch of the frame on the GPU, timed from here to where the token is disposed of (or the end
+    /// of the frame). What it took shows up in <see cref="GpuScopes"/> once the GPU has finished the frame, a frame
+    /// or two later. Scopes nest. Past a few dozen in a frame the rest aren't timed.
+    /// </summary>
+    public GpuScopeToken BeginGpuScope(string name)
+    {
+        if (timestamps.Handle == 0 || !IsAvailable) return default;
+
+        int index = scopeCounts[frameIndex];
+        if (index >= MAX_SCOPES) return default;
+
+        scopeNames[frameIndex][index] = name;
+        scopeDepths[frameIndex][index] = openScopes.Count;
+        scopeCounts[frameIndex] = index + 1;
+        openScopes.Push(index);
+
+        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
+        return new GpuScopeToken(this);
+    }
+
+    /// <summary>Closes the scope opened last, see <see cref="BeginGpuScope"/>.</summary>
+    public void EndGpuScope()
+    {
+        if (timestamps.Handle == 0 || openScopes.Count == 0) return;
+
+        int index = openScopes.Pop();
+        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
+    }
+
+    private ulong QueryCompleted()
+    {
+        ulong value = 0;
+        Vk.GetSemaphoreCounterValue(Device, timeline, &value);
+        return value;
+    }
+
+    /// <summary>
+    /// Helper method to send everything recorded so far to the GPU. For the end of the frame, and for whoever has to
+    /// wait for something that was only just recorded (a fence of this frame, a read back).
+    /// </summary>
+    /// <param name="final">Whether this is the end of the frame, which signals the swapchain.</param>
+    private void Submit(bool final)
+    {
+        EndRendering();
+        VulkanContext.Check(Vk.EndCommandBuffer(cmd), "ending a command buffer");
+
+        FrameResources frame = Frame;
+        ulong value = ++submitted;
+
+        var waits = stackalloc SemaphoreSubmitInfo[1];
+        uint waitCount = 0;
+        if (frame.HasImage && !frame.AcquireWaited)
+        {
+            waits[0] = new SemaphoreSubmitInfo
+            {
+                SType = StructureType.SemaphoreSubmitInfo,
+                Semaphore = frame.ImageAvailable,
+                StageMask = PipelineStageFlags2.ColorAttachmentOutputBit | PipelineStageFlags2.TransferBit
+            };
+            waitCount = 1;
+            frame.AcquireWaited = true;
+        }
+
+        var signals = stackalloc SemaphoreSubmitInfo[2];
+        signals[0] = new SemaphoreSubmitInfo
+        {
+            SType = StructureType.SemaphoreSubmitInfo,
+            Semaphore = timeline,
+            Value = value,
+            StageMask = PipelineStageFlags2.AllCommandsBit
+        };
+        uint signalCount = 1;
+        if (final && frame.HasImage)
+        {
+            signals[1] = new SemaphoreSubmitInfo
+            {
+                SType = StructureType.SemaphoreSubmitInfo,
+                Semaphore = frame.RenderFinished,
+                StageMask = PipelineStageFlags2.AllCommandsBit
+            };
+            signalCount = 2;
+        }
+
+        var commandInfo = new CommandBufferSubmitInfo { SType = StructureType.CommandBufferSubmitInfo, CommandBuffer = cmd };
+        var submitInfo = new SubmitInfo2
+        {
+            SType = StructureType.SubmitInfo2,
+            WaitSemaphoreInfoCount = waitCount,
+            PWaitSemaphoreInfos = waits,
+            CommandBufferInfoCount = 1,
+            PCommandBufferInfos = &commandInfo,
+            SignalSemaphoreInfoCount = signalCount,
+            PSignalSemaphoreInfos = signals
+        };
+
+        lock (Context.QueueLock)
+            VulkanContext.Check(Vk.QueueSubmit2(Context.GraphicsQueue, 1, in submitInfo, default), "submitting a frame");
+
+        frame.TimelineValue = value;
+
+        if (!final)
+        {
+            cmd = frame.BeginCommandBuffer();
+            ResetRecordingState();
+        }
+    }
+
+    /// <summary>Sends what has been recorded so far to the GPU and carries on recording. What it returns is the timeline value to wait for.</summary>
+    public ulong Flush()
+    {
+        Submit(final: false);
+        return submitted;
+    }
+
+    private void WaitTimeline(ulong value, ulong timeout)
+    {
+        Semaphore semaphore = timeline;
+        var waitInfo = new SemaphoreWaitInfo
+        {
+            SType = StructureType.SemaphoreWaitInfo,
+            SemaphoreCount = 1,
+            PSemaphores = &semaphore,
+            PValues = &value
+        };
+
+        Vk.WaitSemaphores(Device, in waitInfo, timeout);
+        completed = Math.Max(completed, QueryCompleted());
+    }
+
+    /// <summary>Waits for the GPU to be done with everything submitted so far. Slow, for shutdown and read backs.</summary>
+    public void WaitIdle()
+    {
+        if (submitted > completed) WaitTimeline(submitted, ulong.MaxValue);
+    }
+
+    /// <summary>Whether frames wait for the screen. Takes at the next frame.</summary>
+    public void SetVSync(bool enabled) => vsync = enabled;
+
+    /* Fences, which are values of the timeline */
 
     /// <summary>Drops a fence behind everything submitted so far, see <see cref="WaitFence"/>.</summary>
-    public abstract nint CreateFence();
+    public nint CreateFence() => (nint)NextSubmission;
 
     /// <summary>Waits until the GPU has got past a fence, or a time (in nanoseconds) has gone by. True if it got past it.</summary>
-    public abstract bool WaitFence(nint fence, ulong timeoutNanoseconds);
+    public bool WaitFence(nint fence, ulong timeoutNanoseconds)
+    {
+        ulong value = (ulong)fence;
+        if (value <= completed) return true;
 
-    public abstract void DeleteFence(nint fence);
+        // Behind something that hasn't even gone to the GPU yet, so it goes now or the wait would be for nothing
+        if (value > submitted) Flush();
+
+        WaitTimeline(value, timeoutNanoseconds);
+        return value <= completed;
+    }
+
+    public void DeleteFence(nint fence)
+    { }
+
+    /// <summary>Has something freed once the GPU is done with the frame being recorded.</summary>
+    internal void Retire(Action free) => Frame.Retired.Add(free);
+
+    public void Dispose()
+    {
+        if (current != this) return;
+
+        Log.Info("[Graphics] Shutting the device down.");
+        Context.WaitIdle();
+
+        // Everything that is still out there goes now, GPU and all
+        foreach (var frame in frames) frame.Dispose();
+
+        foreach (var sampler in samplersById.Values) Vk.DestroySampler(Device, sampler, null);
+        samplersById.Clear();
+        samplersBySettings.Clear();
+
+        if (timestamps.Handle != 0) Vk.DestroyQueryPool(Device, timestamps, null);
+        Vk.DestroySemaphore(Device, timeline, null);
+
+        Pipelines.Dispose();
+        Layouts.Dispose();
+        Bindless.Dispose();
+        swapchain.Dispose();
+        Memory.Dispose();
+        Context.Dispose();
+
+        current = null;
+    }
 }

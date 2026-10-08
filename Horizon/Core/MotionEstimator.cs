@@ -9,7 +9,7 @@ namespace Horizon.Core;
 /// update at a time that is a speed of nothing, then a burst, then nothing again. This measures every step over the
 /// time it took to get there instead, which gives the speed the thing is really going at, and smooths what is left
 /// of the unevenness (two pixels this update, three the next).
-/// This is what a renderer blurs motion by, see <c>VelocityBlurEffect</c>: a blur that knows the real speed hides the
+/// This is what a renderer blurs motion by, see <c>MotionBlurEffect</c>. A blur that knows the real speed hides the
 /// stepping, one that goes by single frames would flicker along with it.
 /// Updated from one thread and read from another without a lock: a speed that is half a moment old does no harm.
 /// </summary>

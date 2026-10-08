@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 using Horizon.Engine;
 using Horizon.HIDL.Lexing;
-using Horizon.OpenGL.Assets;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Text;
 /// <summary>
@@ -320,9 +320,9 @@ public class BMFontImporter
         (CharDefinition[] defs, string path) = BMParser.Parse(Path.Combine(dir, bmFile));
         if (GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
             path,
-            new OpenGL.Descriptions.TextureDescription
+            new TextureDescription
             {
-                Definition = OpenGL.Descriptions.TextureDefinition.RgbaUnsignedByteNearest,
+                Definition = TextureDefinition.RgbaUnsignedByteNearest,
                 Paths = [Path.Combine(dir, path)]
             },
             out var result))

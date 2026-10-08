@@ -1,7 +1,6 @@
 using Horizon.Core.Tweening;
+using Horizon.Graphics;
 using Horizon.Rendering.PostProcessing;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.Rendering.Transitions;
 

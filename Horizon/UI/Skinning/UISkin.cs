@@ -28,7 +28,7 @@ namespace Horizon.UI.Skinning;
 /// </summary>
 public sealed partial class UISkin : IUIIconSource, IDisposable
 {
-    private const string DEFAULT_FONT_DIRECTORY = "fonts/vcr_mono/";
+    private const string DEFAULT_FONT_DIRECTORY = "Assets/fonts/vcr_mono/";
     private const string DEFAULT_FONT_FILE = "vcr_mono.fnt";
     private const char FRAME_SEPARATOR = '#';
     private const int MAX_INHERITANCE = 8;

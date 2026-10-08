@@ -9,7 +9,7 @@ using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Spriting;
 
@@ -80,6 +80,12 @@ public class Sprite : GameObject
     public bool Smooth { get; set; }
 
     public bool UseStencilBuffer { get; set; } = false;
+
+    /// <summary>
+    /// Whether the sprite blocks light, for a <see cref="DeferredRenderer2D"/> whose lights cast shadows. Its shape
+    /// as drawn (every pixel the texture covers) throws a shadow and bounces light, see <see cref="DeferredRenderer2D.SpriteShadows"/>.
+    /// </summary>
+    public bool CastsShadows { get; set; }
 
     // How fast the sprite is going, for a renderer that blurs motion
     private readonly Horizon.Core.MotionEstimator _motion = new();
@@ -297,7 +303,7 @@ public class Sprite : GameObject
             texMin,
             texMax,
             SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
-            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0));
+            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0) | (CastsShadows && !mask ? SpriteItem.ShadowFlag : 0));
         item.Motion = _motion.Velocity;
         item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
         return true;

@@ -2,7 +2,7 @@ using Horizon.Rendering;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
-using Horizon.OpenGL.Assets;
+using Horizon.Graphics;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Skinning;
 
