@@ -142,6 +142,18 @@ With the UI in the same assembly as the engine, the engine's own debugging can u
   `DeveloperConsole.Enqueue` runs a command on the simulation thread.
 - `PerformanceOverlay` (now with the GPU time) stays where it was.
 
+## What the numbers said, and what got fixed because of them
+
+The first sweep of the branch came out a third slower than development on every scene, under llvmpipe. The GPU timer,
+the fences and the camera block were all cleared one by one (the camera block got a ring out of it anyway, see
+`CameraBlock`). It turned out to be the new console overlay, which hides itself by switching its module off, and a
+compositor with nothing on it still replayed its retained layer over the whole window every frame, a full screen
+blend of nothing. The performance overlay was doing the same whenever it was off, on development too. A compositor
+with no items now draws nothing, and the branch came out ahead of development on the scenes that have a UI over them
+(which is all of them, the test host puts one there). Moral of the story, measure before believing, and a full screen
+pass is never free on a software rasterizer. `HORIZON_GPU_TIMER=off` switches the timer queries off for the drivers
+that flush on them.
+
 ## Also in the branch
 
 - Screenshots. F12 saves one to `screenshots/`, and `HORIZON_SCREENSHOT=path@seconds` takes one on its own at that
