@@ -10,6 +10,30 @@ public sealed class LoopStatistics
     /// <summary>How many turns the history goes back.</summary>
     public const int HISTORY = 240;
 
+    /// <summary>What the thread of a loop is doing right now, see <see cref="State"/>.</summary>
+    public enum LoopState
+    {
+        /// <summary>Not started, or done for good.</summary>
+        Stopped,
+
+        /// <summary>Sleeping until its next turn is due.</summary>
+        Sleeping,
+
+        /// <summary>Held up by another thread, for what they share (the render thread setting a scene up, say).</summary>
+        Blocked,
+
+        /// <summary>Taking a turn.</summary>
+        Working,
+    }
+
+    private volatile LoopState state;
+
+    /// <summary>What the thread of the loop is doing right now, as of whoever runs it last said.</summary>
+    public LoopState State => state;
+
+    /// <summary>Says what the thread is doing now. Written by the loop itself at every change.</summary>
+    public void SetState(LoopState now) => state = now;
+
     // How much of a new measurement the running averages take over
     private const double SMOOTHING = 0.05;
 
@@ -98,6 +122,45 @@ public sealed class LoopStatistics
     internal void NoteDropped(int turns)
     {
         lock (gate) DroppedTurns += turns;
+    }
+
+    /// <summary>
+    /// How uneven the last turns have been, out of the history. The 99th percentile of how long a turn took, how long the
+    /// slowest one in every hundred takes on average (what "1% low" frame rates are made of), and how many turns took
+    /// more than twice the budget (the rate the loop is meant to run at, or sixty a second for one with no limit), which
+    /// is a turn anybody would notice.
+    /// </summary>
+    public void Instability(out double percentile99Ms, out double worstPercentMs, out int stutters)
+    {
+        Span<float> sorted = stackalloc float[HISTORY];
+        int count = 0;
+        double budget = 1000.0 / (TargetRate > 0.0 ? TargetRate : 60.0);
+        stutters = 0;
+
+        lock (gate)
+        {
+            foreach (float value in work)
+            {
+                if (value <= 0.0f) continue;
+                sorted[count++] = value;
+                if (value > budget * 2.0) stutters++;
+            }
+        }
+
+        if (count == 0)
+        {
+            percentile99Ms = worstPercentMs = 0.0;
+            return;
+        }
+
+        sorted = sorted[..count];
+        sorted.Sort();
+        percentile99Ms = sorted[Math.Min(count - 1, (int)(count * 0.99))];
+
+        int worst = Math.Max(1, count / 100);
+        double sum = 0.0;
+        for (int i = count - worst; i < count; i++) sum += sorted[i];
+        worstPercentMs = sum / worst;
     }
 
     /// <summary>Copies how long the last turns took (in milliseconds, oldest first) into a buffer of <see cref="HISTORY"/> values.</summary>

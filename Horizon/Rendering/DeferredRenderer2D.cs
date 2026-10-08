@@ -354,21 +354,27 @@ public class DeferredRenderer2D : Renderer2D
     protected override void BeforeResolve(float dt)
     {
         Camera camera = Engine.ActiveCamera;
+        var device = GraphicsDevice.Current;
         UploadLights(camera);
 
         // The shadows of the sprites, out of what they drew this frame
-        spritePixelWorld = camera.Bounds.Width / MathF.Max(ViewportSize.X, 1.0f);
-        spriteField = ShownShadows && ShownSpriteShadows
-            ? spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld)
-            : null;
+        using (device.BeginGpuScope("sprite shadows"))
+        {
+            spritePixelWorld = camera.Bounds.Width / MathF.Max(ViewportSize.X, 1.0f);
+            spriteField = ShownShadows && ShownSpriteShadows
+                ? spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld)
+                : null;
+        }
 
         // Which lights reach which tile of the screen, for the deferred pass and the tracer alike
-        CameraBlock.Use(camera);
-        tiles.Build(this, camera, ViewportSize);
+        using (device.BeginGpuScope("light tiles"))
+        {
+            CameraBlock.Use(camera);
+            tiles.Build(this, camera, ViewportSize);
+        }
 
         if (Lighting != LightingMode.PathTraced) return;
 
-        var device = GraphicsDevice.Current;
         if (!device.Supports(GraphicsFeature.PathTracedLighting))
         {
             device.WarnUnsupported(GraphicsFeature.PathTracedLighting, "The lighting is direct instead.");
@@ -376,7 +382,8 @@ public class DeferredRenderer2D : Renderer2D
             return;
         }
 
-        PathTracing.Run(this, camera, dt);
+        using (device.BeginGpuScope("path tracing"))
+            PathTracing.Run(this, camera, dt);
     }
 
     /// <summary>

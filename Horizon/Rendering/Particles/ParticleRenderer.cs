@@ -189,6 +189,8 @@ public class ParticleRenderer2D : GameObject, IDisposable
     {
         base.Render(dt);
 
+        using var scope = GraphicsDevice.Current.BeginGpuScope("particles");
+
         // Drawn alongside the simulation, the particles keep up with the moment the frame shows, which moves on a
         // little every frame rather than a tick at a time
         RenderFrame frame = RenderFrame.Active;

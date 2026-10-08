@@ -687,7 +687,9 @@ public class WindowManager : GameComponent, IDisposable
             long previous = 0;
             while (!renderStopping)
             {
+                renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
                 WaitForFrame();
+                renderStatistics.SetState(LoopStatistics.LoopState.Working);
 
                 long started = Stopwatch.GetTimestamp();
                 long allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -729,6 +731,8 @@ public class WindowManager : GameComponent, IDisposable
         }
         finally
         {
+            renderStatistics.SetState(LoopStatistics.LoopState.Stopped);
+
             // Nothing is on its way to the GPU once the frames stop, whatever gets freed afterwards is free to go
             Graphics?.WaitIdle();
         }

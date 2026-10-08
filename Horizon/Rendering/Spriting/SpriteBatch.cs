@@ -340,6 +340,8 @@ public class SpriteBatch : GameObject
         if (!Enabled)
             return;
 
+        using var scope = GraphicsDevice.Current.BeginGpuScope("sprites");
+
         RenderFrame frame = RenderFrame.Active;
         if (frame.IsDecoupled)
         {
