@@ -1,0 +1,26 @@
+{
+ "label": "after japan pt",
+ "seconds": 12,
+ "runs": {
+  "--map japan": {
+   "exit": 0,
+   "gpu_ms": 458.8333333333333,
+   "passes": {
+    "DeferredRenderer2D": 447.01,
+    ">tile map": 21.678,
+    ">sprites": 0.7533333333333333,
+    ">particles": 0.938,
+    ">sprite shadows": 72.57666666666667,
+    ">light tiles": 0.5333333333333333,
+    ">light cells": 68.23666666666666,
+    ">path tracing": 224.31666666666666,
+    ">post effects": 36.94,
+    "ui": 4.464,
+    ">resolve": 18.73
+   },
+   "render_fps": 0,
+   "render_ms": 300.12666666666667,
+   "errors": []
+  }
+ }
+}

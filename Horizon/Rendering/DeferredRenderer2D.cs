@@ -170,10 +170,11 @@ public class DeferredRenderer2D : Renderer2D
     private const uint FIELD_UNIT = 3;
     private const uint SPRITE_FIELD_UNIT = 5;
 
-    // The shadows of the sprites, a distance field of what they drew, made anew every frame
+    // The shadows of the sprites, a distance field of what they drew, made anew every frame there is one to make
     private readonly SpriteShadows spriteShadows = new();
     private Texture? spriteField;
     private float spritePixelWorld;
+    private int spriteCasters;
 
     private readonly LightData[] lightData = new LightData[MaxLights];
     private GpuBuffer? lightBuffer;
@@ -182,6 +183,12 @@ public class DeferredRenderer2D : Renderer2D
 
     // The lights sorted into the tiles of the screen, once a frame, for every pass that lights
     private readonly LightTiles tiles = new();
+
+    // The lighting worked out once per lighting pixel, for the deferred pass to read, see LightingPixelSize.
+    // HORIZON_LIGHT_CELLS=off has the deferred pass light every pixel itself instead, for comparing the two
+    internal readonly LightCells LightCells = new();
+    internal bool HasLightCells { get; private set; }
+    private static readonly bool cellsOff = string.Equals(Environment.GetEnvironmentVariable("HORIZON_LIGHT_CELLS"), "off", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// What blocks the lights, null for nothing at all (no shadows). Whoever sets it is the one to dispose of it.
@@ -362,8 +369,15 @@ public class DeferredRenderer2D : Renderer2D
         }
 
         lightsUploaded = false;
+        spriteCasters = 0;
         base.Render(dt);
     }
+
+    /// <summary>
+    /// A sprite that blocks light was drawn into this frame, which is what makes the field of sprite shadows worth
+    /// building. The sprite batches say so, see <see cref="Spriting.SpriteBatch"/>. Render thread.
+    /// </summary>
+    internal void NoteSpriteCasters() => spriteCasters++;
 
     /// <summary>
     /// The lights of this frame go to the GPU, and the tracer runs if it is on. The deferred pass that follows reads both.
@@ -374,20 +388,39 @@ public class DeferredRenderer2D : Renderer2D
         var device = GraphicsDevice.Current;
         UploadLights(camera);
 
-        // The shadows of the sprites, out of what they drew this frame
-        using (device.BeginGpuScope("sprite shadows"))
+        bool traced = Lighting == LightingMode.PathTraced && device.Supports(GraphicsFeature.PathTracedLighting);
+
+        // The shadows of the sprites, out of what they drew this frame. Only when there is something to make them
+        // of and a light to throw them, a frame without a caster in it (or without a light) has no field to build.
+        // The tracer wants it whatever, it is what tells its rays where the lamps and the glowing things are
+        spritePixelWorld = camera.Bounds.Width / MathF.Max(ViewportSize.X, 1.0f);
+        bool wantsField = ShownShadows && ShownSpriteShadows && (traced || (spriteCasters > 0 && uploadedLights > 0));
+        if (wantsField)
         {
-            spritePixelWorld = camera.Bounds.Width / MathF.Max(ViewportSize.X, 1.0f);
-            spriteField = ShownShadows && ShownSpriteShadows
-                ? spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld)
-                : null;
+            using var shadows = device.BeginGpuScope("sprite shadows");
+            spriteField = spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld);
+        }
+        else
+        {
+            spriteField = null;
         }
 
-        // Which lights reach which tile of the screen, for the deferred pass and the tracer alike
-        using (device.BeginGpuScope("light tiles"))
+        // Which lights reach which tile of the screen, for the deferred pass and the tracer alike. No lights, no tiles
+        if (uploadedLights > 0)
         {
+            using var sorting = device.BeginGpuScope("light tiles");
             CameraBlock.Use(camera);
             tiles.Build(this, camera, ViewportSize);
+        }
+
+        // Art lit a pixel of the art at a time is lit once per pixel of the art rather than once per pixel of the
+        // screen, see LightCells. With no lights there is nothing to work out, the deferred pass sees to that quickly
+        HasLightCells = false;
+        if (uploadedLights > 0 && ShownLightingPixelSize > 0.0f && !cellsOff)
+        {
+            using var lighting = device.BeginGpuScope("light cells");
+            CameraBlock.Use(camera);
+            HasLightCells = LightCells.Build(this, camera, ShownLightingPixelSize);
         }
 
         if (Lighting != LightingMode.PathTraced) return;
@@ -463,6 +496,7 @@ public class DeferredRenderer2D : Renderer2D
     {
         PathTracing.Dispose();
         tiles.Dispose();
+        LightCells.Dispose();
         spriteShadows.Dispose();
         lightBuffer?.Dispose();
         lightBuffer = null;

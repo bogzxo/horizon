@@ -1,0 +1,56 @@
+{
+ "label": "before, lavapipe 1600x900",
+ "seconds": 10,
+ "runs": {
+  "post": {
+   "gpu_ms": 303.5,
+   "passes": {
+    "Renderer2D": 295.2,
+    ">DeferredRenderer2D": 232.7,
+    ">>tile map": 8.2,
+    ">>sprite shadows": 171.4,
+    ">>light tiles": 0.4,
+    ">>post effects": 46.0,
+    ">ui": 19.9,
+    ">post effects": 41.9
+   }
+  },
+  "lighting": {
+   "gpu_ms": 345.4,
+   "passes": {
+    "DeferredRenderer2D": 338.1,
+    ">sprites": 0.5,
+    ">particles": 5.4,
+    ">sprite shadows": 185.6,
+    ">light tiles": 0.4,
+    ">resolve": 128.6
+   }
+  },
+  "pathtraced": {
+   "gpu_ms": 849.4,
+   "passes": {
+    "DeferredRenderer2D": 839.4,
+    ">sprites": 0.2,
+    ">particles": 3.6,
+    ">sprite shadows": 180.7,
+    ">light tiles": 0.6,
+    ">path tracing": 487.5,
+    ">resolve": 146.1
+   }
+  },
+  "--map japan": {
+   "gpu_ms": 681.4,
+   "passes": {
+    "DeferredRenderer2D": 599.8,
+    ">tile map": 69.7,
+    ">sprites": 0.5,
+    ">particles": 8.1,
+    ">sprite shadows": 223.8,
+    ">light tiles": 0.5,
+    ">path tracing": 259.1,
+    ">resolve": 35.3,
+    "ui": 13.5
+   }
+  }
+ }
+}

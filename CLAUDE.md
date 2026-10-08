@@ -41,16 +41,45 @@ shadows march, sprites that cast shadows do so through a distance field of the p
 path traced lighting is radiance cascades in compute. The performance overlay (`UI/Diagnostics/PerformanceOverlay`,
 F3) shows what every pass of a frame costs the GPU, the threads, the unevenness of the frames and the garbage.
 
+## Read the notebook
+
+`docs/notebook.md` is where whoever worked in here last left what they learned, what they were up to and hints to
+themselves. Read it before crawling the tree, add to it as you go.
+
+## Lights
+
+`Light2D` is a point light unless its `Type` says spot (a cone, `Direction`, `ConeAngle`, `ConeSoftness`, turn it
+by setting its direction every frame) or directional (the same everywhere, the moon, `Direction` and `Reach`).
+`SpriteShadow` is how much of a light the sprites that block light take, 1 like a wall, less and a fighter in front
+of a lantern throws a shadow without putting the lantern out. The lighting passes of a frame, in order, are the
+lights to the GPU, the sprite shadow field (a jump flood of what blocks or glows, only when something casts and a
+light is in view), the light tiles (only with lights), the lighting per lighting pixel (`LightCells`, only with a
+`LightingPixelSize`), the path tracer (the wall radiance once, then the cascades, then the resolve), and the
+deferred pass that puts it on screen. `HORIZON_LOG_LOOPS` prints what each of those cost the GPU.
+
+## Running on a Mac
+
+Vulkan on a Mac is MoltenVK, which comes with the engine (Silk.NET.MoltenVK.Native, next to the exe) and is loaded
+before GLFW goes looking for a Vulkan, or comes through the Vulkan SDK's loader when that is installed. The
+instance asks for the portability drivers (VK_KHR_portability_enumeration, or the loader hides MoltenVK), the
+device is made with VK_KHR_portability_subset, a 1.2 MoltenVK is taken with dynamic rendering and synchronization2
+as extensions, and the bindless table is sized from what Metal lets a set hold. None of it has been run on an
+actual Mac yet, it was all worked out by reading, so the first run there is the test.
+
 ## Building and testing
 
 - `dotnet build Horizon.sln -p:EnableWindowsTargeting=true` on Linux (the HIDL editor is WinForms).
 - `dotnet test Horizon.Tests`.
 - `Horizon.Testing <scene>` from its output folder runs one example, `HORIZON_INPUT_SCRIPT` (a file of lines like
-  `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers, `HORIZON_SCREENSHOT=file.png@3` to see what
-  was drawn, `HORIZON_VULKAN_VALIDATION=1` for the validation layer (when the SDK is installed), `HORIZON_SHADER_CACHE=off`
+  `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers (the loops and the GPU passes),
+  `HORIZON_SCREENSHOT=file.png@3` to see what was drawn (`file.png@3+8x0.5` for eight of them half a second apart), `HORIZON_VULKAN_VALIDATION=1` for the validation layer (when the SDK is installed), `HORIZON_SHADER_CACHE=off`
   to compile every shader anew. Headless on Linux wants a Vulkan driver, lavapipe does.
 - `docs/metrics/raw/run_scenes_windows.py <bin> <label> <out.json>` runs every scene and collects the loop numbers,
-  `make_vulkan_workbook.py` turns two of those into the OpenGL against Vulkan workbook.
+  `make_vulkan_workbook.py` turns two of those into the OpenGL against Vulkan workbook. `run_passes.py` collects what
+  the GPU spent on every pass (headless on lavapipe does) and `make_passes_workbook.py` makes the lighting
+  performance workbook out of a before and an after of those.
+- Headless on this kind of Linux box, `apt-get install mesa-vulkan-drivers vulkan-tools`, `Xvfb :99 -screen 0 1600x900x24 &`,
+  `DISPLAY=:99`, and lavapipe takes it from there, slowly.
 
 ## Where everything is
 

@@ -99,6 +99,9 @@ public enum PixelFormat
     Rg16F,
     Rg32F,
 
+    /// <summary>Two whole numbers, for a shader to keep coordinates in (the jump flood of the sprite shadows).</summary>
+    Rg32Uint,
+
     /// <summary>Four halves, for pictures that are blended into themselves frame after frame.</summary>
     Rgba16F,
 

@@ -70,6 +70,31 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
 - GPU passes on lavapipe, Japan, path traced, 1600x900. sprite shadows 160 to 235 ms, path tracing 200 to 265,
   tile map 50 to 77, resolve 26 to 39, the rest nothing. The sprite field is the thing to kill first.
 
+## The performance round
+
+- Before anything, on lavapipe at 1600x900, post 294 to 313 ms a frame of which sprite shadows 163 to 180 (and the
+  post scene has no lights!), lighting 336 to 355 of which sprite shadows 177 to 194 and resolve 127 to 131,
+  pathtraced 807 to 892 of which path tracing 453 to 522, sprite shadows 178 to 183, resolve 140 to 153. Japan
+  path traced 532 to 700, sprite shadows 160 to 235, path tracing 200 to 266, tile map 50 to 77, resolve 26 to 39.
+- The sprite shadow field was three passes, one with a thread per column doing a serial sweep and one with a thread
+  per row building an envelope, both serial on one lane per workgroup. It is a jump flood now (sprite_seed,
+  sprite_flood eight times, sprite_field), on a grid two texels coarse with the last pass exact, and it is skipped
+  when no sprite casts or no light is in view (the tracer always wants it). Rg32Uint is a pixel format now, for the seeds.
+- The cascades worked the lamps out with shadows for every ray that hit a wall. gi_radiance does that once a frame
+  for the texels on or next to something solid or glowing, the rays read it.
+- Light tiles are skipped with no lights, and directLight bails out with none.
+- `docs/metrics/raw/run_passes.py` collects the pass numbers into JSON, `make_passes_workbook.py` makes
+  `docs/metrics/lighting-performance.xlsx` out of them.
+- After, on lavapipe, same scenes. post 303 to 120 ms (no field, no tiles, nothing to do), lighting 345 to 158
+  (field 186 to 64, and the resolve read 129 then 63, same code, lavapipe is a CPU and the serial passes were
+  starving it), pathtraced 849 to 365 (path tracing 488 to 199 with the radiance map). Japan, old map, path
+  traced, 681 to 388. Japan with the new map (moon, spots, dusk) 459 path traced and 234 direct, of which the
+  moon's long soft shadows are the dear part, the light cells pass is 68 with it and 19 without. Cells off on the
+  new map the resolve is 120, so lighting once per pixel of the art is worth about a third of the frame there.
+- Lavapipe caveat, compute passes run a lot worse than fragment passes on it than they do on a card, the jump
+  flood's 63 to 74 ms is eight passes of 360 thousand threads, nothing on a GPU. The real after is a run of
+  run_scenes_windows.py on bogz's machine.
+
 ## Hints to self
 
 - Shell cwd drifts between calls, use absolute paths and `git -C`.
