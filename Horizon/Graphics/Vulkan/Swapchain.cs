@@ -65,11 +65,16 @@ internal sealed unsafe class Swapchain : IDisposable
             }
         }
 
+        // Vsync off means frames go out the moment they are done, which is immediate mode and nothing else. Mailbox
+        // still waits for the blank on most drivers (it only swaps the newest frame in at the blank), so on a Windows
+        // box it looked for all the world like the vsync switch did nothing. Mailbox is the fallback for a driver
+        // without immediate, and then fifo, which every driver has
         PresentModeKHR mode = PresentModeKHR.FifoKhr;
         if (!vsync)
         {
-            if (modes.Contains(PresentModeKHR.MailboxKhr)) mode = PresentModeKHR.MailboxKhr;
-            else if (modes.Contains(PresentModeKHR.ImmediateKhr)) mode = PresentModeKHR.ImmediateKhr;
+            if (modes.Contains(PresentModeKHR.ImmediateKhr)) mode = PresentModeKHR.ImmediateKhr;
+            else if (modes.Contains(PresentModeKHR.MailboxKhr)) mode = PresentModeKHR.MailboxKhr;
+            else if (modes.Contains(PresentModeKHR.FifoRelaxedKhr)) mode = PresentModeKHR.FifoRelaxedKhr;
         }
 
         Extent2D extent = capabilities.CurrentExtent.Width != uint.MaxValue
