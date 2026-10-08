@@ -31,8 +31,6 @@ internal sealed class UIRenderer
     /// <summary>The quads that were uploaded last, which is what is drawn. For tests that look at what is on screen.</summary>
     internal ReadOnlySpan<SpriteItem> Uploaded => items.AsSpan(0, itemCount);
 
-    /// <summary>Whether anything of what was last uploaded is going anywhere, see <see cref="UIDrawList.Moving"/>.</summary>
-    public bool Moving { get; private set; }
 
     /// <summary>Whether there is nothing to draw at all, a UI whose modules are all off, or one that hasn't been painted yet.</summary>
     public bool IsEmpty => itemCount == 0;
@@ -81,14 +79,13 @@ internal sealed class UIRenderer
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
-        Moving = list.Moving;
     }
 
     /// <summary>
     /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own: a list as
     /// it was captured at the end of a tick, or two of those blended. They are free to be reused afterwards.
     /// </summary>
-    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, bool moving, ReadOnlySpan<TextureAtlas> listAtlases = default)
+    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, ReadOnlySpan<TextureAtlas> listAtlases = default)
     {
         if (items.Length < source.Length)
             items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
@@ -105,7 +102,6 @@ internal sealed class UIRenderer
             atlases.Add(atlas);
 
         skin = listSkin;
-        Moving = moving;
     }
 
     /// <summary>
@@ -116,7 +112,6 @@ internal sealed class UIRenderer
         itemCount = 0;
         runs.Clear();
         skin = null;
-        Moving = false;
     }
 
     /// <summary>

@@ -94,15 +94,6 @@ public class Sprite : GameObject
     /// </summary>
     public bool CastsShadows { get; set; }
 
-    // How fast the sprite is going, for a renderer that blurs motion
-    private readonly Horizon.Core.MotionEstimator _motion = new();
-
-    /// <summary>
-    /// How fast the sprite is moving across the world, in units a second. Worked out from where it is every update,
-    /// so only a sprite that is updated (one that was added to something as an entity) ever has any.
-    /// </summary>
-    public Vector2 Velocity => _motion.Velocity;
-
     /// <summary>
     /// Whether the sprite has been told what to show, by either <see cref="ConfigureSpriteSheet"/> or <see cref="ConfigureAtlas"/>.
     /// </summary>
@@ -242,8 +233,6 @@ public class Sprite : GameObject
         // The tweens of the sprite move along in here, see SpriteTweens for the ones that come ready made
         base.UpdateState(dt);
 
-        _motion.Update(Transform.Position, dt);
-
         // Sprites out of an atlas keep their own time, the ones of a sprite sheet leave it to their animation manager
         if (Atlas is null || !Animated || _atlasFrames.Length < 2 || _atlasFrameTime <= 0.0f) return;
 
@@ -311,7 +300,6 @@ public class Sprite : GameObject
             texMax,
             SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
             (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0) | (flashed && FlashLights ? SpriteItem.LampFlag : 0) | (CastsShadows && !mask ? SpriteItem.ShadowFlag : 0));
-        item.Motion = _motion.Velocity;
         item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
         return true;
     }

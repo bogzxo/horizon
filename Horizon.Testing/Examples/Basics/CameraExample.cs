@@ -27,7 +27,7 @@ namespace Horizon.Testing.Examples.Basics;
 /// <see cref="Camera.Position"/>, <see cref="Camera.PixelSnap"/> and <see cref="Camera.PixelSnapAnchor"/> (why the
 /// anchor stops the thing you follow wobbling), <see cref="Camera.Snap"/> and <see cref="TransformComponent2D.Snap"/>
 /// for a cut, <see cref="Camera.ScreenToWorld"/> for what the mouse is pointing at, <see cref="Camera.Bounds"/> for
-/// what's on screen and <see cref="Camera.Velocity"/>. The minimap is a <see cref="SpriteBatch"/> drawn through a
+/// what's on screen. The minimap is a <see cref="SpriteBatch"/> drawn through a
 /// camera of its own (<see cref="SpriteBatch.CustomCamera"/>), the same one the <see cref="UICompositor"/> uses.
 /// </para>
 /// <para>
@@ -477,9 +477,6 @@ public class CameraExample : Scene, ITestControls
     {
         var bounds = _camera.Bounds;
         Vector3 position = _camera.Position;
-        // Worked out from where the camera's been every update, it's what the motion blur effects go by. A jump of
-        // more than MotionEstimator.TeleportDistance (256 units, unless you change it) is a cut and reads as standing still
-        Vector2 velocity = _camera.Velocity;
         float pixels = DesignSize.X / (_camera.ViewSize.X * _camera.Zoom);
 
         string snap = _camera.PixelSnap > 0.0f ? $"{_camera.PixelSnap:0}, from {(_anchored ? "the hero" : "(0, 0)")}" : "off";
@@ -491,7 +488,6 @@ public class CameraExample : Scene, ITestControls
             $"PixelSnap  {snap}\n" +
             $"PixelSnapAnchor  {_camera.PixelSnapAnchor.X:0.0}, {_camera.PixelSnapAnchor.Y:0.0}\n" +
             $"Bounds  {bounds.X:0}, {bounds.Y:0}, {bounds.Width:0} x {bounds.Height:0}\n" +
-            $"Velocity  {velocity.X:0}, {velocity.Y:0} units a second\n" +
             $"Mouse in the world  {_mouseWorld.X:0}, {_mouseWorld.Y:0}\n" +
             $"Critters on screen  {_critterCount} of {CRITTERS}\n" +
             $"Cuts  {_cuts}, the next in {CUT_EVERY - _cutTimer:0} s";

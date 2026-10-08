@@ -172,6 +172,9 @@ public sealed partial class UISkin
                 case "corner_radius":
                     skin.CornerRadius = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
+                case "icon_blink":
+                    skin.IconBlink = MathF.Max(0.0f, UIScript.ToNumber(value, key));
+                    break;
                 case "syntax":
                     ReadSyntax(skin.Syntax, value);
                     break;

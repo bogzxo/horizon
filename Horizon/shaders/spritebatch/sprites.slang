@@ -10,10 +10,6 @@ struct Params
 {
     // What the whole batch is moved by
     float4x4 uModel;
-
-    // How near the sprites of this batch are, from 0 (the backdrop) to 1 (right in front). What is nearer blurs
-    // over what is further away when it moves, never the other way around
-    float uNearness;
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -26,7 +22,7 @@ struct SpriteItem
     float2 axisY;
     float2 texMin;
     float2 texMax;
-    float2 motion;
+    float2 padding;
     uint color;
     uint flags;
     float depth;
@@ -56,7 +52,6 @@ struct Varyings
     float2 fragPos : FRAGPOS;
     float4 color : COLOR;
     nointerpolation uint flags : FLAGS;
-    nointerpolation float2 motion : MOTION;
     nointerpolation float ring : RING;
     nointerpolation float2 texelSize : TEXELSIZE;
 };
@@ -91,9 +86,6 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
     float4 world = mul(float4(item.origin + item.axisX * corner.x + item.axisY * corner.y, item.depth, 1.0), params.uModel);
     output.position = toClip(world);
     output.fragPos = world.xy;
-
-    // Across the screen, in halves of it a second, how fast it goes through the world less how fast the camera does
-    output.motion = screenMotion(mul(item.motion, (float2x2)params.uModel));
     return output;
 }
 
@@ -184,7 +176,7 @@ GBuffer fsMain(Varyings input)
     if (result.a <= 0.0) discard;
 
     // Sprites have no normal map, are lit like everything else (unless they are flashed) and aren't shiny
-    GBuffer output = writeFlat(result, glow, input.motion, params.uNearness);
+    GBuffer output = writeFlat(result, glow);
 
     // One that blocks light leaves its shape in the material for the lights to go by, see SpriteShadows
     output.material.g = (input.flags & SHADOW_FLAG) != 0u ? result.a : 0.0;

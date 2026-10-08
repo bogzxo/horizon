@@ -20,8 +20,8 @@ struct Chunk
 struct Layer
 {
     float2 offset;
-    float2 motion;
-    float nearness;
+    float2 padding0;
+    float padding1;
     float emissive;
     float2 padding;
     float4 tint;

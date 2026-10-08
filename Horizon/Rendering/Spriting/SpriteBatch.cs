@@ -29,16 +29,6 @@ public class SpriteBatch : GameObject
     /// <summary>The global transform for all sprite meshes.</summary>
     public TransformComponent2D Transform { get; private set; }
 
-    /// <summary>How near sprites are unless their batch says otherwise, in front of a map, behind its foreground.</summary>
-    public const float DEFAULT_NEARNESS = 0.6f;
-
-    /// <summary>
-    /// How near everything this batch draws is, from 0 (the backdrop) to 1 (right in front). Only a renderer that
-    /// blurs motion goes by it (see <see cref="DeferredRenderer2D"/>), what is nearer blurs over what is further away
-    /// when it moves, and stays sharp when what is behind it does.
-    /// </summary>
-    public float Nearness { get; set; } = DEFAULT_NEARNESS;
-
     /// <summary>
     /// The sprites that are drawn out of one texture (a sprite sheet, or an atlas), which go in one draw call. They belong
     /// to the simulation, sprites are added, removed and turned into quads there.
@@ -71,7 +61,6 @@ public class SpriteBatch : GameObject
         public readonly List<CapturedGroup> Groups = [];
         public int GroupCount;
         public Matrix4x4 Model;
-        public float Nearness;
         public Camera? Camera;
     }
 
@@ -159,7 +148,6 @@ public class SpriteBatch : GameObject
 
             if (casters != 0) NoteCasters();
 
-            _itemMesh!.Nearness = Nearness;
             _itemMesh!.DrawItems(0, items.Length, Transform.ModelMatrix, camera);
         }
 
@@ -264,7 +252,6 @@ public class SpriteBatch : GameObject
         if (_captured.BeginPublish() is { } batch)
         {
             batch.Model = Transform.ModelMatrix;
-            batch.Nearness = Nearness;
             batch.Camera = CustomCamera;
             batch.GroupCount = _groups.Count;
 
@@ -370,7 +357,6 @@ public class SpriteBatch : GameObject
             }
 
             SpriteBatchMesh mesh = MeshOf(group);
-            mesh.Nearness = Nearness;
             mesh.Draw(Transform.ModelMatrix, CollectionsMarshal.AsSpan(group.Sprites), camera, group.Texture);
         }
     }
@@ -446,7 +432,6 @@ public class SpriteBatch : GameObject
                 items[now.Masks + i] = drawn;
             }
 
-            mesh.Nearness = current.Nearness;
             mesh.DrawPasses(now.Masks, now.Colors, current.Model, camera);
             mesh.EndItems();
         }

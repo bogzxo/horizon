@@ -81,15 +81,6 @@ public abstract class Camera : GameObject
     /// </summary>
     public Vector2 PixelSnapAnchor { get; set; }
 
-    private readonly MotionEstimator motion = new();
-
-    /// <summary>
-    /// How fast the camera is moving across the world, in units a second. Worked out from where it is every update
-    /// (see <see cref="MotionEstimator"/>), this is what everything that is drawn measures its own motion on screen
-    /// against: what stands still in the world goes by at this speed the other way.
-    /// </summary>
-    public Vector2 Velocity => TryShow(out Shown frame) ? frame.Velocity : motion.Velocity;
-
     /// <summary>Which way the camera looks.</summary>
     protected virtual Vector3 LookDirection => CameraFront;
 
@@ -102,13 +93,6 @@ public abstract class Camera : GameObject
     {
         base.Initialize();
         UpdateMatrices();
-    }
-
-    public override void UpdateState(float dt)
-    {
-        base.UpdateState(dt);
-
-        motion.Update(new Vector2(Position.X, Position.Y), dt);
     }
 
     public override void Render(float dt)
@@ -126,7 +110,7 @@ public abstract class Camera : GameObject
         UpdateMatrices();
 
         Vector3 look = LookDirection;
-        pose.Publish(new Pose(Position, look == Vector3.Zero ? CameraFront : look, CameraUp, projection, motion.Velocity, PixelSnapAnchor));
+        pose.Publish(new Pose(Position, look == Vector3.Zero ? CameraFront : look, CameraUp, projection, PixelSnapAnchor));
 
         base.Capture();
     }
@@ -191,7 +175,7 @@ public abstract class Camera : GameObject
         Vector3 position = Snapped(at.Position, at.Anchor);
 
         Matrix4x4 lookAt = Matrix4x4.CreateLookAt(position, position + at.Front, at.Up);
-        shown = new Shown(lookAt, at.Projection, lookAt * at.Projection, BoundsAt(position, at.Projection), at.Velocity);
+        shown = new Shown(lookAt, at.Projection, lookAt * at.Projection, BoundsAt(position, at.Projection));
         (shownCurrent, shownPrevious, shownAlpha) = (current.CurrentSequence, current.PreviousSequence, current.Alpha);
 
         frame = shown;
@@ -199,19 +183,18 @@ public abstract class Camera : GameObject
     }
 
     /// <summary>Where the camera was at the end of a tick, and how it looked from there.</summary>
-    private readonly record struct Pose(Vector3 Position, Vector3 Front, Vector3 Up, Matrix4x4 Projection, Vector2 Velocity, Vector2 Anchor) : IBlendable<Pose>
+    private readonly record struct Pose(Vector3 Position, Vector3 Front, Vector3 Up, Matrix4x4 Projection, Vector2 Anchor) : IBlendable<Pose>
     {
         public static Pose Blend(in Pose from, in Pose to, float amount) => new(
             Interpolate.Linear(from.Position, to.Position, amount),
             Vector3.Normalize(Interpolate.Linear(from.Front, to.Front, amount)),
             Interpolate.Hold(from.Up, to.Up, amount),
             Matrix4x4.Lerp(from.Projection, to.Projection, amount),
-            Interpolate.Linear(from.Velocity, to.Velocity, amount),
             Interpolate.Linear(from.Anchor, to.Anchor, amount));
     }
 
     /// <summary>The camera as a frame shows it.</summary>
-    private readonly record struct Shown(Matrix4x4 View, Matrix4x4 Projection, Matrix4x4 ViewProj, RectangleF Bounds, Vector2 Velocity);
+    private readonly record struct Shown(Matrix4x4 View, Matrix4x4 Projection, Matrix4x4 ViewProj, RectangleF Bounds);
 
     /// <summary>
     /// Projects a screen space position to world space.

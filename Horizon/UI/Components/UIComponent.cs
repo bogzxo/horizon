@@ -60,9 +60,6 @@ public abstract partial class UIComponent
 
     private TweenContext? tweens;
 
-    // Where it was drawn last, there once something wants to know how fast it is going (see UIDrawList.PushMotion)
-    private UIMotion? motion;
-
     private UIModule? module;
     private Dictionary<string, IRuntimeValue>? script;
 
@@ -386,16 +383,9 @@ public abstract partial class UIComponent
         if (animated)
             list.PushVisual(VisualOffset, VisualScale, Bounds.Center, Opacity);
 
-        // What is painted from here on goes as fast as this component does, until a child says how fast it goes
-        bool tracked = list.TracksMotion;
-        if (tracked)
-            list.PushMotion(motion ??= new UIMotion(), Bounds);
-
         Paint(list);
         PaintChildren(list);
 
-        if (tracked)
-            list.PopMotion();
         if (animated)
             list.PopVisual();
     }

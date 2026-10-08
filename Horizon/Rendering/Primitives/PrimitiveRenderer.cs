@@ -37,7 +37,6 @@ public class PrimitiveRenderer : GameObject
 
     private const string SHADER_NAME = "primitives";
     private const string UNIFORM_MODEL = "uModel";
-    private const string UNIFORM_NEARNESS = "uNearness";
     private const string UNIFORM_EMISSIVE = "uEmissive";
 
     /// <summary>What a frame of shapes looked like as of one tick.</summary>
@@ -57,12 +56,6 @@ public class PrimitiveRenderer : GameObject
 
     /// <summary>A camera to draw through, if null this defaults to the scene camera.</summary>
     public Camera? CustomCamera { get; set; }
-
-    /// <summary>
-    /// How near the shapes are, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs motion goes by
-    /// it (see <see cref="DeferredRenderer2D"/>), what is nearer blurs over what is further away.
-    /// </summary>
-    public float Nearness { get; set; } = 0.8f;
 
     /// <summary>
     /// How much of the shapes shows no matter the light, from 0 to 1, when they are drawn by a <see cref="DeferredRenderer2D"/>.
@@ -210,7 +203,6 @@ public class PrimitiveRenderer : GameObject
 
         shader.Bind();
         shader.SetUniform(UNIFORM_MODEL, Transform.ModelMatrix);
-        shader.SetUniform(UNIFORM_NEARNESS, Nearness);
         shader.SetUniform(UNIFORM_EMISSIVE, Emissive);
 
         stream!.BindRange(SHAPES_BINDING);

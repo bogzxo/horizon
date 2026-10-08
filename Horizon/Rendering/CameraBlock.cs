@@ -33,8 +33,8 @@ public static class CameraBlock
         public Matrix4x4 Projection;
         public Matrix4x4 ViewProjection;
         public Matrix4x4 InverseViewProjection;
-        public Vector2 CameraVelocity;
-        public Vector2 MotionScale;
+        public Vector2 ProjectionScale;
+        public Vector2 Padding2;
         public Vector2 ViewportSize;
         public Vector2 ViewportTexel;
         public float TotalTime;
@@ -93,7 +93,7 @@ public static class CameraBlock
 
         if (same) return;
 
-        Set(camera.View, camera.Projection, camera.Velocity);
+        Set(camera.View, camera.Projection);
 
         heldCamera = camera;
         heldSequence = frame.CurrentSequence;
@@ -108,7 +108,7 @@ public static class CameraBlock
     /// </summary>
     public static void Use(in Matrix4x4 view, in Matrix4x4 projection)
     {
-        Set(view, projection, Vector2.Zero);
+        Set(view, projection);
         heldCamera = null;
         dirty = true;
     }
@@ -116,10 +116,10 @@ public static class CameraBlock
     /// <summary>How big what is drawn into is, as the block has it.</summary>
     public static Vector2 ViewportSize => viewportSize;
 
-    private static void Set(in Matrix4x4 view, in Matrix4x4 projection, Vector2 velocity)
+    private static void Set(in Matrix4x4 view, in Matrix4x4 projection)
     {
-        // The motion scale is what the camera's own projection says, before Vulkan's way round is applied to it
-        held.MotionScale = new Vector2(projection.M11, projection.M22);
+        // How much of the screen a unit of the world is, the camera's own projection before Vulkan's way round is applied to it
+        held.ProjectionScale = new Vector2(projection.M11, projection.M22);
 
         Matrix4x4 corrected = projection * GraphicsDevice.ClipCorrection;
         Matrix4x4 viewProjection = view * corrected;
@@ -130,7 +130,6 @@ public static class CameraBlock
         held.Projection = corrected;
         held.ViewProjection = viewProjection;
         held.InverseViewProjection = inverse;
-        held.CameraVelocity = velocity;
 
         GraphicsDevice.Current.SetCameraBlock(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref held, 1)));
     }

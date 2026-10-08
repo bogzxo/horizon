@@ -34,6 +34,9 @@ Shaders are Slang (`.slang`, shader-slang.org), one file with every stage in it 
 `#include <common/camera.slang>` and friends, compiled at run time by Slangc and cached under LocalAppData by their
 hash. HLSL (`.hlsl`, the same entry point names) compiles through the same path. There is no GLSL.
 
+There is no motion blur and nothing keeps track of how fast anything moves on screen, that went, the G-buffer is
+albedo, surface and material and that is all.
+
 Where that paid off is written into the code. Sprites and the UI are vertexless quads out of a storage block, tile
 maps live on the GPU as chunks a compute pass culls into one indirect draw, particles are simulated and compacted on
 the GPU and drawn indirect, lights are sorted into screen tiles, the occlusion map is a signed distance field the
@@ -50,9 +53,10 @@ themselves. Read it before crawling the tree, add to it as you go.
 
 `Light2D` is a point light unless its `Type` says spot (a cone, `Direction`, `ConeAngle`, `ConeSoftness`, turn it
 by setting its direction every frame) or directional (the same everywhere, the moon, `Direction` and `Reach`).
-`SpriteShadow` is how much of a light the sprites that block light take, 1 like a wall, less and a fighter in front
-of a lantern throws a shadow without putting the lantern out. The lighting passes of a frame, in order, are the
-lights to the GPU, the sprite shadow field (a jump flood of what blocks or glows, only when something casts and a
+`SpriteShadow` is how much of a light the sprites that block light take, 1 like a wall, less and a fighter throws a
+shadow without putting the lantern out, and a sprite the light itself is inside of (a fighter standing in front of
+the lamp) throws no shadow from it at all, the march notices it never leaves the sprite before it gets to the light.
+The lighting passes of a frame, in order, are the lights to the GPU, the sprite shadow field (a jump flood of what blocks or glows, only when something casts and a
 light is in view), the light tiles (only with lights), the lighting per lighting pixel (`LightCells`, only with a
 `LightingPixelSize`), the path tracer (the wall radiance once, then the cascades, then the resolve), and the
 deferred pass that puts it on screen. `HORIZON_LOG_LOOPS` prints what each of those cost the GPU.
@@ -67,8 +71,9 @@ to the shaders. Cascadia Mono ships as its `.ttf` (OFL), Klaxon and VCR as the b
 
 ## Running on a Mac
 
-Vulkan on a Mac is MoltenVK, which comes with the engine (Silk.NET.MoltenVK.Native, next to the exe) and is loaded
-before GLFW goes looking for a Vulkan, or comes through the Vulkan SDK's loader when that is installed. The
+Vulkan on a Mac is MoltenVK, which comes with the engine (Silk.NET.MoltenVK.Native, next to the exe). GLFW has no
+Vulkan to offer on a Mac, so the window there is SDL's (everywhere else GLFW's), told where MoltenVK is through
+SDL_VULKAN_LIBRARY, or it finds the Vulkan SDK's loader by itself when that is installed. The
 instance asks for the portability drivers (VK_KHR_portability_enumeration, or the loader hides MoltenVK), the
 device is made with VK_KHR_portability_subset, a 1.2 MoltenVK is taken with dynamic rendering and synchronization2
 as extensions, and the bindless table is sized from what Metal lets a set hold. None of it has been run on an
@@ -112,6 +117,7 @@ So nobody has to crawl the tree again. Two libraries and four apps, one solution
   `Host/TestCatalog.cs` listing them (ids like `quickstart`, `lighting`, `pathtraced`, `fluid`, `ui-selftest`).
   `./Horizon.Testing <id>` runs one headless, see Building and testing above.
 - `Horizon.Hex/` the layout editor, `--selftest --exit` clicks through itself. `Horizon.Tests/` xUnit.
+- `docs/radiance-cascades.md` how the path traced lighting works, for whoever has to touch it or wants to build one.
 - `docs/project-health-2.md` the write-up of that branch (its "Towards a second backend" is history now, the
   second backend is the only one), `docs/metrics/` the numbers, raw JSON and the scripts that made them,
   `vulkan-metrics.xlsx` being OpenGL against Vulkan on the same machine.

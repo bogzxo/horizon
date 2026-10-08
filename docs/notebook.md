@@ -119,6 +119,26 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
   sprite field's glow channel and gi_radiance read the material's blue. Fighter2D's impact sparks, blood, mist and
   the hitstun haze don't light, the lava does.
 
+## The round after, flicker everywhere and the blur going
+
+- The tile layers that flickered were the parallax ones. `TileMap.Draw` took the eye from `camera.Position`, which
+  is where the simulation last put the camera, a tick ahead and unrounded, while the view came from `camera.Bounds`,
+  the shown one. Every frame the difference moved every layer with a parallax. Now the eye is the middle of the bounds.
+  Anything on the render thread that wants the camera takes it from Bounds, ViewProj or the camera block, never Position.
+- The gamepad button icons "flickered" because the pressable ones have five frames at 0.12 s and cycled without
+  pause. An icon with frames plays them once every `icon_blink` seconds (3) and rests on the first in between.
+- The UI flicker on things that update (progress bars, a hovered button's neighbours) was almost surely the motion
+  blur, which smears a moving thing over its neighbours by whole 32 pixel tiles. bogz had it removed outright,
+  the motion attachment, the velocity in every shader, the UI's motion tracking, MotionEstimator, Camera.Velocity,
+  the three blur passes and the game option. The G-buffer is three attachments now. If the flicker survives that,
+  the next suspect is the retained UI layer (`UICompositor.DrawUploaded`, `PostLayer.Replay`).
+- Questions with two buttons side by side wanted up and down on the pad because the menus only ever fed the
+  navigator the vertical. Left and right go in too now, a selector still takes them first.
+- Intros ease now (`intro_easing: "out_cubic"` in a layout, any Easing), a fade was the one that ran straight.
+- GLFW has no Vulkan on macOS. The window is SDL's there, see CLAUDE.md.
+- A sprite the light sits inside of doesn't shadow it, the shadow march walks through sprites and a sprite it is
+  still inside of at the light is let off. No colliders on the lamps needed.
+
 ## Hints to self
 
 - Shell cwd drifts between calls, use absolute paths and `git -C`.

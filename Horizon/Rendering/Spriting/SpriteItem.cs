@@ -72,9 +72,8 @@ public struct SpriteItem
     public Vector2 TexMin;
     public Vector2 TexMax;
 
-    // How fast the quad is moving across the world, in units a second. Nothing is moved by this, it is what a
-    // renderer that blurs motion goes by (see DeferredRenderer2D), anything that doesn't say stands still
-    public Vector2 Motion;
+    // Room where the quad's motion used to be, the shader has it too
+    private Vector2 padding;
 
     // RGBA, 8 bits each with red in the low byte, see PackColor
     public uint Color;
@@ -155,7 +154,6 @@ public struct SpriteItem
         item.Origin = Interpolate.Linear(from.Origin, to.Origin, amount);
         item.AxisX = Interpolate.Linear(from.AxisX, to.AxisX, amount);
         item.AxisY = Interpolate.Linear(from.AxisY, to.AxisY, amount);
-        item.Motion = Interpolate.Linear(from.Motion, to.Motion, amount);
         item.Color = Interpolate.PackedColor(from.Color, to.Color, amount);
         item.Ring = Interpolate.Linear(from.Ring, to.Ring, amount);
         return item;

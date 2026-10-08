@@ -19,9 +19,7 @@ namespace Horizon.Rendering.PostProcessing;
 /// With no effect on, <see cref="Begin"/> says no and does nothing: the drawing goes where it always went and the
 /// layer costs nothing, not even the memory. The layer is colours and nothing else, it has no depth and no stencil:
 /// sprites that are cut out with a mask are drawn whole on it.
-/// The layer keeps track of what moves on it the way a <see cref="DeferredRenderer2D"/> does (whatever draws with
-/// the sprite, tile map or particle shaders says how fast it is going), so a <see cref="MotionBlurEffect"/> works
-/// here as it does there. An effect has to pass the alpha of the picture on to be of any use on a layer, see
+/// An effect has to pass the alpha of the picture on to be of any use on a layer, see
 /// <see cref="PostContext.Source"/>: one that makes all of the picture solid (<see cref="CrtEffect"/>) hides
 /// everything under it.
 /// <para>
@@ -33,13 +31,8 @@ namespace Horizon.Rendering.PostProcessing;
 /// </summary>
 public sealed class PostLayer : IDisposable
 {
-    // Fragment shaders write how fast they are going to their fourth output, see DeferredRenderer2D
-    private const AttachmentPoint MOTION_ATTACHMENT = AttachmentPoint.Color3;
-    private const int MOTION_OUTPUT = 3;
-
-    // Nothing there, and nothing moving: must match encodeMotion in the shaders that write it
+    // Nothing there
     private static readonly Vector4 Empty = Vector4.Zero;
-    private static readonly Vector4 Still = new(128.0f / 255.0f, 128.0f / 255.0f, 0.0f, 0.0f);
 
     private static readonly Action Nothing = static () => { };
 
@@ -77,10 +70,6 @@ public sealed class PostLayer : IDisposable
     /// <summary>
     /// Has everything that is drawn from here to <see cref="End"/> go onto the layer, if any effect is on.
     /// </summary>
-    /// <param name="moving">
-    /// False if nothing of what is about to be drawn moves, for whoever knows: the effects that are only for what
-    /// moves are left out then, and if those are all there is so is the layer.
-    /// </param>
     /// <param name="retain">
     /// True to have the layer drawn onto even with no effect on, for whoever wants the picture kept to be laid
     /// over again later (see <see cref="Replay"/>).
@@ -90,11 +79,11 @@ public sealed class PostLayer : IDisposable
     /// where it was going. That is also what happens inside of a renderer that lights its picture, where there is
     /// no picture to lay anything over yet.
     /// </returns>
-    public bool Begin(bool moving = true, bool retain = false)
+    public bool Begin(bool retain = false)
     {
         hasPicture = false;
 
-        effectsActive = Effects.Prepare(moving);
+        effectsActive = Effects.Prepare();
         if (!effectsActive && !retain)
             return false;
 
@@ -147,7 +136,7 @@ public sealed class PostLayer : IDisposable
     /// False if there is no picture to lay over, or what it would be laid over is another size by now: nothing
     /// was done then, and the layer has to be drawn onto again.
     /// </returns>
-    public bool Replay(float dt, bool moving = false)
+    public bool Replay(float dt)
     {
         if (!hasPicture || frameBuffer is null)
             return false;
@@ -163,7 +152,7 @@ public sealed class PostLayer : IDisposable
         target = into;
         before = RenderState.Save();
 
-        effectsActive = Effects.Prepare(moving);
+        effectsActive = Effects.Prepare();
         Compose(dt);
         return true;
     }
@@ -184,7 +173,6 @@ public sealed class PostLayer : IDisposable
         {
             Effects.Run(
                 size,
-                frameBuffer.TextureOf(MOTION_ATTACHMENT),
                 dt,
                 picture,
                 Nothing,
@@ -207,7 +195,6 @@ public sealed class PostLayer : IDisposable
     {
         var device = Horizon.Graphics.GraphicsDevice.Current;
         device.ClearColorAttachment(frameBuffer!, 0, Empty);
-        device.ClearColorAttachment(frameBuffer!, MOTION_OUTPUT, Still);
     }
 
     /// <summary>
@@ -233,9 +220,8 @@ public sealed class PostLayer : IDisposable
                 Height = height,
                 Attachments = new()
                 {
-                    // The picture is read between its pixels by the effects, what moves in it never is
+                    // The picture is read between its pixels by the effects
                     { AttachmentPoint.Color0, PostTarget.Smooth },
-                    { MOTION_ATTACHMENT, PostTarget.Exact },
                 }
             },
             out var result);

@@ -7,7 +7,7 @@ namespace Horizon.Rendering.PostProcessing;
 /// <summary>
 /// The effects a <see cref="Renderer2D"/> puts its picture through before it is shown, in the order they run:
 /// <code>
-/// renderer.PostProcessing.Add(new MotionBlurEffect());
+/// renderer.PostProcessing.Add(new CrtEffect());
 /// renderer.PostProcessing.Add(new CrtEffect { PixelSize = 2 });
 /// </code>
 /// The picture is handed from one effect to the next through two targets that take turns, however many effects
@@ -94,9 +94,8 @@ public sealed class PostProcessor : IDisposable
     /// <summary>
     /// Finds the effects that are on. Has to be called once a frame, before <see cref="Run"/>.
     /// </summary>
-    /// <param name="moving">False if it is known that nothing in the picture moves, which leaves out the effects that are only for what does.</param>
     /// <returns>Whether there are any.</returns>
-    internal bool Prepare(bool moving = true)
+    internal bool Prepare()
     {
         PostEffect[] all = snapshot;
         if (active.Length < all.Length)
@@ -105,7 +104,7 @@ public sealed class PostProcessor : IDisposable
         activeCount = 0;
         foreach (PostEffect effect in all)
         {
-            if (effect.Enabled && (moving || !effect.NeedsMotion))
+            if (effect.Enabled)
                 active[activeCount++] = effect;
         }
 
@@ -116,12 +115,11 @@ public sealed class PostProcessor : IDisposable
     /// Runs the picture through the effects that are on.
     /// </summary>
     /// <param name="size">How big the picture is, in pixels.</param>
-    /// <param name="motion">What is moving in the picture and how fast (see <see cref="PostContext.Motion"/>), null if nobody kept track.</param>
     /// <param name="picture">The picture as it is, null if it only exists once <paramref name="resolve"/> has drawn it.</param>
     /// <param name="resolve">Draws the picture into whatever is bound, for a renderer that has to work it out first (by lighting it).</param>
     /// <param name="bindOutput">Binds where the picture is shown, set up for however it is to be put there.</param>
     /// <param name="outputSize">How big that is.</param>
-    internal void Run(Vector2 size, Texture? motion, float dt, Texture? picture, Action resolve, Action bindOutput, Vector2 outputSize)
+    internal void Run(Vector2 size, float dt, Texture? picture, Action resolve, Action bindOutput, Vector2 outputSize)
     {
         int holding = -1;
 
@@ -135,7 +133,6 @@ public sealed class PostProcessor : IDisposable
         }
 
         context.Processor = this;
-        context.Motion = motion;
         context.DeltaTime = dt;
         context.SourceSize = size;
 

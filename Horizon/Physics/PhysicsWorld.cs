@@ -40,7 +40,7 @@ public class PhysicsWorld : GameComponent
     /// they are drawn alongside the simulation like everything else and go through whatever renderer the world is in.
     /// Its camera, nearness and transform are there to be set like any other's.
     /// </summary>
-    public PrimitiveRenderer DebugRenderer { get; } = new() { Nearness = 1.0f };
+    public PrimitiveRenderer DebugRenderer { get; } = new();
 
     /// <summary>How wide the outlines are, in units of the world.</summary>
     public float DebugLineWidth { get; set; } = 1.0f;

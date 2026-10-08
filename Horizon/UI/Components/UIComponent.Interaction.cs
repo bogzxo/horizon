@@ -196,6 +196,12 @@ public abstract partial class UIComponent
     /// <summary>Where a component that slides in comes from, relative to where it belongs: (-300, 0) is from the left.</summary>
     public Vector2 IntroOffset { get; set; }
 
+    /// <summary>
+    /// How the entrance is timed, any <see cref="Easing"/> (<c>intro_easing: "out_cubic"</c> in a layout). Null for
+    /// what the entrance does by itself, a pop overshoots and settles, a fade and a slide ease out cubic.
+    /// </summary>
+    public Easing? IntroEasing { get; set; }
+
     public const float DEFAULT_INTRO_TIME = 0.35f;
 
     /// <summary>
@@ -209,15 +215,15 @@ public abstract partial class UIComponent
         switch (Intro)
         {
             case UIIntro.Pop:
-                this.PopIn(IntroTime, wait);
+                this.PopIn(IntroTime, wait, IntroEasing ?? Easing.OutBack);
                 break;
 
             case UIIntro.Fade:
-                this.FadeIn(IntroTime, wait);
+                this.FadeIn(IntroTime, wait, IntroEasing ?? Easing.OutCubic);
                 break;
 
             case UIIntro.Slide:
-                this.SlideIn(IntroOffset, IntroTime, wait);
+                this.SlideIn(IntroOffset, IntroTime, wait, IntroEasing ?? Easing.OutCubic);
                 break;
         }
 

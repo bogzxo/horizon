@@ -7,9 +7,8 @@
 // The matrices are row major and multiplied the System.Numerics way, a row vector times the matrix, so what the
 // engine works out on the CPU is exactly what the GPU gets. The projection has already been turned the way Vulkan
 // wants its clip space, nothing here has to think about that.
-// uCameraVelocity is how fast the camera goes across the world (units a second), uMotionScale how much of the
-// screen a unit of the world is (halves of it), which together turn a speed through the world into a speed across
-// the screen, which is what the motion blur goes by, see motion.slang.
+// uProjectionScale is how much of the screen a unit of the world is (halves of it), the camera's own projection
+// before Vulkan's way round is applied to it, for whoever wants to know how big a pixel is in the world.
 
 struct Camera
 {
@@ -17,8 +16,8 @@ struct Camera
     float4x4 uProjection;
     float4x4 uViewProjection;
     float4x4 uInverseViewProjection;
-    float2 uCameraVelocity;
-    float2 uMotionScale;
+    float2 uProjectionScale;
+    float2 uCameraPadding2;
     float2 uViewportSize;
     float2 uViewportTexel;
     float uTotalTime;
@@ -46,10 +45,4 @@ float2 pictureOf(float2 world)
 {
     float4 clip = mul(float4(world, 0.0, 1.0), camera.uViewProjection);
     return clip.xy / clip.w * 0.5 + 0.5;
-}
-
-// How fast something that goes through the world at a speed goes across the screen, in halves of the screen a second.
-float2 screenMotion(float2 worldVelocity)
-{
-    return (worldVelocity - camera.uCameraVelocity) * camera.uMotionScale;
 }

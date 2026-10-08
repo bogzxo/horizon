@@ -143,8 +143,8 @@ internal sealed class TileMapGpu : IDisposable
     public struct Layer
     {
         public Vector2 Offset;
-        public Vector2 Motion;
-        public float Nearness;
+        public Vector2 Padding0;
+        public float Padding1;
         public float Emissive;
         public Vector2 Padding;
         public Vector4 Tint;
