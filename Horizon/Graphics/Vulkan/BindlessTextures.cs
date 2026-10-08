@@ -11,8 +11,14 @@ namespace Horizon.Graphics.Vulkan;
 /// </summary>
 internal sealed unsafe class BindlessTextures : IDisposable
 {
-    /// <summary>How many slots the table has. More than any scene has textures, and a slot is a few bytes.</summary>
-    public const uint CAPACITY = 4096;
+    /// <summary>The most slots the table has. More than any scene has textures, and a slot is a few bytes.</summary>
+    public const uint MAX_CAPACITY = 4096;
+
+    /// <summary>
+    /// How many slots the table has on this card, <see cref="MAX_CAPACITY"/> unless the card allows fewer samplers
+    /// in a set than that (Metal does, through MoltenVK). The shaders are compiled to match, see ShaderPreprocessor.
+    /// </summary>
+    public uint Capacity { get; }
 
     /// <summary>The slot that stands for no texture at all.</summary>
     public const uint NONE = 0xFFFF;
@@ -29,7 +35,14 @@ internal sealed unsafe class BindlessTextures : IDisposable
     {
         this.context = context;
 
-        var flags = DescriptorBindingFlags.PartiallyBoundBit | DescriptorBindingFlags.UpdateAfterBindBit | DescriptorBindingFlags.UpdateUnusedWhilePendingBit;
+        // As many as the card takes in one set after bind, which on most cards is more than anybody has textures and
+        // on Metal is a thousand or so
+        var limits = context.Limits;
+        uint allowed = Math.Min(Math.Min(context.MaxUpdateAfterBindSampledImages, context.MaxUpdateAfterBindSamplers), Math.Min(limits.MaxDescriptorSetSampledImages, limits.MaxDescriptorSetSamplers));
+        Capacity = Math.Clamp(allowed, 256, MAX_CAPACITY);
+
+        var flags = DescriptorBindingFlags.PartiallyBoundBit | DescriptorBindingFlags.UpdateAfterBindBit;
+        if (context.UpdateUnusedWhilePending) flags |= DescriptorBindingFlags.UpdateUnusedWhilePendingBit;
         var flagsInfo = new DescriptorSetLayoutBindingFlagsCreateInfo
         {
             SType = StructureType.DescriptorSetLayoutBindingFlagsCreateInfo,
@@ -41,7 +54,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
         {
             Binding = 0,
             DescriptorType = DescriptorType.CombinedImageSampler,
-            DescriptorCount = CAPACITY,
+            DescriptorCount = Capacity,
             StageFlags = ShaderStageFlags.All
         };
 
@@ -57,7 +70,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
         VulkanContext.Check(context.Vk.CreateDescriptorSetLayout(context.Device, in layoutInfo, null, out DescriptorSetLayout layout), "making the bindless layout");
         Layout = layout;
 
-        var size = new DescriptorPoolSize(DescriptorType.CombinedImageSampler, CAPACITY);
+        var size = new DescriptorPoolSize(DescriptorType.CombinedImageSampler, Capacity);
         var poolInfo = new DescriptorPoolCreateInfo
         {
             SType = StructureType.DescriptorPoolCreateInfo,
@@ -85,7 +98,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
     public uint Add(ImageView view, Sampler sampler)
     {
         uint slot = free.Count > 0 ? free.Pop() : next++;
-        if (slot >= CAPACITY) throw new InvalidOperationException($"The bindless table is full, {CAPACITY} textures is the most it holds.");
+        if (slot >= Capacity) throw new InvalidOperationException($"The bindless table is full, {Capacity} textures is the most this card holds.");
 
         Write(slot, view, sampler);
         return slot;
@@ -111,7 +124,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
     /// <summary>Gives a slot back, once the GPU is done with whatever read it. The caller sees to the waiting.</summary>
     public void Release(uint slot)
     {
-        if (slot < CAPACITY) free.Push(slot);
+        if (slot < Capacity) free.Push(slot);
     }
 
     public void Dispose()

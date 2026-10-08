@@ -20,6 +20,11 @@ internal sealed unsafe class VulkanContext : IDisposable
 {
     private const string VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
     private const string VALIDATION_VARIABLE = "HORIZON_VULKAN_VALIDATION";
+    private const string PORTABILITY_ENUMERATION = "VK_KHR_portability_enumeration";
+    private const string PORTABILITY_SUBSET = "VK_KHR_portability_subset";
+    private const string DYNAMIC_RENDERING = "VK_KHR_dynamic_rendering";
+    private const string SYNCHRONIZATION2 = "VK_KHR_synchronization2";
+    private const string MAINTENANCE4 = "VK_KHR_maintenance4";
 
     public Vk Vk { get; }
     public Instance Instance { get; private set; }
@@ -57,6 +62,19 @@ internal sealed unsafe class VulkanContext : IDisposable
     /// <summary>The depth and stencil format the card has, the 24 plus 8 one when it does, 32 plus 8 otherwise.</summary>
     public Format DepthStencilFormat { get; private set; }
 
+    /// <summary>Whether the bindless table may be written to while a frame that doesn't read the slot is in flight.</summary>
+    public bool UpdateUnusedWhilePending { get; private set; }
+
+    /// <summary>How many sampled images and samplers a set written after bind may hold, which sizes the bindless table.</summary>
+    public uint MaxUpdateAfterBindSampledImages { get; private set; } = uint.MaxValue;
+    public uint MaxUpdateAfterBindSamplers { get; private set; } = uint.MaxValue;
+
+    /// <summary>
+    /// Whether the card is a portability one (MoltenVK on a Mac), which does most of Vulkan and says so through
+    /// VK_KHR_portability_subset. The device is made with that on, as the spec wants.
+    /// </summary>
+    public bool IsPortability { get; private set; }
+
     // Every queue is submitted to under this, the render thread and whoever uploads on a transfer queue included
     public readonly Lock QueueLock = new();
 
@@ -92,6 +110,15 @@ internal sealed unsafe class VulkanContext : IDisposable
             extensions.Add(Marshal.PtrToStringAnsi((nint)windowExtensions[i])!);
         if (ValidationEnabled) extensions.Add(ExtDebugUtils.ExtensionName);
 
+        // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
+        // asked for by name. Without this a Mac says it has no GPU at all
+        var flags = InstanceCreateFlags.None;
+        if (HasInstanceExtension(PORTABILITY_ENUMERATION))
+        {
+            extensions.Add(PORTABILITY_ENUMERATION);
+            flags |= InstanceCreateFlags.EnumeratePortabilityBitKhr;
+        }
+
         var layers = ValidationEnabled ? new[] { VALIDATION_LAYER } : [];
 
         var appInfo = new ApplicationInfo
@@ -107,6 +134,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         var createInfo = new InstanceCreateInfo
         {
             SType = StructureType.InstanceCreateInfo,
+            Flags = flags,
             PApplicationInfo = &appInfo,
             EnabledExtensionCount = (uint)extensions.Count,
             PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions),
@@ -159,6 +187,60 @@ internal sealed unsafe class VulkanContext : IDisposable
         return Vk.False;
     }
 
+    private bool HasInstanceExtension(string name)
+    {
+        uint count = 0;
+        Vk.EnumerateInstanceExtensionProperties((byte*)null, &count, null);
+        if (count == 0) return false;
+
+        var properties = new ExtensionProperties[count];
+        fixed (ExtensionProperties* pointer = properties)
+            Vk.EnumerateInstanceExtensionProperties((byte*)null, &count, pointer);
+
+        foreach (var property in properties)
+        {
+            if (Marshal.PtrToStringAnsi((nint)property.ExtensionName) == name) return true;
+        }
+
+        return false;
+    }
+
+    private HashSet<string> DeviceExtensionsOf(PhysicalDevice device)
+    {
+        uint count = 0;
+        Vk.EnumerateDeviceExtensionProperties(device, (byte*)null, &count, null);
+        var properties = new ExtensionProperties[count];
+        if (count > 0)
+        {
+            fixed (ExtensionProperties* pointer = properties)
+                Vk.EnumerateDeviceExtensionProperties(device, (byte*)null, &count, pointer);
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in properties)
+        {
+            if (Marshal.PtrToStringAnsi((nint)property.ExtensionName) is { } name) names.Add(name);
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// Whether a card will do. Vulkan 1.3, or 1.2 with dynamic rendering and synchronization2 as extensions, which
+    /// is what an older MoltenVK has, and a queue that can draw and present.
+    /// </summary>
+    private bool IsUsable(PhysicalDevice candidate, in PhysicalDeviceProperties properties)
+    {
+        if (properties.ApiVersion < Vk.Version12) return false;
+        if (properties.ApiVersion < Vk.Version13)
+        {
+            var extensions = DeviceExtensionsOf(candidate);
+            if (!extensions.Contains(DYNAMIC_RENDERING) || !extensions.Contains(SYNCHRONIZATION2)) return false;
+        }
+
+        return FindQueues(candidate, out _, out _, out _);
+    }
+
     private bool HasLayer(string name)
     {
         uint count = 0;
@@ -198,8 +280,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         foreach (var candidate in devices)
         {
             Vk.GetPhysicalDeviceProperties(candidate, out var properties);
-            if (properties.ApiVersion < Vk.Version13) continue;
-            if (!FindQueues(candidate, out _, out _, out _)) continue;
+            if (!IsUsable(candidate, in properties)) continue;
 
             int score = properties.DeviceType switch
             {
@@ -216,7 +297,9 @@ internal sealed unsafe class VulkanContext : IDisposable
             }
         }
 
-        PhysicalDevice = best ?? throw new InvalidOperationException("No GPU on this machine does Vulkan 1.3 with a queue that can draw and present.");
+        PhysicalDevice = best ?? throw new InvalidOperationException(
+            "No GPU on this machine does Vulkan 1.3 (or 1.2 with dynamic rendering and synchronization2) with a queue that can draw and present. " +
+            (OperatingSystem.IsMacOS() ? "On a Mac that is MoltenVK, 1.2.6 or later, which the game brings with it or the Vulkan SDK installs." : "Is the driver up to date?"));
 
         Vk.GetPhysicalDeviceProperties(PhysicalDevice, out var chosen);
         Vk.GetPhysicalDeviceMemoryProperties(PhysicalDevice, out var memory);
@@ -297,15 +380,32 @@ internal sealed unsafe class VulkanContext : IDisposable
             };
         }
 
-        // What there is, so that only what is there is asked for
+        // What there is, so that only what is there is asked for. A 1.2 card has dynamic rendering and
+        // synchronization2 as extensions, with feature structs of their own that are the 1.3 ones by other names
+        bool is13 = Properties.ApiVersion >= Vk.Version13;
+        var deviceExtensions = DeviceExtensionsOf(PhysicalDevice);
+
+        var availableSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features };
+        var availableDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &availableSync2 };
         var available13 = new PhysicalDeviceVulkan13Features { SType = StructureType.PhysicalDeviceVulkan13Features };
-        var available12 = new PhysicalDeviceVulkan12Features { SType = StructureType.PhysicalDeviceVulkan12Features, PNext = &available13 };
+        var available12 = new PhysicalDeviceVulkan12Features { SType = StructureType.PhysicalDeviceVulkan12Features, PNext = is13 ? &available13 : (void*)&availableDynamic };
         var available11 = new PhysicalDeviceVulkan11Features { SType = StructureType.PhysicalDeviceVulkan11Features, PNext = &available12 };
         var available = new PhysicalDeviceFeatures2 { SType = StructureType.PhysicalDeviceFeatures2, PNext = &available11 };
         Vk.GetPhysicalDeviceFeatures2(PhysicalDevice, &available);
 
-        if (!available13.DynamicRendering || !available13.Synchronization2 || !available12.TimelineSemaphore || !available12.DescriptorBindingPartiallyBound)
+        bool dynamicRendering = is13 ? available13.DynamicRendering : availableDynamic.DynamicRendering;
+        bool synchronization2 = is13 ? available13.Synchronization2 : availableSync2.Synchronization2;
+        if (!dynamicRendering || !synchronization2 || !available12.TimelineSemaphore || !available12.DescriptorBindingPartiallyBound)
             throw new InvalidOperationException($"{DeviceName} hasn't got dynamic rendering, synchronization2, timeline semaphores and partially bound descriptors, which the engine can't do without.");
+
+        // What a set written after bind may hold, for the bindless table
+        var indexingProperties = new PhysicalDeviceDescriptorIndexingProperties { SType = StructureType.PhysicalDeviceDescriptorIndexingProperties };
+        var properties2 = new PhysicalDeviceProperties2 { SType = StructureType.PhysicalDeviceProperties2, PNext = &indexingProperties };
+        Vk.GetPhysicalDeviceProperties2(PhysicalDevice, &properties2);
+        MaxUpdateAfterBindSampledImages = indexingProperties.MaxDescriptorSetUpdateAfterBindSampledImages;
+        MaxUpdateAfterBindSamplers = indexingProperties.MaxDescriptorSetUpdateAfterBindSamplers;
+        UpdateUnusedWhilePending = available12.DescriptorBindingUpdateUnusedWhilePending;
+        IsPortability = deviceExtensions.Contains(PORTABILITY_SUBSET);
 
         if (!available12.DescriptorIndexing || !available12.DescriptorBindingSampledImageUpdateAfterBind || !available12.ShaderSampledImageArrayNonUniformIndexing || !available12.RuntimeDescriptorArray)
             throw new InvalidOperationException($"{DeviceName} hasn't got descriptor indexing with update after bind, which the bindless textures can't do without.");
@@ -321,10 +421,14 @@ internal sealed unsafe class VulkanContext : IDisposable
             Maintenance4 = available13.Maintenance4
         };
 
+        // The same two for a 1.2 card, through the extensions
+        var featuresSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, Synchronization2 = true };
+        var featuresDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &featuresSync2, DynamicRendering = true };
+
         var features12 = new PhysicalDeviceVulkan12Features
         {
             SType = StructureType.PhysicalDeviceVulkan12Features,
-            PNext = &features13,
+            PNext = is13 ? &features13 : (void*)&featuresDynamic,
             TimelineSemaphore = true,
             DescriptorIndexing = true,
             DescriptorBindingPartiallyBound = true,
@@ -359,7 +463,16 @@ internal sealed unsafe class VulkanContext : IDisposable
             }
         };
 
-        string[] extensions = [KhrSwapchain.ExtensionName];
+        var extensions = new List<string> { KhrSwapchain.ExtensionName };
+        if (!is13)
+        {
+            extensions.Add(DYNAMIC_RENDERING);
+            extensions.Add(SYNCHRONIZATION2);
+            if (deviceExtensions.Contains(MAINTENANCE4)) extensions.Add(MAINTENANCE4);
+        }
+
+        // The spec says a portability card has to be made with this on, and MoltenVK is one
+        if (IsPortability) extensions.Add(PORTABILITY_SUBSET);
 
         fixed (DeviceQueueCreateInfo* queues = queueInfos)
         {
@@ -369,7 +482,7 @@ internal sealed unsafe class VulkanContext : IDisposable
                 PNext = &features,
                 QueueCreateInfoCount = (uint)queueInfos.Length,
                 PQueueCreateInfos = queues,
-                EnabledExtensionCount = (uint)extensions.Length,
+                EnabledExtensionCount = (uint)extensions.Count,
                 PpEnabledExtensionNames = (byte**)SilkMarshal.StringArrayToPtr(extensions)
             };
 
@@ -399,7 +512,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         }
         else TransferQueue = GraphicsQueue;
 
-        Log.Info($"[Vulkan] {DeviceName}, driver {DriverVersion}, Vulkan {Properties.ApiVersion >> 22}.{(Properties.ApiVersion >> 12) & 0x3FF}. " +
+        Log.Info($"[Vulkan] {DeviceName}, driver {DriverVersion}, Vulkan {Properties.ApiVersion >> 22}.{(Properties.ApiVersion >> 12) & 0x3FF}{(IsPortability ? " (portability)" : "")}. " +
                  $"Async compute {(HasAsyncCompute ? "yes" : "no")}, transfer queue {(HasTransferQueue ? "yes" : "no")}, timestamps {(TimestampsSupported ? "yes" : "no")}.");
     }
 

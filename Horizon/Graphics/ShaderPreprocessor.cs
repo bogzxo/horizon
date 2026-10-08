@@ -40,14 +40,16 @@ public sealed class ShaderPreprocessor : IDisposable
     /// <summary>How many samplers on their own, after the images on set 1, each the sampler of the texture unit of the same number. For HLSL.</summary>
     public const int SAMPLER_BINDINGS = 8;
 
-    private const string Prelude = """
+    // The bindless table is as big as the card allows (see BindlessTextures.Capacity), which goes into the prelude
+    // and so into the hash the compiled program is kept under, a card with a smaller table gets its own programs
+    private static string Prelude => $"""
         #define HORIZON_SLANG 1
         #define BIND_UNIFORM(n) [[vk::binding(n, 0)]]
         #define BIND_BUFFER(n) [[vk::binding(n, 0)]]
         #define BIND_TEXTURE(n) [[vk::binding(n, 1)]]
         #define BIND_IMAGE(n) [[vk::binding(8 + n, 1)]]
         #define BIND_SAMPLER(n) [[vk::binding(12 + n, 1)]]
-        #define BINDLESS_TEXTURES(name) [[vk::binding(0, 2)]] Sampler2D name[4096]
+        #define BINDLESS_TEXTURES(name) [[vk::binding(0, 2)]] Sampler2D name[{(GraphicsDevice.IsAvailable ? GraphicsDevice.Current.Bindless.Capacity : Vulkan.BindlessTextures.MAX_CAPACITY)}]
         #define NO_TEXTURE 0xFFFFu
         """;
 
