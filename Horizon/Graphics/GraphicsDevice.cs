@@ -118,6 +118,9 @@ public abstract class GraphicsDevice
     /// <summary>What the backend calls itself, with the version it got, for the log and the overlays.</summary>
     public abstract string Description { get; }
 
+    /// <summary>The widest (and tallest) a texture can be, in texels.</summary>
+    public abstract uint MaxTextureSize { get; }
+
     /* Drawing */
 
     /// <summary>Draws vertices out of the bound vertex array, by their indices.</summary>

@@ -187,10 +187,20 @@ The migration is in Fighter2D's `project-health-2` branch, with a `Fancy lightin
 (`GameOptions.Fancy`, off by default) that puts both the fight and the map preview on the path traced lighting. It
 takes straight away from the options screen like the CRT switch does.
 
-### Known state of Fighter2D
+### Aseprite, straight off the disk
 
-Fighter2D's `development` head (`d48e0bc`, the Aseprite characters) depends on engine work that is not on Horizon's
-`development` branch (`AsepriteDocument`, `SpriteSheetDefinition.Open/Has/FrameCount`, `TextureAtlas(shared:)`,
-`SpriteSource.ReadFrame`, `PhysicsWorld.OverlapsStatic`, `Image.Atlas/Mirrored/AtlasKey`). Those are the only errors
-left when Fighter2D is built against this branch; the commit before it (`43c2113`) builds clean with the migration. The
-migration itself is in Fighter2D's `project-health-2` branch.
+Fighter2D's characters are .ase files with a tag per animation, and its `development` head leaned on engine work for
+that which never made it to Horizon's `development`. So the engine reads Aseprite files itself now. `AsepriteDocument`
+parses one (RGBA, grayscale and indexed, layers and groups, raw, linked and zlib cels, tags), puts a frame together
+out of its layers the first time it's asked for and keeps it. `SpriteSheetDefinition.Open` takes an .ase file (every
+tag a sprite, the frames side by side on a sheet nobody drew), a folder with a `definition.hor`, or the .hor itself,
+and the atlas and `SpriteSource.ReadFrame` find the frames through `SpriteImages`. A `TextureAtlas` can be `shared`
+(it belongs to the engine, not the scene that filled it), grows to what the card takes, only uploads the rows that
+changed, packs along a skyline instead of in rows, and with `Trim` on keeps only the opaque part of a frame and
+remembers where it sat (`AtlasRegion.Offset`), which the sprites and the UI put back. The male mannequin's fight
+went from not fitting in 2048 by 8192 to 88 percent of 2048 by 4096. `Sprite.Frame` picks a frame by hand, `SetAnimation` says whether the sprite has the animation,
+`PhysicsWorld.OverlapsStatic` asks whether a box sits inside the map, and the UI's `Image` draws a region of somebody
+else's atlas (`Atlas`, `AtlasKey`, `Mirrored`), with the renderer bringing that atlas up to date on the thread that can.
+
+With all of that in, Fighter2D's `development` head builds against this branch and the fight, the menu duel and the
+portraits draw the Aseprite characters.

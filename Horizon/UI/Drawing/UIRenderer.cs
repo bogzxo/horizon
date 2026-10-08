@@ -25,6 +25,7 @@ internal sealed class UIRenderer
     private SpriteItem[] items = [];
     private int itemCount;
     private readonly List<UIDrawList.Run> runs = [];
+    private readonly List<TextureAtlas> atlases = [];
     private readonly List<SpriteRun> spriteRuns = [];
     private UISkin? skin;
 
@@ -82,6 +83,9 @@ internal sealed class UIRenderer
         runs.Clear();
         runs.AddRange(list.Runs);
 
+        atlases.Clear();
+        atlases.AddRange(list.Atlases);
+
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
         Moving = list.Moving;
@@ -91,7 +95,7 @@ internal sealed class UIRenderer
     /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own: a list as
     /// it was captured at the end of a tick, or two of those blended. They are free to be reused afterwards.
     /// </summary>
-    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, bool moving)
+    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, bool moving, ReadOnlySpan<TextureAtlas> listAtlases = default)
     {
         if (items.Length < source.Length)
             items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
@@ -102,6 +106,10 @@ internal sealed class UIRenderer
         runs.Clear();
         foreach (var run in sourceRuns)
             runs.Add(run);
+
+        atlases.Clear();
+        foreach (var atlas in listAtlases)
+            atlases.Add(atlas);
 
         skin = listSkin;
         Moving = moving;
@@ -123,6 +131,10 @@ internal sealed class UIRenderer
     /// </summary>
     public void Draw(Camera camera)
     {
+        // Art the UI asked other people's atlases for turns up in them here, on the thread that can upload it
+        foreach (var atlas in atlases)
+            atlas.Update();
+
         if (batch is null || skin is null || itemCount == 0)
             return;
 
