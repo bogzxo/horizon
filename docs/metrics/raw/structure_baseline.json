@@ -1,0 +1,38 @@
+{
+ "label": "baseline",
+ "engine_projects": 11,
+ "engine_project_names": [
+  "Bogz.Logging",
+  "Horizon.Content",
+  "Horizon.Core",
+  "Horizon.Engine",
+  "Horizon.HIDL",
+  "Horizon.Input",
+  "Horizon.OpenGL",
+  "Horizon.Physics",
+  "Horizon.Rendering",
+  "Horizon.Rendering.UIX",
+  "Horizon.Webhost"
+ ],
+ "all_projects": 15,
+ "engine_cs_files": 255,
+ "engine_cs_loc": 36721,
+ "all_cs_files": 372,
+ "all_cs_loc": 57647,
+ "shader_files": 43,
+ "shader_loc": 1987,
+ "shader_versions": {
+  "none (include)": 6,
+  "410": 29,
+  "460": 8
+ },
+ "glsl_versions_in_use": [
+  "410",
+  "460"
+ ],
+ "bind_based_buffer_calls": 1,
+ "named_uniform_camera_sets": 12,
+ "encodeMotion_copies": 3,
+ "project_references": 45,
+ "package_references": 19
+}
