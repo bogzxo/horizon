@@ -45,7 +45,7 @@ internal sealed class TestHost : GameObject
 
     // The running test's scene, and what was on the GPU before it started
     private Scene? scene;
-    private Horizon.OpenGL.Managers.ObjectManager.AssetSnapshot? assetsBeforeTest;
+    private Horizon.Graphics.ObjectManager.AssetSnapshot? assetsBeforeTest;
 
     public TestSelectorScene Selector { get; }
 
@@ -132,7 +132,7 @@ internal sealed class TestHost : GameObject
 
         // Scenes are swapped in an Exclusive: on the render thread at the start of a frame, with the simulation
         // parked. The render thread because leaving a test frees what it had on the GPU, and only that thread may
-        // touch GL. The simulation parked because the test we're leaving is updated right up until then, and
+        // touch the GPU. The simulation parked because the test we're leaving is updated right up until then, and
         // pulling stuff out from under a running tick is how you get a crash that only happens on Tuesdays.
         Engine.WindowManager.Exclusive += _ =>
         {
@@ -158,6 +158,14 @@ internal sealed class TestHost : GameObject
         // Stays as you left it from one test to the next
         if (keyboard.WasPressed(Key.F1))
             ShowKeys(!keys.Visible);
+
+        // For checking the swapchain follows, the loop numbers (HORIZON_LOG_LOOPS) say whether it did
+        if (keyboard.WasPressed(Key.F10))
+        {
+            var display = Engine.WindowManager.Display;
+            Engine.WindowManager.Apply(display with { VSync = !display.VSync });
+            Horizon.Logging.Log.Info($"[TestHost] VSync {(display.VSync ? "off" : "on")}.");
+        }
     }
 
     /// <summary>

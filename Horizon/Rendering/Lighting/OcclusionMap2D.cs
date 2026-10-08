@@ -2,34 +2,39 @@ using System.Numerics;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
-
-using Silk.NET.OpenGL;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Lighting;
 
 /// <summary>
-/// What in the world is solid as far as light goes: a grid over the world in which every cell either lets light through
+/// What in the world is solid as far as light goes, a grid over the world in which every cell either lets light through
 /// or blocks it. A <see cref="DeferredRenderer2D"/> that is given one has its lights cast shadows.
 /// The grid is the same no matter where the camera is, so what is off screen still casts its shadow onto what isn't.
-/// A tile map fits this exactly: one cell for every tile, solid where the tile is.
+/// A tile map fits this exactly, one cell for every tile, solid where the tile is.
 /// <para>
 /// Cells are set from the updates. The renderer it is given to publishes the grid along with the rest of its lighting
 /// at the end of every tick (a copy, only when something changed), and frames drawn alongside the simulation show that,
 /// so a wall that goes up throws its shadow the same frame it is drawn rather than a tick early, or half of it.
 /// </para>
+/// <para>
+/// What the shaders read is not the grid but a signed distance field made from it (shaders/lighting/sdf_rows.slang and
+/// sdf_columns.slang), a few texels to a cell, so a ray towards a light takes a handful of steps rather than one per
+/// cell. It is made anew on the GPU whenever the grid changes, which is rarely.
+/// </para>
 /// </summary>
 public sealed class OcclusionMap2D : IDisposable
 {
-    private readonly byte[] cells;
-    private Texture? texture;
+    /// <summary>How many texels of the distance field a cell is, each way.</summary>
+    public const int FIELD_TEXELS_PER_CELL = 8;
 
-    // Goes up whenever a cell changes, which is how a capture and the texture know whether they are behind
+    private readonly byte[] cells;
+    private Texture? texture, field, rows;
+
+    // Goes up whenever a cell changes, which is how a capture and the textures know whether they are behind
     private int version;
-    private int uploadedVersion = -1;
+    private int uploadedVersion = -1, fieldVersion = -1;
+
+    private static Technique? rowsShader, columnsShader;
 
     private sealed class CapturedCells
     {
@@ -49,6 +54,12 @@ public sealed class OcclusionMap2D : IDisposable
     /// <summary>The size of a cell, in world units.</summary>
     public Vector2 CellSize { get; }
 
+    /// <summary>The size of a texel of the distance field, in world units.</summary>
+    public Vector2 FieldTexelSize => CellSize / FIELD_TEXELS_PER_CELL;
+
+    /// <summary>How many texels the distance field is across and up.</summary>
+    public Vector2 FieldSize => new(Width * FIELD_TEXELS_PER_CELL, Height * FIELD_TEXELS_PER_CELL);
+
     public OcclusionMap2D(int width, int height, Vector2 origin, Vector2 cellSize)
     {
         Width = Math.Max(width, 1);
@@ -59,9 +70,7 @@ public sealed class OcclusionMap2D : IDisposable
         cells = new byte[Width * Height];
     }
 
-    /// <summary>
-    /// Whether a cell blocks light. Cells outside of the grid never do, setting one is ignored.
-    /// </summary>
+    /// <summary>Whether a cell blocks light. Cells outside of the grid never do, setting one is ignored.</summary>
     public bool this[int x, int y]
     {
         get => Contains(x, y) && cells[x + y * Width] != 0;
@@ -77,9 +86,7 @@ public sealed class OcclusionMap2D : IDisposable
         }
     }
 
-    /// <summary>
-    /// Sets whether the cell a position of the world falls into blocks light.
-    /// </summary>
+    /// <summary>Sets whether the cell a position of the world falls into blocks light.</summary>
     public void Set(Vector2 position, bool solid)
     {
         Vector2 cell = (position - Origin) / CellSize;
@@ -105,25 +112,21 @@ public sealed class OcclusionMap2D : IDisposable
     }
 
     /// <summary>
-    /// GL thread. The grid as a texture with a texel for every cell, as the frame that is being drawn shows it (as it
+    /// Render thread. The grid as a texture with a texel for every cell, as the frame that is being drawn shows it (as it
     /// is, with the simulation standing still). Null if it couldn't be made.
     /// </summary>
     internal unsafe Texture? GetTexture()
     {
         if (texture is null)
         {
-            if (!GameEngine
-                    .Instance
-                    .ObjectManager
-                    .Textures
-                    .TryCreate(
-                        new TextureDescription
-                        {
-                            Width = (uint)Width,
-                            Height = (uint)Height,
-                            Definition = TextureDefinition.RedUnsignedByteNearest
-                        },
-                        out var result))
+            if (!GameEngine.Instance.ObjectManager.Textures.TryCreate(
+                    new TextureDescription
+                    {
+                        Width = (uint)Width,
+                        Height = (uint)Height,
+                        Definition = TextureDefinition.RedUnsignedByteNearest
+                    },
+                    out var result))
             {
                 return null;
             }
@@ -143,17 +146,78 @@ public sealed class OcclusionMap2D : IDisposable
             uploadedVersion = shownVersion;
 
             fixed (byte* data = shown)
-                Horizon.Graphics.GraphicsDevice.Current.UploadTexels(texture, 0, 0, (uint)Width, (uint)Height, Horizon.Graphics.TexelFormat.R8, data);
+                GraphicsDevice.Current.UploadTexels(texture, 0, 0, (uint)Width, (uint)Height, TexelFormat.R8, data);
         }
 
         return texture;
     }
 
+    /// <summary>
+    /// Render thread. The signed distance field of the grid, in world units, negative inside of a wall. Made anew on
+    /// the GPU when the grid has changed since. Null if it couldn't be made.
+    /// </summary>
+    internal Texture? GetField()
+    {
+        if (GetTexture() is not { } grid) return null;
+        if (field is not null && fieldVersion == uploadedVersion) return field;
+        if (!EnsureShaders()) return null;
+
+        var objects = GameEngine.Instance.ObjectManager;
+        uint width = (uint)FieldSize.X, height = (uint)FieldSize.Y;
+
+        if (field is null)
+        {
+            if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = TextureDefinition.DistanceField }, out var made))
+                return null;
+            field = made.Asset;
+
+            if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = new TextureDefinition(PixelFormat.Rg16F, Smooth: false, Usage: TextureUsage.Storage) }, out var temp))
+                return null;
+            rows = temp.Asset;
+        }
+
+        var device = GraphicsDevice.Current;
+        uint groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
+
+        foreach (Technique pass in new[] { rowsShader!, columnsShader! })
+        {
+            pass.Bind();
+            pass.SetUniform("uSize", FieldSize);
+            pass.SetUniform("uCells", new Vector2(Width, Height));
+            pass.SetUniform("uTexelWorld", MathF.Min(FieldTexelSize.X, FieldTexelSize.Y));
+            pass.SetUniform("uTexelsPerCell", FIELD_TEXELS_PER_CELL);
+            grid.Bind(0);
+            device.BindStorageImage(0, rows);
+            device.BindStorageImage(1, field);
+            device.Dispatch(groupsX, groupsY);
+            device.Barrier(BarrierTargets.ShaderImages);
+            pass.Unbind();
+        }
+
+        device.BindStorageImage(0, null);
+        device.BindStorageImage(1, null);
+        fieldVersion = uploadedVersion;
+        return field;
+    }
+
+    private static bool EnsureShaders()
+    {
+        if (rowsShader is not null && columnsShader is not null) return true;
+
+        var shaders = GameEngine.Instance.ObjectManager.Shaders;
+        if (!shaders.TryCreateOrGet("sdf_rows", ShaderDescription.FromPath("shaders/lighting", "sdf_rows"), out var rows)) return false;
+        if (!shaders.TryCreateOrGet("sdf_columns", ShaderDescription.FromPath("shaders/lighting", "sdf_columns"), out var columns)) return false;
+
+        rowsShader = new Technique(rows.Asset);
+        columnsShader = new Technique(columns.Asset);
+        return true;
+    }
+
     public void Dispose()
     {
-        if (texture is null) return;
-
-        texture.Dispose();
-        texture = null;
+        texture?.Dispose();
+        field?.Dispose();
+        rows?.Dispose();
+        texture = field = rows = null;
     }
 }

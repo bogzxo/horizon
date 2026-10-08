@@ -1,4 +1,4 @@
-﻿using Horizon.Core.Primitives;
+using Horizon.Graphics;
 
 namespace Horizon.Content.Disposers;
 
@@ -6,7 +6,7 @@ namespace Horizon.Content.Disposers;
 /// Generic interface implementing a way to aggregate and efficiently unload a array of assets.
 /// </summary>
 public interface IGameAssetFinalizer<AssetType>
-    where AssetType : IGLObject
+    where AssetType : IGpuObject
 {
     /// <summary>
     /// Unloads all of a designated asset type.

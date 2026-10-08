@@ -3,7 +3,7 @@ using System.Numerics;
 using Horizon.Core.Components;
 using Horizon.Engine;
 using Horizon.Input;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
 using Horizon.UI;

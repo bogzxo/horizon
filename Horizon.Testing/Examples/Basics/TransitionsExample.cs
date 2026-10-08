@@ -6,7 +6,7 @@ using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.Engine.Components;
 using Horizon.Input;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Transitions;
@@ -14,9 +14,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 
 using Silk.NET.Input;
-using Silk.NET.OpenGL;
 
-using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.Testing.Examples.Basics;
 

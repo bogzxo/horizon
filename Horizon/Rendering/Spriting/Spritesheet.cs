@@ -1,27 +1,37 @@
-﻿using Horizon.Logging;
+using Horizon.Logging;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
-using Horizon.Logging.Loggers;
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
 
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
-/// A specialized <see cref="Texture"/> with specific additions such as sprite definitions, animation management and soon to be refactored backend rendering code.
+/// A texture cut into sprites of one size, with the animations that run across them. The texture is the
+/// <see cref="Texture"/>, this is what the sprites know about it.
 /// </summary>
-/// <seealso cref="Horizon.OpenGL.Texture" />
-public class SpriteSheet : Texture
+public class SpriteSheet
 {
     public int ID { get; private set; }
+
+    /// <summary>The picture the sprites are cut out of.</summary>
+    public Texture Texture { get; init; } = Texture.Invalid;
 
     public Dictionary<string, SpriteDefinition> Sprites { get; init; }
     public Vector2 SpriteSize { get; init; }
     public Vector2 SingleSpriteSize { get; init; }
+
+    /// <summary>The texture's number, which is what tells one sheet from another.</summary>
+    public uint Handle => Texture.Handle;
+
+    public uint Width => Texture.Width;
+    public uint Height => Texture.Height;
+
+    /// <summary>Whether there is a picture behind the sheet at all.</summary>
+    public bool IsValid => Texture.IsValid;
 
     public SpriteSheet()
     {
@@ -30,18 +40,19 @@ public class SpriteSheet : Texture
 
     public static (bool success, SpriteSheet result, SpriteSheetAnimationManager manager) LoadSpriteSheetFromDirectory(in string dir, in string defFileName = "definition.hor")
     {
-
         if (!Directory.Exists(dir))
         {
             Log.Error($"Failed to find directory '{dir}' to load sprite!");
             return (false, null!, null!);
         }
 
-
         HIDLRuntime runtime = new();
         var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/" + defFileName));
-        if (!success) { Log.Error($"Malformed sprite definition!\r\b{msg}"); 
-            return (false, null!, null!); }
+        if (!success)
+        {
+            Log.Error($"Malformed sprite definition!\r\b{msg}");
+            return (false, null!, null!);
+        }
 
         string spriteFilePath = "spritesheet.png";
         float spriteSizeX = 0, spriteSizeY = 0, gridSizeX = 0, gridSizeY = 0;
@@ -125,7 +136,6 @@ public class SpriteSheet : Texture
                         if (anim.Properties.ContainsKey("span") && anim.Properties["span"] is NumberValue anim_s)
                             span = (uint)anim_s.Value;
 
-
                         animationManager.AddAnimation(name, new Vector2(posX, posY), length, time, new Vector2(spriteSizeX, spriteSizeY), span);
                     }
                 }
@@ -136,57 +146,25 @@ public class SpriteSheet : Texture
         return (false, null!, null!);
     }
 
+    /// <summary>A sheet over a texture that is already there, cut into sprites of a size.</summary>
     public static SpriteSheet FromTexture(in Texture texture, in Vector2 spriteSize)
     {
         return new SpriteSheet()
         {
-            Handle = texture.Handle,
-            Width = texture.Width,
-            Height = texture.Height,
+            Texture = texture,
             SpriteSize = spriteSize,
-            SingleSpriteSize = spriteSize / new Vector2(texture.Width, texture.Height)
+            SingleSpriteSize = spriteSize / new Vector2(Math.Max(1, texture.Width), Math.Max(1, texture.Height))
         };
     }
 
-    /// <summary>
-    /// Defines a sprite by name.
-    /// </summary>
-    /// <param name="name">The name.</param>
-    /// <param name="pos">The position.</param>
-    /// <param name="size">The size.</param>
-    //public void AddSprite(string name, Vector2 pos, Vector2? size = null)
-    //{
-    //    if (Sprites.ContainsKey(name))
-    //    {
-    //        //Entity.ConcurrentLogger.Instance.Log(
-    //        //    Logging.LogLevel.Error,
-    //        //    $"Attempt to add sprite '{name}' which already exists!"
-    //        //); TODO: FIX
-    //        return;
-    //    }
-
-    //    this.Sprites.Add(name, new SpriteDefinition { Position = pos, Size = size ?? SpriteSize });
-    //}
-
-    /// <summary>
-    /// Gets the static texture coordinates.
-    /// </summary>
-    /// <param name="name">The name.</param>
-    /// <returns></returns>
+    /// <summary>Gets the static texture coordinates of a named sprite.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal Vector2[] GetTextureCoordinates(string name)
     {
         if (!Sprites.TryGetValue(name, out var sprite))
-        {
-            //Entity.ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Error,
-            //    $"Attempt to get sprite '{name}' which doesn't exist!"
-            //); TODO: FIX
             return Array.Empty<Vector2>();
-        }
 
-        // Calculate texture coordinates for the sprite
-        Vector2 topLeftTexCoord = sprite.Position / new Vector2(Width, Height); // todo
+        Vector2 topLeftTexCoord = sprite.Position / new Vector2(Width, Height);
         Vector2 bottomRightTexCoord = (sprite.Position + sprite.Size) / new Vector2(Width, Height);
 
         return new Vector2[]

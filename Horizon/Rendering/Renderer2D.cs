@@ -3,37 +3,31 @@ using System.Numerics;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering.PostProcessing;
-using Horizon.OpenGL;
-
-using Silk.NET.OpenGL;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.Rendering;
 
 /// <summary>
 /// Class providing a rendering and post processing pipeline for 2D sprite oriented rendering, specializing in extra functionality for pixel art.
-/// Everything that is added to it (with AddEntity) is drawn into its frame buffer rather than straight to the window,
+/// Everything that is added to it (with AddEntity) is drawn into its render target rather than straight to the window,
 /// which is then put on screen by a <see cref="Renderer2DTechnique"/>. Whatever is to stay out of that (a HUD) is simply
 /// left outside and drawn after it.
-/// On its way to the screen the picture goes through the effects of <see cref="PostProcessing"/>, if there are any:
+/// On its way to the screen the picture goes through the effects of <see cref="PostProcessing"/>, if there are any,
 /// see <see cref="PostProcessor"/>.
 /// A renderer can be put inside of another one, which it is then shown in rather than on screen. That is how a
 /// world that is lit (a <see cref="DeferredRenderer2D"/> with its own effects) and a HUD that isn't end up behind
-/// the same glass: both go into a plain renderer that has the effect of the glass.
-/// On its own all this gets is a frame buffer of a size of its own choosing, see <see cref="DeferredRenderer2D"/> for lighting.
+/// the same glass. Both go into a plain renderer that has the effect of the glass.
+/// On its own all this gets is a render target of a size of its own choosing, see <see cref="DeferredRenderer2D"/> for lighting.
 /// </summary>
 public class Renderer2D : GameObject
 {
-    public FrameBufferObject FrameBuffer { get => frameBuffer; private set => frameBuffer = value; }
+    public RenderTarget FrameBuffer { get => frameBuffer; private set => frameBuffer = value; }
 
     /// <summary>What puts the picture where the renderer is shown, made by <see cref="CreateTechnique"/>.</summary>
     public Renderer2DTechnique Technique { get => technique; private set => technique = value; }
 
-    /// <summary>The size of the frame buffer everything is drawn into, however big it ends up on screen.</summary>
+    /// <summary>The size of the render target everything is drawn into, however big it ends up on screen.</summary>
     public Vector2 ViewportSize { get; private set; }
 
     /// <summary>
@@ -55,7 +49,7 @@ public class Renderer2D : GameObject
     public virtual Texture? MotionTexture => null;
 
     /// <summary>
-    /// Whether the frame buffer holds the picture as it is. If it doesn't, the picture only exists once the
+    /// Whether the render target holds the picture as it is. If it doesn't, the picture only exists once the
     /// technique has made it out of what is in there, which is what lighting is.
     /// </summary>
     protected internal virtual bool HoldsPicture => true;
@@ -64,7 +58,7 @@ public class Renderer2D : GameObject
     private static Renderer2D? current;
 
     /// <summary>
-    /// The renderer that is drawing what is in it right now, null while none is: what is drawn then goes straight
+    /// The renderer that is drawing what is in it right now, null while none is. What is drawn then goes straight
     /// to wherever the engine puts the frame.
     /// </summary>
     internal static Renderer2D? Current => current;
@@ -74,30 +68,28 @@ public class Renderer2D : GameObject
     private Renderer2D? outer;
     private float frameTime;
 
-    /// <summary>Makes what puts the picture on screen, once the frame buffer is there. Render thread.</summary>
+    /// <summary>Makes what puts the picture on screen, once the render target is there. Render thread.</summary>
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
 
-    protected virtual FrameBufferObject CreateFrameBuffer(in uint width, in uint height) =>
+    protected virtual RenderTarget CreateFrameBuffer(in uint width, in uint height) =>
         CreateFrameBuffer(
-            new FrameBufferObjectDescription
+            new RenderTargetDescription
             {
                 Width = width,
                 Height = height,
-                Attachments = new() {
-                    { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
+                Attachments = new()
+                {
+                    { AttachmentPoint.Color0, TextureDefinition.RgbaUnsignedByteNearest },
 
                     // Sprite batches cut their sprites out with the stencil
-                    { FramebufferAttachment.DepthStencilAttachment, FrameBufferAttachmentDefinition.DepthStencilComponent },
+                    { AttachmentPoint.DepthStencil, TextureDefinition.DepthStencil },
                 }
             });
 
-    /// <summary>
-    /// Helper method to make a frame buffer, anything going wrong is logged and thrown: there is no drawing without one.
-    /// </summary>
-    protected static FrameBufferObject CreateFrameBuffer(in FrameBufferObjectDescription description) =>
-        FrameBufferObject.Create(description);
+    /// <summary>Helper method to make a render target, anything going wrong is logged and thrown, there is no drawing without one.</summary>
+    protected static RenderTarget CreateFrameBuffer(in RenderTargetDescription description) => RenderTarget.Create(description);
 
-    private FrameBufferObject frameBuffer = null!;
+    private RenderTarget frameBuffer = null!;
     private Renderer2DTechnique technique = null!;
 
     public Renderer2D(in uint width, in uint height)
@@ -108,9 +100,7 @@ public class Renderer2D : GameObject
         bindOutput = () => BindOutput(outer);
     }
 
-    /// <summary>
-    /// Helper method to draw the picture into whatever is bound with the technique: one triangle over all of it.
-    /// </summary>
+    /// <summary>Helper method to draw the picture into whatever is bound with the technique, one triangle over all of it.</summary>
     private void Resolve()
     {
         technique.Bind();
@@ -128,7 +118,7 @@ public class Renderer2D : GameObject
     }
 
     /// <summary>
-    /// Makes the renderer another size, frame buffer and all. Render thread. What was drawn into it is gone, the next
+    /// Makes the renderer another size, render target and all. Render thread. What was drawn into it is gone, the next
     /// frame fills it again, and the post effects remake their targets to fit by themselves.
     /// </summary>
     public void Resize(uint width, uint height)
@@ -144,7 +134,7 @@ public class Renderer2D : GameObject
         Resized();
     }
 
-    /// <summary>Called after <see cref="Resize"/> made the frame buffer anew, for whatever else goes by its size.</summary>
+    /// <summary>Called after <see cref="Resize"/> made the render target anew, for whatever else goes by its size.</summary>
     protected virtual void Resized()
     { }
 
@@ -164,20 +154,18 @@ public class Renderer2D : GameObject
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();
 
-        // Bind the framebuffer and its attachments
         FrameBuffer.Bind();
-        FrameBuffer.Viewport();
 
         // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something.
-        // What is see-through is blended over what is there already, in every attachment alike: the alpha that comes
-        // out of that is how much of the pixel is covered.
+        // What is see-through is blended over what is there already, in every attachment alike, the alpha that comes
+        // out of that is how much of the pixel is covered
         RenderState.DepthTest = false;
         RenderState.Blend = true;
         RenderState.BlendMode = BlendMode.Alpha;
 
         Clear();
 
-        // draw all children. A renderer among them is shown in us, and goes back to whoever we are shown in after
+        // Draw all children. A renderer among them is shown in us, and goes back to whoever we are shown in after
         outer = current;
         current = this;
         base.Render(dt);
@@ -187,7 +175,7 @@ public class Renderer2D : GameObject
         RenderState.Blend = false;
         frameTime = dt;
 
-        // Whatever a renderer works out of the frame buffer before the picture goes anywhere (the lighting)
+        // Whatever a renderer works out of the render target before the picture goes anywhere (the lighting)
         BeforeResolve(dt);
 
         if (PostProcessing.Prepare())
@@ -213,32 +201,28 @@ public class Renderer2D : GameObject
     }
 
     /// <summary>
-    /// Render thread, after everything in the renderer has been drawn into the frame buffer and before the picture
-    /// is put where it is shown. For passes that work out something of the frame buffer first (the path traced
+    /// Render thread, after everything in the renderer has been drawn into the render target and before the picture
+    /// is put where it is shown. For passes that work out something of the target first (the path traced
     /// lighting). Whatever is bound afterwards doesn't matter, the output is bound after this.
     /// </summary>
     protected virtual void BeforeResolve(float dt)
     { }
 
-    /// <summary>
-    /// GL thread, with the frame buffer bound. Empties every attachment for a new frame.
-    /// </summary>
+    /// <summary>Render thread, with the render target bound. Empties every attachment for a new frame.</summary>
     protected virtual void Clear()
     {
         Clear(0, ClearColor);
         ClearDepthStencil();
     }
 
-    /// <summary>
-    /// Helper method to fill a colour attachment of the frame buffer, each one can be emptied to a value of its own.
-    /// </summary>
-    /// <param name="index">Which colour attachment, in the order the frame buffer draws to them.</param>
+    /// <summary>Helper method to fill a colour attachment of the render target, each one can be emptied to a value of its own.</summary>
+    /// <param name="index">Which colour attachment, in the order the target draws to them.</param>
     protected void Clear(int index, Vector4 value) => Engine.Graphics.ClearColorAttachment(FrameBuffer, index, value);
 
     protected void ClearDepthStencil() => Engine.Graphics.ClearDepthStencil(FrameBuffer);
 
     /// <summary>
-    /// Helper method to bind whatever this renderer is shown in: the renderer it is inside of, or else whatever the
+    /// Helper method to bind whatever this renderer is shown in, the renderer it is inside of, or else whatever the
     /// engine is drawing the frame into, which is the window.
     /// </summary>
     internal static void BindOutput(Renderer2D? outer)
@@ -246,17 +230,13 @@ public class Renderer2D : GameObject
         if (outer is not null)
         {
             outer.FrameBuffer.Bind();
-            outer.FrameBuffer.Viewport();
             return;
         }
 
         Engine.Graphics.BindWindow();
-        Engine.Graphics.SetViewport(0, 0, (uint)Engine.WindowManager.ViewportSize.X, (uint)Engine.WindowManager.ViewportSize.Y);
     }
 
-    /// <summary>
-    /// Helper method to say how big what <see cref="BindOutput"/> binds is.
-    /// </summary>
+    /// <summary>Helper method to say how big what <see cref="BindOutput"/> binds is.</summary>
     internal static Vector2 OutputSize(Renderer2D? outer)
     {
         if (outer is not null)

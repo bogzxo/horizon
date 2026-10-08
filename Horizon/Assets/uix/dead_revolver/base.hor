@@ -12,7 +12,7 @@
 
 let skin = {
     sprites: "sprites.hor",
-    font: { dir: "fonts/klaxon_mono/", file: "klaxon_mono.fnt" },
+    font: { dir: "Assets/fonts/klaxon_mono/", file: "klaxon_mono.fnt" },
 
     art_scale: 3,
     text_scale: 0.4,

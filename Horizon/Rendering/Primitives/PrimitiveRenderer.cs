@@ -4,23 +4,18 @@ using System.Numerics;
 using Horizon.Core.Components;
 using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL.Managers;
-
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Primitives;
 
 /// <summary>
-/// Flat shapes without a texture in sight: boxes, discs, lines, triangles, filled or as outlines, every one of them
+/// Flat shapes without a texture in sight. Boxes, discs, lines, triangles, filled or as outlines, every one of them
 /// smooth at its edge whatever size it is drawn at (see <see cref="ShapeKind"/>). What debug overlays, graphs and
-/// placeholders are made of. However many shapes there are it is one draw call: the shapes of a frame are written
-/// straight into a <see cref="StreamBuffer{T}"/> and the <see cref="UnitQuad"/> is drawn once per shape, with a
-/// shader that works out what of the quad is inside the shape.
+/// placeholders are made of. However many shapes there are it is one draw call. The shapes of a frame are written
+/// straight into a <see cref="StreamBuffer{T}"/> and the one quad is drawn once per shape, with a shader that works
+/// out what of the quad is inside the shape.
 /// <para>
-/// The shapes are the simulation's, see <see cref="Shapes"/>: written down there (from the updates, or in
+/// The shapes are the simulation's, see <see cref="Shapes"/>. Written down there (from the updates, or in
 /// <see cref="Describe"/>) and published at the end of every tick, so frames drawn alongside the simulation show
 /// them between the last two ticks, every shape on its way from where it was to where it is (the list has to be
 /// written in the same order every tick for that, see <see cref="ShapeInstance.CanBlend"/>). Something that was put
@@ -37,8 +32,8 @@ namespace Horizon.Rendering.Primitives;
 /// </summary>
 public class PrimitiveRenderer : GameObject
 {
-    /// <summary>The binding of the storage block the shapes are read out of, which is what shapes.vert says.</summary>
-    public const uint SHAPES_BINDING = 1;
+    /// <summary>The binding of the storage block the shapes are read out of, which is what shapes.slang says.</summary>
+    public const uint SHAPES_BINDING = 3;
 
     private const string SHADER_NAME = "primitives";
     private const string UNIFORM_MODEL = "uModel";
@@ -65,25 +60,25 @@ public class PrimitiveRenderer : GameObject
 
     /// <summary>
     /// How near the shapes are, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs motion goes by
-    /// it (see <see cref="DeferredRenderer2D"/>): what is nearer blurs over what is further away.
+    /// it (see <see cref="DeferredRenderer2D"/>), what is nearer blurs over what is further away.
     /// </summary>
     public float Nearness { get; set; } = 0.8f;
 
     /// <summary>
     /// How much of the shapes shows no matter the light, from 0 to 1, when they are drawn by a <see cref="DeferredRenderer2D"/>.
-    /// All of it unless said otherwise: a debug overlay is to be seen in the dark.
+    /// All of it unless said otherwise, a debug overlay is to be seen in the dark.
     /// </summary>
     public float Emissive { get; set; } = 1.0f;
 
     /// <summary>
     /// The shapes, as the simulation has them. Written to from the updates (and kept from tick to tick until they are
     /// cleared), or from <see cref="Describe"/>, which starts afresh every tick. Never from the render thread while
-    /// the simulation runs: that is what <see cref="Draw"/> is for.
+    /// the simulation runs, that is what <see cref="Draw"/> is for.
     /// </summary>
     public ShapeList Shapes { get; } = new();
 
     /// <summary>
-    /// Writes down what is drawn, if set: called at the end of every tick (simulation thread) with the list cleared,
+    /// Writes down what is drawn, if set. Called at the end of every tick (simulation thread) with the list cleared,
     /// and while the simulation stands still (a scene being set up) from the render thread. The easy way to draw
     /// whatever something looks like right now, see the summary.
     /// </summary>
@@ -102,12 +97,10 @@ public class PrimitiveRenderer : GameObject
         base.Initialize();
 
         EnsureShader();
-        stream ??= new StreamBuffer<ShapeInstance>(BufferTargetARB.ShaderStorageBuffer, 1024, "shapes");
+        stream ??= new StreamBuffer<ShapeInstance>(BufferUsage.Storage, 1024, "shapes");
     }
 
-    /// <summary>
-    /// Has the next tick not be blended with the one before: everything was put where it is, not moved there. Simulation thread.
-    /// </summary>
+    /// <summary>Has the next tick not be blended with the one before, everything was put where it is, not moved there. Simulation thread.</summary>
     public void Break() => captured.Break();
 
     /// <summary>
@@ -189,7 +182,7 @@ public class PrimitiveRenderer : GameObject
 
     /// <summary>
     /// Draws shapes right now, in the order they are in. For whoever draws on the render thread (an overlay drawn out
-    /// of what a frame knows, say) rather than from the simulation. GL thread.
+    /// of what a frame knows, say) rather than from the simulation. Render thread.
     /// </summary>
     public void Draw(ReadOnlySpan<ShapeInstance> shapes, Camera? camera = null)
     {
@@ -207,13 +200,11 @@ public class PrimitiveRenderer : GameObject
         stream.End();
     }
 
-    /// <summary>
-    /// Helper method to draw the shapes that were written into the stream: one instanced draw of the quad.
-    /// </summary>
-    private unsafe void Submit(int count, Camera camera)
+    /// <summary>Helper method to draw the shapes that were written into the stream, one instanced draw of the quad.</summary>
+    private void Submit(int count, Camera camera)
     {
         DrawnCount = count;
-        if (shader is not { IsValid: true } || !UnitQuad.Bind()) return;
+        if (shader is not { IsValid: true }) return;
 
         CameraBlock.Use(camera);
 
@@ -222,9 +213,9 @@ public class PrimitiveRenderer : GameObject
         shader.SetUniform(UNIFORM_NEARNESS, Nearness);
         shader.SetUniform(UNIFORM_EMISSIVE, Emissive);
 
-        stream!.BindRange(BufferTargetARB.ShaderStorageBuffer, SHAPES_BINDING);
+        stream!.BindRange(SHAPES_BINDING);
 
-        Horizon.Graphics.GraphicsDevice.Current.DrawIndexedInstanced(Horizon.Graphics.Topology.Triangles, UnitQuad.INDICES, (uint)count);
+        GraphicsDevice.Current.DrawInstanced(Topology.Triangles, 6, (uint)count);
     }
 
     private static void EnsureShader()

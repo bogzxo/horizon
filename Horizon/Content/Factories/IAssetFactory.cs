@@ -1,4 +1,4 @@
-﻿using Horizon.Core.Primitives;
+using Horizon.Graphics;
 
 namespace Horizon.Content.Descriptions;
 
@@ -8,7 +8,7 @@ namespace Horizon.Content.Descriptions;
 /// <typeparam name="AssetType"></typeparam>
 /// <typeparam name="DescriptionType"></typeparam>
 public interface IAssetFactory<AssetType, DescriptionType>
-    where AssetType : IGLObject
+    where AssetType : IGpuObject
     where DescriptionType : IAssetDescription
 {
     public static abstract bool TryCreate(in DescriptionType description, out AssetCreationResult<AssetType> result);

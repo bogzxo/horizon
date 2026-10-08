@@ -1,6 +1,6 @@
 using System.Numerics;
 
-using Texture = Horizon.OpenGL.Assets.Texture;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.PostProcessing;
 
