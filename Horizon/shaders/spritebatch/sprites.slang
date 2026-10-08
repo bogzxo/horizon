@@ -47,6 +47,7 @@ static const uint CORNER_FLAG = 0x40000u;
 static const uint FLASH_FLAG = 0x80000u;
 static const uint SHADOW_FLAG = 0x100000u;
 static const uint FIELD_FLAG = 0x200000u;
+static const uint LAMP_FLAG = 0x400000u;
 
 struct Varyings
 {
@@ -187,5 +188,10 @@ GBuffer fsMain(Varyings input)
 
     // One that blocks light leaves its shape in the material for the lights to go by, see SpriteShadows
     output.material.g = (input.flags & SHADOW_FLAG) != 0u ? result.a : 0.0;
+
+    // A flash is for looks, it shows bright whatever the light is but lights nothing round it, unless the sprite
+    // says it is a lamp (Sprite.FlashLights). A fighter flashing white on every hit would otherwise light the
+    // whole arena up with every punch in the path traced mode
+    output.material.b = (input.flags & LAMP_FLAG) != 0u ? glow : 0.0;
     return output;
 }

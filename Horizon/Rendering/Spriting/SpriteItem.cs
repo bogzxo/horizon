@@ -54,6 +54,10 @@ public struct SpriteItem
     // edge of the ink, up inside, down outside. The shader turns it into a crisp edge at any size, the colour is the item's
     public const uint FieldFlag = 0x200000;
 
+    // Set in Flags for a flashed quad that is a lamp, its flash lights what is round it in the path traced lighting
+    // rather than only showing bright, see Sprite.FlashLights
+    public const uint LampFlag = 0x400000;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad

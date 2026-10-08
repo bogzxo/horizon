@@ -42,7 +42,7 @@ public enum LightingMode
 /// </summary>
 public sealed class PathTracedLighting2D : IDisposable
 {
-    private const uint UNIT_ALBEDO = 0, UNIT_SURFACE = 1, UNIT_PREVIOUS = 2, UNIT_UPPER = 4, UNIT_RADIANCE = 6;
+    private const uint UNIT_ALBEDO = 0, UNIT_MATERIAL = 1, UNIT_PREVIOUS = 2, UNIT_UPPER = 4, UNIT_RADIANCE = 6;
 
     /// <summary>
     /// How big the lighting is worked out at, as a share of the renderer's size. Half, which is plenty for light that
@@ -121,7 +121,7 @@ public sealed class PathTracedLighting2D : IDisposable
         // What the walls throw back, once, for every ray that lands on one to read
         radiancePass.Bind();
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color0, UNIT_ALBEDO);
-        renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color1, UNIT_SURFACE);
+        renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color2, UNIT_MATERIAL);
         previous.Bind(UNIT_PREVIOUS);
         renderer.BindLighting(radiancePass);
         radiancePass.SetUniform("uSize", Size);

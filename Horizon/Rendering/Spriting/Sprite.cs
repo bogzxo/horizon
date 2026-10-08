@@ -74,6 +74,13 @@ public class Sprite : GameObject
     public float FlashAmount { get; set; }
 
     /// <summary>
+    /// Whether a flash makes the sprite a lamp, lighting what is round it in the path traced lighting (a glowing
+    /// blob, a fire sprite), rather than only showing bright whatever the light is (a fighter hit). Off, because a
+    /// fighter flashing white on every hit would light the whole arena with every punch.
+    /// </summary>
+    public bool FlashLights { get; set; }
+
+    /// <summary>
     /// Whether the pixels of the sprite are blended where they meet, for pixel art that is drawn at a size that isn't
     /// a whole multiple of itself (see <see cref="SpriteItem.SmoothFlag"/>).
     /// </summary>
@@ -303,7 +310,7 @@ public class Sprite : GameObject
             texMin,
             texMax,
             SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
-            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0) | (CastsShadows && !mask ? SpriteItem.ShadowFlag : 0));
+            (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0) | (flashed && FlashLights ? SpriteItem.LampFlag : 0) | (CastsShadows && !mask ? SpriteItem.ShadowFlag : 0));
         item.Motion = _motion.Velocity;
         item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
         return true;

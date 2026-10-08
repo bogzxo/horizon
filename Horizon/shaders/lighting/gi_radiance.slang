@@ -20,7 +20,7 @@ struct Params
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
 
 BIND_TEXTURE(0) Sampler2D uTexAlbedo;
-BIND_TEXTURE(1) Sampler2D uTexSurface;
+BIND_TEXTURE(1) Sampler2D uTexMaterial;
 BIND_TEXTURE(2) Sampler2D uTexPrevious;
 
 BIND_IMAGE(0) [[vk::image_format("rgba16f")]] RWTexture2D<float4> uRadiance;
@@ -45,7 +45,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
     }
 
     float3 albedo = uTexAlbedo.SampleLevel(picture, 0.0).rgb;
-    float emissive = uTexSurface.SampleLevel(picture, 0.0).b;
+    // How much of it is a lamp (the blue of the material, not what merely shows unlit, see gbuffer.slang)
+    float emissive = uTexMaterial.SampleLevel(picture, 0.0).b;
 
     float3 direct = float3(0.0, 0.0, 0.0);
     int tile = tileOf(picture, params.uTileCounts, params.uTileScreen);

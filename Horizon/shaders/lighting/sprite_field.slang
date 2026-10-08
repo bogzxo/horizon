@@ -64,7 +64,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     // The edge of what blocks is half a texel past the texels on it either way
     bool blocks = uMaterial.Load(int3(texel, 0)).g > 0.5;
-    bool glows = blocks || uSurface.Load(int3(texel, 0)).b > GLOWS_FROM;
+    bool glows = blocks || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
     float2 distance = float2(
         blocks ? -(toEdge.x + 0.5) : toEdge.x - 0.5,
         glows ? -(toEdge.y + 0.5) : toEdge.y - 0.5) * params.uPixelWorld;
