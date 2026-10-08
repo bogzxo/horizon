@@ -88,6 +88,8 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
             new("A", "next ambient"),
             new("F", "toggle the path traced lighting (the fancy one)"),
             new("B", "show what the path tracer found, on its own"),
+            new("D", "the moon on and off (a directional light)"),
+            new("T", "the swinging spot on and off"),
         ]
         : [];
 
@@ -100,7 +102,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
     private WallTechnique wall = null!;
     private ParticleRenderer2D dust = null!, sparks = null!;
 
-    private Light2D? mouseLight;
+    private Light2D? mouseLight, moon, spot;
     private readonly Light2D[] orbit = new Light2D[3];
     private readonly List<Light2D> dropped = [];
 
@@ -213,6 +215,36 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
 
         mouseLight = lighting.AddLight(new Light2D { Radius = 280.0f, Intensity = 1.2f, Size = 6.0f, Enabled = !pan });
 
+        // A cold light from high up on the left that reaches everything, the blocks and the blob throw long shadows from it
+        moon = lighting.AddLight(new Light2D
+        {
+            Type = LightType.Directional,
+            Direction = -MathF.PI * 0.3f,
+            Color = new Vector3(0.55f, 0.65f, 0.9f),
+            Intensity = 0.35f,
+            Height = 80.0f,
+            Reach = 500.0f,
+            Size = 10.0f,
+            SpriteShadow = 0.8f,
+            Enabled = !pan
+        });
+
+        // A warm spot hanging from the top of the view, swinging like a lamp on a rope
+        spot = lighting.AddLight(new Light2D
+        {
+            Type = LightType.Spot,
+            Position = new Vector2(0.0f, Engine.WindowManager.ViewportSize.Y / 2.0f - 20.0f),
+            Color = new Vector3(1.0f, 0.85f, 0.6f),
+            Radius = 520.0f,
+            Intensity = 1.6f,
+            ConeAngle = MathF.PI / 3.0f,
+            ConeSoftness = 0.4f,
+            Glow = 0.1f,
+            Size = 8.0f,
+            SpriteShadow = 0.6f,
+            Enabled = !pan
+        });
+
         Vector3[] colours = [new(1.0f, 0.35f, 0.25f), new(0.35f, 1.0f, 0.4f), new(0.35f, 0.5f, 1.0f)];
         for (int i = 0; i < orbit.Length; i++)
         {
@@ -308,6 +340,11 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
         if (keyboard.WasPressed(Key.A)) lighting!.Ambient = Ambients[ambient = (ambient + 1) % Ambients.Length];
         if (keyboard.WasPressed(Key.F)) lighting!.Lighting = lighting.Lighting == LightingMode.Direct ? LightingMode.PathTraced : LightingMode.Direct;
         if (keyboard.WasPressed(Key.B)) lighting!.ShowTracedLight = !lighting.ShowTracedLight;
+        if (keyboard.WasPressed(Key.D) && moon is not null) moon.Enabled = !moon.Enabled;
+        if (keyboard.WasPressed(Key.T) && spot is not null) spot.Enabled = !spot.Enabled;
+
+        // Swinging to and fro, straight down in the middle of the swing
+        if (spot is not null) spot.Direction = -MathF.PI / 2.0f + MathF.Sin(time * 1.3f) * 0.45f;
 
         if (keyboard.WasPressed(Key.C))
         {

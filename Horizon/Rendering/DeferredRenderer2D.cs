@@ -32,7 +32,7 @@ public class DeferredRenderer2D : Renderer2D
     public const int MaxLights = 64;
 
     /// <summary>
-    /// A light the way the shader has it, laid out exactly like the std430 <c>Light</c> struct in deferred.frag (48 bytes).
+    /// A light the way the shader has it, laid out exactly like the std430 <c>Light</c> struct in lighting/direct.slang (80 bytes).
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal struct LightData
@@ -45,7 +45,13 @@ public class DeferredRenderer2D : Renderer2D
         public float Glow;
         public float CastsShadows;      // 1 if it does, 0 if not
         public float Size;
-        public float Padding;
+        public float SpriteShadow;
+        public Vector2 Direction;       // a unit vector, which way a spot shines or a directional light's rays go
+        public float CosInner;          // a spot is full inside of this, gone past CosOuter, below -1 for a light that shines every way
+        public float CosOuter;
+        public float Type;              // LightType as a float
+        public float Reach;
+        public Vector2 Padding;
     }
 
     // A light that is only there for a moment, fading out as it goes
@@ -66,14 +72,16 @@ public class DeferredRenderer2D : Renderer2D
     private struct LightState
     {
         public Light2D Light;
+        public LightType Type;
         public Vector2 Position;
         public Vector3 Color;
-        public float Radius, Intensity, Height, Glow, Size, Flicker;
+        public float Radius, Intensity, Height, Glow, Size, Flicker, Direction, ConeAngle, ConeSoftness, Reach, SpriteShadow;
         public bool CastsShadows, Enabled;
 
         public static LightState Of(Light2D light) => new()
         {
             Light = light,
+            Type = light.Type,
             Position = light.Position,
             Color = light.Color,
             Radius = light.Radius,
@@ -82,11 +90,16 @@ public class DeferredRenderer2D : Renderer2D
             Glow = light.Glow,
             Size = light.Size,
             Flicker = light.Flicker,
+            Direction = light.Direction,
+            ConeAngle = light.ConeAngle,
+            ConeSoftness = light.ConeSoftness,
+            Reach = light.Reach,
+            SpriteShadow = light.SpriteShadow,
             CastsShadows = light.CastsShadows,
             Enabled = light.Enabled
         };
 
-        /// <summary>Partway from one tick to the next: where it is, how far it reaches, how bright and what colour.</summary>
+        /// <summary>Partway from one tick to the next: where it is, which way it points, how far it reaches, how bright and what colour.</summary>
         public static LightState Blend(in LightState from, in LightState to, float amount)
         {
             LightState light = to;
@@ -95,6 +108,10 @@ public class DeferredRenderer2D : Renderer2D
             light.Radius = Interpolate.Linear(from.Radius, to.Radius, amount);
             light.Intensity = Interpolate.Linear(from.Intensity, to.Intensity, amount);
             light.Glow = Interpolate.Linear(from.Glow, to.Glow, amount);
+
+            // The short way round, a light swinging through the seam of the circle mustn't whip round the long way
+            float turn = MathF.IEEERemainder(to.Direction - from.Direction, MathF.Tau);
+            light.Direction = from.Direction + turn * amount;
             return light;
         }
     }
@@ -524,7 +541,7 @@ public class DeferredRenderer2D : Renderer2D
     {
         data = default;
 
-        if (!light.Enabled || light.Radius <= 0.0f || light.Intensity <= 0.0f) return false;
+        if (!light.Enabled || light.Intensity <= 0.0f || (light.Radius <= 0.0f && light.Type != LightType.Directional)) return false;
 
         Vector2 position = light.Position;
         float radius = light.Radius;
@@ -544,9 +561,16 @@ public class DeferredRenderer2D : Renderer2D
             radius *= 1.0f + waver * light.Flicker * 0.1f;
         }
 
-        // A light that doesn't reach into the view has nothing to light, every pixel would test it for nothing
-        if (position.X + radius < view.Left || position.X - radius > view.Right ||
-            position.Y + radius < view.Top || position.Y - radius > view.Bottom) return false;
+        // A light that doesn't reach into the view has nothing to light, every pixel would test it for nothing.
+        // A directional light is everywhere
+        if (light.Type != LightType.Directional && (
+            position.X + radius < view.Left || position.X - radius > view.Right ||
+            position.Y + radius < view.Top || position.Y - radius > view.Bottom)) return false;
+
+        // A spot is full within its inner angle and fades to nothing at the outer, which is the edge of the cone
+        float outer = Math.Clamp(light.ConeAngle, 0.0f, MathF.Tau) / 2.0f;
+        float inner = outer * (1.0f - Math.Clamp(light.ConeSoftness, 0.01f, 1.0f));   // never quite hard, the shader fades between the two
+        var (sin, cos) = MathF.SinCos(light.Direction);
 
         data = new LightData
         {
@@ -557,7 +581,13 @@ public class DeferredRenderer2D : Renderer2D
             Height = light.Height,
             Glow = light.Glow,
             CastsShadows = light.CastsShadows ? 1.0f : 0.0f,
-            Size = light.Size
+            Size = light.Size,
+            SpriteShadow = Math.Clamp(light.SpriteShadow, 0.0f, 1.0f),
+            Direction = new Vector2(cos, sin),
+            CosInner = light.Type == LightType.Spot ? MathF.Cos(inner) : -2.0f,
+            CosOuter = light.Type == LightType.Spot ? MathF.Cos(outer) : -2.0f,
+            Type = (float)light.Type,
+            Reach = MathF.Max(light.Reach, 1.0f)
         };
         return true;
     }
