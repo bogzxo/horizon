@@ -838,6 +838,16 @@ public class WindowManager : GameComponent, IDisposable
                 $"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. " +
                 $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far.");
         }
+
+        // And what the GPU spent on the last frame it finished, pass by pass, the way the overlay shows it
+        if (Graphics is { } device && device.GpuScopes.Length > 0)
+        {
+            var passes = new System.Text.StringBuilder();
+            passes.Append($"[{Name}] GPU {device.GpuFrameMilliseconds:0.00} ms a frame");
+            foreach (GpuScope scope in device.GpuScopes)
+                passes.Append($", {new string('>', scope.Depth)}{scope.Name} {scope.Milliseconds:0.00}");
+            Log.Info(passes.ToString());
+        }
     }
 
     public void Dispose()
