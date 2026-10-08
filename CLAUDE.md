@@ -38,13 +38,13 @@ So nobody has to crawl the tree again. Two libraries and four apps, one solution
   `Core` (window, the three loops, snapshots and interpolation), `Logging`, `Content` (asset scopes, packs),
   `Graphics` (the GraphicsDevice the renderers talk to), `OpenGL` (the only backend, and the only place `GL.` lives,
   with the resource classes, factories, StreamBuffer, GpuTimer), `Input`, `Engine` (GameEngine, Scene, Scene2D,
-  cameras, Debugging with the console overlay, WebHost dashboard), `Rendering` (Renderer2D and the deferred one,
+  cameras, Debugging, which is waiting on a new debugger and dashboard, the old ones went), `Rendering` (Renderer2D and the deferred one,
   CameraBlock, Spriting with the sprite batch, atlas, Aseprite reader and sprite sheet definitions, Tiling with the
   tile map and its pathfinder, Particles, Primitives, PostProcessing, Lighting with the path tracer, Text,
   Transitions), `UI` (UIX, compositor, modules, components, skins, drawing), `Physics` (world, bodies, fixtures,
-  particle simulators), `Webhost`. Run time files live at its root and copy out at the same paths, `shaders/`
+  particle simulators). Run time files live at its root and copy out at the same paths, `shaders/`
   (`common/`, `lighting/`, `spritebatch/`, `tilemap/`, `particle/`, `primitives/`, `renderer2d/`, `post/`),
-  `fonts/`, `Assets/uix/` (the dead_revolver and flat skins), `web_host/`.
+  `fonts/`, `Assets/uix/` (the dead_revolver and flat skins).
 - `Horizon.HIDL/` the scripting language, kept apart because the WinForms editor (`Horizon.HIDL.Editor/`) wants
   it without the engine.
 - `Horizon.Testing/` the example scenes, one per feature, `Examples/{Basics,Engine,Input,Physics,Rendering,UI}` with
