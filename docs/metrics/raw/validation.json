@@ -1,0 +1,52 @@
+{
+ "selftests": {
+  "Horizon.Testing ui-selftest": {
+   "before": "13/13",
+   "after": "13/13",
+   "before_gl": 0,
+   "after_gl": 0
+  },
+  "Horizon.Testing ui-layout-selftest": {
+   "before": "34/34",
+   "after": "34/34",
+   "before_gl": 0,
+   "after_gl": 0
+  },
+  "Horizon.Testing ui-controls-selftest": {
+   "before": "27/27",
+   "after": "27/27",
+   "before_gl": 0,
+   "after_gl": 0
+  },
+  "Horizon.Testing ui-navigation-selftest": {
+   "before": "41/41",
+   "after": "41/41",
+   "before_gl": 0,
+   "after_gl": 0
+  },
+  "Horizon.Testing tilemap": {
+   "before": "20/20",
+   "after": "20/20",
+   "before_gl": 0,
+   "after_gl": 0
+  },
+  "Horizon.Testing tweens": {
+   "before": "13/13",
+   "after": "13/13",
+   "before_gl": 0,
+   "after_gl": 0
+  }
+ },
+ "tools": {
+  "Horizon.Hex --selftest": {
+   "before": "97/97",
+   "before_gl": 0,
+   "after": "97/97",
+   "after_gl": 0
+  }
+ },
+ "unit_tests": {
+  "before": "100/100",
+  "after": "100/100"
+ }
+}

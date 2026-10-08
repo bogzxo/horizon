@@ -1,0 +1,7 @@
+{
+ "baseline_s": 36.3,
+ "ph2_s": 21.7,
+ "baseline_testing_s": 12.2,
+ "ph2_testing_s": 11.5,
+ "note": "Clean Release builds of Horizon.Testing, Horizon.Hex and Horizon.Tests (and the engine under them), then Horizon.Testing alone. Fighter2D left out, it builds on neither side."
+}
