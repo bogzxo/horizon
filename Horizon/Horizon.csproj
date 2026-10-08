@@ -1,0 +1,77 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The engine, all of it in one library: logging, the core (entities, threading, windowing), content management,
+    the OpenGL layer, input, the web host, the engine itself, rendering, the UI and physics. Each keeps its own
+    namespace (Horizon.Core, Horizon.Rendering, Horizon.UI, ...) and folder, but there is nothing between them that
+    can't see the rest: the UI can be used by the engine's own debugging and the physics draws its outlines with
+    the renderer's primitives. Only the scripting language (Horizon.HIDL) is a project of its own, as it has an
+    editor that wants nothing of the engine.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Horizon</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <Platforms>AnyCPU;x64</Platforms>
+    <IsPublishable>false</IsPublishable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Nullable advice in code that predates it, and the trimming notes of the HIDL reflection, are not errors -->
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DotTiled" Version="1.0.0" />
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.SDL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+  </ItemGroup>
+
+  <!--
+    What the engine needs next to it at run time, at the same paths whichever game it is in: its shaders, the fonts
+    the UI comes with, the UI skins, and the pages of the web dashboard. A game that packs itself into one file
+    (see Fighter2D) picks these up from here.
+  -->
+  <ItemGroup>
+    <None Update="shaders\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="fonts\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Assets\uix\dead_revolver\*.png;Assets\uix\dead_revolver\*.hor;Assets\uix\flat\*.hor">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Data\example\example.hor">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="web_host\dashboard\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Tests" />
+    <InternalsVisibleTo Include="Horizon.Testing" />
+  </ItemGroup>
+
+</Project>

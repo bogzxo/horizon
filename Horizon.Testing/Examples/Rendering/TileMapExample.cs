@@ -5,8 +5,8 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.Rendering;
 using Horizon.Rendering.Tiling;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Silk.NET.Input;
 

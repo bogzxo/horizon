@@ -3,12 +3,12 @@ using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Silk.NET.Input;
 
-using Button = Horizon.Rendering.UIX.Components.Button;
+using Button = Horizon.UI.Components.Button;
 
 namespace Horizon.Testing.Examples.UI;
 

@@ -10,7 +10,7 @@ namespace Horizon.Tests;
 /// </summary>
 public class PackTests
 {
-    private const string PACK = "Horizon.Rendering.UIX/Assets/uix/dead_revolver";
+    private const string PACK = "Horizon/Assets/uix/dead_revolver";
 
     /// <summary>
     /// Helper method to find the repo from wherever the tests run, by the solution file.

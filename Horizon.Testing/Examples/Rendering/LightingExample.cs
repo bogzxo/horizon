@@ -45,7 +45,7 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
     ];
 
     /// <summary>
-    /// The wall: a rectangle over the whole view, drawn by shaders/testing/wall.
+    /// The wall: a pass over the whole view (see <see cref="FullScreenPass"/>), drawn by shaders/testing/wall.
     /// </summary>
     private sealed class WallTechnique : Technique
     {
@@ -59,10 +59,9 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
 
         protected override void SetUniforms()
         {
-            var camera = GameEngine.Instance.ActiveCamera;
-            Matrix4x4.Invert(camera.View * camera.Projection, out Matrix4x4 inverseViewProjection);
+            // Where every pixel is in the world comes out of the camera block's inverse view projection
+            CameraBlock.Use(GameEngine.Instance.ActiveCamera);
 
-            SetUniform("uInverseViewProjection", in inverseViewProjection);
             SetUniform("uNormals", Normals);
             SetUniform("uSpecular", Specular);
         }
@@ -113,7 +112,7 @@ public class LightingExample(bool deferred = true) : Scene, ITestControls
 
         // The renderers compile their shaders as they are constructed, so they need the GL context.
         wall = new WallTechnique();
-        renderer.AddEntity(new RenderRectangle(wall));
+        renderer.AddEntity(new FullScreenPass(wall));
 
         // Lit like everything else, it only shows where there is light
         dust = renderer.AddEntity(

@@ -30,6 +30,8 @@
  *   HORIZON_LOG_ALLOCATIONS=5   logs what every thread allocates, by type, every 5 seconds
  *   HORIZON_SHADER_CACHE=off    stops linked shader programs being cached on disk (or set it to a folder to keep them there)
  *   HORIZON_INPUT_SCRIPT=file   plays a scripted gamepad from a file, lines like "2.0 tap A" or "8 quit"
+ *
+ * Keys that work everywhere: F3 cycles the performance overlay (where a test adds one), F4 opens the engine's console.
  */
 
 using Horizon.Core;
@@ -47,6 +49,9 @@ internal class Program
 
         // The host goes on the engine itself rather than in a scene, so it outlives every scene it swaps between
         var host = engine.AddEntity(new TestHost(TestCatalog.Tests));
+
+        // The engine's console over everything, F4 shows it: the log as it comes in, and HIDL to type at the engine
+        engine.AddEntity(new Horizon.Engine.Debugging.ConsoleOverlay());
 
         // `dotnet run -- particles` starts straight in a test, by its id. Without one, or with one that doesn't
         // exist, you get the selector.

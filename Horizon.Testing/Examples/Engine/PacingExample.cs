@@ -1,7 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
 
-using Bogz.Logging;
+using Horizon.Logging;
 
 using Horizon.Core.Components;
 using Horizon.Core.Threading;
@@ -9,8 +9,8 @@ using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Silk.NET.Input;
 

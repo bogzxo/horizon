@@ -7,8 +7,8 @@ using Horizon.Input;
 using Horizon.OpenGL.Descriptions;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Silk.NET.Input;
 
@@ -548,7 +548,7 @@ public class SpritesExample : Scene, ITestControls
     }
 
     // The atlas's side of the art: where every prop is in props.png, in pixels from its top left. See
-    // Assets/uix/dead_revolver/sprites.hor in Horizon.Rendering.UIX for one that explains every option
+    // Assets/uix/dead_revolver/sprites.hor in Horizon.UI for one that explains every option
     private const string PropsDefinition = """
         let props = {
             file: "props.png",
