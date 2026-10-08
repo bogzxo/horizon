@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 using Horizon.Graphics;
@@ -58,6 +59,12 @@ public sealed partial class UIDrawList
     private int frame;
     private float deltaTime;
 
+    // Who is painting right now and how many quads they have painted, which is what every quad is keyed by, see
+    // SpriteItem.Key. Nested, a component inside of a component
+    private readonly Stack<(float Owner, int Painted)> owners = new();
+    private float owner;
+    private int ownerPainted;
+
     // How long the UI has been drawn for, for the icons that animate. Starts over now and then so it never grows coarse
     private float time;
     private const float TIME_WRAP = 3600.0f;
@@ -96,7 +103,28 @@ public sealed partial class UIDrawList
         visualOffset = Vector2.Zero;
         visualScale = Vector2.One;
         opacity = 1.0f;
+
+        owners.Clear();
+        owner = 0.0f;
+        ownerPainted = 0;
     }
+
+    /// <summary>
+    /// Everything painted until <see cref="PopOwner"/> is keyed as painted by this object, the component that is
+    /// painting, so that a snapshot of the UI blended with the next one blends a quad with the same quad and never
+    /// with the one that merely sits where it did, see <see cref="SpriteItem.Key"/>.
+    /// </summary>
+    internal void PushOwner(object painter)
+    {
+        owners.Push((owner, ownerPainted));
+
+        // The hash of the object, cut to what a float holds exactly, is as good a name as any and stays the same
+        // for as long as the object lives
+        owner = (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
+        ownerPainted = 0;
+    }
+
+    internal void PopOwner() => (owner, ownerPainted) = owners.Pop();
 
     internal void End()
     {
@@ -415,6 +443,7 @@ public sealed partial class UIDrawList
         ref SpriteItem item = ref items[itemCount++];
         item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
         item.Ring = ring;
+        item.Key = new Vector2(owner, ownerPainted++);
     }
 
     private void CloseRun()

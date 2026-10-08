@@ -383,8 +383,11 @@ public abstract partial class UIComponent
         if (animated)
             list.PushVisual(VisualOffset, VisualScale, Bounds.Center, Opacity);
 
+        // Every quad is ours by name, see UIDrawList.PushOwner
+        list.PushOwner(this);
         Paint(list);
         PaintChildren(list);
+        list.PopOwner();
 
         if (animated)
             list.PopVisual();

@@ -501,7 +501,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 // popped up) is not shown flying over, it was put there, see SpriteItem.CanBlend
                 blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[i], b[i])
                     ? SpriteItem.Blend(a[i], b[i], alpha)
-                    : a[i];
+                    : b[i];
             }
 
             renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
@@ -517,12 +517,26 @@ public partial class UICompositor : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to say whether two lists are the same quads (the same many, in the same runs) so that they can be
-    /// blended one quad with the other.
+    /// Helper method to say whether two lists are the same quads (the same many, in the same runs, every one painted
+    /// by the same component as the same one of its quads) so that they can be blended one quad with the other.
+    /// Blending by place in the list alone was how a hover that put one quad in or took one out had every quad
+    /// after it blended with its neighbour, a button's background halfway to the next one's, a bar across the
+    /// row for a frame. A list that isn't the same quads is shown as it is, the step is a tick long and nobody sees it.
     /// </summary>
-    private static bool Blendable(CapturedList before, CapturedList after) =>
-        before.Count == after.Count &&
-        System.Runtime.InteropServices.CollectionsMarshal.AsSpan(before.Runs).SequenceEqual(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs));
+    private static bool Blendable(CapturedList before, CapturedList after)
+    {
+        if (before.Count != after.Count ||
+            !System.Runtime.InteropServices.CollectionsMarshal.AsSpan(before.Runs).SequenceEqual(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs)))
+            return false;
+
+        ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
+        for (int i = 0; i < a.Length; i++)
+        {
+            if (a[i].Key != b[i].Key) return false;
+        }
+
+        return true;
+    }
 
     /* For whoever is working on a layout rather than using it, an editor say */
 

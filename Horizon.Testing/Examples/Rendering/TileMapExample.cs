@@ -207,7 +207,7 @@ public class TileMapExample : Scene, ITestControls
 
         File.WriteAllText(Path.Combine(directory, "town.tmx"), $"""
             <?xml version="1.0" encoding="UTF-8"?>
-            <map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="{COLUMNS}" height="{ROWS}" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#5c9edb" nextlayerid="9" nextobjectid="7">
+            <map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="{COLUMNS}" height="{ROWS}" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#5c9edb" nextlayerid="10" nextobjectid="8">
              <properties>
               <property name="music" value="town"/>
              </properties>
@@ -270,6 +270,12 @@ public class TileMapExample : Scene, ITestControls
               <object id="6" name="note" x="96" y="16" width="80" height="20">
                <text wrap="1">a note</text>
               </object>
+             </objectgroup>
+             <objectgroup id="8" name="pillars">
+              <properties>
+               <property name="BlocksLight" type="bool" value="true"/>
+              </properties>
+              <object id="7" name="pillar" x="64" y="128" width="16" height="32"/>
              </objectgroup>
             </map>
             """);
@@ -400,7 +406,7 @@ public class TileMapExample : Scene, ITestControls
             && map.Max == map.Origin + map.Size && map.Properties.GetString("music") == "town" && map.BackgroundColor is { Z: > 0.8f });
 
         checks.Check("layers come in their order, the ones of a group among them", () =>
-            string.Join(" ", map.Layers.Select(layer => layer.Name)) == "clouds hills solid decor front things"
+            string.Join(" ", map.Layers.Select(layer => layer.Name)) == "clouds hills solid decor front things pillars"
             && map.FindLayer("hills") is { Group: "backdrop", Kind: TileMapLayerKind.Tiles }
             && map.FindLayer("clouds")!.Kind == TileMapLayerKind.Image && map.FindLayer("things")!.Kind == TileMapLayerKind.Objects);
 
@@ -466,7 +472,7 @@ public class TileMapExample : Scene, ITestControls
             return spawn is { Shape: TileMapShape.Rectangle, Class: "spawn", Id: 2 } && At(spawn.Position, 40, 80) && spawn.Size == new Vector2(16, 32) && At(spawn.Min, 32, 64)
                 && zone.Shape == TileMapShape.Polygon && At(zone.Position, 160, 128) && zone.Points.Count == 3 && At(zone.Points[2], 176, 104)
                 && marker is { Shape: TileMapShape.Point, Name: "marker" } && At(marker.Position, 8, 184) && marker.Size == Vector2.Zero
-                && map.FindObject("note") is { Shape: TileMapShape.Text, Text: "a note" } && map.Objects.Count == 6;
+                && map.FindObject("note") is { Shape: TileMapShape.Text, Text: "a note" } && map.Objects.Count == 7;
         });
 
         checks.Check("an object made from a template has what the template says, and its own on top", () =>
@@ -501,17 +507,18 @@ public class TileMapExample : Scene, ITestControls
                 .OfShape(TileMapShape.Polygon, found => seen.Add($"shape:{found.Name}"))
                 .Named("sign", found => seen.Add($"named:{found.Name}"))
                 .InLayer("things", found => seen.Add("layer"))
+                .InLayer("pillars", found => seen.Add("layer"))
                 .Otherwise(found => seen.Add($"left:{found.Name}")));
 
             return string.Join(" ", seen.Where(entry => entry != "layer")) == "light:lamp spawn:p1 shape:zone named:sign"
-                && seen.Count(entry => entry == "layer") == 6;
+                && seen.Count(entry => entry == "layer") == 7;
         });
 
         checks.Check("what is left over goes to whoever takes the rest", () =>
         {
             var left = new List<string>();
             map.DispatchObjects(objects => objects.OfClass("spawn", _ => { }).Otherwise(found => left.Add(found.Name)));
-            return string.Join(" ", left) == "lamp zone sign marker note";
+            return string.Join(" ", left) == "lamp zone sign marker note pillar";
         });
 
         checks.Check("solid tiles next to each other are one box, and a tile can be solid in part", () =>
@@ -528,8 +535,13 @@ public class TileMapExample : Scene, ITestControls
         checks.Check("whoever asks decides what is solid instead", () =>
             map.BuildColliders(cell => cell.Layer.Name == "front") is [{ } box] && At(box.Min, 80, 64) && At(box.Size, 32, 32));
 
-        checks.Check("the tiles that block light are the ones of the layers that say so", () =>
-            map.ShadowCasters().Count() == 58 && map.ShadowCasters().All(centre => centre.Y < 48));
+        checks.Check("the tiles that block light are the ones of the layers that say so, and the objects of the layers that block it", () =>
+        {
+            // The solid tiles are all below 48, the pillar is an object 16 by 32 standing on cell (4, 2), two cells of it
+            var casters = map.ShadowCasters().ToList();
+            return casters.Count == 60 && casters.Count(centre => centre.Y >= 48) == 1
+                && casters.Contains(new Vector2(72, 40)) && casters.Contains(new Vector2(72, 56));
+        });
 
         checks.Check("a tile that is put down is there to be found, and one that is taken away isn't", () =>
         {
