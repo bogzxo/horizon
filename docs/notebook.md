@@ -169,3 +169,15 @@ shuffled again, that is the first place to look. `CastsShadows` is also only eve
 collidable layer casts nothing unless it asks, the colliders of the game maps are hidden and not what the light
 should see. And a point inside a wall takes no sprite shadows, so a fighter's shadow stops at the ground instead of
 running on down through it.
+
+## UI quads have names now
+
+Two captured UI draw lists are blended for the frames between ticks, and they were blended by place in the list,
+quad i with quad i. Plain rectangles all look alike to that (no texture, same flags), so a hover that put one quad
+in or took one out had every quad after it blended with its neighbour's, a button background halfway to the next
+button's, which is the bar across the row in bogz's screenshot and the "nearby buttons flicker" from before. Every
+quad now carries a key in `SpriteItem.Key` (the component that painted it and which of its quads it is, see
+`UIDrawList.PushOwner`) and two lists only blend when every key lines up, otherwise the newer one is shown as it is.
+Text out of the distance field is read bilinear now, the pixel art filter (`smoothTexel`) was being applied to the
+field too and at a big size it made a staircase of every edge. `BlocksLight` on an object layer puts the objects
+into `ShadowCasters()`.

@@ -133,10 +133,12 @@ GBuffer fsMain(Varyings input)
     float cornerPixel = max(fwidth(fromMiddle), 0.00001);
     float2 uv = input.texel * input.texelSize;
 
+    // A distance field is read between its texels like any smooth picture, the pixel art filter below keeps the
+    // texels hard and at a big size that made a staircase of every edge
     float4 tex = float4(1.0, 1.0, 1.0, 1.0);
     if (texture != NO_TEXTURE)
     {
-        tex = (input.flags & SMOOTH_FLAG) != 0u
+        tex = (input.flags & SMOOTH_FLAG) != 0u && (input.flags & FIELD_FLAG) == 0u
             ? smoothTexel(uTextures[NonUniformResourceIndex(texture)], input.texel, box)
             : uTextures[NonUniformResourceIndex(texture)].SampleGrad(uv, ddx(uv), ddy(uv));
     }

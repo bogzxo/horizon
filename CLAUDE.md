@@ -61,6 +61,11 @@ light is in view), the light tiles (only with lights), the lighting per lighting
 `LightingPixelSize`), the path tracer (the wall radiance once, then the cascades, then the resolve), and the
 deferred pass that puts it on screen. `HORIZON_LOG_LOOPS` prints what each of those cost the GPU.
 
+A tile map says what blocks light with two layer properties. `CastsShadows` on a tile layer puts its tiles in the
+occlusion map, `BlocksLight` on an object layer puts the box of every object on it in there (a pillar or a crate
+put down as an object), and a collidable layer casts nothing unless it says so, the colliders of a map are hidden
+and not what the light should see. `TileMap.ShadowCasters()` is the lot of it.
+
 ## Text
 
 Fonts are signed distance fields (`Rendering/Text/DistanceFieldFont.cs`), one R8 atlas a skin's text is drawn out

@@ -85,6 +85,7 @@ public readonly record struct TileMapBox(Vector2 Min, Vector2 Size)
 /// <list type="bullet">
 /// <item><c>IsCollidable</c> (bool): its tiles are solid, see <see cref="TileMap.BuildColliders"/>.</item>
 /// <item><c>CastsShadows</c> (bool): its tiles block light. Only a layer that says so does, the colliders of a map are usually not what the light should see.</item>
+/// <item><c>BlocksLight</c> (bool): on an object layer, every object on it (its box, a tile object the size it is drawn at) blocks light, see <see cref="TileMap.ShadowCasters"/>. For the things of a map that aren't tiles, a pillar put down as an object, a crate.</item>
 /// <item><c>Emissive</c> (float, 0 to 1): how much of it shows no matter the light. A sky is 1.</item>
 /// <item><c>Foreground</c> (bool, <c>IsAlwaysOnTop</c> works too): it is drawn by <see cref="TileMap.Foreground"/>, in front of whatever is added between the two.</item>
 /// <item><c>ScrollX</c>, <c>ScrollY</c> (float): it drifts by itself, in pixels a second. For clouds, with an image layer that repeats.</item>
@@ -113,6 +114,7 @@ public sealed class TileMapLayer
 
         IsCollidable = properties.GetBool("IsCollidable", properties.GetBool("Collidable"));
         CastsShadows = properties.GetBool("CastsShadows");
+        BlocksLight = properties.GetBool("BlocksLight");
         Emissive = Math.Clamp(properties.GetFloat("Emissive"), 0.0f, 1.0f);
         IsForeground = properties.GetBool("Foreground", properties.GetBool("IsAlwaysOnTop"));
 
@@ -162,6 +164,9 @@ public sealed class TileMapLayer
 
     public bool IsCollidable { get; set; }
     public bool CastsShadows { get; set; }
+
+    /// <summary>Whether the objects of the layer block light, see <see cref="TileMap.ShadowCasters"/>. Only means anything on an object layer.</summary>
+    public bool BlocksLight { get; set; }
 
     /* Tiles. Kept here rather than read out of the source so they can be changed. */
 

@@ -72,8 +72,10 @@ public struct SpriteItem
     public Vector2 TexMin;
     public Vector2 TexMax;
 
-    // Room where the quad's motion used to be, the shader has it too
-    private Vector2 padding;
+    // Who painted the quad and which of theirs it is, for telling the same quad apart from a different one that
+    // merely looks alike when two snapshots of a UI are blended. The shader has the room and ignores it. Zero
+    // for a quad nobody claimed
+    public Vector2 Key;
 
     // RGBA, 8 bits each with red in the low byte, see PackColor
     public uint Color;

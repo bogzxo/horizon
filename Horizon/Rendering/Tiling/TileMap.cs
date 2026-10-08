@@ -747,10 +747,54 @@ public sealed class TileMap : GameObject
 
     /// <summary>
     /// The middle of every cell that blocks light, for an <see cref="OcclusionMap2D"/> laid over the map
-    /// (<c>new OcclusionMap2D(map.Width, map.Height, map.Origin, map.TileSize)</c>). See <see cref="TileMapLayer.CastsShadows"/>.
+    /// (<c>new OcclusionMap2D(map.Width, map.Height, map.Origin, map.TileSize)</c>). The tiles of the layers that
+    /// cast shadows (<see cref="TileMapLayer.CastsShadows"/>) and every cell under an object of a layer that blocks
+    /// light (<see cref="TileMapLayer.BlocksLight"/>), by the box around the object, turned or not.
     /// </summary>
-    public IEnumerable<Vector2> ShadowCasters() =>
-        layers.Where(layer => layer.CastsShadows).SelectMany(layer => layer.Tiles()).Select(cell => cell.Centre);
+    public IEnumerable<Vector2> ShadowCasters()
+    {
+        foreach (var cell in layers.Where(layer => layer.CastsShadows).SelectMany(layer => layer.Tiles()))
+            yield return cell.Centre;
+
+        foreach (TileMapObject found in objects)
+        {
+            if (!found.Layer.BlocksLight || found.Shape is TileMapShape.Point or TileMapShape.Text)
+                continue;
+
+            // The box around it as it sits in the world, a polygon by its corners, everything else by its size and turn
+            Vector2 min, max;
+            if (found.Shape is TileMapShape.Polygon or TileMapShape.Polyline)
+            {
+                var points = found.Points;
+                if (points.Count == 0) continue;
+                min = max = points[0];
+                foreach (Vector2 point in points)
+                {
+                    min = Vector2.Min(min, point);
+                    max = Vector2.Max(max, point);
+                }
+            }
+            else
+            {
+                (float sin, float cos) = MathF.SinCos(found.Rotation * MathF.PI / 180.0f);
+                Vector2 half = found.Size / 2.0f;
+                var reach = new Vector2(MathF.Abs(half.X * cos) + MathF.Abs(half.Y * sin), MathF.Abs(half.X * sin) + MathF.Abs(half.Y * cos));
+                min = found.Position - reach;
+                max = found.Position + reach;
+            }
+
+            // Every cell of the map's grid the box covers, by more than a sliver
+            int left = (int)MathF.Floor((min.X - Origin.X) / TileSize.X + 0.05f);
+            int right = (int)MathF.Ceiling((max.X - Origin.X) / TileSize.X - 0.05f);
+            int bottom = (int)MathF.Floor((min.Y - Origin.Y) / TileSize.Y + 0.05f);
+            int top = (int)MathF.Ceiling((max.Y - Origin.Y) / TileSize.Y - 0.05f);
+            for (int y = bottom; y < top; y++)
+            {
+                for (int x = left; x < right; x++)
+                    yield return Origin + new Vector2(x + 0.5f, y + 0.5f) * TileSize;
+            }
+        }
+    }
 
     /* Drawing */
 
