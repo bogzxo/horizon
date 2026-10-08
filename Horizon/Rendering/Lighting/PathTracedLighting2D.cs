@@ -42,7 +42,7 @@ public enum LightingMode
 /// </summary>
 public sealed class PathTracedLighting2D : IDisposable
 {
-    private const uint UNIT_ALBEDO = 0, UNIT_SURFACE = 1, UNIT_PREVIOUS = 2, UNIT_UPPER = 4;
+    private const uint UNIT_ALBEDO = 0, UNIT_SURFACE = 1, UNIT_PREVIOUS = 2, UNIT_UPPER = 4, UNIT_RADIANCE = 6;
 
     /// <summary>
     /// How big the lighting is worked out at, as a share of the renderer's size. Half, which is plenty for light that
@@ -72,13 +72,13 @@ public sealed class PathTracedLighting2D : IDisposable
     private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
     private readonly List<Texture> cascades = [];
-    private Texture? resultA, resultB;
+    private Texture? resultA, resultB, radiance;
     private bool writeB;
     private uint width, height, cascadeWidth, cascadeHeight;
     private int cascadeCount;
     private Vector2? originBefore;
 
-    private Technique? cascadePass, resolvePass;
+    private Technique? radiancePass, cascadePass, resolvePass;
 
     /// <summary>What the tracer found last, for the deferred pass. Null before the first frame.</summary>
     public Texture? Result { get; private set; }
@@ -97,15 +97,16 @@ public sealed class PathTracedLighting2D : IDisposable
     {
         var device = GraphicsDevice.Current;
 
+        radiancePass ??= new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
         cascadePass ??= new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
         resolvePass ??= new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
-        if (!cascadePass.IsValid || !resolvePass.IsValid) return;
+        if (!radiancePass.IsValid || !cascadePass.IsValid || !resolvePass.IsValid) return;
 
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
         uint wanted = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.X * scale));
         uint wantedHeight = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.Y * scale));
         Fit(wanted, wantedHeight);
-        if (resultA is null || resultB is null || cascades.Count == 0) return;
+        if (resultA is null || resultB is null || radiance is null || cascades.Count == 0) return;
 
         Texture previous = writeB ? resultA : resultB;
         Texture result = writeB ? resultB : resultA;
@@ -117,18 +118,28 @@ public sealed class PathTracedLighting2D : IDisposable
         // Where the top left of the picture is in the world, which is what the probes are laid out from, see Offset
         Vector2 topLeft = TopLeftOf(camera);
 
-        // The cascades, from the furthest in, each merged into the one above it as it is made
-        cascadePass.Bind();
+        // What the walls throw back, once, for every ray that lands on one to read
+        radiancePass.Bind();
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color0, UNIT_ALBEDO);
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color1, UNIT_SURFACE);
         previous.Bind(UNIT_PREVIOUS);
+        renderer.BindLighting(radiancePass);
+        radiancePass.SetUniform("uSize", Size);
+        radiancePass.SetUniform("uPixelWorld", pixelWorld);
+        radiancePass.SetUniform("uBounce", Math.Clamp(Bounce, 0.0f, 1.5f));
+        radiancePass.SetUniform("uShift", in shift);
+        device.BindStorageImage(0, radiance);
+        device.Dispatch((width + 7) / 8, (height + 7) / 8);
+        device.Barrier(BarrierTargets.ShaderImages);
+
+        // The cascades, from the furthest in, each merged into the one above it as it is made
+        cascadePass.Bind();
+        radiance.Bind(UNIT_RADIANCE);
         renderer.BindLighting(cascadePass);
 
         cascadePass.SetUniform("uSize", Size);
         cascadePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
         cascadePass.SetUniform("uPixelWorld", pixelWorld);
-        cascadePass.SetUniform("uBounce", Math.Clamp(Bounce, 0.0f, 1.5f));
-        cascadePass.SetUniform("uShift", in shift);
 
         for (int i = cascadeCount - 1; i >= 0; i--)
         {
@@ -282,8 +293,10 @@ public sealed class PathTracedLighting2D : IDisposable
 
         if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var a)) return;
         if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var b)) return;
+        if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var r)) return;
         resultA = a.Asset;
         resultB = b.Asset;
+        radiance = r.Asset;
 
         originBefore = null;
         Result = null;
@@ -295,7 +308,8 @@ public sealed class PathTracedLighting2D : IDisposable
         cascades.Clear();
         resultA?.Dispose();
         resultB?.Dispose();
-        resultA = resultB = null;
+        radiance?.Dispose();
+        resultA = resultB = radiance = null;
         Result = null;
     }
 

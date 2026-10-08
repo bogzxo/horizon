@@ -16,6 +16,10 @@ struct Params
     // The size of the squares of the world that are lit as a whole, 0 for every pixel by itself
     float uPixelSize;
     float3 uAmbient;
+
+    // Whether the lighting was worked out per square already (see light_cells.slang), and where that grid starts
+    int uHasCells;
+    float2 uCellOrigin;
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -31,6 +35,10 @@ BIND_TEXTURE(2) Sampler2D uTexMaterial;
 
 // What the path traced lighting found, see PathTracedLighting2D. Only read when uLightingMode is 1.
 BIND_TEXTURE(4) Sampler2D uTexGi;
+
+// The lighting per square, see light_cells.slang. Only read when uHasCells says so.
+BIND_TEXTURE(6) Sampler2D uTexCells;
+BIND_TEXTURE(7) Sampler2D uTexCellsExtra;
 
 // Leaves a colour as it is up to here, and rolls whatever is over off towards 1. Lights can be a lot brighter
 // than white without everything they touch turning into a flat patch. It is the colour as a whole that is brought
@@ -61,15 +69,27 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     // Pixel art is lit a pixel of the art at a time, from the middle of it
     if (params.uPixelSize > 0.0) position = (floor(position / params.uPixelSize) + 0.5) * params.uPixelSize;
 
-    bool hasNormal;
-    float3 normal = surfaceNormal(surface, hasNormal);
+    float3 light, extra;
+    if (params.uPixelSize > 0.0 && params.uHasCells != 0)
+    {
+        // Lit a square at a time already, this is the square the pixel is in
+        int2 cell = int2(floor((position - params.uCellOrigin) / params.uPixelSize));
+        light = uTexCells.Load(int3(cell, 0)).rgb;
+        extra = uTexCellsExtra.Load(int3(cell, 0)).rgb;
+    }
+    else
+    {
+        bool hasNormal;
+        float3 normal = surfaceNormal(surface, hasNormal);
 
-    float3 highlights, glow;
-    float3 light = directLight(
-        position, texCoords, normal, hasNormal, shine,
-        params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness,
-        LIGHTING_FIELD(params), params.uTileCounts, params.uTileScreen,
-        highlights, glow);
+        float3 highlights, glow;
+        light = directLight(
+            position, texCoords, normal, hasNormal, shine,
+            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness,
+            LIGHTING_FIELD(params), params.uTileCounts, params.uTileScreen,
+            highlights, glow);
+        extra = highlights + glow;
+    }
 
     // For looking at what the tracer found on its own, see DeferredRenderer2D.ShowTracedLight
     if (params.uLightingMode == 2)
@@ -87,7 +107,7 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     }
 
     // What is emissive shows as it was drawn no matter the light
-    float3 color = albedo * lerp(light, float3(1.0, 1.0, 1.0), emissive) + highlights + glow;
+    float3 color = albedo * lerp(light, float3(1.0, 1.0, 1.0), emissive) + extra;
 
     return float4(rollOff(color), 1.0);
 }

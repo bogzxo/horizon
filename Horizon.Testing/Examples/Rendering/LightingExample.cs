@@ -88,8 +88,8 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
             new("A", "next ambient"),
             new("F", "toggle the path traced lighting (the fancy one)"),
             new("B", "show what the path tracer found, on its own"),
-            new("D", "the moon on and off (a directional light)"),
-            new("T", "the swinging spot on and off"),
+            new("D", "the moon on (a directional light)"),
+            new("T", "the swinging spot on"),
         ]
         : [];
 
@@ -226,7 +226,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
             Reach = 500.0f,
             Size = 10.0f,
             SpriteShadow = 0.8f,
-            Enabled = !pan
+            Enabled = false
         });
 
         // A warm spot hanging from the top of the view, swinging like a lamp on a rope
@@ -242,7 +242,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
             Glow = 0.1f,
             Size = 8.0f,
             SpriteShadow = 0.6f,
-            Enabled = !pan
+            Enabled = false
         });
 
         Vector3[] colours = [new(1.0f, 0.35f, 0.25f), new(0.35f, 1.0f, 0.4f), new(0.35f, 0.5f, 1.0f)];

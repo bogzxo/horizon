@@ -205,6 +205,7 @@ public sealed unsafe partial class GraphicsDevice
         PixelFormat.R16F => Format.R16Sfloat,
         PixelFormat.Rg16F => Format.R16G16Sfloat,
         PixelFormat.Rg32F => Format.R32G32Sfloat,
+        PixelFormat.Rg32Uint => Format.R32G32Uint,
         PixelFormat.Rgba16F => Format.R16G16B16A16Sfloat,
         PixelFormat.Rgba32F => Format.R32G32B32A32Sfloat,
         PixelFormat.Depth24Stencil8 => Context.DepthStencilFormat,

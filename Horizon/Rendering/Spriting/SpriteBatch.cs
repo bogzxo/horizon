@@ -139,6 +139,7 @@ public class SpriteBatch : GameObject
             Span<uint> table = stackalloc uint[shared.Length + 2];
             for (int i = 0; i < shared.Length; i++) table[i] = shared[i].Index;
 
+            uint casters = 0;
             foreach (var run in runs)
             {
                 int count = shared.Length;
@@ -152,8 +153,11 @@ public class SpriteBatch : GameObject
                     uint slot = SpriteItem.TextureOf(item.Flags);
                     item.Flags = SpriteItem.WithTexture(item.Flags, slot < (uint)count ? table[(int)slot] : SpriteItem.NoTexture);
                     buffer[i] = item;
+                    casters |= item.Flags & SpriteItem.ShadowFlag;
                 }
             }
+
+            if (casters != 0) NoteCasters();
 
             _itemMesh!.Nearness = Nearness;
             _itemMesh!.DrawItems(0, items.Length, Transform.ModelMatrix, camera);
@@ -358,10 +362,26 @@ public class SpriteBatch : GameObject
             // Whatever the sprites asked for since the last frame is put into the atlas before they are drawn
             group.Atlas?.Update();
 
+            foreach (Sprite sprite in group.Sprites)
+            {
+                if (!sprite.CastsShadows) continue;
+                NoteCasters();
+                break;
+            }
+
             SpriteBatchMesh mesh = MeshOf(group);
             mesh.Nearness = Nearness;
             mesh.Draw(Transform.ModelMatrix, CollectionsMarshal.AsSpan(group.Sprites), camera, group.Texture);
         }
+    }
+
+    /// <summary>
+    /// Helper method to tell the renderer we are drawn into that a sprite that blocks light was drawn this frame, so
+    /// it knows whether there is a field of sprite shadows to build at all. Render thread.
+    /// </summary>
+    private static void NoteCasters()
+    {
+        if (Renderer2D.Current is DeferredRenderer2D lit) lit.NoteSpriteCasters();
     }
 
     /// <summary>Helper method to draw the quads of the last two ticks, blended to the moment the frame shows.</summary>
@@ -406,6 +426,8 @@ public class SpriteBatch : GameObject
             {
                 ref readonly SpriteItem to = ref now.Items[now.Masks + i];
                 SpriteItem drawn;
+
+                if ((to.Flags & SpriteItem.ShadowFlag) != 0) NoteCasters();
 
                 if (before is null || i >= before.Colors || before.Sprites[i] != now.Sprites[i])
                 {

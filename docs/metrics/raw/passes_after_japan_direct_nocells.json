@@ -1,0 +1,24 @@
+{
+ "label": "after japan direct no cells",
+ "seconds": 12,
+ "runs": {
+  "--map japan": {
+   "exit": 0,
+   "gpu_ms": 259.6933333333333,
+   "passes": {
+    "DeferredRenderer2D": 247.57999999999998,
+    ">tile map": 18.472,
+    ">sprites": 0.22666666666666666,
+    ">particles": 1.0095,
+    ">sprite shadows": 62.85666666666667,
+    ">light tiles": 0.5366666666666666,
+    ">post effects": 136.73,
+    "ui": 5.434,
+    ">resolve": 127.745
+   },
+   "render_fps": 0.6666666666666666,
+   "render_ms": 217.10666666666665,
+   "errors": []
+  }
+ }
+}

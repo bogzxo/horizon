@@ -1,0 +1,55 @@
+{
+ "label": "after",
+ "seconds": 12,
+ "runs": {
+  "post": {
+   "exit": 0,
+   "gpu_ms": 120.49666666666667,
+   "passes": {
+    "ui": 0.39666666666666667,
+    "Renderer2D": 112.24666666666667,
+    ">DeferredRenderer2D": 54.77,
+    ">>tile map": 9.924,
+    ">>post effects": 32.21,
+    ">ui": 18.886666666666667,
+    ">post effects": 37.84
+   },
+   "render_fps": 7.75,
+   "render_ms": 120.03,
+   "errors": []
+  },
+  "lighting": {
+   "exit": 0,
+   "gpu_ms": 157.6,
+   "passes": {
+    "DeferredRenderer2D": 149.76,
+    ">sprites": 0.23666666666666666,
+    ">particles": 2.0416666666666665,
+    ">sprite shadows": 63.65,
+    ">light tiles": 0.47,
+    ">resolve": 62.723333333333336,
+    "ui": 0.21333333333333332
+   },
+   "render_fps": 6.25,
+   "render_ms": 157.3775,
+   "errors": []
+  },
+  "pathtraced": {
+   "exit": 0,
+   "gpu_ms": 365.2966666666667,
+   "passes": {
+    "ui": 0.2866666666666667,
+    "DeferredRenderer2D": 357.93,
+    ">sprites": 0.24000000000000002,
+    ">particles": 2.02,
+    ">sprite shadows": 71.04666666666667,
+    ">light tiles": 0.6833333333333333,
+    ">path tracing": 199.3033333333333,
+    ">resolve": 64.03999999999999
+   },
+   "render_fps": 3.5,
+   "render_ms": 282.5375,
+   "errors": []
+  }
+ }
+}

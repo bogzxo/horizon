@@ -307,6 +307,7 @@ float3 directLight(
     highlights = float3(0.0, 0.0, 0.0);
     glow = float3(0.0, 0.0, 0.0);
 
+    if (lightCount <= 0) return light;
     int tile = tileOf(picture, tileCounts, tileScreen);
     if (tile < 0) return light;
 

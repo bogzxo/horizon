@@ -1,0 +1,25 @@
+{
+ "label": "after japan pt no cells",
+ "seconds": 12,
+ "runs": {
+  "--map japan": {
+   "exit": 0,
+   "gpu_ms": 463.1666666666667,
+   "passes": {
+    "DeferredRenderer2D": 451.54333333333335,
+    ">tile map": 21.29,
+    ">sprites": 0.23,
+    ">particles": 0.755,
+    ">sprite shadows": 62.80666666666667,
+    ">light tiles": 0.54,
+    ">path tracing": 207.42000000000002,
+    ">post effects": 138.28,
+    "ui": 4.882,
+    ">resolve": 119.46666666666667
+   },
+   "render_fps": 0,
+   "render_ms": 299.16333333333336,
+   "errors": []
+  }
+ }
+}
