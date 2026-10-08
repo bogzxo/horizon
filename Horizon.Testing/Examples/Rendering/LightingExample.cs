@@ -24,8 +24,13 @@ namespace Horizon.Testing.Examples.Rendering;
 /// Started without the lighting this is the test of a plain <see cref="Renderer2D"/> instead: the same wall and particles
 /// drawn into a frame buffer a quarter of the size of the window, and blown up from there.
 /// </summary>
-public class LightingExample(bool deferred = true, bool pathTraced = false, bool showTraced = false) : Scene, ITestControls
+public class LightingExample(bool deferred = true, bool pathTraced = false, bool showTraced = false, bool pan = false) : Scene, ITestControls
 {
+    // Panning, nothing moves but the camera, which drifts about in whole pixels. The lights stand still and don't
+    // waver, the blob glows and stays put, the fountains are off. Anything that changes from frame to frame in this
+    // is the lighting itself changing its mind, which is what it is for, see the notebook on the lanterns breathing
+    private const float PanAcross = 140.0f, PanUp = 60.0f;
+
     private const float CellSize = 32.0f;
     private const float StatusInterval = 5.0f;
     private const float FountainRate = 400.0f;      // Particles per second, for each of the two
@@ -106,7 +111,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
     public override void Initialize()
     {
         // First, so it is up to date by the time anything is drawn with it
-        ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
+        ActiveCamera = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize) { PixelSnap = pan ? 1.0f : 0.0f });
 
         uint width = (uint)Engine.WindowManager.ViewportSize.X, height = (uint)Engine.WindowManager.ViewportSize.Y;
 
@@ -127,6 +132,13 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
         {
             var sheet = SpriteSheet.FromTexture(blobArt.Asset, new Vector2(Basics.SpritesExample.CELL));
             blob = casters.AddEntity(new Sprite(new Vector2(Basics.SpritesExample.CELL * 6)) { CastsShadows = true });
+            if (pan)
+            {
+                // Glowing, so the tracer has a lamp with a shape to find
+                blob.FlashColor = new Vector4(1.0f, 0.7f, 0.3f, 1.0f);
+                blob.FlashAmount = 1.0f;
+                blob.Transform.Position = new Vector2(120.0f, -20.0f);
+            }
             blob.ConfigureSpriteSheet(sheet, "idle");
             blob.AddAnimation("idle", Vector2.Zero, 4, 0.25f);
             casters.Add(blob);
@@ -199,7 +211,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
     {
         if (lighting is null) return;
 
-        mouseLight = lighting.AddLight(new Light2D { Radius = 280.0f, Intensity = 1.2f, Size = 6.0f });
+        mouseLight = lighting.AddLight(new Light2D { Radius = 280.0f, Intensity = 1.2f, Size = 6.0f, Enabled = !pan });
 
         Vector3[] colours = [new(1.0f, 0.35f, 0.25f), new(0.35f, 1.0f, 0.4f), new(0.35f, 0.5f, 1.0f)];
         for (int i = 0; i < orbit.Length; i++)
@@ -210,7 +222,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
                 Radius = 300.0f,
                 Intensity = 1.4f,
                 Glow = 0.2f,
-                Flicker = 0.2f,
+                Flicker = pan ? 0.0f : 0.2f,
                 Size = 6.0f
             });
         }
@@ -245,8 +257,15 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
 
         float quarter = Engine.WindowManager.ViewportSize.X / 4.0f;
         float floor = -Engine.WindowManager.ViewportSize.Y / 2.0f + 40.0f;
-        dust.AddCone(new Vector2(-quarter, floor), Vector2.UnitY, MathF.PI / 5.0f, due, 520);
-        sparks.AddCone(new Vector2(quarter, floor), Vector2.UnitY, MathF.PI / 5.0f, due, 520);
+        if (!pan)
+        {
+            dust.AddCone(new Vector2(-quarter, floor), Vector2.UnitY, MathF.PI / 5.0f, due, 520);
+            sparks.AddCone(new Vector2(quarter, floor), Vector2.UnitY, MathF.PI / 5.0f, due, 520);
+        }
+        else
+        {
+            ActiveCamera.Position = new Vector3(MathF.Sin(time * 0.7f) * PanAcross, MathF.Cos(time * 0.5f) * PanUp, ActiveCamera.Position.Z);
+        }
 
         if (lighting is not null)
         {
@@ -272,13 +291,13 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
 
         mouseLight!.Position = mousePos;
 
-        if (blob is not null)
+        if (blob is not null && !pan)
             blob.Transform.Position = new Vector2(MathF.Cos(time * 0.35f) * 260.0f, MathF.Sin(time * 0.5f) * 140.0f);
 
         for (int i = 0; i < orbit.Length; i++)
         {
             // Evenly spread around the circle, each a bit closer in or further out than the next
-            var (sin, cos) = MathF.SinCos(time * 0.6f + i * MathF.Tau / orbit.Length);
+            var (sin, cos) = MathF.SinCos((pan ? 0.0f : time * 0.6f) + i * MathF.Tau / orbit.Length);
             orbit[i].Position = new Vector2(cos, sin * 0.7f) * (OrbitRadius + i * 40.0f);
         }
 

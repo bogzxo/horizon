@@ -39,6 +39,7 @@ internal static class TestCatalog
         new("lighting", TestArea.Rendering, "Lighting", "Deferred lights, shadows, normal maps and particles that glow.", () => new LightingExample()),
         new("renderer2d", TestArea.Rendering, "Renderer2D", "The lighting scene unlit, drawn at a quarter of the size and blown up.", () => new LightingExample(deferred: false)),
         new("pathtraced", TestArea.Rendering, "Path traced lighting", "The lighting scene with the fancy lighting on, light bouncing off the blocks and spilling round them.", () => new LightingExample(pathTraced: true)),
+        new("pathtraced-pan", TestArea.Rendering, "Path tracer under a panning camera", "The path tracer's buffer with nothing moving but the camera, for catching the lighting changing its mind from frame to frame.", () => new LightingExample(pathTraced: true, showTraced: true, pan: true)),
         new("pathtraced-buffer", TestArea.Rendering, "Path tracer's buffer", "What the path tracer found, on its own, for seeing what it is up to.", () => new LightingExample(pathTraced: true, showTraced: true)),
 
         // UI: UIX, in C# and out of layout files. The self-tests drive the pointer themselves and check the results,
