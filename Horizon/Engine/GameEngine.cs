@@ -8,10 +8,14 @@ using Horizon.Core.Components;
 using Horizon.Engine.Components;
 using Horizon.Engine.Debugging.Debuggers;
 using Horizon.Engine.WebHost;
+using Horizon.Graphics;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
 
 using Silk.NET.OpenGL;
+
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 namespace Horizon.Engine;
 
@@ -35,7 +39,15 @@ public class GameEngine : Entity
     /// </summary>
     public GameEngineConfiguration Configuration { get; init; }
 
+    /// <summary>
+    /// The GL of the window, for whoever has to go underneath the device. Renderers don't, see <see cref="Graphics"/>.
+    /// </summary>
     public GL GL => WindowManager.GL;
+
+    /// <summary>
+    /// The GPU as the engine draws with it, see <see cref="Horizon.Graphics.GraphicsDevice"/>. Everything that draws goes through this.
+    /// </summary>
+    public Horizon.Graphics.GraphicsDevice Graphics => Horizon.Graphics.GraphicsDevice.Current;
 
     public static GameEngine Instance { get; private set; } = null!;
 
@@ -87,9 +99,22 @@ public class GameEngine : Entity
     public Vector2 ViewportSize => WindowManager.ViewportSize;
 
     // Kept here for as long as the driver may call it, the garbage collector doesn't know that it does
-    private DebugProc? debugProc;
 
     private Horizon.OpenGL.GpuTimer? gpuTimer;
+
+    // Set this in the environment to "some/file.png@3" and a screenshot is saved three seconds in, for runs nobody is
+    // watching (a headless test box, say). Without the @ it's two seconds
+    private const string SCREENSHOT_VARIABLE = "HORIZON_SCREENSHOT";
+
+    private string? scheduledScreenshot;
+    private double scheduledScreenshotAt;
+    private string? requestedScreenshot;
+
+    /// <summary>Where screenshots taken with <see cref="ScreenshotKey"/> go. Made if it isn't there.</summary>
+    public string ScreenshotDirectory { get; set; } = "screenshots";
+
+    /// <summary>The key that saves a screenshot of the window, null for none.</summary>
+    public Silk.NET.Input.Key? ScreenshotKey { get; set; } = Silk.NET.Input.Key.F12;
 
     /// <summary>
     /// How long (in milliseconds) the GPU spent on the last frame it finished, as measured by a timer query around
@@ -137,6 +162,53 @@ public class GameEngine : Entity
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+
+        if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
+        {
+            int at = wanted.LastIndexOf('@');
+            scheduledScreenshot = at > 0 ? wanted[..at] : wanted;
+            scheduledScreenshotAt = at > 0 && double.TryParse(wanted[(at + 1)..], System.Globalization.CultureInfo.InvariantCulture, out double seconds) ? seconds : 2.0;
+        }
+    }
+
+    /// <summary>
+    /// Saves what the window shows at the end of the next frame as a PNG. From any thread, the file is written off
+    /// the render thread once the pixels are read.
+    /// </summary>
+    public void CaptureScreenshot(string path) => Interlocked.Exchange(ref requestedScreenshot, path);
+
+    /// <summary>
+    /// Helper method to read the frame back and write it out, at the end of a frame on the render thread.
+    /// </summary>
+    private void TakeScreenshot(string path)
+    {
+        uint width = (uint)WindowManager.ViewportSize.X, height = (uint)WindowManager.ViewportSize.Y;
+        if (width == 0 || height == 0) return;
+
+        var pixels = new byte[width * height * 4];
+        Graphics.BindWindow();
+        Graphics.ReadPixels(0, 0, width, height, pixels);
+
+        // Encoding a PNG takes a while, which is not the render thread's problem
+        Task.Run(() =>
+        {
+            try
+            {
+                string? directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+
+                using var image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgba32>(pixels, (int)width, (int)height);
+
+                // GL reads the bottom row first, a picture starts at the top
+                image.Mutate(context => context.Flip(SixLabors.ImageSharp.Processing.FlipMode.Vertical));
+                image.SaveAsPng(path);
+                Log.Info($"[Engine] Screenshot saved to {path}.");
+            }
+            catch (Exception e)
+            {
+                Log.Error($"[Engine] The screenshot couldn't be saved to {path}: {e.Message}");
+            }
+        });
     }
 
     /// <summary>
@@ -168,31 +240,27 @@ public class GameEngine : Entity
         base.Initialize();
         DefaultCamera = AddEntity(new Camera2D(WindowManager.ViewportSize));
 
-        unsafe
-        {
-            GL.Enable(EnableCap.DebugOutput);
-            GL.DebugMessageCallback(debugProc = OnDebugMessage, null);
-        }
+        Graphics.OnDebugMessage(OnDebugMessage);
 
         gpuTimer = Horizon.OpenGL.GpuTimer.TryCreate();
     }
 
     /// <summary>
-    /// Called by the driver when it has something to say about what it was asked to do.
+    /// Called by the graphics backend when it has something to say about what it was asked to do.
     /// </summary>
-    private void OnDebugMessage(GLEnum source, GLEnum type, int id, GLEnum severity, int length, nint message, nint userParam)
+    private static void OnDebugMessage(string message, DebugLevel severity, int id)
     {
-        if (id is NOTE_BUFFER_DETAILS or NOTE_INVALID_ENUM || severity == GLEnum.DebugSeverityNotification)
+        if (id is NOTE_BUFFER_DETAILS or NOTE_INVALID_ENUM || severity == DebugLevel.Note)
             return;
 
         LogLevel level = severity switch
         {
-            GLEnum.DebugSeverityHigh => LogLevel.Error,
-            GLEnum.DebugSeverityMedium => LogLevel.Warning,
+            DebugLevel.High => LogLevel.Error,
+            DebugLevel.Medium => LogLevel.Warning,
             _ => LogLevel.Info
         };
 
-        Log.Write(level, $"[{source}] [{severity}] [{type}] [{id}] {Marshal.PtrToStringAnsi(message)}");
+        Log.Write(level, $"{message} ({severity}, {id})");
     }
 
     public override void UpdatePhysics(float dt)
@@ -206,6 +274,9 @@ public class GameEngine : Entity
     {
         Runtime += dt;
 
+        if (ScreenshotKey is { } key && Input.Keyboard.WasPressed(key))
+            CaptureScreenshot(Path.Combine(ScreenshotDirectory, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}.png"));
+
         EventManager.PreState?.Invoke(dt);
         base.UpdateState(dt);
         EventManager.PostState?.Invoke(dt);
@@ -217,8 +288,9 @@ public class GameEngine : Entity
 
         EventManager.PreRender?.Invoke(dt);
 
-        GL.Viewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
-        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+        var graphics = Graphics;
+        graphics.SetViewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        graphics.Clear(Horizon.Graphics.ClearTargets.All);
 
         // The camera every shader draws through, bound for the frame. Whoever draws says which camera, see CameraBlock.Use
         Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
@@ -232,6 +304,15 @@ public class GameEngine : Entity
             base.Render(dt);
 
         gpuTimer?.End();
+
+        if (scheduledScreenshot is { } scheduled && TotalTime >= scheduledScreenshotAt)
+        {
+            scheduledScreenshot = null;
+            CaptureScreenshot(scheduled);
+        }
+
+        if (Interlocked.Exchange(ref requestedScreenshot, null) is { } path)
+            TakeScreenshot(path);
 
         EventManager.PostRender?.Invoke(dt);
     }

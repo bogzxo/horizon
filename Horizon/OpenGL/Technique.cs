@@ -109,20 +109,14 @@ public class Technique
     /// Binds textures to a run of units in one call, the first to <paramref name="first"/> and so on. A handle of 0
     /// leaves nothing bound to its unit.
     /// </summary>
-    public static unsafe void BindTextures(ReadOnlySpan<uint> handles, uint first = 0)
-    {
-        fixed (uint* pointer = handles)
-            ObjectManager.GL.BindTextures(first, (uint)handles.Length, pointer);
-    }
+    public static void BindTextures(ReadOnlySpan<uint> handles, uint first = 0) =>
+        Horizon.Graphics.GraphicsDevice.Current.BindTextures(handles, first);
 
     /// <summary>
     /// Binds sampler objects to a run of units in one call. A handle of 0 has the unit go by the texture's own settings.
     /// </summary>
-    public static unsafe void BindSamplers(ReadOnlySpan<uint> samplers, uint first = 0)
-    {
-        fixed (uint* pointer = samplers)
-            ObjectManager.GL.BindSamplers(first, (uint)samplers.Length, pointer);
-    }
+    public static void BindSamplers(ReadOnlySpan<uint> samplers, uint first = 0) =>
+        Horizon.Graphics.GraphicsDevice.Current.BindSamplers(samplers, first);
 
     public void SetUniform(string name, int value) => ObjectManager.GL.Uniform1(Location(name), value);
 

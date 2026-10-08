@@ -60,7 +60,7 @@ public class TweenExample : Scene, ITestControls
         BuildTracks();
         BuildResults(RunChecks());
 
-        Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
     private void BuildTracks()

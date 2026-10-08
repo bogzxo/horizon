@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
 
@@ -276,10 +276,7 @@ public sealed class TextureAtlas : IDisposable
 
         // The whole thing every time: this only happens when something new is asked for, which is rare
         fixed (byte* data = _pixels)
-        {
-            engine.GL.TextureSubImage2D(
-                Texture.Handle, 0, 0, 0, (uint)_width, (uint)_height, PixelFormat.Rgba, PixelType.UnsignedByte, data);
-        }
+            Horizon.Graphics.GraphicsDevice.Current.UploadTexels(Texture, 0, 0, (uint)_width, (uint)_height, Horizon.Graphics.TexelFormat.Rgba8, data);
     }
 
     public void Dispose()

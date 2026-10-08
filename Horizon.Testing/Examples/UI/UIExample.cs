@@ -59,7 +59,7 @@ public class UIExample : Scene, ITestControls
             ScriptSelfTest(_selfTest);
 
         Console.WriteLine("UIExample Initialized.");
-        Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
     // 2. Components anchored to the screen rather than placed by hand.

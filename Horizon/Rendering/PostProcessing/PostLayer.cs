@@ -1,4 +1,4 @@
-﻿using Horizon.Logging;
+using Horizon.Logging;
 using System.Numerics;
 
 using Horizon.Engine;
@@ -208,14 +208,11 @@ public sealed class PostLayer : IDisposable
         RenderState.Restore(before);
     }
 
-    private unsafe void Clear()
+    private void Clear()
     {
-        var gl = GameEngine.Instance.GL;
-        uint handle = frameBuffer!.Handle;
-
-        Vector4 empty = Empty, still = Still;
-        gl.ClearNamedFramebuffer(handle, BufferKind.Color, 0, (float*)&empty);
-        gl.ClearNamedFramebuffer(handle, BufferKind.Color, MOTION_OUTPUT, (float*)&still);
+        var device = Horizon.Graphics.GraphicsDevice.Current;
+        device.ClearColorAttachment(frameBuffer!, 0, Empty);
+        device.ClearColorAttachment(frameBuffer!, MOTION_OUTPUT, Still);
     }
 
     /// <summary>

@@ -126,7 +126,7 @@ public class EntitiesExample : Scene, ITestControls
         BuildPanel();
         RefreshReadout();
 
-        Engine.GL.ClearColor(0.12f, 0.13f, 0.18f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.12f, 0.13f, 0.18f, 1.0f);
 
         // Don't skip this, it's what runs PostInit. Mind that PostInit is called from in here, so it runs before
         // anything you just added has been set up
@@ -423,8 +423,7 @@ public class EntitiesExample : Scene, ITestControls
             // Render thread, so this is where GPU stuff gets made. Never in the constructor: R builds hives on the
             // simulation thread, and GL calls off the render thread break in ways that are a pain in the arse to find
             _glowTexture = Texture.Create(GLOW_TEXELS, GLOW_TEXELS, TextureDefinition.RgbaUnsignedByte);
-            Engine.GL.TextureSubImage2D<byte>(
-                _glowTexture.Handle, 0, 0, 0, GLOW_TEXELS, GLOW_TEXELS, PixelFormat.Rgba, PixelType.UnsignedByte, PaintGlow(_kind.Colour));
+            Engine.Graphics.UploadTexels(_glowTexture, 0, 0, GLOW_TEXELS, GLOW_TEXELS, Horizon.Graphics.TexelFormat.Rgba8, PaintGlow(_kind.Colour));
             Interlocked.Increment(ref _tally.GlowsMade);
 
             base.Initialize();

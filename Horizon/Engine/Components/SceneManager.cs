@@ -1,4 +1,4 @@
-﻿using Horizon.Logging;
+using Horizon.Logging;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -283,9 +283,9 @@ public class SceneManager : Entity
         Log.Info($"[SceneManager] Set up '{(scene.Name.Length > 0 ? scene.Name : scene.GetType().Name)}' ahead in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
 
         // What the warm up drew is not for showing
-        var gl = GameEngine.Instance.GL;
-        gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-        gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+        var graphics = GameEngine.Instance.Graphics;
+        graphics.BindWindow();
+        graphics.Clear(Horizon.Graphics.ClearTargets.All);
     }
 
     /// <summary>
@@ -435,9 +435,9 @@ public class SceneManager : Entity
                 Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
 
                 // What the warm up drew is not for showing
-                var gl = GameEngine.Instance.GL;
-                gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
-                gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.StencilBufferBit);
+                var graphics = GameEngine.Instance.Graphics;
+                graphics.BindWindow();
+                graphics.Clear(Horizon.Graphics.ClearTargets.All);
             }
         }
 

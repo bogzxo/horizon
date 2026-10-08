@@ -102,7 +102,7 @@ public class GamepadExample : Scene, ITestControls
             Color = checks.Passed == checks.Count ? new Vector4(0.6f, 0.95f, 0.65f, 1.0f) : new Vector4(1.0f, 0.5f, 0.45f, 1.0f)
         });
 
-        Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
     public override void UpdateState(float dt)

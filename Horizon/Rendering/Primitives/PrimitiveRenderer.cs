@@ -224,7 +224,7 @@ public class PrimitiveRenderer : GameObject
 
         stream!.BindRange(BufferTargetARB.ShaderStorageBuffer, SHAPES_BINDING);
 
-        ObjectManager.GL.DrawElementsInstanced(PrimitiveType.Triangles, UnitQuad.INDICES, DrawElementsType.UnsignedInt, null, (uint)count);
+        Horizon.Graphics.GraphicsDevice.Current.DrawIndexedInstanced(Horizon.Graphics.Topology.Triangles, UnitQuad.INDICES, (uint)count);
     }
 
     private static void EnsureShader()

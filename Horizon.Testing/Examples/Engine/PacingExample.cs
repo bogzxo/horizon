@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Numerics;
 
 using Horizon.Logging;
@@ -125,7 +125,7 @@ public class PacingExample : Scene, ITestControls
                 .SetEasing(Easing.Linear)
                 .SetLoops(-1, LoopMode.PingPong));
 
-        Engine.GL.ClearColor(0.16f, 0.17f, 0.22f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.16f, 0.17f, 0.22f, 1.0f);
     }
 
     private Vector2 Advance(Vector2 position, float dt)

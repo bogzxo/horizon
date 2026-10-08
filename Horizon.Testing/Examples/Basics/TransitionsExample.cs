@@ -202,7 +202,7 @@ public sealed class TransitionsExample : Scene, ITestControls
         // this runs, so the texture is noted down as this scene's and freed when the scene is left. A fresh scene
         // leaves nothing behind without a single line of cleanup, and Home (Persistent) just keeps it
         var art = Texture.Create(2 * CELL, CELL, TextureDefinition.RgbaUnsignedByte);
-        Engine.GL.TextureSubImage2D<byte>(art.Handle, 0, 0, 0, 2 * CELL, CELL, PixelFormat.Rgba, PixelType.UnsignedByte, PaintArt());
+        Engine.Graphics.UploadTexels(art, 0, 0, 2 * CELL, CELL, Horizon.Graphics.TexelFormat.Rgba8, PaintArt());
         var sheet = SpriteSheet.FromTexture(art, new Vector2(CELL));
 
         switch (_stop)

@@ -234,7 +234,7 @@ internal sealed partial class HexScene : Scene
         base.PostInit();
 
         // The dark the editor sits on. Its root has no colour of its own, so the layouts drawn under it show through the canvas
-        Engine.GL.ClearColor(0.065f, 0.07f, 0.092f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.065f, 0.07f, 0.092f, 1.0f);
     }
 
     private void ToggleBrowsing()

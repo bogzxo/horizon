@@ -34,7 +34,13 @@ public class Renderer2D : GameObject
     public Renderer2DTechnique Technique { get => technique; private set => technique = value; }
 
     /// <summary>The size of the frame buffer everything is drawn into, however big it ends up on screen.</summary>
-    public Vector2 ViewportSize { get; init; }
+    public Vector2 ViewportSize { get; private set; }
+
+    /// <summary>
+    /// Whether the renderer keeps itself the size of the window, remade whenever that changes. For a renderer that
+    /// draws a pixel a pixel. One that draws pixel art at a size of its own and has it blown up leaves this off.
+    /// </summary>
+    public bool FollowWindow { get; set; }
 
     /// <summary>What shows wherever nothing was drawn.</summary>
     public Vector4 ClearColor { get; set; } = new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -121,12 +127,39 @@ public class Renderer2D : GameObject
         Technique = CreateTechnique();
     }
 
+    /// <summary>
+    /// Makes the renderer another size, frame buffer and all. Render thread. What was drawn into it is gone, the next
+    /// frame fills it again, and the post effects remake their targets to fit by themselves.
+    /// </summary>
+    public void Resize(uint width, uint height)
+    {
+        width = Math.Max(1, width);
+        height = Math.Max(1, height);
+        if (frameBuffer is not null && width == frameBuffer.Width && height == frameBuffer.Height) return;
+
+        frameBuffer?.Dispose();
+        ViewportSize = new Vector2(width, height);
+        FrameBuffer = CreateFrameBuffer(width, height);
+        Technique = CreateTechnique();
+        Resized();
+    }
+
+    /// <summary>Called after <see cref="Resize"/> made the frame buffer anew, for whatever else goes by its size.</summary>
+    protected virtual void Resized()
+    { }
+
     public override void Render(float dt)
     {
         // Whatever was just added is set up before anything is bound, setting things up tends to leave bindings behind.
         // Drawn alongside the simulation that has happened already, with it standing still, before the frame began
         if (!RenderFrame.Active.IsDecoupled)
             InitializeAll();
+
+        if (FollowWindow)
+        {
+            Vector2 window = Engine.WindowManager.ViewportSize;
+            Resize((uint)window.X, (uint)window.Y);
+        }
 
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();
@@ -154,6 +187,9 @@ public class Renderer2D : GameObject
         RenderState.Blend = false;
         frameTime = dt;
 
+        // Whatever a renderer works out of the frame buffer before the picture goes anywhere (the lighting)
+        BeforeResolve(dt);
+
         if (PostProcessing.Prepare())
         {
             // Through the effects, the last of which draws to where we are shown
@@ -177,6 +213,14 @@ public class Renderer2D : GameObject
     }
 
     /// <summary>
+    /// Render thread, after everything in the renderer has been drawn into the frame buffer and before the picture
+    /// is put where it is shown. For passes that work out something of the frame buffer first (the path traced
+    /// lighting). Whatever is bound afterwards doesn't matter, the output is bound after this.
+    /// </summary>
+    protected virtual void BeforeResolve(float dt)
+    { }
+
+    /// <summary>
     /// GL thread, with the frame buffer bound. Empties every attachment for a new frame.
     /// </summary>
     protected virtual void Clear()
@@ -189,20 +233,9 @@ public class Renderer2D : GameObject
     /// Helper method to fill a colour attachment of the frame buffer, each one can be emptied to a value of its own.
     /// </summary>
     /// <param name="index">Which colour attachment, in the order the frame buffer draws to them.</param>
-    protected unsafe void Clear(int index, Vector4 value)
-    {
-        Engine.GL.ClearNamedFramebuffer(FrameBuffer.Handle, BufferKind.Color, index, (float*)&value);
-    }
+    protected void Clear(int index, Vector4 value) => Engine.Graphics.ClearColorAttachment(FrameBuffer, index, value);
 
-    protected void ClearDepthStencil()
-    {
-        var gl = Engine.GL;
-
-        // Only what can be written to gets cleared, and whoever drew last might have left these off
-        gl.DepthMask(true);
-        gl.StencilMask(0xFF);
-        gl.ClearNamedFramebuffer(FrameBuffer.Handle, GLEnum.DepthStencil, 0, 1.0f, 0);
-    }
+    protected void ClearDepthStencil() => Engine.Graphics.ClearDepthStencil(FrameBuffer);
 
     /// <summary>
     /// Helper method to bind whatever this renderer is shown in: the renderer it is inside of, or else whatever the
@@ -217,8 +250,8 @@ public class Renderer2D : GameObject
             return;
         }
 
-        FrameBufferObject.Unbind();
-        Engine.GL.Viewport(0, 0, (uint)Engine.WindowManager.ViewportSize.X, (uint)Engine.WindowManager.ViewportSize.Y);
+        Engine.Graphics.BindWindow();
+        Engine.Graphics.SetViewport(0, 0, (uint)Engine.WindowManager.ViewportSize.X, (uint)Engine.WindowManager.ViewportSize.Y);
     }
 
     /// <summary>
