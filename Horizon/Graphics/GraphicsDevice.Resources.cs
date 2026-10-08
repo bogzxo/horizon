@@ -68,6 +68,7 @@ public sealed unsafe partial class GraphicsDevice
         buffer.Size = bytes;
         buffer.LastUse = 0;
         Statistics.Buffers++;
+        LabelBuffer(buffer);
     }
 
     private void RetireBuffer(Buffer handle, VulkanMemory.Allocation memory)
@@ -153,6 +154,7 @@ public sealed unsafe partial class GraphicsDevice
         texture.DefaultSampler = SamplerFor(definition.Sampler);
         texture.BindlessIndex = (definition.Usage & TextureUsage.Sampled) != 0 ? Bindless.Add(view, texture.DefaultSampler) : BindlessTextures.NONE;
         Statistics.Textures++;
+        LabelTexture(texture);
 
         if (!pixels.IsEmpty)
         {
@@ -214,6 +216,24 @@ public sealed unsafe partial class GraphicsDevice
     };
 
     /* Shaders */
+
+    /* Names for the debugger, see VulkanContext.Name. A resource nobody named is told by what it is */
+
+    internal void LabelBuffer(GpuBuffer buffer) =>
+        Context.Name(ObjectType.Buffer, buffer.Buffer.Handle, buffer.Name ?? $"{buffer.Usage} buffer of {buffer.Capacity} bytes");
+
+    internal void LabelTexture(Texture texture)
+    {
+        string name = texture.Name ?? $"{texture.Width} by {texture.Height} {texture.Definition.Format}";
+        Context.Name(ObjectType.Image, texture.Image.Handle, name);
+        Context.Name(ObjectType.ImageView, texture.View.Handle, name + " view");
+    }
+
+    internal void LabelShader(Shader shader)
+    {
+        foreach (var stage in shader.Modules)
+            Context.Name(ObjectType.ShaderModule, stage.Module.Handle, shader.Name);
+    }
 
     /// <summary>Helper method to turn SPIR-V into a module.</summary>
     internal ShaderModule CreateShaderModule(byte[] spirv)

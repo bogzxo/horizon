@@ -387,6 +387,7 @@ public sealed class TextureAtlas : IDisposable
                 }
 
                 Texture = result.Asset;
+                Texture.Name = $"atlas {_width} by {_height}";
             }
             finally
             {

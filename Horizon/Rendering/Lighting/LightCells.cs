@@ -80,6 +80,8 @@ internal sealed class LightCells : IDisposable
         var textures = GameEngine.Instance.ObjectManager.Textures;
         if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Cells }, out var a)) return false;
         if (!textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = Cells }, out var b)) return false;
+        a.Asset.Name = "light cells a";
+        b.Asset.Name = "light cells b";
 
         light = a.Asset;
         extra = b.Asset;

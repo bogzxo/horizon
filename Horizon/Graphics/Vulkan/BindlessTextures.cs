@@ -69,6 +69,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
 
         VulkanContext.Check(context.Vk.CreateDescriptorSetLayout(context.Device, in layoutInfo, null, out DescriptorSetLayout layout), "making the bindless layout");
         Layout = layout;
+        context.Name(ObjectType.DescriptorSetLayout, layout.Handle, "set 2, the bindless table");
 
         var size = new DescriptorPoolSize(DescriptorType.CombinedImageSampler, Capacity);
         var poolInfo = new DescriptorPoolCreateInfo
@@ -92,6 +93,7 @@ internal sealed unsafe class BindlessTextures : IDisposable
 
         VulkanContext.Check(context.Vk.AllocateDescriptorSets(context.Device, in allocateInfo, out DescriptorSet set), "allocating the bindless set");
         Set = set;
+        context.Name(ObjectType.DescriptorSet, set.Handle, "the bindless table");
     }
 
     /// <summary>Puts a texture (read through a sampler) in the table and says which slot it got.</summary>

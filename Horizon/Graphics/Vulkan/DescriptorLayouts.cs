@@ -46,6 +46,8 @@ internal sealed unsafe class DescriptorLayouts : IDisposable
 
         Buffers = MakeLayout(bufferBindings);
         Images = MakeLayout(imageBindings);
+        context.Name(ObjectType.DescriptorSetLayout, Buffers.Handle, "set 0, the buffers");
+        context.Name(ObjectType.DescriptorSetLayout, Images.Handle, "set 1, the textures and images");
 
         var layouts = stackalloc DescriptorSetLayout[3] { Buffers, Images, bindless.Layout };
         var pipelineInfo = new PipelineLayoutCreateInfo
@@ -57,6 +59,7 @@ internal sealed unsafe class DescriptorLayouts : IDisposable
 
         VulkanContext.Check(context.Vk.CreatePipelineLayout(context.Device, in pipelineInfo, null, out PipelineLayout layout), "making the pipeline layout");
         PipelineLayout = layout;
+        context.Name(ObjectType.PipelineLayout, layout.Handle, "the one pipeline layout");
     }
 
     private static DescriptorSetLayoutBinding Binding(uint binding, DescriptorType type) => new()
@@ -117,9 +120,13 @@ internal sealed unsafe class DescriptorAllocator : IDisposable
 
     public int SetsAllocated { get; private set; }
 
-    public DescriptorAllocator(VulkanContext context)
+    // Which frame in flight the sets are for, for the names
+    private readonly int frame;
+
+    public DescriptorAllocator(VulkanContext context, int frame)
     {
         this.context = context;
+        this.frame = frame;
         pools.Add(MakePool());
     }
 
@@ -143,6 +150,7 @@ internal sealed unsafe class DescriptorAllocator : IDisposable
         };
 
         VulkanContext.Check(context.Vk.CreateDescriptorPool(context.Device, in info, null, out DescriptorPool pool), "making a descriptor pool");
+        context.Name(ObjectType.DescriptorPool, pool.Handle, $"frame {frame} descriptors {pools.Count}");
         return pool;
     }
 

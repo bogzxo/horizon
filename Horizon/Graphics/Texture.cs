@@ -176,5 +176,10 @@ public sealed class Texture : GpuResource, IDisposable
         return true;
     }
 
+    protected override void Named()
+    {
+        if (Image.Handle != 0) device?.LabelTexture(this);
+    }
+
     protected override void DestroyCore() => device?.DestroyTexture(this);
 }

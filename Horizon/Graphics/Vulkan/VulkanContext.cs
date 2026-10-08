@@ -20,6 +20,7 @@ internal sealed unsafe class VulkanContext : IDisposable
 {
     private const string VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
     private const string VALIDATION_VARIABLE = "HORIZON_VULKAN_VALIDATION";
+    private const string LABELS_VARIABLE = "HORIZON_VULKAN_LABELS";
     private const string PORTABILITY_ENUMERATION = "VK_KHR_portability_enumeration";
     private const string PORTABILITY_SUBSET = "VK_KHR_portability_subset";
     private const string DYNAMIC_RENDERING = "VK_KHR_dynamic_rendering";
@@ -56,6 +57,12 @@ internal sealed unsafe class VulkanContext : IDisposable
     public string DeviceName { get; private set; } = string.Empty;
     public string DriverVersion { get; private set; } = string.Empty;
     public bool ValidationEnabled { get; private set; }
+
+    /// <summary>
+    /// Whether every object gets its name told to the driver and the GPU scopes are labelled, for RenderDoc and
+    /// friends. On in a Debug build (HORIZON_VULKAN_LABELS=off turns it off), off in Release unless that says on.
+    /// </summary>
+    public bool LabelsEnabled { get; private set; }
     public bool TimestampsSupported { get; private set; }
     public float TimestampPeriod { get; private set; }
 
@@ -80,6 +87,9 @@ internal sealed unsafe class VulkanContext : IDisposable
 
     private ExtDebugUtils? debugUtils;
     private DebugUtilsMessengerEXT messenger;
+
+    // The names and labels are handed over as C strings, one buffer reused for all of them
+    private readonly byte[] labelBytes = new byte[256];
     private PfnDebugUtilsMessengerCallbackEXT? debugCallback;
 
     /// <summary>What the validation layer (or the driver) had to say, for the engine's log.</summary>
@@ -104,11 +114,18 @@ internal sealed unsafe class VulkanContext : IDisposable
 #endif
         ValidationEnabled = wantValidation && HasLayer(VALIDATION_LAYER);
 
+        string? labels = Environment.GetEnvironmentVariable(LABELS_VARIABLE);
+        bool wantLabels = !string.Equals(labels, "off", StringComparison.OrdinalIgnoreCase) && labels != "0";
+#if !DEBUG
+        wantLabels = string.Equals(labels, "on", StringComparison.OrdinalIgnoreCase) || labels == "1";
+#endif
+        bool wantDebugUtils = (ValidationEnabled || wantLabels) && HasInstanceExtension(ExtDebugUtils.ExtensionName);
+
         byte** windowExtensions = surfaceSource.GetRequiredExtensions(out uint windowExtensionCount);
         var extensions = new List<string>();
         for (uint i = 0; i < windowExtensionCount; i++)
             extensions.Add(Marshal.PtrToStringAnsi((nint)windowExtensions[i])!);
-        if (ValidationEnabled) extensions.Add(ExtDebugUtils.ExtensionName);
+        if (wantDebugUtils) extensions.Add(ExtDebugUtils.ExtensionName);
 
         // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
         // asked for by name. Without this a Mac says it has no GPU at all
@@ -154,9 +171,15 @@ internal sealed unsafe class VulkanContext : IDisposable
             throw new InvalidOperationException("The Vulkan instance has no surface extension, there is nothing to draw into.");
         KhrSurface = khrSurface;
 
-        if (ValidationEnabled && Vk.TryGetInstanceExtension(Instance, out ExtDebugUtils utils))
+        if (wantDebugUtils && Vk.TryGetInstanceExtension(Instance, out ExtDebugUtils utils))
         {
             debugUtils = utils;
+            LabelsEnabled = wantLabels;
+            if (LabelsEnabled) Log.Info("[Vulkan] Every object is being named for the debugger.");
+        }
+
+        if (ValidationEnabled && debugUtils is not null)
+        {
             debugCallback = new PfnDebugUtilsMessengerCallbackEXT(OnDebugMessage);
 
             var messengerInfo = new DebugUtilsMessengerCreateInfoEXT
@@ -167,9 +190,60 @@ internal sealed unsafe class VulkanContext : IDisposable
                 PfnUserCallback = debugCallback.Value
             };
 
-            utils.CreateDebugUtilsMessenger(Instance, in messengerInfo, null, out messenger);
+            debugUtils.CreateDebugUtilsMessenger(Instance, in messengerInfo, null, out messenger);
             Log.Info("[Vulkan] The validation layer is on, every mistake is going in the log.");
         }
+    }
+
+    /// <summary>
+    /// Tells the driver what an object is called, so a debugger (RenderDoc) shows "sprites.slang" rather than
+    /// Pipeline 0x3f. Nothing happens unless <see cref="LabelsEnabled"/>. The name is cut off at 255 bytes.
+    /// </summary>
+    public void Name(ObjectType type, ulong handle, string? name)
+    {
+        if (!LabelsEnabled || handle == 0 || string.IsNullOrEmpty(name)) return;
+
+        fixed (byte* pointer = labelBytes)
+        {
+            ToCString(name);
+            var info = new DebugUtilsObjectNameInfoEXT
+            {
+                SType = StructureType.DebugUtilsObjectNameInfoExt,
+                ObjectType = type,
+                ObjectHandle = handle,
+                PObjectName = pointer
+            };
+            debugUtils!.SetDebugUtilsObjectName(Device, in info);
+        }
+    }
+
+    /// <summary>Opens a named stretch of a command buffer the debugger folds up as one, closed by <see cref="EndLabel"/>.</summary>
+    public void BeginLabel(CommandBuffer cmd, string name)
+    {
+        if (!LabelsEnabled) return;
+
+        fixed (byte* pointer = labelBytes)
+        {
+            ToCString(name);
+            var label = new DebugUtilsLabelEXT { SType = StructureType.DebugUtilsLabelExt, PLabelName = pointer };
+            debugUtils!.CmdBeginDebugUtilsLabel(cmd, in label);
+        }
+    }
+
+    public void EndLabel(CommandBuffer cmd)
+    {
+        if (!LabelsEnabled) return;
+        debugUtils!.CmdEndDebugUtilsLabel(cmd);
+    }
+
+    // Writes the name into labelBytes, UTF-8 and zero terminated, however long it is
+    private void ToCString(string name)
+    {
+        var utf8 = System.Text.Encoding.UTF8;
+        int chars = name.Length;
+        while (chars > 0 && utf8.GetByteCount(name.AsSpan(0, chars)) >= labelBytes.Length) chars--;
+        int written = utf8.GetBytes(name.AsSpan(0, chars), labelBytes);
+        labelBytes[written] = 0;
     }
 
     private uint OnDebugMessage(DebugUtilsMessageSeverityFlagsEXT severity, DebugUtilsMessageTypeFlagsEXT type, DebugUtilsMessengerCallbackDataEXT* data, void* user)

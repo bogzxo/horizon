@@ -26,8 +26,22 @@ public abstract class GpuResource : IGpuObject
     /// <summary>Whether the resource is there to be used. One that failed to be made, or was freed, isn't.</summary>
     public virtual bool IsValid => Handle != 0 && !IsDestroyed;
 
-    /// <summary>What it is called in the log, if anybody said.</summary>
-    public string? Name { get; set; }
+    /// <summary>What it is called in the log (and in the debugger, see <see cref="Named"/>), if anybody said.</summary>
+    public string? Name
+    {
+        get => name;
+        set
+        {
+            name = value;
+            Named();
+        }
+    }
+
+    private string? name;
+
+    /// <summary>Called when the resource is given a name, for whoever tells the driver. Nothing by default.</summary>
+    protected virtual void Named()
+    { }
 
     /// <summary>Whether <see cref="Destroy"/> has been called.</summary>
     public bool IsDestroyed { get; private set; }

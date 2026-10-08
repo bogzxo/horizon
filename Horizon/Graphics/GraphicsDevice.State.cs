@@ -230,6 +230,7 @@ public sealed unsafe partial class GraphicsDevice
         };
 
         VulkanContext.Check(Vk.CreateSampler(Device, in info, null, out Sampler sampler), "making a sampler");
+        Context.Name(ObjectType.Sampler, sampler.Handle, $"{(settings.Smooth ? "smooth" : "nearest")}{(settings.Mipmaps ? " mipmapped" : "")}{(settings.Repeat ? " repeating" : settings.Border ? " bordered" : " clamped")} sampler");
         samplersBySettings[settings] = sampler;
         uint id = nextSamplerId++;
         samplersById[id] = sampler;

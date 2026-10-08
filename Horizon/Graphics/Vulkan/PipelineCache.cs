@@ -290,6 +290,7 @@ internal sealed unsafe class PipelineCache : IDisposable
             Result result = vk.CreateGraphicsPipelines(context.Device, cache, 1, in info, null, out Pipeline pipeline);
             foreach (nint entry in entries) SilkMarshal.Free(entry);
             VulkanContext.Check(result, $"making a pipeline for {shader.Name}");
+            context.Name(ObjectType.Pipeline, pipeline.Handle, $"{shader.Name} pipeline");
             return pipeline;
         }
     }
@@ -314,6 +315,7 @@ internal sealed unsafe class PipelineCache : IDisposable
         Result result = context.Vk.CreateComputePipelines(context.Device, cache, 1, in info, null, out Pipeline pipeline);
         SilkMarshal.Free(entry);
         VulkanContext.Check(result, $"making a compute pipeline for {shader.Name}");
+        context.Name(ObjectType.Pipeline, pipeline.Handle, $"{shader.Name} compute pipeline");
         return pipeline;
     }
 

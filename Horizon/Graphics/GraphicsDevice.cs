@@ -173,7 +173,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         VulkanContext.Check(Vk.CreateSemaphore(Device, in semaphoreInfo, null, out timeline), "making the timeline");
 
         for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
-            frames[i] = new FrameResources(Context, Memory);
+            frames[i] = new FrameResources(Context, Memory, i);
 
         if (Context.TimestampsSupported)
         {
@@ -184,6 +184,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
                 QueryCount = FRAMES_IN_FLIGHT * QUERIES_PER_FRAME
             };
             VulkanContext.Check(Vk.CreateQueryPool(Device, in queryInfo, null, out timestamps), "making the timestamp queries");
+            Context.Name(ObjectType.QueryPool, timestamps.Handle, "frame timestamps");
         }
 
         for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
@@ -382,27 +383,37 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// </summary>
     public GpuScopeToken BeginGpuScope(string name)
     {
-        if (timestamps.Handle == 0 || !IsAvailable) return default;
+        if (!IsAvailable) return default;
 
-        int index = scopeCounts[frameIndex];
-        if (index >= MAX_SCOPES) return default;
+        // A scope is also what the debugger folds the frame up by, which goes on past the timed ones
+        bool timed = timestamps.Handle != 0 && scopeCounts[frameIndex] < MAX_SCOPES;
+        if (!timed && !Context.LabelsEnabled) return default;
 
-        scopeNames[frameIndex][index] = name;
-        scopeDepths[frameIndex][index] = openScopes.Count;
-        scopeCounts[frameIndex] = index + 1;
+        Context.BeginLabel(cmd, name);
+
+        int index = -1;
+        if (timed)
+        {
+            index = scopeCounts[frameIndex];
+            scopeNames[frameIndex][index] = name;
+            scopeDepths[frameIndex][index] = openScopes.Count;
+            scopeCounts[frameIndex] = index + 1;
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
+        }
+
         openScopes.Push(index);
-
-        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 2 + index * 2));
         return new GpuScopeToken(this);
     }
 
     /// <summary>Closes the scope opened last, see <see cref="BeginGpuScope"/>.</summary>
     public void EndGpuScope()
     {
-        if (timestamps.Handle == 0 || openScopes.Count == 0) return;
+        if (openScopes.Count == 0) return;
 
         int index = openScopes.Pop();
-        Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
+        if (index >= 0)
+            Vk.CmdWriteTimestamp2(cmd, PipelineStageFlags2.AllCommandsBit, timestamps, (uint)(frameIndex * QUERIES_PER_FRAME + 3 + index * 2));
+        Context.EndLabel(cmd);
     }
 
     private ulong QueryCompleted()

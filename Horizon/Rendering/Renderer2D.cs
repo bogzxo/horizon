@@ -63,8 +63,9 @@ public class Renderer2D : GameObject
     private Renderer2D? outer;
     private float frameTime;
 
-    // What the GPU timings call this renderer, see GraphicsDevice.BeginGpuScope
+    // What the GPU timings and the debugger call this renderer, see GraphicsDevice.BeginGpuScope
     private string? scopeLabel;
+    private string ScopeLabel => scopeLabel ??= string.IsNullOrEmpty(Name) ? GetType().Name : Name;
 
     /// <summary>Makes what puts the picture on screen, once the render target is there. Render thread.</summary>
     protected virtual Renderer2DTechnique CreateTechnique() => new(FrameBuffer);
@@ -112,6 +113,7 @@ public class Renderer2D : GameObject
 
         // i am aware we just went from uint -> float!! -> uint but fuck it we ball.
         FrameBuffer = CreateFrameBuffer((uint)ViewportSize.X, (uint)ViewportSize.Y);
+        FrameBuffer.Name = ScopeLabel;
         Technique = CreateTechnique();
     }
 
@@ -128,6 +130,7 @@ public class Renderer2D : GameObject
         frameBuffer?.Dispose();
         ViewportSize = new Vector2(width, height);
         FrameBuffer = CreateFrameBuffer(width, height);
+        FrameBuffer.Name = ScopeLabel;
         Technique = CreateTechnique();
         Resized();
     }
@@ -152,7 +155,7 @@ public class Renderer2D : GameObject
         // The rest of the frame (and of the engine) is drawn with whatever it had set, which is put back when we are done
         var before = RenderState.Save();
 
-        using var scope = Engine.Graphics.BeginGpuScope(scopeLabel ??= string.IsNullOrEmpty(Name) ? GetType().Name : Name);
+        using var scope = Engine.Graphics.BeginGpuScope(ScopeLabel);
 
         FrameBuffer.Bind();
 

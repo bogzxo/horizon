@@ -211,6 +211,7 @@ internal sealed class TileMapGpu : IDisposable
         if (layerList.Count == 0) return false;
 
         layers ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
+        layers.Name = "tile map layers";
         layers.Upload<Layer>(CollectionsMarshal.AsSpan(layerList));
 
         // Whether the chunks still line up with what was packed last time
@@ -271,11 +272,13 @@ internal sealed class TileMapGpu : IDisposable
             tiles?.Dispose();
             tileCapacity = Math.Max(packed.Count, tileCapacity * 2);
             tiles = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(tileCapacity * Marshal.SizeOf<Tile>())));
+            tiles.Name = "tile map tiles";
         }
 
         tiles.Update<Tile>(CollectionsMarshal.AsSpan(packed));
 
         chunks ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
+        chunks.Name = "tile map chunks";
         chunks.Upload<Chunk>(CollectionsMarshal.AsSpan(chunkList));
 
         nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 16);
@@ -283,9 +286,11 @@ internal sealed class TileMapGpu : IDisposable
         {
             commands?.Dispose();
             commands = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, commandBytes));
+            commands.Name = "tile map draw commands";
         }
 
         count ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 16));
+        count.Name = "tile map draw count";
     }
 
     /// <summary>Helper method to send up only the batches that changed, in place.</summary>
