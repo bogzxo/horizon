@@ -5,10 +5,10 @@
 // coordinate for its own stuff: x is how far out from the middle a vertex is (0 middle, 1 tip),
 // y is 1 for the ring round the outside, which stays put while the star breathes.
 
+#include <common/camera.glsl>
+
 layout(location = 0) in vec2 vPos;
 layout(location = 1) in vec2 vTexCoords;
-
-uniform mat4 uViewProjection;
 uniform vec2 uCentre;
 uniform float uTime;
 

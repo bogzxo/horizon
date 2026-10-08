@@ -1,7 +1,7 @@
 using System.Numerics;
 
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 namespace Horizon.Hex;
 

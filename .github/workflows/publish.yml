@@ -18,7 +18,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.x
 
       - name: Cache dependencies
         uses: actions/cache@v2
@@ -28,7 +28,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-dotnet-
       - name: Restore dependencies
-        run: dotnet restore --runtime win-x64
+        run: dotnet restore Horizon.sln --runtime win-x64 -p:EnableWindowsTargeting=true
 
       - name: Build for Windows
         run: dotnet publish --no-restore --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false

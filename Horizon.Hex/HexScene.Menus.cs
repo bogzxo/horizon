@@ -3,8 +3,8 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Key = Silk.NET.Input.Key;
 

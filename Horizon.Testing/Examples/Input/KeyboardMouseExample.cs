@@ -5,8 +5,8 @@ using Horizon.Engine;
 using Horizon.Input;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Silk.NET.Input;
 

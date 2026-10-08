@@ -4,8 +4,8 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering;
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 namespace Horizon.Hex;
 

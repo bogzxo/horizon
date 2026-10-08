@@ -1,7 +1,7 @@
 using System.Numerics;
 
-using Horizon.Rendering.UIX;
-using Horizon.Rendering.UIX.Components;
+using Horizon.UI;
+using Horizon.UI.Components;
 
 using Key = Silk.NET.Input.Key;
 using MouseButton = Silk.NET.Input.MouseButton;

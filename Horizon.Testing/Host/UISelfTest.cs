@@ -2,7 +2,7 @@
 
 using System.Numerics;
 
-using Horizon.Rendering.UIX;
+using Horizon.UI;
 
 namespace Horizon.Testing;
 
