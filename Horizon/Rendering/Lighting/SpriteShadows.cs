@@ -13,9 +13,9 @@ namespace Horizon.Rendering.Lighting;
 /// get every cell the nearest edge within a couple of hundred texels, and the last pass reads the picture itself so
 /// the field is exact at the sprites' edges. The lights march it alongside the distance field of the occlusion map,
 /// see direct.slang, so a sprite throws a shadow and bounces light exactly where its texture has ink.
-/// A second distance in the same field is to everything that blocks or glows, which is what the path traced
-/// lighting stops its rays at, so whatever is drawn emissive (a lamp, sparks, a glowing sign) lights what is around
-/// it with its own shape and colour. Render thread.
+/// A second distance in the same field is to everything that blocks or is a lamp (the blue of the material, see
+/// gbuffer.slang), which is what the path traced lighting stops its rays at, so whatever is drawn as one (a lamp,
+/// sparks, a glowing sign) lights what is around it with its own shape and colour. Render thread.
 /// </summary>
 internal sealed class SpriteShadows : IDisposable
 {

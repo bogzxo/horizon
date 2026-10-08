@@ -16,6 +16,10 @@ struct Params
     float uStartEmissive;
     float uEndEmissive;
 
+    // How much of that is a lamp to the path traced lighting (1 for all of it, 0 for a particle that only shows
+    // in the dark without lighting anything), see ParticleRenderer2D.Lights
+    float uLamp;
+
     // How near the particles are, from 0 (the backdrop) to 1 (right in front)
     float uNearness;
 
@@ -93,9 +97,13 @@ GBuffer fsMain(Varyings input)
     // Particles fade out as they die, and so does what they say about the surface, a spark that is nearly gone
     // must not leave whatever is behind it glowing. A particle isn't shiny, and takes the shine off of what is
     // behind it as far as it covers it
-    return writeFlat(
+    GBuffer output = writeFlat(
         float4(lerp(params.uEndColor * 2.0, params.uStartColor, input.alive), input.alive),
         lerp(params.uEndEmissive, params.uStartEmissive, input.alive),
         input.motion,
         params.uNearness);
+
+    // Sparks off a hit show bright in the dark but needn't light the arena every time somebody lands a punch
+    output.material.b *= params.uLamp;
+    return output;
 }

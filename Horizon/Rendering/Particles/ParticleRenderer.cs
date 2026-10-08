@@ -19,6 +19,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
     private const int SpawnChunkSize = 256;
 
     private const string UNIFORM_NEARNESS = "uNearness";
+    private const string UNIFORM_LAMP = "uLamp";
     private const string UNIFORM_STRETCH = "uStretch";
     private const string UNIFORM_TIME_OFFSET = "uTimeOffset";
     private const string UNIFORM_MAX_STRETCH = "uMaxStretch";
@@ -58,6 +59,13 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
     /// <summary>How much of a particle shows no matter the light at the end of its life, what glowed can cool off.</summary>
     public float EndEmissive { get; set; } = 0.0f;
+
+    /// <summary>
+    /// Whether what is emissive of the particles lights what is round them in the path traced lighting (embers,
+    /// lava, a fountain of sparks that is a lamp to the room) or only shows in the dark (the sparks off a hit,
+    /// which would otherwise light the whole arena up and down with every punch). On, until a game says otherwise.
+    /// </summary>
+    public bool Lights { get; set; } = true;
 
     /// <summary>How much of a particle shows no matter the light, all of its life. Sets both <see cref="StartEmissive"/> and <see cref="EndEmissive"/>.</summary>
     public float Emissive
@@ -222,6 +230,7 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
         Material.Bind();
         Material.SetUniform(UNIFORM_NEARNESS, Nearness);
+        Material.SetUniform(UNIFORM_LAMP, Lights ? 1.0f : 0.0f);
         Material.SetUniform(UNIFORM_PARTICLE_SIZE, ParticleSize);
         Material.SetUniform(UNIFORM_TIME_OFFSET, timeOffset);
         Material.SetUniform(UNIFORM_STRETCH, MathF.Max(Stretch, 0.0f));

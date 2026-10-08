@@ -109,6 +109,16 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
 - Ideas not done. Outlines and drop shadows are one more threshold on the same field (the spread is kept for
   that). Multi channel fields (MSDF) would keep sharp corners sharper at big sizes, that needs msdfgen which is C++.
 
+## Emissive is not the same as a lamp
+
+- Everything emissive used to be a lamp to the tracer, so a fighter flashed white on a hit lit the whole arena for
+  the frames of the flash and every hit spark was a tiny light going on and off. That read as the lights flickering
+  violently whenever anybody attacked. The material attachment's blue is "how much this lights what is round it"
+  now (`gbuffer.slang`), the surface's blue stays "how much shows unlit". Tiles and primitives light as they glow,
+  a sprite's flash lights nothing unless `Sprite.FlashLights`, and a particle renderer says with `Lights`. The
+  sprite field's glow channel and gi_radiance read the material's blue. Fighter2D's impact sparks, blood, mist and
+  the hitstun haze don't light, the lava does.
+
 ## Hints to self
 
 - Shell cwd drifts between calls, use absolute paths and `git -C`.

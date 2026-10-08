@@ -1,6 +1,6 @@
 // The first pass of the sprite shadows, see SpriteShadows.cs. Everything that was drawn as blocking light (see
-// Sprite.CastsShadows) left its coverage in the green of the material attachment, and everything that glows its
-// emissive in the blue of the surface attachment. The field of distances to those is built by a jump flood over a
+// Sprite.CastsShadows) left its coverage in the green of the material attachment, and everything that lights what is
+// round it says so in the blue of the material attachment. The field of distances to those is built by a jump flood over a
 // grid a few picture texels coarse (uScale of them to a cell), and this pass plants the seeds of it, for every cell
 // the picture texel in it that is on an edge (one that blocks with a neighbour that doesn't), of what blocks (x) and
 // of what blocks or glows (y), each as its picture coordinates packed into one word, NONE for a cell without one.
@@ -27,7 +27,7 @@ bool2 at(int2 texel, int2 size)
 {
     texel = clamp(texel, int2(0, 0), size - 1);
     bool blocks = uMaterial.Load(int3(texel, 0)).g > 0.5;
-    bool glows = blocks || uSurface.Load(int3(texel, 0)).b > GLOWS_FROM;
+    bool glows = blocks || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
     return bool2(blocks, glows);
 }
 

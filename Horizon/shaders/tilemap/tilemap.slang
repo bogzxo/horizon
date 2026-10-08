@@ -113,7 +113,7 @@ GBuffer fsMain(Varyings input)
     GBuffer output;
     output.albedo = albedo;
     output.surface = float4(normal, layer.emissive, albedo.a);
-    output.material = float4(shine, 0.0, 0.0, albedo.a);
+    output.material = float4(shine, 0.0, layer.emissive, albedo.a);
     output.motion = float4(encodeMotion(layer.motion), layer.nearness, albedo.a);
     return output;
 }

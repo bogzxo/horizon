@@ -139,6 +139,7 @@ public class LightingExample(bool deferred = true, bool pathTraced = false, bool
                 // Glowing, so the tracer has a lamp with a shape to find
                 blob.FlashColor = new Vector4(1.0f, 0.7f, 0.3f, 1.0f);
                 blob.FlashAmount = 1.0f;
+                blob.FlashLights = true;
                 blob.Transform.Position = new Vector2(120.0f, -20.0f);
             }
             blob.ConfigureSpriteSheet(sheet, "idle");
