@@ -6,7 +6,7 @@
 
 #include <common/camera.slang>
 
-// Must match DeferredRenderer2D.LightData (48 bytes).
+// Must match DeferredRenderer2D.LightData (80 bytes).
 struct Light
 {
     float2 position;
@@ -17,8 +17,18 @@ struct Light
     float glow;
     float castsShadows;
     float size;
-    float padding;
+    float spriteShadow;   // how much the sprites that block light darken this one, 0 for not at all, 1 for all the way
+    float2 direction;     // which way a spot shines, or a directional light's rays go, a unit vector
+    float cosInner;       // a spot is full inside of this angle (its cosine)
+    float cosOuter;       // and gone past this one, below -1 for a light that shines every way
+    float type;           // 0 point, 1 spot, 2 directional, see LightType
+    float reach;          // how far a directional light's shadows go looking for something in the way
+    float2 padding;
 };
+
+static const float LIGHT_POINT = 0.0;
+static const float LIGHT_SPOT = 1.0;
+static const float LIGHT_DIRECTIONAL = 2.0;
 
 // How many lights a tile of the screen can hold, counting the count itself. Must match LightTiles.cs.
 static const uint TILE_SIZE = 32u;
@@ -93,35 +103,38 @@ BIND_TEXTURE(3) Sampler2D uTexField;
 // one, and in the green the same for everything that blocks or glows. Unit 5, see SpriteShadows.
 BIND_TEXTURE(5) Sampler2D uTexSprites;
 
-// How far the nearest thing that blocks light is from a point of the world, negative inside one, counting what
-// glows as blocking if asked (the path traced lighting does, it is what lights things). Everything past the edge
-// of the occlusion map is open as far as the map goes, and the sprites only block on the picture.
+// How far the nearest wall of the occlusion map is from a point of the world, negative inside one. Everything past
+// the edge of the map is open as far as the map goes.
+float wallsDistance(float2 position, Field field)
+{
+    if (!field.hasWalls) return 1e9;
+
+    float2 texel = (position - field.origin) / (field.cellSize * field.size);
+    float2 inside = clamp(texel, 0.0, 1.0);
+    float distance = uTexField.SampleLevel(inside, 0.0).r;
+
+    // Outside of the field the nearest wall is at least as far as the edge of it
+    float2 outside = max(abs(texel - 0.5) - 0.5, 0.0) * field.cellSize * field.size;
+    return any(outside > 0.0) ? max(distance, 0.0) + length(outside) : distance;
+}
+
+// How far the nearest sprite that blocks light is, negative inside one, counting what glows as blocking if asked
+// (the path traced lighting does, it is what lights things). The sprites only block on the picture.
+float spritesDistance(float2 position, Field field, bool glowing)
+{
+    if (!field.hasSprites) return 1e9;
+
+    float2 picture = pictureOf(position);
+    if (any(picture < 0.0) || any(picture > 1.0)) return 1e9;
+
+    float2 sprites = uTexSprites.SampleLevel(picture, 0.0).rg;
+    return glowing ? sprites.g : sprites.r;
+}
+
+// How far the nearest thing that blocks light is from a point of the world, walls and sprites alike.
 float wallDistance(float2 position, Field field, bool glowing)
 {
-    float nearest = 1e9;
-
-    if (field.hasWalls)
-    {
-        float2 texel = (position - field.origin) / (field.cellSize * field.size);
-        float2 inside = clamp(texel, 0.0, 1.0);
-        float distance = uTexField.SampleLevel(inside, 0.0).r;
-
-        // Outside of the field the nearest wall is at least as far as the edge of it
-        float2 outside = max(abs(texel - 0.5) - 0.5, 0.0) * field.cellSize * field.size;
-        nearest = any(outside > 0.0) ? max(distance, 0.0) + length(outside) : distance;
-    }
-
-    if (field.hasSprites)
-    {
-        float2 picture = pictureOf(position);
-        if (all(picture >= 0.0) && all(picture <= 1.0))
-        {
-            float2 sprites = uTexSprites.SampleLevel(picture, 0.0).rg;
-            nearest = min(nearest, glowing ? sprites.g : sprites.r);
-        }
-    }
-
-    return nearest;
+    return min(wallsDistance(position, field), spritesDistance(position, field, glowing));
 }
 
 float wallDistance(float2 position, Field field)
@@ -175,7 +188,10 @@ int tileOf(float2 picture, float2 tileCounts, float2 tileScreen)
 // hidden all at once, the way to it narrows to a penumbra along the edge of whatever is in the way. How wide the
 // penumbra is follows from how near the way passes to a wall and how far along it that is, and the two readings of
 // the field either side of the nearest point say where that was better than either of them alone.
-float shadow(float2 from, float2 to, float size, Field field)
+// A sprite in the way only takes spriteShadow of the light (1 for all of it, which is what a wall takes), so a
+// fighter standing in front of a lantern throws a shadow without putting the lantern out. The march walks on
+// through the sprite to see what else is in the way.
+float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
 {
     float2 way = to - from;
     float distance = length(way);
@@ -187,15 +203,33 @@ float shadow(float2 from, float2 to, float size, Field field)
     float t = 0.0;
     if (!leaveWall(from, direction, t, field)) return 1.0;
     float surface = t;
-    if (t > 0.0) t += 0.5 * fieldTexel(field);
+    float texel = fieldTexel(field);
+    if (t > 0.0) t += 0.5 * texel;
 
     float visible = 1.0;
+    float through = 1.0;
     float previous = 1e9;
+    bool sprites = field.hasSprites && spriteShadow < 1.0;
     for (int step = 0; step < 32; step++)
     {
         if (t >= distance) break;
 
-        float d = wallDistance(from + direction * t, field);
+        float2 at = from + direction * t;
+        float d = sprites ? wallsDistance(at, field) : wallDistance(at, field, false);
+
+        if (sprites)
+        {
+            // Sprites on their own, which the march can go through
+            float ds = spritesDistance(at, field, false);
+            if (ds < 0.05)
+            {
+                through = 1.0 - spriteShadow;
+                t += max(abs(ds), 0.5 * texel);
+                continue;
+            }
+            d = min(d, ds);
+        }
+
         if (d < 0.05) return 0.0;
 
         // The nearer the way passes to a wall, the less of a sized light is seen past it. Closing in on a wall, the
@@ -212,7 +246,52 @@ float shadow(float2 from, float2 to, float size, Field field)
     }
 
     visible = clamp(visible, 0.0, 1.0);
-    return visible * visible * (3.0 - 2.0 * visible);
+    return visible * visible * (3.0 - 2.0 * visible) * through;
+}
+
+float shadow(float2 from, float2 to, float size, Field field)
+{
+    return shadow(from, to, size, field, 1.0);
+}
+
+// How much of a light arrives at a point of the world, before the surface has its say. Its brightness over the
+// distance (a point and a spot fade to nothing at their radius, a directional light is the same everywhere), the
+// cone of a spot, and the shadow of whatever is in the way. Where the light is seen from, for the normal maps and
+// the highlights, comes out in toLight, which for a directional light is far off along its rays.
+// 0 for a light that doesn't get here at all.
+float lightReach(Light l, float2 position, bool shadows, float softness, Field field, out float2 toLight, out float falloff)
+{
+    falloff = 1.0;
+    if (l.type == LIGHT_DIRECTIONAL)
+    {
+        // The rays all come the one way, from as far off as the light says it looks for shadows
+        toLight = -l.direction * l.reach;
+    }
+    else
+    {
+        toLight = l.position - position;
+        float distanceSquared = dot(toLight, toLight);
+        float radiusSquared = l.radius * l.radius;
+        if (distanceSquared >= radiusSquared) return 0.0;
+
+        // Brightest in the middle, fading smoothly to nothing at the edge
+        falloff = 1.0 - distanceSquared / radiusSquared;
+        falloff *= falloff;
+
+        // A spot only shines within its cone, full inside the inner angle and fading out to the outer one
+        if (l.type == LIGHT_SPOT)
+        {
+            float along = dot(-toLight, l.direction) * rsqrt(max(distanceSquared, 1e-6));
+            falloff *= smoothstep(l.cosOuter, l.cosInner, along);
+            if (falloff <= 0.0) return 0.0;
+        }
+    }
+
+    float reach = l.intensity * falloff;
+    if (shadows && hasAnything(field) && l.castsShadows > 0.5)
+        reach *= shadow(position, position + toLight, l.size + softness, field, l.spriteShadow);
+
+    return reach;
 }
 
 // The light every light of a tile throws straight onto a point of the world. What is shiny mirrors the lights
@@ -236,21 +315,10 @@ float3 directLight(
     {
         Light l = lights[lightTiles[tile + 1 + int(n)]];
 
-        float2 toLight = l.position - position;
-        float distanceSquared = dot(toLight, toLight);
-        float radiusSquared = l.radius * l.radius;
-        if (distanceSquared >= radiusSquared) continue;
-
-        // Brightest in the middle, fading smoothly to nothing at the edge
-        float falloff = 1.0 - distanceSquared / radiusSquared;
-        falloff *= falloff;
-
-        float reach = l.intensity * falloff;
-        if (shadows && hasAnything(field) && l.castsShadows > 0.5)
-        {
-            reach *= shadow(position, l.position, l.size + softness, field);
-            if (reach <= 0.0) continue;
-        }
+        float2 toLight;
+        float falloff;
+        float reach = lightReach(l, position, shadows, softness, field, toLight, falloff);
+        if (reach <= 0.0) continue;
 
         float3 direction = normalize(float3(toLight, l.height));
 

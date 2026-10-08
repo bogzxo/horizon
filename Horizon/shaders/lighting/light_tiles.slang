@@ -31,9 +31,14 @@ void csMain(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < params.uLightCount && found < TILE_LIGHTS; i++)
     {
         Light l = lights[i];
-        float2 nearest = clamp(l.position, low, high);
-        float2 away = l.position - nearest;
-        if (dot(away, away) >= l.radius * l.radius) continue;
+
+        // A directional light reaches every tile there is, the others only the tiles within their radius
+        if (l.type != LIGHT_DIRECTIONAL)
+        {
+            float2 nearest = clamp(l.position, low, high);
+            float2 away = l.position - nearest;
+            if (dot(away, away) >= l.radius * l.radius) continue;
+        }
 
         tilesOut[first + 1 + int(found)] = uint(i);
         found++;

@@ -71,17 +71,9 @@ float3 wallRadiance(float2 position, float2 picture, int tile)
         for (uint n = 0; n < count; n++)
         {
             Light l = lights[lightTiles[tile + 1 + int(n)]];
-            float2 toLight = l.position - position;
-            float distanceSquared = dot(toLight, toLight);
-            float radiusSquared = l.radius * l.radius;
-            if (distanceSquared >= radiusSquared) continue;
-
-            float falloff = 1.0 - distanceSquared / radiusSquared;
-            float reach = l.intensity * falloff * falloff;
-            if (shadows && l.castsShadows > 0.5)
-                reach *= shadow(position, l.position, l.size + params.uShadowSoftness, field);
-
-            direct += l.color * reach;
+            float2 toLight;
+            float falloff;
+            direct += l.color * lightReach(l, position, shadows, params.uShadowSoftness, field, toLight, falloff);
         }
     }
 
