@@ -39,6 +39,9 @@ public sealed partial class UIDrawList
     private int runStart;
     private Texture? runImage0, runImage1;
 
+    // The atlases of other people this list drew out of (or wanted to), for the renderer to bring up to date
+    private readonly List<TextureAtlas> atlases = [];
+
     private readonly Stack<UIRect> clips = new();
     private UIRect clip = Unclipped;
 
@@ -78,6 +81,7 @@ public sealed partial class UIDrawList
 
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
+    internal ReadOnlySpan<TextureAtlas> Atlases => CollectionsMarshal.AsSpan(atlases);
 
     /// <param name="frame">Which update this is, counting up by one for as long as the UI is painted without a break.</param>
     /// <param name="dt">How long the update is, in seconds.</param>
@@ -99,6 +103,7 @@ public sealed partial class UIDrawList
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
+        atlases.Clear();
 
         clips.Clear();
         clip = Unclipped;
@@ -353,6 +358,30 @@ public sealed partial class UIDrawList
     /// <summary>Draws a whole texture that isn't part of the skin, such as a portrait or an icon.</summary>
     public void Image(Texture texture, UIRect rect, Vector4 tint) =>
         Image(texture, rect, Vector2.Zero, new Vector2(texture.Width, texture.Height), tint);
+
+    /// <summary>
+    /// A region of somebody else's atlas (a character's, say), by the key it was asked for under. Nothing is drawn
+    /// until the atlas has it, which the renderer sees to the next time this is drawn. Mirrored flips it left to right.
+    /// </summary>
+    public void Image(TextureAtlas atlas, string key, UIRect rect, Vector4 tint, bool mirrored = false)
+    {
+        if (!atlases.Contains(atlas)) atlases.Add(atlas);
+
+        if (!atlas.TryGet(key, out var region) || atlas.Texture.Handle == 0) return;
+
+        // An atlas that trims kept part of the frame, and the rectangle is the whole frame: the part goes where it was
+        if (region.Trimmed)
+        {
+            Vector2 from = region.Offset / region.FrameSize, to = (region.Offset + region.Size) / region.FrameSize;
+            if (mirrored) (from.X, to.X) = (1.0f - to.X, 1.0f - from.X);
+            rect = new UIRect(rect.Min + rect.Size * from, rect.Min + rect.Size * to);
+        }
+
+        Vector2 topLeft = region.Position, bottomRight = region.Position + region.Size;
+        if (mirrored) (topLeft.X, bottomRight.X) = (bottomRight.X, topLeft.X);
+
+        Image(atlas.Texture, rect, topLeft, bottomRight, tint);
+    }
 
     /// <summary>
     /// Draws a part of a texture that isn't part of the skin, such as one sprite out of a sheet.

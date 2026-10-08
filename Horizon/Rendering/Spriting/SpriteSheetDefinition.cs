@@ -28,6 +28,17 @@ public readonly record struct SpriteSource(
     (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null)
 {
     /// <summary>
+    /// The pixels of one frame, RGBA from the top left, for whoever wants to look at the art itself (tracing boxes
+    /// off it, say). Null if the image can't be read, which has been logged. Read off disk the first time, so not
+    /// something to do every frame.
+    /// </summary>
+    public SpritePixels? ReadFrame(int frame)
+    {
+        (int x, int y) = FrameAt(Math.Clamp(frame, 0, Math.Max(Frames - 1, 0)));
+        return SpriteImages.Read(Path, x, y, Width, Height);
+    }
+
+    /// <summary>
     /// The top left corner of a frame, the first being where the sprite is.
     /// </summary>
     public (int X, int Y) FrameAt(int frame)
@@ -57,6 +68,9 @@ public sealed class SpriteSheetDefinition
 {
     private const char FRAME_SEPARATOR = '#';
     private const char THEME_SEPARATOR = '@';
+
+    /// <summary>What a folder of sprites calls its definition, for <see cref="Open"/>.</summary>
+    public const string DEFAULT_FILE = "definition.hor";
 
     private sealed class ImageDefinition
     {
@@ -95,6 +109,53 @@ public sealed class SpriteSheetDefinition
     private SpriteSheetDefinition(string path)
     {
         Path = path;
+    }
+
+    /// <summary>Whether there is a sprite of that name.</summary>
+    public bool Has(string name) => _sprites.ContainsKey(name);
+
+    /// <summary>How many frames a sprite has, 0 for one there isn't.</summary>
+    public int FrameCount(string name) => _sprites.TryGetValue(name, out var sprite) ? sprite.Frames : 0;
+
+    /// <summary>
+    /// Opens whatever is at a path. An Aseprite file is read as it is, every tag an animation, a folder is read
+    /// through the definition.hor in it, and a .hor file is read as a definition. Throws, saying what's wrong, if
+    /// it can't be.
+    /// </summary>
+    public static SpriteSheetDefinition Open(string path)
+    {
+        if (AsepriteDocument.IsAseprite(path))
+            return FromAseprite(AsepriteDocument.Open(path));
+
+        if (Directory.Exists(path))
+            return Load(path, DEFAULT_FILE);
+
+        return Load(System.IO.Path.GetDirectoryName(path) ?? string.Empty, System.IO.Path.GetFileName(path));
+    }
+
+    /// <summary>
+    /// Every tag of an Aseprite file as a sprite with as many frames as the tag has. The frames lie side by side
+    /// on a sheet that only exists in the mind of the atlas, frame i being at x = i * width, which is how it and
+    /// <see cref="SpriteSource.ReadFrame"/> find them again.
+    /// </summary>
+    public static SpriteSheetDefinition FromAseprite(AsepriteDocument document)
+    {
+        var definition = new SpriteSheetDefinition(document.Path);
+        var image = new ImageDefinition { Path = document.Path, Size = new Vector2(document.Width, document.Height) };
+
+        foreach (var tag in document.Tags)
+        {
+            // The tag's own pace, or the file's if the frames don't agree with each other
+            float time = 0.0f;
+            for (int frame = tag.From; frame <= tag.To; frame++) time += document.Duration(frame);
+            time /= Math.Max(tag.Frames, 1);
+
+            definition.Add(tag.Name, new SpriteDefinition(
+                image, 0, tag.From * document.Width, 0, document.Width, document.Height, Vector4.Zero, Vector4.Zero,
+                tag.Frames, time > 0.0f ? time : 0.1f, (document.Width, 0), null));
+        }
+
+        return definition;
     }
 
     /// <summary>
@@ -294,6 +355,15 @@ public sealed class SpriteSheetDefinition
     {
         if (!_sprites.TryAdd(name, sprite))
             throw new Exception($"There are two sprites called '{name}'.");
+    }
+
+    /// <summary>
+    /// Takes the sprites of another definition that this one hasn't got, for art that comes in more than one file.
+    /// </summary>
+    public void AddMissing(SpriteSheetDefinition other)
+    {
+        foreach (var (name, sprite) in other._sprites) _sprites.TryAdd(name, sprite);
+        foreach (string theme in other._themes) _themes.Add(theme);
     }
 
     private static SpriteDefinition ReadSprite(ImageDefinition image, string name, Dictionary<string, IRuntimeValue> properties)

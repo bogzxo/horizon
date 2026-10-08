@@ -30,6 +30,31 @@ public class Sprite : GameObject
     private float _atlasFrameTime, _atlasFrameTimer;
     private int _atlasFrame;
 
+    // Where the animations of a sprite out of an atlas are written down, for asking how long one is
+    private SpriteSheetDefinition? _atlasDefinition;
+    private string? _atlasTheme;
+
+    /// <summary>
+    /// Which frame of the animation is showing, for a sprite out of an atlas. Set it to pick the frame yourself
+    /// (with <see cref="Animated"/> off, or it moves on from there), it's kept inside the animation.
+    /// </summary>
+    public int Frame
+    {
+        get => _atlasFrame;
+        set => _atlasFrame = _atlasFrames.Length == 0 ? 0 : Math.Clamp(value, 0, _atlasFrames.Length - 1);
+    }
+
+    /// <summary>
+    /// How many frames an animation has, for a sprite out of an atlas. 0 for one it hasn't got.
+    /// </summary>
+    public int GetFrameCount(string name)
+    {
+        if (_atlasDefinition is { } definition)
+            return definition.TryGetSprite(name, _atlasTheme, out var source) ? source.Frames : 0;
+
+        return AnimationManager is not null && AnimationManager.Animations.TryGetValue(name, out var found) ? (int)found.Length : 0;
+    }
+
     /// <summary>
     /// Whether a sprite out of an atlas plays through its frames, off it stays on the one it is on.
     /// </summary>
@@ -191,6 +216,8 @@ public class Sprite : GameObject
         _atlasFrameTime = source.FrameTime;
         _atlasFrameTimer = 0.0f;
         _atlasFrame = 0;
+        _atlasDefinition = definition;
+        _atlasTheme = theme;
 
         this.Atlas = atlas;
         this.FrameName = name;
@@ -223,6 +250,7 @@ public class Sprite : GameObject
     internal bool TryCreateItem(bool mask, out SpriteItem item)
     {
         Vector2 texMin, texMax;
+        AtlasRegion? trimmed = null;
 
         if (Atlas is { } atlas)
         {
@@ -238,6 +266,7 @@ public class Sprite : GameObject
 
             texMin = region.Position;
             texMax = region.Position + region.Size;
+            trimmed = region.Trimmed ? region : null;
         }
         else
         {
@@ -250,8 +279,21 @@ public class Sprite : GameObject
 
         bool flashed = FlashAmount > 0.0f;
 
+        Matrix4x4 model = UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix;
+
+        // An atlas that trims kept only part of the frame, the quad shrinks to where that part was. The quad runs
+        // from -0.5 to 0.5 with the top of the texture at the top, so a frame's rows count down from there
+        if (trimmed is { } cut)
+        {
+            Vector2 scale = cut.Size / cut.FrameSize;
+            Vector2 centre = new(
+                (cut.Offset.X + cut.Size.X * 0.5f) / cut.FrameSize.X - 0.5f,
+                0.5f - (cut.Offset.Y + cut.Size.Y * 0.5f) / cut.FrameSize.Y);
+            model = Matrix4x4.CreateScale(scale.X, scale.Y, 1.0f) * Matrix4x4.CreateTranslation(centre.X, centre.Y, 0.0f) * model;
+        }
+
         item = SpriteItem.FromModel(
-            UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix,
+            model,
             texMin,
             texMax,
             SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
@@ -261,9 +303,20 @@ public class Sprite : GameObject
         return true;
     }
 
-    public void SetAnimation(string name)
+    /// <summary>
+    /// Switches to another animation, from its first frame. A sprite out of an atlas says whether it has it (false
+    /// leaves it on the one it's on), and nothing is asked of the atlas again for the one it's on already.
+    /// </summary>
+    public bool SetAnimation(string name)
     {
+        if (Atlas is { } atlas && _atlasDefinition is { } definition)
+        {
+            if (FrameName == name) return true;
+            return ConfigureAtlas(atlas, definition, name, _atlasTheme);
+        }
+
         this.FrameName = name;
+        return true;
     }
 
     public Vector2 GetFrameOffset()
