@@ -7,8 +7,7 @@ using DotTiled.Serialization;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 
 using TiledObject = DotTiled.Object;
 
@@ -43,17 +42,14 @@ public sealed class TileMap : GameObject
 
     // How far inside of its edges a tile is cut out of its image, so its neighbours in the image never show at its seams
     private const float SOURCE_INSET = 0.01f;
-    private const string UNIFORM_OFFSET = "uOffset";
-    private const string UNIFORM_TINT = "uTint";
-    private const string UNIFORM_EMISSIVE = "uEmissive";
-    private const string UNIFORM_MOTION = "uMotion";
-    private const string UNIFORM_NEARNESS = "uNearness";
 
     // How near the layers are for a renderer that blurs motion: the ordinary ones from the furthest to the nearest
     // between these two, and the ones in the foreground in front of anything that isn't a map
     private const float NEARNESS_BACK = 0.1f, NEARNESS_FRONT = 0.5f, NEARNESS_FOREGROUND = 0.9f;
 
-    private static Technique? shader;
+    // The map on the GPU, every layer and tile of it in one draw
+    private readonly TileMapGpu gpu = new();
+    private readonly List<(TileMapLayer Layer, TileMapGpu.Layer Settings, bool Foreground)> shown = [];
 
     private readonly string directory;
     private readonly List<TileMapLayer> layers = [];
@@ -830,8 +826,10 @@ public sealed class TileMap : GameObject
     /// <param name="foreground">Whether to draw the layers that are in the foreground or the ones that aren't, null for all of them.</param>
     internal void Draw(bool? foreground)
     {
-        if (Engine.ActiveCamera is not { } camera || !EnsureShader())
+        if (Engine.ActiveCamera is not { } camera)
             return;
+
+        using var scope = GraphicsDevice.Current.BeginGpuScope("tile map");
 
         // Drawn alongside the simulation, the map is drawn as it was between the last two ticks, out of what was published
         RenderFrame frame = RenderFrame.Active;
@@ -856,22 +854,21 @@ public sealed class TileMap : GameObject
         var viewMax = new Vector2(view.X + view.Width, view.Y + view.Height);
         var eye = new Vector2(camera.Position.X, camera.Position.Y);
 
-        CameraBlock.Use(camera);
-        shader!.Bind();
-
-        // What it takes to say how fast a layer goes across the screen: how fast the camera goes, and how much of the
+        // What it takes to say how fast a layer goes across the screen, how fast the camera goes, and how much of the
         // screen a unit of the world is
         Matrix4x4 projection = camera.Projection;
         Vector2 cameraVelocity = camera.Velocity;
         var motionScale = new Vector2(projection.M11, projection.M22);
 
+        // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
+        shown.Clear();
         int count = after?.Layers.Length ?? layers.Count;
         for (int index = 0; index < count && index < layers.Count; index++)
         {
             TileMapLayer layer = layers[index];
             CapturedLayer state = after is null ? Live(layer) : after.Layers[index];
 
-            if (!state.Visible || state.Opacity <= 0.0f || (foreground is { } wanted && state.IsForeground != wanted))
+            if (!state.Visible || state.Opacity <= 0.0f)
                 continue;
 
             Vector2 drift = blend ? Interpolate.Linear(before!.Layers[index].Drift, state.Drift, alpha) : state.Drift;
@@ -891,13 +888,6 @@ public sealed class TileMap : GameObject
 
             Animate(layer, shownTime);
 
-            Vector2 offset = origin + moved;
-            var tint = new Vector4(state.Tint, state.Opacity);
-
-            shader.SetUniform(UNIFORM_OFFSET, in offset);
-            shader.SetUniform(UNIFORM_TINT, in tint);
-            shader.SetUniform(UNIFORM_EMISSIVE, state.Emissive);
-
             // A layer that is as far away as the map goes by as fast as the camera moves, the other way. One that is
             // further away keeps up with the camera a little, and one that drifts does that on top
             Vector2 motion = (state.Scroll - cameraVelocity * state.Parallax) * motionScale;
@@ -905,40 +895,29 @@ public sealed class TileMap : GameObject
                 ? NEARNESS_FOREGROUND
                 : NEARNESS_BACK + (NEARNESS_FRONT - NEARNESS_BACK) * index / MathF.Max(1, layers.Count - 1);
 
-            shader.SetUniform(UNIFORM_MOTION, in motion);
-            shader.SetUniform(UNIFORM_NEARNESS, nearness);
-
-            foreach (TileMapBatch batch in layer.Batches)
+            shown.Add((layer, new TileMapGpu.Layer
             {
-                // Out of sight, out of the frame
-                if (batch.Instances.Count == 0
-                    || batch.Max.X + offset.X < viewMin.X || batch.Min.X + offset.X > viewMax.X
-                    || batch.Max.Y + offset.Y < viewMin.Y || batch.Min.Y + offset.Y > viewMax.Y)
-                {
-                    continue;
-                }
-
-                batch.Draw(shader, TextureOf(batch.ImagePath));
-            }
+                Offset = origin + moved,
+                Motion = motion,
+                Nearness = nearness,
+                Emissive = state.Emissive,
+                Tint = new Vector4(state.Tint, state.Opacity)
+            }, state.IsForeground));
         }
 
-        shader.Unbind();
+        if (!gpu.Sync(shown, TextureOf))
+            return;
+
+        gpu.Draw(foreground, viewMin, viewMax, camera);
     }
 
-    private static bool EnsureShader()
+    protected override void DisposeOther()
     {
-        if (shader is not null)
-            return true;
+        // The images are the object manager's, shared with whichever map uses the same ones
+        gpu.Dispose();
+        textures.Clear();
 
-        // By name, so it is the same one for every map there ever is and nobody frees it from under the others
-        if (!Engine.ObjectManager.Shaders.TryCreateOrGet("tilemap", ShaderDescription.FromPath("shaders/tilemap", "tilemap"), out var result))
-        {
-            Log.Error(result.Message);
-            return false;
-        }
-
-        shader = new Technique(result.Asset);
-        return true;
+        base.DisposeOther();
     }
 
     private TileMapTexture TextureOf(string path)

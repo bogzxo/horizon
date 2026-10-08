@@ -8,9 +8,7 @@ using Horizon.Core.Components;
 using Horizon.Engine.Components;
 using Horizon.Graphics;
 using Horizon.Input;
-using Horizon.OpenGL.Managers;
 
-using Silk.NET.OpenGL;
 
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
@@ -29,18 +27,10 @@ namespace Horizon.Engine;
 public class GameEngine : Entity
 {
     // Things the driver likes to go on about that nobody needs to read. How its buffers are doing, mostly
-    private const int NOTE_BUFFER_DETAILS = 131185;
-    private const int NOTE_INVALID_ENUM = 1280;
-
     /// <summary>
     /// A copy of the game engines initial configuration.
     /// </summary>
     public GameEngineConfiguration Configuration { get; init; }
-
-    /// <summary>
-    /// The GL of the window, for whoever has to go underneath the device. Renderers don't, see <see cref="Graphics"/>.
-    /// </summary>
-    public GL GL => WindowManager.GL;
 
     /// <summary>
     /// The GPU as the engine draws with it, see <see cref="Horizon.Graphics.GraphicsDevice"/>. Everything that draws goes through this.
@@ -90,10 +80,6 @@ public class GameEngine : Entity
     /// </summary>
     public Vector2 ViewportSize => WindowManager.ViewportSize;
 
-    // Kept here for as long as the driver may call it, the garbage collector doesn't know that it does
-
-    private Horizon.OpenGL.GpuTimer? gpuTimer;
-
     // Set this in the environment to "some/file.png@3" and a screenshot is saved three seconds in, for runs nobody is
     // watching (a headless test box, say). Without the @ it's two seconds
     private const string SCREENSHOT_VARIABLE = "HORIZON_SCREENSHOT";
@@ -112,7 +98,7 @@ public class GameEngine : Entity
     /// How long (in milliseconds) the GPU spent on the last frame it finished, as measured by a timer query around
     /// everything the engine drew. Zero until the first frame has been timed, and where the driver doesn't say.
     /// </summary>
-    public double GpuFrameMs => gpuTimer?.LastMilliseconds ?? 0.0;
+    public double GpuFrameMs => Graphics.GpuFrameMilliseconds;
 
     public GameEngine()
         : this(GameEngineConfiguration.Default) { }
@@ -190,7 +176,7 @@ public class GameEngine : Entity
 
                 using var image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgba32>(pixels, (int)width, (int)height);
 
-                // GL reads the bottom row first, a picture starts at the top
+                // The pixels come out bottom row first, a picture starts at the top
                 image.Mutate(context => context.Flip(SixLabors.ImageSharp.Processing.FlipMode.Vertical));
                 image.SaveAsPng(path);
                 Log.Info($"[Engine] Screenshot saved to {path}.");
@@ -232,10 +218,6 @@ public class GameEngine : Entity
         DefaultCamera = AddEntity(new Camera2D(WindowManager.ViewportSize));
 
         Graphics.OnDebugMessage(OnDebugMessage);
-
-        // Timer queries make some drivers (llvmpipe for one) flush every frame, so they can be switched off for the numbers
-        if (Environment.GetEnvironmentVariable("HORIZON_GPU_TIMER") is not "off")
-            gpuTimer = Horizon.OpenGL.GpuTimer.TryCreate();
     }
 
     /// <summary>
@@ -243,7 +225,7 @@ public class GameEngine : Entity
     /// </summary>
     private static void OnDebugMessage(string message, DebugLevel severity, int id)
     {
-        if (id is NOTE_BUFFER_DETAILS or NOTE_INVALID_ENUM || severity == DebugLevel.Note)
+        if (severity == DebugLevel.Note)
             return;
 
         LogLevel level = severity switch
@@ -288,15 +270,12 @@ public class GameEngine : Entity
         // The camera every shader draws through, bound for the frame. Whoever draws says which camera, see CameraBlock.Use
         Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
 
-        gpuTimer?.Begin();
-
         // Whatever is drawn outside of a scene makes what it makes on the GPU for everybody, the same as when it's
         // set up (see EntityLifecycle.Scope above): an overlay on the engine that makes its layer the first time it's
         // drawn mustn't have it count as a leftover of whichever scene was on then. Scenes draw in their own scope
         using (Horizon.Content.AssetScope.EnterGlobal())
             base.Render(dt);
 
-        gpuTimer?.End();
         Horizon.Rendering.CameraBlock.EndFrame();
 
         if (scheduledScreenshot is { } scheduled && TotalTime >= scheduledScreenshotAt)

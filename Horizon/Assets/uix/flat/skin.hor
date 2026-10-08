@@ -1,0 +1,50 @@
+// The flat skin, for tools and anything else with a lot to read and click on. It has no art at all.
+// Every component draws itself as a box in the colours below, with corners as round as corner_radius says,
+// and those are worked out as they are drawn. So it is crisp at any size, where pixel art only is at whole multiples of itself.
+//
+// The font is Cascadia Mono, smooth and the same width for every letter. Its numbers match the pixel fonts
+// (see Assets/fonts/cascadia_mono), so a text scale of 0.125 is small print here like it is with those.
+//
+// A button whose style ends in _flat (button_flat) is only its label until the pointer finds it, which is what
+// the rows of a list and the tabs above something want to be. Every other style is a button you can see.
+//
+// There are no icons in this skin, [icon:name] in a text is left the way it is written.
+// Under syntax is what code is coloured in with, see the code view (compositor.code).
+// Comments can't go inside of the object, the parser won't have it.
+
+let skin = {
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.fnt" },
+    text_scale: 0.125,
+
+    corner_radius: 5,
+
+    text_color: vec(0.84, 0.87, 0.93, 1.0),
+    control_text_color: vec(0.9, 0.92, 0.97, 1.0),
+    control_color: vec(0.17, 0.19, 0.25, 1.0),
+    field_color: vec(0.055, 0.06, 0.08, 1.0),
+    border_color: vec(1.0, 1.0, 1.0, 0.09),
+    panel_color: vec(0.1, 0.11, 0.145, 1.0),
+    track_color: vec(0.055, 0.06, 0.08, 1.0),
+    hover_color: vec(1.0, 1.0, 1.0, 0.07),
+    accent_color: vec(0.38, 0.62, 1.0, 1.0),
+    highlight_color: vec(0.38, 0.62, 1.0, 1.0),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.38),
+    bar_text_color: vec(1.0, 1.0, 1.0, 1.0),
+
+    button_padding: vec(12, 7),
+    progress_inset: vec(3, 3),
+    toggle_size: 18,
+    spacing: 8,
+
+    syntax: {
+        name: vec(0.84, 0.87, 0.93, 1.0),
+        keyword: vec(0.78, 0.57, 0.95, 1.0),
+        property: vec(0.49, 0.78, 0.98, 1.0),
+        call: vec(0.98, 0.82, 0.48, 1.0),
+        text: vec(0.62, 0.86, 0.55, 1.0),
+        number: vec(0.98, 0.63, 0.47, 1.0),
+        comment: vec(0.45, 0.5, 0.58, 1.0),
+        punctuation: vec(0.6, 0.65, 0.74, 1.0),
+        line_number: vec(0.32, 0.36, 0.44, 1.0)
+    }
+};

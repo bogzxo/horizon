@@ -35,8 +35,11 @@
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
-    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
     <PackageReference Include="Silk.NET.SDL" Version="2.23.0" />
+    <PackageReference Include="Slangc.NET" Version="2026.19.0" />
+    <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Vulkan.Extensions.EXT" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Vulkan.Extensions.KHR" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
@@ -55,10 +58,10 @@
     <None Update="shaders\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="fonts\**\*.*">
+    <None Update="Assets\fonts\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\uix\dead_revolver\*.png;Assets\uix\dead_revolver\*.hor">
+    <None Update="Assets\uix\dead_revolver\*.png;Assets\uix\dead_revolver\*.hor;Assets\uix\flat\*.hor">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

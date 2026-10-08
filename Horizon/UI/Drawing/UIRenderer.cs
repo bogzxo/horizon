@@ -3,9 +3,8 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Skinning;
-using Horizon.OpenGL;
+using Horizon.Graphics;
 
-using Silk.NET.OpenGL;
 
 namespace Horizon.UI.Drawing;
 

@@ -17,18 +17,23 @@ public enum PerformanceDetail
     /// <summary>Nothing, it's not there (and costs next to nothing).</summary>
     Off,
 
-    /// <summary>Frames a second and how long a frame takes, in a corner. For players who like a number.</summary>
+    /// <summary>The minimal one. Frames a second, how long a frame takes on the CPU and on the GPU, in a corner. For players who like a number.</summary>
     Compact,
 
-    /// <summary>Every loop of the engine, how far behind the frames are drawn, memory, and graphs. For you.</summary>
+    /// <summary>
+    /// The advanced one. Every thread of the engine and what it is doing, how uneven the frames come, what every
+    /// pass of the frame costs the GPU, what the frame asked of the device, memory and garbage, and graphs. For you.
+    /// </summary>
     Full,
 }
 
 /// <summary>
-/// The engine's vital signs drawn over the game, straight out of the loops: how fast frames are drawn and how long they
-/// take, the simulation ticking along on its own thread (logic and physics), how far in the past frames are drawn so
-/// they can be interpolated, ticks that got dropped, and how much garbage every thread is making. Add one to the
-/// engine and press F3:
+/// The engine's vital signs drawn over the game, straight out of the loops and the device. How fast frames are drawn
+/// and how long they take on the CPU and the GPU, what every thread is doing (drawing, simulating, sleeping, held up
+/// by another), how uneven the frames come (the slowest in a hundred, the stutters), what every pass of the frame
+/// costs the GPU, how many draws and dispatches a frame is, how much memory the GPU holds, how far in the past frames
+/// are drawn so they can be interpolated, ticks that got dropped, and how much garbage every thread is making. Add
+/// one to the engine and press F3.
 /// <code>
 /// engine.AddEntity(new PerformanceOverlay());                          // off until F3
 /// engine.AddEntity(new PerformanceOverlay(PerformanceDetail.Full));    // on from the start
@@ -37,10 +42,13 @@ public enum PerformanceDetail
 /// yourself, from an options screen say). It's a UIX layout like any other, on a screen UI of its own over everything
 /// else, drawn in the plain flat skin so it reads the same in every game.
 /// <para>
-/// Reading it: the simulation should sit on its target rate (120 by default) whatever the frames are doing, that's
-/// the whole point of drawing alongside it. "Behind" is how far in the past the frames show, about a tick and a bit;
-/// "dropped" ticks mean the simulation couldn't keep up and let some go. Garbage that never stops climbing is what
-/// ends up as a hitch when the collector has to clean up after it.
+/// Reading it. The simulation should sit on its target rate (120 by default) whatever the frames are doing, that's
+/// the whole point of drawing alongside it. "Behind" is how far in the past the frames show, about a tick and a bit,
+/// "dropped" ticks mean the simulation couldn't keep up and let some go. A frame rate is only as good as its worst
+/// frames, so the slowest one in a hundred and the stutters (frames over twice the budget) are on their own line.
+/// The GPU passes are the stretches of the frame the renderers name (see <see cref="Graphics.GraphicsDevice.BeginGpuScope"/>),
+/// a frame or two behind the CPU. Garbage that never stops climbing is what ends up as a hitch when the collector
+/// has to clean up after it.
 /// </para>
 /// </summary>
 public sealed class PerformanceOverlay : GameObject
@@ -144,7 +152,7 @@ public sealed class PerformanceOverlay : GameObject
         LoopStatistics? render = Find(loops, "Render"), simulation = Find(loops, "Simulation");
         LoopStatistics? logic = Find(loops, "Logic"), physics = Find(loops, "Physics");
 
-        // The CPU's side of a frame and the GPU's: whichever is the bigger is what a slow frame is spent on
+        // The CPU's side of a frame and the GPU's, whichever is the bigger is what a slow frame is spent on
         double gpu = Engine.GpuFrameMs;
         headline.Text = render is null
             ? "starting up..."
@@ -164,12 +172,23 @@ public sealed class PerformanceOverlay : GameObject
         lastRefreshAt = now;
 
         var clock = window.Snapshots;
+        var device = Engine.Graphics;
         var text = new System.Text.StringBuilder();
 
+        // The threads, and what each is doing this very moment
+        text.Append("threads     ");
+        text.Append($"render {Doing(render)}");
+        if (simulation is not null) text.Append($"   simulation {Doing(simulation)}");
+        text.AppendLine();
+
         if (render is not null)
+        {
+            render.Instability(out double p99, out double worstPercent, out int stutters);
             text.AppendLine($"frames      {render.Rate:0}/s   {render.WorkMs:0.00} ms (worst {render.PeakWorkMs:0.0})   jitter {render.JitterMs:0.0} ms   gpu {gpu:0.00} ms");
+            text.AppendLine($"unevenness  1% low {(worstPercent > 0.0 ? 1000.0 / worstPercent : 0.0):0} fps   p99 {p99:0.0} ms   stutters {stutters} of the last {LoopStatistics.HISTORY}");
+        }
         if (simulation is not null)
-            text.AppendLine($"simulation  {simulation.Rate:0}/{simulation.TargetRate:0} ticks   {simulation.WorkMs:0.00} ms   load {simulation.Load:0%}   dropped {simulation.DroppedTurns}");
+            text.AppendLine($"simulation  {simulation.Rate:0}/{simulation.TargetRate:0} ticks   {simulation.WorkMs:0.00} ms   load {simulation.Load:0%}   waits {simulation.WaitMs:0.00} ms   dropped {simulation.DroppedTurns}");
         if (logic is not null)
             text.AppendLine($"   logic    {logic.Rate:0}/s   {logic.WorkMs:0.00} ms (worst {logic.PeakWorkMs:0.0})");
         if (physics is not null)
@@ -178,6 +197,26 @@ public sealed class PerformanceOverlay : GameObject
         string presentation = window.Presentation == PresentationMode.Interpolated ? "interpolated" : "newest tick";
         text.AppendLine($"drawing     {presentation}, {clock.Delay * 1000.0:0.0} ms behind   tick every {clock.TickInterval * 1000.0:0.0} ms   #{window.Tick}");
 
+        // What the frame cost the GPU, pass by pass, the ones that matter first
+        var scopes = device.GpuScopes;
+        if (scopes.Length > 0)
+        {
+            text.Append("gpu passes  ");
+            int shown = 0;
+            for (int i = 0; i < scopes.Length && shown < 7; i++)
+            {
+                if (scopes[i].Depth > 1 || scopes[i].Milliseconds < 0.005) continue;
+                if (shown > 0) text.Append("   ");
+                text.Append(scopes[i].Depth > 0 ? "  " : string.Empty).Append(scopes[i].Name).Append(' ').Append(scopes[i].Milliseconds.ToString("0.00"));
+                shown++;
+            }
+            text.AppendLine();
+        }
+
+        var frame = device.Statistics.Last;
+        text.AppendLine($"device      {frame.DrawCalls} draws ({frame.Instances} instances)   {frame.Dispatches} dispatches   {frame.PipelineBinds} pipelines   {frame.DescriptorSets} sets   {frame.Barriers} barriers   {(frame.BytesUploaded + frame.BytesStreamed) / 1024.0:0} KB up");
+        text.AppendLine($"gpu memory  {device.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in {device.Statistics.MemoryBlocks} blocks   {device.Statistics.Textures} textures   {device.Statistics.Buffers} buffers   {device.Statistics.Pipelines} pipelines");
+
         text.AppendLine($"garbage     {perSecond / 1024.0:0} KB/s   frames {render?.AllocatedPerSecond / 1024.0 ?? 0:0}  sim {simulation?.AllocatedPerSecond / 1024.0 ?? 0:0} KB/s");
         text.Append($"collections {GC.CollectionCount(0)} small  {GC.CollectionCount(1)} mid  {GC.CollectionCount(2)} big   heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB");
         details.Text = text.ToString();
@@ -185,6 +224,16 @@ public sealed class PerformanceOverlay : GameObject
         frames.Read(render);
         ticks.Read(simulation);
     }
+
+    /// <summary>Helper method for what a loop's thread is up to, in a word.</summary>
+    private static string Doing(LoopStatistics? loop) => loop?.State switch
+    {
+        LoopStatistics.LoopState.Working => "working",
+        LoopStatistics.LoopState.Sleeping => "sleeping",
+        LoopStatistics.LoopState.Blocked => "held up",
+        LoopStatistics.LoopState.Stopped => "stopped",
+        _ => "?"
+    };
 
     private static LoopStatistics? Find(IReadOnlyList<LoopStatistics> loops, string name)
     {

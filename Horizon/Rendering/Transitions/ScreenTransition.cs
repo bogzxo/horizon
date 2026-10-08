@@ -1,10 +1,8 @@
 using System.Numerics;
 
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.Rendering.PostProcessing;
-using Horizon.OpenGL;
-
-using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering.Transitions;
 
@@ -37,8 +35,8 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
     protected abstract void Draw(float cover, bool arriving, float dt);
 
     private static readonly BlendMode ColoursOnly = new(
-        BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha,
-        BlendingFactor.Zero, BlendingFactor.One);
+        BlendFactor.SrcAlpha, BlendFactor.OneMinusSrcAlpha,
+        BlendFactor.Zero, BlendFactor.One);
 
     public sealed override void Render(float cover, bool arriving, float dt)
     {

@@ -4,7 +4,7 @@ using Horizon.Core.Components;
 using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.Input;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.Rendering.Spriting;
 using Horizon.UI;
@@ -62,7 +62,7 @@ public class SpritesExample : Scene, ITestControls
     private static readonly Vector4 MarkerColour = new(1.0f, 0.2f, 0.25f, 1.0f);
 
     // One frame of blob is this many pixels square, and the sheet is a grid of them
-    private const int CELL = 16;
+    internal const int CELL = 16;
 
     // Where the top of the grass is. Everything that stands on the ground stands here
     private const float GROUND = -300.0f;
@@ -390,6 +390,20 @@ public class SpritesExample : Scene, ITestControls
     /// Render thread, the sheet has to exist.
     /// </summary>
     /// <param name="scale">How many units of the world one pixel of the art takes up. Whole numbers keep it crisp.</param>
+    /// <summary>
+    /// Paints the blob's sprite sheet into the temp directory for another example to use, and says where it is.
+    /// The idle animation is the first row, four frames of it.
+    /// </summary>
+    internal static string BlobSheet()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "horizon-sprites-example");
+        Directory.CreateDirectory(directory);
+
+        string path = Path.Combine(directory, "blob.png");
+        PaintBlobSheet(path);
+        return path;
+    }
+
     private static Sprite CreateBlob(SpriteBatch batch, SpriteSheet sheet, Vector2 position, int scale)
     {
         // AddEntity is what gets the sprite updated (its tweens and animations move along in there), Add is what

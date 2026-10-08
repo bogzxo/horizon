@@ -1,6 +1,6 @@
 using System.Numerics;
 
-using Horizon.OpenGL.Assets;
+using Horizon.Graphics;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;

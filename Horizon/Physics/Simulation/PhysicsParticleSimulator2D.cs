@@ -1,23 +1,16 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering.Particles.Simulation;
-
-using Silk.NET.OpenGL;
-
-using Shader = Horizon.OpenGL.Assets.Shader;
 
 namespace Horizon.Physics.Simulation;
 
-
 /// <summary>
-/// Simulates the particles of a renderer on the GPU (shaders/particle/simulate_physics.comp) as small dynamic bodies of a
-/// <see cref="PhysicsWorld"/>: they fall, land on the map, bounce, slide to a stop, and are shoved out of the way by the
-/// dynamic bodies moving through them (the players). A particle is a lot lighter than a real body though: it is a circle
+/// Simulates the particles of a renderer on the GPU (shaders/particle/simulate_physics.slang) as small dynamic bodies of a
+/// <see cref="PhysicsWorld"/>. They fall, land on the map, bounce, slide to a stop, and are shoved out of the way by the
+/// dynamic bodies moving through them (the players). A particle is a lot lighter than a real body though. It is a circle
 /// that never turns, it doesn't push anything back and particles pass through one another.
 /// The particles never leave the GPU, so the world can't step them itself. It tells this class what there is to run into
 /// instead (see <see cref="PhysicsParticleFeed"/>), which is uploaded for the compute shader to test against.
@@ -25,18 +18,16 @@ namespace Horizon.Physics.Simulation;
 /// </summary>
 public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
 {
-    /// <summary>Must match MAX_IMPULSES in simulate_physics.comp.</summary>
+    /// <summary>Must match MAX_IMPULSES in simulate_physics.slang.</summary>
     private const int MaxImpulses = 8;
 
     private const float LOST_MARGIN = 64.0f;    // How far past the edge of the map a particle has to fall before it is given up on
 
-    // Must match the bindings in simulate_physics.comp
-    private const uint MAP_SHAPE_BINDING = 1;
-    private const uint MAP_CELL_BINDING = 2;
-    private const uint BODY_BINDING = 3;
-    private const uint SEGMENT_BINDING = 4;
-
-    private static readonly string[] ImpulseUniforms = [.. Enumerable.Range(0, MaxImpulses).Select(i => $"uImpulses[{i}]")];
+    // Must match the bindings in simulate_physics.slang
+    private const uint MAP_SHAPE_BINDING = 3;
+    private const uint MAP_CELL_BINDING = 4;
+    private const uint BODY_BINDING = 5;
+    private const uint SEGMENT_BINDING = 6;
 
     private readonly PhysicsWorld world;
     private readonly PhysicsParticleFeed feed;
@@ -44,10 +35,10 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
     private readonly PhysicsGpuShape[] bodies = new PhysicsGpuShape[PhysicsParticleFeed.MaxBodies];
     private readonly Vector4[] impulses = new Vector4[MaxImpulses];
     private readonly Vector4[] segments = new Vector4[PhysicsParticleFeed.MaxSegments];
-    private BufferObject? segmentBuffer;
+    private GpuBuffer? segmentBuffer;
 
     // The map only changes when the world rebuilds its grid, so it is uploaded once and kept
-    private BufferObject? mapShapeBuffer, mapCellBuffer, bodyBuffer;
+    private GpuBuffer? mapShapeBuffer, mapCellBuffer, bodyBuffer;
     private PhysicsParticleMap? uploadedMap;
 
     // The size of every particle
@@ -68,21 +59,21 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
     /* None of the following is physics, it is there for the look of things */
 
     // The speed a particle is brought to for as long as it is in the air, and how quickly (0 for not at all, which
-    // leaves the air to gravity and drag). For what falls at one speed from the moment it shows up, wind and all:
+    // leaves the air to gravity and drag). For what falls at one speed from the moment it shows up, wind and all,
     // rain, snow. Once it has landed it is left to lie
     public Vector2 Cruise { get; set; } = Vector2.Zero;
     public float CruiseRate { get; set; } = 0.0f;
 
-    // For what splashes rather than bounces: a particle that lands hard stops where it comes down and runs off
+    // For what splashes rather than bounces. A particle that lands hard stops where it comes down and runs off
     // along the surface instead, to either side and at any speed up to this one. 0 for none of that
     public float Splash { get; set; } = 0.0f;
 
     // How much of the life it has left such a landing can cost a particle (0 to 1), a different share for each of
-    // them: what has splashed doesn't all go at the same moment
+    // them, what has splashed doesn't all go at the same moment
     public float SplashFade { get; set; } = 0.0f;
 
     // How much of the speed of a body a particle takes on when the body shoves it out of the way. Bodies are a lot
-    // faster than anything a particle does by itself, taking on all of it has them fired off rather than pushed aside.
+    // faster than anything a particle does by itself, taking on all of it has them fired off rather than pushed aside
     public float BodyPush { get; set; } = 0.3f;
 
     // The fastest (per second) a body can send a particle off at, however fast the body itself is going
@@ -95,14 +86,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
     }
 
     protected override Shader? CreateShader() =>
-        GameEngine
-            .Instance
-            .ObjectManager
-            .Shaders
-            .TryCreateOrGet(
-                "particle2d_simulate_physics",
-                ShaderDescription.FromPath("shaders/particle", "simulate_physics"),
-                out var shader)
+        GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_simulate_physics", ShaderDescription.FromPath("shaders/particle", "simulate_physics"), out var shader)
             ? shader.Asset
             : null;
 
@@ -156,7 +140,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         for (int i = 0; i < impulseCount && mass > 0.0f; i++)
         {
             Vector4 impulse = impulses[i] with { W = impulses[i].W / mass };
-            technique.SetUniform(ImpulseUniforms[i], in impulse);
+            technique.SetUniform("uImpulses", i, in impulse);
         }
 
         technique.SetUniform("uRadius", Radius);
@@ -173,9 +157,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         technique.SetUniform("uBodyPushLimit", BodyPushLimit);
     }
 
-    /// <summary>
-    /// Helper method to hand the shader where the dynamic bodies are, they move every step so this is done every time.
-    /// </summary>
+    /// <summary>Helper method to hand the shader where the dynamic bodies are, they move every step so this is done every time.</summary>
     private void BindBodies(Technique technique, int bodyCount)
     {
         bodyBuffer ??= CreateBuffer((uint)(PhysicsParticleFeed.MaxBodies * Unsafe.SizeOf<PhysicsGpuShape>()));
@@ -206,9 +188,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         technique.BindBuffer(BODY_BINDING, bodyBuffer);
     }
 
-    /// <summary>
-    /// Helper method to replace the map the shader collides against. The buffers can't be resized, so they are made anew.
-    /// </summary>
+    /// <summary>Helper method to replace the map the shader collides against. The buffers can't be resized, so they are made anew.</summary>
     private void UploadMap(PhysicsParticleMap map)
     {
         ReleaseBuffer(ref mapShapeBuffer);
@@ -222,37 +202,19 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         mapCellBuffer = CreateBuffer((uint)(map.Cells.Length * sizeof(int)));
         if (mapShapeBuffer is null || mapCellBuffer is null) return;
 
-        // As spans: handed an array the buffer tries to make itself anew, which one with fixed storage can't
         mapShapeBuffer.Update<PhysicsGpuShape>(map.Shapes.AsSpan());
         mapCellBuffer.Update<int>(map.Cells.AsSpan());
     }
 
-    private static BufferObject? CreateBuffer(uint sizeInBytes)
+    private static GpuBuffer? CreateBuffer(uint sizeInBytes)
     {
-        if (!GameEngine
-                .Instance
-                .ObjectManager
-                .Buffers
-                .TryCreate(
-                    new BufferObjectDescription
-                    {
-                        IsStorageBuffer = true,
-                        // Never mapped, only written to from here and read by the compute shader
-                        StorageMasks = BufferStorageMask.DynamicStorageBit,
-                        Type = BufferTargetARB.ShaderStorageBuffer,
-                        Size = sizeInBytes
-                    },
-                    out var result
-                )
-        )
-        {
+        if (!GameEngine.Instance.ObjectManager.Buffers.TryCreate(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, sizeInBytes), out var result))
             return null;
-        }
 
         return result.Asset;
     }
 
-    private static void ReleaseBuffer(ref BufferObject? buffer)
+    private static void ReleaseBuffer(ref GpuBuffer? buffer)
     {
         if (buffer is null) return;
 
@@ -268,6 +230,7 @@ public sealed class PhysicsParticleSimulator2D : ComputeParticleSimulator2D
         ReleaseBuffer(ref mapShapeBuffer);
         ReleaseBuffer(ref mapCellBuffer);
         ReleaseBuffer(ref bodyBuffer);
+        ReleaseBuffer(ref segmentBuffer);
 
         base.Dispose();
     }

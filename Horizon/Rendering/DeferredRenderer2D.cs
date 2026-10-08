@@ -5,15 +5,8 @@ using System.Runtime.InteropServices;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 using Horizon.Rendering.Lighting;
-
-using Silk.NET.OpenGL;
 
 namespace Horizon.Rendering;
 
@@ -26,7 +19,7 @@ namespace Horizon.Rendering;
 /// none for anything without one), the other channels are still free. Attachment3 holds the motion: how fast the
 /// fragment is going across the screen in the RG channels (halves of the screen a second, see <c>encodeMotion</c> in
 /// the shaders) and how near it is in the B channel, from 0 for the backdrop to 1 for right in front. Nothing is lit
-/// by those two, they are for whatever comes after the lighting: <see cref="PostProcessing.VelocityBlurEffect"/> blurs
+/// by those two, they are for whatever comes after the lighting, <see cref="PostProcessing.MotionBlurEffect"/> blurs
 /// by the one and decides what blurs over what by the other.
 /// Where a fragment is in the world isn't stored, that follows from where it is on screen.
 /// The alpha of every attachment is how much of what was there before the fragment covers, they are all blended alike.
@@ -112,8 +105,8 @@ public class DeferredRenderer2D : Renderer2D
         public LightState[] Lights = new LightState[16];
         public int Count;
         public Vector3 Ambient;
-        public float LightingPixelSize, Shininess, SpecularIntensity;
-        public bool Shadows;
+        public float LightingPixelSize, Shininess, SpecularIntensity, ShadowSoftness;
+        public bool Shadows, SpriteShadows;
         public OcclusionMap2D? Occlusion;
     }
 
@@ -130,7 +123,9 @@ public class DeferredRenderer2D : Renderer2D
     internal float ShownLightingPixelSize => shownAfter?.LightingPixelSize ?? LightingPixelSize;
     internal float ShownShininess => shownAfter?.Shininess ?? Shininess;
     internal float ShownSpecularIntensity => shownAfter?.SpecularIntensity ?? SpecularIntensity;
+    internal float ShownShadowSoftness => shownAfter?.ShadowSoftness ?? ShadowSoftness;
     internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
+    internal bool ShownSpriteShadows => shownAfter?.SpriteShadows ?? SpriteShadows;
     internal OcclusionMap2D? ShownOcclusion => shownAfter is null ? Occlusion : shownAfter.Occlusion;
 
     /// <summary>
@@ -153,14 +148,23 @@ public class DeferredRenderer2D : Renderer2D
 
     /* The lights as the shaders get them, uploaded once a frame for every pass that lights */
 
-    // Must match the binding of LightBuffer in lighting/direct.glsl
-    private const uint LIGHT_BINDING = 0;
-    private const uint OCCLUSION_UNIT = 3;
+    // Must match the bindings of lighting/direct.slang
+    private const uint LIGHT_BINDING = 2;
+    private const uint FIELD_UNIT = 3;
+    private const uint SPRITE_FIELD_UNIT = 5;
+
+    // The shadows of the sprites, a distance field of what they drew, made anew every frame
+    private readonly SpriteShadows spriteShadows = new();
+    private Texture? spriteField;
+    private float spritePixelWorld;
 
     private readonly LightData[] lightData = new LightData[MaxLights];
-    private BufferObject? lightBuffer;
+    private GpuBuffer? lightBuffer;
     private int uploadedLights;
     private bool lightsUploaded;
+
+    // The lights sorted into the tiles of the screen, once a frame, for every pass that lights
+    private readonly LightTiles tiles = new();
 
     /// <summary>
     /// What blocks the lights, null for nothing at all (no shadows). Whoever sets it is the one to dispose of it.
@@ -168,9 +172,17 @@ public class DeferredRenderer2D : Renderer2D
     public OcclusionMap2D? Occlusion { get; set; }
 
     /// <summary>
-    /// Whether the lights cast shadows, for those that are set to and as long as there is an <see cref="Occlusion"/>.
+    /// Whether the lights cast shadows, for those that are set to, from the <see cref="Occlusion"/> and from the
+    /// sprites that block light (see <see cref="SpriteShadows"/>).
     /// </summary>
     public bool Shadows { get; set; } = true;
+
+    /// <summary>
+    /// Whether the sprites that say they block light (<see cref="Spriting.Sprite.CastsShadows"/>) cast shadows as
+    /// sharp as their pixels and bounce light. What they drew is turned into a distance field of the picture every
+    /// frame, a dozen passes over it, see <see cref="Lighting.SpriteShadows"/>.
+    /// </summary>
+    public bool SpriteShadows { get; set; } = true;
 
     /// <summary>
     /// The size (in world units) of the squares the lighting is worked out for, 0 for every pixel of the screen by itself.
@@ -191,20 +203,29 @@ public class DeferredRenderer2D : Renderer2D
     /// </summary>
     public float SpecularIntensity { get; set; } = 1.0f;
 
-    protected override FrameBufferObject CreateFrameBuffer(in uint width, in uint height) =>
+    /// <summary>
+    /// How soft the edges of every shadow are, in world units. It is as if every light were this much wider than its
+    /// <see cref="Light2D.Size"/> says as far as its shadows go, so what is only hidden from a part of the light is
+    /// only partly in shadow, more so the further the shadow falls from what casts it. 0 for shadows as the lights
+    /// say, hard from a light without a size.
+    /// </summary>
+    public float ShadowSoftness { get; set; } = 12.0f;
+
+    protected override RenderTarget CreateFrameBuffer(in uint width, in uint height) =>
         CreateFrameBuffer(
-            new FrameBufferObjectDescription
+            new RenderTargetDescription
             {
                 Width = width,
                 Height = height,
-                Attachments = new() {
-                    { FramebufferAttachment.ColorAttachment0, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
-                    { FramebufferAttachment.ColorAttachment1, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
-                    { FramebufferAttachment.ColorAttachment2, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
-                    { FramebufferAttachment.ColorAttachment3, FrameBufferAttachmentDefinition.TextureRGBAByteNearest },
+                Attachments = new()
+                {
+                    { AttachmentPoint.Color0, TextureDefinition.RgbaUnsignedByteNearest },
+                    { AttachmentPoint.Color1, TextureDefinition.RgbaUnsignedByteNearest },
+                    { AttachmentPoint.Color2, TextureDefinition.RgbaUnsignedByteNearest },
+                    { AttachmentPoint.Color3, TextureDefinition.RgbaUnsignedByteNearest },
 
                     // Sprite batches cut their sprites out with the stencil
-                    { FramebufferAttachment.DepthStencilAttachment, FrameBufferAttachmentDefinition.DepthStencilComponent },
+                    { AttachmentPoint.DepthStencil, TextureDefinition.DepthStencil },
                 }
             });
 
@@ -214,8 +235,7 @@ public class DeferredRenderer2D : Renderer2D
     protected internal override bool HoldsPicture => false;
 
     /// <inheritdoc/>
-    public override Horizon.OpenGL.Assets.Texture? MotionTexture =>
-        FrameBuffer?.Attachments[FramebufferAttachment.ColorAttachment3].Texture;
+    public override Texture? MotionTexture => FrameBuffer?.TextureOf(AttachmentPoint.Color3);
 
     public DeferredRenderer2D(in uint width, in uint height)
         : base(width, height) { }
@@ -285,7 +305,9 @@ public class DeferredRenderer2D : Renderer2D
             into.LightingPixelSize = LightingPixelSize;
             into.Shininess = Shininess;
             into.SpecularIntensity = SpecularIntensity;
+            into.ShadowSoftness = ShadowSoftness;
             into.Shadows = Shadows;
+            into.SpriteShadows = SpriteShadows;
             into.Occlusion = Occlusion;
 
             lock (lightLock)
@@ -332,12 +354,36 @@ public class DeferredRenderer2D : Renderer2D
     protected override void BeforeResolve(float dt)
     {
         Camera camera = Engine.ActiveCamera;
+        var device = GraphicsDevice.Current;
         UploadLights(camera);
+
+        // The shadows of the sprites, out of what they drew this frame
+        using (device.BeginGpuScope("sprite shadows"))
+        {
+            spritePixelWorld = camera.Bounds.Width / MathF.Max(ViewportSize.X, 1.0f);
+            spriteField = ShownShadows && ShownSpriteShadows
+                ? spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld)
+                : null;
+        }
+
+        // Which lights reach which tile of the screen, for the deferred pass and the tracer alike
+        using (device.BeginGpuScope("light tiles"))
+        {
+            CameraBlock.Use(camera);
+            tiles.Build(this, camera, ViewportSize);
+        }
 
         if (Lighting != LightingMode.PathTraced) return;
 
-        CameraBlock.Use(camera);
-        PathTracing.Run(this, camera, dt);
+        if (!device.Supports(GraphicsFeature.PathTracedLighting))
+        {
+            device.WarnUnsupported(GraphicsFeature.PathTracedLighting, "The lighting is direct instead.");
+            Lighting = LightingMode.Direct;
+            return;
+        }
+
+        using (device.BeginGpuScope("path tracing"))
+            PathTracing.Run(this, camera, dt);
     }
 
     /// <summary>
@@ -348,17 +394,8 @@ public class DeferredRenderer2D : Renderer2D
         if (lightsUploaded) return;
         lightsUploaded = true;
 
-        if (lightBuffer is null)
-        {
-            lightBuffer = BufferObject.Create(new BufferObjectDescription
-            {
-                IsStorageBuffer = true,
-                // Never mapped, the lights of a frame are simply written over those of the last
-                StorageMasks = BufferStorageMask.DynamicStorageBit,
-                Type = BufferTargetARB.ShaderStorageBuffer,
-                Size = (uint)(MaxLights * Unsafe.SizeOf<LightData>())
-            });
-        }
+        // Never mapped, the lights of a frame are simply written over those of the last
+        lightBuffer ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(MaxLights * Unsafe.SizeOf<LightData>())));
 
         uploadedLights = CollectLights(lightData, camera.Bounds);
         if (uploadedLights > 0)
@@ -366,8 +403,8 @@ public class DeferredRenderer2D : Renderer2D
     }
 
     /// <summary>
-    /// Sets everything a technique that includes shaders/lighting/direct.glsl needs, with the technique bound, the
-    /// lights of the frame, what blocks them and how shiny things are. Render thread, in or after <see cref="BeforeResolve"/>.
+    /// Sets everything a technique that includes shaders/lighting/direct.slang needs, with the technique bound, the
+    /// lights of the frame and their tiles, what blocks them and how shiny things are. Render thread, in or after <see cref="BeforeResolve"/>.
     /// </summary>
     internal void BindLighting(Technique technique)
     {
@@ -376,27 +413,42 @@ public class DeferredRenderer2D : Renderer2D
         if (lightBuffer is not null && uploadedLights > 0)
             technique.BindBuffer(LIGHT_BINDING, lightBuffer);
 
+        if (tiles.Buffer is { } tileBuffer)
+            technique.BindBuffer(LightTiles.TILES_BINDING, tileBuffer);
+
         technique.SetUniform("uLightCount", uploadedLights);
         technique.SetUniform("uShininess", MathF.Max(ShownShininess, 1.0f));
         technique.SetUniform("uSpecularIntensity", MathF.Max(ShownSpecularIntensity, 0.0f));
+        technique.SetUniform("uShadowSoftness", MathF.Max(ShownShadowSoftness, 0.0f));
+        technique.SetUniform("uTileCounts", tiles.Counts);
+        technique.SetUniform("uTileScreen", tiles.Screen);
 
         OcclusionMap2D? occlusion = ShownOcclusion;
-        Texture? texture = ShownShadows ? occlusion?.GetTexture() : null;
+        Texture? field = occlusion?.GetField();
 
-        technique.SetUniform("uShadows", texture is not null);
-        if (texture is null || occlusion is null) return;
+        technique.SetUniform("uShadows", ShownShadows && (field is not null || spriteField is not null));
+        technique.SetUniform("uHasSprites", spriteField is not null);
+        technique.SetUniform("uSpritePixelWorld", spritePixelWorld);
+        spriteField?.Bind(SPRITE_FIELD_UNIT);
 
-        texture.Bind(OCCLUSION_UNIT);
+        technique.SetUniform("uHasField", field is not null);
+        if (field is null || occlusion is null) return;
 
-        Vector2 origin = occlusion.Origin, cellSize = occlusion.CellSize, size = new(occlusion.Width, occlusion.Height);
-        technique.SetUniform("uOcclusionOrigin", in origin);
-        technique.SetUniform("uOcclusionCellSize", in cellSize);
-        technique.SetUniform("uOcclusionSize", in size);
+        field.Bind(FIELD_UNIT);
+
+        Vector2 origin = occlusion.Origin, texel = occlusion.FieldTexelSize, size = occlusion.FieldSize;
+        technique.SetUniform("uFieldOrigin", in origin);
+        technique.SetUniform("uFieldCellSize", in texel);
+        technique.SetUniform("uFieldSize", in size);
     }
 
     protected override void DisposeOther()
     {
         PathTracing.Dispose();
+        tiles.Dispose();
+        spriteShadows.Dispose();
+        lightBuffer?.Dispose();
+        lightBuffer = null;
         base.DisposeOther();
     }
 

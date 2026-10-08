@@ -3,29 +3,22 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL.Managers;
-
-using Silk.NET.OpenGL;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Tiling;
 
 /// <summary>
-/// One tile (or image) the way the shader is handed it, see shaders/tilemap/tilemap.vert.
+/// One tile (or image) as the map keeps it on the CPU, before the layer it is on and its textures are added for the
+/// GPU, see <see cref="TileMapGpu.Tile"/>.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
-internal struct TileInstance : IVertex
+internal struct TileInstance
 {
     // The middle of the quad, before whatever its layer is moved by
     public Vector2 Position;
     public Vector2 Size;
 
-    // Where in the image it is cut out of, in pixels from the top left corner: left, top, right, bottom
+    // Where in the image it is cut out of, in pixels from the top left corner, left, top, right, bottom
     public Vector4 Source;
 
     // In radians, counter-clockwise around the middle
@@ -33,22 +26,9 @@ internal struct TileInstance : IVertex
 
     // A TileFlip
     public float Flip;
-
-    public const uint SizeInBytes = sizeof(float) * 10;
-
-    // Attributes 2 to 5, after the two of the quad's corners
-    private static readonly VertexLayoutDescription[] Layout =
-    [
-        VertexLayoutDescription.Float(2, 2, 0, instanced: true),
-        VertexLayoutDescription.Float(3, 2, sizeof(float) * 2, instanced: true),
-        VertexLayoutDescription.Float(4, 4, sizeof(float) * 4, instanced: true),
-        VertexLayoutDescription.Float(5, 2, sizeof(float) * 8, instanced: true)
-    ];
-
-    public static ReadOnlySpan<VertexLayoutDescription> GetLayout() => Layout;
 }
 
-/// <summary>A tile of a layer that plays through frames: which instance it is, and the frame it is showing.</summary>
+/// <summary>A tile of a layer that plays through frames, which instance it is and the frame it is showing.</summary>
 internal sealed class TileMapAnimated(TileMapBatch batch, int index, TileMapTile tile)
 {
     public TileMapBatch Batch { get; } = batch;
@@ -72,7 +52,7 @@ internal sealed class TileMapTexture
 
     public Vector2 Size => new(Albedo.Width, Albedo.Height);
 
-    /// <summary>Has to run on the GL thread. An image that isn't there gives a texture that draws nothing.</summary>
+    /// <summary>Has to run on the render thread. An image that isn't there gives a texture that draws nothing.</summary>
     public static TileMapTexture Load(string path)
     {
         string directory = Path.GetDirectoryName(path) ?? string.Empty;
@@ -106,19 +86,11 @@ internal sealed class TileMapTexture
 }
 
 /// <summary>
-/// Everything of a layer that is drawn with one image in one go: the tiles of a part of the layer that are out of
-/// the same tile set. It is the <see cref="UnitQuad"/> drawn as many times as there are tiles, each with what a
-/// <see cref="TileInstance"/> says, out of a buffer of instances of its own.
+/// Everything of a layer that is drawn with one image and sits together, the tiles of a part of the layer that are
+/// out of the same tile set. On the GPU it is a chunk of the map's one tile buffer, see <see cref="TileMapGpu"/>.
 /// </summary>
 internal sealed class TileMapBatch(string imagePath)
 {
-    private const string UNIFORM_HAS_NORMAL = "uHasNormal";
-    private const string UNIFORM_HAS_SPECULAR = "uHasSpecular";
-    private const string UNIFORM_TEXEL_SIZE = "uTexelSize";
-
-    /// <summary>The binding the instances are read through, after the quad's corners on binding 0.</summary>
-    private const uint INSTANCE_BINDING = 1;
-
     public string ImagePath { get; } = imagePath;
 
     public List<TileInstance> Instances { get; } = [];
@@ -132,9 +104,9 @@ internal sealed class TileMapBatch(string imagePath)
     /// <summary>Whether the instances have changed since they were last handed to the GPU.</summary>
     public bool NeedsUpload { get; set; } = true;
 
-    // The quad with this batch's instances laid over binding 1
-    private VertexBufferObject? buffers;
-    private uint uploaded;
+    /// <summary>Where the batch's tiles are in the map's tile buffer, as of the last packing, and how many there were then.</summary>
+    internal int First = -1;
+    internal int Packed = -1;
 
     public int Add(in TileInstance instance)
     {
@@ -156,68 +128,273 @@ internal sealed class TileMapBatch(string imagePath)
         Max = new Vector2(float.MinValue);
         NeedsUpload = true;
     }
+}
 
-    /// <summary>Draws the batch with a shader that is bound and has everything set that is the same for the whole layer.</summary>
-    public unsafe void Draw(Technique shader, TileMapTexture texture)
+/// <summary>
+/// The map on the GPU. Every tile of every layer is in one storage buffer, in the chunks the batches are, the layers'
+/// settings are in another, and a compute pass (shaders/tilemap/tilemap_cull.slang) writes a draw for every chunk in
+/// view. Drawing the map is one indirect draw, however many layers and tile sets it has. The tiles only go up again
+/// when a batch changed (a tile animating, an image layer placed anew), the rest never touches the CPU again.
+/// </summary>
+internal sealed class TileMapGpu : IDisposable
+{
+    /// <summary>Must match Layer in shaders/tilemap/tilemap.slang (48 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Layer
     {
-        if (texture.Albedo.Handle == 0 || !EnsureBuffers())
-            return;
-
-        if (NeedsUpload)
-        {
-            NeedsUpload = false;
-            uploaded = (uint)Instances.Count;
-
-            if (uploaded > 0)
-                buffers!.InstanceBuffer!.Upload<TileInstance>(CollectionsMarshal.AsSpan(Instances));
-        }
-
-        if (uploaded == 0)
-            return;
-
-        // The image, its normal map and its specular map on the units the shader says, in one call
-        ReadOnlySpan<uint> handles = [texture.Albedo.Handle, texture.Normal.Handle, texture.Specular.Handle];
-        Technique.BindTextures(handles);
-
-        // An image that came without a normal or a specular map has nothing to say about its surface
-        shader.SetUniform(UNIFORM_HAS_NORMAL, texture.Normal.Handle != 0);
-        shader.SetUniform(UNIFORM_HAS_SPECULAR, texture.Specular.Handle != 0);
-
-        Vector2 texel = Vector2.One / Vector2.Max(Vector2.One, texture.Size);
-        shader.SetUniform(UNIFORM_TEXEL_SIZE, in texel);
-
-        buffers!.Bind();
-        Horizon.Graphics.GraphicsDevice.Current.DrawIndexedInstanced(Horizon.Graphics.Topology.Triangles, UnitQuad.INDICES, uploaded);
+        public Vector2 Offset;
+        public Vector2 Motion;
+        public float Nearness;
+        public float Emissive;
+        public Vector2 Padding;
+        public Vector4 Tint;
     }
 
-    private bool EnsureBuffers()
+    /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (56 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Tile
     {
-        if (buffers is not null)
-            return true;
+        public Vector2 Position;
+        public Vector2 Size;
+        public Vector4 Source;
+        public float Rotation;
+        public float Flip;
+        public uint LayerIndex;
+        public uint Albedo;
+        public uint Normal;
+        public uint Specular;
+        public Vector2 TexelSize;
+    }
 
-        try
+    /// <summary>Must match Chunk in shaders/tilemap/tilemap_cull.slang (32 bytes).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Chunk
+    {
+        public Vector2 Min;
+        public Vector2 Max;
+        public uint First;
+        public uint Count;
+        public uint LayerIndex;
+        public uint Foreground;
+    }
+
+    private const uint LAYERS_BINDING = 2;
+    private const uint TILES_BINDING = 3;
+    private const uint CHUNKS_BINDING = 3;
+    private const uint COMMANDS_BINDING = 4;
+    private const uint COUNT_BINDING = 5;
+
+    private static Technique? drawShader, cullShader;
+
+    private GpuBuffer? layers, tiles, chunks, commands, count;
+    private readonly List<Tile> packed = [];
+    private readonly List<Chunk> chunkList = [];
+    private readonly List<Layer> layerList = [];
+    private int tileCapacity;
+    private bool packedOnce;
+
+    /// <summary>How many chunks were put together last, which is the most draws there can be.</summary>
+    public int ChunkCount => chunkList.Count;
+
+    /// <summary>
+    /// Brings the GPU side up to date with the layers as they are to be drawn this frame. Every layer's settings go
+    /// up, and the tiles of any batch that changed. A batch that grew or shrank has the whole map packed anew.
+    /// </summary>
+    /// <param name="shown">Every layer and how it is shown this frame, with the batches of each.</param>
+    public bool Sync(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    {
+        if (!EnsureShaders()) return false;
+
+        // The layers, every frame, they are small and they move
+        layerList.Clear();
+        foreach (var (_, settings, _) in shown) layerList.Add(settings);
+        if (layerList.Count == 0) return false;
+
+        layers ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
+        layers.Upload<Layer>(CollectionsMarshal.AsSpan(layerList));
+
+        // Whether the chunks still line up with what was packed last time
+        bool repack = !packedOnce;
+        for (int i = 0; i < shown.Count && !repack; i++)
         {
-            buffers = VertexBufferObject.CreateInstanced();
+            foreach (TileMapBatch batch in shown[i].Layer.Batches)
+            {
+                if (batch.First < 0 || batch.Packed != batch.Instances.Count) repack = true;
+            }
         }
-        catch (InvalidOperationException e)
+
+        if (repack) Pack(shown, textureOf);
+        else Patch(shown, textureOf);
+
+        return chunkList.Count > 0;
+    }
+
+    /// <summary>Helper method to lay every tile of every layer out in one buffer, chunk after chunk, and the chunks with them.</summary>
+    private void Pack(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    {
+        packed.Clear();
+        chunkList.Clear();
+
+        for (int layerIndex = 0; layerIndex < shown.Count; layerIndex++)
         {
-            Log.Error(e.Message);
+            var (layer, _, foreground) = shown[layerIndex];
+            foreach (TileMapBatch batch in layer.Batches)
+            {
+                batch.First = packed.Count;
+                batch.Packed = batch.Instances.Count;
+                batch.NeedsUpload = false;
+
+                if (batch.Instances.Count == 0) continue;
+
+                TileMapTexture texture = textureOf(batch.ImagePath);
+                foreach (ref readonly TileInstance instance in CollectionsMarshal.AsSpan(batch.Instances))
+                    packed.Add(Convert(instance, (uint)layerIndex, texture));
+
+                chunkList.Add(new Chunk
+                {
+                    Min = batch.Min,
+                    Max = batch.Max,
+                    First = (uint)batch.First,
+                    Count = (uint)batch.Instances.Count,
+                    LayerIndex = (uint)layerIndex,
+                    Foreground = foreground ? 1u : 0u
+                });
+            }
+        }
+
+        packedOnce = true;
+        if (packed.Count == 0) return;
+
+        // The tiles live on the card and are patched in place from here on, so they get room to grow into
+        if (tiles is null || tileCapacity < packed.Count)
+        {
+            tiles?.Dispose();
+            tileCapacity = Math.Max(packed.Count, tileCapacity * 2);
+            tiles = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(tileCapacity * Marshal.SizeOf<Tile>())));
+        }
+
+        tiles.Update<Tile>(CollectionsMarshal.AsSpan(packed));
+
+        chunks ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
+        chunks.Upload<Chunk>(CollectionsMarshal.AsSpan(chunkList));
+
+        nuint commandBytes = (nuint)(Math.Max(1, chunkList.Count) * 16);
+        if (commands is null || commands.Size < commandBytes)
+        {
+            commands?.Dispose();
+            commands = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, commandBytes));
+        }
+
+        count ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 16));
+    }
+
+    /// <summary>Helper method to send up only the batches that changed, in place.</summary>
+    private void Patch(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    {
+        if (tiles is null) return;
+
+        for (int layerIndex = 0; layerIndex < shown.Count; layerIndex++)
+        {
+            foreach (TileMapBatch batch in shown[layerIndex].Layer.Batches)
+            {
+                if (!batch.NeedsUpload || batch.Instances.Count == 0) continue;
+                batch.NeedsUpload = false;
+
+                TileMapTexture texture = textureOf(batch.ImagePath);
+                var span = CollectionsMarshal.AsSpan(batch.Instances);
+                var converted = new Tile[span.Length];
+                for (int i = 0; i < span.Length; i++) converted[i] = Convert(span[i], (uint)layerIndex, texture);
+
+                tiles.Update<Tile>(converted, (nint)(batch.First * Marshal.SizeOf<Tile>()));
+            }
+        }
+    }
+
+    private static Tile Convert(in TileInstance instance, uint layerIndex, TileMapTexture texture) => new()
+    {
+        Position = instance.Position,
+        Size = instance.Size,
+        Source = instance.Source,
+        Rotation = instance.Rotation,
+        Flip = instance.Flip,
+        LayerIndex = layerIndex,
+        Albedo = texture.Albedo.BindlessIndex,
+        Normal = texture.Normal.IsValid ? texture.Normal.BindlessIndex : SpriteItemNoTexture,
+        Specular = texture.Specular.IsValid ? texture.Specular.BindlessIndex : SpriteItemNoTexture,
+        TexelSize = Vector2.One / Vector2.Max(Vector2.One, texture.Size)
+    };
+
+    private const uint SpriteItemNoTexture = 0xFFFF;
+
+    /// <summary>
+    /// Draws the layers of one kind (the foreground ones, the rest, or all) that are in view. The culling happens on the
+    /// GPU and so does the deciding how many draws there are.
+    /// </summary>
+    /// <param name="foreground">True for the foreground layers, false for the others, null for all of them.</param>
+    public void Draw(bool? foreground, Vector2 viewMin, Vector2 viewMax, Camera camera)
+    {
+        if (tiles is null || chunks is null || commands is null || count is null || layers is null || chunkList.Count == 0) return;
+        if (drawShader is null || cullShader is null) return;
+
+        var device = GraphicsDevice.Current;
+        CameraBlock.Use(camera);
+
+        // Which chunks are in view, worked out by the GPU into a list of draws
+        device.FillBuffer(count, 0, 0, 16);
+
+        cullShader.Bind();
+        cullShader.SetUniform("uChunkCount", (uint)chunkList.Count);
+        cullShader.SetUniform("uForeground", foreground is null ? 2u : foreground.Value ? 1u : 0u);
+        cullShader.SetUniform("uViewMin", viewMin);
+        cullShader.SetUniform("uViewMax", viewMax);
+        device.BindStorageBuffer(LAYERS_BINDING, layers);
+        device.BindStorageBuffer(CHUNKS_BINDING, chunks);
+        device.BindStorageBuffer(COMMANDS_BINDING, commands);
+        device.BindStorageBuffer(COUNT_BINDING, count);
+        device.Dispatch((uint)((chunkList.Count + 63) / 64));
+        device.Barrier(BarrierTargets.ShaderStorage | BarrierTargets.VertexAttributes);
+
+        // And the draws themselves, as many as it said
+        drawShader.Bind();
+        device.BindStorageBuffer(LAYERS_BINDING, layers);
+        device.BindStorageBuffer(TILES_BINDING, tiles);
+        device.BindStorageBuffer(COMMANDS_BINDING, null);
+        device.BindStorageBuffer(COUNT_BINDING, null);
+        device.BindVertexArray(null);
+        device.DrawIndirectCount(Topology.Triangles, commands, 0, count, 0, (uint)chunkList.Count);
+    }
+
+    private static bool EnsureShaders()
+    {
+        if (drawShader is not null && cullShader is not null) return true;
+
+        var shaders = GameEngine.Instance.ObjectManager.Shaders;
+
+        // By name, so it is the same one for every map there ever is and nobody frees it from under the others
+        if (!shaders.TryCreateOrGet("tilemap", ShaderDescription.FromPath("shaders/tilemap", "tilemap"), out var draw))
+        {
+            Log.Error(draw.Message);
             return false;
         }
 
-        // A quad of one by one around its middle. The image has its first row at the top, the world has Y going up
-        buffers.SetLayout<Spriting.Data.Vertex2D>();
-        buffers.VertexBuffer.Upload<Spriting.Data.Vertex2D>(
-        [
-            new(-0.5f, -0.5f, 0.0f, 1.0f),
-            new(0.5f, -0.5f, 1.0f, 1.0f),
-            new(0.5f, 0.5f, 1.0f, 0.0f),
-            new(-0.5f, 0.5f, 0.0f, 0.0f)
-        ], BufferUsageARB.StaticDraw);
-        buffers.ElementBuffer.Upload<uint>([0, 1, 2, 0, 2, 3], BufferUsageARB.StaticDraw);
+        if (!shaders.TryCreateOrGet("tilemap_cull", ShaderDescription.FromPath("shaders/tilemap", "tilemap_cull"), out var cull))
+        {
+            Log.Error(cull.Message);
+            return false;
+        }
 
-        // What is different for every tile, read once per instance
-        buffers.SetInstanceLayout<TileInstance>();
+        drawShader = new Technique(draw.Asset);
+        cullShader = new Technique(cull.Asset);
         return true;
+    }
+
+    public void Dispose()
+    {
+        layers?.Dispose();
+        tiles?.Dispose();
+        chunks?.Dispose();
+        commands?.Dispose();
+        count?.Dispose();
+        layers = tiles = chunks = commands = count = null;
     }
 }
