@@ -375,6 +375,22 @@ public class PhysicsWorld : GameComponent
     }
 
     // Whether two bodies are of a group, in which case they don't collide (see PhysicsBodyComponent2D.CollisionGroup)
+    /// <summary>
+    /// Test if a fixture would be inside of anything static with its body at a position. A body is only ever stopped
+    /// from moving into something, never pushed back out of it, so a fixture that is about to grow (or a body that
+    /// is about to be put somewhere) asks here first whether there is room. From the thread the world is stepped on.
+    /// </summary>
+    public bool OverlapsStatic(IPhysicsFixture fixture, Vector2 position)
+    {
+        foreach (int candidate in FindStaticCandidates(fixture, position, position))
+        {
+            if (fixture.TestIntersection(staticGrid.GetFixture(candidate), position, staticGrid.GetBodyPosition(candidate)))
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool SameGroup(PhysicsBodyComponent2D a, PhysicsBodyComponent2D b) =>
         a.CollisionGroup != 0 && a.CollisionGroup == b.CollisionGroup;
 

@@ -28,7 +28,7 @@
     <None Update="Assets\uix\dead_revolver\Arcade\BackgroundGrid.png">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\uix\dead_revolver\*.png;Assets\uix\dead_revolver\*.hor">
+    <None Update="Assets\uix\dead_revolver\*.png;Assets\uix\dead_revolver\*.hor;Assets\uix\dead_revolver\*.aseprite">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Assets\uix\flat\*.hor">

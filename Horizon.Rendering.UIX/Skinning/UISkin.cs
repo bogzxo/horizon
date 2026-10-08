@@ -186,18 +186,48 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     internal bool Update()
     {
         // Nothing to add, and the atlas has its texture (which it only gets the first time it is updated)
-        if (!Atlas.HasPending && Atlas.Texture.Handle != 0) return false;
+        if (!Atlas.HasPending && Atlas.Texture.Handle != 0 && !HasPendingTracked()) return false;
 
         // The atlas belongs to nobody, least of all to the scene that happened to be drawing when it grew
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
-        return Atlas.Update();
+        bool added = Atlas.Update();
+
+        foreach (TextureAtlas atlas in tracked.Keys)
+        {
+            // One that was disposed of is somebody's old art, nothing to keep up with any more
+            if (atlas.IsDisposed) tracked.TryRemove(atlas, out _);
+            else added |= atlas.Update();
+        }
+
+        return added;
+    }
+
+    // The atlases of other people that a UI with this skin draws out of, see Track
+    private readonly ConcurrentDictionary<TextureAtlas, byte> tracked = new();
+
+    /// <summary>
+    /// Has the skin keep an atlas that isn't its own up to date along with its own, for a UI that draws art out of it
+    /// (see <see cref="Components.Image.Atlas"/>). Somebody has to put what was asked for into an atlas on the GL
+    /// thread, and a UI is the only one who knows it is being drawn. From any thread, as often as anybody likes.
+    /// </summary>
+    public void Track(TextureAtlas atlas)
+    {
+        if (!atlas.IsDisposed) tracked.TryAdd(atlas, 0);
     }
 
     /// <summary>
     /// Whether art that was asked for is still on its way into the atlas, which it gets the next time a UI with
     /// this skin is drawn. What is painted in the meantime is painted without it.
     /// </summary>
-    public bool HasPendingArt => Atlas.HasPending;
+    public bool HasPendingArt => Atlas.HasPending || HasPendingTracked();
+
+    private bool HasPendingTracked()
+    {
+        foreach (TextureAtlas atlas in tracked.Keys)
+            if (atlas is { IsDisposed: false, HasPending: true }) return true;
+
+        return false;
+    }
 
     /// <summary>The sets of icons the skin has, see <see cref="TryGetIcon(ReadOnlySpan{char}, ReadOnlySpan{char}, out UIIcon)"/>.</summary>
     public IReadOnlyCollection<string> IconSets => iconSets.Keys;
@@ -239,7 +269,9 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         if (name.Length == 0 || Describe(name) is not { } art)
             return false;
 
-        Atlas.Request(art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height);
+        // Which frame and which layers as well, for art out of an Aseprite file
+        Atlas.Request(
+            art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height, art.Source.ImageFrame, art.Source.Layers);
         if (!Atlas.TryGet(art.Key, out var placed))
             return false;
 
@@ -254,32 +286,14 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>
     /// How big an image file is, in pixels: what an image drawn out of it whole measures. Zero if it isn't there or
-    /// isn't a PNG. From any thread, the file is only looked at the first time.
+    /// is neither a PNG nor an Aseprite file. From any thread, the file is only looked at the first time.
     /// </summary>
-    public Vector2 ImageSize(string path) => imageSizes.GetOrAdd(path, static path =>
-    {
-        try
-        {
-            // Width and height are the first thing in a PNG after its signature and the header's length and name
-            using var file = File.OpenRead(path);
-            Span<byte> header = stackalloc byte[24];
-            if (file.Read(header) < header.Length || header[1] != (byte)'P' || header[2] != (byte)'N' || header[3] != (byte)'G')
-                return Vector2.Zero;
-
-            return new Vector2(
-                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[16..]),
-                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[20..]));
-        }
-        catch (Exception)
-        {
-            return Vector2.Zero;
-        }
-    });
+    public Vector2 ImageSize(string path) => imageSizes.GetOrAdd(path, static path => ImagePixels.SizeOf(path));
 
     /// <summary>
     /// An image file, the whole of it, as a piece of art of the skin: stitched into the atlas the first time it is
     /// asked for (and there by the next frame), drawn at the scale of the UI like the rest of the skin. For art that
-    /// belongs to a layout rather than the skin, a logo say. PNG only.
+    /// belongs to a layout rather than the skin, a logo say. A PNG, or an Aseprite file (its first frame, the way it was saved).
     /// </summary>
     public bool TryGetImage(string path, out UIRegion region)
     {
@@ -443,7 +457,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             scale,
             tint,
             // The same pixels asked for under two names are only stitched in once.
-            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height));
+            source.KeyOf(0));
     }
 
     public void Dispose() => Atlas.Dispose();
