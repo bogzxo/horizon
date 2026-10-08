@@ -350,12 +350,17 @@ public sealed partial class UIDrawList
 
         if (!atlas.TryGet(key, out var region) || atlas.Texture.Handle == 0) return;
 
-        // An atlas that trims kept part of the frame, and the rectangle is the whole frame: the part goes where it was
+        // An atlas that trims kept part of the frame, and the rectangle is the whole frame, the part goes where it
+        // was. The frame counts its rows from the top and the UI has its Y going up, so the part hangs from the top
+        // of the rectangle. Counted from the bottom a fighter who stands at the foot of their frame floats at the
+        // top of the box with all the empty air under their feet
         if (region.Trimmed)
         {
             Vector2 from = region.Offset / region.FrameSize, to = (region.Offset + region.Size) / region.FrameSize;
             if (mirrored) (from.X, to.X) = (1.0f - to.X, 1.0f - from.X);
-            rect = new UIRect(rect.Min + rect.Size * from, rect.Min + rect.Size * to);
+            rect = new UIRect(
+                new Vector2(rect.Min.X + rect.Width * from.X, rect.Max.Y - rect.Height * to.Y),
+                new Vector2(rect.Min.X + rect.Width * to.X, rect.Max.Y - rect.Height * from.Y));
         }
 
         Vector2 topLeft = region.Position, bottomRight = region.Position + region.Size;

@@ -64,7 +64,9 @@ deferred pass that puts it on screen. `HORIZON_LOG_LOOPS` prints what each of th
 A tile map says what blocks light with two layer properties. `CastsShadows` on a tile layer puts its tiles in the
 occlusion map, `BlocksLight` on an object layer puts the box of every object on it in there (a pillar or a crate
 put down as an object), and a collidable layer casts nothing unless it says so, the colliders of a map are hidden
-and not what the light should see. `TileMap.ShadowCasters()` is the lot of it.
+and not what the light should see. `TileMap.ShadowCasters()` is the lot of it by the cell, and
+`TileMap.CreateOcclusion()` makes the occlusion map by the shape of the art instead (a pot is not a square, the air
+in the corners of its tile is air), which is the one a game wants.
 
 The body of anything that blocks light (the ground under the fighters) is drawn and lit as its face, and it stops
 every shadow at its edge, nothing runs on down through it (`DeferredRenderer2D.ShadowsInsideWalls` puts the wall
@@ -73,7 +75,14 @@ an `AmbientOcclusion2D`, off unless asked) darkens the corners, the ground under
 to a pillar, by marching a few short rays through the same distance field in the deferred pass, with the `_ao` maps
 of the tile sets taken into account, packed under the sprite coverage in the green of the material attachment. It is not part of
 the path tracing, the cascades see the world at probe spacing and this is contact scale, so it is there in both
-lighting modes, and `Show` puts it on screen on its own (O and V in the lighting example).
+lighting modes, and `Show` puts it on screen on its own (O and V in the lighting example). A pixel that is a
+sprite casting a shadow doesn't count the sprites, or it is hemmed in by itself, and what a foot does to the floor
+fades out on the way down into it. With its `Strength` at 0 nothing is marched and the maps still count.
+`TileMap.GeometryOcclusion` (off unless asked, a map property of the same name works too) is the map doing the
+corners itself, one picture of how hemmed in every spot is by what blocks light, made on the CPU when the map
+changes and read by every layer that isn't the geometry, into the same green of the material. It costs a frame
+next to nothing where the march costs a few tenths of a millisecond. `TileMap.OcclusionMapStrength` is how much
+the painted maps count on a map, apart from its geometry, and the renderer's `BakedStrength` scales the two together.
 
 ## Text
 

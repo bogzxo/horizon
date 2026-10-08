@@ -77,7 +77,8 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
 
         // The ambient occlusion, the baked maps come along in the material attachment
         var occlusion = renderer.ShownAmbientOcclusion;
-        bool occluding = occlusion.Enabled && occlusion.Strength > 0.0f;
+        // With the strength at 0 nothing is marched and the maps (and a tile map's own geometry) still count
+        bool occluding = occlusion.Enabled && (occlusion.Strength > 0.0f || occlusion.BakedStrength > 0.0f);
         SetUniform(UNIFORM_AO_ENABLED, occluding);
         if (occluding)
         {

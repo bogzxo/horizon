@@ -47,6 +47,8 @@ public sealed class TileMap : GameObject
 
     // The map on the GPU, every layer and tile of it in one draw
     private readonly TileMapGpu gpu = new();
+    private readonly TileMapGeometryOcclusion geometry = new();
+    private readonly TileMapSilhouettes silhouettes = new();
     private readonly List<(TileMapLayer Layer, TileMapGpu.Layer Settings, bool Foreground)> shown = [];
 
     private readonly string directory;
@@ -141,7 +143,36 @@ public sealed class TileMap : GameObject
     /// Whether layers are only ever moved by whole units when they scroll at a speed of their own. Pixel art that is
     /// moved by half a pixel shimmers.
     /// </summary>
-    public bool SnapParallax { get; set; } = true;
+    public bool SnapParallax { get; set; } = false;
+
+    /// <summary>
+    /// Whether the map darkens what is drawn next to its own geometry, the wall behind a floor going darker
+    /// towards the floor, the corner a crate makes with the ground. Off unless asked, or the map says so itself
+    /// with a <c>GeometryOcclusion</c> property (bool, with <c>GeometryOcclusionReach</c> and
+    /// <c>GeometryOcclusionStrength</c> next to it if it wants). The geometry is what blocks light
+    /// (<see cref="ShadowCasters"/>, the layers with <c>CastsShadows</c> and the objects of the ones with
+    /// <c>BlocksLight</c>), it is worked out once and again whenever a tile of those changes, and every other
+    /// layer reads it where it ends up on screen. It goes the same way the occlusion maps of the tile sets do,
+    /// so it shows when the renderer has its <c>AmbientOcclusion</c> on and counts by its <c>BakedStrength</c>.
+    /// It is the cheap way to the same corners the marched occlusion finds, with that one's <c>Strength</c> at 0
+    /// the map still has its corners dark and nothing is marched at all, with both on the corners get both.
+    /// </summary>
+    public bool GeometryOcclusion { get; set; }
+
+    /// <summary>
+    /// How much the occlusion maps of the tile sets count on this map (the <c>_ao</c> image next to a tile set's
+    /// picture), 0 to leave them out, 1 to take them as painted. Apart from <see cref="GeometryOcclusionStrength"/>
+    /// on purpose, the one is what the artist painted into the material and the other what the map is shaped like,
+    /// and how much of each a game wants is a matter of taste. The renderer's <c>BakedStrength</c> scales the two
+    /// together afterwards. A map property of the same name sets it too.
+    /// </summary>
+    public float OcclusionMapStrength { get; set; } = 1.0f;
+
+    /// <summary>How far from the geometry the darkening reaches, in world units. See <see cref="GeometryOcclusion"/>.</summary>
+    public float GeometryOcclusionReach { get; set; } = 24.0f;
+
+    /// <summary>How dark it gets right up against a flat piece of the geometry, 0 not at all, 1 black as far as the ambient light goes.</summary>
+    public float GeometryOcclusionStrength { get; set; } = 0.9f;
 
     /// <summary>
     /// Draws the layers that are marked as being in the foreground (see <see cref="TileMapLayer.IsForeground"/>).
@@ -159,6 +190,10 @@ public sealed class TileMap : GameObject
 
         TileSize = new Vector2(data.TileWidth, data.TileHeight);
         Properties = new TileMapProperties(data.Properties, directory);
+        GeometryOcclusion = Properties.GetBool("GeometryOcclusion");
+        GeometryOcclusionReach = Properties.GetFloat("GeometryOcclusionReach", GeometryOcclusionReach);
+        GeometryOcclusionStrength = Properties.GetFloat("GeometryOcclusionStrength", GeometryOcclusionStrength);
+        OcclusionMapStrength = Properties.GetFloat("OcclusionMapStrength", OcclusionMapStrength);
         BackgroundColor = data.BackgroundColor is { A: > 0 } background ? TileMapProperties.ToVector(background) : null;
         Foreground = new TileMapForeground(this);
 
@@ -756,6 +791,86 @@ public sealed class TileMap : GameObject
         foreach (var cell in layers.Where(layer => layer.CastsShadows).SelectMany(layer => layer.Tiles()))
             yield return cell.Centre;
 
+        foreach (Vector2 centre in ObjectShadowCasters())
+            yield return centre;
+    }
+
+    /// <summary>
+    /// How many cells a tile is cut into each way when the map is asked what blocks light by the shape of things
+    /// (<see cref="ShadowCasterTexels"/>, <see cref="CreateOcclusion"/>). A cell a texel of the art, less on a map
+    /// so big that would be silly.
+    /// </summary>
+    public int ShadowCellsPerTile => Math.Max(1, Math.Min((int)MathF.Min(TileSize.X, TileSize.Y), 4096 / Math.Max(1, Math.Max(Width, Height))));
+
+    /// <summary>
+    /// What blocks light by the shape of it and not by the square it sits in. <see cref="ShadowCasters"/> says a
+    /// tile blocks light or doesn't, which is right for a wall and wrong for a pot, a tuft of grass, the rounded
+    /// end of a platform, the air in the corners of those tiles is air and the wall behind it wants lighting like
+    /// the wall next to it. Here every tile is cut into <paramref name="perTile"/> cells each way (see
+    /// <see cref="ShadowCellsPerTile"/>) and only the ones the picture of the tile has something in come back, as
+    /// where they are in a grid that many times the map's, counted from its bottom left corner. The objects of the
+    /// layers that block light are still the box around them.
+    /// </summary>
+    public IEnumerable<(int X, int Y)> ShadowCasterTexels(int perTile)
+    {
+        perTile = Math.Max(perTile, 1);
+
+        foreach (var cell in layers.Where(layer => layer.CastsShadows).SelectMany(layer => layer.Tiles()))
+        {
+            int tileX = (int)MathF.Floor((cell.Centre.X - Origin.X) / TileSize.X);
+            int tileY = (int)MathF.Floor((cell.Centre.Y - Origin.Y) / TileSize.Y);
+            Vector4 source = cell.Tile.Source;
+
+            for (int v = 0; v < perTile; v++)
+            {
+                for (int u = 0; u < perTile; u++)
+                {
+                    // Which part of the image ends up here, turned over the way the tile is, the same thing
+                    // tilemap.slang does to its corners (v counts from the top, like the image)
+                    var at = new Vector2((u + 0.5f) / perTile, (v + 0.5f) / perTile);
+                    if (cell.Flip.HasFlag(TileFlip.Vertical)) at.Y = 1.0f - at.Y;
+                    if (cell.Flip.HasFlag(TileFlip.Horizontal)) at.X = 1.0f - at.X;
+                    if (cell.Flip.HasFlag(TileFlip.Diagonal)) at = new Vector2(at.Y, at.X);
+
+                    float x = source.X + (source.Z - source.X) * at.X;
+                    float y = source.Y + (source.W - source.Y) * at.Y;
+                    if (silhouettes.Filled(cell.Tile.ImagePath, x, y))
+                        yield return (tileX * perTile + u, tileY * perTile + (perTile - 1 - v));
+                }
+            }
+        }
+
+        foreach (Vector2 centre in ObjectShadowCasters())
+        {
+            int left = (int)MathF.Floor((centre.X - Origin.X) / TileSize.X) * perTile;
+            int bottom = (int)MathF.Floor((centre.Y - Origin.Y) / TileSize.Y) * perTile;
+            for (int y = bottom; y < bottom + perTile; y++)
+            {
+                for (int x = left; x < left + perTile; x++)
+                    yield return (x, y);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes the occlusion map of this map, what blocks light in it by the shape of every tile
+    /// (<see cref="ShadowCasterTexels"/>), with a texel of the distance field a cell so it is no bigger than it
+    /// has to be. Hand it to the renderer (<c>DeferredRenderer2D.Occlusion</c>), it belongs to whoever asked.
+    /// </summary>
+    public Horizon.Rendering.Lighting.OcclusionMap2D CreateOcclusion()
+    {
+        int perTile = ShadowCellsPerTile;
+        var occlusion = new Horizon.Rendering.Lighting.OcclusionMap2D(Width * perTile, Height * perTile, Origin, TileSize / perTile, fieldTexelsPerCell: 1);
+
+        foreach (var (x, y) in ShadowCasterTexels(perTile))
+            occlusion[x, y] = true;
+
+        return occlusion;
+    }
+
+    /// <summary>Helper method to list the middle of every cell under an object of a layer that blocks light.</summary>
+    private IEnumerable<Vector2> ObjectShadowCasters()
+    {
         foreach (TileMapObject found in objects)
         {
             if (!found.Layer.BlocksLight || found.Shape is TileMapShape.Point or TileMapShape.Text)
@@ -902,6 +1017,16 @@ public sealed class TileMap : GameObject
 
 
         // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
+        // What the geometry of the map does to the ambient light, if anybody asked, see GeometryOcclusion
+        uint geometrySlot = TileMapGpu.NoTexture;
+        if (GeometryOcclusion && GeometryOcclusionStrength > 0.0f && GeometryOcclusionReach > 0.0f)
+        {
+            geometry.Ensure(this, GeometryOcclusionReach, Math.Clamp(GeometryOcclusionStrength, 0.0f, 1.0f), GeometrySignature());
+            geometrySlot = geometry.Slot ?? TileMapGpu.NoTexture;
+        }
+
+        Vector2 worldSize = Size;
+
         shown.Clear();
         int count = after?.Layers.Length ?? layers.Count;
         for (int index = 0; index < count && index < layers.Count; index++)
@@ -932,6 +1057,12 @@ public sealed class TileMap : GameObject
             shown.Add((layer, new TileMapGpu.Layer
             {
                 Offset = origin + moved,
+
+                // What the geometry is made of doesn't read it, that is lit as its face and has no corner with itself
+                Geometry = layer.CastsShadows || layer.BlocksLight ? TileMapGpu.NoTexture : geometrySlot,
+                GeometryOrigin = origin,
+                GeometryScale = Vector2.One / Vector2.Max(worldSize, Vector2.One),
+                OcclusionMaps = Math.Clamp(OcclusionMapStrength, 0.0f, 1.0f),
                 Emissive = state.Emissive,
                 Tint = new Vector4(state.Tint, state.Opacity)
             }, state.IsForeground));
@@ -943,10 +1074,28 @@ public sealed class TileMap : GameObject
         gpu.Draw(foreground, viewMin, viewMax, camera);
     }
 
+    /// <summary>Helper method to boil everything the geometry occlusion is made from down to a number that is another one whenever any of it changes.</summary>
+    private long GeometrySignature()
+    {
+        var hash = new HashCode();
+        hash.Add(GeometryOcclusionReach);
+        hash.Add(GeometryOcclusionStrength);
+        foreach (TileMapLayer layer in layers)
+        {
+            hash.Add(layer.CastsShadows);
+            hash.Add(layer.BlocksLight);
+            if (layer.CastsShadows) hash.Add(layer.Version);
+        }
+
+        hash.Add(objects.Count);
+        return hash.ToHashCode();
+    }
+
     protected override void DisposeOther()
     {
         // The images are the object manager's, shared with whichever map uses the same ones
         gpu.Dispose();
+        geometry.Dispose();
         textures.Clear();
 
         base.DisposeOther();

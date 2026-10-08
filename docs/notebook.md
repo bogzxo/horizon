@@ -203,3 +203,59 @@ world at probe spacing and this is contact scale, and it costs a few dozen field
 `shadow()` returns 1 straight away for a point inside a wall unless `ShadowsInsideWalls` is on, so the ground body
 is lit as its face without the bands of the crates and post bases running down through it. That is what was asked
 for with "the floors stop shadows", the maps already have CastsShadows on their floors.
+
+## The ambient occlusion, a day later
+
+Looked at properly (the Japan fight, CRT off, `Show` on) it had two things wrong with it. Every fighter was
+speckled black, a pixel of a sprite that casts shadows is inside the sprite field, so every ray it sent hit its
+own sprite at the first step. And the body of the ground had bars standing in it under every foot and a hatched
+mess under every crate, a point in a wall was moved out to its face by the slope of the whole field, sprites and
+all, and next to a ridge of that field the slope points anywhere. Now only the walls say where the face is
+(`wallsDistance`), a point that is still inside after the move gets moved once more and left open if that didn't
+do it either, what the face found is faded out by how deep the point is, and a pixel whose material green says
+"I am a sprite that blocks light" marches the walls only.
+
+`Strength` is clamped to 1, so 10.6 is 1, which is why cranking it did nothing past a point. `DirectStrength` is
+the one that makes it show under a lamp, 0.4 now to begin with, with none of it the corners right under the
+lanterns were as flat as before. The defaults are 16, 0.85, 8 samples and that.
+
+The `_ao` maps Japan came with were blurred outlines of every silhouette, 0.79 at the darkest, which darkened
+the rim of things and said nothing about a window. `Art/tools/build_ao.py` in Fighter2D paints them out of the
+albedo now, a texel darker than the opaque texels round it is in a hole, over four sizes of neighbourhood, a
+lone dark texel is dithering and left alone, nothing is blurred. `--depth` is how dark the deepest hole goes
+(0.5 as shipped, bogz wanted less out of the paint and more out of the geometry).
+
+`TileMap.GeometryOcclusion` is that geometry. `TileMapGeometryOcclusion` fills a grid a cell an art pixel with
+`ShadowCasters()`, smears it with a box twice (a tent, running sums), and what the smear left on an open cell is
+how hemmed in it is, R8, bindless, its slot and the map's corner and size in what used to be the padding of
+`TileMapGpu.Layer` (tilemap_cull.slang has the same struct and wants the same edit, 64 bytes since
+`TileMap.OcclusionMapStrength` went in, which is how much the painted maps count apart from the geometry). A layer that
+is the geometry gets NO_TEXTURE. It is made again when a `CastsShadows` layer's version, the reach or the
+strength changes, on the render thread, off the live tiles, which is fine for a map that changes once in a while
+and not what you want for one that is dug through every tick.
+
+What it costs on the 3060 at 1920 by 1080, the Japan fight, the resolve pass going from about 0.09 ms to
+somewhere between 0.2 and 0.45 with eight samples marched (the readings wander that much from run to run, the
+fight is never the same twice), about 0.2 with four. The maps and the geometry are inside the noise. The march
+runs for every screen pixel although the lighting is worked out a `LightingPixelSize` cell at a time, moving it
+into light_cells.slang would cut it by the square of the zoom and nobody has done that yet.
+
+## A pot is not a square
+
+The pots of Japan sat in a pale square once the corners went dark. `ShadowCasters()` says a tile blocks light or
+it doesn't, so the whole 16 by 16 cell of a pot was wall, and the wall behind the see-through corners of its tile
+was "inside something solid", lit as a face, no shadow on it, no occlusion either. It had been like that since the
+floors stopped the shadows, the occlusion only made it show. `TileMap.ShadowCasterTexels(perTile)` gives what
+blocks light by the shape of the art now (`TileMapSilhouettes` keeps the alpha of every tile set image on the CPU,
+read off the file the first time, turned over the way the tile is), `TileMap.CreateOcclusion()` makes an
+`OcclusionMap2D` out of that with a cell a texel of the art and a texel of the field a cell
+(`fieldTexelsPerCell`, 8 for a grid of tiles as before, 1 here), and the geometry occlusion is made from the same.
+For Japan the field went from 768 to 1536 on a side with a texel a world unit instead of two, and the passes cost
+what they did. Objects on a `BlocksLight` layer are still the box round them, there is no picture to ask.
+
+## Trimmed frames in the UI hung upside down
+
+`UIDrawList.Image(TextureAtlas, ...)` put the kept part of a trimmed frame back by its offset counted from the
+bottom of the rectangle, and the offset counts rows from the top while UI space has Y going up. Every character
+portrait (versus screen, character select, the cells) floated at the top of its box with the empty air under the
+feet. It hangs from `rect.Max.Y` now. `Sprite` always had it right.

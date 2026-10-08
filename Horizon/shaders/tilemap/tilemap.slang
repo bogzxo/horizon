@@ -13,15 +13,25 @@ struct Layer
     // Where the layer is, the corner of the map, how far the layer is moved from it and what its parallax adds to that
     float2 offset;
 
-    float2 padding0;
-    float padding1;
+    // What the geometry of the map does to the ambient light, see TileMap.GeometryOcclusion. Where that picture
+    // starts in the world, its bindless slot (NO_TEXTURE for a layer that doesn't read it, the geometry itself
+    // for one) and further down one over the size of the world it covers
+    float2 geometryOrigin;
+    uint geometry;
 
     // How much of the layer shows no matter the light (a sky, a glowing sign)
     float emissive;
-    float2 padding;
+    float2 geometryScale;
 
     // What the layer multiplies everything in it by, its tint, and in the alpha how much of it there is
     float4 tint;
+
+    // How much the occlusion maps of the tile sets count, see TileMap.OcclusionMapStrength, and what makes the
+    // struct a whole number of 16 bytes (64)
+    float occlusionMaps;
+    float padding0;
+    float padding1;
+    float padding2;
 };
 
 // Must match TileMapGpu.Tile in TileMapBatch.cs (80 bytes, a whole number of 16, the stride a block's layout
@@ -59,6 +69,7 @@ struct Varyings
 {
     float4 position : SV_Position;
     float2 texCoords : TEXCOORD0;
+    float2 world : WORLD;
     nointerpolation int flip : FLIP;
     nointerpolation uint layer : LAYER;
     nointerpolation uint albedo : ALBEDO;
@@ -95,6 +106,7 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
     output.specular = tile.specular;
     output.occlusion = tile.occlusion;
     output.texCoords = lerp(tile.source.xy, tile.source.zw, at) * tile.texelSize;
+    output.world = world;
     output.position = toClip(float4(world, 0.0, 1.0));
     return output;
 }
@@ -118,7 +130,16 @@ GBuffer fsMain(Varyings input)
     float shine = input.specular != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.specular)].Sample(input.texCoords).r : 0.0;
 
     // How much of the ambient light the artist painted into the corners, 1 wherever there is no map to say
-    float occlusion = input.occlusion != NO_TEXTURE ? uTextures[NonUniformResourceIndex(input.occlusion)].Sample(input.texCoords).r : 1.0;
+    float occlusion = input.occlusion != NO_TEXTURE ? lerp(1.0, uTextures[NonUniformResourceIndex(input.occlusion)].Sample(input.texCoords).r, layer.occlusionMaps) : 1.0;
+
+    // And how hemmed in by the map's own geometry the spot is where this ended up on screen, the wall behind a
+    // floor going darker towards it. The picture has its top row first and the world has Y going up
+    if (layer.geometry != NO_TEXTURE)
+    {
+        float2 spot = (input.world - layer.geometryOrigin) * layer.geometryScale;
+        if (all(spot >= 0.0) && all(spot <= 1.0))
+            occlusion *= uTextures[NonUniformResourceIndex(layer.geometry)].SampleLevel(float2(spot.x, 1.0 - spot.y), 0.0).r;
+    }
 
     GBuffer output;
     output.albedo = albedo;

@@ -24,8 +24,15 @@ namespace Horizon.Rendering.Lighting;
 /// </summary>
 public sealed class OcclusionMap2D : IDisposable
 {
-    /// <summary>How many texels of the distance field a cell is, each way.</summary>
+    /// <summary>How many texels of the distance field a cell is, each way, unless the map was made with another number.</summary>
     public const int FIELD_TEXELS_PER_CELL = 8;
+
+    /// <summary>
+    /// How many texels of the distance field a cell of this map is, each way. Eight for a grid of tiles, so the
+    /// field is finer than the squares it is made of, one for a grid that is fine already (a cell a texel of the
+    /// art, <c>TileMap.CreateOcclusion</c>).
+    /// </summary>
+    public int FieldTexelsPerCell { get; }
 
     private readonly byte[] cells;
     private Texture? texture, field, rows;
@@ -55,13 +62,14 @@ public sealed class OcclusionMap2D : IDisposable
     public Vector2 CellSize { get; }
 
     /// <summary>The size of a texel of the distance field, in world units.</summary>
-    public Vector2 FieldTexelSize => CellSize / FIELD_TEXELS_PER_CELL;
+    public Vector2 FieldTexelSize => CellSize / FieldTexelsPerCell;
 
     /// <summary>How many texels the distance field is across and up.</summary>
-    public Vector2 FieldSize => new(Width * FIELD_TEXELS_PER_CELL, Height * FIELD_TEXELS_PER_CELL);
+    public Vector2 FieldSize => new(Width * FieldTexelsPerCell, Height * FieldTexelsPerCell);
 
-    public OcclusionMap2D(int width, int height, Vector2 origin, Vector2 cellSize)
+    public OcclusionMap2D(int width, int height, Vector2 origin, Vector2 cellSize, int fieldTexelsPerCell = FIELD_TEXELS_PER_CELL)
     {
+        FieldTexelsPerCell = Math.Max(fieldTexelsPerCell, 1);
         Width = Math.Max(width, 1);
         Height = Math.Max(height, 1);
         Origin = origin;
@@ -188,7 +196,7 @@ public sealed class OcclusionMap2D : IDisposable
             pass.SetUniform("uSize", FieldSize);
             pass.SetUniform("uCells", new Vector2(Width, Height));
             pass.SetUniform("uTexelWorld", MathF.Min(FieldTexelSize.X, FieldTexelSize.Y));
-            pass.SetUniform("uTexelsPerCell", FIELD_TEXELS_PER_CELL);
+            pass.SetUniform("uTexelsPerCell", FieldTexelsPerCell);
             grid.Bind(0);
             device.BindStorageImage(0, rows);
             device.BindStorageImage(1, field);

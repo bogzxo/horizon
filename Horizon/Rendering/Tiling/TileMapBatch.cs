@@ -142,17 +142,30 @@ internal sealed class TileMapBatch(string imagePath)
 /// </summary>
 internal sealed class TileMapGpu : IDisposable
 {
-    /// <summary>Must match Layer in shaders/tilemap/tilemap.slang (48 bytes).</summary>
+    /// <summary>Must match Layer in shaders/tilemap/tilemap.slang and tilemap_cull.slang (64 bytes, a whole number of 16 like every struct in a block).</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct Layer
     {
         public Vector2 Offset;
-        public Vector2 Padding0;
-        public float Padding1;
+
+        /// <summary>Where the picture of the map's geometry occlusion starts in the world, see TileMap.GeometryOcclusion.</summary>
+        public Vector2 GeometryOrigin;
+
+        /// <summary>Its slot in the bindless table, <see cref="NoTexture"/> for a layer that doesn't read it.</summary>
+        public uint Geometry;
         public float Emissive;
-        public Vector2 Padding;
+
+        /// <summary>One over the size of the map in the world, which is what the picture covers.</summary>
+        public Vector2 GeometryScale;
         public Vector4 Tint;
+
+        /// <summary>How much the occlusion maps of the tile sets count, see TileMap.OcclusionMapStrength.</summary>
+        public float OcclusionMaps;
+        public float Padding0, Padding1, Padding2;
     }
+
+    /// <summary>What a slot says when there is no texture in it, NO_TEXTURE in the shaders.</summary>
+    public const uint NoTexture = SpriteItemNoTexture;
 
     /// <summary>Must match Tile in shaders/tilemap/tilemap.slang (80 bytes, a whole number of 16, see there).</summary>
     [StructLayout(LayoutKind.Sequential)]
