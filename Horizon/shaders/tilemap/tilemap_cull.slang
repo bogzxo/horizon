@@ -1,7 +1,10 @@
 // Decides which chunks of a tile map are drawn this frame, on the GPU. Every chunk is a run of tiles of one layer
-// that sit together, with the box around them. A chunk that reaches into the view gets a draw of the one quad over
-// its tiles written into the command buffer, and the count of those is what the map draws with (DrawIndirectCount).
-// The CPU never looks at the tiles again once they are built.
+// that sit together, with the box around them. Every chunk gets a draw of the one quad over its tiles written into
+// the command buffer at its own place, and a chunk that is out of view (or of the wrong layers) gets one of no
+// instances, which costs the GPU nothing. The draws stay in the order the chunks were packed in, which is layer by
+// layer, and that order is the whole point. Handing out slots with an atomic put the draws in whatever order the
+// threads got there, which was a different order every frame, so the lantern of one layer drew over the glowing
+// lantern of the one above it, or not, depending on the frame. The CPU never looks at the tiles again once they are built.
 
 #include <common/camera.slang>
 
@@ -49,7 +52,7 @@ BIND_BUFFER(2) StructuredBuffer<Layer> layers;
 BIND_BUFFER(3) StructuredBuffer<Chunk> chunks;
 BIND_BUFFER(4) RWStructuredBuffer<DrawCommand> commands;
 
-// One uint, how many commands were written. Must be cleared to 0 before the dispatch.
+// One uint, how many draws there are, which is every chunk
 BIND_BUFFER(5) RWStructuredBuffer<uint> drawCount;
 
 [shader("compute")]
@@ -57,23 +60,20 @@ BIND_BUFFER(5) RWStructuredBuffer<uint> drawCount;
 void csMain(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= params.uChunkCount) return;
+    if (id.x == 0) drawCount[0] = params.uChunkCount;
 
     Chunk chunk = chunks[id.x];
-    if (chunk.count == 0) return;
-    if (params.uForeground != 2u && chunk.foreground != params.uForeground) return;
+    bool drawn = chunk.count != 0 && (params.uForeground == 2u || chunk.foreground == params.uForeground);
 
     // Out of sight, out of the frame
     float2 offset = layers[chunk.layer].offset;
     if (chunk.max.x + offset.x < params.uViewMin.x || chunk.min.x + offset.x > params.uViewMax.x ||
-        chunk.max.y + offset.y < params.uViewMin.y || chunk.min.y + offset.y > params.uViewMax.y) return;
-
-    uint slot;
-    InterlockedAdd(drawCount[0], 1u, slot);
+        chunk.max.y + offset.y < params.uViewMin.y || chunk.min.y + offset.y > params.uViewMax.y) drawn = false;
 
     DrawCommand command;
     command.vertexCount = 6;
-    command.instanceCount = chunk.count;
+    command.instanceCount = drawn ? chunk.count : 0u;
     command.firstVertex = 0;
     command.firstInstance = chunk.first;
-    commands[slot] = command;
+    commands[id.x] = command;
 }

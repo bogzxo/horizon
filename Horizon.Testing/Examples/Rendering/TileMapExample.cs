@@ -229,6 +229,7 @@ public class TileMapExample : Scene, ITestControls
              <layer id="4" name="solid" width="{COLUMNS}" height="{ROWS}">
               <properties>
                <property name="IsCollidable" type="bool" value="true"/>
+               <property name="CastsShadows" type="bool" value="true"/>
               </properties>
               <data encoding="csv">
             {Csv(solid)}

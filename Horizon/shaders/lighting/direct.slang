@@ -193,6 +193,8 @@ int tileOf(float2 picture, float2 tileCounts, float2 tileScreen)
 // fighter standing right in front of the lamp, doesn't shadow it at all. The march walks on through every sprite
 // it meets, and one it is still inside of when it reaches the light is one the light is behind, which is the
 // fighter in front of the lamp, so that one is let off. That is a few steps of the field, no colliders, no lists.
+// A point inside a wall (the body of the ground under a fighter) takes no sprite shadows at all, a sprite's shadow
+// stops at the tiles rather than running on down through them.
 float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
 {
     float2 way = to - from;
@@ -211,7 +213,7 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     float visible = 1.0;
     float through = 1.0;
     float previous = 1e9;
-    bool sprites = field.hasSprites;
+    bool sprites = field.hasSprites && wallsDistance(from, field) >= 0.0;
     bool inside = false;
     for (int step = 0; step < 32; step++)
     {

@@ -157,3 +157,15 @@ overlay does. `GpuResource.Name` has a `Named()` hook the texture, buffer and re
 so naming a resource after it is made works too, and a named render target names its attachments after itself.
 What nobody named is told by what it is ("Storage buffer of 4096 bytes", "640 by 360 Rgba16F"). Lavapipe takes the
 names without complaint, nobody has looked at them in RenderDoc yet, that wants a real GPU.
+
+## The tile map draws in layer order now, it didn't
+
+The cull compute handed the draws their slots with an atomic, so the chunks were drawn in whatever order the GPU's
+threads got there, a different one every frame. With blending and no depth that meant the lantern of one layer drew
+over the glowing lantern of the layer above it or not, by luck, and on lavapipe the luck went one way and on a real
+GPU another (hiding a layer changed the chunk count and the luck with it). Every chunk now has a draw at its own
+index, an empty one when it is out of view, and the count is the chunk count. If the layers of a map ever look
+shuffled again, that is the first place to look. `CastsShadows` is also only ever what a layer says now, a
+collidable layer casts nothing unless it asks, the colliders of the game maps are hidden and not what the light
+should see. And a point inside a wall takes no sprite shadows, so a fighter's shadow stops at the ground instead of
+running on down through it.

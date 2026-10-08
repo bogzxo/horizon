@@ -344,9 +344,8 @@ internal sealed class TileMapGpu : IDisposable
         var device = GraphicsDevice.Current;
         CameraBlock.Use(camera);
 
-        // Which chunks are in view, worked out by the GPU into a list of draws
-        device.FillBuffer(count, 0, 0, 16);
-
+        // Which chunks are in view, worked out by the GPU into a draw for every chunk, empty for one that isn't,
+        // in the order the chunks were packed, which is the order of the layers
         cullShader.Bind();
         cullShader.SetUniform("uChunkCount", (uint)chunkList.Count);
         cullShader.SetUniform("uForeground", foreground is null ? 2u : foreground.Value ? 1u : 0u);
@@ -359,7 +358,7 @@ internal sealed class TileMapGpu : IDisposable
         device.Dispatch((uint)((chunkList.Count + 63) / 64));
         device.Barrier(BarrierTargets.ShaderStorage | BarrierTargets.VertexAttributes);
 
-        // And the draws themselves, as many as it said
+        // And the draws themselves, one a chunk
         drawShader.Bind();
         device.BindStorageBuffer(LAYERS_BINDING, layers);
         device.BindStorageBuffer(TILES_BINDING, tiles);
