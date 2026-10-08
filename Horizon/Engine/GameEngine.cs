@@ -85,7 +85,8 @@ public class GameEngine : Entity
     private const string SCREENSHOT_VARIABLE = "HORIZON_SCREENSHOT";
 
     private string? scheduledScreenshot;
-    private double scheduledScreenshotAt;
+    private double scheduledScreenshotAt, scheduledScreenshotEvery;
+    private int scheduledScreenshotsLeft, scheduledScreenshotsTaken;
     private string? requestedScreenshot;
 
     /// <summary>Where screenshots taken with <see cref="ScreenshotKey"/> go. Made if it isn't there.</summary>
@@ -142,9 +143,24 @@ public class GameEngine : Entity
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
+            // file.png@3 for one at three seconds, file.png@3+8x0.5 for eight of them half a second apart from
+            // three seconds on, numbered before the extension, which is how a flicker gets caught in the act
             int at = wanted.LastIndexOf('@');
             scheduledScreenshot = at > 0 ? wanted[..at] : wanted;
-            scheduledScreenshotAt = at > 0 && double.TryParse(wanted[(at + 1)..], System.Globalization.CultureInfo.InvariantCulture, out double seconds) ? seconds : 2.0;
+            string when = at > 0 ? wanted[(at + 1)..] : "2";
+            int plus = when.IndexOf('+');
+            string start = plus > 0 ? when[..plus] : when;
+            scheduledScreenshotAt = double.TryParse(start, System.Globalization.CultureInfo.InvariantCulture, out double seconds) ? seconds : 2.0;
+            if (plus > 0 && when[(plus + 1)..].Split('x') is { Length: 2 } series &&
+                int.TryParse(series[0], out scheduledScreenshotsLeft) &&
+                double.TryParse(series[1], System.Globalization.CultureInfo.InvariantCulture, out scheduledScreenshotEvery))
+            {
+                scheduledScreenshotsLeft = Math.Max(scheduledScreenshotsLeft, 1);
+            }
+            else
+            {
+                scheduledScreenshotsLeft = 1;
+            }
         }
     }
 
@@ -280,8 +296,20 @@ public class GameEngine : Entity
 
         if (scheduledScreenshot is { } scheduled && TotalTime >= scheduledScreenshotAt)
         {
-            scheduledScreenshot = null;
-            CaptureScreenshot(scheduled);
+            if (scheduledScreenshotsLeft > 1)
+            {
+                // One of a series, numbered, the next one is due a little later
+                string numbered = Path.Combine(Path.GetDirectoryName(scheduled) ?? string.Empty, $"{Path.GetFileNameWithoutExtension(scheduled)}_{scheduledScreenshotsTaken:000}{Path.GetExtension(scheduled)}");
+                scheduledScreenshotsTaken++;
+                scheduledScreenshotsLeft--;
+                scheduledScreenshotAt += scheduledScreenshotEvery;
+                CaptureScreenshot(numbered);
+            }
+            else
+            {
+                scheduledScreenshot = null;
+                CaptureScreenshot(scheduledScreenshotsTaken > 0 ? Path.Combine(Path.GetDirectoryName(scheduled) ?? string.Empty, $"{Path.GetFileNameWithoutExtension(scheduled)}_{scheduledScreenshotsTaken:000}{Path.GetExtension(scheduled)}") : scheduled);
+            }
         }
 
         if (Interlocked.Exchange(ref requestedScreenshot, null) is { } path)
