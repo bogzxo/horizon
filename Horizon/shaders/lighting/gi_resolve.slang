@@ -7,6 +7,7 @@ struct Params
     float2 uSize;        // the small picture, in pixels
     float2 uProbeCount;  // probes of the nearest cascade
     float uProbeSpacing;
+    float2 uProbeOffset; // where its grid starts against the picture, see PathTracedLighting2D.Offset
     float uDirections;
 };
 
@@ -22,7 +23,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
     int2 texel = int2(id.xy);
     if (any(texel >= int2(params.uSize))) return;
 
-    float2 at = (float2(texel) + 0.5) / params.uProbeSpacing - 0.5;
+    float2 at = (float2(texel) + 0.5 - params.uProbeOffset) / params.uProbeSpacing - 0.5;
     float2 low = floor(at);
     float2 weight = at - low;
     int2 count = int2(params.uProbeCount);

@@ -1,0 +1,81 @@
+# Notebook
+
+Claude's running notes, kept so the next session (or the next hour) doesn't have to crawl the tree again. Goals,
+what's going on, what was learned the hard way, hints to self. Read this first, then CLAUDE.md.
+
+## How to write in here (and everywhere else in this repo)
+
+Write like bogz does. Casual, a bit clever, the odd swear word when it earns it, exclamation marks are fine, jokes
+are fine. No "Thing: explanation" colons in comments or commit messages, that reads like a bot. No "Added X" lists
+in commit bodies, say what happened like a person would. Short commit titles that say what happened. Lowercase inline
+comments are fine. If a sentence sounds like a press release, rewrite it.
+
+## Goals right now (October 2026, project-health-2 after the Vulkan merge)
+
+1. The emissive lights flicker in Fighter2D on the Japan map (test on that map only). Find why, fix, prove it with captures.
+2. A fighter standing in front of a lantern blacks it out completely. Keep the sprite shadows but stop the light dying.
+   Ideas from bogz, raise the light poles, give lights a height so the sprite only clips them, and add light types,
+   spot and directional (cones) that rotate and animate. The Japan map should use them.
+3. Post and lighting are slower on Vulkan than they were on GL (post 953 to 244 fps, lighting 820 to 201 on bogz's
+   machine) while CPU bound scenes doubled. Benchmark with the GPU scopes, fix it algorithmically, Vulkan first,
+   re-measure, Excel report in docs/metrics.
+4. Why doesn't it run on macOS arm64. Investigate, plan, fix what can be fixed blind.
+5. After all that, text rendering. Bitmap fonts out, SDF (probably MSDF) fonts in, through the bindless sprite path.
+6. Fighter2D is the flagship, it should use every bell and whistle the engine has.
+
+## What I've learned so far
+
+- Headless on this Linux box works with lavapipe. `apt-get install mesa-vulkan-drivers vulkan-tools`, Xvfb on :99,
+  then `DISPLAY=:99 HORIZON_LOG_LOOPS=2 HORIZON_INPUT_SCRIPT=quit.txt HORIZON_SCREENSHOT=x.png@5 ./Horizon.Testing lighting`.
+  About 3 fps on the lighting scene, 265 ms a frame, so the GPU scope numbers are relative, not absolute. Four cores.
+- The GPU scopes exist (`GraphicsDevice.BeginGpuScope`, read back in `ReadGpuTime`) but `HORIZON_LOG_LOOPS` doesn't
+  print them, only the loops. Add them to the log so headless runs say what each pass costs.
+- The sprite shadow field (`Lighting/SpriteShadows.cs`) is three compute passes every frame, edges, then one thread
+  per column doing a serial sweep over the whole column, then one thread per row building a Felzenszwalb envelope
+  serially, twice (two channels). That is a serial chain of a thousand steps on one lane per workgroup, which is
+  exactly what a GPU hates. Suspect number one for the lighting scene. Jump flooding or a parallel scan would do.
+- The light tiles pass is tiny (one thread a tile) and not the problem on its own, but it runs even with zero lights
+  and so does the sprite field even when nothing casts.
+- The cascades (`gi_cascade.slang`) stop a ray at `toWall < 0.25` world units and treat anything emissive over 0.2
+  as a wall in the "glowing" channel of the sprite field, which is how a lantern lights its surroundings. Small
+  emitters a few pixels wide against probes every 2 pixels of a half size picture (so 4 picture pixels apart)
+  is a classic flicker setup, a ray hits the lantern one frame and misses it the next as the camera moves. The
+  bounce reads last frame's result shifted by `uShift`, with Bounce 0.8, so anything that wobbles gets fed back.
+- Lights in Japan come from Tiled objects with `light_*` properties (`Map/FightingStage.cs` ReadLight), the
+  lantern template is `Assets/maps/objects/lantern.tx`, the map overrides to radius 100, intensity 0.75, flicker 0.2,
+  shadows on. There's a "glow" tile layer with Emissive 1. Player fill lights are in `Effects/PlayerLights.cs`.
+- Every light is a point in the plane, the fighter's sprite field is a hard wall between the light and whatever is
+  behind the fighter. That is why a fighter in front of a lantern kills it, the lantern is in the floor plane.
+- macOS, found by reading, not by running (no Mac here). `VulkanContext` creates the instance without
+  `VK_KHR_portability_enumeration` and without the portability flag, so under the Vulkan SDK loader MoltenVK is
+  hidden and `vkEnumeratePhysicalDevices` says zero GPUs. It also throws out any device under Vulkan 1.3 and asks
+  for the 1.3 feature structs directly, MoltenVK depends on version. It never enables `VK_KHR_portability_subset`
+  on the device, which the spec says you must when it's there. The bindless table wants 4096 combined samplers in one
+  set, Metal limits samplers per argument buffer, size it from the limits. `shadow_columns.slang` uses 32 KB of
+  groupshared, which is the whole Apple threadgroup budget. GLFW on Mac needs `libvulkan.1.dylib` or
+  `libMoltenVK.dylib` findable and nothing ships it, the user has to have the SDK installed. Natives for SDL/GLFW/Slang
+  all ship osx-arm64 so that's not it. Window on main thread, drawing on a render thread, that's the right way round for Cocoa.
+- The window is GLFW (`WindowManager` registers GlfwWindowing) even though the csproj references the SDL packages.
+
+## Done so far this round
+
+- The lanterns breathing on Japan was the radiance cascade probe grid riding along with the camera. Every pixel the
+  camera panned, every probe saw something slightly different and a lamp a few pixels wide got hit by a ray one
+  frame and missed the next. The grid is pinned to the world now (`PathTracedLighting2D.Offset`, `uProbeOffset` in
+  gi_cascade and gi_resolve, one probe more each way). Measured on the new `pathtraced-pan` example (nothing moves
+  but the camera, lights steady, the blob glows), aligned frame to frame difference of the GI buffer went from 0.96
+  to 0.35, and about 0.1 while the camera drifts slowly. The lights' own `Flicker` is still there on purpose.
+- `HORIZON_SCREENSHOT=file.png@3+8x0.5` takes a series now, numbered, and `HORIZON_LOG_LOOPS` prints the GPU passes.
+- Vsync off asks for immediate mode first, mailbox was still waiting for the blank on Windows.
+- GPU passes on lavapipe, Japan, path traced, 1600x900. sprite shadows 160 to 235 ms, path tracing 200 to 265,
+  tile map 50 to 77, resolve 26 to 39, the rest nothing. The sprite field is the thing to kill first.
+
+## Hints to self
+
+- Shell cwd drifts between calls, use absolute paths and `git -C`.
+- Build the game with `dotnet build -c Debug` in /home/user/Fighter2D, run it headless with
+  `DISPLAY=:99 ./Fighter2D --map japan` from bin/Debug/net10.0, HORIZON_INPUT_SCRIPT to quit, HORIZON_SCREENSHOT@11
+  (ten seconds of versus screen first).
+- `options.hor` next to the exe holds the options, `fancy: true` is the path traced one.
+- Commits end with the Co-Authored-By and Claude-Session lines, no model names anywhere in the code.
+- Don't touch Build History in Fighter2D, it's tracked on purpose.

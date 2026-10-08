@@ -114,6 +114,9 @@ public sealed class PathTracedLighting2D : IDisposable
         float pixelWorld = camera.Bounds.Width / width;
         Vector2 shift = MeasureShift(camera) ?? Vector2.Zero;
 
+        // Where the top left of the picture is in the world, which is what the probes are laid out from, see Offset
+        Vector2 topLeft = TopLeftOf(camera);
+
         // The cascades, from the furthest in, each merged into the one above it as it is made
         cascadePass.Bind();
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color0, UNIT_ALBEDO);
@@ -132,14 +135,18 @@ public sealed class PathTracedLighting2D : IDisposable
             Describe(i, out Vector2 probes, out float spacing, out float directions, out float start, out float end);
             bool hasUpper = i + 1 < cascadeCount;
             Describe(hasUpper ? i + 1 : i, out Vector2 upperProbes, out float upperSpacing, out float upperDirections, out _, out _);
+            Vector2 offset = Offset(topLeft, pixelWorld, spacing);
+            Vector2 upperOffset = Offset(topLeft, pixelWorld, upperSpacing);
 
             cascadePass.SetUniform("uProbeCount", in probes);
             cascadePass.SetUniform("uProbeSpacing", spacing);
+            cascadePass.SetUniform("uProbeOffset", in offset);
             cascadePass.SetUniform("uDirections", directions);
             cascadePass.SetUniform("uIntervalStart", start);
             cascadePass.SetUniform("uIntervalEnd", end);
             cascadePass.SetUniform("uUpperProbeCount", in upperProbes);
             cascadePass.SetUniform("uUpperSpacing", upperSpacing);
+            cascadePass.SetUniform("uUpperOffset", in upperOffset);
             cascadePass.SetUniform("uUpperDirections", upperDirections);
             cascadePass.SetUniform("uHasUpper", hasUpper);
 
@@ -152,12 +159,14 @@ public sealed class PathTracedLighting2D : IDisposable
 
         // And what every pixel sees out of the nearest one
         Describe(0, out Vector2 nearestProbes, out float nearestSpacing, out float nearestDirections, out _, out _);
+        Vector2 nearestOffset = Offset(topLeft, pixelWorld, nearestSpacing);
 
         resolvePass.Bind();
         cascades[0].Bind(0);
         resolvePass.SetUniform("uSize", Size);
         resolvePass.SetUniform("uProbeCount", in nearestProbes);
         resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
+        resolvePass.SetUniform("uProbeOffset", in nearestOffset);
         resolvePass.SetUniform("uDirections", nearestDirections);
         device.BindStorageImage(0, result);
         device.Dispatch((width + 7) / 8, (height + 7) / 8);
@@ -169,13 +178,51 @@ public sealed class PathTracedLighting2D : IDisposable
         writeB = !writeB;
     }
 
+    /// <summary>
+    /// Helper method for where the probes of a cascade sit against the picture, in pixels, which is up to the world
+    /// and not the picture. A probe grid that rode along with the camera would have every probe see something a
+    /// little different every time the camera moved a pixel, and a lantern a few pixels wide would be hit by a ray
+    /// one frame and missed the next, which showed up as the lamps breathing while the camera panned. So the grid
+    /// is pinned to the world instead, every cascade's probes sit on multiples of their spacing in world units,
+    /// and the picture is offset to that, by up to a spacing. The grid of a cascade is a grid of the one above it
+    /// as well, so the merges line up.
+    /// </summary>
+    private static Vector2 Offset(Vector2 topLeft, float pixelWorld, float spacing)
+    {
+        // Where the top left of the picture falls within a cell of the probe grid, in pixels of the picture
+        float x = Mod(topLeft.X / pixelWorld, spacing);
+        float y = Mod(topLeft.Y / pixelWorld, spacing);
+
+        // Down the picture the world goes the other way, see the sums in Run
+        return new Vector2(-x, y - spacing);
+
+        static float Mod(float a, float b)
+        {
+            float m = a % b;
+            return m < 0.0f ? m + b : m;
+        }
+    }
+
+    /// <summary>Helper method for where the top left of the picture is in the world.</summary>
+    private static Vector2 TopLeftOf(Camera camera)
+    {
+        if (!Matrix4x4.Invert(camera.ViewProj, out Matrix4x4 inverse)) return Vector2.Zero;
+
+        // Clip space the way the engine has it before the correction for Vulkan, Y up, so the top left is (-1, 1)
+        Vector4 corner = Vector4.Transform(new Vector4(-1.0f, 1.0f, 0.0f, 1.0f), inverse);
+        return new Vector2(corner.X, corner.Y) / corner.W;
+    }
+
     /// <summary>Helper method for what a cascade is, how many probes, how far apart, how many rays each, over which distances.</summary>
     private void Describe(int cascade, out Vector2 probes, out float spacing, out float directions, out float start, out float end)
     {
         int baseSpacing = Math.Max(1, ProbeSpacing);
         spacing = baseSpacing * (1 << cascade);
         directions = 4.0f * MathF.Pow(4.0f, cascade);
-        probes = new Vector2(MathF.Ceiling(width / spacing), MathF.Ceiling(height / spacing));
+
+        // One more each way than the picture takes, the grid is pinned to the world and may start up to a spacing
+        // before the picture does, see Offset
+        probes = new Vector2(MathF.Ceiling(width / spacing) + 1.0f, MathF.Ceiling(height / spacing) + 1.0f);
 
         float interval = MathF.Max(BaseInterval, 1.0f);
         start = interval * (MathF.Pow(4.0f, cascade) - 1.0f) / 3.0f;

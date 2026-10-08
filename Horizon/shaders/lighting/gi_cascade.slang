@@ -26,11 +26,13 @@ struct Params
     float2 uCascadeSize;      // the cascade texture, probes times rays each way
     float2 uProbeCount;       // probes across and up, this cascade
     float uProbeSpacing;      // pixels between probes, this cascade
+    float2 uProbeOffset;      // where the first probe's cell starts against the picture, in pixels, up to a spacing before it
     float uDirections;        // rays per probe, this cascade (a power of four)
     float uIntervalStart;     // how far from the probe a ray starts, in pixels
     float uIntervalEnd;       // and where it gives up
     float2 uUpperProbeCount;  // the same for the cascade above, which this one merges into
     float uUpperSpacing;
+    float2 uUpperOffset;
     float uUpperDirections;
     int uHasUpper;
     float uPixelWorld;        // how big a pixel of the picture is in world units
@@ -137,7 +139,7 @@ float4 trace(float2 probe, float2 direction)
 // and over the four probes around the position.
 float4 upper(float2 probePixels, uint direction)
 {
-    float2 at = probePixels / params.uUpperSpacing - 0.5;
+    float2 at = (probePixels - params.uUpperOffset) / params.uUpperSpacing - 0.5;
     float2 low = floor(at);
     float2 weight = at - low;
     int2 count = int2(params.uUpperProbeCount);
@@ -179,7 +181,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
     int sqrtDirections = int(sqrt(params.uDirections) + 0.5);
     uint direction = uint(dirCell.y * sqrtDirections + dirCell.x);
 
-    float2 probePixels = (float2(probe) + 0.5) * params.uProbeSpacing;
+    // The probes are pinned to the world rather than the picture, see PathTracedLighting2D.Offset
+    float2 probePixels = (float2(probe) + 0.5) * params.uProbeSpacing + params.uProbeOffset;
     float angle = (float(direction) + 0.5) / params.uDirections * TAU;
     float2 ray = float2(cos(angle), sin(angle));
 
