@@ -403,6 +403,22 @@ public class PhysicsWorld : GameComponent
         return staticGrid.Query(Vector2.Min(from, to) + local.Min, Vector2.Max(from, to) + local.Max);
     }
 
+    /// <summary>
+    /// Whether a fixture, with its body at a position, is inside anything static. For fitting a body that changes
+    /// shape (a fighter whose box follows the frame they're drawn on) somewhere it doesn't stick into the map.
+    /// Simulation thread, like the rest of the physics.
+    /// </summary>
+    public bool OverlapsStatic(IPhysicsFixture fixture, Vector2 bodyPosition)
+    {
+        foreach (int candidate in FindStaticCandidates(fixture, bodyPosition, bodyPosition))
+        {
+            if (fixture.TestIntersection(staticGrid.GetFixture(candidate), bodyPosition, staticGrid.GetBodyPosition(candidate)))
+                return true;
+        }
+
+        return false;
+    }
+
     private void UpdateParticles(float dt)
     {
         if (particleGroups.Count == 0 && particleFeeds.Count == 0) return;
