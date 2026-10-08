@@ -187,7 +187,7 @@ internal sealed class TileMapBatch(string imagePath)
         shader.SetUniform(UNIFORM_TEXEL_SIZE, in texel);
 
         buffers!.Bind();
-        ObjectManager.GL.DrawElementsInstanced(PrimitiveType.Triangles, UnitQuad.INDICES, DrawElementsType.UnsignedInt, null, uploaded);
+        Horizon.Graphics.GraphicsDevice.Current.DrawIndexedInstanced(Horizon.Graphics.Topology.Triangles, UnitQuad.INDICES, uploaded);
     }
 
     private bool EnsureBuffers()

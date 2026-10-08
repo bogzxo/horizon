@@ -29,7 +29,7 @@ internal static class ScreenTriangle
             return;
 
         array.Bind();
-        ObjectManager.GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+        Horizon.Graphics.GraphicsDevice.Current.Draw(Horizon.Graphics.Topology.Triangles, 3);
     }
 
     private static VertexArrayObject? Create()

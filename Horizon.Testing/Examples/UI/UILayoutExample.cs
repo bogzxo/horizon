@@ -79,7 +79,7 @@ public class UILayoutExample : Scene, ITestControls
         if (_selfTest is not null)
             ScriptSelfTest(_selfTest);
 
-        Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
     // 1. A grid, something to scroll, a number box and a selector, put together in C#.

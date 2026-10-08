@@ -30,6 +30,9 @@ public class ObjectManager : GameComponent, IDisposable
     {
         GL = gl;
         BufferObject.ReadLimits();
+
+        // The renderers never see the GL, they see this
+        _ = new OpenGLDevice(gl);
     }
 
     public AssetManager<

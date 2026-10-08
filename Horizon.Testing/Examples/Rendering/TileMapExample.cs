@@ -2,6 +2,8 @@ using System;
 using System.IO.Compression;
 using System.Numerics;
 
+using Horizon.OpenGL;
+
 using Horizon.Engine;
 using Horizon.Rendering;
 using Horizon.Rendering.Tiling;
@@ -67,9 +69,9 @@ public class TileMapExample : Scene, ITestControls
     {
         base.PostInit();
 
-        Engine.GL.Enable(Silk.NET.OpenGL.EnableCap.Blend);
-        Engine.GL.BlendFunc(Silk.NET.OpenGL.BlendingFactor.SrcAlpha, Silk.NET.OpenGL.BlendingFactor.OneMinusSrcAlpha);
-        Engine.GL.ClearColor(0.36f, 0.62f, 0.86f, 1.0f);
+        RenderState.Blend = true;
+        RenderState.BlendMode = BlendMode.Alpha;
+        Engine.Graphics.ClearColor = new Vector4(0.36f, 0.62f, 0.86f, 1.0f);
 
         // Looking at the middle of the map, which is also where its layers line up
         _eye = _map.Min + _map.Size / 2.0f;

@@ -142,7 +142,7 @@ public class UIScreensExample : Scene, ITestControls
         FillMates();
         Say("right click a mate, Q and E flip the pages");
 
-        Engine.GL.ClearColor(0.12f, 0.13f, 0.17f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.12f, 0.13f, 0.17f, 1.0f);
     }
 
     // Called whenever the list changes. Bind keeps the buttons it made last time, so only a new mate pops in

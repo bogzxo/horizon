@@ -176,7 +176,6 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
 
     private void Simulate(Technique technique, BufferObject buffer, ParticleRange range, float dt, float maxAge)
     {
-        var gl = GameEngine.Instance.GL;
         Vector2 gravity = Renderer.Gravity;
 
         technique.Bind();
@@ -188,14 +187,12 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
         technique.SetUniform(UNIFORM_GRAVITY, in gravity);
         BindSimulation(technique);
 
-        gl.DispatchCompute((range.Count + WorkGroupSize - 1) / WorkGroupSize, 1, 1);
+        var device = Horizon.Graphics.GraphicsDevice.Current;
+        device.Dispatch((range.Count + WorkGroupSize - 1) / WorkGroupSize);
 
         // What the shader wrote is read next as instance attributes, by the next dispatch, and
         // overwritten by the next spawn upload.
-        gl.MemoryBarrier(
-            MemoryBarrierMask.VertexAttribArrayBarrierBit
-                | MemoryBarrierMask.ShaderStorageBarrierBit
-                | MemoryBarrierMask.BufferUpdateBarrierBit);
+        device.Barrier(Horizon.Graphics.BarrierTargets.VertexAttributes | Horizon.Graphics.BarrierTargets.ShaderStorage | Horizon.Graphics.BarrierTargets.BufferUpdate);
 
         technique.Unbind();
     }

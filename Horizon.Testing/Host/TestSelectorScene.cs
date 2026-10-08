@@ -135,7 +135,7 @@ internal sealed class TestSelectorScene : Scene
     {
         // Render thread, so GL is fair game. Every frame rather than once: whatever test you just left has
         // probably buggered about with it
-        Engine.GL.ClearColor(Color.CornflowerBlue);
+        Engine.Graphics.ClearColor = new Vector4(0.39f, 0.58f, 0.93f, 1.0f);
         base.Render(dt);
     }
 

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Core.Threading;
 using Horizon.Engine;
@@ -142,16 +142,8 @@ public sealed class OcclusionMap2D : IDisposable
         {
             uploadedVersion = shownVersion;
 
-            var gl = GameEngine.Instance.GL;
-
-            // The rows are a byte per cell with nothing in between, the default is to expect them padded to four
-            gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
             fixed (byte* data = shown)
-            {
-                gl.TextureSubImage2D(
-                    texture.Handle, 0, 0, 0, (uint)Width, (uint)Height, PixelFormat.Red, PixelType.UnsignedByte, data);
-            }
-            gl.PixelStore(PixelStoreParameter.UnpackAlignment, 4);
+                Horizon.Graphics.GraphicsDevice.Current.UploadTexels(texture, 0, 0, (uint)Width, (uint)Height, Horizon.Graphics.TexelFormat.R8, data);
         }
 
         return texture;

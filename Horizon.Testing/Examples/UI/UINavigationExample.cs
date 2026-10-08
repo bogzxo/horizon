@@ -100,7 +100,7 @@ public class UINavigationExample : Scene, ITestControls
         if (_selfTest is not null)
             ScriptSelfTest(_selfTest);
 
-        Engine.GL.ClearColor(0.22f, 0.27f, 0.36f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.22f, 0.27f, 0.36f, 1.0f);
     }
 
     private void Build()

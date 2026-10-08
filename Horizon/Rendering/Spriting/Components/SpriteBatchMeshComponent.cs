@@ -1,9 +1,9 @@
 using System.Numerics;
 
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.OpenGL;
 using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Managers;
 
 using Silk.NET.OpenGL;
 
@@ -123,13 +123,7 @@ public class SpriteBatchMesh : GameObject
 
         items.BindRange(BufferTargetARB.ShaderStorageBuffer, ITEMS_BINDING);
 
-        ObjectManager.GL.DrawElementsInstancedBaseInstance(
-            PrimitiveType.Triangles,
-            UnitQuad.INDICES,
-            DrawElementsType.UnsignedInt,
-            null,
-            (uint)count,
-            (uint)first);
+        GraphicsDevice.Current.DrawIndexedInstanced(Topology.Triangles, UnitQuad.INDICES, (uint)count, (uint)first);
 
         // Samplers stick to a unit whatever texture is bound there next, so the units are left the way they were found
         if (sampled)
@@ -206,39 +200,39 @@ public class SpriteBatchMesh : GameObject
             return;
         }
 
-        var gl = ObjectManager.GL;
+        var device = GraphicsDevice.Current;
 
         // stencil setup
-        gl.Enable(EnableCap.StencilTest);
-        gl.StencilMask(0xFF);
-        gl.Clear(ClearBufferMask.StencilBufferBit);
+        device.SetStencilTest(true);
+        device.SetStencilWrite(0xFF);
+        device.Clear(ClearTargets.Stencil);
 
         // write 1s to the mask wherever we draw
-        gl.StencilFunc(StencilFunction.Always, 1, 0xFF);
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Replace);
+        device.SetStencilFunction(CompareFunction.Always, 1, 0xFF);
+        device.SetStencilOperation(StencilAction.Keep, StencilAction.Keep, StencilAction.Replace);
 
         // turn off colors and depth, just rendering the mask for now
-        gl.ColorMask(false, false, false, false);
-        gl.DepthMask(false);
+        device.SetColorWrite(false);
+        device.SetDepthWrite(false);
 
         // pass 1: mask write
         DrawItems(0, masks, textures, globalModel, camera);
 
         // pass 2: color draw
         // only draw if the mask equals 1, and don't write to the stencil buffer anymore
-        gl.StencilFunc(StencilFunction.Equal, 1, 0x01);
-        gl.StencilMask(0x00);
-        gl.StencilOp(StencilOp.Keep, StencilOp.Keep, StencilOp.Keep);
+        device.SetStencilFunction(CompareFunction.Equal, 1, 0x01);
+        device.SetStencilWrite(0x00);
+        device.SetStencilOperation(StencilAction.Keep, StencilAction.Keep, StencilAction.Keep);
 
         // colors back!
-        gl.ColorMask(true, true, true, true);
-        gl.DepthMask(true);
+        device.SetColorWrite(true);
+        device.SetDepthWrite(true);
 
         DrawItems(masks, colors, textures, globalModel, camera);
 
         // cleanup state so we don't bleed into other draw calls
-        gl.Disable(EnableCap.StencilTest);
-        gl.StencilMask(0xFF);
+        device.SetStencilTest(false);
+        device.SetStencilWrite(0xFF);
     }
 
     /// <summary>

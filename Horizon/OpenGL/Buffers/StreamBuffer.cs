@@ -106,7 +106,7 @@ public sealed unsafe class StreamBuffer<T> : IDisposable where T : unmanaged
     {
         if (mapped == null) return;
 
-        fences[region] = ObjectManager.GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, SyncBehaviorFlags.None);
+        fences[region] = Horizon.Graphics.GraphicsDevice.Current.CreateFence();
         region = (region + 1) % REGIONS;
         Count = 0;
     }
@@ -168,18 +168,18 @@ public sealed unsafe class StreamBuffer<T> : IDisposable where T : unmanaged
         nint fence = fences[which];
         if (fence == 0) return;
 
-        var gl = ObjectManager.GL;
-        gl.ClientWaitSync(fence, SyncObjectMask.Bit, LONGEST_WAIT);
-        gl.DeleteSync(fence);
+        var device = Horizon.Graphics.GraphicsDevice.Current;
+        device.WaitFence(fence, LONGEST_WAIT);
+        device.DeleteFence(fence);
         fences[which] = 0;
     }
 
     public void Dispose()
     {
-        var gl = ObjectManager.GL;
+        var device = Horizon.Graphics.GraphicsDevice.Current;
         for (int i = 0; i < REGIONS; i++)
         {
-            if (fences[i] != 0) gl.DeleteSync(fences[i]);
+            if (fences[i] != 0) device.DeleteFence(fences[i]);
             fences[i] = 0;
         }
 

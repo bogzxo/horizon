@@ -151,7 +151,7 @@ public class FluidExample : Scene, ITestControls
         base.PostInit();
 
         Console.WriteLine("FluidExample\r\n\r\n The spout fills the left basin, which overflows into the next one, and that into the last.");
-        Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.02f, 0.02f, 0.04f, 1.0f);
     }
 
     public override void UpdateState(float dt)

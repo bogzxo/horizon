@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.OpenGL.Buffers;
 using Horizon.OpenGL.Descriptions;
 
@@ -69,6 +70,9 @@ public sealed class PostTarget : IDisposable
 
     public Texture Texture { get; }
 
+    /// <summary>The frame buffer behind the target, for clearing it or binding one of its attachments.</summary>
+    public FrameBufferObject FrameBuffer => frameBuffer;
+
     /// <summary>The size in pixels.</summary>
     public Vector2 Size { get; }
 
@@ -119,16 +123,8 @@ public sealed class PostTarget : IDisposable
     /// </summary>
     public void CopyFromWindow()
     {
-        var engine = GameEngine.Instance;
-        Vector2 window = engine.WindowManager.ViewportSize;
-
-        // Zero is the window, the one frame buffer nobody had to make
-        engine.GL.BlitNamedFramebuffer(
-            0, frameBuffer.Handle,
-            0, 0, (int)window.X, (int)window.Y,
-            0, 0, (int)Size.X, (int)Size.Y,
-            ClearBufferMask.ColorBufferBit,
-            BlitFramebufferFilter.Linear);
+        Vector2 window = GameEngine.Instance.WindowManager.ViewportSize;
+        GraphicsDevice.Current.CopyWindow(frameBuffer, (uint)window.X, (uint)window.Y, (uint)Size.X, (uint)Size.Y);
     }
 
     public void Dispose() => frameBuffer.Dispose();

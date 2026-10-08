@@ -195,7 +195,7 @@ public class UIPackExample : Scene, ITestControls
     public override void PostInit()
     {
         base.PostInit();
-        Engine.GL.ClearColor(0.16f, 0.17f, 0.22f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.16f, 0.17f, 0.22f, 1.0f);
     }
 
     public override void UpdateState(float dt)

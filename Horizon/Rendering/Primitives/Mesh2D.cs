@@ -53,6 +53,6 @@ public class Mesh2D : GameObject
 
         Shader.Bind();
         Buffer.Bind();
-        ObjectManager.GL.DrawElements(PrimitiveType.Triangles, elementCount, DrawElementsType.UnsignedInt, null);
+        Horizon.Graphics.GraphicsDevice.Current.DrawIndexed(Horizon.Graphics.Topology.Triangles, elementCount);
     }
 }

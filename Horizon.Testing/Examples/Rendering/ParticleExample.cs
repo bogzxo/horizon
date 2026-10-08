@@ -71,7 +71,7 @@ public class ParticleExample : Scene, ITestControls
         base.PostInit();
 
         Console.WriteLine("ParticleExample\r\n\r\n CPU simulator on the left, compute shader simulator on the right.");
-        Engine.GL.ClearColor(0.02f, 0.02f, 0.04f, 1.0f);
+        Engine.Graphics.ClearColor = new Vector4(0.02f, 0.02f, 0.04f, 1.0f);
     }
 
     public override void UpdateState(float dt)

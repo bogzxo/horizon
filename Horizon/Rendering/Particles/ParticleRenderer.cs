@@ -261,15 +261,8 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
         buffer.Bind();
 
-        // baseInstance offsets the divisor-1 attributes to the simulator's range of the instance buffer.
-        Engine.GL.DrawElementsInstancedBaseInstance(
-            PrimitiveType.Triangles,
-            6,
-            DrawElementsType.UnsignedInt,
-            null,
-            range.Count,
-            range.First
-        );
+        // the first instance offsets the per instance attributes to the simulator's range of the instance buffer
+        Engine.Graphics.DrawIndexedInstanced(Horizon.Graphics.Topology.Triangles, 6, range.Count, range.First);
 
         Simulator.Submitted();
     }

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering.Spriting;
@@ -47,16 +47,10 @@ internal sealed class UIRenderer
         if (fontSampler != 0)
             return;
 
-        var gl = GameEngine.Instance.GL;
-
         // Text is nearly always drawn smaller than the atlas, which a nearest filter turns to SHIT, so
         // the font gets as many mipmaps as can be and is sampled through a smooth sampler. The texture's own filter is
         // left alone for anything else drawing with the same font image...
-        fontSampler = gl.CreateSampler();
-        gl.SamplerParameter(fontSampler, SamplerParameterI.MinFilter, (int)GLEnum.LinearMipmapLinear);
-        gl.SamplerParameter(fontSampler, SamplerParameterI.MagFilter, (int)GLEnum.Linear);
-        gl.SamplerParameter(fontSampler, SamplerParameterI.WrapS, (int)GLEnum.ClampToEdge);
-        gl.SamplerParameter(fontSampler, SamplerParameterI.WrapT, (int)GLEnum.ClampToEdge);
+        fontSampler = GameEngine.Instance.Graphics.CreateSampler(new Horizon.Graphics.SamplerSettings(Smooth: true, Mipmaps: true));
     }
 
     /// <summary>
@@ -67,9 +61,7 @@ internal sealed class UIRenderer
         if (font.Texture.Handle == 0)
             return;
 
-        var gl = GameEngine.Instance.GL;
-        gl.TextureParameter(font.Texture.Handle, TextureParameterName.TextureMaxLevel, 1000);
-        gl.GenerateTextureMipmap(font.Texture.Handle);
+        GameEngine.Instance.Graphics.GenerateMipmaps(font.Texture);
     }
 
     /// <summary>
