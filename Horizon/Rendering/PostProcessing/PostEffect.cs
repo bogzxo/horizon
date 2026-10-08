@@ -30,12 +30,6 @@ public abstract class PostEffect : IDisposable
     /// </summary>
     public TweenContext Tweens => tweens ?? Interlocked.CompareExchange(ref tweens, new TweenContext(), null) ?? tweens;
 
-    /// <summary>
-    /// Whether the effect only does anything to what moves. One that says so is left out for as long as whoever
-    /// drew the picture knows that nothing in it does, which saves all of its passes.
-    /// </summary>
-    protected internal virtual bool NeedsMotion => false;
-
     /// <summary>GL thread, once, before the effect is first run: where its shaders are made.</summary>
     protected virtual void Initialize()
     { }
@@ -83,12 +77,6 @@ public sealed class PostContext
     /// work on both passes the alpha on, and treats it like the colours.
     /// </summary>
     public Texture Source { get; internal set; } = null!;
-
-    /// <summary>
-    /// How fast everything in the picture is moving across it and how near it is (see <see cref="DeferredRenderer2D"/>
-    /// for what is in it), for the effects that go by that. Null if whoever drew the picture doesn't keep track.
-    /// </summary>
-    public Texture? Motion { get; internal set; }
 
     /// <summary>The size of <see cref="Source"/> in pixels.</summary>
     public Vector2 SourceSize { get; internal set; }

@@ -16,9 +16,7 @@ using Button = Horizon.UI.Components.Button;
 namespace Horizon.Testing.Examples.Rendering;
 
 /// <summary>
-/// The post processing of the 2D renderers.
-/// The HUD has a blur of its own instead (<see cref="UICompositor.PostProcessing"/>): a button that slides back and
-/// forth and one that grows and shrinks are smeared the way they move, the line of text that stands still is not.
+/// The post processing of the 2D renderers, the picture tube over a lit world and a HUD.
 /// </summary>
 public class PostProcessExample : Scene, ITestControls
 {
@@ -40,9 +38,6 @@ public class PostProcessExample : Scene, ITestControls
     public IReadOnlyList<TestControl> Controls { get; } =
     [
         new("C", "the picture tube on and off"),
-        new("M", "the motion blur of the world on and off"),
-        new("U", "the motion blur of the HUD on and off"),
-        new("Up / Down", "open the shutter for longer or shorter"),
         new("W", "the bulge of the glass on and off"),
         new("P", "stop and start the camera")
     ];
@@ -50,7 +45,6 @@ public class PostProcessExample : Scene, ITestControls
     private readonly Camera2D _camera;
     private readonly Renderer2D _screen;
     private readonly DeferredRenderer2D _world;
-    private readonly MotionBlurEffect _blur, _hudBlur;
     private readonly CrtEffect _tube;
     private readonly TileMap _map;
 
@@ -70,9 +64,8 @@ public class PostProcessExample : Scene, ITestControls
         _screen = AddEntity(new Renderer2D((uint)viewport.X, (uint)viewport.Y) { ClearColor = new Vector4(0.36f, 0.62f, 0.86f, 1.0f) });
         _tube = _screen.PostProcessing.Add(new CrtEffect { PixelSize = PIXEL_SIZE });
 
-        // The world, lit and blurred, shown in the glass
+        // The world, lit, shown in the glass
         _world = _screen.AddEntity(new DeferredRenderer2D((uint)viewport.X, (uint)viewport.Y) { ClearColor = new Vector4(0.36f, 0.62f, 0.86f, 1.0f) });
-        _blur = _world.PostProcessing.Add(new MotionBlurEffect());
 
         string directory = Path.Combine(Path.GetTempPath(), "horizon-tilemap-test");
         TileMapExample.WriteFiles(directory);
@@ -80,10 +73,9 @@ public class PostProcessExample : Scene, ITestControls
         _map = _world.AddEntity(TileMap.Load(Path.Combine(directory, "town.tmx")));
         _world.AddEntity(_map.Foreground);
 
-        // The HUD: behind the glass as well, but neither lit nor blurred
+        // The HUD: behind the glass as well, but not lit
         var viewportCamera = AddEntity(new Camera2D(viewport));
         var compositor = _screen.AddComponent(new UICompositor(viewportCamera) { DesignSize = DesignSize });
-        _hudBlur = compositor.PostProcessing.Add(new MotionBlurEffect());
 
         var module = compositor.CreateModule();
         _status = module.AddComponent(new Label
@@ -130,12 +122,8 @@ public class PostProcessExample : Scene, ITestControls
         var keyboard = Engine.Input.Keyboard;
 
         if (keyboard.WasPressed(Key.C)) _tube.Enabled = !_tube.Enabled;
-        if (keyboard.WasPressed(Key.M)) _blur.Enabled = !_blur.Enabled;
-        if (keyboard.WasPressed(Key.U)) _hudBlur.Enabled = !_hudBlur.Enabled;
         if (keyboard.WasPressed(Key.P)) _panning = !_panning;
         if (keyboard.WasPressed(Key.W)) _tube.Warp = _tube.Warp == Vector2.Zero ? new Vector2(1.0f / 32.0f, 1.0f / 24.0f) : Vector2.Zero;
-        if (keyboard.WasPressed(Key.Up)) _blur.Shutter = MathF.Min(_blur.Shutter * 1.5f, 0.2f);
-        if (keyboard.WasPressed(Key.Down)) _blur.Shutter = MathF.Max(_blur.Shutter / 1.5f, 1.0f / 480.0f);
 
         if (_panning)
             _time += dt;
@@ -144,9 +132,7 @@ public class PostProcessExample : Scene, ITestControls
         float x = _centre.X + MathF.Sin(_time * PAN_SPEED) * PAN_RANGE;
         _camera.Position = new Vector3(MathF.Round(x), MathF.Round(_centre.Y), 0.0f);
 
-        _status.Text =
-            $"tube {(_tube.Enabled ? "on" : "off")}    blur {(_blur.Enabled ? "on" : "off")}    hud blur {(_hudBlur.Enabled ? "on" : "off")}    " +
-            $"shutter 1/{1.0f / _blur.Shutter:0}s    camera {MathF.Abs(_camera.Velocity.X):0} px/s";
+        _status.Text = $"tube {(_tube.Enabled ? "on" : "off")}    warp {(_tube.Warp == Vector2.Zero ? "off" : "on")}    camera {(_panning ? "panning" : "stopped")}";
 
         base.UpdateState(dt);
     }

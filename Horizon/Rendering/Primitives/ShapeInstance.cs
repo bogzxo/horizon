@@ -58,10 +58,7 @@ public struct ShapeInstance
     /// <summary>A <see cref="ShapeKind"/>.</summary>
     public uint Kind;
 
-    /// <summary>How fast the shape is moving across the world, for a renderer that blurs motion. Nothing is moved by it.</summary>
-    public Vector2 Motion;
-
-    private Vector2 padding0, padding1;
+    private Vector2 padding0, padding1, padding2;
 
     public static readonly uint SizeInBytes = (uint)Unsafe.SizeOf<ShapeInstance>();
 
@@ -131,7 +128,6 @@ public struct ShapeInstance
         shape.Thickness = Interpolate.Linear(from.Thickness, to.Thickness, amount);
         shape.Rounding = Interpolate.Linear(from.Rounding, to.Rounding, amount);
         shape.Color = Interpolate.PackedColor(from.Color, to.Color, amount);
-        shape.Motion = Interpolate.Linear(from.Motion, to.Motion, amount);
         return shape;
     }
 

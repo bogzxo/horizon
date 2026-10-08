@@ -13,9 +13,7 @@ struct Params
     // What the whole renderer is moved by
     float4x4 uModel;
 
-    // How near the shapes are, from 0 (the backdrop) to 1 (right in front), and how much of them shows whatever the
-    // light is (debug drawings want to be seen in the dark, which is 1)
-    float uNearness;
+    // How much of the shapes shows whatever the light is (debug drawings want to be seen in the dark, which is 1)
     float uEmissive;
 };
 
@@ -37,9 +35,9 @@ struct Shape
     float depth;
     uint color;
     uint kind;
-    float2 motion;
     float2 padding0;
     float2 padding1;
+    float2 padding2;
 };
 
 // Must match ShapeKind.
@@ -61,7 +59,6 @@ struct Varyings
     nointerpolation float thickness : THICKNESS;
     nointerpolation float rounding : ROUNDING;
     nointerpolation uint kind : KIND;
-    nointerpolation float2 motion : MOTION;
 };
 
 [shader("vertex")]
@@ -72,8 +69,8 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
     uint kind = shape.kind & KIND_MASK;
 
     // The edge of a shape is smoothed over about a pixel, so the quad reaches a little past it. A pixel of the world
-    // at the scale things are drawn at, which uMotionScale (halves of the screen a unit) and the viewport give
-    float pixel = 2.0 / max(camera.uViewportSize.x * abs(camera.uMotionScale.x), 0.0001);
+    // at the scale things are drawn at, which uProjectionScale (halves of the screen a unit) and the viewport give
+    float pixel = 2.0 / max(camera.uViewportSize.x * abs(camera.uProjectionScale.x), 0.0001);
 
     float2 center = shape.center;
     float2 halfSize = shape.size;
@@ -107,7 +104,6 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
     output.thickness = shape.thickness;
     output.rounding = shape.rounding;
     output.kind = kind;
-    output.motion = screenMotion(mul(shape.motion, (float2x2)params.uModel));
     return output;
 }
 
@@ -171,5 +167,5 @@ GBuffer fsMain(Varyings input)
     float4 result = float4(input.color.rgb, input.color.a * coverage);
     if (result.a <= 0.0) discard;
 
-    return writeFlat(result, params.uEmissive, input.motion, params.uNearness);
+    return writeFlat(result, params.uEmissive);
 }

@@ -72,6 +72,12 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     public UIFont Font { get; }
 
+    /// <summary>
+    /// How often (in seconds) an icon with frames plays them, a gamepad button that presses itself say, resting on
+    /// its first frame in between. <c>icon_blink</c> in the skin file.
+    /// </summary>
+    public float IconBlink { get; set; } = 3.0f;
+
     /// <summary>The sprite sheet definition the art is looked up in, null for a skin that only cuts its regions out of an image.</summary>
     public SpriteSheetDefinition? Sheet { get; }
 
@@ -323,7 +329,12 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
         if (art.Frames > 1 && time > 0.0f && art.FrameTime > 0.0f)
         {
-            int frame = (int)(time / art.FrameTime) % art.Frames;
+            // Played through once every so often and left on the first frame in between, a button that pressed
+            // itself over and over looked like it was flickering
+            float play = art.Frames * art.FrameTime;
+            float cycle = MathF.Max(play, IconBlink);
+            float phase = time % cycle;
+            int frame = phase < play ? (int)(phase / art.FrameTime) % art.Frames : 0;
             if (frame > 0)
             {
                 // The names are made once, this is asked on every draw of every icon

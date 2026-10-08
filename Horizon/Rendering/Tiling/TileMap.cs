@@ -43,9 +43,7 @@ public sealed class TileMap : GameObject
     // How far inside of its edges a tile is cut out of its image, so its neighbours in the image never show at its seams
     private const float SOURCE_INSET = 0.01f;
 
-    // How near the layers are for a renderer that blurs motion: the ordinary ones from the furthest to the nearest
     // between these two, and the ones in the foreground in front of anything that isn't a map
-    private const float NEARNESS_BACK = 0.1f, NEARNESS_FRONT = 0.5f, NEARNESS_FOREGROUND = 0.9f;
 
     // The map on the GPU, every layer and tile of it in one draw
     private readonly TileMapGpu gpu = new();
@@ -852,13 +850,12 @@ public sealed class TileMap : GameObject
         var view = camera.Bounds;
         var viewMin = new Vector2(view.X, view.Y);
         var viewMax = new Vector2(view.X + view.Width, view.Y + view.Height);
-        var eye = new Vector2(camera.Position.X, camera.Position.Y);
+        // The middle of what is shown, which is the camera as the frame has it, between two ticks and rounded to
+        // its pixels. Camera.Position is where the simulation last put it, a tick ahead and unrounded, and parallax
+        // worked out from that against a view worked out from the other had every layer that isn't at the map's
+        // own depth jittering by the difference every frame, worst of all under a screen shake
+        var eye = new Vector2(view.X + view.Width * 0.5f, view.Y + view.Height * 0.5f);
 
-        // What it takes to say how fast a layer goes across the screen, how fast the camera goes, and how much of the
-        // screen a unit of the world is
-        Matrix4x4 projection = camera.Projection;
-        Vector2 cameraVelocity = camera.Velocity;
-        var motionScale = new Vector2(projection.M11, projection.M22);
 
         // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
         shown.Clear();
@@ -888,18 +885,9 @@ public sealed class TileMap : GameObject
 
             Animate(layer, shownTime);
 
-            // A layer that is as far away as the map goes by as fast as the camera moves, the other way. One that is
-            // further away keeps up with the camera a little, and one that drifts does that on top
-            Vector2 motion = (state.Scroll - cameraVelocity * state.Parallax) * motionScale;
-            float nearness = state.IsForeground
-                ? NEARNESS_FOREGROUND
-                : NEARNESS_BACK + (NEARNESS_FRONT - NEARNESS_BACK) * index / MathF.Max(1, layers.Count - 1);
-
             shown.Add((layer, new TileMapGpu.Layer
             {
                 Offset = origin + moved,
-                Motion = motion,
-                Nearness = nearness,
                 Emissive = state.Emissive,
                 Tint = new Vector4(state.Tint, state.Opacity)
             }, state.IsForeground));

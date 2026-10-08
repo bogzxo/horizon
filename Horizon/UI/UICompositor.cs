@@ -28,8 +28,7 @@ namespace Horizon.UI;
 /// changed. A UI that is drawn by hand and never published is drawn from its newest list, as it always was.
 /// </para>
 /// <para>
-/// A UI can have effects of its own, see <see cref="PostProcessing"/>: with a
-/// <see cref="MotionBlurEffect"/> what slides, pops or is tweened about is smeared along the way it goes.
+/// A UI can have effects of its own, see <see cref="PostProcessing"/>.
 /// </para>
 /// </summary>
 public partial class UICompositor : GameComponent, IDisposable
@@ -40,8 +39,6 @@ public partial class UICompositor : GameComponent, IDisposable
     /// <summary>The definition of that skin.</summary>
     public const string DEFAULT_SKIN_FILE = "skin.hor";
 
-    // How long (in milliseconds) the UI can go without an update before what moved in the meantime is not motion
-    private const long MOTION_BREAK = 100;
 
     internal readonly Camera2D viewportCamera;
     private string skinDirectory;
@@ -50,7 +47,6 @@ public partial class UICompositor : GameComponent, IDisposable
 
     // For the layout debugger. Where the pointer was last, and when the UI was last updated.
     private Vector2 lastPointer;
-    private long lastUpdate;
 
     /// <summary>Where the pointer was and whether it was down as of the last update, in the camera's world space.</summary>
     public UIPointer Pointer { get; private set; }
@@ -107,7 +103,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
     // Counts the updates for whoever works out how fast things are going, skipping one whenever there was a gap:
     // what is somewhere else after a break hasn't moved there
-    private int motionFrame;
+    private int paintFrame;
     private bool layerWarmed;
 
     // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
@@ -126,7 +122,7 @@ public partial class UICompositor : GameComponent, IDisposable
     /// <summary>
     /// The effects the UI goes through before it is laid over whatever is under it, none to begin with:
     /// <code>
-    /// compositor.PostProcessing.Add(new MotionBlurEffect());
+    /// compositor.PostProcessing.Add(new BlurEffect());
     /// </code>
     /// They only ever see the UI and leave what is behind it alone. While any of them is on the UI is drawn onto
     /// a layer of its own first (see <see cref="PostLayer"/>) and every component keeps track of how fast it is
@@ -196,7 +192,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
-        public bool Moving, Incomplete;
+        public bool Incomplete;
 
         public ReadOnlySpan<SpriteItem> Span => Items.AsSpan(0, Count);
     }
@@ -365,9 +361,7 @@ public partial class UICompositor : GameComponent, IDisposable
         if (Skin is not { } skin)
             return;
 
-        long now = Environment.TickCount64;
-        motionFrame += now - lastUpdate > MOTION_BREAK ? 2 : 1;
-        lastUpdate = now;
+        paintFrame++;
 
         var snapshot = modules;
 
@@ -392,7 +386,7 @@ public partial class UICompositor : GameComponent, IDisposable
         RouteKeyboard(snapshot);
         UpdateTooltip(snapshot, dt);
 
-        back.Begin(skin, motionFrame, dt, layer.Effects.IsActive);
+        back.Begin(skin, paintFrame, dt);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
@@ -462,7 +456,6 @@ public partial class UICompositor : GameComponent, IDisposable
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
-            into.Moving = front.Moving;
             into.Incomplete = front.Incomplete;
         }
     }
@@ -511,11 +504,11 @@ public partial class UICompositor : GameComponent, IDisposable
                     : a[i];
             }
 
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, before.Moving || after.Moving, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
+            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, shown.Moving, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases));
+            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases));
         }
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
@@ -640,10 +633,10 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
-        if (Retained && pictureCurrent && layer.Replay(dt, renderer.Moving))
+        if (Retained && pictureCurrent && layer.Replay(dt))
             return;
 
-        bool layered = layer.Begin(renderer.Moving || !layerWarmed, Retained);
+        bool layered = layer.Begin(Retained);
         layerWarmed = true;
         renderer.Draw(viewportCamera);
 

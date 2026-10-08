@@ -55,11 +55,6 @@ public sealed partial class UIDrawList
     private Vector2 visualScale = Vector2.One;
     private float opacity = 1.0f;
 
-    // How fast what is being painted is going across the screen, for the effects that blur what moves. At a point p
-    // (as the camera sees it) that is motionBase + motionSlope * p. Each component says so for what it paints, see
-    // PushMotion.
-    private readonly Stack<(Vector2 Base, Vector2 Slope)> motions = new();
-    private Vector2 motionBase, motionSlope;
     private int frame;
     private float deltaTime;
 
@@ -70,14 +65,6 @@ public sealed partial class UIDrawList
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
 
-    /// <summary>
-    /// Whether the quads are told how fast they are going. Only when something is going to use it. Working it out
-    /// takes every component a little memory and a little time.
-    /// </summary>
-    internal bool TracksMotion { get; private set; }
-
-    /// <summary>Whether anything that was painted this frame is going anywhere, as far as <see cref="TracksMotion"/> can tell.</summary>
-    internal bool Moving { get; private set; }
 
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
@@ -85,19 +72,13 @@ public sealed partial class UIDrawList
 
     /// <param name="frame">Which update this is, counting up by one for as long as the UI is painted without a break.</param>
     /// <param name="dt">How long the update is, in seconds.</param>
-    /// <param name="tracksMotion">See <see cref="TracksMotion"/>.</param>
-    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, bool tracksMotion = false)
+    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f)
     {
         Skin = skin;
 
         this.frame = frame;
         deltaTime = dt;
         time = (time + dt) % TIME_WRAP;
-        TracksMotion = tracksMotion;
-        Moving = false;
-
-        motions.Clear();
-        motionBase = motionSlope = Vector2.Zero;
 
         itemCount = 0;
         runs.Clear();
@@ -132,7 +113,7 @@ public sealed partial class UIDrawList
     /// </summary>
     internal bool SameAs(UIDrawList other)
     {
-        if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete || Moving != other.Moving)
+        if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete)
             return false;
 
         if (!CollectionsMarshal.AsSpan(runs).SequenceEqual(CollectionsMarshal.AsSpan(other.runs)))
@@ -163,34 +144,6 @@ public sealed partial class UIDrawList
     }
 
     internal void PopVisual() => (visualOffset, visualScale, opacity) = visuals.Pop();
-
-    /// <summary>
-    /// Everything painted until the matching <see cref="PopMotion"/> is going as fast as a component is, which is
-    /// worked out here from where its bounds end up being drawn this update and where they were the last.
-    /// Both of its corners are followed, so what is painted near one of them goes as fast as that corner does:
-    /// the far end of something that is growing moves, the end it grows from doesn't.
-    /// </summary>
-    /// <param name="motion">What the component remembers of where it was.</param>
-    /// <param name="bounds">Where the layout put the component.</param>
-    internal void PushMotion(UIMotion motion, UIRect bounds)
-    {
-        Vector2 min = (bounds.Min * visualScale + visualOffset) * scale + origin;
-        Vector2 max = (bounds.Max * visualScale + visualOffset) * scale + origin;
-
-        motion.Track(min, max, bounds.Size, frame, deltaTime);
-        motions.Push((motionBase, motionSlope));
-
-        // From one corner to the other the speed changes evenly. Something without a size goes at one speed
-        Vector2 size = max - min;
-        Vector2 spread = motion.Max - motion.Min;
-
-        motionSlope = new Vector2(
-            size.X != 0.0f ? spread.X / size.X : 0.0f,
-            size.Y != 0.0f ? spread.Y / size.Y : 0.0f);
-        motionBase = motion.Min - motionSlope * min;
-    }
-
-    internal void PopMotion() => (motionBase, motionSlope) = motions.Pop();
 
     /// <summary>
     /// Everything painted from here on is scaled and then moved, which is how a module places itself.
@@ -462,14 +415,6 @@ public sealed partial class UIDrawList
         ref SpriteItem item = ref items[itemCount++];
         item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
         item.Ring = ring;
-
-        // A quad goes at one speed all over, the one of its middle. They are small enough for that. A panel is
-        // nine of them and text one a letter
-        if (TracksMotion)
-        {
-            item.Motion = motionBase + motionSlope * ((min + max) * 0.5f);
-            Moving |= item.Motion != Vector2.Zero;
-        }
     }
 
     private void CloseRun()

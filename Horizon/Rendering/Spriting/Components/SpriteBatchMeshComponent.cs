@@ -22,7 +22,6 @@ public class SpriteBatchMesh : GameObject
     public const uint ITEMS_BINDING = 3;
 
     private const string UNIFORM_MODEL_MATRIX = "uModel";
-    private const string UNIFORM_NEARNESS = "uNearness";
 
     private readonly SpriteSheet? sheet;
     private readonly StreamBuffer<SpriteItem> items;
@@ -34,12 +33,6 @@ public class SpriteBatchMesh : GameObject
 
     // How many items the current frame has, see BeginItems
     private int frameCount;
-
-    /// <summary>
-    /// How near what this mesh draws is, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs
-    /// motion goes by it, what is nearer blurs over what is further away, see <see cref="DeferredRenderer2D"/>.
-    /// </summary>
-    public float Nearness { get; set; } = SpriteBatch.DEFAULT_NEARNESS;
 
     /// <summary>A mesh for the sprites of a sprite sheet.</summary>
     public SpriteBatchMesh(SpriteSheet sheet, Technique shader)
@@ -85,7 +78,6 @@ public class SpriteBatchMesh : GameObject
         CameraBlock.Use(camera);
         Shader.Bind();
         Shader.SetUniform(UNIFORM_MODEL_MATRIX, in globalModel);
-        Shader.SetUniform(UNIFORM_NEARNESS, Nearness);
 
         items.BindRange(ITEMS_BINDING);
 

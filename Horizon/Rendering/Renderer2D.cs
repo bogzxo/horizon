@@ -42,11 +42,6 @@ public class Renderer2D : GameObject
     /// <summary>The effects the picture goes through before it is shown, none to begin with.</summary>
     public PostProcessor PostProcessing { get; } = new();
 
-    /// <summary>
-    /// How fast everything in the picture is moving across it and how near it is, for the effects that go by that
-    /// (see <see cref="DeferredRenderer2D"/> for what is in it). Null for a renderer that doesn't keep track.
-    /// </summary>
-    public virtual Texture? MotionTexture => null;
 
     /// <summary>
     /// Whether the render target holds the picture as it is. If it doesn't, the picture only exists once the
@@ -189,7 +184,6 @@ public class Renderer2D : GameObject
             using var effects = Engine.Graphics.BeginGpuScope("post effects");
             PostProcessing.Run(
                 ViewportSize,
-                MotionTexture,
                 dt,
                 HoldsPicture ? FrameBuffer.Color : null,
                 resolve,

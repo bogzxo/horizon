@@ -239,9 +239,18 @@ public class WindowManager : GameComponent, IDisposable
 
     public WindowManager(in WindowManagerConfiguration config)
     {
-        LoadMoltenVK();
-        GlfwWindowing.RegisterPlatform();
-        GlfwInput.RegisterPlatform();
+        // GLFW has no Vulkan to offer on a Mac, SDL has (through a Metal surface) and can be told where MoltenVK is
+        if (OperatingSystem.IsMacOS())
+        {
+            LoadMoltenVK();
+            Silk.NET.Windowing.Sdl.SdlWindowing.RegisterPlatform();
+            Silk.NET.Input.Sdl.SdlInput.RegisterPlatform();
+        }
+        else
+        {
+            GlfwWindowing.RegisterPlatform();
+            GlfwInput.RegisterPlatform();
+        }
 
         Name = "Window Manager";
 
@@ -305,14 +314,16 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to get MoltenVK, which the engine brings with it (Silk.NET.MoltenVK.Native), loaded on a Mac
-    /// before GLFW goes looking for a Vulkan. GLFW asks for it by its bare name, which only finds it where dyld
-    /// looks, so it is loaded by its full path first and the one next to the exe is then the one that is loaded.
-    /// With the Vulkan SDK installed its loader is found first and MoltenVK comes through that instead.
+    /// Helper method to point SDL at MoltenVK, which the engine brings with it (Silk.NET.MoltenVK.Native, next to
+    /// the exe), on a Mac. SDL loads its Vulkan by the SDL_VULKAN_LIBRARY hint when there is one, which is set here
+    /// to the full path so it needn't be anywhere dyld looks on its own, and the Vulkan API loader of Silk.NET
+    /// finds the same dylib by name once it is loaded. With the Vulkan SDK installed and no dylib next to the exe
+    /// SDL finds the SDK's loader by itself and MoltenVK comes through that instead.
     /// </summary>
     private static void LoadMoltenVK()
     {
         if (!OperatingSystem.IsMacOS()) return;
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SDL_VULKAN_LIBRARY"))) return;
 
         foreach (string candidate in new[] { Path.Combine(AppContext.BaseDirectory, "libMoltenVK.dylib"), Path.Combine(AppContext.BaseDirectory, "runtimes", "osx", "native", "libMoltenVK.dylib") })
         {
@@ -320,7 +331,8 @@ public class WindowManager : GameComponent, IDisposable
             try
             {
                 System.Runtime.InteropServices.NativeLibrary.Load(candidate);
-                Log.Info($"[Window Manager] MoltenVK loaded from {candidate}.");
+                Environment.SetEnvironmentVariable("SDL_VULKAN_LIBRARY", candidate);
+                Log.Info($"[Window Manager] MoltenVK is {candidate}.");
                 return;
             }
             catch (Exception e)

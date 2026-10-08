@@ -13,9 +13,8 @@ struct Layer
     // Where the layer is, the corner of the map, how far the layer is moved from it and what its parallax adds to that
     float2 offset;
 
-    // How fast the layer goes across the screen (halves of it a second) and how near it is, 0 the backdrop, 1 right in front
-    float2 motion;
-    float nearness;
+    float2 padding0;
+    float padding1;
 
     // How much of the layer shows no matter the light (a sky, a glowing sign)
     float emissive;
@@ -114,6 +113,5 @@ GBuffer fsMain(Varyings input)
     output.albedo = albedo;
     output.surface = float4(normal, layer.emissive, albedo.a);
     output.material = float4(shine, 0.0, layer.emissive, albedo.a);
-    output.motion = float4(encodeMotion(layer.motion), layer.nearness, albedo.a);
     return output;
 }

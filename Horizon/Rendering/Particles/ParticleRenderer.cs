@@ -18,7 +18,6 @@ public class ParticleRenderer2D : GameObject, IDisposable
     /// <summary>How many particles the group helpers build on the stack before handing them over.</summary>
     private const int SpawnChunkSize = 256;
 
-    private const string UNIFORM_NEARNESS = "uNearness";
     private const string UNIFORM_LAMP = "uLamp";
     private const string UNIFORM_STRETCH = "uStretch";
     private const string UNIFORM_TIME_OFFSET = "uTimeOffset";
@@ -91,12 +90,6 @@ public class ParticleRenderer2D : GameObject, IDisposable
 
     /// <summary>The longest <see cref="Stretch"/> draws a particle out to, in world units.</summary>
     public float MaxStretch { get; set; } = 32.0f;
-
-    /// <summary>
-    /// How near the particles are, from 0 (the backdrop) to 1 (right in front). Only a renderer that blurs motion
-    /// goes by it (see <see cref="DeferredRenderer2D"/>), what is nearer blurs over what is further away.
-    /// </summary>
-    public float Nearness { get; set; } = 0.7f;
 
     /// <summary>Creates a renderer whose particles are simulated on the CPU.</summary>
     public ParticleRenderer2D(int count)
@@ -224,12 +217,9 @@ public class ParticleRenderer2D : GameObject, IDisposable
         double prepared = Simulator.PreparedTime;
         float timeOffset = double.IsNaN(shown) || double.IsNaN(prepared) ? 0.0f : (float)Math.Clamp(shown - prepared, -0.25, 0.0);
 
-        // The camera (and how fast it goes, which a renderer that blurs motion takes off how fast each particle flies)
-        // comes out of the camera block
         CameraBlock.Use(Engine.ActiveCamera);
 
         Material.Bind();
-        Material.SetUniform(UNIFORM_NEARNESS, Nearness);
         Material.SetUniform(UNIFORM_LAMP, Lights ? 1.0f : 0.0f);
         Material.SetUniform(UNIFORM_PARTICLE_SIZE, ParticleSize);
         Material.SetUniform(UNIFORM_TIME_OFFSET, timeOffset);

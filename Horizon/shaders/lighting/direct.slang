@@ -189,8 +189,10 @@ int tileOf(float2 picture, float2 tileCounts, float2 tileScreen)
 // penumbra is follows from how near the way passes to a wall and how far along it that is, and the two readings of
 // the field either side of the nearest point say where that was better than either of them alone.
 // A sprite in the way only takes spriteShadow of the light (1 for all of it, which is what a wall takes), so a
-// fighter standing in front of a lantern throws a shadow without putting the lantern out. The march walks on
-// through the sprite to see what else is in the way.
+// fighter can be told to throw a shadow without putting the lantern out. And a sprite the light is inside of, a
+// fighter standing right in front of the lamp, doesn't shadow it at all. The march walks on through every sprite
+// it meets, and one it is still inside of when it reaches the light is one the light is behind, which is the
+// fighter in front of the lamp, so that one is let off. That is a few steps of the field, no colliders, no lists.
 float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
 {
     float2 way = to - from;
@@ -209,7 +211,8 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     float visible = 1.0;
     float through = 1.0;
     float previous = 1e9;
-    bool sprites = field.hasSprites && spriteShadow < 1.0;
+    bool sprites = field.hasSprites;
+    bool inside = false;
     for (int step = 0; step < 32; step++)
     {
         if (t >= distance) break;
@@ -219,14 +222,23 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
 
         if (sprites)
         {
-            // Sprites on their own, which the march can go through
+            // Sprites on their own, which the march goes through, a step at a time while inside of one
             float ds = spritesDistance(at, field, false);
             if (ds < 0.05)
             {
-                through = 1.0 - spriteShadow;
+                inside = true;
                 t += max(abs(ds), 0.5 * texel);
                 continue;
             }
+
+            // Out the other side of one, which was in the way after all
+            if (inside)
+            {
+                inside = false;
+                through *= 1.0 - spriteShadow;
+                if (through <= 0.0) return 0.0;
+            }
+
             d = min(d, ds);
         }
 
@@ -245,6 +257,7 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
         t += max(d, 0.5);
     }
 
+    // Still inside of a sprite at the light, the light is behind that one and it throws no shadow from it
     visible = clamp(visible, 0.0, 1.0);
     return visible * visible * (3.0 - 2.0 * visible) * through;
 }

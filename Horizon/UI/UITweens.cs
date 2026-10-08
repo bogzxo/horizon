@@ -73,13 +73,13 @@ public static class UITweens
     /// Makes the component appear by growing out of nothing, a little too far and back.
     /// It is hidden from the moment this is called, also while it waits out its delay.
     /// </summary>
-    public static Tween PopIn(this UIComponent component, float duration = 0.35f, float delay = 0.0f)
+    public static Tween PopIn(this UIComponent component, float duration = 0.35f, float delay = 0.0f, Easing easing = Easing.OutBack)
     {
         component.VisualScale = Vector2.Zero;
         component.Opacity = 0.0f;
 
-        component.TweenOpacity(1.0f, duration * 0.5f).SetDelay(delay);
-        return component.TweenScale(1.0f, duration).SetEasing(Easing.OutBack).SetDelay(delay);
+        component.TweenOpacity(1.0f, duration * 0.5f).SetEasing(Easing.OutCubic).SetDelay(delay);
+        return component.TweenScale(1.0f, duration).SetEasing(easing).SetDelay(delay);
     }
 
     /// <summary>Makes the component disappear by shrinking to nothing.</summary>
@@ -93,13 +93,13 @@ public static class UITweens
     /// Makes the component appear by sliding into its place from somewhere else.
     /// </summary>
     /// <param name="from">Where it comes from, relative to where it belongs: (-300, 0) comes in from the left.</param>
-    public static Tween SlideIn(this UIComponent component, Vector2 from, float duration = 0.4f, float delay = 0.0f)
+    public static Tween SlideIn(this UIComponent component, Vector2 from, float duration = 0.4f, float delay = 0.0f, Easing easing = Easing.OutCubic)
     {
         component.VisualOffset = from;
         component.Opacity = 0.0f;
 
-        component.TweenOpacity(1.0f, duration * 0.6f).SetDelay(delay);
-        return component.TweenOffset(Vector2.Zero, duration).SetEasing(Easing.OutCubic).SetDelay(delay);
+        component.TweenOpacity(1.0f, duration * 0.6f).SetEasing(Easing.OutCubic).SetDelay(delay);
+        return component.TweenOffset(Vector2.Zero, duration).SetEasing(easing).SetDelay(delay);
     }
 
     /// <summary>Makes the component disappear by sliding away.</summary>
@@ -110,14 +110,15 @@ public static class UITweens
         return component.TweenOffset(to, duration).SetEasing(Easing.InCubic).SetDelay(delay);
     }
 
-    public static Tween FadeIn(this UIComponent component, float duration = 0.3f, float delay = 0.0f)
+    /// <summary>Makes the component appear out of nothing. Eased, a straight fade looks like it stops dead at the end.</summary>
+    public static Tween FadeIn(this UIComponent component, float duration = 0.3f, float delay = 0.0f, Easing easing = Easing.OutCubic)
     {
         component.Opacity = 0.0f;
-        return component.TweenOpacity(1.0f, duration).SetDelay(delay);
+        return component.TweenOpacity(1.0f, duration).SetEasing(easing).SetDelay(delay);
     }
 
-    public static Tween FadeOut(this UIComponent component, float duration = 0.3f, float delay = 0.0f) =>
-        component.TweenOpacity(0.0f, duration).SetDelay(delay);
+    public static Tween FadeOut(this UIComponent component, float duration = 0.3f, float delay = 0.0f, Easing easing = Easing.InCubic) =>
+        component.TweenOpacity(0.0f, duration).SetEasing(easing).SetDelay(delay);
 
     /// <summary>
     /// A quick bump in size that settles back to normal, for saying "this one" or "got it".

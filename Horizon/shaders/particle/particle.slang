@@ -20,9 +20,6 @@ struct Params
     // in the dark without lighting anything), see ParticleRenderer2D.Lights
     float uLamp;
 
-    // How near the particles are, from 0 (the backdrop) to 1 (right in front)
-    float uNearness;
-
     // Half the side of the quad a particle is drawn as, in world units
     float uParticleSize;
 
@@ -54,9 +51,6 @@ struct Varyings
     float4 position : SV_Position;
     float alive : ALIVE;
     float2 fragPos : FRAGPOS;
-
-    // How fast the particle goes across the screen (halves of it a second), for whoever blurs motion
-    nointerpolation float2 motion : MOTION;
 };
 
 [shader("vertex")]
@@ -67,7 +61,6 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
 
     Varyings output;
     output.alive = particle.alive;
-    output.motion = screenMotion(particle.velocity);
 
     // The corners at the back stay behind where the particle was a moment ago, which draws a drop out into a streak.
     // A stream that falls faster and faster would come apart into a string of dots otherwise
@@ -99,9 +92,7 @@ GBuffer fsMain(Varyings input)
     // behind it as far as it covers it
     GBuffer output = writeFlat(
         float4(lerp(params.uEndColor * 2.0, params.uStartColor, input.alive), input.alive),
-        lerp(params.uEndEmissive, params.uStartEmissive, input.alive),
-        input.motion,
-        params.uNearness);
+        lerp(params.uEndEmissive, params.uStartEmissive, input.alive));
 
     // Sparks off a hit show bright in the dark but needn't light the arena every time somebody lands a punch
     output.material.b *= params.uLamp;

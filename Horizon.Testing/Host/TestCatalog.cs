@@ -34,7 +34,7 @@ internal static class TestCatalog
         // Rendering: everything that ends up as pixels that isn't a UI.
         new("primitives", TestArea.Rendering, "Shapes", "Triangles, rectangles and circles in one draw call: lines, debug overlays, a bar graph and a Mesh2D star.", () => new PrimitivesExample()),
         new("tilemap", TestArea.Rendering, "Tile maps", "A Tiled map with one of everything: turned and animated tiles, parallax, groups, objects and templates.", () => new TileMapExample()),
-        new("post", TestArea.Rendering, "Post processing", "A lit world with its motion blurred and a HUD, behind the glass of an old telly.", () => new PostProcessExample()),
+        new("post", TestArea.Rendering, "Post processing", "A lit world and a HUD behind the glass of an old telly.", () => new PostProcessExample()),
         new("particles", TestArea.Rendering, "Particles", "CPU and compute shader particles, side by side.", () => new ParticleExample()),
         new("lighting", TestArea.Rendering, "Lighting", "Deferred lights, shadows, normal maps and particles that glow.", () => new LightingExample()),
         new("renderer2d", TestArea.Rendering, "Renderer2D", "The lighting scene unlit, drawn at a quarter of the size and blown up.", () => new LightingExample(deferred: false)),

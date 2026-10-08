@@ -16,14 +16,11 @@ namespace Horizon.Rendering;
 /// Attachment0 holds the albedo. Attachment1 holds the surface: the normal in the RG channels (0.5 being none at all,
 /// which is what anything without a normal map has) and how emissive it is in the B channel, the share of it that shows
 /// no matter the light. Attachment2 holds the material: how shiny it is in the R channel (what a specular map says,
-/// none for anything without one), the other channels are still free. Attachment3 holds the motion: how fast the
-/// fragment is going across the screen in the RG channels (halves of the screen a second, see <c>encodeMotion</c> in
-/// the shaders) and how near it is in the B channel, from 0 for the backdrop to 1 for right in front. Nothing is lit
-/// by those two, they are for whatever comes after the lighting, <see cref="PostProcessing.MotionBlurEffect"/> blurs
-/// by the one and decides what blurs over what by the other.
+/// none for anything without one), how much of the pixel blocks light in the G channel and how much of it lights what
+/// is round it in the B channel, see gbuffer.slang.
 /// Where a fragment is in the world isn't stored, that follows from where it is on screen.
 /// The alpha of every attachment is how much of what was there before the fragment covers, they are all blended alike.
-/// The shaders of the sprite batch, the tile map and the particles write all four, anything else that is drawn in
+/// The shaders of the sprite batch, the tile map and the particles write all three, anything else that is drawn in
 /// here has to as well (see shaders/renderer2d/deferred.frag for what is made of them).
 /// </summary>
 public class DeferredRenderer2D : Renderer2D
@@ -246,7 +243,6 @@ public class DeferredRenderer2D : Renderer2D
                     { AttachmentPoint.Color0, TextureDefinition.RgbaUnsignedByteNearest },
                     { AttachmentPoint.Color1, TextureDefinition.RgbaUnsignedByteNearest },
                     { AttachmentPoint.Color2, TextureDefinition.RgbaUnsignedByteNearest },
-                    { AttachmentPoint.Color3, TextureDefinition.RgbaUnsignedByteNearest },
 
                     // Sprite batches cut their sprites out with the stencil
                     { AttachmentPoint.DepthStencil, TextureDefinition.DepthStencil },
@@ -257,9 +253,6 @@ public class DeferredRenderer2D : Renderer2D
 
     // What is in the frame buffer is what there is to light, the picture is what the lighting makes of it
     protected internal override bool HoldsPicture => false;
-
-    /// <inheritdoc/>
-    public override Texture? MotionTexture => FrameBuffer?.TextureOf(AttachmentPoint.Color3);
 
     public DeferredRenderer2D(in uint width, in uint height)
         : base(width, height) { }
@@ -635,9 +628,6 @@ public class DeferredRenderer2D : Renderer2D
 
         // Not shiny either
         Clear(2, Vector4.Zero);
-
-        // Standing still (which is 128 out of 255, see encodeMotion in the shaders) and as far away as it gets
-        Clear(3, new Vector4(128.0f / 255.0f, 128.0f / 255.0f, 0.0f, 0.0f));
         ClearDepthStencil();
     }
 }

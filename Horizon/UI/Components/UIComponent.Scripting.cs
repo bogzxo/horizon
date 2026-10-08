@@ -55,6 +55,10 @@ public abstract partial class UIComponent
         Expose("intro_time", () => IntroTime, value => IntroTime = MathF.Max(0.0f, value));
         Expose("intro_delay", () => IntroDelay, value => IntroDelay = MathF.Max(0.0f, value));
         Expose("intro_offset", () => IntroOffset, value => IntroOffset = value);
+        Expose(
+            "intro_easing",
+            () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : (IRuntimeValue)new NullValue(),
+            value => IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, "intro_easing"));
 
         Expose(
             "parent",
