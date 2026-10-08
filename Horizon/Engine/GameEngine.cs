@@ -6,8 +6,6 @@ using Horizon.Logging;
 using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Engine.Components;
-using Horizon.Engine.Debugging.Debuggers;
-using Horizon.Engine.WebHost;
 using Horizon.Graphics;
 using Horizon.Input;
 using Horizon.OpenGL.Managers;
@@ -83,12 +81,6 @@ public class GameEngine : Entity
     public InputManager Input { get; }
 
     /// <summary>
-    /// The console of the engine. It is a HIDL runtime that whatever talks to the running game from outside (the web
-    /// dashboard) has its commands run by. It has no window of its own.
-    /// </summary>
-    public DeveloperConsole Console { get; }
-
-    /// <summary>
     /// The scene that is on screen, null before the first one has been set.
     /// </summary>
     public Scene? Scene => SceneManager.CurrentInstance;
@@ -157,7 +149,6 @@ public class GameEngine : Entity
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
         Input = AddComponent<InputManager>();
-        Console = AddComponent<DeveloperConsole>();
         SceneManager = AddEntity<SceneManager>();
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
@@ -350,30 +341,4 @@ public class GameEngine : Entity
     /// </summary>
     public void Exit() => WindowManager.Close();
 
-#if DEBUG
-    /// <summary>
-    /// Aggregates all metrics to be sent to the web host
-    /// </summary>
-    internal TelemetryData CollectTelemetry()
-    {
-        // As the window manager measures them
-        double RateOf(string loop)
-        {
-            foreach (var statistics in WindowManager.Loops)
-            {
-                if (statistics.Name == loop) return statistics.Rate;
-            }
-
-            return 0.0;
-        }
-
-        return new TelemetryData
-        {
-            LogicRate = RateOf("Logic"),
-            RenderRate = RateOf("Render"),
-            PhysicsRate = RateOf("Physics")
-        };
-    }
-
-#endif
 }
