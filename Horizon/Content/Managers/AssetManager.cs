@@ -4,7 +4,7 @@ using Horizon.Logging;
 
 using Horizon.Content.Descriptions;
 using Horizon.Content.Disposers;
-using Horizon.Core.Primitives;
+using Horizon.Graphics;
 
 namespace Horizon.Content.Managers;
 
@@ -17,7 +17,7 @@ namespace Horizon.Content.Managers;
 /// </summary>
 public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, AssetDisposerType>
     : IDisposable
-    where AssetType : class, IGLObject
+    where AssetType : class, IGpuObject
     where AssetDescriptionType : IAssetDescription
     where AssetFactoryType : IAssetFactory<AssetType, AssetDescriptionType>
     where AssetDisposerType : IGameAssetFinalizer<AssetType>

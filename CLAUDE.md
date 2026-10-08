@@ -44,7 +44,7 @@ So nobody has to crawl the tree again. Two libraries and four apps, one solution
   Transitions), `UI` (UIX, compositor, modules, components, skins, drawing), `Physics` (world, bodies, fixtures,
   particle simulators). Run time files live at its root and copy out at the same paths, `shaders/`
   (`common/`, `lighting/`, `spritebatch/`, `tilemap/`, `particle/`, `primitives/`, `renderer2d/`, `post/`),
-  `fonts/`, `Assets/uix/` (the dead_revolver and flat skins).
+  `Assets/fonts/`, `Assets/uix/` (the dead_revolver and flat skins).
 - `Horizon.HIDL/` the scripting language, kept apart because the WinForms editor (`Horizon.HIDL.Editor/`) wants
   it without the engine.
 - `Horizon.Testing/` the example scenes, one per feature, `Examples/{Basics,Engine,Input,Physics,Rendering,UI}` with

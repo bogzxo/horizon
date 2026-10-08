@@ -1,5 +1,5 @@
 using Horizon.Engine;
-using Horizon.OpenGL;
+using Horizon.Graphics;
 using Horizon.Rendering.PostProcessing;
 
 namespace Horizon.Rendering;

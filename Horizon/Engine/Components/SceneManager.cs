@@ -9,7 +9,6 @@ using Horizon.Core.Components;
 using Horizon.Core.Threading;
 using Horizon.Core.Tweening;
 
-using Silk.NET.OpenGL;
 
 namespace Horizon.Engine.Components;
 

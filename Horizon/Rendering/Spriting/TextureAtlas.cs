@@ -5,12 +5,9 @@ using System.Runtime.InteropServices;
 using Horizon.Logging;
 
 using Horizon.Engine;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
+using Horizon.Graphics;
 
-using Silk.NET.OpenGL;
 
-using Texture = Horizon.OpenGL.Assets.Texture;
 
 namespace Horizon.Rendering.Spriting;
 
@@ -403,7 +400,7 @@ public sealed class TextureAtlas : IDisposable
         if (bottom > top)
         {
             fixed (byte* data = &_pixels[top * _width * 4])
-                Horizon.Graphics.GraphicsDevice.Current.UploadTexels(Texture, 0, top, (uint)_width, (uint)(bottom - top), Horizon.Graphics.TexelFormat.Rgba8, data);
+                GraphicsDevice.Current.UploadTexels(Texture, 0, top, (uint)_width, (uint)(bottom - top), TexelFormat.Rgba8, data);
         }
 
         _dirtyTop = int.MaxValue;

@@ -1,115 +1,90 @@
 using System.Numerics;
 
 using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-
-using Silk.NET.OpenGL;
-
-using Shader = Horizon.OpenGL.Assets.Shader;
+using Horizon.Graphics;
+using Horizon.Logging;
 
 namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
-/// Simulates particles on the GPU with a compute shader (shaders/particle/simulate.comp).
-/// The particle state never leaves the GPU: the buffer the compute shader updates in place is the
-/// same buffer the renderer reads its instances from, and the CPU only uploads newly spawned particles.
-/// A simulator that does more to its particles derives from this one, hands over its own compute shader
-/// (see <see cref="CreateShader"/>) and feeds it whatever else it needs in <see cref="BindSimulation"/>.
+/// Simulates particles on the GPU with a compute shader (shaders/particle/simulate.slang). The particle state never
+/// leaves the GPU. The CPU only uploads newly spawned particles into a pool that goes round, the GPU ages and moves
+/// what is in the pool, gathers up what is still alive (shaders/particle/particle_compact.slang) and writes the draw
+/// that draws exactly those, so the CPU never has to know which died and the vertex shader never sees one that did.
+/// A simulator that does more to its particles derives from this one, hands over its own compute shader (see
+/// <see cref="CreateShader"/>) and feeds it whatever else it needs in <see cref="BindSimulation"/>.
 /// </summary>
 public class ComputeParticleSimulator2D : ParticleSimulator2D
 {
-    /// <summary>Must match local_size_x in simulate.comp.</summary>
+    /// <summary>Must match numthreads in simulate.slang.</summary>
     private const uint WorkGroupSize = 256;
 
-    /// <summary>Must match the binding of ParticleBuffer in simulate.comp.</summary>
-    private const uint BUFFER_BINDING = 0;
+    /// <summary>Must match the bindings of pool.slang and particle_compact.slang.</summary>
+    private const uint POOL_BINDING = 2;
+    private const uint COMPACT_INSTANCES_BINDING = 3;
+    private const uint COMMAND_BINDING = 4;
 
     private const string UNIFORM_FIRST = "uFirst";
     private const string UNIFORM_COUNT = "uCount";
+    private const string UNIFORM_CAPACITY = "uCapacity";
     private const string UNIFORM_DELTA_TIME = "uDeltaTime";
     private const string UNIFORM_INV_MAX_AGE = "uInvMaxAge";
     private const string UNIFORM_GRAVITY = "uGravity";
 
-    /// <summary>
-    /// Extra life a batch is given before it is written off, to absorb the rounding error the GPU
-    /// accumulates while ageing its particles in single precision.
-    /// </summary>
-    private const double ExpiryMargin = 0.05;
+    private static Technique? compactShader;
 
     private Technique? compute;
-    private BufferObject? particleBuffer;
+    private GpuBuffer? pool, instances, command;
 
-    // The simulation thread only banks time, the simulation itself has to run on the GL thread.
+    // The simulation thread only banks time, the simulation itself has to run on the render thread
     private readonly Lock timeLock = new();
     private float pendingTime;
 
-    // The pool is a ring: particles are written at the head and replace the oldest once it is full, so
-    // the live ones always sit in [tail, head). Both are running totals, the slot is the total modulo
-    // Maximum.
+    // The pool is a ring. Particles are written at the head and replace the oldest once it is full. How many slots
+    // have ever been written is how many the GPU looks at
     private ulong head;
-    private ulong tail;
-    private uint count;
 
-    // The CPU can't see which particles died, but it knows how fast the slowest one ages. The clock is
-    // the life that particle has lost so far; a batch born at clock b is certainly dead by b + 1.
-    private double decayClock;
-    private readonly Queue<(ulong End, double Born)> batches = new();
-
-    public override uint Count => count;
+    public override uint Count => (uint)Math.Min(head, Maximum);
 
     /// <summary>
-    /// GL thread, once. The compute shader that moves the particles, null if it couldn't be made.
-    /// It has to take the buffer and the uniforms simulate.comp does, anything on top of those is up to
-    /// <see cref="BindSimulation"/>.
+    /// Render thread, once. The compute shader that moves the particles, null if it couldn't be made.
+    /// It has to take the pool and the params pool.slang does, anything on top of those is up to <see cref="BindSimulation"/>.
     /// </summary>
     protected virtual Shader? CreateShader() =>
-        GameEngine
-            .Instance
-            .ObjectManager
-            .Shaders
-            .TryCreateOrGet(
-                "particle2d_simulate",
-                ShaderDescription.FromPath("shaders/particle", "simulate"),
-                out var shader)
+        GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_simulate", ShaderDescription.FromPath("shaders/particle", "simulate"), out var shader)
             ? shader.Asset
             : null;
 
     /// <summary>
-    /// GL thread, every time the particles are about to be moved, with <paramref name="technique"/> bound.
+    /// Render thread, every time the particles are about to be moved, with <paramref name="technique"/> bound.
     /// Bind the buffers and set the uniforms the shader of <see cref="CreateShader"/> has of its own.
     /// </summary>
     protected virtual void BindSimulation(Technique technique)
     { }
 
-    protected internal override void Initialize(VertexBufferObject mesh)
+    protected internal override void Initialize()
     {
-        var objects = GameEngine.Instance.ObjectManager;
-
-        // Failures are logged by the asset managers; without both there is nothing to simulate or draw.
-        if (CreateShader() is not Shader shader
-            || !objects
-                .Buffers
-                .TryCreate(
-                    new BufferObjectDescription
-                    {
-                        IsStorageBuffer = true,
-                        // Never mapped: spawns go in through glBufferSubData, the rest happens on the GPU.
-                        StorageMasks = BufferStorageMask.DynamicStorageBit,
-                        // Bound as a storage buffer for the compute shader, as an array buffer for drawing.
-                        Type = BufferTargetARB.ArrayBuffer,
-                        Size = Maximum * ParticleState2D.SizeInBytes
-                    },
-                    out var buffer))
-        {
+        if (CreateShader() is not Shader shader)
             return;
+
+        if (compactShader is null)
+        {
+            if (!GameEngine.Instance.ObjectManager.Shaders.TryCreateOrGet("particle2d_compact", ShaderDescription.FromPath("shaders/particle", "particle_compact"), out var compact))
+            {
+                Log.Error(compact.Message);
+                return;
+            }
+
+            compactShader = new Technique(compact.Asset);
         }
 
         compute = new Technique(shader);
-        particleBuffer = buffer.Asset;
-        AttachInstanceBuffer(mesh, particleBuffer, ParticleState2D.SizeInBytes, 0, sizeof(float) * 4, sizeof(float) * 2);
+        pool = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleState2D.SizeInBytes));
+        instances = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, Maximum * ParticleInstance.SizeInBytes));
+        command = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage | BufferUsage.Indirect, BufferAccess.Dynamic, 16));
+
+        // A draw of the quad, with the instance count for the GPU to fill in every frame
+        command.Update<uint>([6, 0, 0, 0]);
     }
 
     protected internal override void Update(float dt)
@@ -118,12 +93,13 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
             pendingTime += dt;
     }
 
-    protected internal override ParticleRange Prepare()
+    protected internal override bool Prepare(out ParticleDraw draw)
     {
-        if (compute is null || particleBuffer is null)
-            return default;
+        draw = default;
+        if (compute is null || compactShader is null || pool is null || instances is null || command is null)
+            return false;
 
-        Upload(particleBuffer, TakePending());
+        Upload(TakePending());
 
         float dt;
         lock (timeLock)
@@ -132,95 +108,84 @@ public class ComputeParticleSimulator2D : ParticleSimulator2D
             pendingTime = 0.0f;
         }
 
-        // Drawn alongside the simulation: as far as the frames have moved on in the game, not a tick at a time
+        // Drawn alongside the simulation, as far as the frames have moved on in the game, not a tick at a time
         if (FrameStep is { } step)
             dt = step;
 
-        if (dt > 0.0f && head != tail)
-        {
-            float maxAge = Renderer.MaxAge;
+        uint count = Count;
+        if (count == 0) return false;
 
-            Simulate(compute, particleBuffer, LiveRange(), dt, maxAge);
-            Expire(dt, maxAge);
+        var device = GraphicsDevice.Current;
+        float maxAge = Renderer.MaxAge;
+
+        if (dt > 0.0f)
+        {
+            Simulate(compute, count, dt, maxAge);
+            device.Barrier(BarrierTargets.ShaderStorage);
         }
 
-        var range = LiveRange();
-        count = range.Count;
-        return range;
+        // The live ones gathered up for drawing, and the draw told how many there were
+        device.FillBuffer(command, 0, 4, 4);
+
+        compactShader.Bind();
+        SetPoolParams(compactShader, count, dt, maxAge);
+        compactShader.BindBuffer(POOL_BINDING, pool);
+        compactShader.BindBuffer(COMPACT_INSTANCES_BINDING, instances);
+        compactShader.BindBuffer(COMMAND_BINDING, command);
+        device.Dispatch((count + WorkGroupSize - 1) / WorkGroupSize);
+        device.Barrier(BarrierTargets.ShaderStorage | BarrierTargets.VertexAttributes);
+        compactShader.Unbind();
+
+        device.BindStorageBuffer(COMMAND_BINDING, null);
+        device.BindStorageBuffer(INSTANCES_BINDING, instances);
+        draw = new ParticleDraw(0, 0, command);
+        return true;
     }
 
-    private void Upload(BufferObject buffer, ReadOnlySpan<ParticleState2D> spawned)
+    private void Upload(ReadOnlySpan<ParticleState2D> spawned)
     {
-        if (spawned.IsEmpty)
+        if (spawned.IsEmpty || pool is null)
             return;
 
-        // At most Maximum particles can be pending, so this wraps around the end of the pool once at most.
+        // At most Maximum particles can be pending, so this wraps around the end of the pool once at most
         int slot = (int)(head % Maximum);
         int untilWrap = Math.Min(spawned.Length, (int)Maximum - slot);
 
-        Write(buffer, spawned[..untilWrap], slot);
-        Write(buffer, spawned[untilWrap..], 0);
+        if (untilWrap > 0) pool.Update(spawned[..untilWrap], slot * (int)ParticleState2D.SizeInBytes);
+        if (untilWrap < spawned.Length) pool.Update(spawned[untilWrap..], 0);
 
         head += (ulong)spawned.Length;
-        if (head - tail > Maximum)
-            tail = head - Maximum;
-
-        batches.Enqueue((head, decayClock));
     }
 
-    private static void Write(BufferObject buffer, ReadOnlySpan<ParticleState2D> states, int slot)
-    {
-        if (!states.IsEmpty)
-            buffer.Update(states, slot * (int)ParticleState2D.SizeInBytes);
-    }
-
-    private void Simulate(Technique technique, BufferObject buffer, ParticleRange range, float dt, float maxAge)
+    private void SetPoolParams(Technique technique, uint count, float dt, float maxAge)
     {
         Vector2 gravity = Renderer.Gravity;
-
-        technique.Bind();
-        technique.BindBuffer(BUFFER_BINDING, buffer);
-        technique.SetUniform(UNIFORM_FIRST, range.First);
-        technique.SetUniform(UNIFORM_COUNT, range.Count);
+        technique.SetUniform(UNIFORM_FIRST, 0u);
+        technique.SetUniform(UNIFORM_COUNT, count);
+        technique.SetUniform(UNIFORM_CAPACITY, Maximum);
         technique.SetUniform(UNIFORM_DELTA_TIME, dt);
         technique.SetUniform(UNIFORM_INV_MAX_AGE, 1.0f / maxAge);
         technique.SetUniform(UNIFORM_GRAVITY, in gravity);
+    }
+
+    private void Simulate(Technique technique, uint count, float dt, float maxAge)
+    {
+        technique.Bind();
+        SetPoolParams(technique, count, dt, maxAge);
+        technique.BindBuffer(POOL_BINDING, pool!);
         BindSimulation(technique);
 
-        var device = Horizon.Graphics.GraphicsDevice.Current;
-        device.Dispatch((range.Count + WorkGroupSize - 1) / WorkGroupSize);
-
-        // What the shader wrote is read next as instance attributes, by the next dispatch, and
-        // overwritten by the next spawn upload.
-        device.Barrier(Horizon.Graphics.BarrierTargets.VertexAttributes | Horizon.Graphics.BarrierTargets.ShaderStorage | Horizon.Graphics.BarrierTargets.BufferUpdate);
-
+        GraphicsDevice.Current.Dispatch((count + WorkGroupSize - 1) / WorkGroupSize);
         technique.Unbind();
     }
 
-    private void Expire(float dt, float maxAge)
+    public override void Dispose()
     {
-        decayClock += (double)dt * MinRate / maxAge;
+        pool?.Dispose();
+        instances?.Dispose();
+        command?.Dispose();
+        pool = instances = command = null;
 
-        while (batches.TryPeek(out var batch) && decayClock - batch.Born > 1.0 + ExpiryMargin)
-        {
-            tail = Math.Max(tail, batch.End);
-            batches.Dequeue();
-        }
-    }
-
-    private ParticleRange LiveRange()
-    {
-        if (head == tail)
-            return default;
-
-        uint live = (uint)(head - tail);
-        uint first = (uint)(tail % Maximum);
-
-        // A window that wraps around the end of the pool isn't one run of instances, so cover the whole
-        // pool instead. Wrapping means every slot has been written, and the ones outside the window
-        // hold dead particles, which the shaders skip.
-        return first + live > Maximum
-            ? new ParticleRange(0, Maximum)
-            : new ParticleRange(first, live);
+        base.Dispose();
     }
 }

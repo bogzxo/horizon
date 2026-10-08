@@ -3,7 +3,7 @@ using System.Numerics;
 using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.Input;
-using Horizon.OpenGL;
+using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.Rendering.Primitives;
 using Horizon.Rendering.Spriting.Data;
@@ -570,7 +570,7 @@ public class PrimitivesExample : Scene, ITestControls
     }
 
     /// <summary>
-    /// The star's shader (shaders/testing/primitives.vert and .frag), and every uniform it needs besides the camera. Bind() calls
+    /// The star's shader (shaders/testing/primitives.slang), and every uniform it needs besides the camera. Bind() calls
     /// <see cref="SetUniforms"/>, so this is set every time the mesh draws, on the render thread.
     /// </summary>
     private sealed class StarTechnique : Technique

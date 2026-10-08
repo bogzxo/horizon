@@ -2,11 +2,7 @@ using Horizon.Logging;
 using System.Numerics;
 
 using Horizon.Engine;
-using Horizon.OpenGL.Buffers;
-using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL;
-
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.PostProcessing;
 
@@ -24,7 +20,7 @@ namespace Horizon.Rendering.PostProcessing;
 /// layer costs nothing, not even the memory. The layer is colours and nothing else, it has no depth and no stencil:
 /// sprites that are cut out with a mask are drawn whole on it.
 /// The layer keeps track of what moves on it the way a <see cref="DeferredRenderer2D"/> does (whatever draws with
-/// the sprite, tile map or particle shaders says how fast it is going), so a <see cref="VelocityBlurEffect"/> works
+/// the sprite, tile map or particle shaders says how fast it is going), so a <see cref="MotionBlurEffect"/> works
 /// here as it does there. An effect has to pass the alpha of the picture on to be of any use on a layer, see
 /// <see cref="PostContext.Source"/>: one that makes all of the picture solid (<see cref="CrtEffect"/>) hides
 /// everything under it.
@@ -38,7 +34,7 @@ namespace Horizon.Rendering.PostProcessing;
 public sealed class PostLayer : IDisposable
 {
     // Fragment shaders write how fast they are going to their fourth output, see DeferredRenderer2D
-    private const FramebufferAttachment MOTION_ATTACHMENT = FramebufferAttachment.ColorAttachment3;
+    private const AttachmentPoint MOTION_ATTACHMENT = AttachmentPoint.Color3;
     private const int MOTION_OUTPUT = 3;
 
     // Nothing there, and nothing moving: must match encodeMotion in the shaders that write it
@@ -48,7 +44,7 @@ public sealed class PostLayer : IDisposable
     private static readonly Action Nothing = static () => { };
 
     private readonly Action bindOutput;
-    private FrameBufferObject? frameBuffer;
+    private RenderTarget? frameBuffer;
     private Vector2 size;
     private bool unavailable;
 
@@ -112,7 +108,6 @@ public sealed class PostLayer : IDisposable
         before = RenderState.Save();
 
         frameBuffer!.Bind();
-        frameBuffer.Viewport();
 
         // Drawn back to front and blended, like everything flat. With the alpha kept apart what comes out is how
         // much of every pixel is covered, and colours that are multiplied by it.
@@ -189,7 +184,7 @@ public sealed class PostLayer : IDisposable
         {
             Effects.Run(
                 size,
-                frameBuffer.Attachments[MOTION_ATTACHMENT].Texture,
+                frameBuffer.TextureOf(MOTION_ATTACHMENT),
                 dt,
                 picture,
                 Nothing,
@@ -231,16 +226,16 @@ public sealed class PostLayer : IDisposable
 
         Release();
 
-        bool created = GameEngine.Instance.ObjectManager.FrameBuffers.TryCreate(
-            new FrameBufferObjectDescription
+        bool created = GameEngine.Instance.ObjectManager.RenderTargets.TryCreate(
+            new RenderTargetDescription
             {
                 Width = width,
                 Height = height,
                 Attachments = new()
                 {
                     // The picture is read between its pixels by the effects, what moves in it never is
-                    { FramebufferAttachment.ColorAttachment0, new FrameBufferAttachmentDefinition { IsRenderBuffer = false, TextureDefinition = PostTarget.Smooth } },
-                    { MOTION_ATTACHMENT, new FrameBufferAttachmentDefinition { IsRenderBuffer = false, TextureDefinition = PostTarget.Exact } },
+                    { AttachmentPoint.Color0, PostTarget.Smooth },
+                    { MOTION_ATTACHMENT, PostTarget.Exact },
                 }
             },
             out var result);

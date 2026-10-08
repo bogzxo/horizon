@@ -2,13 +2,7 @@ using Horizon.Logging;
 using System.Numerics;
 
 using Horizon.Core.Tweening;
-using Horizon.Engine;
-using Horizon.OpenGL;
-using Horizon.OpenGL.Descriptions;
-
-using Silk.NET.OpenGL;
-
-using Texture = Horizon.OpenGL.Assets.Texture;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.PostProcessing;
 
@@ -157,7 +151,7 @@ public sealed class PostContext
 }
 
 /// <summary>
-/// The shader of a pass of an effect: a fragment shader out of shaders/post, run for every pixel of what is drawn to.
+/// The shader of a pass of an effect, a Slang file out of shaders/post with a fragment stage, run for every pixel of what is drawn to.
 /// It is handed where it is as <c>texCoords</c> (0 to 1 from the bottom left corner), everything else is up to the
 /// uniforms the effect sets after binding it.
 /// </summary>
@@ -165,14 +159,14 @@ public class PostTechnique : ScreenTechnique
 {
     /// <summary>
     /// What every pass calls the picture it works on. It is always on texture unit 0, which the shaders say
-    /// themselves (<c>layout(binding = 0)</c>): bind the picture there and draw.
+    /// themselves (<c>BIND_TEXTURE(0)</c>), bind the picture there and draw.
     /// </summary>
     public const string UNIFORM_SOURCE = "uSource";
 
     private const string DIRECTORY = "shaders/post";
 
-    /// <param name="fragment">The name of the fragment shader in shaders/post, without its extension.</param>
+    /// <param name="fragment">The name of the shader in shaders/post, without its extension.</param>
     public PostTechnique(string fragment)
         // By name, so every renderer that uses the effect shares the one shader
-        : base($"post_{fragment}", $"{DIRECTORY}/{fragment}.frag") { }
+        : base($"post_{fragment}", $"{DIRECTORY}/{fragment}.slang") { }
 }

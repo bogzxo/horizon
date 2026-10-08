@@ -1,27 +1,52 @@
-using Horizon.OpenGL;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Buffers;
+using System.Numerics;
+using System.Runtime.InteropServices;
 
-using Silk.NET.OpenGL;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
-/// Owns the particles of a <see cref="ParticleRenderer2D"/>: it spawns, moves and kills them, and keeps
-/// the per-instance buffer the renderer draws from up to date.
-/// The engine updates state on the simulation thread and renders on the GL thread, so the work is split the
-/// same way: <see cref="Update"/> runs on the simulation thread and must not touch GL, everything else that
-/// is called by the renderer runs on the GL thread.
+/// A particle the way the renderer draws it. Must match ParticleInstance in shaders/particle/particle.slang (24 bytes).
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct ParticleInstance
+{
+    public Vector2 Offset;
+    public float Alive;
+    public float Padding;
+    public Vector2 Velocity;
+
+    public static readonly uint SizeInBytes = 24;
+}
+
+/// <summary>How a simulator's particles are to be drawn this frame, see <see cref="ParticleSimulator2D.Prepare"/>.</summary>
+/// <param name="Count">How many instances, for a simulator that knows.</param>
+/// <param name="First">The first instance of the bound buffer to draw.</param>
+/// <param name="Indirect">A buffer holding the draw itself (a VkDrawIndirectCommand), for a simulator whose GPU knows and the CPU doesn't.</param>
+public readonly record struct ParticleDraw(uint Count, uint First, GpuBuffer? Indirect = null)
+{
+    public bool IsEmpty => Indirect is null && Count == 0;
+}
+
+/// <summary>
+/// Owns the particles of a <see cref="ParticleRenderer2D"/>. It spawns, moves and kills them, and keeps the buffer
+/// of instances the renderer draws from up to date.
+/// The engine updates state on the simulation thread and renders on the render thread, so the work is split the
+/// same way. <see cref="Update"/> runs on the simulation thread and must not touch the GPU, everything else that
+/// is called by the renderer runs on the render thread.
 /// </summary>
 public abstract class ParticleSimulator2D : IDisposable
 {
+    /// <summary>The binding the renderer reads the instances at, which is what particle.slang says.</summary>
+    public const uint INSTANCES_BINDING = 3;
+
     /// <summary>
     /// The slowest a particle can age (see <see cref="ParticleState2D.Rate"/>), which means no particle
     /// outlives <see cref="ParticleRenderer2D.MaxAge"/> / <see cref="MinRate"/> seconds.
     /// </summary>
     protected const float MinRate = 0.5f;
 
-    // Spawn requests can come from any thread; the simulator collects them with TakePending.
+    // Spawn requests can come from any thread, the simulator collects them with TakePending
     private readonly Lock spawnLock = new();
     private ParticleState2D[] pending = new ParticleState2D[64];
     private ParticleState2D[] taken = [];
@@ -99,40 +124,20 @@ public abstract class ParticleSimulator2D : IDisposable
         }
     }
 
-    /// <summary>
-    /// Feeds the renderer's per-instance attributes (1: offset, 2: alive, 3: velocity) from <paramref name="buffer"/>,
-    /// which has to be an array buffer. The velocity is in world units a second: it is what the renderer stretches
-    /// a particle along (<see cref="ParticleRenderer2D.Stretch"/>) and what tells a renderer that blurs motion how
-    /// fast it is going.
-    /// </summary>
-    protected static void AttachInstanceBuffer(
-        VertexBufferObject mesh, BufferObject buffer, uint stride, int offsetOffset, int aliveOffset, int velocityOffset)
-    {
-        // Attributes 1 to 3 of shaders/particle/basic.vert, read once per instance out of the simulator's buffer
-        var array = mesh.VertexArrayObject;
-        array.SetAttribute(1, VertexBufferObject.INSTANCE_BINDING, VertexLayoutDescription.Float(1, 2, offsetOffset, instanced: true));
-        array.SetAttribute(2, VertexBufferObject.INSTANCE_BINDING, VertexLayoutDescription.Float(2, 1, aliveOffset, instanced: true));
-        array.SetAttribute(3, VertexBufferObject.INSTANCE_BINDING, VertexLayoutDescription.Float(3, 2, velocityOffset, instanced: true));
-        array.SetVertexBuffer(VertexBufferObject.INSTANCE_BINDING, buffer, stride, 0, 1);
-    }
-
-    /// <summary>
-    /// GL thread, once. Create the instance buffer and attach it to <paramref name="mesh"/> with
-    /// <see cref="AttachInstanceBuffer"/>.
-    /// </summary>
-    protected internal abstract void Initialize(VertexBufferObject mesh);
+    /// <summary>Render thread, once. Make whatever lives on the GPU.</summary>
+    protected internal abstract void Initialize();
 
     /// <summary>Simulation thread, every state update.</summary>
     protected internal abstract void Update(float dt);
 
     /// <summary>
-    /// GL thread, every frame before drawing. Bring the instance buffer up to date and say which
-    /// instances are worth drawing.
+    /// Render thread, every frame before drawing. Bring the instances up to date, bind them at
+    /// <see cref="INSTANCES_BINDING"/> and say how they are to be drawn. False for nothing to draw.
     /// </summary>
-    protected internal abstract ParticleRange Prepare();
+    protected internal abstract bool Prepare(out ParticleDraw draw);
 
     /// <summary>
-    /// For a simulator that moves the particles on the render thread: how far (in seconds of the game) to move them for
+    /// For a simulator that moves the particles on the render thread, how far (in seconds of the game) to move them for
     /// this frame instead of by the time the updates banked, null for that. Set by the renderer before
     /// <see cref="Prepare"/> when the frame is drawn alongside the simulation, where the frames show the game between
     /// ticks and the particles have to keep up with that rather than jump a tick at a time.
@@ -140,14 +145,14 @@ public abstract class ParticleSimulator2D : IDisposable
     protected internal float? FrameStep { get; internal set; }
 
     /// <summary>
-    /// For a simulator that moves the particles in the updates: how long (in seconds of the game, counted the way the
+    /// For a simulator that moves the particles in the updates, how long (in seconds of the game, counted the way the
     /// renderer counts its updates) it had been simulating for when it made what <see cref="Prepare"/> handed out.
     /// NaN for one that moves them on the render thread. The renderer draws them back along their way by however much
     /// earlier than that the frame shows the game.
     /// </summary>
     protected internal virtual double PreparedTime => double.NaN;
 
-    /// <summary>GL thread, after the range returned by <see cref="Prepare"/> has been drawn.</summary>
+    /// <summary>Render thread, after what <see cref="Prepare"/> handed out has been drawn.</summary>
     protected internal virtual void Submitted()
     { }
 
