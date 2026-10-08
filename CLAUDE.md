@@ -66,6 +66,15 @@ occlusion map, `BlocksLight` on an object layer puts the box of every object on 
 put down as an object), and a collidable layer casts nothing unless it says so, the colliders of a map are hidden
 and not what the light should see. `TileMap.ShadowCasters()` is the lot of it.
 
+The body of anything that blocks light (the ground under the fighters) is drawn and lit as its face, and it stops
+every shadow at its edge, nothing runs on down through it (`DeferredRenderer2D.ShadowsInsideWalls` puts the wall
+shadows back on it, the sprites never shadow it). The ambient occlusion (`DeferredRenderer2D.AmbientOcclusion`,
+an `AmbientOcclusion2D`, off unless asked) darkens the corners, the ground under a fighter's feet and the air next
+to a pillar, by marching a few short rays through the same distance field in the deferred pass, with the `_ao` maps
+of the tile sets taken into account, packed under the sprite coverage in the green of the material attachment. It is not part of
+the path tracing, the cascades see the world at probe spacing and this is contact scale, so it is there in both
+lighting modes, and `Show` puts it on screen on its own (O and V in the lighting example).
+
 ## Text
 
 Fonts are signed distance fields (`Rendering/Text/DistanceFieldFont.cs`), one R8 atlas a skin's text is drawn out

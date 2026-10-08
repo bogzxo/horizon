@@ -181,3 +181,25 @@ quad now carries a key in `SpriteItem.Key` (the component that painted it and wh
 Text out of the distance field is read bilinear now, the pixel art filter (`smoothTexel`) was being applied to the
 field too and at a big size it made a staircase of every edge. `BlocksLight` on an object layer puts the objects
 into `ShadowCasters()`.
+
+## Ambient occlusion and where the floors stop the shadows
+
+The baked occlusion of the tiles (`_ao` next to the image, white for open) rides in the green of the material
+attachment, scaled under 0.4 (`packOcclusion` in gbuffer.slang), where the sprites that cast shadows write their
+coverage above 0.5, so the two never meet and `writeFlat` says wide open. Every texture unit of the deferred
+shader is spoken for, a fourth attachment would have had to come in through the bindless table.
+
+A thing that cost an afternoon. A struct in a storage block has its stride rounded up to 16 bytes by the layout
+the shaders get, and the C# side (Sequential, Marshal.SizeOf) doesn't. Every struct we had happened to be a whole
+number of 16 (SpriteItem 64, Tile 64, Chunk 32, Layer 48, LightData 80), so nobody noticed, and the moment Tile
+grew to 72 the GPU read every tile shifted by 8 bytes a tile, garbage bindless slots, segfault in lavapipe's
+compiled shader, no message. Keep every struct that goes in a block a whole number of 16 bytes, pad it by hand,
+and say so in the comment next to it. The screen space part (`ambientOcclusion` in deferred.slang) marches a handful of short rays
+through the distance field of walls and sprites, a point inside a wall starts at its face and only looks the way
+the face does, which is why a flat floor stays open and its corners don't. `AmbientOcclusion2D` holds the knobs,
+`Show` is lighting mode 3. It lives in the deferred resolve and not in the cascades on purpose, the cascades see the
+world at probe spacing and this is contact scale, and it costs a few dozen field reads a pixel.
+
+`shadow()` returns 1 straight away for a point inside a wall unless `ShadowsInsideWalls` is on, so the ground body
+is lit as its face without the bands of the crates and post bases running down through it. That is what was asked
+for with "the floors stop shadows", the maps already have CastsShadows on their floors.
