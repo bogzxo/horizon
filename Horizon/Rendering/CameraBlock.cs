@@ -4,9 +4,7 @@ using System.Runtime.InteropServices;
 using Horizon.Core.Threading;
 using Horizon.Engine;
 using Horizon.Logging;
-using Horizon.OpenGL.Assets;
-using Horizon.OpenGL.Descriptions;
-using Horizon.OpenGL.Managers;
+using Horizon.OpenGL.Buffers;
 
 using Silk.NET.OpenGL;
 
@@ -30,7 +28,9 @@ public static class CameraBlock
     public const uint BINDING = 0;
 
     /// <summary>Must match the std140 layout of the block in shaders/common/camera.glsl.</summary>
-    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    // Padded out to 512 bytes so every block in the ring starts where a uniform block may be bound (256 at the most, on
+    // any driver that's been seen)
+    [StructLayout(LayoutKind.Sequential, Pack = 4, Size = SLOT_BYTES)]
     private struct Block
     {
         public Matrix4x4 View;
@@ -47,7 +47,18 @@ public static class CameraBlock
         public float Padding;
     }
 
-    private static BufferObject? buffer;
+    private const int SLOT_BYTES = 512;
+
+    // How many times a frame the camera can change before it has to be written over the last one in place. A scene,
+    // its post processing, the UI and a few overlays is a handful, this is a hundred times that
+    private const int SLOTS = 256;
+
+    // The blocks of a frame go one after the other into a ring that's three frames deep, each one bound as the block
+    // when it's written. Writing the one buffer in place every time the camera changed had the driver wait for the
+    // draws still reading it, every frame, and llvmpipe lost a third of its frame rate to that alone
+    private static StreamBuffer<Block>? ring;
+    private static int slot;
+    private static bool overflowed;
     private static bool unavailable;
 
     // What the block holds, to spare the GPU being told again
@@ -82,7 +93,16 @@ public static class CameraBlock
         dirty = true;
         heldCamera = null;
 
-        buffer!.BindBase(BufferTargetARB.UniformBuffer, BINDING);
+        ring!.Begin(SLOTS);
+        slot = -1;
+    }
+
+    /// <summary>The frame is drawn, the ring moves on. The engine calls it.</summary>
+    internal static void EndFrame()
+    {
+        if (ring is null) return;
+        ring.End();
+        slot = -1;
     }
 
     /// <summary>
@@ -148,36 +168,41 @@ public static class CameraBlock
     /// <summary>How big what is drawn into is, as the block has it.</summary>
     public static Vector2 ViewportSize => viewportSize;
 
-    private static unsafe void Write()
+    private static void Write()
     {
-        fixed (Block* block = &held)
-            buffer!.Update(block, (nuint)sizeof(Block));
+        if (ring is null || !ring.IsAvailable) return;
+
+        if (slot + 1 < SLOTS) slot++;
+        else if (!overflowed)
+        {
+            // Written over in place from here on, which stalls, but it draws
+            Log.Warning($"[CameraBlock] The camera changed more than {SLOTS} times in a frame, the rest write over the last block.");
+            overflowed = true;
+        }
+
+        if (slot < 0) slot = 0;
+        ring.Write(slot, in held);
+        ring.BindRange(BufferTargetARB.UniformBuffer, BINDING, slot, 1);
     }
 
-    private static unsafe bool Ensure()
+    private static bool Ensure()
     {
-        if (buffer is not null) return true;
+        if (ring is not null) return true;
         if (unavailable) return false;
 
         // The engine's, not the scene's that happened to draw first
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
-        if (!ObjectManager.Instance.Buffers.TryCreate(
-                new BufferObjectDescription
-                {
-                    Type = BufferTargetARB.UniformBuffer,
-                    IsStorageBuffer = true,
-                    Size = (uint)sizeof(Block),
-                    StorageMasks = BufferStorageMask.DynamicStorageBit
-                },
-                out var result))
+        ring = new StreamBuffer<Block>(BufferTargetARB.UniformBuffer, SLOTS, "camera");
+        if (!ring.IsAvailable)
         {
-            Log.Error($"[CameraBlock] The camera's uniform block couldn't be made, nothing will draw where it should: {result.Message}");
+            Log.Error("[CameraBlock] The camera's uniform ring couldn't be made, nothing will draw where it should.");
+            ring.Dispose();
+            ring = null;
             unavailable = true;
             return false;
         }
 
-        buffer = result.Asset;
         return true;
     }
 }

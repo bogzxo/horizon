@@ -242,7 +242,9 @@ public class GameEngine : Entity
 
         Graphics.OnDebugMessage(OnDebugMessage);
 
-        gpuTimer = Horizon.OpenGL.GpuTimer.TryCreate();
+        // Timer queries make some drivers (llvmpipe for one) flush every frame, so they can be switched off for the numbers
+        if (Environment.GetEnvironmentVariable("HORIZON_GPU_TIMER") is not "off")
+            gpuTimer = Horizon.OpenGL.GpuTimer.TryCreate();
     }
 
     /// <summary>
@@ -304,6 +306,7 @@ public class GameEngine : Entity
             base.Render(dt);
 
         gpuTimer?.End();
+        Horizon.Rendering.CameraBlock.EndFrame();
 
         if (scheduledScreenshot is { } scheduled && TotalTime >= scheduledScreenshotAt)
         {

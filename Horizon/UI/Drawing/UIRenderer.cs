@@ -34,6 +34,9 @@ internal sealed class UIRenderer
     /// <summary>Whether anything of what was last uploaded is going anywhere, see <see cref="UIDrawList.Moving"/>.</summary>
     public bool Moving { get; private set; }
 
+    /// <summary>Whether there is nothing to draw at all, a UI whose modules are all off, or one that hasn't been painted yet.</summary>
+    public bool IsEmpty => itemCount == 0;
+
     public void Initialize()
     {
         // Not part of any scene. It only ever draws what it is handed here.
