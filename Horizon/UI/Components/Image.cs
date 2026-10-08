@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using Horizon.OpenGL.Assets;
+using Horizon.Rendering.Spriting;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -59,6 +60,18 @@ public class Image : UIComponent
 
     public Vector4 Tint { get; set; } = Vector4.One;
 
+    /// <summary>
+    /// Somebody else's atlas to draw out of (a character's, the one the fight draws them from), with
+    /// <see cref="AtlasKey"/> saying which region. Takes the place of the region, the file and the texture.
+    /// </summary>
+    public TextureAtlas? Atlas { get; set; }
+
+    /// <summary>The region of <see cref="Atlas"/> to show, the key it was asked for under.</summary>
+    public string AtlasKey { get; set; } = string.Empty;
+
+    /// <summary>Whether what's shown is flipped left to right.</summary>
+    public bool Mirrored { get; set; }
+
     public Image()
     { }
 
@@ -69,6 +82,9 @@ public class Image : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
+        if (Atlas is { } atlas)
+            return SourceSize != Vector2.Zero ? SourceSize : atlas.TryGet(AtlasKey, out var found) ? found.FrameSize : Vector2.Zero;
+
         if (Texture is { } texture)
             return SourceSize != Vector2.Zero ? SourceSize : new Vector2(texture.Width, texture.Height);
 
@@ -86,6 +102,12 @@ public class Image : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
+        if (Atlas is { } atlas)
+        {
+            if (AtlasKey.Length > 0) list.Image(atlas, AtlasKey, Bounds, Tint, Mirrored);
+            return;
+        }
+
         if (Texture is { } texture)
         {
             if (SourceSize != Vector2.Zero)

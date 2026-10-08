@@ -192,6 +192,7 @@ public partial class UICompositor : GameComponent, IDisposable
     {
         public SpriteItem[] Items = new SpriteItem[256];
         public readonly List<UIDrawList.Run> Runs = [];
+        public readonly List<TextureAtlas> Atlases = [];
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
@@ -455,6 +456,10 @@ public partial class UICompositor : GameComponent, IDisposable
             foreach (var run in front.Runs)
                 into.Runs.Add(run);
 
+            into.Atlases.Clear();
+            foreach (var atlas in front.Atlases)
+                into.Atlases.Add(atlas);
+
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
             into.Moving = front.Moving;
@@ -504,11 +509,11 @@ public partial class UICompositor : GameComponent, IDisposable
                     : a[i];
             }
 
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, before.Moving || after.Moving);
+            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, before.Moving || after.Moving, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, shown.Moving);
+            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, shown.Moving, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases));
         }
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);

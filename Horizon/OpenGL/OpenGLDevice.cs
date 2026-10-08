@@ -28,10 +28,13 @@ public sealed class OpenGLDevice : GraphicsDevice
     {
         this.gl = gl;
         Description = $"OpenGL {gl.GetStringS(StringName.Version)} on {gl.GetStringS(StringName.Renderer)}";
+        MaxTextureSize = (uint)Math.Max(gl.GetInteger(GetPName.MaxTextureSize), 1024);
         Install(this);
     }
 
     public override string Description { get; }
+
+    public override uint MaxTextureSize { get; }
 
     private static PrimitiveType Of(Topology topology) => topology switch
     {
