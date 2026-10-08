@@ -50,22 +50,16 @@ internal sealed class UIRenderer
         if (fontSampler != 0)
             return;
 
-        // Text is nearly always drawn smaller than the atlas, which a nearest filter turns to SHIT, so
-        // the font gets as many mipmaps as can be and is sampled through a smooth sampler. The texture's own filter is
-        // left alone for anything else drawing with the same font image...
-        fontSampler = GameEngine.Instance.Graphics.CreateSampler(new Horizon.Graphics.SamplerSettings(Smooth: true, Mipmaps: true));
+        // The font is a distance field, read smoothly and without mipmaps, the shader makes the edge out of it at
+        // whatever size the text is drawn (see FieldFlag in sprites.slang). Mipmaps would only blunt the field
+        fontSampler = GameEngine.Instance.Graphics.CreateSampler(new Horizon.Graphics.SamplerSettings(Smooth: true, Mipmaps: false));
     }
 
     /// <summary>
-    /// Gets the font of a skin ready to be drawn small. Has to be done once for every skin.
+    /// There used to be mipmaps to make here, a distance field wants none. Kept for whoever still calls it.
     /// </summary>
     public static void PrepareFont(UIFont font)
-    {
-        if (font.Texture.Handle == 0)
-            return;
-
-        GameEngine.Instance.Graphics.GenerateMipmaps(font.Texture);
-    }
+    { }
 
     /// <summary>
     /// Takes a copy of a finished draw list. The list is free to be reused afterwards.

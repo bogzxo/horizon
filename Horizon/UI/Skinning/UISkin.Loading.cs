@@ -6,6 +6,8 @@ using Horizon.Rendering.Spriting;
 using Horizon.UI.Drawing;
 using Horizon.UI.Scripting;
 
+using Horizon.Rendering.Text;
+
 namespace Horizon.UI.Skinning;
 
 // The half of the skin that reads skin files. What a file can say is in Read, one case for every word of it.
@@ -107,17 +109,20 @@ public sealed partial class UISkin
     {
         string fontDirectory = DEFAULT_FONT_DIRECTORY;
         string fontFile = DEFAULT_FONT_FILE;
+        int fontSize = DistanceFieldFont.DEFAULT_EM;
         if (properties.TryGetValue("font", out var fontValue))
         {
             if (fontValue is not ObjectValue font
                 || !font.Properties.TryGetValue("dir", out var dir)
                 || !font.Properties.TryGetValue("file", out var name))
             {
-                throw new Exception("font has to be an object with a dir and a file.");
+                throw new Exception("font has to be an object with a dir and a file (and a size, pixels to the em, for a TrueType one).");
             }
 
             fontDirectory = UIScript.ToText(dir, "font.dir");
             fontFile = UIScript.ToText(name, "font.file");
+            if (font.Properties.TryGetValue("size", out var size))
+                fontSize = (int)UIScript.ToNumber(size, "font.size");
         }
 
         SpriteSheetDefinition? sheet = properties.TryGetValue("sprites", out var sprites)
@@ -133,7 +138,7 @@ public sealed partial class UISkin
             ? Path.Combine(directory, UIScript.ToText(textureFile, "texture"))
             : null;
 
-        var skin = new UISkin(new UIFont(fontDirectory, fontFile), sheet, theme);
+        var skin = new UISkin(new UIFont(fontDirectory, fontFile, fontSize), sheet, theme);
 
         // Before anything else. It is what every region is scaled by unless it says otherwise.
         if (properties.TryGetValue("art_scale", out var artScale))

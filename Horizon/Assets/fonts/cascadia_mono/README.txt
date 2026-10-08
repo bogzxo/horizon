@@ -1,5 +1,5 @@
-cascadia_mono.png and cascadia_mono.fnt are Cascadia Mono (regular) baked into a bitmap font, 96 pixels to the em.
-One cell per character from space to tilde, white with the coverage of the ink in the alpha.
+cascadia_mono.ttf is Cascadia Mono (regular), the TrueType font itself. The engine turns it into a signed distance
+field when a skin asks for it (see DistanceFieldFont), there is no bitmap of it any more.
 
 Cascadia Mono is Copyright (c) 2019 - Present, Microsoft Corporation, with Reserved Font Name Cascadia Code.
 It is licensed under the SIL Open Font License, Version 1.1, which lets it be used, embedded and handed on

@@ -50,6 +50,10 @@ public struct SpriteItem
     // of the renderer, which makes a distance field of it for the lights to march
     public const uint ShadowFlag = 0x100000;
 
+    // Set in Flags for a quad whose texture is a signed distance field (text, see DistanceFieldFont), 128 on the
+    // edge of the ink, up inside, down outside. The shader turns it into a crisp edge at any size, the colour is the item's
+    public const uint FieldFlag = 0x200000;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad

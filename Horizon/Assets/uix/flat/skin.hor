@@ -2,8 +2,8 @@
 // Every component draws itself as a box in the colours below, with corners as round as corner_radius says,
 // and those are worked out as they are drawn. So it is crisp at any size, where pixel art only is at whole multiples of itself.
 //
-// The font is Cascadia Mono, smooth and the same width for every letter. Its numbers match the pixel fonts
-// (see Assets/fonts/cascadia_mono), so a text scale of 0.125 is small print here like it is with those.
+// The font is Cascadia Mono, the TrueType itself, drawn as a distance field at 96 pixels to the em like the pixel
+// fonts were baked, so a text scale of 0.125 is small print here like it is with those.
 //
 // A button whose style ends in _flat (button_flat) is only its label until the pointer finds it, which is what
 // the rows of a list and the tabs above something want to be. Every other style is a button you can see.
@@ -13,7 +13,7 @@
 // Comments can't go inside of the object, the parser won't have it.
 
 let skin = {
-    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.fnt" },
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 96 },
     text_scale: 0.125,
 
     corner_radius: 5,

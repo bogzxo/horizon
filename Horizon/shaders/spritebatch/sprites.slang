@@ -46,6 +46,7 @@ static const uint SMOOTH_FLAG = 0x20000u;
 static const uint CORNER_FLAG = 0x40000u;
 static const uint FLASH_FLAG = 0x80000u;
 static const uint SHADOW_FLAG = 0x100000u;
+static const uint FIELD_FLAG = 0x200000u;
 
 struct Varyings
 {
@@ -149,6 +150,17 @@ GBuffer fsMain(Varyings input)
 
     // The texture only says where the ink is (fonts), the colour is all the item's
     if ((input.flags & COVERAGE_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, tex.a);
+
+    // Or how far from the ink's edge every texel is (text out of a distance field), the edge is wherever the
+    // field crosses the middle, smoothed over the width of a screen pixel so it is crisp big and small alike.
+    // The width is worked out outside of the branch, derivatives want every lane along
+    float field = tex.r;
+    float fieldPixel = max(fwidth(field), 0.0001);
+    if ((input.flags & FIELD_FLAG) != 0u)
+    {
+        float ink = clamp((field - 0.5) / fieldPixel + 0.5, 0.0, 1.0);
+        tex = float4(1.0, 1.0, 1.0, ink);
+    }
 
     // A quarter of a disc. Inside of its edge, and (for the corner of an outline) outside of the hole in it
     if ((input.flags & CORNER_FLAG) != 0u)

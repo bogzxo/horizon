@@ -20,7 +20,8 @@ internal interface IUIIconSource
 }
 
 /// <summary>
-/// A bitmap font as the UI needs it. Enough to measure text and to place its glyphs.
+/// A font as the UI needs it, a distance field (see <see cref="DistanceFieldFont"/>) with enough around it to
+/// measure text and to place its glyphs, kerning included.
 /// Text can have icons in it: <c>[icon:name]</c> is replaced by the icon of that name (see
 /// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
 /// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin:
@@ -33,10 +34,14 @@ public sealed class UIFont
     private const char ICON_TAG_END = ']';
 
     private readonly Dictionary<char, CharDefinition> glyphs;
-    private readonly int spaceAdvance;
+    private readonly Dictionary<int, float> kerning;
+    private readonly float spaceAdvance;
 
-    /// <summary>The glyph atlas. Only its alpha is used, text takes its colour from whoever draws it.</summary>
-    public Texture Texture { get; }
+    /// <summary>The font itself, the field and its numbers.</summary>
+    public DistanceFieldFont Field { get; }
+
+    /// <summary>The glyph atlas, a distance field. Text takes its colour from whoever draws it.</summary>
+    public Texture Texture => Field.Texture;
 
     /// <summary>The height of a line of text at scale 1, in pixels.</summary>
     public float LineHeight { get; }
@@ -45,28 +50,32 @@ public sealed class UIFont
     internal IUIIconSource? Icons { get; set; }
 
     /// <summary>
-    /// Loads a BMFont definition and its atlas. Has to run on the GL thread.
+    /// Loads a font, TrueType or BMFont, as a distance field. Render thread.
     /// </summary>
-    public UIFont(string directory, string file)
+    /// <param name="emSize">How many pixels to the em a TrueType font's metrics come out at, a scale of 1 draws it this big. A bitmap font is the size it was baked at.</param>
+    public UIFont(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM)
     {
-        var importer = new BMFontImporter(directory, file);
-
-        glyphs = importer.Definitions;
-        Texture = importer.Texture ?? Texture.Invalid;
+        Field = DistanceFieldFont.Load(directory, file, emSize);
+        glyphs = Field.Glyphs;
+        kerning = Field.Kerning;
 
         float tallest = 0.0f;
         foreach (var glyph in glyphs.Values)
             tallest = MathF.Max(tallest, glyph.Offset.Y + glyph.Size.Y);
 
-        LineHeight = importer.LineHeight > 0 ? importer.LineHeight : tallest;
+        LineHeight = Field.LineHeight > 0 ? Field.LineHeight : tallest;
 
         // Fonts are often exported without a glyph for the space, in which case any letter's advance
         // is a better guess than nothing ('n' being the traditional one).
         spaceAdvance =
             glyphs.TryGetValue(' ', out var space) ? space.XAdvance
             : glyphs.TryGetValue('n', out var n) ? n.XAdvance
-            : (int)(LineHeight * 0.5f);
+            : LineHeight * 0.5f;
     }
+
+    /// <summary>How much nearer (or further) the second of two characters sits to the first than its advance says, at scale 1.</summary>
+    internal float Kerning(char first, char second) =>
+        kerning.Count > 0 && kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
 
     /// <summary>
     /// Finds what a character looks like. The glyph always says how far the character moves the pen;
@@ -195,6 +204,7 @@ public sealed class UIFont
 
             Resolve(character, out var glyph);
             width += glyph.XAdvance * scale;
+            if (i + 1 < text.Length) width += Kerning(character, text[i + 1]) * scale;
         }
 
         return new Vector2(MathF.Max(widest, width), lines * LineHeight * scale);
@@ -328,6 +338,7 @@ public sealed class UIFont
 
         Resolve(character, out var glyph);
         at++;
-        return glyph.XAdvance * scale;
+        float kern = at < text.Length ? Kerning(character, text[at]) : 0.0f;
+        return (glyph.XAdvance + kern) * scale;
     }
 }
