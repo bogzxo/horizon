@@ -23,11 +23,15 @@ struct Chunk
 struct Layer
 {
     float2 offset;
-    float2 padding0;
-    float padding1;
+    float2 geometryOrigin;
+    uint geometry;
     float emissive;
-    float2 padding;
+    float2 geometryScale;
     float4 tint;
+    float occlusionMaps;
+    float padding0;
+    float padding1;
+    float padding2;
 };
 
 // VkDrawIndirectCommand.
