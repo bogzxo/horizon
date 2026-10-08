@@ -117,6 +117,20 @@ public sealed unsafe class StreamBuffer<T> : IDisposable where T : unmanaged
     public void BindRange(BufferTargetARB blockTarget, uint index) =>
         Buffer?.BindRange(blockTarget, index, ByteOffset, RegionBytes);
 
+    /// <summary>
+    /// Binds some of this frame's region, from an item for so many, where a shader block says it is. The byte offset of
+    /// the first item has to suit what the block target wants aligned, which is the caller's to arrange (a padded item).
+    /// </summary>
+    public void BindRange(BufferTargetARB blockTarget, uint index, int first, int count) =>
+        Buffer?.BindRange(blockTarget, index, ByteOffset + (nint)first * sizeof(T), (nuint)count * (nuint)sizeof(T));
+
+    /// <summary>Writes one item into this frame's region, between <see cref="Begin"/> and <see cref="End"/>.</summary>
+    public void Write(int index, in T item)
+    {
+        if (mapped == null || (uint)index >= (uint)Capacity) return;
+        mapped[Offset + index] = item;
+    }
+
     private void Resize(int wanted)
     {
         // Every region starts on an offset a shader block may be bound at, so the capacity is rounded up to that

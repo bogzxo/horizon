@@ -611,6 +611,15 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
+        // A UI with nothing on it (an overlay that's switched off, say) draws nothing, and in particular doesn't lay an
+        // empty picture over the whole screen every frame, which is a full screen pass for fuck all. It's painted
+        // afresh the moment it has something again
+        if (renderer.IsEmpty)
+        {
+            pictureCurrent = false;
+            return;
+        }
+
         // Onto its own layer and through its effects if it has any that are on, straight over the scene if not.
         // A UI that is standing still has nothing for a blur to do, and goes straight there as well
         // The very first frame goes through the layer whether anything moves or not. Making the layer and what its
