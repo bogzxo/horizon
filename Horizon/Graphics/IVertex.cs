@@ -35,7 +35,7 @@ public readonly struct VertexLayoutDescription
 
     /// <summary>
     /// Whether an integer attribute is handed to the shader as a float from 0 to 1 (or -1 to 1). Colours packed into
-    /// bytes want this; an attribute the shader reads as an int never goes through here.
+    /// bytes want this, an attribute the shader reads as an int never goes through here.
     /// </summary>
     public bool Normalized { get; init; }
 

@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Diagnostics;
+using System.Numerics;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -14,10 +15,10 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI;
 
 /// <summary>
-/// Runs a UI: owns the skin and the modules, routes the pointer to the component under it, and draws
+/// Runs a UI. It owns the skin and the modules, routes the pointer to the component under it, and draws
 /// everything on top of the scene.
 /// The work is split the way the engine splits it. Input, layout and painting happen on the simulation thread
-/// and produce a list of quads; <see cref="Render"/> only hands the latest list to the sprite renderer, so
+/// and produce a list of quads. <see cref="Render"/> only hands the latest list to the sprite renderer, so
 /// components never touch the GPU. The pointer and the keys are handed out in <see cref="UpdateState"/>, the
 /// laying out and the painting wait for the end of the tick (<see cref="Capture"/>) so that what is painted is
 /// the UI as every update of the tick left it. Painted in its own update, a name tag the scene puts on a sprite
@@ -25,13 +26,17 @@ namespace Horizon.UI;
 /// <para>
 /// Drawn alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>) the list that was painted last is
 /// published at the end of every tick (<see cref="Capture"/>), and every frame draws the UI at the moment between the
-/// last two ticks it shows: what slides, pops or is tweened goes the same distance for the same time from frame to frame
+/// last two ticks it shows. What slides, pops or is tweened goes the same distance for the same time from frame to frame
 /// at any frame rate, however the ticks and the frames line up. Quads that are the same in both lists but for where they
-/// are, how big and what colour are blended; whatever changed in steps (the text, which art) changes at the moment it
+/// are, how big and what colour are blended, whatever changed in steps (the text, which art) changes at the moment it
 /// changed. A UI that is drawn by hand and never published is drawn from its newest list, as it always was.
 /// </para>
 /// <para>
 /// A UI can have effects of its own, see <see cref="PostProcessing"/>.
+/// </para>
+/// <para>
+/// However fast the frames come the UI is only put together and drawn anew so many times a second, see
+/// <see cref="FrameRateLimit"/>.
 /// </para>
 /// </summary>
 public partial class UICompositor : GameComponent, IDisposable
@@ -70,7 +75,7 @@ public partial class UICompositor : GameComponent, IDisposable
     public float Scale { get; set; } = 1.0f;
 
     /// <summary>
-    /// How much bigger than it was laid out the UI is drawn right now: <see cref="Scale"/> times whatever
+    /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
     /// fitting the <see cref="DesignSize"/> comes to. A unit of the layout is this many units of the camera.
     /// </summary>
     public float UIScale { get; private set; } = 1.0f;
@@ -92,7 +97,7 @@ public partial class UICompositor : GameComponent, IDisposable
         } while (Interlocked.CompareExchange(ref pendingScroll, before + notches, before) != before);
     }
 
-    // A skin asked for with SetSkin, waiting for the GL thread to load it.
+    // A skin asked for with SetSkin, waiting for the render thread to load it.
     private (string Directory, string File, string? Theme)? requestedSkin;
     private readonly Lock skinLock = new();
 
@@ -104,10 +109,8 @@ public partial class UICompositor : GameComponent, IDisposable
     // Where the UI is drawn while it has effects that are on, rather than straight over the scene
     private readonly PostLayer layer = new();
 
-    // Counts the updates for whoever works out how fast things are going, skipping one whenever there was a gap:
-    // what is somewhere else after a break hasn't moved there
+    // Counts the updates, every list is told which one it was painted in
     private int paintFrame;
-    private bool layerWarmed;
 
     // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
     // through another camera the same list is another picture
@@ -123,7 +126,71 @@ public partial class UICompositor : GameComponent, IDisposable
     public bool Retained { get; set; } = true;
 
     /// <summary>
-    /// The effects the UI goes through before it is laid over whatever is under it, none to begin with:
+    /// What <see cref="FrameRateLimit"/> is for every UI made from here on, 120 unless a game says otherwise. Set
+    /// it before the UIs are made (as the game starts), the ones there are already keep what they have.
+    /// </summary>
+    public static float DefaultFrameRateLimit { get; set; } = 120.0f;
+
+    /// <summary>
+    /// How many times a second the UI is put together and drawn anew at the most, 0 for as often as there are
+    /// frames. A game that runs at three thousand frames a second was blending every moving UI between its last
+    /// two ticks, sending the lot to the GPU and drawing every quad of it three thousand times a second, for a
+    /// screen that shows a hundred and forty four of them on a good day and a player who reads a health bar at
+    /// about four. The frames in between get what was drawn last, the picture of it laid over once more (one
+    /// quad, see <see cref="Retained"/>) or the same quads again where there is no picture.
+    /// <para>
+    /// It is rounded to whole frames, the UI is drawn anew on the frame nearest to when it is due. So a screen of
+    /// 144 has it every frame rather than five frames out of six, which is a judder anybody can see, one of 240
+    /// has it every other frame, and a game that is slower than the limit never notices there is one.
+    /// </para>
+    /// <para>
+    /// Only the drawing is held back. The pointer, the updates, the laying out and the painting are the
+    /// simulation's and go at its rate, a click is felt as soon as ever, and the <see cref="Cursor"/> is drawn
+    /// where the mouse is every frame whatever this says. A UI that has been standing still is drawn the moment
+    /// something in it changes, there is nothing to wait for then.
+    /// </para>
+    /// </summary>
+    [Inspect(0.0f, 480.0f)]
+    public float FrameRateLimit { get; set; } = DefaultFrameRateLimit;
+
+    // When the UI was last put together and sent to the GPU and when it was last asked to draw, by the
+    // stopwatch, 0 for never. And how long a frame is these days, smoothed
+    private long refreshedAt, renderedAt;
+    private double frameSeconds;
+
+    /// <summary>
+    /// Helper method to say whether a UI that was last drawn anew a while ago is due again, see
+    /// <see cref="FrameRateLimit"/>. It is if this frame is nearer to the moment it is due than the next one
+    /// will be, which is where the half a frame comes from.
+    /// </summary>
+    /// <param name="sinceRefresh">How long ago it was drawn anew, in seconds.</param>
+    /// <param name="frameSeconds">How long a frame is.</param>
+    /// <param name="limit">How many times a second it may be, 0 for no limit.</param>
+    internal static bool RefreshDue(double sinceRefresh, double frameSeconds, float limit) =>
+        limit <= 0.0f || sinceRefresh + frameSeconds * 0.5 >= 1.0 / limit;
+
+    /// <summary>
+    /// Helper method to note that a frame is being drawn and say whether the UI may be drawn anew in it. Render
+    /// thread, once a frame.
+    /// </summary>
+    private bool NoteFrame()
+    {
+        long now = Stopwatch.GetTimestamp();
+
+        // A UI nobody drew for a while (a menu that was closed) has not had a frame that long, it had none
+        if (renderedAt != 0)
+        {
+            double took = Math.Min(Stopwatch.GetElapsedTime(renderedAt, now).TotalSeconds, 0.1);
+            frameSeconds = frameSeconds <= 0.0 ? took : frameSeconds + (took - frameSeconds) * 0.1;
+        }
+
+        renderedAt = now;
+
+        return refreshedAt == 0 || RefreshDue(Stopwatch.GetElapsedTime(refreshedAt, now).TotalSeconds, frameSeconds, FrameRateLimit);
+    }
+
+    /// <summary>
+    /// The effects the UI goes through before it is laid over whatever is under it, none to begin with.
     /// <code>
     /// compositor.PostProcessing.Add(new BlurEffect());
     /// </code>
@@ -202,7 +269,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
     private readonly SnapshotBuffer<CapturedList> captured = new(static () => new CapturedList());
 
-    // What of the captured lists was uploaded last: which two lists and how far between them, -1 for something else.
+    // What of the captured lists was uploaded last, which two lists and how far between them, -1 for something else.
     // And where blended lists are put together
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
@@ -268,7 +335,7 @@ public partial class UICompositor : GameComponent, IDisposable
     private bool ownsCamera;
 
     /// <summary>
-    /// A UI laid out against the whole window, with a camera of its own that it keeps the size of the window: for a
+    /// A UI laid out against the whole window, with a camera of its own that it keeps the size of the window. For a
     /// UI that isn't drawn through any camera of the scene (a HUD, a menu laid over everything), which saves making
     /// one and remembering to resize it. The window can be resized under it, it follows on the next update.
     /// </summary>
@@ -317,7 +384,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
     /// <summary>
     /// Swaps the look of the whole UI for another skin, such as another theme of the same art. Safe
-    /// from any thread: the skin is loaded the next time the UI is drawn, and if it can't be the
+    /// from any thread, the skin is loaded the next time the UI is drawn, and if it can't be the
     /// current one stays.
     /// </summary>
     /// <param name="directory">The directory holding the skin definition and its art.</param>
@@ -353,6 +420,9 @@ public partial class UICompositor : GameComponent, IDisposable
         Skin = skin;
         renderer.Clear();
         pictureCurrent = false;
+
+        // And the first list painted with the new one goes up as soon as it is there, limit or no limit
+        refreshedAt = 0;
     }
 
     public override void UpdateState(float dt)
@@ -499,11 +569,12 @@ public partial class UICompositor : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to upload what a frame that is drawn alongside the simulation shows: the last two captured lists,
+    /// Helper method to upload what a frame that is drawn alongside the simulation shows, the last two captured lists
     /// blended to the moment between them. Only when that is something else than what was uploaded last.
     /// </summary>
+    /// <param name="due">Whether the UI may be drawn anew this frame, see <see cref="FrameRateLimit"/>.</param>
     /// <returns>False if nothing was captured yet, the UI is drawn from its newest list then.</returns>
-    private bool UploadCaptured(in RenderFrame frame, UISkin skin)
+    private bool UploadCaptured(in RenderFrame frame, UISkin skin, bool due)
     {
         if (!captured.TryGet(frame, out CapturedList before, out CapturedList after, out bool continuous))
             return false;
@@ -521,7 +592,6 @@ public partial class UICompositor : GameComponent, IDisposable
         // lists at all was how one clock in a HUD had the whole UI drawn in steps a tick apart
         bool sameList = before.Painted == after.Painted;
         bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete;
-        bool sameQuads = canBlend && Blendable(before, after);
 
         // A list that changed in steps is shown as it was until the moment is all the way at the newer one
         CapturedList shown = sameList || canBlend || frame.Alpha >= 1.0f || before.Skin != skin || before.Incomplete ? after : before;
@@ -531,13 +601,19 @@ public partial class UICompositor : GameComponent, IDisposable
         if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha)
             return true;
 
+        // Not yet, see FrameRateLimit. What is up there already is shown once more and this is asked again the
+        // next frame, so whatever the UI comes to rest as gets there a hundred and twentieth of a second late
+        // at the worst
+        if (!due)
+            return true;
+
         if (canBlend && alpha < 1.0f)
         {
             if (blended.Length < after.Count)
                 blended = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)after.Count)];
 
             ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-            if (!sameQuads)
+            if (!Blendable(before, after))
             {
                 BlendByKey(a, b, alpha);
             }
@@ -560,6 +636,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
         pictureCurrent = false;
+        refreshedAt = renderedAt;
         return true;
     }
 
@@ -629,7 +706,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
     /// <summary>
     /// Called when the other button of the pointer (right click) goes down and nothing under it handled it with
-    /// <see cref="UIComponent.OnContextMenu"/>: with the innermost component under the pointer (null if none) and
+    /// <see cref="UIComponent.OnContextMenu"/>. With the innermost component under the pointer (null if none) and
     /// where the pointer is, in the camera's world. Show a <see cref="ContextMenu"/> from here.
     /// </summary>
     public Action<UIComponent?, Vector2>? ContextRequested { get; set; }
@@ -645,12 +722,14 @@ public partial class UICompositor : GameComponent, IDisposable
             return;
 
         RenderFrame frame = RenderFrame.Active;
+        bool due = NoteFrame();
+
         if (frame.IsDecoupled)
         {
             // Art that was asked for while painting is stitched into the atlas now, whichever list is shown
             skin.Update();
 
-            if (UploadCaptured(frame, skin))
+            if (UploadCaptured(frame, skin, due))
             {
                 DrawUploaded(dt);
                 return;
@@ -663,13 +742,15 @@ public partial class UICompositor : GameComponent, IDisposable
             // while any was missing is skipped, what was shown before it stays up until the next one has it.
             skin.Update();
 
-            if (uploadedFrame != paintedFrame || shownAfter >= 0)
+            // A new list that isn't due yet (see FrameRateLimit) waits here until it is, it is not forgotten
+            if ((uploadedFrame != paintedFrame || shownAfter >= 0) && due)
             {
                 // A frame painted with a skin that has been swapped out since is skipped too.
                 if (front.Skin == skin && !front.Incomplete)
                 {
                     renderer.Upload(front);
                     pictureCurrent = false;
+                    refreshedAt = renderedAt;
                 }
 
                 uploadedFrame = paintedFrame;
@@ -764,7 +845,6 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawList(float dt)
     {
-
         // A UI with nothing on it (an overlay that's switched off, say) draws nothing, and in particular doesn't lay an
         // empty picture over the whole screen every frame, which is a full screen pass for fuck all. It's painted
         // afresh the moment it has something again
@@ -774,11 +854,6 @@ public partial class UICompositor : GameComponent, IDisposable
             return;
         }
 
-        // Onto its own layer and through its effects if it has any that are on, straight over the scene if not.
-        // A UI that is standing still has nothing for a blur to do, and goes straight there as well
-        // The very first frame goes through the layer whether anything moves or not. Making the layer and what its
-        // effects need takes a moment, which is better spent while the UI is loading than on the first frame
-        // something in it moves
         // Seen through a camera that has changed, what was drawn before is not what the UI looks like any more
         if (viewportCamera.View != pictureView || viewportCamera.Projection != pictureProjection)
             pictureCurrent = false;
@@ -788,8 +863,10 @@ public partial class UICompositor : GameComponent, IDisposable
         if (Retained && pictureCurrent && layer.Replay(dt))
             return;
 
+        // Onto its own layer, through its effects if it has any that are on, and kept there to be laid over
+        // again. Straight over the scene where there is no layer to be had (inside of a renderer that lights
+        // its picture, or a UI that asked not to be kept)
         bool layered = layer.Begin(Retained);
-        layerWarmed = true;
         renderer.Draw(viewportCamera);
 
         if (layered)
@@ -801,8 +878,8 @@ public partial class UICompositor : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Frees what the UI has on the GPU: the layer it is drawn onto for its effects, along with the effects.
-    /// GL thread. Its skin is not its own (see <see cref="UISkin.Shared"/>) and stays.
+    /// Frees what the UI has on the GPU, the layer it is drawn onto for its effects, along with the effects.
+    /// Render thread. Its skin is not its own (see <see cref="UISkin.Shared"/>) and stays.
     /// </summary>
     public void Dispose()
     {

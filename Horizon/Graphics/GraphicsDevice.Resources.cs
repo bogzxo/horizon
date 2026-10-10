@@ -9,7 +9,7 @@ namespace Horizon.Graphics;
 
 /// <summary>
 /// Making and freeing what lives on the GPU, the memory of buffers and images, the views and the shader modules. The
-/// resource classes call in here; nothing else has to.
+/// resource classes call in here, nothing else has to.
 /// </summary>
 public sealed unsafe partial class GraphicsDevice
 {
@@ -71,14 +71,16 @@ public sealed unsafe partial class GraphicsDevice
         LabelBuffer(buffer);
     }
 
+    /// <summary>
+    /// Helper method to let go of a buffer once the GPU is done with the frame being recorded. Onto a list of the
+    /// frame's as what it is, a handle and its memory. It used to be a lambda that remembered the two, which is an
+    /// object for the lambda to remember them in and a delegate on top, for every buffer anybody rewrote while it
+    /// was still being read (see <see cref="AllocateBuffer"/>, which says that is fine to do every frame).
+    /// </summary>
     private void RetireBuffer(Buffer handle, VulkanMemory.Allocation memory)
     {
         Statistics.Buffers--;
-        Retire(() =>
-        {
-            Vk.DestroyBuffer(Device, handle, null);
-            Memory.Free(memory);
-        });
+        Frame.RetiredBuffers.Add((handle, memory));
     }
 
     internal void DestroyBuffer(GpuBuffer buffer)
@@ -215,8 +217,6 @@ public sealed unsafe partial class GraphicsDevice
         _ => Format.R8G8B8A8Unorm
     };
 
-    /* Shaders */
-
     /* Names for the debugger, see VulkanContext.Name. A resource nobody named is told by what it is */
 
     internal void LabelBuffer(GpuBuffer buffer) =>
@@ -234,6 +234,8 @@ public sealed unsafe partial class GraphicsDevice
         foreach (var stage in shader.Modules)
             Context.Name(ObjectType.ShaderModule, stage.Module.Handle, shader.Name);
     }
+
+    /* Shaders */
 
     /// <summary>Helper method to turn SPIR-V into a module.</summary>
     internal ShaderModule CreateShaderModule(byte[] spirv)

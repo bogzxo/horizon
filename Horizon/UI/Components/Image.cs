@@ -50,7 +50,7 @@ public class Image : UIComponent
     public Texture? Texture { get; set; }
 
     /// <summary>
-    /// The part of <see cref="Texture"/> that is shown, in pixels from its top left corner: one sprite of a
+    /// The part of <see cref="Texture"/> that is shown, in pixels from its top left corner, one sprite of a
     /// sheet, say. The whole texture while <see cref="SourceSize"/> is zero.
     /// </summary>
     public Vector2 SourcePosition { get; set; }

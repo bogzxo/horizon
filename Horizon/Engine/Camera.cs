@@ -7,13 +7,13 @@ using Horizon.Core.Threading;
 namespace Horizon.Engine;
 
 /// <summary>
-/// What the world is seen through: where from, which way, and through what lens.
+/// What the world is seen through, where from, which way and through what lens.
 /// <para>
 /// There are two of everything it works out. The simulation's (<see cref="View"/>, <see cref="Bounds"/> and the rest,
 /// as read from the updates) is worked out from where the camera is at the end of every tick, so a game that asks what
 /// is on screen or where the pointer is in the world gets the same answer all tick long. A frame that is drawn
 /// alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>) gets the camera as it was at the moment the
-/// frame shows instead, between two ticks, out of what was published: the same properties read while drawing give that.
+/// frame shows instead, between two ticks, out of what was published. The same properties read while drawing give that.
 /// Whatever draws reads the camera the way it always did, and whatever updates the game does too.
 /// </para>
 /// </summary>
@@ -67,13 +67,13 @@ public abstract class Camera : GameObject
     /// How far apart (in units of the world) the places the camera is shown at are, 0 for anywhere. A camera that shows
     /// pixel art a unit per pixel wants 1 here, or the art shimmers as the camera glides over it. The camera is rounded
     /// to it once it has been worked out where it is at the moment a frame shows, so it still moves as smoothly as the
-    /// frames let it: rounded before it is shown between two ticks it would stand still and jump. Drawn with the
+    /// frames let it. Rounded before it is shown between two ticks it would stand still and jump, which is the worst of both. Drawn with the
     /// simulation standing still it is rounded where it is. <see cref="Position"/> itself is never rounded.
     /// </summary>
     public float PixelSnap { get; set; }
 
     /// <summary>
-    /// What the camera is rounded from (see <see cref="PixelSnap"/>): it is shown a whole number of steps away from
+    /// What the camera is rounded from (see <see cref="PixelSnap"/>), it is shown a whole number of steps away from
     /// here. Nothing for the steps of the world itself. A camera that follows somebody can be kept a whole number of
     /// pixels from them instead, so whoever it follows sits still on screen while the world steps by under them,
     /// rather than wobbling a pixel every time the camera steps at a different moment than they do, which looks shit.
@@ -98,7 +98,7 @@ public abstract class Camera : GameObject
     public override void Render(float dt)
     {
         // Drawn with the simulation standing still (a scene being set up, before the first tick) the camera is there to
-        // be read as it is, moved since the last tick or not. Drawn alongside it, it isn't: the frame goes by what was published
+        // be read as it is, moved since the last tick or not. Drawn alongside it, it isn't, and the frame goes by what was published
         if (!RenderFrame.Active.IsDecoupled)
             UpdateMatrices();
 
@@ -116,7 +116,7 @@ public abstract class Camera : GameObject
     }
 
     /// <summary>
-    /// Has the camera not be shown on its way from where it was to where it is from now on: it was put there, a cut.
+    /// Has the camera not be shown on its way from where it was to where it is from now on. It was put there, a cut.
     /// Simulation thread.
     /// </summary>
     public void Snap() => pose.Break();
@@ -149,7 +149,7 @@ public abstract class Camera : GameObject
     /// <summary>
     /// Helper method to get the camera as the frame that is being drawn shows it, worked out once a frame. False on any
     /// thread but the render thread, outside of a frame that is drawn alongside the simulation, and for a camera that
-    /// wasn't published (one that isn't in the scene): the simulation's is what there is then.
+    /// wasn't published (one that isn't in the scene). The simulation's is what there is then.
     /// </summary>
     private bool TryShow(out Shown frame)
     {
@@ -197,60 +197,40 @@ public abstract class Camera : GameObject
     private readonly record struct Shown(Matrix4x4 View, Matrix4x4 Projection, Matrix4x4 ViewProj, RectangleF Bounds);
 
     /// <summary>
-    /// Projects a screen space position to world space.
+    /// Where a point of the window is in the world, the way the mouse says where it is (pixels from the top left
+    /// corner of the window). For a camera that looks straight at a flat world.
     /// </summary>
-    /// <param name="screenPosition">The screen position.</param>
-    /// <returns></returns>
     public Vector2 ScreenToWorld(Vector2 screenPosition)
     {
-        // Normalize the screen position from [0, 1] to [-1, 1]
-        Vector2 normalizedScreenPosition = new Vector2(
-            (screenPosition.X / Engine.WindowManager.WindowSize.X) * 2.0f - 1.0f,
-            1.0f - (screenPosition.Y / Engine.WindowManager.WindowSize.Y) * 2.0f
-        );
+        // Out of the window and into clip space, which goes from -1 to 1 either way with its Y going up
+        Vector2 window = Engine.WindowManager.WindowSize;
+        var clip = new Vector4(
+            screenPosition.X / window.X * 2.0f - 1.0f,
+            1.0f - screenPosition.Y / window.Y * 2.0f,
+            0.0f,
+            1.0f);
 
-        // Calculate the inverse view-projection matrix
-        Matrix4x4 inverseViewProj;
-        if (Matrix4x4.Invert(ViewProj, out inverseViewProj))
-        {
-            // Transform the normalized screen position into world coordinates
-            Vector4 worldPosition4D = Vector4.Transform(
-                new Vector4(normalizedScreenPosition, 0.0f, 1.0f),
-                inverseViewProj
-            );
-            Vector3 worldPosition = new Vector3(
-                worldPosition4D.X,
-                worldPosition4D.Y,
-                worldPosition4D.Z
-            );
+        // And back out through everything the camera does to get there. A camera that can't be turned round
+        // (a lens of no size at all, say) has nowhere to put it
+        if (!Matrix4x4.Invert(ViewProj, out Matrix4x4 back))
+            return Vector2.Zero;
 
-            return new Vector2(worldPosition.X, worldPosition.Y);
-        }
-
-        // Return a default value if the inverse matrix is not valid
-        return Vector2.Zero;
+        Vector4 world = Vector4.Transform(clip, back);
+        return new Vector2(world.X, world.Y);
     }
 
     /// <summary>
-    /// Projects a screen space position to world space.
+    /// Where a place in the world is in the window, in pixels from its top left corner, the other way round from
+    /// <see cref="ScreenToWorld"/>. This used to hand back clip space under the same name, which was no use to
+    /// anybody who believed the name.
     /// </summary>
-    /// <param name="screenPosition">The screen position.</param>
-    /// <returns></returns>
-    public Vector2 WorldToScreen(Vector2 screenPosition)
+    public Vector2 WorldToScreen(Vector2 worldPosition)
     {
-        // Calculate the inverse view-projection matrix
+        Vector4 clip = Vector4.Transform(new Vector4(worldPosition, 0.0f, 1.0f), ViewProj);
+        if (clip.W != 0.0f && clip.W != 1.0f)
+            clip /= clip.W;
 
-        // Transform the normalized screen position into world coordinates
-        Vector4 worldPosition4D = Vector4.Transform(
-            new Vector4(screenPosition, 0.0f, 1.0f),
-            ViewProj
-        );
-        Vector3 worldPosition = new Vector3(
-            worldPosition4D.X,
-            worldPosition4D.Y,
-            worldPosition4D.Z
-        );
-
-        return new Vector2(worldPosition.X, worldPosition.Y);
+        Vector2 window = Engine.WindowManager.WindowSize;
+        return new Vector2((clip.X * 0.5f + 0.5f) * window.X, (0.5f - clip.Y * 0.5f) * window.Y);
     }
 }

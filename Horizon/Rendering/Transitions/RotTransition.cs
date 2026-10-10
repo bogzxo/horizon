@@ -7,7 +7,7 @@ namespace Horizon.Rendering.Transitions;
 
 /// <summary>
 /// The old scene rots away. Blotches turn up all over it and spread until there is nothing left, then the new scene comes out from under them the same way.
-/// The blotches are Perlin noise with a threshold that moves through it, see shaders/post/rot.frag. A stain creeps ahead of each one and its edge has a crust.
+/// The blotches are Perlin noise with a threshold that moves through it, see shaders/post/rot.slang. A stain creeps ahead of each one and its edge has a crust.
 /// <code>
 /// engine.SetScene(new FightScene(), new RotTransition { EdgeColor = new Vector3(0.8f, 0.2f, 0.1f) });
 /// </code>

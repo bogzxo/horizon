@@ -22,7 +22,7 @@ internal sealed class GaussianBlur : IDisposable
     private const string UNIFORM_TEXEL = "uTexel";
 
     // From this radius on (in pixels of the picture) the blur is worked out at a quarter of the size instead of half of it,
-    // then blown up to half: a sixteenth of the pixels and one round where half the size would take two. Nobody can tell
+    // then blown up to half, which is a sixteenth of the pixels and one round where half the size would take two. Nobody can tell
     // on a blur this big, but the first few pixels of a blur that is barely there would turn blocky
     private const float QUARTER_FROM = 12.0f;
 
@@ -42,7 +42,7 @@ internal sealed class GaussianBlur : IDisposable
     public static float Share(float radius) => Math.Clamp(radius / FULL_RADIUS, 0.0f, 1.0f);
 
     /// <summary>
-    /// Blurs a picture. GL thread, with nothing blended.
+    /// Blurs a picture. Render thread, with nothing blended.
     /// </summary>
     /// <param name="sourceSize">The size of <paramref name="source"/> in pixels.</param>
     /// <param name="radius">How far the picture is smeared, in pixels of the picture.</param>
@@ -91,8 +91,8 @@ internal sealed class GaussianBlur : IDisposable
     }
 
     /// <summary>
-    /// Helper method to blur a picture at a quarter of its size, for a blur that is big enough for that not to show:
-    /// averaged down to a quarter, blurred there in rounds the way it is at half, and blown up into the half sized result.
+    /// Helper method to blur a picture at a quarter of its size, for a blur that is big enough for that not to show.
+    /// Averaged down to a quarter, blurred there in rounds the way it is at half, and blown up into the half sized result.
     /// </summary>
     private PostTarget BlurAtQuarter(Texture source, Vector2 sourceSize, float radius, ref PostTarget? into)
     {

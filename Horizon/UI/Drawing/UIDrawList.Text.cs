@@ -113,7 +113,8 @@ public sealed partial class UIDrawList
                     glyph.Position,
                     glyph.Position + glyph.TexelSize,
                     packed,
-                    FONT_SLOT | SpriteItem.FieldFlag);
+                    FONT_SLOT | SpriteItem.FieldFlag,
+                    font.FieldSlope);
             }
 
             pen.X += glyph.XAdvance * scale;
@@ -122,7 +123,7 @@ public sealed partial class UIDrawList
     }
 
     /// <summary>
-    /// Draws text lined up inside an area: <see cref="Origin.Center"/> centres it,
+    /// Draws text lined up inside an area, <see cref="Origin.Center"/> centres it,
     /// <see cref="Origin.TopLeft"/> pushes it into the top left corner, and so on.
     /// </summary>
     public void Text(ReadOnlySpan<char> text, UIRect area, Origin align, float scale, Vector4 color, bool markup = true)

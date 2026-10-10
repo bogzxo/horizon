@@ -8,26 +8,26 @@ namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
 /// A see-through picture of its own for what is drawn on top of everything else (a UI, say) and is to have effects
-/// to itself: a HUD that blurs as it slides in, without the game under it being touched. Whatever is drawn between
+/// to itself, a HUD that blurs as it slides in, without the game under it being touched. Whatever is drawn between
 /// <see cref="Begin"/> and <see cref="End"/> goes onto the layer instead of where it was headed, through the
-/// <see cref="Effects"/>, and is then laid over what was there:
+/// <see cref="Effects"/>, and is then laid over what was there.
 /// <code>
 /// bool layered = layer.Begin();
 /// batch.Draw(...);
 /// if (layered) layer.End(dt);
 /// </code>
-/// With no effect on, <see cref="Begin"/> says no and does nothing: the drawing goes where it always went and the
-/// layer costs nothing, not even the memory. The layer is colours and nothing else, it has no depth and no stencil:
-/// sprites that are cut out with a mask are drawn whole on it.
+/// With no effect on, <see cref="Begin"/> says no and does nothing, the drawing goes where it always went and the
+/// layer costs nothing, not even the memory. The layer is colours and nothing else, it has no depth and no stencil,
+/// so sprites that are cut out with a mask are drawn whole on it.
 /// An effect has to pass the alpha of the picture on to be of any use on a layer, see
-/// <see cref="PostContext.Source"/>: one that makes all of the picture solid (<see cref="CrtEffect"/>) hides
+/// <see cref="PostContext.Source"/>. One that makes all of the picture solid (<see cref="CrtEffect"/>) hides
 /// everything under it.
 /// <para>
 /// A layer can also be what keeps a picture between frames. Begun with <c>retain</c> it is drawn onto whether
 /// there are effects or not, and for as long as what would be drawn onto it stays the same <see cref="Replay"/>
-/// lays the picture it has over the frame again without any of it being drawn anew: one quad, however much is in it.
+/// lays the picture it has over the frame again without any of it being drawn anew, one quad however much is in it.
 /// </para>
-/// All of it on the GL thread.
+/// All of it on the render thread.
 /// </summary>
 public sealed class PostLayer : IDisposable
 {
@@ -41,7 +41,7 @@ public sealed class PostLayer : IDisposable
     private Vector2 size;
     private bool unavailable;
 
-    // Where the layer ends up: the renderer that was drawing when it was begun, or the frame itself
+    // Where the layer ends up, the renderer that was drawing when it was begun or the frame itself
     private Renderer2D? target;
 
     // Whether any effect is on for what is being laid over right now, and whether the layer has a picture to lay over at all
@@ -75,7 +75,7 @@ public sealed class PostLayer : IDisposable
     /// over again later (see <see cref="Replay"/>).
     /// </param>
     /// <returns>
-    /// Whether it does. If not, nothing was changed and there is no <see cref="End"/> to call: whatever is drawn goes
+    /// Whether it does. If not, nothing was changed and there is no <see cref="End"/> to call, whatever is drawn goes
     /// where it was going. That is also what happens inside of a renderer that lights its picture, where there is
     /// no picture to lay anything over yet.
     /// </returns>
@@ -124,16 +124,11 @@ public sealed class PostLayer : IDisposable
 
     /// <summary>
     /// Lays the picture the layer was last drawn with over where it would go once more, through whatever effects
-    /// are on, without anything being drawn onto the layer: for a frame in which nothing of it has changed.
+    /// are on, without anything being drawn onto the layer. For a frame in which nothing of it has changed.
     /// </summary>
     /// <param name="dt">How long the frame is, in seconds.</param>
-    /// <param name="moving">
-    /// Whether what is in the picture was moving when it was drawn, which the effects that are only for what moves go
-    /// by. A picture that is shown once more because nothing new came along in time (a tick that was late) is still in
-    /// the middle of whatever it was doing, and its trails don't stop and start again for it.
-    /// </param>
     /// <returns>
-    /// False if there is no picture to lay over, or what it would be laid over is another size by now: nothing
+    /// False if there is no picture to lay over, or what it would be laid over is another size by now. Nothing
     /// was done then, and the layer has to be drawn onto again.
     /// </returns>
     public bool Replay(float dt)
@@ -207,7 +202,7 @@ public sealed class PostLayer : IDisposable
         if (frameBuffer is not null && frameBuffer.Width == width && frameBuffer.Height == height)
             return true;
 
-        // Asked for once and turned down: asking again every frame only fills the log
+        // Asked for once and turned down, asking again every frame only fills the log
         if (unavailable)
             return false;
 

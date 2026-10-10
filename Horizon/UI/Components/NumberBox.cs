@@ -6,7 +6,7 @@ using Horizon.HIDL.Runtime;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// A text box for a number. Whatever is typed is read as one as it is typed; while the box doesn't have the
+/// A text box for a number. Whatever is typed is read as one as it is typed, and while the box doesn't have the
 /// focus it shows the number it holds, however it was written. Dragging across it changes the number without
 /// the keyboard.
 /// </summary>
@@ -28,7 +28,7 @@ public class NumberBox : TextBox
         {
             number = value;
 
-            // What somebody is in the middle of typing is theirs: "1." mustn't turn back into "1".
+            // What somebody is in the middle of typing is theirs, "1." mustn't turn back into "1" under their fingers.
             if (!IsFocused)
                 Text = Format(value);
         }
@@ -93,7 +93,7 @@ public class NumberBox : TextBox
     {
         base.Update(dt);
 
-        // Tidied up once whoever was typing has left: "007" and "" both stand for a number.
+        // Tidied up once whoever was typing has left, "007" and "" both stand for a number.
         if (!IsFocused && !IsPressed && Text != Format(number))
             Text = Format(number);
     }

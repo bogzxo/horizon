@@ -3,22 +3,22 @@
 namespace Horizon.Core.Components;
 
 /// <summary>
-/// IGameComponent interface represents a game component.
+/// What an entity is given to do its work for it, something with a name, a switch and the usual turns.
 /// </summary>
 public interface IGameComponent : IRenderable, IUpdateable, IInstantiable
 {
     /// <summary>
-    /// Gets or sets the enable flag for this component.
+    /// Whether the component gets its turns.
     /// </summary>
     public bool Enabled { get; set; }
 
     /// <summary>
-    /// Gets or sets the human readable name for this component.
+    /// What the component is called, for whoever reads the log.
     /// </summary>
     public string Name { get; set; }
 
     /// <summary>
-    /// Gets or sets the parent entity of the game component.
+    /// The entity the component was added to.
     /// </summary>
     public Entity Parent { get; set; }
 }

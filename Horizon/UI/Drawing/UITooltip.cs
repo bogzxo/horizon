@@ -7,7 +7,7 @@ namespace Horizon.UI.Drawing;
 
 /// <summary>
 /// Draws the box of text that comes up next to the pointer when it rests on a component for a moment, see
-/// <see cref="UIComponent.Tooltip"/>. The compositor decides when, this only draws it: a box in the colours of the
+/// <see cref="UIComponent.Tooltip"/>. The compositor decides when, this only draws it, a box in the colours of the
 /// skin, just below and to the right of the pointer, pushed back onto the screen where it would hang off it.
 /// </summary>
 internal static class UITooltip

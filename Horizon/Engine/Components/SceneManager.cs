@@ -12,15 +12,15 @@ using Horizon.Core.Tweening;
 
 namespace Horizon.Engine.Components;
 
-// Dropped InstanceManager<Scene> to guarantee no Activator/Reflection warnings during AOT publishing.
+// There used to be an InstanceManager<Scene> under this. It went, so publishing AOT has no Activator or reflection to moan about.
 /// <summary>
 /// Holds the scene that is on screen and swaps it for another one when asked to.
 /// <para>
-/// A swap happens all at once, on the render thread, at the start of a frame: the new scene is set up, all of it
+/// A swap happens all at once, on the render thread, at the start of a frame. The new scene is set up, all of it
 /// (see <see cref="Entity.InitializeAll"/>), and run until it has everything it shows (see
 /// <see cref="ReportUnfinished"/>), and the scene that is left is freed with everything it had on the GPU (see
 /// <see cref="Scene.Assets"/>). Only then is a frame drawn. So the frame before a swap is the old scene as it
-/// was, the frame after it is the new scene whole, and nothing in between is ever shown or updated: no empty
+/// was, the frame after it is the new scene whole, and nothing in between is ever shown or updated. No empty
 /// frame, no frame of a scene that is still missing its UI, and no update of a scene that is half set up.
 /// </para>
 /// <para>
@@ -39,7 +39,7 @@ public class SceneManager : Entity
     // Only one tween moves the cover at a time, covering up takes over from uncovering and the other way round
     private const string COVER_CHANNEL = "cover";
 
-    // Absorbed from InstanceManager
+    // The scene that is on screen. Still called what the InstanceManager called it, which this class ate
     public Scene? CurrentInstance { get; private set; }
 
     /// <summary>
@@ -85,11 +85,11 @@ public class SceneManager : Entity
         return true;
     }
 
-    // Whether a scene is waiting to take over. Nothing is updated in the meantime: the scene that is left has
+    // Whether a scene is waiting to take over. Nothing is updated in the meantime, the scene that is left has
     // said it is done, and the one that takes over isn't set up yet
     private volatile bool _halt = false;
 
-    // The scene that takes over at the next frame, and what guards it: scenes are set from any thread
+    // The scene that takes over at the next frame, and what guards it, scenes are set from any thread
     private readonly Lock _changeLock = new();
     private Scene? _incoming;
 
@@ -106,7 +106,7 @@ public class SceneManager : Entity
     private readonly TweenContext _tweens = new();
     private SceneTransition? _running, _incomingTransition;
 
-    // A scene that is to be set up ahead of being shown at the next chance, and one that has been: set up, warmed up
+    // A scene that is to be set up ahead of being shown at the next chance, and one that has been, set up, warmed up
     // and waiting, so the swap to it costs nothing (see Preload)
     private Scene? _toPreload, _preloaded;
 
@@ -127,13 +127,13 @@ public class SceneManager : Entity
     /// </summary>
     public SceneTransition? Transition { get; set; }
 
-    // AOT-friendly registry for dynamic Type lookups
+    // How to make a scene of a kind when all there is to go by is its type, see RegisterScene
     private readonly Dictionary<Type, Func<Scene>> _sceneFactories = new();
 
 
     /// <summary>
-    /// AOT Safe: Registers a factory delegate for a scene type.
-    /// Call this during startup if you still need to use ChangeInstance(Type).
+    /// Says how a scene of a kind is made, for whoever only has its type to ask with (<see cref="ChangeInstance(Type)"/>).
+    /// Nothing is found by reflection, so this is safe to publish AOT.
     /// </summary>
     public void RegisterScene<TScene>(Func<TScene> factory) where TScene : Scene
     {
@@ -141,7 +141,7 @@ public class SceneManager : Entity
     }
 
     /// <summary>
-    /// AOT Safe: The modern, preferred way to change scenes without reflection.
+    /// Has a new scene of a kind take over, the old name for <see cref="SetScene{TScene}()"/>.
     /// </summary>
     public void ChangeInstance<TScene>() where TScene : Scene, new()
     {
@@ -157,8 +157,8 @@ public class SceneManager : Entity
     }
 
     /// <summary>
-    /// Drop-in replacement for the old reflection-based method.
-    /// Requires you to register the scene via RegisterScene() first.
+    /// Has a new scene of a type take over. The type has to have been registered with <see cref="RegisterScene"/>
+    /// first, there is no making one out of thin air any more.
     /// </summary>
     public void ChangeInstance(Type type)
     {
@@ -221,7 +221,7 @@ public class SceneManager : Entity
             _arriving = false;
             _running = transition;
 
-            // Set up now, while the old scene is covered up, rather than at the moment it is all the way covered: the
+            // Set up now, while the old scene is covered up, rather than at the moment it is all the way covered. The
             // wait (loading a scene can take a good while) is when the button was pressed, and the transition itself
             // plays out smoothly with nothing left to do at its height but swap
             QueuePreload(scene);
@@ -237,7 +237,7 @@ public class SceneManager : Entity
     }
 
     /// <summary>
-    /// For whatever is drawn in a scene and finds it can't show all of itself yet: a UI that hasn't been updated
+    /// For whatever is drawn in a scene and finds it can't show all of itself yet, a UI that hasn't been updated
     /// once, art that is still on its way to the GPU. Called while drawing, on the render thread. A scene that
     /// has just been set is not shown while anything in it says this, it is given another turn instead (up to a
     /// point). At any other time it does nothing.
@@ -246,10 +246,10 @@ public class SceneManager : Entity
 
     /// <summary>
     /// Sets a scene up ahead of it being shown (made, its assets loaded, warmed up), at the start of the next frame,
-    /// so that setting it later swaps to it straight away. For a scene that is pretty sure to come next: the fight
+    /// so that setting it later swaps to it straight away. For a scene that is pretty sure to come next, the fight
     /// while the map is being picked, the next level while this one is being played. From any thread.
     /// <para>
-    /// One scene is kept like that at a time: preloading another, or setting a scene that isn't it, lets go of it
+    /// One scene is kept like that at a time, so preloading another, or setting a scene that isn't it, lets go of it
     /// (unless it is <see cref="Scene.Persistent"/>). Setting a scene with a transition preloads it by itself.
     /// </para>
     /// </summary>
@@ -369,7 +369,7 @@ public class SceneManager : Entity
         // The cover is moved along here rather than with the updates, those stop while a scene is being swapped
         _tweens.Tick(MathF.Min(dt, MAX_TRANSITION_STEP));
 
-        // Drawn alongside the simulation, the scene is drawn once it has been published: not the frame it was swapped in
+        // Drawn alongside the simulation, the scene is drawn once it has been published. Not the frame it was swapped in
         // on, before it has had a tick, but every one after
         RenderFrame frame = RenderFrame.Active;
         if (CurrentInstance is { IsDisposed: false } scene && (!frame.IsDecoupled || scene.WasCaptured(frame)))
@@ -483,7 +483,7 @@ public class SceneManager : Entity
             }
         }
 
-        // The scene that is left goes last, once the new one has everything it needs: what the two share by name
+        // The scene that is left goes last, once the new one has everything it needs. What the two share by name
         // stays where it is that way, rather than being freed and loaded all over again
         if (left is { Persistent: false })
         {
@@ -517,7 +517,7 @@ public class SceneManager : Entity
         // the GPU the first time it is drawn, a UI has nothing to draw before it has been updated, and art that
         // is asked for while painting arrives a frame later. Shown right away that is a few frames of a
         // background without its UI. So it is drawn and updated here, unseen, until nothing in it says it is
-        // still missing something: all of this ends up in one frame, which is drawn over afterwards
+        // still missing something. All of this ends up in one frame, which is drawn over afterwards
         int turn = 0;
         for (; turn < MAX_WARM_UP; turn++)
         {
@@ -545,7 +545,7 @@ public class SceneManager : Entity
 
     /// <summary>
     /// Frees the scenes that were left, with everything they had. What a scene holds is disposed of first, the
-    /// way it wants to go, and whatever is left of what it made on the GPU after that is freed for it: not
+    /// way it wants to go, and whatever is left of what it made on the GPU after that is freed for it. Not
     /// everything cleans up after itself, and a scene mustn't depend on that to not leak.
     /// </summary>
     private void DisposeRetired()

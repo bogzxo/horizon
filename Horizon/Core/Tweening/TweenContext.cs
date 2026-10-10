@@ -1,7 +1,7 @@
 namespace Horizon.Core.Tweening;
 
 /// <summary>
-/// Plays tweens: holds the ones that are running and moves them along when it is ticked, once per update.
+/// Plays tweens. It holds the ones that are running and moves them along when it is ticked, once per update.
 /// Everything that animates has one (a UI component, a sprite), and a game can make its own for anything else.
 /// Tweens can be played from any thread, they are only ever moved along by the one that ticks.
 /// </summary>
@@ -68,9 +68,26 @@ public sealed class TweenContext
     /// <summary>Kills whatever is running on a channel, see <see cref="Play"/>.</summary>
     public void Kill(object channel)
     {
+        // Play asks this every time it is given a channel, and nearly every time there is sod all on it.
+        // Looking first saves copying the whole list out just to find that out
         Tween[] snapshot;
         lock (tweensLock)
+        {
+            bool running = false;
+            foreach (var tween in tweens)
+            {
+                if (tween.IsFinished || !Equals(tween.Channel, channel))
+                    continue;
+
+                running = true;
+                break;
+            }
+
+            if (!running)
+                return;
+
             snapshot = [.. tweens];
+        }
 
         foreach (var tween in snapshot)
         {

@@ -406,7 +406,7 @@ public sealed unsafe partial class GraphicsDevice
 
         if (boundVertexArray is { } array)
         {
-            foreach (var (binding, description) in array.Bindings)
+            foreach (var (binding, description) in array.BindingList)
             {
                 if (description.Buffer is not { IsValid: true } buffer || buffer.Buffer.Handle == 0) continue;
 

@@ -64,7 +64,7 @@ public sealed class Snapshot<T> where T : struct
     /// <summary>
     /// The newer of the snapshots of a frame. Render thread.
     /// </summary>
-    /// <returns>False if the thing wasn't published in it: it didn't exist yet, or wasn't shown.</returns>
+    /// <returns>False if the thing wasn't published in it, it didn't exist yet or wasn't shown.</returns>
     public bool TryGet(in RenderFrame frame, out T current)
     {
         if (frame.HasSnapshot && written[frame.CurrentSlot] == frame.CurrentSequence)
@@ -81,7 +81,7 @@ public sealed class Snapshot<T> where T : struct
     /// Both snapshots of a frame. Render thread.
     /// </summary>
     /// <param name="previous">The older one, the newer one again if the thing wasn't published in the older one (it is new).</param>
-    /// <param name="continuous">Whether the two can be blended: both are there and nothing broke in between (see <see cref="Break"/>).</param>
+    /// <param name="continuous">Whether the two can be blended, both are there and nothing broke in between (see <see cref="Break"/>).</param>
     /// <returns>False if the thing wasn't published in the newer one.</returns>
     public bool TryGet(in RenderFrame frame, out T previous, out T current, out bool continuous)
     {
@@ -116,7 +116,7 @@ public static class SnapshotBlending
     /// <summary>
     /// What a thing looks like at the moment a frame shows. Render thread.
     /// Across a <see cref="Snapshot{T}.Break"/> it is shown as it was until the frame is all the way at the newer
-    /// snapshot, and as it is from then on: put somewhere else at the moment it was put there, never on its way.
+    /// snapshot, and as it is from then on, put somewhere else at the moment it was put there, never on its way.
     /// </summary>
     /// <returns>False if the thing wasn't published in the newer snapshot of the frame.</returns>
     public static bool TryBlend<T>(this Snapshot<T> snapshot, in RenderFrame frame, out T value) where T : struct, IBlendable<T>

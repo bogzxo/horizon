@@ -11,17 +11,17 @@ using Horizon.Rendering.Lighting;
 namespace Horizon.Rendering;
 
 /// <summary>
-/// Implementation of <see cref="Renderer2D"/> with deferred lighting: everything added to it is drawn unlit into a
+/// Implementation of <see cref="Renderer2D"/> with deferred lighting. Everything added to it is drawn unlit into a
 /// G-buffer first, which is then lit in one go by every <see cref="Light2D"/> there is when it is put on screen.
-/// Attachment0 holds the albedo. Attachment1 holds the surface: the normal in the RG channels (0.5 being none at all,
+/// Attachment0 holds the albedo. Attachment1 holds the surface, the normal in the RG channels (0.5 being none at all,
 /// which is what anything without a normal map has) and how emissive it is in the B channel, the share of it that shows
-/// no matter the light. Attachment2 holds the material: how shiny it is in the R channel (what a specular map says,
+/// no matter the light. Attachment2 holds the material, how shiny it is in the R channel (what a specular map says,
 /// none for anything without one), how much of the pixel blocks light in the G channel and how much of it lights what
 /// is round it in the B channel, see gbuffer.slang.
 /// Where a fragment is in the world isn't stored, that follows from where it is on screen.
 /// The alpha of every attachment is how much of what was there before the fragment covers, they are all blended alike.
 /// The shaders of the sprite batch, the tile map and the particles write all three, anything else that is drawn in
-/// here has to as well (see shaders/renderer2d/deferred.frag for what is made of them).
+/// here has to as well (see shaders/renderer2d/deferred.slang for what is made of them), or it comes out lit like a hole in the world.
 /// </summary>
 public class DeferredRenderer2D : Renderer2D
 {
@@ -96,7 +96,7 @@ public class DeferredRenderer2D : Renderer2D
             Enabled = light.Enabled
         };
 
-        /// <summary>Partway from one tick to the next: where it is, which way it points, how far it reaches, how bright and what colour.</summary>
+        /// <summary>Partway from one tick to the next, where it is, which way it points, how far it reaches, how bright and what colour.</summary>
         public static LightState Blend(in LightState from, in LightState to, float amount)
         {
             LightState light = to;
@@ -132,7 +132,7 @@ public class DeferredRenderer2D : Renderer2D
     private bool shownBlends;
     private float shownAlpha;
 
-    /// <summary>The ambient light of the frame that is being drawn: as it is, or between the last two ticks.</summary>
+    /// <summary>The ambient light of the frame that is being drawn, as it is or between the last two ticks.</summary>
     internal Vector3 ShownAmbient => shownAfter is null ? Ambient : shownBlends ? Interpolate.Linear(shownBefore!.Ambient, shownAfter.Ambient, shownAlpha) : shownAfter.Ambient;
 
     internal float ShownLightingPixelSize => shownAfter?.LightingPixelSize ?? LightingPixelSize;
@@ -230,7 +230,7 @@ public class DeferredRenderer2D : Renderer2D
     public float LightingPixelSize { get; set; } = 0.0f;
 
     /// <summary>
-    /// How tight the highlights on what is shiny are: the higher this is the smaller and sharper they get,
+    /// How tight the highlights on what is shiny are. The higher this is the smaller and sharper they get,
     /// low values spread a dull sheen over a wide area.
     /// </summary>
     public float Shininess { get; set; } = 24.0f;
@@ -306,7 +306,7 @@ public class DeferredRenderer2D : Renderer2D
     }
 
     /// <summary>
-    /// Adds a light that is only there for a moment (the flash of a hit, an explosion): it starts as bright as it is
+    /// Adds a light that is only there for a moment (the flash of a hit, an explosion). It starts as bright as it is
     /// handed over and fades to nothing over the duration, after which it is gone. Can be called from any thread.
     /// </summary>
     /// <param name="duration">How long the light lasts, in seconds.</param>
@@ -320,7 +320,7 @@ public class DeferredRenderer2D : Renderer2D
 
     public override void UpdateState(float dt)
     {
-        // Flashes fade by the game's clock: they stand still when it does, and fade as the game goes rather than the frames
+        // Flashes fade by the game's clock, they stand still when it does, and fade as the game goes rather than the frames
         FadeFlashes(dt);
 
         base.UpdateState(dt);
@@ -456,8 +456,14 @@ public class DeferredRenderer2D : Renderer2D
         lightsUploaded = true;
 
         // Never mapped, the lights of a frame are simply written over those of the last
-        lightBuffer ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(MaxLights * Unsafe.SizeOf<LightData>())));
-        lightBuffer.Name = "lights";
+        // Named when it is made and not again. Naming it here every frame told the driver what it is called
+        // every frame, and the driver heard us the first time
+        if (lightBuffer is null)
+        {
+            lightBuffer = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Dynamic, (nuint)(MaxLights * Unsafe.SizeOf<LightData>())));
+            lightBuffer.Name = "lights";
+        }
+
 
         uploadedLights = CollectLights(lightData, camera.Bounds);
         if (uploadedLights > 0)
@@ -531,7 +537,7 @@ public class DeferredRenderer2D : Renderer2D
                     continue;
                 }
 
-                // Quick to drop off at first, then lingering: that is how a flash looks
+                // Quick to drop off at first, then lingering, which is how a flash looks
                 float left = 1.0f - flash.Age / flash.Duration;
                 flash.Light.Intensity = flash.Intensity * left * left;
             }
@@ -548,7 +554,7 @@ public class DeferredRenderer2D : Renderer2D
         int count = 0;
         double time = Engine.TotalTime;
 
-        // Drawn alongside the simulation: the lights as they were between the last two ticks, a light that is in both
+        // Drawn alongside the simulation, so the lights as they were between the last two ticks, a light that is in both
         // (in the same place among the others) blended, any other as it is
         if (shownAfter is { } after)
         {

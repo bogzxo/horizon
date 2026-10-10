@@ -21,6 +21,10 @@ public sealed class VertexArray : GpuResource, IDisposable
     public Dictionary<VertexArraySlot, GpuBuffer> Buffers { get; }
 
     internal readonly SortedDictionary<uint, BindingDescription> Bindings = [];
+
+    // The same bindings as a plain array, for the device to walk at every draw. Walking the sorted dictionary
+    // makes a stack on the heap every single time, which is a lot to pay for the privilege of counting to two
+    internal (uint Binding, BindingDescription Description)[] BindingList = [];
     internal readonly List<AttributeDescription> Attributes = [];
     internal GpuBuffer? IndexBuffer;
 
@@ -59,6 +63,7 @@ public sealed class VertexArray : GpuResource, IDisposable
     public void SetVertexBuffer(uint binding, GpuBuffer buffer, uint stride, nint offset = 0, uint divisor = 0)
     {
         Bindings[binding] = new BindingDescription(buffer, stride, offset, divisor);
+        BindingList = [.. Bindings.Select(pair => (pair.Key, pair.Value))];
         Rekey();
     }
 

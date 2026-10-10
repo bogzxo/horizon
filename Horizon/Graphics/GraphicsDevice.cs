@@ -21,7 +21,7 @@ namespace Horizon.Graphics;
 /// device.DrawIndexedInstanced(Topology.Triangles, 6, count);
 /// </code>
 /// A frame runs from <see cref="BeginFrame"/> to <see cref="EndFrame"/>, which is when the picture goes to the
-/// screen. In between, binding things and drawing records into the frame's command buffer; rendering into a target
+/// screen. In between, binding things and drawing records into the frame's command buffer. Rendering into a target
 /// is begun the moment something is drawn into it and ended the moment something else is needed (a clear of another
 /// target, an upload, a compute dispatch), so the renderers never have to think about render passes. Two frames are
 /// in flight, so while the GPU draws one the CPU records the next, and whatever a frame writes from the CPU (the uniform

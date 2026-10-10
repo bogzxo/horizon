@@ -6,16 +6,16 @@ namespace Horizon.Core;
 /// Keeps track of what has been added to the entities of a running game and is still to be set up.
 /// <para>
 /// Setting something up (its <c>Initialize</c>) may need the GPU, which only the render thread can talk to, so
-/// it can't always happen where the thing is added: a component that is added from an update is set up later.
+/// it can't always happen where the thing is added, a component that is added from an update is set up later.
 /// What this guarantees is when. Everything that is waiting is set up in one go at the start of the next frame,
 /// before anything is drawn, and neither the logic nor the physics takes another turn until that has happened
 /// (see <see cref="WindowManager"/>). So nothing is ever updated or drawn next to something that was added
-/// before it and doesn't exist yet: whatever was added during one turn is there, whole, for the next.
+/// before it and doesn't exist yet. Whatever was added during one turn is there, whole, for the next.
 /// </para>
 /// <para>
 /// What is added on the way to being set up itself (the children an entity adds in its own <c>Initialize</c>, or
 /// to an entity that hasn't been set up yet) doesn't come through here at all, it is set up along with whatever
-/// it was added to: see <see cref="Entity.InitializeAll"/>.
+/// it was added to, see <see cref="Entity.InitializeAll"/>.
 /// </para>
 /// </summary>
 public static class EntityLifecycle
@@ -39,7 +39,7 @@ public static class EntityLifecycle
     public static bool IsRenderThread => Environment.CurrentManagedThreadId == renderThread;
 
     /// <summary>
-    /// Whether this is known not to be the thread that draws: there is one by now, and it's another. For whoever
+    /// Whether this is known not to be the thread that draws, there is one by now and it's another. For whoever
     /// wants to say so when something is done on the wrong thread.
     /// </summary>
     public static bool IsOffRenderThread
@@ -52,7 +52,7 @@ public static class EntityLifecycle
     }
 
     /// <summary>
-    /// Asked for whatever is to hold while an entity is set up, and disposed of afterwards: for an engine that
+    /// Asked for whatever is to hold while an entity is set up, and disposed of afterwards. For an engine that
     /// keeps track of who makes what, so that what a scene's entities make is noted as that scene's.
     /// </summary>
     public static Func<Entity, IDisposable?>? Scope { get; set; }

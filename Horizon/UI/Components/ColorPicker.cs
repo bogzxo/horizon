@@ -67,7 +67,7 @@ public class ColorPicker : UIComponent
 
     protected override Vector2 Measure(UISkin skin) => new(DEFAULT_WIDTH, DEFAULT_HEIGHT);
 
-    /* Where everything is: the square on the left, then the strips, then the swatch in what is left */
+    /* Where everything is, the square on the left, then the strips, then the swatch in what is left */
 
     private float StripsWidth => (ShowAlpha ? 2 : 1) * (STRIP_WIDTH + GAP);
 

@@ -5,7 +5,7 @@ namespace Horizon.Rendering.PostProcessing;
 /// <summary>
 /// Blurs the whole picture, for when something else is meant to be looked at (a menu over a paused game, a versus screen over the arena).
 /// <para>
-/// To ease it in and out use <see cref="BlurTo"/>, which also switches the effect on while it is needed and off again once the picture is sharp:
+/// To ease it in and out use <see cref="BlurTo"/>, which also switches the effect on while it is needed and off again once the picture is sharp.
 /// <code>
 /// var blur = renderer.PostProcessing.Add(new BlurEffect { Radius = 0, Enabled = false });
 /// blur.BlurTo(12, 0.2f);    // something popped up over the game

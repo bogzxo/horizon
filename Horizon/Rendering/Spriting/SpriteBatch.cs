@@ -39,6 +39,9 @@ public class SpriteBatch : GameObject
         public readonly TextureAtlas? Atlas = atlas;
         public readonly List<Sprite> Sprites = [];
 
+        // The same sprites as a set, for asking whether one is in here already without walking the list
+        public readonly HashSet<Sprite> Members = [];
+
         public SpriteTexture Texture => Atlas is { } a ? new SpriteTexture(a.Texture) : new SpriteTexture(Sheet!);
     }
 
@@ -80,6 +83,9 @@ public class SpriteBatch : GameObject
     public int Count { get; private set; }
 
     private ConcurrentStack<Sprite> _queuedSprites = new();
+
+    // Where the queued sprites are popped to on their way into their groups, kept from one time to the next
+    private Sprite[] _taken = [];
 
     // The mesh for the items that are handed to us directly, made the first time there are any
     private SpriteBatchMesh? _itemMesh;
@@ -178,7 +184,7 @@ public class SpriteBatch : GameObject
         if (GroupOf(sprite, create: false) is not { } group)
             return;
 
-        if (group.Sprites.Remove(sprite))
+        if (group.Members.Remove(sprite) && group.Sprites.Remove(sprite))
             Count--;
     }
 
@@ -217,8 +223,11 @@ public class SpriteBatch : GameObject
             return;
 
         int length = _queuedSprites.Count;
-        Sprite[] sprites = new Sprite[length];
-        int taken = _queuedSprites.TryPopRange(sprites);
+        if (_taken.Length < length)
+            _taken = new Sprite[Math.Max(length, _taken.Length * 2)];
+
+        Sprite[] sprites = _taken;
+        int taken = _queuedSprites.TryPopRange(sprites, 0, length);
 
         // In the order they come off the stack, which is the order they have always been drawn in
         for (int i = 0; i < taken; i++)
@@ -228,17 +237,21 @@ public class SpriteBatch : GameObject
 
             if (!sprite.IsConfigured || GroupOf(sprite, create: true) is not { } group)
             {
-                // Sprite not yet initialized
+                // Doesn't know what it shows yet, back in the queue with it
                 _queuedSprites.Push(sprite);
                 continue;
             }
 
-            if (group.Sprites.Contains(sprite))
+            // A set says whether it is in there already. Asking the list meant walking it for every sprite added,
+            // which for ten thousand of them at once was fifty million comparisons to say no fifty million times
+            if (!group.Members.Add(sprite))
                 continue;
 
             group.Sprites.Add(sprite);
             Count++;
         }
+
+        Array.Clear(sprites, 0, taken);
     }
 
     /// <summary>
@@ -399,6 +412,7 @@ public class SpriteBatch : GameObject
             }
 
             uint texture = now.Group.Texture.Index;
+            bool casters = false;
 
             // The masks are drawn as they are now, they only say where the sprites may show
             for (int i = 0; i < now.Masks; i++)
@@ -413,7 +427,7 @@ public class SpriteBatch : GameObject
                 ref readonly SpriteItem to = ref now.Items[now.Masks + i];
                 SpriteItem drawn;
 
-                if ((to.Flags & SpriteItem.ShadowFlag) != 0) NoteCasters();
+                casters |= (to.Flags & SpriteItem.ShadowFlag) != 0;
 
                 if (before is null || i >= before.Colors || before.Sprites[i] != now.Sprites[i])
                 {
@@ -431,6 +445,9 @@ public class SpriteBatch : GameObject
                 drawn.Flags = SpriteItem.WithTexture(drawn.Flags, texture);
                 items[now.Masks + i] = drawn;
             }
+
+            // Said once for the group rather than once for every sprite in it that throws a shadow
+            if (casters) NoteCasters();
 
             mesh.DrawPasses(now.Masks, now.Colors, current.Model, camera);
             mesh.EndItems();

@@ -15,7 +15,7 @@ namespace Horizon.Rendering.Tiling;
 
 /// <summary>
 /// A map made in Tiled, in the world. Orthogonal maps, read with DotTiled, with everything such a map can have in
-/// it: maps with and without edges, layers of tiles, of objects and of images, groups, tiles that are turned over,
+/// it. Maps with and without edges, layers of tiles, of objects and of images, groups, tiles that are turned over,
 /// bigger than the grid or animated, tile sets cut out of one image or made of many, and layers that are tinted,
 /// see-through, moved, repeated or scrolling at a speed of their own.
 /// <code>
@@ -30,7 +30,7 @@ namespace Horizon.Rendering.Tiling;
 /// foreach (TileMapBox box in map.BuildColliders())
 ///     body.CreateRectangularFixture(box.Min, box.Size);
 /// </code>
-/// The map is laid out in the world's units, one to a pixel of its tiles, with Y going up: its bottom left corner
+/// The map is laid out in the world's units, one to a pixel of its tiles, with Y going up. Its bottom left corner
 /// is at <see cref="Origin"/> and it reaches up and to the right from there. Whatever is asked of it (where an
 /// object is, where a tile is) is answered in those, Tiled's own way of counting stays in the file.
 /// See <see cref="TileMapLayer"/> for the custom properties of a layer the map goes by.
@@ -42,8 +42,6 @@ public sealed class TileMap : GameObject
 
     // How far inside of its edges a tile is cut out of its image, so its neighbours in the image never show at its seams
     private const float SOURCE_INSET = 0.01f;
-
-    // between these two, and the ones in the foreground in front of anything that isn't a map
 
     // The map on the GPU, every layer and tile of it in one draw
     private readonly TileMapGpu gpu = new();
@@ -101,7 +99,7 @@ public sealed class TileMap : GameObject
     public int Height { get; }
 
     /// <summary>
-    /// The column and the row the map starts at, the way Tiled counts them. Zero for a map with edges; one without
+    /// The column and the row the map starts at, the way Tiled counts them. Zero for a map with edges, one without
     /// can have tiles to the left of and above where it started out, which makes these negative.
     /// </summary>
     public int Left { get; }
@@ -126,14 +124,14 @@ public sealed class TileMap : GameObject
 
     public TileMapProperties Properties { get; }
 
-    /// <summary>Every layer from the back to the front. Groups are gone: what a group says about what is in it is worked into its layers.</summary>
+    /// <summary>Every layer from the back to the front. Groups are gone, what a group says about what is in it is worked into its layers.</summary>
     public IReadOnlyList<TileMapLayer> Layers => layers;
 
     /// <summary>Every object of every object layer, see also <see cref="DispatchObjects"/>.</summary>
     public IReadOnlyList<TileMapObject> Objects => objects;
 
     /// <summary>
-    /// The point of the world at which every layer is where it was drawn, however it scrolls: the further the camera is
+    /// The point of the world at which every layer is where it was drawn, however it scrolls. The further the camera is
     /// from it, the further a layer with a <see cref="TileMapLayer.Parallax"/> other than 1 has moved. Starts out as
     /// what the map says in Tiled, which unless somebody changed it there is its top left corner.
     /// </summary>
@@ -485,7 +483,23 @@ public sealed class TileMap : GameObject
         // Before its frames are looked up, which may well be the tile itself
         tiles[gid] = tile;
 
-        if (tile is not null && tilesets.Find(set => set.Set == tile.Tileset).Tiles.TryGetValue((uint)tile.Id, out Tile? definition) && definition.Animation.Count > 0)
+        // The tile set it is out of, found with a loop. With a lambda that needs the tile, every look up made an
+        // object for the lambda to keep the tile in as it started, the ones that found the tile in the dictionary
+        // three lines in and left again as well, which is nearly all of them
+        Dictionary<uint, Tile>? definitions = null;
+        if (tile is not null)
+        {
+            foreach (var set in tilesets)
+            {
+                if (set.Set == tile.Tileset)
+                {
+                    definitions = set.Tiles;
+                    break;
+                }
+            }
+        }
+
+        if (tile is not null && definitions is not null && definitions.TryGetValue((uint)tile.Id, out Tile? definition) && definition.Animation.Count > 0)
         {
             var frames = new List<(TileMapTile, float)>();
             uint first = gid - (uint)tile.Id;
@@ -531,7 +545,7 @@ public sealed class TileMap : GameObject
         }
         else if (definition is { Image.HasValue: true } && definition.Image.Value.Source.HasValue)
         {
-            // A collection of images: the tile is the whole of its own, or the part of it the set says
+            // A collection of images, the tile is the whole of its own, or the part of it the set says
             Image own = definition.Image.Value;
 
             image = System.IO.Path.GetFullPath(System.IO.Path.Combine(found.Directory, own.Source.Value));
@@ -683,7 +697,7 @@ public sealed class TileMap : GameObject
     /* What is solid */
 
     /// <summary>
-    /// Everything of the map there is to bump into, as few rectangles as it takes: the tiles of the layers that are
+    /// Everything of the map there is to bump into, as few rectangles as it takes. The tiles of the layers that are
     /// collidable (see <see cref="TileMapLayer.IsCollidable"/>), tiles that have a custom property <c>collidable</c>
     /// set on them in their tile set, the shapes that were drawn onto tiles in Tiled's collision editor, and the
     /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle.
@@ -735,7 +749,7 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>
-    /// Turns the cells that are solid into rectangles: every run of them along a row is one, and runs that are right
+    /// Turns the cells that are solid into rectangles. Every run of them along a row is one, and runs that are right
     /// underneath each other and just as long are one as well.
     /// </summary>
     private void Merge(bool[] solid, List<TileMapBox> boxes)
@@ -943,7 +957,7 @@ public sealed class TileMap : GameObject
             {
                 TileMapLayer layer = layers[i];
 
-                // A change of the tiles is copied once, and that copy is never written to: every snapshot after it shares it
+                // A change of the tiles is copied once, and that copy is never written to, every snapshot after it shares it
                 if (layer.CapturedVersion != layer.Version)
                 {
                     layer.CapturedGids = (uint[])layer.Gids.Clone();
@@ -1015,8 +1029,6 @@ public sealed class TileMap : GameObject
         // own depth jittering by the difference every frame, worst of all under a screen shake
         var eye = new Vector2(view.X + view.Width * 0.5f, view.Y + view.Height * 0.5f);
 
-
-        // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
         // What the geometry of the map does to the ambient light, if anybody asked, see GeometryOcclusion
         uint geometrySlot = TileMapGpu.NoTexture;
         if (GeometryOcclusion && GeometryOcclusionStrength > 0.0f && GeometryOcclusionReach > 0.0f)
@@ -1027,6 +1039,7 @@ public sealed class TileMap : GameObject
 
         Vector2 worldSize = Size;
 
+        // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
         shown.Clear();
         int count = after?.Layers.Length ?? layers.Count;
         for (int index = 0; index < count && index < layers.Count; index++)
@@ -1068,7 +1081,7 @@ public sealed class TileMap : GameObject
             }, state.IsForeground));
         }
 
-        if (!gpu.Sync(shown, TextureOf))
+        if (!gpu.Sync(shown, textureOf ??= TextureOf))
             return;
 
         gpu.Draw(foreground, viewMin, viewMax, camera);
@@ -1101,6 +1114,9 @@ public sealed class TileMap : GameObject
         base.DisposeOther();
     }
 
+    // Handed to the GPU side every frame. Made once, a method handed over by its name is a new delegate every time
+    private Func<string, TileMapTexture>? textureOf;
+
     private TileMapTexture TextureOf(string path)
     {
         if (!textures.TryGetValue(path, out TileMapTexture? texture))
@@ -1128,9 +1144,9 @@ public sealed class TileMap : GameObject
 
     /// <summary>
     /// Puts together what a layer is drawn from. Everything is placed as if the bottom left corner of the map were at
-    /// zero and the layer hadn't moved: where the map is and how far the layer has scrolled is added when it is drawn.
+    /// zero and the layer hadn't moved. Where the map is and how far the layer has scrolled is added when it is drawn.
     /// </summary>
-    /// <param name="gids">The tiles to build from: the layer's own, or a copy of them that was published.</param>
+    /// <param name="gids">The tiles to build from, the layer's own or a copy of them that was published.</param>
     /// <param name="version">Which change of the tiles that is.</param>
     private void Build(TileMapLayer layer, uint[] gids, TileFlip[] flips, int version)
     {
@@ -1194,7 +1210,7 @@ public sealed class TileMap : GameObject
         }
     }
 
-    /// <summary>The tiles that were put down as objects: any size, anywhere, turned any way.</summary>
+    /// <summary>The tiles that were put down as objects, any size, anywhere, turned any bloody way.</summary>
     private void BuildTileObjects(TileMapLayer layer)
     {
         var batches = new Dictionary<string, TileMapBatch>();
@@ -1226,7 +1242,7 @@ public sealed class TileMap : GameObject
     }
 
     /// <summary>
-    /// Lays the image of an image layer out for what is in view: once where the layer has it, or as many times as it
+    /// Lays the image of an image layer out for what is in view, once where the layer has it, or as many times as it
     /// takes to cover the view along the ways it repeats.
     /// </summary>
     /// <param name="viewMin">The bottom left corner of what the camera sees, measured the way the layer's batches are.</param>
@@ -1307,7 +1323,7 @@ public sealed class TileMap : GameObject
 }
 
 /// <summary>
-/// The layers of a <see cref="TileMap"/> that go in front of whatever is drawn after the map: add this to the same
+/// The layers of a <see cref="TileMap"/> that go in front of whatever is drawn after the map. Add this to the same
 /// renderer once everything that goes in between is in it. See <see cref="TileMap.Foreground"/>.
 /// </summary>
 public sealed class TileMapForeground : GameObject

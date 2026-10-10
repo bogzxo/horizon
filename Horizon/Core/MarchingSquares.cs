@@ -4,12 +4,12 @@ namespace Horizon.Core;
 
 /// <summary>
 /// Finds the outlines of what is solid in a grid of cells (the pixels of a sprite that aren't see-through, say) by
-/// marching squares: the grid is gone over four neighbouring cells at a time, and which of the four are solid says
+/// marching squares. The grid is gone over four neighbouring cells at a time, and which of the four are solid says
 /// how the outline passes between them. What comes out is every closed line there is around something solid and
 /// around the holes in it, running halfway between a solid cell and an empty one, with its corners cut at a slant.
 /// <para>
 /// Straight from the grid an outline has a point for every cell it passes, a few hundred for a small sprite. They
-/// are thinned out afterwards: a point goes if the line doesn't stray further than the tolerance without it.
+/// are thinned out afterwards, a point goes if the line doesn't stray further than the tolerance without it.
 /// </para>
 /// </summary>
 public static class MarchingSquares
@@ -49,7 +49,7 @@ public static class MarchingSquares
     /// <param name="tolerance">How far (in cells) an outline may stray from the one the grid really has, 0 keeps every point.</param>
     /// <returns>
     /// Every outline as the points it goes through, the last of them joining up with the first. In cells from the
-    /// top left corner of the grid, x to the right and y downwards: the middle of the first cell is (0.5, 0.5).
+    /// top left corner of the grid, x to the right and y downwards, so the middle of the first cell is (0.5, 0.5).
     /// </returns>
     public static List<Vector2[]> Trace(ReadOnlySpan<bool> solid, int width, int height, float tolerance = 0.75f)
     {
@@ -57,7 +57,7 @@ public static class MarchingSquares
         if (width < 1 || height < 1 || solid.Length < width * height) return outlines;
 
         // Every piece of outline as the two points it joins. A point is where the outline crosses from one cell
-        // to the next, which is halfway between them: kept in halves of a cell, so they are whole numbers
+        // to the next, which is halfway between them. Kept in halves of a cell, so they are whole numbers
         var ends = new List<(int X, int Y)>();
         var at = new Dictionary<(int, int), (int First, int Second)>();
 
@@ -87,7 +87,7 @@ public static class MarchingSquares
             }
         }
 
-        // The pieces are strung together into closed lines: from a piece on to the one that shares its far end
+        // The pieces are strung together into closed lines, from a piece on to the one that shares its far end
         var used = new bool[ends.Count / 2];
         var points = new List<Vector2>();
 
@@ -139,14 +139,14 @@ public static class MarchingSquares
     }
 
     /// <summary>
-    /// Helper method to thin a closed line out (Ramer, Douglas and Peucker): between two points that are kept, the one
+    /// Helper method to thin a closed line out (Ramer, Douglas and Peucker, bless all three). Between two points that are kept, the one
     /// furthest from the straight line between them is kept as well if it is further than the tolerance, and so on.
     /// </summary>
     private static Vector2[] Simplify(List<Vector2> points, float tolerance)
     {
         if (tolerance <= 0.0f || points.Count < 4) return [.. points];
 
-        // A closed line has no ends to start from: the first point and the one furthest from it will do
+        // A closed line has no ends to start from, the first point and the one furthest from it will do
         int far = 0;
         float furthest = 0.0f;
         for (int i = 1; i < points.Count; i++)

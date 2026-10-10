@@ -1,8 +1,14 @@
 namespace Horizon.Core.Threading;
 
 /// <summary>
+/// A tenth of a second of a loop, see <see cref="LoopStatistics.CopyTimeline"/>. How long its turns took and how
+/// far apart they came, on average and at the worst, all in milliseconds, and how many turns there were.
+/// </summary>
+public readonly record struct LoopSlice(float WorkMs, float WorstWorkMs, float GapMs, float WorstGapMs, int Turns);
+
+/// <summary>
 /// How one of the things an engine does over and over has been doing (drawing, updating the state, stepping the
-/// physics): how often it really comes round, how long its turns take and how unevenly they come. Written by
+/// physics), how often it really comes round, how long its turns take and how unevenly they come. Written by
 /// whoever does it and read by whoever wants to show it (the debugger), from any thread.
 /// </summary>
 public sealed class LoopStatistics
@@ -40,6 +46,19 @@ public sealed class LoopStatistics
     private readonly Lock gate = new();
     private readonly float[] work = new float[HISTORY];
     private int cursor;
+    private float peak;
+
+    /// <summary>How many slices the timeline goes back and how long (in seconds) each of them is, twelve seconds between them.</summary>
+    public const int TIMELINE = 120;
+    public const double SLICE = 0.1;
+
+    // The timeline, and the slice that is being filled. The clock carries what ran over the end of the last
+    // slice so they come out a tenth of a second each on average, the span is only the turns of this one
+    private readonly LoopSlice[] timeline = new LoopSlice[TIMELINE];
+    private int timelineCursor, timelineCount;
+    private double sliceClock, sliceSpan, sliceWork;
+    private float sliceWorstWork, sliceWorstGap;
+    private int sliceTurns;
 
     public string Name { get; }
 
@@ -49,14 +68,14 @@ public sealed class LoopStatistics
     /// <summary>How many turns a second it has been taking.</summary>
     public double Rate { get; private set; }
 
-    /// <summary>How long a turn takes, in milliseconds: on average and the longest of the history.</summary>
+    /// <summary>How long a turn takes, in milliseconds, on average and the longest of the history.</summary>
     public double WorkMs { get; private set; }
     public double PeakWorkMs { get; private set; }
 
     /// <summary>How long a turn waits for another loop to be done with what they share, in milliseconds on average.</summary>
     public double WaitMs { get; private set; }
 
-    /// <summary>How unevenly the turns come: how far the time between two of them is off what it has been on average, in milliseconds.</summary>
+    /// <summary>How unevenly the turns come, which is how far the time between two of them is off what it has been on average, in milliseconds.</summary>
     public double JitterMs { get; private set; }
 
     /// <summary>How much of the time it has the loop spends working, from 0 to 1 (and over, for one that can't keep up).</summary>
@@ -110,13 +129,65 @@ public sealed class LoopStatistics
 
             if (turns > 1) LateTurns += turns - 1;
 
-            work[cursor] = (float)workMs;
+            // The longest turn of the history only needs looking for again when the one that was the longest
+            // drops out of the far end, every other time the new turn either beats it or it doesn't. This
+            // runs three thousand times a second on a good day and went over all 240 of them every time
+            float leaving = work[cursor], arriving = (float)workMs;
+            work[cursor] = arriving;
             cursor = (cursor + 1) % HISTORY;
 
-            float peak = 0.0f;
-            foreach (float value in work) peak = MathF.Max(peak, value);
+            if (arriving >= peak)
+            {
+                peak = arriving;
+            }
+            else if (leaving >= peak)
+            {
+                peak = 0.0f;
+                foreach (float value in work) peak = MathF.Max(peak, value);
+            }
+
             PeakWorkMs = peak;
+
+            // And into the slice of time it fell in, see CopyTimeline
+            if (sinceLast > 0.0)
+            {
+                sliceClock += sinceLast;
+                sliceSpan += sinceLast;
+                sliceWork += workSeconds * 1000.0;
+                sliceTurns += Math.Max(1, turns);
+                sliceWorstWork = MathF.Max(sliceWorstWork, arriving);
+                sliceWorstGap = MathF.Max(sliceWorstGap, (float)(sinceLast * 1000.0));
+
+                if (sliceClock >= SLICE) CloseSlice();
+            }
         }
+    }
+
+    /// <summary>Helper method to put the slice that is full onto the timeline and start the next. Inside the gate.</summary>
+    private void CloseSlice()
+    {
+        var slice = new LoopSlice(
+            (float)(sliceWork / sliceTurns),
+            sliceWorstWork,
+            (float)(sliceSpan * 1000.0 / sliceTurns),
+            sliceWorstGap,
+            sliceTurns);
+
+        // A turn that took longer than a slice (a hitch, a scene loading) is as many slices as it was long, so
+        // a second on the timeline stays a second and a hitch is as wide as it felt
+        int slices = Math.Clamp((int)(sliceClock / SLICE), 1, TIMELINE);
+        for (int i = 0; i < slices; i++)
+        {
+            timeline[timelineCursor] = i == 0 ? slice : slice with { Turns = 0 };
+            timelineCursor = (timelineCursor + 1) % TIMELINE;
+        }
+
+        timelineCount = Math.Min(TIMELINE, timelineCount + slices);
+
+        sliceClock = slices < TIMELINE ? sliceClock - slices * SLICE : 0.0;
+        sliceSpan = sliceWork = 0.0;
+        sliceWorstWork = sliceWorstGap = 0.0f;
+        sliceTurns = 0;
     }
 
     internal void NoteDropped(int turns)
@@ -161,6 +232,27 @@ public sealed class LoopStatistics
         double sum = 0.0;
         for (int i = count - worst; i < count; i++) sum += sorted[i];
         worstPercentMs = sum / worst;
+    }
+
+    /// <summary>
+    /// Copies the last twelve seconds of the loop, a slice for every tenth of one and the oldest first, into a
+    /// buffer of <see cref="TIMELINE"/> slices (a shorter one gets the newest that fit). The history is the last
+    /// so many turns, which at three thousand frames a second is over before anybody has read it. This is the
+    /// last so much time, a hitch stays on it for twelve seconds however fast the frames come.
+    /// </summary>
+    /// <returns>How many of the slices have been filled, the ones before them (at the start) are nothing yet.</returns>
+    public int CopyTimeline(Span<LoopSlice> into)
+    {
+        lock (gate)
+        {
+            int length = Math.Min(into.Length, TIMELINE);
+            for (int i = 0; i < length; i++)
+            {
+                into[i] = timeline[(timelineCursor + TIMELINE - length + i) % TIMELINE];
+            }
+
+            return Math.Min(timelineCount, length);
+        }
     }
 
     /// <summary>Copies how long the last turns took (in milliseconds, oldest first) into a buffer of <see cref="HISTORY"/> values.</summary>

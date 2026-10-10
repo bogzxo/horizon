@@ -5,10 +5,10 @@ using Horizon.Rendering.Particles.Simulation;
 namespace Horizon.Physics.Simulation;
 
 /// <summary>
-/// A set of particles that the physics world simulates as small dynamic bodies: they fall, land on the map, bounce,
+/// A set of particles that the physics world simulates as small dynamic bodies. They fall, land on the map, bounce,
 /// slide to a stop, and are shoved out of the way by the dynamic bodies moving through them (the players).
 /// They are made with <see cref="PhysicsWorld.CreateParticleGroup"/> and stepped by the world along with everything else.
-/// A particle is a lot lighter than a real body though: it is a circle that never turns, it doesn't push anything back
+/// A particle is a lot lighter than a real body though. It is a circle that never turns, it doesn't push anything back
 /// and particles pass through one another, which is what allows there to be thousands of them.
 /// Everything here has to be called from the thread the physics runs on.
 /// </summary>
@@ -22,7 +22,7 @@ public class PhysicsParticleGroup
 
     private protected ParticleState2D[] _particles = [];
 
-    // A particle that has come to rest on the map is asleep: it isn't moved or collided until a body or a push wakes it up.
+    // A particle that has come to rest on the map is asleep, it isn't moved or collided until a body or a push wakes it up.
     // Most particles spend most of their life like this, so it is what keeps large numbers of them cheap.
     private bool[] _asleep = [];
     private int _mapVersion;
@@ -185,7 +185,7 @@ public class PhysicsParticleGroup
 
             if (p.Life <= 0.0f || lost)
             {
-                // Swap-remove: the last live particle (not yet updated this step) takes this slot,
+                // Swap and remove, the last live particle (not yet updated this step) takes this slot,
                 // then we re-process index i without advancing.
                 live--;
                 if (i != live)
@@ -242,7 +242,7 @@ public class PhysicsParticleGroup
                 }
 
                 // Being pushed out of one tile can end inside the one next to it, and a body can press a particle into the floor
-                // harder than the floor pushes back (a roll going over it). The map always wins: rather than end up inside of it
+                // harder than the floor pushes back (a roll going over it). The map always wins, rather than end up inside of it
                 // the particle stays where it was. Unless it was inside already (spawned there), then it has to be let out.
                 if (touchedAnything && grid.Contains(p.Position) && !grid.Contains(before))
                 {
@@ -262,7 +262,7 @@ public class PhysicsParticleGroup
     }
 
     /// <summary>
-    /// Helper method to find the box a particle has to stay in to still be worth simulating:
+    /// Helper method to find the box a particle has to stay in to still be worth simulating,
     /// one that gravity has taken past the edge of the map has nothing left to land on.
     /// </summary>
     private protected void GetLostBounds(PhysicsStaticGrid grid, out Vector2 lostMin, out Vector2 lostMax)
@@ -305,7 +305,7 @@ public class PhysicsParticleGroup
 
     /// <summary>
     /// Helper method to test if a particle is within reach of any body, going by the boxes around their fixtures.
-    /// The box around all of the bodies isn't enough to wake a particle up on: with two players stood apart
+    /// The box around all of the bodies isn't enough to wake a particle up on, with two players stood apart
     /// it covers the whole floor between them.
     /// </summary>
     private bool IsTouchingBody(Vector2 position, ReadOnlySpan<PhysicsShape> bodies)
@@ -328,7 +328,7 @@ public class PhysicsParticleGroup
             ref readonly PhysicsShape shape = ref bodies[i];
             if (!shape.Overlaps(p.Position, Radius, out Vector2 normal, out float depth)) continue;
 
-            // A body is soft compared to the map: nothing bounces off of it
+            // A body is soft compared to the map, nothing bounces off of it
             Respond(ref p, normal, depth, GetBodyPush(shape), slide, 0.0f);
             touched = true;
         }

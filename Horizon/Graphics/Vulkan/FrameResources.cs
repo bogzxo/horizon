@@ -109,6 +109,7 @@ internal sealed unsafe class LinearArena
 internal sealed unsafe class FrameResources : IDisposable
 {
     private readonly VulkanContext context;
+    private readonly VulkanMemory memory;
 
     public CommandPool CommandPool { get; }
     public Semaphore ImageAvailable { get; }
@@ -127,6 +128,12 @@ internal sealed unsafe class FrameResources : IDisposable
     /// <summary>What is to be let go of once the GPU is done with this frame.</summary>
     public List<Action> Retired { get; } = [];
 
+    /// <summary>
+    /// The buffers that are to go with it, by what they are. Buffers are thrown away often enough (one that is
+    /// rewritten while the GPU still reads it gets new memory every time) not to want a delegate each.
+    /// </summary>
+    public List<(Buffer Buffer, VulkanMemory.Allocation Memory)> RetiredBuffers { get; } = [];
+
     /// <summary>Whether the swapchain image's semaphore has been waited on by a submission of this frame yet.</summary>
     public bool AcquireWaited { get; set; }
 
@@ -139,6 +146,7 @@ internal sealed unsafe class FrameResources : IDisposable
     public FrameResources(VulkanContext context, VulkanMemory memory, int index)
     {
         this.context = context;
+        this.memory = memory;
         this.index = index;
 
         var poolInfo = new CommandPoolCreateInfo
@@ -197,6 +205,14 @@ internal sealed unsafe class FrameResources : IDisposable
     {
         foreach (var retired in Retired) retired();
         Retired.Clear();
+
+        foreach (var (buffer, allocation) in RetiredBuffers)
+        {
+            context.Vk.DestroyBuffer(context.Device, buffer, null);
+            memory.Free(allocation);
+        }
+
+        RetiredBuffers.Clear();
 
         Uniforms.FreeRetired();
         Staging.FreeRetired();

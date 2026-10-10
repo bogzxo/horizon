@@ -5,7 +5,7 @@ namespace Horizon.Physics.Simulation;
 
 /// <summary>
 /// A shape the way the compute shader has it, laid out exactly like the std430 <c>Shape</c> struct
-/// in shaders/particle/simulate_physics.comp (40 bytes).
+/// in shaders/particle/simulate_physics.slang (40 bytes).
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct PhysicsGpuShape
@@ -14,7 +14,7 @@ internal struct PhysicsGpuShape
     public Vector2 Velocity;
     public float Radius;
     public float IsCircle;      // 1 for a circle, 0 for a rectangle, 2 for an outline
-    public Vector2 Range;       // For an outline: the first of its pieces among all of the pieces there are, and how many it has
+    public Vector2 Range;       // For an outline, the first of its pieces among all of the pieces there are, and how many it has
 
     public const float OUTLINE = 2.0f;
 
@@ -50,8 +50,8 @@ internal sealed class PhysicsParticleMap
 }
 
 /// <summary>
-/// What the world tells particles that are simulated on the GPU, which can't be stepped along with everything else:
-/// the world steps on the simulation thread and a compute shader can only be run from the GL one. So after every step the
+/// What the world tells particles that are simulated on the GPU, which can't be stepped along with everything else.
+/// The world steps on the simulation thread and a compute shader can only be run from the render one. So after every step the
 /// world leaves what there is to run into here (the map, where the bodies are, the pushes that were asked for),
 /// and the simulator comes to collect it when it is about to move its particles.
 /// </summary>
@@ -135,7 +135,7 @@ internal sealed class PhysicsParticleFeed
     }
 
     /// <summary>
-    /// Leaves a push for the particles: everything within the radius is launched away from the centre, the closer the harder.
+    /// Leaves a push for the particles, everything within the radius is launched away from the centre, the closer the harder.
     /// </summary>
     public void AddImpulse(Vector2 centre, float radius, float impulse)
     {
@@ -166,10 +166,7 @@ internal sealed class PhysicsParticleFeed
             _segments.AsSpan(0, segmentCount).CopyTo(segments);
 
             impulseCount = Math.Min(_impulses.Count, impulses.Length);
-            for (int i = 0; i < impulseCount; i++)
-            {
-                impulses[i] = _impulses[i];
-            }
+            CollectionsMarshal.AsSpan(_impulses)[..impulseCount].CopyTo(impulses);
             _impulses.RemoveRange(0, impulseCount);
 
             return _map;

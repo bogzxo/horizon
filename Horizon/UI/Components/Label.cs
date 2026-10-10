@@ -8,9 +8,9 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// A piece of text. Sizes itself to fit unless told otherwise; lines are split on '\n'.
+/// A piece of text. Sizes itself to fit unless told otherwise, lines are split on '\n'.
 /// Told to <see cref="Wrap"/>, text that is wider than the label is broken between words into as many lines as
-/// it takes, and the label is as tall as those. That wants a width to wrap to: a <see cref="UIComponent.Size"/>
+/// it takes, and the label is as tall as those. That wants a width to wrap to, a <see cref="UIComponent.Size"/>
 /// with a width, or a <see cref="UIComponent.Fill"/> across. A label with neither is one line, wrap or no wrap.
 /// <code>
 /// let about = compositor.label({ size: vec(400, 0), wrap: true, align: "top_left", text: "..." });

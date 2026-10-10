@@ -1,10 +1,5 @@
-using System;
-using System.Collections;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
-using System.Text;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -30,13 +25,13 @@ public enum PhysicsRadialTargets
 public class PhysicsWorld : GameComponent
 {
     /// <summary>
-    /// Whether the outline of every fixture is drawn over the world, see <see cref="DebugRenderer"/>: static bodies
+    /// Whether the outline of every fixture is drawn over the world, see <see cref="DebugRenderer"/>. Static bodies
     /// in red, dynamic ones in blue, kinematic fixtures in yellow and cyan, the fixtures of particles in green.
     /// </summary>
     public bool RenderDebug { get; set; } = false;
 
     /// <summary>
-    /// What the outlines are drawn with when <see cref="RenderDebug"/> is on: the engine's own primitive renderer, so
+    /// What the outlines are drawn with when <see cref="RenderDebug"/> is on, the engine's own primitive renderer, so
     /// they are drawn alongside the simulation like everything else and go through whatever renderer the world is in.
     /// Its camera, nearness and transform are there to be set like any other's.
     /// </summary>
@@ -48,6 +43,15 @@ public class PhysicsWorld : GameComponent
     public List<PhysicsBodyComponent2D> DynamicBodies { get; init; } = new();
 
     public Vector2 Gravity { get; set; }
+
+    /// <summary>
+    /// Whether two bodies that run into each other share out their speed by what they weigh, along the way they
+    /// met. Somebody walking into a crate gets it moving and is slowed by it, more by a heavy one, and what was
+    /// going sideways for either of them keeps going. Off, which is what it is unless a game asks, the one that
+    /// was run into is sent off at the other's speed turned round, both ways at once, which is what two fighters
+    /// bumping chests want and no use for pushing anything anywhere. A body with no mass is not moved by either.
+    /// </summary>
+    public bool BodiesPush { get; set; }
 
     // Particles are simulated by the world too, but as something a lot lighter than a body
     private readonly List<PhysicsParticleGroup> particleGroups = [];
@@ -254,7 +258,8 @@ public class PhysicsWorld : GameComponent
 
         foreach (var body in dynamicBodies)
         {
-            // 2. Correct Gravity Integration: Apply acceleration directly (independent of Mass)
+            // 2. Gravity is an acceleration and goes on as one, whatever the body weighs. A feather and a piano fall
+            // alike, Galileo said so and he was nearly burned for less
             body.Velocity += (Gravity + (body.Force * body.InverseMass)) * dt;
 
             if (body.LinearDrag > 0.0f)
@@ -277,7 +282,9 @@ public class PhysicsWorld : GameComponent
                     var otherFixture = staticGrid.GetFixture(candidate);
                     if (fixture.TestIntersection(otherFixture, nextPositionX, staticGrid.GetBodyPosition(candidate)))
                     {
-                        nextPositionX.X = currentPosition.X;
+                        nextPositionX.X = body.StopsFlush
+                            ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, staticGrid.GetBodyPosition(candidate))
+                            : currentPosition.X;
                         body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
 
                         fixture.IsTouching = true;
@@ -296,10 +303,22 @@ public class PhysicsWorld : GameComponent
                     {
                         if (fixture.TestIntersection(otherFixture, nextPositionX, other.Position))
                         {
-                            nextPositionX.X = currentPosition.X;
-                            body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+                            if (BodiesPush)
+                            {
+                                // Right up against it if it stops flush, or pushing something along is a stutter
+                                nextPositionX.X = body.StopsFlush
+                                    ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, other.Position)
+                                    : currentPosition.X;
+                                Shove(body, other, sideways: true);
+                            }
+                            else
+                            {
+                                nextPositionX.X = currentPosition.X;
+                                body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
 
-                            other.Velocity = -body.Velocity;
+                                other.Velocity = -body.Velocity;
+                            }
+
                             fixture.IsTouching = true;
                             otherFixture.IsTouching = true;
                             fixture.ActiveContacts.Add(otherFixture);
@@ -319,7 +338,9 @@ public class PhysicsWorld : GameComponent
                     var otherFixture = staticGrid.GetFixture(candidate);
                     if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                     {
-                        nextPositionY.Y = currentPosition.Y;
+                        nextPositionY.Y = body.StopsFlush
+                            ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY, staticGrid.GetBodyPosition(candidate))
+                            : currentPosition.Y;
                         body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
 
                         fixture.IsTouching = true;
@@ -338,10 +359,20 @@ public class PhysicsWorld : GameComponent
                     {
                         if (fixture.TestIntersection(otherFixture, nextPositionY, other.Position))
                         {
-                            nextPositionY.Y = currentPosition.Y;
-                            body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+                            if (BodiesPush)
+                            {
+                                nextPositionY.Y = body.StopsFlush
+                                    ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY, other.Position)
+                                    : currentPosition.Y;
+                                Shove(body, other, sideways: false);
+                            }
+                            else
+                            {
+                                nextPositionY.Y = currentPosition.Y;
+                                body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
 
-                            other.Velocity = -body.Velocity;
+                                other.Velocity = -body.Velocity;
+                            }
 
                             fixture.IsTouching = true;
                             otherFixture.IsTouching = true;
@@ -387,6 +418,59 @@ public class PhysicsWorld : GameComponent
 
         // 6. Step the particles against where everything ended up
         UpdateParticles(dt);
+    }
+
+    /// <summary>
+    /// Helper method for how much of a move (0 to 1) a fixture can make before it is inside of another, for a body
+    /// that stops flush (see <see cref="PhysicsBodyComponent2D.StopsFlush"/>). Found by halving, six times, which
+    /// is to a sixty fourth of the step and works for any two shapes that can be tested against each other. A body
+    /// that is inside of the thing before it moves gets none of the move, the same as it always did.
+    /// </summary>
+    private static float Reach(IPhysicsFixture fixture, IPhysicsFixture other, Vector2 from, Vector2 to, Vector2 otherPosition)
+    {
+        float free = 0.0f, blocked = 1.0f;
+        for (int i = 0; i < 6; i++)
+        {
+            float middle = (free + blocked) * 0.5f;
+            if (fixture.TestIntersection(other, Vector2.Lerp(from, to, middle), otherPosition)) blocked = middle;
+            else free = middle;
+        }
+
+        return free;
+    }
+
+    /// <summary>
+    /// Helper method to share the speed of two bodies that met out between them, along the way they met (see
+    /// <see cref="BodiesPush"/>). What the two have between them (mass times speed) is the same after as before, the
+    /// bouncier of the two decides how much of the speed they met at they part with, none of it and they go on
+    /// together. The other way, across the one they met along, is nobody's business here.
+    /// </summary>
+    private static void Shove(PhysicsBodyComponent2D body, PhysicsBodyComponent2D other, bool sideways)
+    {
+        float mine = sideways ? body.Velocity.X : body.Velocity.Y;
+        float theirs = sideways ? other.Velocity.X : other.Velocity.Y;
+        float bounce = MathF.Min(body.Restitution, other.Restitution);
+
+        float after, theirsAfter;
+        if (other.Mass <= 0.0f)
+        {
+            // Not to be moved, it is a wall as far as this goes
+            (after, theirsAfter) = (theirs - (mine - theirs) * bounce, theirs);
+        }
+        else if (body.Mass <= 0.0f)
+        {
+            (after, theirsAfter) = (mine, mine + (mine - theirs) * bounce);
+        }
+        else
+        {
+            float both = body.Mass + other.Mass;
+            float together = (body.Mass * mine + other.Mass * theirs) / both;
+            after = together - other.Mass * bounce * (mine - theirs) / both;
+            theirsAfter = together + body.Mass * bounce * (mine - theirs) / both;
+        }
+
+        body.Velocity = sideways ? new Vector2(after, body.Velocity.Y) : new Vector2(body.Velocity.X, after);
+        other.Velocity = sideways ? new Vector2(theirsAfter, other.Velocity.Y) : new Vector2(other.Velocity.X, theirsAfter);
     }
 
     // Whether two bodies are of a group, in which case they don't collide (see PhysicsBodyComponent2D.CollisionGroup)
@@ -467,7 +551,7 @@ public class PhysicsWorld : GameComponent
 
     public override void Render(float dt)
     {
-        // Drawn alongside the simulation, the outlines are the ones it published: the bodies are moving meanwhile
+        // Drawn alongside the simulation, the outlines are the ones it published, the bodies are moving meanwhile
         if (RenderDebug)
             DebugRenderer.Render(dt);
     }

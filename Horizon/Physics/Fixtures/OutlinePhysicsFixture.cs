@@ -3,11 +3,11 @@ using System.Numerics;
 namespace Horizon.Physics.Fixtures;
 
 /// <summary>
-/// A shape of any outline at all, as the pieces of straight line that go around it: the silhouette of a sprite, say
+/// A shape of any outline at all, as the pieces of straight line that go around it, the silhouette of a sprite, say
 /// (see <c>MarchingSquares</c> for getting one). It can have holes and be in several parts, and it can be given
 /// another outline at any time, which is how it follows an animation frame by frame.
 /// <para>
-/// Only particles collide with it. Bodies don't: testing one outline against another every step is a lot of work
+/// Only particles collide with it. Bodies don't, testing one outline against another every step is a lot of work
 /// for something a couple of circles do just as well. So a body keeps its plain fixtures for standing on the map,
 /// and has one of these in <see cref="PhysicsBodyComponent2D.ParticleFixtures"/> for what rains down on it.
 /// </para>
@@ -56,6 +56,6 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
         (Min, Max) = count > 0 ? (min, max) : (Vector2.Zero, Vector2.Zero);
     }
 
-    // See the summary: bodies go by their other fixtures
+    // See the summary, bodies go by their other fixtures
     public bool TestIntersection(in IPhysicsFixture other, Vector2 positionOffset, Vector2 otherPositionOffset) => false;
 }

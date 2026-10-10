@@ -340,7 +340,7 @@ public sealed unsafe partial class GraphicsDevice
     };
 
     /// <summary>
-    /// Ends the rendering instance, if one is on. Everything that isn't a draw does this itself; it is here for
+    /// Ends the rendering instance, if one is on. Everything that isn't a draw does this itself, it is here for
     /// whoever records commands of their own. The next draw begins one again.
     /// </summary>
     public void EndRendering()
@@ -373,9 +373,18 @@ public sealed unsafe partial class GraphicsDevice
 
         if (renderingActive && ReferenceEquals(renderingTarget, target))
         {
-            var attachments = new List<int>();
-            if (color) for (int i = 0; i < target.ColorTextures.Length; i++) if (target.ColorTextures[i] is not null) attachments.Add(i);
-            ClearAttachmentsNow(attachments, clearColor, depth, stencil, 1.0f, 0);
+            // On the stack, a clear in the middle of a pass used to make a list on the heap to count to four with
+            Span<int> attachments = stackalloc int[ShaderPreprocessor.TEXTURE_BINDINGS];
+            int count = 0;
+            if (color)
+            {
+                for (int i = 0; i < target.ColorTextures.Length; i++)
+                {
+                    if (target.ColorTextures[i] is not null) attachments[count++] = i;
+                }
+            }
+
+            ClearAttachmentsNow(attachments[..count], clearColor, depth, stencil, 1.0f, 0);
             return;
         }
 
@@ -423,7 +432,7 @@ public sealed unsafe partial class GraphicsDevice
         ClearDepthImageNow(texture, depth, stencil);
     }
 
-    private void ClearAttachmentsNow(IReadOnlyList<int> colorAttachments, Vector4 color, bool depth, bool stencil, float depthValue, int stencilValue)
+    private void ClearAttachmentsNow(ReadOnlySpan<int> colorAttachments, Vector4 color, bool depth, bool stencil, float depthValue, int stencilValue)
     {
         var clears = stackalloc ClearAttachment[ShaderPreprocessor.TEXTURE_BINDINGS + 1];
         uint count = 0;
@@ -593,7 +602,7 @@ public sealed unsafe partial class GraphicsDevice
             height = nextHeight;
         }
 
-        // The last level never got read, so it is still a destination; everything above is a source. All of it read by shaders from here on
+        // The last level never got read, so it is still a destination, everything above is a source. All of it read by shaders from here on
         MipBarrier(texture, texture.MipLevels - 1, ImageLayout.TransferDstOptimal, ImageLayout.TransferSrcOptimal, AccessFlags2.TransferWriteBit, AccessFlags2.TransferReadBit);
         texture.Layout = ImageLayout.TransferSrcOptimal;
         texture.LastStage = PipelineStageFlags2.TransferBit;

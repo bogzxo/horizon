@@ -93,7 +93,7 @@ public abstract partial class UIComponent
         Expose(name, () => new Vector4Value(get()), value => set(UIScript.ToColor(value, name)));
 
     /// <summary>
-    /// Sets every property named in an object a script wrote, e.g. { label: "Play", pos: vec(0, 32) }.
+    /// Sets every property named in an object a script wrote, <c>{ label: "Play", pos: vec(0, 32) }</c> say.
     /// </summary>
     internal void ApplyScript(ObjectValue values)
     {

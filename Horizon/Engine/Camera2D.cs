@@ -3,8 +3,13 @@ using System.Numerics;
 
 namespace Horizon.Engine;
 
+/// <summary>
+/// A camera that looks straight at a flat world, with no perspective to it. It sees as much of the world as its
+/// <see cref="ViewSize"/> says, around wherever it is put, and less of it the further it is zoomed in.
+/// </summary>
 public class Camera2D : Camera
 {
+    /// <summary>How much smaller or bigger the camera makes its view, 1 as it comes. Under 1 it sees less and everything is bigger.</summary>
     public float Zoom
     {
         get => _zoom;
@@ -34,7 +39,7 @@ public class Camera2D : Camera
 
     /// <summary>
     /// A camera that can be drawn through straight away, also one that is never added to anything (one a UI is laid
-    /// out by): its matrices are there from the start and kept up with its lens.
+    /// out by). Its matrices are there from the start and kept up with its lens.
     /// </summary>
     public Camera2D(in Vector2 size)
     {
@@ -53,7 +58,7 @@ public class Camera2D : Camera
     }
 
     /// <summary>
-    /// What it sees from a place: as much of the world as the lens is wide and high (an orthographic projection is two
+    /// What it sees from a place, as much of the world as the lens is wide and high (an orthographic projection is two
     /// over that), around where the camera is.
     /// </summary>
     protected override RectangleF BoundsAt(Vector3 position, in Matrix4x4 projection)

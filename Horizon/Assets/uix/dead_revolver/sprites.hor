@@ -1,36 +1,36 @@
 // The sprites of Dead Revolver's pixel UI pack, by name.
 //
 // Every image of the pack holds the same art several times over, once for every colour it comes in. A sprite is
-// written down once, for the first copy, and found in the others by the theme it is asked for in:
-//   block:    how wide one copy of the art is, in pixels
-//   themes:   which copy every theme starts at, counted in blocks from the left of the image
-//   fallback: the theme that is used when a sprite is asked for in a theme the image doesn't come in
+// written down once, for the first copy, and found in the others by the theme it is asked for in. An image says
+//   block     how wide one copy of the art is, in pixels
+//   themes    which copy every theme starts at, counted in blocks from the left of the image
+//   fallback  the theme that is used when a sprite is asked for in a theme the image doesn't come in
 //             (the first one listed if it doesn't say)
-//   states:   the other states the art of every theme is followed by, and how many blocks along each of them is:
-//             with states: { hover: 1 } every sprite of the image is there a second time as "name_hover"
-//   size:     how big the sprites of the image are, for images that are a grid of them: a number or
+//   states    the other states the art of every theme is followed by, and how many blocks along each of them is.
+//             With states { hover: 1 } every sprite of the image is there a second time as "name_hover"
+//   size      how big the sprites of the image are, for images that are a grid of them, a number or
 //             vec(width, height). A sprite can still say otherwise with a w and an h of its own
-// A sprite says where it is inside of its copy, in pixels from the top left:
-//   x, y, w, h: the rectangle of the sprite (of its first frame, if it has several)
-//   block:      how many blocks further along it is, for images that follow every theme with its other states
-//   border:     how much of every edge keeps its size when the sprite is stretched as a nine-slice: a number for
+// A sprite says where it is inside of its copy, in pixels from the top left
+//   x, y, w, h  the rectangle of the sprite (of its first frame, if it has several)
+//   block       how many blocks further along it is, for images that follow every theme with its other states
+//   border      how much of every edge keeps its size when the sprite is stretched as a nine-slice, a number for
 //               all four sides, vec(horizontal, vertical) or vec(left, top, right, bottom)
-//   content:    how far in from every edge whatever is put on top of the sprite goes, written like a border: the
+//   content     how far in from every edge whatever is put on top of the sprite goes, written like a border. The
 //               label of a button sits on its face, not on the lip under it
-//   frames:     how many frames it has, they follow each other to the right ("name#2" is the third on its own),
+//   frames      how many frames it has, they follow each other to the right ("name#2" is the third on its own),
 //               or a list of where every frame after the first is, vec(x, y) each, for frames scattered about the image
-//   step:       how far the next frame is from the one before, for frames that aren't simply side by side: vec(right, down)
-//   time:       how long every frame of an animation is shown for, in seconds
-//   cell:       where it is as a cell of the grid of its image, vec(column, row), instead of x and y
-// An image can have a grid: cell: 16 (or vec(w, h)) is how big a cell is, origin: vec(x, y) where the grid starts, and
-// then its sprites can be written by their cell. block can be a vec(right, down) as well, for copies that go down.
-// A sprite can also be asked for in a theme of its own, whatever the skin's theme is: "round_blank@white".
+//   step        how far the next frame is from the one before, a vec(right, down), for frames that aren't simply side by side
+//   time        how long every frame of an animation is shown for, in seconds
+//   cell        where it is as a cell of the grid of its image, vec(column, row), instead of x and y
+// An image can have a grid. Its cell (16, or a vec(w, h)) is how big a cell is and its origin, a vec(x, y), where the
+// grid starts, and then its sprites can be written by their cell. block can be a vec(right, down) as well, for copies
+// that go down. A sprite can also be asked for in a theme of its own, whatever the skin's theme is, as "round_blank@white".
 //
 // This file is a program. Anything written down over and over is better written as a loop, see the keyboard below.
 // Only sprites that are used get loaded, so there is no harm in naming more of the pack here than a UI needs.
 // The rectangles were measured off the images, see the pack itself for what else there is to name.
 
-// Buttons. Every theme is followed by its other states, so every sprite here is there four times over:
+// Buttons. Every theme is followed by its other states, so every sprite here is there four times over,
 // "button", "button_hover", "button_pressed" and "button_selected".
 let buttons = {
     file: "buttons.png",
@@ -120,7 +120,7 @@ let form = {
     }
 };
 
-// Health and progress bars. There is no blue one: skins of the themes this image doesn't come in get the white
+// Health and progress bars. There is no blue one, skins of the themes this image doesn't come in get the white
 // one, which takes a tint well.
 let bars = {
     file: "value_bars.png",
@@ -321,7 +321,7 @@ pressable(playstation.sprites, "ps_share", 16, 240, 48, 16, 16);
 pressable(playstation.sprites, "ps_options", 16, 256, 48, 16, 16);
 
 // The keyboard and the mouse. The sheet has the whole keyboard four times, one under the other, as the frames of a
-// key being pressed: the key as it sits, going down, down, and back up. A key is 16 by 16 in a grid of 16, the wide
+// key being pressed, the key as it sits, going down, down, and back up. A key is 16 by 16 in a grid of 16, the wide
 // ones 24 and the space bar 104. The four keyboards aren't quite the same distance apart, so every key lists its frames.
 let keyboard = {
     file: "gdb-keyboard.png",

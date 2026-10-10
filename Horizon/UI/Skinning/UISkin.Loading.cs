@@ -314,8 +314,8 @@ public sealed partial class UISkin
     }
 
     /// <summary>
-    /// A region is the name of a sprite, or an object: { sprite: "name" } to change something about a
-    /// sprite (its border, content, scale or tint), { x, y, w, h } to cut a rectangle out of the skin's texture.
+    /// A region is the name of a sprite, or an object, <c>{ sprite: "name" }</c> to change something about a
+    /// sprite (its border, content, scale or tint) and <c>{ x, y, w, h }</c> to cut a rectangle out of the skin's texture.
     /// </summary>
     private static RegionSource ReadRegion(string name, IRuntimeValue value, string? texture)
     {

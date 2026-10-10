@@ -40,7 +40,7 @@
  *   HORIZON_SCREENSHOT=f.png@3  saves what was drawn three seconds in
  *
  * Keys that work in every example. Esc for the menu, Page Up and Page Down for the one before and after, F1 folds
- * the list of keys away, F3 goes round the performance overlay (a line, the lot, nothing), and in a Debug build
+ * the list of keys away, F3 goes round the performance overlay (a pill, the whole card, nothing), and in a Debug build
  * F10 brings up the engine's Skyline debugger, the example in a container with the scene tree, an inspector that
  * changes its fields as it runs, what is loaded and what every pass costs around it. F8 pauses, F9 steps a tick.
  */

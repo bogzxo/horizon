@@ -64,7 +64,7 @@ public sealed class Shader : GpuResource
 
     /// <summary>
     /// Loads and compiles a program out of every file of a name in a folder, so "shaders/post" and "blur" is blur.slang
-    /// (or blur.vert and blur.frag) in there. Only compiled the first time, everybody who asks after gets the same one.
+    /// in there. Only compiled the first time, everybody who asks after gets the same one.
     /// </summary>
     /// <returns>The shader, or <see cref="Invalid"/> if it didn't compile (and what the compiler had to say about that is in the log).</returns>
     public static Shader Load(string directory, string name) =>

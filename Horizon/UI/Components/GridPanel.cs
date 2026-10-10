@@ -7,7 +7,7 @@ namespace Horizon.UI.Components;
 /// <summary>
 /// A panel that lines its children up in rows of so many columns, left to right and then top to bottom.
 /// Every cell is as big as the biggest child, so the rows and the columns come out straight whatever is in
-/// them; a child smaller than its cell sits in it by its <see cref="UIComponent.Anchor"/>.
+/// them, and a child smaller than its cell sits in it by its <see cref="UIComponent.Anchor"/>.
 /// </summary>
 public class GridPanel : Panel
 {

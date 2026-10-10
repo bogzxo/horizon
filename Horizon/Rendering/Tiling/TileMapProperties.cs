@@ -6,9 +6,9 @@ using DotTiled;
 namespace Horizon.Rendering.Tiling;
 
 /// <summary>
-/// The custom properties something in a Tiled map was given: a layer, an object, a tile, the map itself.
+/// The custom properties something in a Tiled map was given, a layer, an object, a tile or the map itself.
 /// Names don't mind their case, and every getter takes what to answer when the property isn't there (or can't be
-/// read as what was asked for), so whoever reads a map doesn't have to parse anything or check for anything:
+/// read as what was asked for), so whoever reads a map doesn't have to parse anything or check for anything.
 /// <code>
 /// float radius = light.Properties.GetFloat("light_radius", 100);
 /// Vector4 colour = light.Properties.GetColor("light_colour", Vector4.One);
@@ -25,7 +25,7 @@ public sealed class TileMapProperties
 
     /// <param name="properties">What Tiled has.</param>
     /// <param name="directory">Where the files a property names are looked for from.</param>
-    /// <param name="fallback">Properties to look in for whatever these don't have: those of its tile, for an object that shows one.</param>
+    /// <param name="fallback">Properties to look in for whatever these don't have, those of its tile for an object that shows one.</param>
     internal TileMapProperties(IEnumerable<IProperty>? properties, string directory, TileMapProperties? fallback = null)
     {
         this.directory = directory;

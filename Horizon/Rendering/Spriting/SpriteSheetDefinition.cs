@@ -6,7 +6,7 @@ using Horizon.HIDL.Runtime;
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
-/// Where a named sprite is to be found: which image it is in and which part of it.
+/// Where a named sprite is to be found, which image it is in and which part of it.
 /// </summary>
 /// <param name="Path">The image file.</param>
 /// <param name="X">The left edge of the first frame, in pixels from the left of the image.</param>
@@ -55,12 +55,12 @@ public readonly record struct SpriteSource(
 
 /// <summary>
 /// The names of the sprites in a set of images, as written down in a HIDL file (see Assets/uix/dead_revolver/sprites.hor
-/// for one that explains itself). It only says where everything is, nothing is loaded: pair it with a
+/// for one that explains itself). It only says where everything is, nothing is loaded. Pair it with a
 /// <see cref="TextureAtlas"/> to have the sprites that are actually used stitched together.
 /// Sheets that hold the same art in a number of colours can say so by naming their themes. A sprite is then written down
 /// once, for the first copy of the art, and looked up in whichever theme is wanted.
-/// The same goes for art that is repeated for its states (a button, the same button hovered, the same button pressed):
-/// an image names its states and every sprite in it can be asked for as "name_hover" without being written down again.
+/// The same goes for art that is repeated for its states (a button, the same button hovered, the same button pressed).
+/// An image names its states and every sprite in it can be asked for as "name_hover" without being written down again.
 /// A sheet file is a program, so what is written down over and over (a key for every key of a keyboard) can be written
 /// as a loop instead, see the keyboard of the Dead Revolver pack.
 /// </summary>

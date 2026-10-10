@@ -27,17 +27,17 @@ public enum ShapeKind : uint
 }
 
 /// <summary>
-/// One shape the way the shader is handed it: 64 bytes, laid out exactly like the std430 <c>Shape</c> struct in
-/// shaders/primitives/shapes.vert. Made with the helpers (<see cref="Box"/>, <see cref="Disc"/>, <see cref="Line"/>...)
+/// One shape the way the shader is handed it, 64 bytes laid out exactly like the std430 <c>Shape</c> struct in
+/// shaders/primitives/shapes.slang. Made with the helpers (<see cref="Box"/>, <see cref="Disc"/>, <see cref="Line"/>...)
 /// or by a <see cref="ShapeList"/>, which has the lot.
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 64)]
 public struct ShapeInstance
 {
-    /// <summary>The middle of a rectangle, circle or triangle; one end of a segment.</summary>
+    /// <summary>The middle of a rectangle, circle or triangle, or one end of a segment.</summary>
     public Vector2 Center;
 
-    /// <summary>Half the width and height of a rectangle or triangle; the radius of a circle (in X); the other end of a segment.</summary>
+    /// <summary>Half the width and height of a rectangle or triangle, the radius of a circle (in X), or the other end of a segment.</summary>
     public Vector2 Size;
 
     /// <summary>In radians, anticlockwise around the middle. A segment has none.</summary>
@@ -113,7 +113,7 @@ public struct ShapeInstance
     private const float TELEPORT = 256.0f;
 
     /// <summary>
-    /// What a shape looks like partway (0 to 1) from one snapshot of it to the next: where it is, how big and how
+    /// What a shape looks like partway (0 to 1) from one snapshot of it to the next. Where it is, how big and how
     /// turned, its colour and how fast it goes are mixed. See <see cref="CanBlend"/> for when two aren't to be.
     /// </summary>
     public static ShapeInstance Blend(in ShapeInstance from, in ShapeInstance to, float amount)
@@ -132,7 +132,7 @@ public struct ShapeInstance
     }
 
     /// <summary>
-    /// Whether a shape went from one snapshot to the next in a way that can be shown on its way: it is still the same
+    /// Whether a shape went from one snapshot to the next in a way that can be shown on its way, it is still the same
     /// kind of shape, and it wasn't put somewhere else entirely.
     /// </summary>
     public static bool CanBlend(in ShapeInstance from, in ShapeInstance to)
@@ -146,7 +146,7 @@ public struct ShapeInstance
 }
 
 /// <summary>
-/// Shapes written down to be drawn, see <see cref="PrimitiveRenderer.Shapes"/>: the list the simulation fills, with
+/// Shapes written down to be drawn, see <see cref="PrimitiveRenderer.Shapes"/>. The list the simulation fills, with
 /// a helper for every kind of shape. Colours are RGBA from 0 to 1, rotations in radians, everything else in units of
 /// the world. A <see cref="Vector3"/> colour is opaque.
 /// </summary>
@@ -221,7 +221,7 @@ public sealed class ShapeList
 
     public void FillCircle(Vector2 center, float radius, Vector3 color) => FillCircle(center, radius, new Vector4(color, 1.0f));
 
-    /// <summary>A ring: the outline of a disc.</summary>
+    /// <summary>A ring, the outline of a disc.</summary>
     public void Circle(Vector2 center, float radius, float thickness, Vector4 color) =>
         Add(ShapeInstance.Disc(center, radius, SpriteItem.PackColor(color), MathF.Max(thickness, 0.0001f)));
 

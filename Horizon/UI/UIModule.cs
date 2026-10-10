@@ -7,7 +7,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI
 {
     /// <summary>
-    /// A self contained piece of UI: a tree of components, the script runtime that can build and drive
+    /// A self contained piece of UI, a tree of components, the script runtime that can build and drive
     /// it, and a position and scale for the lot. A HUD, a menu and a dialog would each be a module.
     /// The components are laid out against the whole screen, so anchoring one to a corner of the
     /// module puts it in that corner of the screen.
@@ -90,7 +90,7 @@ namespace Horizon.UI
         public Vector2 Scale { get; set; } = Vector2.One;
 
         /// <summary>
-        /// The screen the module was designed for, in units of its layout: a layout file says so with
+        /// The screen the module was designed for, in units of its layout. A layout file says so with
         /// <c>compositor.design({ size: vec(1600, 900), fit: "contain" })</c>. Null for a module that just takes
         /// whatever screen it's given at the compositor's scale (and its <see cref="UICompositor.DesignSize"/>).
         /// How it is fitted to the real screen is <see cref="Fit"/>.
@@ -103,14 +103,14 @@ namespace Horizon.UI
         public UIFit Fit { get; set; } = UIFit.Contain;
 
         /// <summary>
-        /// How many units of the camera a unit of the layout comes to right now: the compositor's
+        /// How many units of the camera a unit of the layout comes to right now, the compositor's
         /// <see cref="UICompositor.UIScale"/>, or for a module with a <see cref="DesignSize"/> whatever fits that
         /// design to the screen times the player's <see cref="UICompositor.Scale"/>. Worked out every update.
         /// </summary>
         public float UnitScale { get; private set; } = 1.0f;
 
         /// <summary>
-        /// The rectangle (in the module's own units) the components were laid out in last: the screen as the
+        /// The rectangle (in the module's own units) the components were laid out in last, the screen as the
         /// module sees it, or for a contained design the design itself sitting in the middle of it. What an
         /// editor draws a box around.
         /// </summary>
@@ -118,13 +118,13 @@ namespace Horizon.UI
 
         /// <summary>
         /// Draws a box around <see cref="Frame"/> in this colour, over everything in the module. For an editor
-        /// that wants the edges of the layout shown; null (no box) for anything else.
+        /// that wants the edges of the layout shown, null (no box) for anything else.
         /// </summary>
         public Vector4? FrameColor { get; set; }
 
         /// <summary>
         /// The screen the module is laid out against, in its own space. Left unset that is whatever the camera
-        /// sees; set, the module is laid out as if that were the screen whatever the real one is, which is how
+        /// sees. Set, the module is laid out as if that were the screen whatever the real one is, which is how
         /// an editor shows a layout made for another resolution in a corner of its own.
         /// </summary>
         public UIRect? Viewport { get; set; }
@@ -153,7 +153,7 @@ namespace Horizon.UI
         private UINavigator? navigation;
 
         /// <summary>
-        /// Walks the module without a pointer, for a gamepad or the keyboard: see <see cref="UINavigator"/>. Made the
+        /// Walks the module without a pointer, for a gamepad or the keyboard, see <see cref="UINavigator"/>. Made the
         /// first time somebody asks, and nothing until they do.
         /// </summary>
         public UINavigator Navigation => navigation ??= new UINavigator(this);
@@ -246,7 +246,7 @@ namespace Horizon.UI
         /// </summary>
         internal void FitTo(UIRect screen)
         {
-            // Shown by somebody else (an editor scales and places it itself), or not designed for a screen at all:
+            // Shown by somebody else (an editor scales and places it itself), or not designed for a screen at all,
             // the compositor's scale it is
             if (Viewport is not null || DesignSize is not { X: > 0.0f, Y: > 0.0f } design || screen.IsEmpty)
             {
@@ -365,20 +365,38 @@ namespace Horizon.UI
                 return;
             }
 
-            // Lowest first, so the highest ends up on top. Stable, so two at the same height keep their order
-            raised.Sort((a, b) => a.ZOffset.CompareTo(b.ZOffset));
+            // Lowest first, so the highest ends up on top, and two at the same height keep the order they were
+            // painted in. Sorted by hand, there are never more than a handful and List.Sort makes no promise about
+            // keeping equals in order (the comment that was here said it did, the docs say it doesn't, and two
+            // badges at the same height swapping over every other frame is no way to live)
+            for (int i = 1; i < raised.Count; i++)
+            {
+                UIComponent moving = raised[i];
+                int at = i - 1;
+                for (; at >= 0 && raised[at].ZOffset > moving.ZOffset; at--)
+                    raised[at + 1] = raised[at];
+
+                raised[at + 1] = moving;
+            }
 
             paintingRaised = true;
             foreach (UIComponent component in raised)
                 component.PaintTree(list);
             paintingRaised = false;
 
-            raisedShown = [.. raised];
+            // The same ones as last time is the usual case, and no reason for a new array every frame
+            bool same = raisedShown.Length == raised.Count;
+            for (int i = 0; same && i < raised.Count; i++)
+                same = ReferenceEquals(raisedShown[i], raised[i]);
+
+            if (!same)
+                raisedShown = [.. raised];
+
             raised.Clear();
         }
 
         /// <summary>
-        /// The innermost component at a point of the camera's world space, whatever kind it is: unlike the
+        /// The innermost component at a point of the camera's world space, whatever kind it is. Unlike the
         /// pointer this finds labels and panels too, and doesn't care whether the module is interactive.
         /// </summary>
         /// <param name="hidden">Whether components that aren't visible are found as well.</param>

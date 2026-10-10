@@ -8,14 +8,14 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// Pages you flip between with a strip of tabs along the top: an options screen, an inventory, an editor's side panel.
+/// Pages you flip between with a strip of tabs along the top, an options screen, an inventory, an editor's side panel.
 /// Every child is a page (anything, usually a stack), the tabs are named by <see cref="Tabs"/> in the same order, and
 /// only the <see cref="Selected"/> one is drawn and clickable. The others keep their state and their place in the
 /// layout, so nothing jumps about when you flip and the panel is as big as its biggest page.
 /// <para>
 /// Click a tab to open it, or drive it from a gamepad with <see cref="Next"/> and <see cref="Previous"/> (bumpers are
 /// the usual), and put the buttons for that at the ends of the strip with <see cref="PreviousHint"/> and
-/// <see cref="NextHint"/>:
+/// <see cref="NextHint"/>.
 /// </para>
 /// <code>
 /// let tabs = compositor.tabs({ tabs: ["Display", "Look", "Fight"], prev_hint: "[icon:pad_lb]", next_hint: "[icon:pad_rb]" });

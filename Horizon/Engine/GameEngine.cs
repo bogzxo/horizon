@@ -17,7 +17,7 @@ namespace Horizon.Engine;
 
 /// <summary>
 /// The engine. It opens the window, keeps the scene that is on screen updated and drawn, and has everything a game reaches for.
-/// A whole game starts like this:
+/// A whole game starts like this.
 /// <code>
 /// using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "My game" });
 /// engine.Run&lt;MainMenuScene&gt;();
@@ -26,9 +26,8 @@ namespace Horizon.Engine;
 /// </summary>
 public class GameEngine : Entity
 {
-    // Things the driver likes to go on about that nobody needs to read. How its buffers are doing, mostly
     /// <summary>
-    /// A copy of the game engines initial configuration.
+    /// What the engine was told to be when it was made.
     /// </summary>
     public GameEngineConfiguration Configuration { get; init; }
 
@@ -51,7 +50,7 @@ public class GameEngine : Entity
 
     /// <summary>
     /// How long (in seconds) frames have been drawn for. This is the clock for anything that only animates what is seen.
-    /// Kept in double precision: in single precision a clock in seconds can't tell milliseconds apart any more after a few hours.
+    /// Kept in double precision, in single precision a clock in seconds can't tell milliseconds apart any more after a few hours.
     /// </summary>
     public double TotalTime { get; private set; }
 
@@ -103,11 +102,11 @@ public class GameEngine : Entity
 
 #if DEBUG
     /// <summary>
-    /// The debugging suite, the menu bar over the game with the scene tree, the inspector and the rest behind it
-    /// (see <see cref="Debugging.DebugSuite"/>). Only in a Debug build, a Release one hasn't got the class at all,
+    /// The Skyline debugger, the menu bar over the game with the scene tree, the inspector and the rest behind it
+    /// (see <see cref="Debugging.SkylineDebugger"/>). Only in a Debug build, a Release one hasn't got the class at all,
     /// so whatever talks to it goes inside of an #if DEBUG as well.
     /// </summary>
-    public Debugging.DebugSuite Debugger { get; }
+    public Debugging.SkylineDebugger Debugger { get; }
 #endif
 
     public GameEngine()
@@ -148,7 +147,7 @@ public class GameEngine : Entity
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
-        Debugger = AddEntity(new Debugging.DebugSuite());
+        Debugger = AddEntity(new Debugging.SkylineDebugger());
 #endif
 
         SceneManager = AddEntity<SceneManager>();
@@ -302,13 +301,13 @@ public class GameEngine : Entity
         Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
 
         // Whatever is drawn outside of a scene makes what it makes on the GPU for everybody, the same as when it's
-        // set up (see EntityLifecycle.Scope above): an overlay on the engine that makes its layer the first time it's
+        // set up (see EntityLifecycle.Scope above). An overlay on the engine that makes its layer the first time it's
         // drawn mustn't have it count as a leftover of whichever scene was on then. Scenes draw in their own scope
         using (Horizon.Content.AssetScope.EnterGlobal())
             base.Render(dt);
 
 #if DEBUG
-        // Over everything, the suite draws last whatever was added to the engine after it. In its editor layout
+        // Over everything, the debugger draws last whatever was added to the engine after it. While it is up
         // it takes the frame as it is now and shows it in a part of the window
         Debugger.Draw(dt);
 #endif

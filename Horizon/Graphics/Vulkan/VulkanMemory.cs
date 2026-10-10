@@ -179,11 +179,24 @@ internal sealed unsafe class VulkanMemory : IDisposable
         }
 
         // An empty block that isn't the only one of its kind goes back to the driver
-        if (block.Used == 0 && blocks.Count(other => other.TypeIndex == block.TypeIndex && other.ForImages == block.ForImages) > 1)
+        if (block.Used == 0 && HasAnother(block))
         {
             blocks.Remove(block);
             Release(block);
         }
+    }
+
+    // Whether there is another block of the same kind, so this one can go. A loop, this is run for everything
+    // that is ever freed and counting with a lambda made garbage out of taking the garbage out
+    private bool HasAnother(Block block)
+    {
+        foreach (Block other in blocks)
+        {
+            if (!ReferenceEquals(other, block) && other.TypeIndex == block.TypeIndex && other.ForImages == block.ForImages)
+                return true;
+        }
+
+        return false;
     }
 
     private uint FindType(uint allowed, MemoryPropertyFlags flags, uint except = uint.MaxValue)

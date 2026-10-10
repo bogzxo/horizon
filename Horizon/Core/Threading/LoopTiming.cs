@@ -18,7 +18,7 @@ internal static class LoopTiming
     private static int timerUsers;
 
     /// <summary>
-    /// Waits for a moment (in seconds of the stopwatch): asleep for most of it, awake for the end.
+    /// Waits for a moment (in seconds of the stopwatch), asleep for most of it, awake for the end.
     /// </summary>
     public static void WaitUntil(double moment)
     {
@@ -36,7 +36,7 @@ internal static class LoopTiming
 
     /// <summary>
     /// Has the system wake sleeping threads to the millisecond for as long as anybody who keeps time runs. Windows
-    /// otherwise only looks every 15 or so, which nothing could keep time by.
+    /// otherwise only looks every 15 or so, which is no way to run a railway.
     /// </summary>
     public static void SharpenTimer(bool on)
     {

@@ -24,7 +24,7 @@ public static class Interpolate
     public static Vector4 Linear(Vector4 from, Vector4 to, float amount) => from + (to - from) * amount;
 
     /// <summary>
-    /// An angle in degrees, the short way round: from 350 to 10 goes through 0, not back through 180.
+    /// An angle in degrees, the short way round. From 350 to 10 goes through 0, not all the way back through 180 like a pillock.
     /// </summary>
     public static float Angle(float from, float to, float amount)
     {
@@ -54,7 +54,7 @@ public static class Interpolate
     }
 
     /// <summary>
-    /// Whatever changes in steps: what it was until the moment is all the way at what it is.
+    /// Whatever changes in steps, what it was until the moment is all the way at what it is.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static T Hold<T>(T from, T to, float amount) => amount >= 1.0f ? to : from;

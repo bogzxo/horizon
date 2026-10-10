@@ -16,7 +16,7 @@ namespace Horizon.Graphics;
 /// technique.SetUniform("uTime", time);
 /// </code>
 /// The uniforms are the members of the shader's <c>Params</c> block (a <c>ConstantBuffer&lt;Params&gt;</c> on binding 1
-/// in Slang, a <c>BIND_UNIFORM(1) uniform Params</c> block in GLSL). Setting one writes it into a copy of the block
+/// in Slang, there is no GLSL any more and nobody misses it). Setting one writes it into a copy of the block
 /// here, and the block goes to the GPU the moment something is drawn with the technique. However many uniforms a draw
 /// sets, it is one small write. A name the block hasn't got is said once in the log and then ignored.
 /// A class of its own that descends from this can set what it always needs in <see cref="SetUniforms"/>, which every bind calls.

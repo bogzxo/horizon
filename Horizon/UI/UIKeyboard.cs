@@ -19,7 +19,7 @@ namespace Horizon.UI;
 /// </para>
 /// <para>
 /// What is pasted (control with V) goes in as one <see cref="PASTE"/> mark with the whole text waiting next to it,
-/// see <see cref="TryTakePaste"/>: a text box takes the first line of it, an editor can take a whole file.
+/// see <see cref="TryTakePaste"/>. A text box takes the first line of it, an editor can take a whole file.
 /// </para>
 /// </summary>
 internal static class UIKeyboard
@@ -40,14 +40,14 @@ internal static class UIKeyboard
     /// <summary>Stands for the delete key, which takes what is after the caret.</summary>
     public const char DELETE = '\u007F';
 
-    /// <summary>Control with A: everything is selected.</summary>
+    /// <summary>Control with A, everything is selected.</summary>
     public const char SELECT_ALL = '\u0001';
 
-    /// <summary>Control with C and with X: what is selected goes to the clipboard, and for X out of the text.</summary>
+    /// <summary>Control with C and with X, what is selected goes to the clipboard, and for X out of the text.</summary>
     public const char COPY = '\u0003';
     public const char CUT = '\u0018';
 
-    /// <summary>Control with V: what is on the clipboard is typed, see <see cref="TryTakePaste"/> for the text itself.</summary>
+    /// <summary>Control with V, what is on the clipboard is typed, see <see cref="TryTakePaste"/> for the text itself.</summary>
     public const char PASTE = '\u0016';
 
     /// <summary>The caret goes somewhere. A character or (with control) a word to either side, or to either end.</summary>
@@ -96,7 +96,7 @@ internal static class UIKeyboard
     private static long scrollUsedOn = -1;
 
     /// <summary>
-    /// Starts listening to the keyboards. Only the first call does anything; has to be made once
+    /// Starts listening to the keyboards. Only the first call does anything, and it has to be made once
     /// the window exists.
     /// </summary>
     public static void Hook()
@@ -245,7 +245,7 @@ internal static class UIKeyboard
     /// <summary>
     /// How far the mouse wheel turned for this update, in notches (positive is away from the user), or nothing if
     /// another UI already used it. Every UI gets to look at it, the first one with a use for it says so with
-    /// <see cref="UseScroll"/>: a UI that has nothing under the pointer used to take it anyway and leave the one that
+    /// <see cref="UseScroll"/>. A UI that has nothing under the pointer used to take it anyway and leave the one that
     /// did with sod all. Simulation thread.
     /// </summary>
     public static float PeekScroll() =>

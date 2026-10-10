@@ -19,7 +19,7 @@ public readonly record struct KeyDefinition(string Label, string Types, string S
 
 /// <summary>
 /// A keyboard on screen that types into a <see cref="TextBox"/>, for when there is no real one (a gamepad, a kiosk).
-/// Its keys can be clicked, or walked with a gamepad: the game calls <see cref="Navigate"/> when the d-pad is
+/// Its keys can be clicked, or walked with a gamepad. The game calls <see cref="Navigate"/> when the d-pad is
 /// pressed and <see cref="Press"/> for its confirm button, and a <see cref="UINavigator"/> that lands on the keyboard
 /// does the same by itself. The highlighted key is the one that gets pressed.
 /// <see cref="Full"/> is laid out like the real thing, with the keys drawn as the keys of the skin's keyboard when
@@ -250,7 +250,7 @@ public class OnScreenKeyboard : StackPanel
     }
 
     /// <summary>
-    /// Moves the highlight by a number of keys: positive <paramref name="right"/> goes right and
+    /// Moves the highlight by a number of keys, positive <paramref name="right"/> goes right and
     /// positive <paramref name="down"/> goes down. It stops at the edges.
     /// </summary>
     public void Navigate(int right, int down)

@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace Horizon.Core.Threading;
 
 /// <summary>
-/// What has the simulation thread pick up where an <c>await</c> left off: whatever is posted to it runs on that
+/// What has the simulation thread pick up where an <c>await</c> left off. Whatever is posted to it runs on that
 /// thread at the start of the next tick, before anything of that tick is updated. So game code can wait on a tween,
 /// a timer or a download with <c>await</c> and carry on as if it never left, without anything of it ever running
 /// in the middle of a tick or on some other thread. It is the <see cref="SynchronizationContext"/> of the

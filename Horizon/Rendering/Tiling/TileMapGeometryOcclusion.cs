@@ -7,9 +7,9 @@ namespace Horizon.Rendering.Tiling;
 /// <summary>
 /// The ambient occlusion a map works out of its own geometry, see <see cref="TileMap.GeometryOcclusion"/>. One
 /// picture over the whole map that says how open every spot of it is, made on the CPU whenever what blocks light
-/// changed, which for most maps is once. The tiles read it where they
-/// end up on screen and write it into the G-buffer with whatever their tile set painted,
-/// so it costs a frame one more texture read a tile fragment and no marching at all.
+/// changed, which for most maps is once. The tiles read it where they end up on screen and write it into the
+/// G-buffer with whatever their tile set painted, so it costs a frame one more texture read a tile fragment and
+/// no marching at all.
 /// </summary>
 internal sealed class TileMapGeometryOcclusion : IDisposable
 {

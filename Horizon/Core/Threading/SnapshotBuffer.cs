@@ -1,7 +1,7 @@
 namespace Horizon.Core.Threading;
 
 /// <summary>
-/// Like a <see cref="Snapshot{T}"/>, for what is too big to be copied whole every tick: a list, an array of quads. There
+/// Like a <see cref="Snapshot{T}"/>, for what is too big to be copied whole every tick, a list or an array of quads. There
 /// is an object of its own for every slot of the <see cref="SnapshotClock"/>, made once and reused, and the simulation
 /// fills in the one of the capture that is going on while the renderer reads the ones of its frame, which nobody
 /// writes to while it does.
@@ -33,7 +33,7 @@ public sealed class SnapshotBuffer<T> where T : class
     public void Break() => epoch++;
 
     /// <summary>
-    /// The object of the capture that is going on of the engine's clock, to be filled in now: it is part of that
+    /// The object of the capture that is going on of the engine's clock, to be filled in now. It is part of that
     /// capture from here on. Null if no capture is going on. Simulation thread.
     /// </summary>
     public T? BeginPublish() => BeginPublish(SnapshotClock.Active);
@@ -72,7 +72,7 @@ public sealed class SnapshotBuffer<T> where T : class
     /// The objects of both snapshots of a frame. Render thread, read only.
     /// </summary>
     /// <param name="previous">The older one, the newer one again if nothing was published in the older one.</param>
-    /// <param name="continuous">Whether the two can be blended: both are there and nothing broke in between.</param>
+    /// <param name="continuous">Whether the two can be blended, both are there and nothing broke in between.</param>
     /// <returns>False if nothing was published in the newer one.</returns>
     public bool TryGet(in RenderFrame frame, out T previous, out T current, out bool continuous)
     {

@@ -40,7 +40,7 @@ public partial class UICompositor
 
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
-        // Escape closes whatever is open, top down: a dialog, then a popup, then the focus. One thing a press
+        // Escape closes whatever is open, top down. A dialog, then a popup, then the focus, one thing a press
         if (keyboard.WasPressed(Key.Escape))
             Escape(snapshot);
 
@@ -81,7 +81,7 @@ public partial class UICompositor
     }
 
     /// <summary>
-    /// Helper method for the escape key: a dialog that is up is cancelled, failing that whatever is open on top of a
+    /// Helper method for the escape key. A dialog that is up is cancelled, failing that whatever is open on top of a
     /// module is closed, failing that the focus is given up. Nothing of it, and the key was for the game.
     /// </summary>
     private void Escape(UIModule[] snapshot)
@@ -242,7 +242,7 @@ public partial class UICompositor
 
         IsPointerOverUI = over is not null || pressed is not null;
 
-        // The other button asks whatever it's over what it has to offer: the innermost component with a handler for
+        // The other button asks whatever it's over what it has to offer, the innermost component with a handler for
         // it, then whoever listens on the whole compositor (an editor deciding by what was clicked)
         if (pointer.SecondaryDown && !secondaryWasDown)
         {

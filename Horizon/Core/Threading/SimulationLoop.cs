@@ -17,19 +17,19 @@ public interface ISimulationHost
     void UpdatePhysics(float dt);
 
     /// <summary>
-    /// Called once everything of a tick is done: the moment to publish what the game looks like now.
+    /// Called once everything of a tick is done, the moment to publish what the game looks like now.
     /// </summary>
     /// <param name="tick">Which tick it was, counting from 1.</param>
-    /// <param name="stamp">The moment (stopwatch ticks) the game is at now: when this tick was due.</param>
+    /// <param name="stamp">The moment (stopwatch ticks) the game is at now, which is when this tick was due.</param>
     /// <param name="time">How long (in seconds) the game has been simulated for.</param>
     void EndTick(long tick, long stamp, double time);
 }
 
 /// <summary>
-/// The thread the game is simulated on: the logic and the physics of the game, one tick after another, on a clock of
+/// The thread the game is simulated on, the logic and the physics of the game, one tick after another, on a clock of
 /// their own, whatever the frames are doing.
 /// <para>
-/// The loop ticks as often as the faster of the two wants to go. Each of them keeps its own time: the physics steps by
+/// The loop ticks as often as the faster of the two wants to go. Each of them keeps its own time. The physics steps by
 /// the same length of time every time, as often as its rate says (what it comes to then doesn't depend on how busy the
 /// machine was), the logic is told how long it has been since its last turn, which at the same rate as the ticks is
 /// one tick every time. A tick is logic first, then physics, then whatever the host does at the end of it (publish a
@@ -64,7 +64,7 @@ public sealed class SimulationLoop : IDisposable
     // When each of them last had a turn (stopwatch ticks), which is how often they really come round is known
     private long lastTickAt, lastLogicAt, lastPhysicsAt;
 
-    /// <summary>How many ticks a second the loop makes: as many as the faster of the logic and the physics wants.</summary>
+    /// <summary>How many ticks a second the loop makes, as many as the faster of the logic and the physics wants.</summary>
     public double TickRate { get; }
 
     /// <summary>How many times a second the logic is meant to take its turn.</summary>
@@ -80,7 +80,7 @@ public sealed class SimulationLoop : IDisposable
     public double Time { get; private set; }
 
     /// <summary>
-    /// Where whatever is to run on the simulation thread goes, at the start of the next tick: what an <c>await</c> on
+    /// Where whatever is to run on the simulation thread goes, at the start of the next tick. What an <c>await</c> on
     /// that thread carries on with, and whatever anybody else hands it (see <see cref="SimulationContext"/>).
     /// </summary>
     public SimulationContext Context { get; } = new();
@@ -148,7 +148,7 @@ public sealed class SimulationLoop : IDisposable
 
     /// <summary>
     /// Forgets how far behind the loop is. For when it was held up on purpose (a scene being set up) and is to carry on
-    /// from now rather than make up for the time it stood still. Loop thread, also from inside of a tick: whatever
+    /// from now rather than make up for the time it stood still. Loop thread, also from inside of a tick, whatever
     /// ticks were still to be made to catch up are let go, and the next one is made straight away.
     /// </summary>
     public void Resynchronize() => next = double.NaN;
@@ -189,7 +189,7 @@ public sealed class SimulationLoop : IDisposable
         long now = clock();
         double period = tickPeriod * frequency;
 
-        // The first tick, or the first after being held up: from now on
+        // The first tick, or the first after being held up, from now on
         if (double.IsNaN(next))
             next = now;
 
@@ -210,7 +210,7 @@ public sealed class SimulationLoop : IDisposable
         {
             MakeTick((long)first + (long)(period * i));
 
-            // Held up on purpose at the end of that one (a scene being set up): the rest isn't made up for, the next
+            // Held up on purpose at the end of that one (a scene being set up), so the rest isn't made up for and the next
             // tick is from now
             if (double.IsNaN(next))
                 return;
@@ -220,7 +220,7 @@ public sealed class SimulationLoop : IDisposable
     }
 
     /// <summary>
-    /// Helper method to make one tick: the logic if it is due, the physics as many steps as are due, then the end of it.
+    /// Helper method to make one tick, the logic if it is due, the physics as many steps as are due, then the end of it.
     /// </summary>
     private void MakeTick(long stamp)
     {

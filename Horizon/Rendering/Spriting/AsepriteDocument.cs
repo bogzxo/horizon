@@ -22,8 +22,8 @@ public readonly record struct AsepriteTag(string Name, int From, int To, int Dir
 /// layers when they're asked for (and kept, so the atlas and the box tracer don't both pay for it) and every tag is
 /// an animation. Read once per file, see <see cref="Open"/> and <see cref="Forget"/>.
 /// <para>
-/// What's read: RGBA, grayscale and indexed files, any number of layers (hidden ones left out, groups honoured),
-/// raw, linked and zlib compressed cels, layer and cel opacity, tags. What isn't: blend modes other than normal
+/// What's read is RGBA, grayscale and indexed files, any number of layers (hidden ones left out, groups honoured),
+/// raw, linked and zlib compressed cels, layer and cel opacity, tags. What isn't is blend modes other than normal
 /// (they're drawn as normal and said so once), tilemap layers, external files. Enough for sprites drawn in it.
 /// </para>
 /// </summary>

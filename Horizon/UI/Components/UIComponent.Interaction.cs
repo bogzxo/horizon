@@ -31,7 +31,7 @@ public abstract partial class UIComponent
     /// <summary>
     /// Whether a child is part of what is shown right now. Not shown it is neither drawn nor hit by the pointer,
     /// without anything about the child itself changing (its <see cref="Visible"/> included, which goes into the
-    /// file): how the pages of a <see cref="TabPanel"/> that aren't open stay out of the way.
+    /// file). It is how the pages of a <see cref="TabPanel"/> that aren't open stay out of the way.
     /// </summary>
     protected internal virtual bool ShowsChild(UIComponent child) => true;
 
@@ -89,12 +89,12 @@ public abstract partial class UIComponent
 
     /// <summary>
     /// What the other button of the pointer (right click) does on this component, or on anything inside it that has
-    /// nothing of its own: called with where the pointer is, in the layout's units. Usually shows a
+    /// nothing of its own. Called with where the pointer is, in the layout's units. Usually shows a
     /// <see cref="ContextMenu"/>. Null for nothing, the compositor's <see cref="UICompositor.ContextRequested"/> gets it then.
     /// </summary>
     public Action<Vector2>? OnContextMenu { get; set; }
 
-    /* Driving the UI without a pointer: a gamepad or the keyboard walking from one component to the next, see UINavigator */
+    /* Driving the UI without a pointer, a gamepad or the keyboard walking from one component to the next, see UINavigator */
 
     /// <summary>
     /// Whether the component is the one a <see cref="UINavigator"/> is on. It is drawn lit the way the pointer lights
@@ -113,7 +113,7 @@ public abstract partial class UIComponent
     { }
 
     /// <summary>
-    /// What left and right (or a stick) do to this component while it is selected: a selector steps through its
+    /// What left and right (or a stick) do to this component while it is selected. A selector steps through its
     /// options, a slider moves. Whoever has a use for it says so by returning true, otherwise the navigator moves on.
     /// </summary>
     /// <param name="step">-1 for left, 1 for right.</param>
@@ -121,7 +121,7 @@ public abstract partial class UIComponent
 
     /// <summary>
     /// What a direction does inside of this component while it is selected, before the navigator moves on to another
-    /// one: a list box moves its choice up and down. Whoever has a use for it says so by returning true, and false at
+    /// one, a list box moves its choice up and down. Whoever has a use for it says so by returning true, and false at
     /// the end of what it has, so the next press leaves it.
     /// </summary>
     /// <param name="right">1 for right, -1 for left, 0 for neither.</param>
@@ -130,7 +130,7 @@ public abstract partial class UIComponent
 
     /// <summary>
     /// What is written in a box next to the pointer when it rests on the component for a moment. Empty for nothing.
-    /// In a layout file: <c>tooltip: "Starts the fight"</c>.
+    /// In a layout file that is <c>tooltip: "Starts the fight"</c>.
     /// </summary>
     public string Tooltip { get; set; } = string.Empty;
 
@@ -154,7 +154,7 @@ public abstract partial class UIComponent
     internal const string SELECTION_REGION = "selection";
     private const float SELECTION_RIM = 3.0f;
 
-    /* Popups: what a component shows on top of everything else in its module for a while, the list of a dropdown say */
+    /* Popups, what a component shows on top of everything else in its module for a while, the list of a dropdown say */
 
     /// <summary>Whether this component is the one that has something open on top of its module.</summary>
     public bool IsPopupOpen => Module?.Popup == this;
@@ -193,7 +193,7 @@ public abstract partial class UIComponent
     /// <summary>How long the component stays hidden before its entrance starts, in seconds.</summary>
     public float IntroDelay { get; set; }
 
-    /// <summary>Where a component that slides in comes from, relative to where it belongs: (-300, 0) is from the left.</summary>
+    /// <summary>Where a component that slides in comes from, relative to where it belongs, (-300, 0) is from the left.</summary>
     public Vector2 IntroOffset { get; set; }
 
     /// <summary>

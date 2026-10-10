@@ -10,14 +10,14 @@ public enum TileMapShape
     Polygon,
     Polyline,
 
-    /// <summary>A tile put down as an object: anywhere, any size, turned any way. The map draws these itself.</summary>
+    /// <summary>A tile put down as an object, anywhere, any size, turned any way. The map draws these itself.</summary>
     Tile,
 
     Text
 }
 
 /// <summary>
-/// Something that was placed in an object layer of a map: a spawn point, a light, a trigger. Everything about
+/// Something that was placed in an object layer of a map, a spawn point, a light, a trigger. Everything about
 /// where it is has been turned into the world's units already (Y going up, see <see cref="TileMap.Origin"/>), so
 /// whoever is handed one can put something there without knowing how Tiled counts.
 /// </summary>
@@ -25,7 +25,7 @@ public sealed class TileMapObject
 {
     private readonly TileMap map;
 
-    // The object as Tiled has it: pixels from the top left corner of the map, Y going down
+    // The object as Tiled has it, in pixels from the top left corner of the map with Y going down, because Tiled
     private readonly Vector2 pixelPosition;
     private readonly Vector2 pixelCentre;
     private readonly Vector2[] pixelPoints;
@@ -53,7 +53,7 @@ public sealed class TileMapObject
     public TileMapLayer Layer { get; }
 
     /// <summary>
-    /// Where the object is in the world: the point itself for a point, the middle for everything that has a size,
+    /// Where the object is in the world, the point itself for a point, the middle for everything that has a size,
     /// and the first corner for a polygon or a polyline.
     /// </summary>
     public Vector2 Position => map.TiledToWorld(Shape is TileMapShape.Polygon or TileMapShape.Polyline ? pixelPosition : pixelCentre) + Layer.WorldOffset;
@@ -101,7 +101,7 @@ public sealed class TileMapObject
 }
 
 /// <summary>
-/// Hands the objects of a map to whoever knows what to do with them, by what they are:
+/// Hands the objects of a map to whoever knows what to do with them, by what they are.
 /// <code>
 /// map.DispatchObjects(objects => objects
 ///     .OfClass("spawn", spawn => spawns.Add(spawn.Position))

@@ -138,7 +138,7 @@ public sealed class Keyboard
             {
                 if (_pressed[key])
                 {
-                    // Pressed this very update: held for it, let go of at the next
+                    // Pressed this very update, so it is held for it and let go of at the next
                     if (!_tapped[key])
                     {
                         _tapped[key] = true;

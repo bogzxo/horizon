@@ -9,9 +9,9 @@ namespace Horizon.Core.Threading;
 /// There are four slots. At the end of a tick the simulation captures everything that is drawn into a slot nobody is
 /// looking at (<see cref="BeginCapture"/>, then every <see cref="Snapshot{T}"/> is published, then
 /// <see cref="EndCapture"/>), which makes it the newest. At the start of a frame the renderer takes the two ticks the
-/// moment it shows lies between (<see cref="Acquire"/>) and has them to itself until it lets go (<see cref="Release"/>):
-/// nothing is ever written to a slot that is being drawn from. That pair is the newest tick and the one before it, or
-/// the one before that and the one before that again; with the renderer holding two of them the simulation always has
+/// moment it shows lies between (<see cref="Acquire"/>) and has them to itself until it lets go (<see cref="Release"/>).
+/// Nothing is ever written to a slot that is being drawn from. That pair is the newest tick and the one before it, or
+/// the one before that and the one before that again. With the renderer holding two of them the simulation always has
 /// another one to write to. A renderer that is slower than the simulation simply never sees some ticks, the one written
 /// over is one it never asked for, and the next pair it gets spans two ticks instead of one, which interpolates just as well.
 /// </para>
@@ -22,10 +22,10 @@ namespace Horizon.Core.Threading;
 /// ticks come and how late they are published, which keeps it as short as it can be.
 /// </para>
 /// <para>
-/// Why three ticks to pick a pair from and not just the newest two: ticks are never published equally late. Drawn
+/// Why three ticks to pick a pair from and not just the newest two? Because ticks are never published equally late, the bastards. Drawn
 /// between the newest two, a moment far enough back for the next tick to always be there in time is, just after a tick
 /// that came a bit early, before the older of the two. Frames then jump to that tick and stand still until real time
-/// catches up, every single tick. At 60 frames a second that's a sliver of a frame nobody sees; with thousands of frames
+/// catches up, every single tick. At 60 frames a second that's a sliver of a frame nobody sees, with thousands of frames
 /// a second it's a proper stutter. With the tick before that to fall back on there is a whole tick of room for that.
 /// </para>
 /// The lock in here is only ever held for a handful of instructions, by one side at a time.
@@ -33,7 +33,7 @@ namespace Horizon.Core.Threading;
 public sealed class SnapshotClock
 {
     /// <summary>
-    /// How many slots there are: the newest three ticks for the renderer to draw a pair of, and one for the simulation
+    /// How many slots there are, the newest three ticks for the renderer to draw a pair of, and one for the simulation
     /// to write to.
     /// </summary>
     public const int SLOTS = 4;
@@ -42,16 +42,16 @@ public sealed class SnapshotClock
     private const double MARGIN = 0.0005;
 
     // How much of a new measurement of the tick interval is taken over, and of the lag when it's lower than it was. A
-    // tick published later than the lag goes straight up to it: frames that catch up with the newest tick hold still,
+    // tick published later than the lag goes straight up to it. Frames that catch up with the newest tick hold still,
     // which is a lot worse than being a millisecond or two further behind. It comes back down over a second or so
     private const double INTERVAL_SMOOTHING = 0.05;
     private const double LAG_FALL = 0.02;
 
     // The most the lag is taken to be, as a share of a tick. There's a tick of room between the newest snapshot and the
-    // one two before it to draw from; a tick later than that is a proper hitch whatever is done about it
+    // one two before it to draw from, and a tick later than that is a proper hitch whatever is done about it
     private const double MOST_LAG = 0.75;
 
-    // How hard the moment frames show is pulled towards where the delay says it ought to be, a second: hard when it has
+    // How hard the moment frames show is pulled towards where the delay says it ought to be, a second. Hard when it has
     // to go further back (or a late tick leaves frames with nothing newer to show), gently when it can come forward.
     // And the most it is ever pulled, as a share of the real time that went by, so whatever moves never speeds up or
     // slows down by more than that. Past SNAP_TICKS ticks out (a stall, a scene loading) it just goes there
@@ -80,7 +80,7 @@ public sealed class SnapshotClock
     private int recentAt;
     private long lastStamp;
 
-    // The renderer's side: when the last frame was, and the time it showed
+    // The renderer's side, when the last frame was and the time it showed
     private long lastFrame;
     private double lastPresentation = double.NaN;
 
@@ -179,7 +179,7 @@ public sealed class SnapshotClock
     /// <summary>
     /// Finishes the capture that was begun, which makes it the newest snapshot. Simulation thread.
     /// </summary>
-    /// <param name="stamp">The moment (in stopwatch ticks) the snapshot shows the simulation at: when its tick was due.</param>
+    /// <param name="stamp">The moment (in stopwatch ticks) the snapshot shows the simulation at, which is when its tick was due.</param>
     /// <param name="simulatedTime">How long (in seconds) the simulation had been running for at that moment.</param>
     /// <param name="publishedAt">When this happens (stopwatch ticks), now unless said otherwise.</param>
     public void EndCapture(long stamp, double simulatedTime, long publishedAt = 0)
@@ -237,7 +237,7 @@ public sealed class SnapshotClock
             {
                 Shown(now / frequency, realDelta);
 
-                // Past the newest tick there's nothing to show, it's late: wait for it rather than carry on without it
+                // Past the newest tick there's nothing to show, it's late. Wait for it rather than carry on without it
                 // and jump to where the moment got to when it comes. Being that much further behind is eased back out
                 double newest = stamps[current] / frequency;
                 if (shownAt > newest)
@@ -304,7 +304,7 @@ public sealed class SnapshotClock
     /// Helper method to move the moment frames show on, by as much real time as went by since the last one, pulled a
     /// little towards <c>now - Delay</c>. The delay is a guess made again on every tick (how far apart they come, how late
     /// they're published) and it wobbles by a fair few microseconds every time. Shown as it is, that wobble lands on the
-    /// next frame in full: nothing at 60 frames a second, a stutter of a good share of the frame when there are thousands
+    /// next frame in full, nothing at 60 frames a second, a stutter of a good share of the frame when there are thousands
     /// of them.
     /// </summary>
     private void Shown(double now, float realDelta)
@@ -342,7 +342,7 @@ public sealed class SnapshotClock
     }
 
     /// <summary>
-    /// Helper method to find the slot to capture into: one the renderer isn't holding and that isn't the newest, the
+    /// Helper method to find the slot to capture into, one the renderer isn't holding and that isn't the newest, the
     /// oldest of those. If the renderer holds the other two the newest is all there is, and it is written over.
     /// </summary>
     private int PickFree()

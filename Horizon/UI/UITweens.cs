@@ -7,15 +7,15 @@ namespace Horizon.UI;
 
 /// <summary>
 /// Tweens for UI components. Every one of them starts playing straight away on the component's own
-/// <see cref="UIComponent.Tweens"/> and hands the tween back for setting up further:
+/// <see cref="UIComponent.Tweens"/> and hands the tween back for setting up further.
 /// <code>
 /// panel.PopIn();
 /// button.SlideIn(new Vector2(-300, 0), delay: 0.1f);
 /// label.TweenOpacity(0.0f, 0.5f).SetLoops(-1, LoopMode.PingPong);
 /// </code>
 /// What moves is how the component is drawn (<see cref="UIComponent.VisualOffset"/>,
-/// <see cref="UIComponent.VisualScale"/> and <see cref="UIComponent.Opacity"/>), which leaves the layout alone:
-/// a button that pops in doesn't push its neighbours around while it does. <see cref="TweenPosition"/> and
+/// <see cref="UIComponent.VisualScale"/> and <see cref="UIComponent.Opacity"/>), which leaves the layout alone.
+/// A button that pops in doesn't push its neighbours around while it does. <see cref="TweenPosition"/> and
 /// <see cref="TweenSize"/> are there for when the layout is what should move.
 /// Starting a tween stops the one that was moving the same thing, so they can be fired off without checking.
 /// </summary>
@@ -92,7 +92,7 @@ public static class UITweens
     /// <summary>
     /// Makes the component appear by sliding into its place from somewhere else.
     /// </summary>
-    /// <param name="from">Where it comes from, relative to where it belongs: (-300, 0) comes in from the left.</param>
+    /// <param name="from">Where it comes from, relative to where it belongs, (-300, 0) comes in from the left.</param>
     public static Tween SlideIn(this UIComponent component, Vector2 from, float duration = 0.4f, float delay = 0.0f, Easing easing = Easing.OutCubic)
     {
         component.VisualOffset = from;

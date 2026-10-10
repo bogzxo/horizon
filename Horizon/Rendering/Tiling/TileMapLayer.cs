@@ -43,7 +43,7 @@ public sealed class TileMapTile
     /// <summary>The image the tile is cut out of.</summary>
     public string ImagePath { get; init; } = string.Empty;
 
-    /// <summary>Where in the image the tile is, in pixels from its top left corner: left, top, right, bottom.</summary>
+    /// <summary>Where in the image the tile is, in pixels from its top left corner, as left, top, right, bottom.</summary>
     public Vector4 Source { get; init; }
 
     /// <summary>How big the tile is drawn, which for a tile set with tiles bigger than the grid is more than a cell.</summary>
@@ -65,8 +65,8 @@ public sealed class TileMapTile
 }
 
 /// <summary>A tile where it is in a layer.</summary>
-/// <param name="X">The column, counted the way Tiled does: from the left.</param>
-/// <param name="Y">The row, counted the way Tiled does: from the top.</param>
+/// <param name="X">The column, counted the way Tiled does, from the left.</param>
+/// <param name="Y">The row, counted the way Tiled does, from the top.</param>
 /// <param name="Centre">The middle of the cell in the world.</param>
 public readonly record struct TileMapCell(TileMapLayer Layer, int X, int Y, TileMapTile Tile, TileFlip Flip, Vector2 Centre);
 
@@ -78,17 +78,17 @@ public readonly record struct TileMapBox(Vector2 Min, Vector2 Size)
 }
 
 /// <summary>
-/// A layer of a <see cref="TileMap"/>. What Tiled says about it is what it starts out as; everything that can be
+/// A layer of a <see cref="TileMap"/>. What Tiled says about it is what it starts out as, and everything that can be
 /// set here can be changed while the map is on screen, which is how a layer is faded, slid away or made to drift.
 /// <para>
-/// A few custom properties of a layer mean something to the map (their names don't mind their case):
+/// A few custom properties of a layer mean something to the map (their names don't mind their case).
 /// <list type="bullet">
-/// <item><c>IsCollidable</c> (bool): its tiles are solid, see <see cref="TileMap.BuildColliders"/>.</item>
-/// <item><c>CastsShadows</c> (bool): its tiles block light. Only a layer that says so does, the colliders of a map are usually not what the light should see.</item>
-/// <item><c>BlocksLight</c> (bool): on an object layer, every object on it (its box, a tile object the size it is drawn at) blocks light, see <see cref="TileMap.ShadowCasters"/>. For the things of a map that aren't tiles, a pillar put down as an object, a crate.</item>
-/// <item><c>Emissive</c> (float, 0 to 1): how much of it shows no matter the light. A sky is 1.</item>
-/// <item><c>Foreground</c> (bool, <c>IsAlwaysOnTop</c> works too): it is drawn by <see cref="TileMap.Foreground"/>, in front of whatever is added between the two.</item>
-/// <item><c>ScrollX</c>, <c>ScrollY</c> (float): it drifts by itself, in pixels a second. For clouds, with an image layer that repeats.</item>
+/// <item><c>IsCollidable</c> (bool) makes its tiles solid, see <see cref="TileMap.BuildColliders"/>.</item>
+/// <item><c>CastsShadows</c> (bool) has its tiles block light. Only a layer that says so does, the colliders of a map are usually not what the light should see.</item>
+/// <item><c>BlocksLight</c> (bool) is for an object layer, every object on it (its box, a tile object the size it is drawn at) blocks light, see <see cref="TileMap.ShadowCasters"/>. For the things of a map that aren't tiles, a pillar put down as an object, a crate.</item>
+/// <item><c>Emissive</c> (float, 0 to 1) is how much of it shows no matter the light. A sky is 1.</item>
+/// <item><c>Foreground</c> (bool, <c>IsAlwaysOnTop</c> works too) has it drawn by <see cref="TileMap.Foreground"/>, in front of whatever is added between the two.</item>
+/// <item><c>ScrollX</c>, <c>ScrollY</c> (float) have it drift by itself, in pixels a second. For clouds, with an image layer that repeats.</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -147,7 +147,7 @@ public sealed class TileMapLayer
     public Vector2 WorldOffset { get; set; }
 
     /// <summary>
-    /// How fast the layer moves when the camera does: 1 is with the map, less than that is further away, 0 is
+    /// How fast the layer moves when the camera does. 1 is with the map, less than that is further away, 0 is
     /// painted onto the screen, more than 1 is closer than the map. All layers are where they were drawn when the
     /// camera is on <see cref="TileMap.ParallaxOrigin"/>.
     /// </summary>
@@ -177,7 +177,7 @@ public sealed class TileMapLayer
     internal Vector2 Drift;
     internal bool IsDirty = true;
 
-    // How often the tiles have been changed, and a copy of them as of the last change that was published: frames drawn
+    // How often the tiles have been changed, and a copy of them as of the last change that was published. Frames drawn
     // alongside the simulation build from that, never from the arrays the simulation goes on changing. And which change
     // the render thread built the layer from last
     internal int Version;

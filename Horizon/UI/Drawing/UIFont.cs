@@ -22,9 +22,9 @@ internal interface IUIIconSource
 /// <summary>
 /// A font as the UI needs it, a distance field (see <see cref="DistanceFieldFont"/>) with enough around it to
 /// measure text and to place its glyphs, kerning included.
-/// Text can have icons in it: <c>[icon:name]</c> is replaced by the icon of that name (see
+/// Text can have icons in it, <c>[icon:name]</c> is replaced by the icon of that name (see
 /// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
-/// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin:
+/// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin, so
 /// <c>"[icons:playstation][icon:pad_a] pick"</c> shows whatever the skin says a PlayStation gamepad has for pad_a.
 /// </summary>
 public sealed class UIFont
@@ -37,6 +37,13 @@ public sealed class UIFont
     private readonly Dictionary<int, float> kerning;
     private readonly float spaceAdvance;
 
+    // The first couple of hundred characters, which is nearly everything anybody ever writes, by their number.
+    // Every character of every label is looked up three times a tick (measured, lined up, drawn) and through
+    // the dictionary that was three hashes a letter to find the letter A where it has always been
+    private const int QUICK = 256;
+    private readonly CharDefinition[] quickGlyphs = new CharDefinition[QUICK];
+    private readonly bool[] quickKnown = new bool[QUICK];
+
     /// <summary>The font itself, the field and its numbers.</summary>
     public DistanceFieldFont Field { get; }
 
@@ -45,6 +52,13 @@ public sealed class UIFont
 
     /// <summary>The height of a line of text at scale 1, in pixels.</summary>
     public float LineHeight { get; }
+
+    /// <summary>
+    /// How much the field changes from one texel of the atlas to the next on its way across an edge (half of it
+    /// is the whole spread). Every glyph is drawn with this so the shader knows how wide a screen pixel is in the
+    /// field without having to guess it from the pixel next door, see FIELD_FLAG in sprites.slang.
+    /// </summary>
+    internal float FieldSlope { get; }
 
     /// <summary>Who to ask about the icons in a text. Without one, tags are just text.</summary>
     internal IUIIconSource? Icons { get; set; }
@@ -65,8 +79,27 @@ public sealed class UIFont
 
         LineHeight = Field.LineHeight > 0 ? Field.LineHeight : tallest;
 
+        // The spread is in the pixels the glyphs are measured in, the shader wants it in texels of the atlas, and
+        // any glyph that has both sizes says how the two compare
+        foreach (var glyph in glyphs.Values)
+        {
+            if (glyph.Size.X <= 0.0f || glyph.TexelSize.X <= 0.0f) continue;
+
+            float spreadTexels = Field.Spread * glyph.TexelSize.X / glyph.Size.X;
+            if (spreadTexels > 0.0f) FieldSlope = 0.5f / spreadTexels;
+            break;
+        }
+
         // Fonts are often exported without a glyph for the space, in which case any letter's advance
         // is a better guess than nothing ('n' being the traditional one).
+        foreach (var (character, glyph) in glyphs)
+        {
+            if (character >= QUICK) continue;
+
+            quickGlyphs[character] = glyph;
+            quickKnown[character] = true;
+        }
+
         spaceAdvance =
             glyphs.TryGetValue(' ', out var space) ? space.XAdvance
             : glyphs.TryGetValue('n', out var n) ? n.XAdvance
@@ -78,13 +111,23 @@ public sealed class UIFont
         kerning.Count > 0 && kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
 
     /// <summary>
-    /// Finds what a character looks like. The glyph always says how far the character moves the pen;
+    /// Finds what a character looks like. The glyph always says how far the character moves the pen,
     /// the result says whether there is anything to draw as well.
     /// </summary>
     internal bool Resolve(char character, out CharDefinition glyph)
     {
-        if (glyphs.TryGetValue(character, out glyph))
+        if (character < QUICK)
+        {
+            if (quickKnown[character])
+            {
+                glyph = quickGlyphs[character];
+                return glyph.Size.X > 0 && glyph.Size.Y > 0;
+            }
+        }
+        else if (glyphs.TryGetValue(character, out glyph))
+        {
             return glyph.Size.X > 0 && glyph.Size.Y > 0;
+        }
 
         if (!char.IsWhiteSpace(character) && glyphs.TryGetValue('?', out glyph))
             return true;
@@ -237,7 +280,7 @@ public sealed class UIFont
             while (at < text.Length && text[at] != '\n' && char.IsWhiteSpace(text[at]))
                 gapWidth += Advance(text, ref at, scale, ref icons, markup);
 
-            // The end of the line, with or without a line break: what was placed so far is the line
+            // The end of the line, with or without a line break, and what was placed so far is the line
             if (at >= text.Length || text[at] == '\n')
             {
                 lines.Add((lineStart, lineEnd - lineStart));

@@ -4,19 +4,19 @@ using System.Runtime.InteropServices;
 
 using Horizon.Core;
 using Horizon.Core.Components;
+using Horizon.Logging;
 
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
-/// An internal component used to keep track of animated regions of a spritesheet.
+/// Keeps the animations of a sprite that is drawn out of a sprite sheet, and moves them along with the updates.
 /// </summary>
-/// <seealso cref="Horizon.GameEntity.Components.IGameComponent" />
 public class SpriteSheetAnimationManager : GameComponent
 {
     public bool AnimateFrames { get; set; } = true;
 
     /// <summary>
-    /// The animations by name. Simulation thread: they are moved along in the updates, and only read by the frames that
+    /// The animations by name. Simulation thread, they are moved along in the updates, and only read by the frames that
     /// are drawn with the simulation standing still.
     /// </summary>
     public Dictionary<string, SpriteAnimationDefinition> Animations { get; init; }
@@ -41,27 +41,34 @@ public class SpriteSheetAnimationManager : GameComponent
     {
         if (!Animations.TryGetValue(name, out SpriteAnimationDefinition value))
         {
-            //Entity.ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Error,
-            //    $"Attempt to get animation '{name}' which doesn't exist!"
-            //); TODO: FIX
+            NoteMissing(name, "A sprite was asked to show");
             return default;
         }
 
         return (value.FirstFrame, value.Index);
     }
+    /// <summary>How many frames an animation has, 0 for one there isn't.</summary>
     public uint GetFrameCount(string name)
     {
         if (!Animations.TryGetValue(name, out SpriteAnimationDefinition value))
         {
-            //Entity.ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Error,
-            //    $"Attempt to get animation '{name}' which doesn't exist!"
-            //); TODO: FIX
+            NoteMissing(name, "Somebody asked how long");
             return 0;
         }
 
-        return value.Index;
+        // Its length. This handed back the frame it was on for years, which is a count of sorts, just not this one
+        return value.Length;
+    }
+
+    // The names that were asked for and that there is no animation by, each said once in the log. They used to be
+    // logged every time, which for a sprite that is drawn is every tick, until somebody (rightly) commented
+    // the lot out and left a TODO
+    private HashSet<string>? missing;
+
+    private void NoteMissing(string name, string asked)
+    {
+        if ((missing ??= []).Add(name))
+            Log.Warning($"[{Name}] {asked} '{name}' is, and there is no animation called that.");
     }
 
     public void AddAnimation(
@@ -75,10 +82,7 @@ public class SpriteSheetAnimationManager : GameComponent
     {
         if (Animations.ContainsKey(name))
         {
-            //Entity.ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Error,
-            //    $"Attempt to add animation '{name}' which already exists!"
-            //); TODO: FIX
+            Log.Warning($"[{Name}] There is an animation called '{name}' already, the first one stands.");
             return;
         }
 
@@ -104,7 +108,7 @@ public class SpriteSheetAnimationManager : GameComponent
     {
         if (!Enabled || !AnimateFrames) return;
 
-        // Changed where they are, rather than taken out and put back: that was a copy of every key and a new node
+        // Changed where they are, rather than taken out and put back. That was a copy of every key and a new node
         // for every animation, every tick, for the garbage collector to clear up after
         foreach (string name in Animations.Keys)
         {

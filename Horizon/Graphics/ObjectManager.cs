@@ -146,7 +146,7 @@ public class ObjectManager : GameComponent, IDisposable
 
     public void Dispose()
     {
-        // Textures are attached to render targets, so those go first; buffers are read by vertex arrays, so those go last
+        // Textures are attached to render targets, so those go first. Buffers are read by vertex arrays, so those go last
         RenderTargets.Dispose();
         Textures.Dispose();
         Shaders.Dispose();

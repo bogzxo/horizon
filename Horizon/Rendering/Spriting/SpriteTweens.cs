@@ -6,7 +6,7 @@ namespace Horizon.Rendering.Spriting;
 
 /// <summary>
 /// Tweens for sprites. Every one of them starts playing straight away on the sprite's own
-/// <see cref="Sprite.Tweens"/> and hands the tween back for setting up further:
+/// <see cref="Sprite.Tweens"/> and hands the tween back for setting up further.
 /// <code>
 /// sprite.TweenPosition(new Vector2(200, 0), 0.5f).SetEasing(Easing.OutCubic);
 /// sprite.PopIn();

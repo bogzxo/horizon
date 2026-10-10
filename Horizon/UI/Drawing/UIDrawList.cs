@@ -9,7 +9,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Drawing;
 
 /// <summary>
-/// Everything the UI wants on screen this frame, as quads in painter's order: what is added later is
+/// Everything the UI wants on screen this frame, as quads in painter's order, what is added later is
 /// drawn on top. Components paint into it on the simulation thread and the sprite renderer draws the result
 /// (the quads are its <see cref="SpriteItem"/>s), the whole UI in a single call unless more than two
 /// custom images are involved.
@@ -25,7 +25,7 @@ public sealed partial class UIDrawList
     private const float ICON_LABEL_HEIGHT = 0.75f;
 
     /// <summary>
-    /// A run of quads drawn in one call. Skin art, text and solid colours all share a run; only a quad
+    /// A run of quads drawn in one call. Skin art, text and solid colours all share a run, only a quad
     /// showing a third custom image when the run already has two starts a new one.
     /// </summary>
     internal readonly record struct Run(int First, int Count, Texture? Image0, Texture? Image1);
@@ -349,7 +349,7 @@ public sealed partial class UIDrawList
             return;
         }
 
-        // The border is measured in texels; on screen it is as big as the art is drawn.
+        // The border is measured in texels, on screen it is as big as the art is drawn.
         float left = border.Left * region.Scale, right = border.Right * region.Scale;
         float top = border.Top * region.Scale, bottom = border.Bottom * region.Scale;
 
@@ -484,7 +484,10 @@ public sealed partial class UIDrawList
         // Text has a filter of its own.
         Vector2 drawn = visualScale * scale;
         bool whole = drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
-        if (!whole && (flags & 0xFF) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
+        // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
+        // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
+        // texture it hasn't got. The shader knew better, but it was still bollocks
+        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
             flags |= SpriteItem.SmoothFlag;
 
         Vector2 min = (visible.Min * visualScale + visualOffset) * scale + origin;

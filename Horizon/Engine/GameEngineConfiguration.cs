@@ -3,7 +3,7 @@
 namespace Horizon.Engine;
 
 /// <summary>
-/// Configuration for <see cref="GameEngine"/> and derived classes.
+/// What a <see cref="GameEngine"/> is told to be when it is made, which so far is what its window is like.
 /// </summary>
 public readonly struct GameEngineConfiguration
 {

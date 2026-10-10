@@ -7,17 +7,17 @@ namespace Horizon.Physics.Simulation;
 /// <summary>
 /// A set of particles that, on top of everything a <see cref="PhysicsParticleGroup"/> does, collide with one another.
 /// They can't share a spot, so they stack up where they land, run off the top of the pile and fill whatever they
-/// are poured into until it overflows: enough of them behave like a liquid (or like sand, without any spread).
+/// are poured into until it overflows. Enough of them behave like a liquid (or like sand, without any spread).
 /// Bodies wading through them push them out of the way, which raises the level around them.
 /// They are made with <see cref="PhysicsWorld.CreateFluidParticleGroup"/> and stepped by the world along with everything else.
-/// All of this costs more per particle than the plain group: there is no sleeping here (what is resting is still
+/// All of this costs more per particle than the plain group. There is no sleeping here (what is resting is still
 /// holding up what lies on top of it) and every particle is pushed out of its neighbours several times a step.
 /// Particles of different groups still pass through each other.
 /// <see cref="PhysicsParticleGroup.Restitution"/> is not used, what is packed this tightly doesn't bounce.
 /// </summary>
 public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 {
-    private const float BODY_STEP = 2.0f;       // The furthest a body moves a particle out of its way in a pass: the few passes of a step have to
+    private const float BODY_STEP = 2.0f;       // The furthest a body moves a particle out of its way in a pass. The few passes of a step have to
                                                 // stay under half a tile between them, or a fast body would plough particles through the map
     private const float CONTACT_RANGE = 1.25f;  // How far apart (in diameters) two particles can be and still be worth keeping an eye on
     private const float SPREAD_RANGE = 1.5f;    // How far (in diameters) the particles of a pile keep nudging each other away
@@ -34,7 +34,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     // Where every particle was before anything at all was done to it this step, to go back to if all else fails
     private Vector2[] _origins = [];
 
-    // The shove a body gave a particle this step (zero if none did): the speed it is sent off at, see BodyPush
+    // The shove a body gave a particle this step (zero if none did), the speed it is sent off at, see BodyPush
     private Vector2[] _shoves = [];
 
     // Whether a particle is close enough to the map or to a body to run into it this step
@@ -46,7 +46,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private int _flowCount;
 
     // The particles are sorted into the cells of a grid, which is how each one finds its neighbours.
-    // The grid has no edges: cells are hashed into a table, so two of them can share a slot (which only costs a few wasted tests).
+    // The grid has no edges, cells are hashed into a table, so two of them can share a slot (which only costs a few wasted tests).
     // The particles in slot i are _cellParticles[_cellStart[i].._cellStart[i + 1]]
     private int[] _cellStart = [0];
     private int[] _cellParticles = [];
@@ -70,13 +70,13 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     /// How readily a pile flattens itself out. At 0 the particles heap up like sand and only run off where the heap
     /// gets too steep, the higher this is the more they keep nudging each other apart until the surface is level
     /// (1 is about water, which never quite stops stirring).
-    /// Spreading costs more: every particle has to look further for its neighbours.
+    /// Spreading costs more, every particle has to look further for its neighbours.
     /// </summary>
     public float Spread { get; set; } = 1.0f;
 
     /// <summary>
     /// The longest (in seconds) any particle is kept, 0 for no limit. <see cref="PhysicsParticleGroup.MaxAge"/> is what a
-    /// particle fades over, and each one does so at its own rate: the slow ones take up to twice as long. This cuts them
+    /// particle fades over, and each one does so at its own rate, the slow ones take up to twice as long. This cuts them
     /// all off at the same age, so what was poured is certain to be gone (and its room free again) by then.
     /// </summary>
     public float MaxLife { get; set; } = 0.0f;
@@ -84,7 +84,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     /// <summary>
     /// How fast every particle is going with the last few steps averaged out, in the order of <see cref="PhysicsParticleGroup.Particles"/>.
     /// This is the speed to draw them by (to stretch or blur them along the way they move). The one a particle
-    /// has from one step to the next is no good for that: what is packed into a pile is forever being put a little
+    /// has from one step to the next is no good for that. What is packed into a pile is forever being put a little
     /// this way and that by its neighbours, which is speed as far as the numbers go but none that anybody sees.
     /// Here a pool lies as good as still, and what falls into it does not.
     /// </summary>
@@ -108,7 +108,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     }
 
     /// <summary>
-    /// Helper method to start the particles off that were added since the last time: so far they have only ever gone
+    /// Helper method to start the particles off that were added since the last time, so far they have only ever gone
     /// as fast as they were let go.
     /// </summary>
     private void TrackNew()
@@ -136,10 +136,10 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         _flowCount = live;
         if (live == 0) return;
 
-        // Nobody moves further than their own size in a step: any further and a particle could end up on the far side of
+        // Nobody moves further than their own size in a step. Any further and a particle could end up on the far side of
         // another one (or of a tile) without ever having touched it. Splitting the step up for the fast ones (as the plain
-        // particles do) means doing all of the work below again for every one of them, so they are held to this instead:
-        // it is as fast as anything here falls, which makes small particles slow ones.
+        // particles do) means doing all of the work below again for every one of them, so they are held to this instead.
+        // It is as fast as anything here falls, which makes small particles slow ones.
         float diameter = MathF.Max(Radius * 2.0f, 0.5f);
         float safeDistance = diameter;
         float maxSpeed = safeDistance / dt;
@@ -154,7 +154,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         float range = diameter * (Spread > 0.0f ? SPREAD_RANGE : CONTACT_RANGE);
         int iterations = Math.Max(Iterations, 1);
 
-        // How far a particle can end up from where it is headed: put there by its neighbours, or by a body
+        // How far a particle can end up from where it is headed, put there by its neighbours or by a body
         // (which gets to move it once every other pass)
         float mapReach = Radius * 3.0f + safeDistance + (bodies.Length > 0 ? BODY_STEP * ((iterations + 1) / 2) : 0.0f);
 
@@ -186,24 +186,24 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
                              p.Position.Y >= bodiesMin.Y && p.Position.Y <= bodiesMax.Y;
         }
 
-        // 2. Work out who is close enough to whom to matter, once: the passes below only go over this list
+        // 2. Work out who is close enough to whom to matter, once. The passes below only go over this list
         SortIntoCells(live, range);
         FindPairs(live, range);
 
         // 3. Whatever was overlapping before anyone moved (let go on top of each other, or squeezed further than
         // the passes could undo) is put apart a little at a time, and what is merely close is nudged apart (the spread).
-        // Where it was is moved along with it, so that none of this is taken for speed: it is what keeps a deep pool
+        // Where it was is moved along with it, so that none of this is taken for speed. It is what keeps a deep pool
         // from boiling, a crowded spot from firing particles off and what is poured from spraying all over.
         Settle(live, diameter, range, spread, grid);
 
         // 4. Then push them out of each other, the map and the bodies. Getting out of one thing can mean ending up in
-        // the next, so it is done over and over: every pass gets the whole lot a bit closer to where nothing overlaps.
+        // the next, so it is done over and over, every pass gets the whole lot a bit closer to where nothing overlaps.
         for (int pass = 0; pass < iterations; pass++)
         {
             SeparatePairs(diameter);
 
             // The few that are near something solid only get out of it every other pass, which is plenty
-            // as long as the last pass is one of them: nothing may be left inside of the map
+            // as long as the last pass is one of them, nothing may be left inside of the map
             if (((iterations - 1 - pass) & 1) != 0) continue;
 
             for (int i = 0; i < live; i++)
@@ -224,9 +224,9 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             Vector2 contact = _contacts[i];
 
             // The weight of a pile (or a body) can press a particle into the map harder than the map pushes back.
-            // The map always wins: rather than end up inside of it the particle stays where it was.
+            // The map always wins, rather than end up inside of it the particle stays where it was.
             // Unless it was inside already (spawned there), then it has to be let out.
-            // Where it was is taken from before anything was done to it: settling and bodies move that along with them.
+            // Where it was is taken from before anything was done to it, settling and bodies move that along with them.
             if (contact != Vector2.Zero && grid.Contains(p.Position) && !grid.Contains(_origins[i]))
             {
                 p.Position = _origins[i];
@@ -237,7 +237,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
             Vector2 velocity = (p.Position - _previous[i]) / dt;
 
-            // Being squeezed out from between the others can be very sudden. Around a body more so: everything it
+            // Being squeezed out from between the others can be very sudden. Around a body more so, everything it
             // ploughs through is pressed into its neighbours at once, which would spray the lot into the air.
             // What is near a body comes away no faster than a body could have sent it, unless it already was.
             float limit = _nearBodies[i] ? MathF.Min(maxSpeed, MathF.Max(BodyPushLimit, p.Velocity.Length())) : maxSpeed;
@@ -282,7 +282,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         float decay = MaxAge > 0.0f ? dt / MaxAge : 0.0f;
 
         // How old a particle is isn't kept, but it follows from how much of its life it has used up and how fast it
-        // does so. As a share of its life: one ageing at rate r has reached the limit once it is down to 1 - r * limit
+        // does so. As a share of its life, one ageing at rate r has reached the limit once it is down to 1 - r * limit
         float limit = MaxLife > 0.0f && MaxAge > 0.0f ? MaxLife / MaxAge : float.MaxValue;
 
         for (int i = 0; i < live;)
@@ -295,7 +295,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
             if (p.Life <= 0.0f || lost || 1.0f - p.Life >= p.Rate * limit)
             {
-                // Swap-remove: the last live particle (not yet aged this step) takes this slot,
+                // Swap and remove, the last live particle (not yet aged this step) takes this slot,
                 // then we re-process index i without advancing.
                 p = particles[--live];
                 _flow[i] = _flow[live];
@@ -424,7 +424,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     }
 
     /// <summary>
-    /// Helper method to give two particles in the very same spot (let go by the same emitter) a way to go apart:
+    /// Helper method to give two particles in the very same spot (let go by the same emitter) a way to go apart,
     /// whichever, as long as it is the same one every time.
     /// </summary>
     private static void GetAnyDirection(int a, int b, out float x, out float y)
@@ -434,10 +434,10 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
     /// <summary>
     /// Helper method to undo some of the overlaps there were before this step moved anything, without anyone gaining speed
-    /// from it, and to work out for every pair how far apart the two are to be kept for the rest of the step: their full
+    /// from it, and to work out for every pair how far apart the two are to be kept for the rest of the step, their full
     /// size if they were clear of each other, or only as far as they got here. That way pushing them apart further is
     /// never left to the passes, where it would be taken for speed. Which way each pair is to be pushed apart is settled
-    /// here too: the way they were apart before moving, as after it one may sit right on top of the other.
+    /// here too, the way they were apart before moving, as after it one may sit right on top of the other.
     /// </summary>
     /// <param name="spread">How far the ones that are merely close nudge each other away, see <see cref="Spread"/>.</param>
     private void Settle(int live, float diameter, float range, float spread, PhysicsStaticGrid grid)
@@ -450,7 +450,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         float most = diameter * SETTLE_RATE;
         float inverseRange = 1.0f / range;
 
-        // The maths of the loops over the pairs is written out per axis: they are by far the hottest ones there are,
+        // The maths of the loops over the pairs is written out per axis. They are by far the hottest ones there are,
         // and in a build without optimisations every operator of a vector is a call
         for (int pair = 0, count = _pairCount; pair < count; pair += 2)
         {
@@ -502,7 +502,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             Vector2 before = previous[i], contact = default;
             SeparateFromMap(ref previous[i], ref contact, grid);
 
-            // Getting out of one tile can end inside of the one next to it (in a corner). The map always wins:
+            // Getting out of one tile can end inside of the one next to it (in a corner). The map always wins,
             // rather than that, the particle isn't put anywhere at all this time
             if (contact != Vector2.Zero && grid.Contains(previous[i]) && !grid.Contains(_origins[i]))
             {
@@ -532,7 +532,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             float x = second.Position.X - first.Position.X, y = second.Position.Y - first.Position.Y;
             if (x * x + y * y >= diameterSquared) continue;
 
-            // How far apart they are is measured along the way they were apart to begin with: one that has ended up
+            // How far apart they are is measured along the way they were apart to begin with, one that has ended up
             // on top of (or just past) the other is then still put back on the side it came from
             float normalX = normals[pair], normalY = normals[pair + 1];
             float amount = (gaps[pair >> 1] - (x * normalX + y * normalY)) * 0.5f;
@@ -546,7 +546,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     }
 
     /// <summary>
-    /// Helper method to get a particle out of the bodies it is inside of. Where it was is moved along with it: being put
+    /// Helper method to get a particle out of the bodies it is inside of. Where it was is moved along with it, being put
     /// out of the way of a body (which can cover a lot of ground in a step) is not to be taken for speed.
     /// </summary>
     /// <param name="shove">Set to the speed the hardest pushing body sends the particle off at.</param>
