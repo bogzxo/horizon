@@ -402,3 +402,4 @@ FodyWeavers.xsd
 
 
 **/*.sync-conflict*
+/CLAUDE.md
