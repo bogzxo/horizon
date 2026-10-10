@@ -35,12 +35,23 @@ public sealed class Keyboard
     /// <summary>
     /// Whether a key is held down right now.
     /// </summary>
-    public bool IsDown(Key key) => Known(key) && _down[(int)key];
+    public bool IsDown(Key key) => !Withheld && Known(key) && _down[(int)key];
+
+    /// <summary>
+    /// Whether the keys are somebody else's right now (the Skyline debugger, with something being typed into one of
+    /// its boxes), the game hears none of them.
+    /// </summary>
+    internal bool Withheld { get; set; }
+
+    /// <summary>Whether a key went down since the last update, withheld or not. For whoever is withholding them.</summary>
+    internal bool PressedRegardless(Key key) => Known(key) && _pressed[(int)key];
+
+    internal bool DownRegardless(Key key) => Known(key) && _down[(int)key];
 
     /// <summary>
     /// Whether a key went down since the last update. Only true for that one update however long it is held.
     /// </summary>
-    public bool WasPressed(Key key) => Known(key) && _pressed[(int)key];
+    public bool WasPressed(Key key) => !Withheld && Known(key) && _pressed[(int)key];
 
     /// <summary>
     /// Whether a key was let go of since the last update.
@@ -56,7 +67,9 @@ public sealed class Keyboard
     /// <summary>
     /// Whether any key at all went down since the last update, for a "press any key".
     /// </summary>
-    public bool AnyPressed { get; private set; }
+    public bool AnyPressed => !Withheld && _anyPressed;
+
+    private bool _anyPressed;
 
     /// <summary>
     /// -1, 0 or 1 out of two keys that push opposite ways, so <c>Axis(Key.A, Key.D)</c> is which way somebody is steering.
@@ -87,7 +100,7 @@ public sealed class Keyboard
             _changed = false;
         }
 
-        AnyPressed = false;
+        _anyPressed = false;
 
         // The taps of the last update are let go of now
         foreach (int key in _taps)
@@ -115,7 +128,7 @@ public sealed class Keyboard
                 {
                     _pressed[key] = true;
                     _down[key] = true;
-                    AnyPressed = true;
+                    _anyPressed = true;
                 }
 
                 // Down again before the tap was let go of, so it isn't let go of

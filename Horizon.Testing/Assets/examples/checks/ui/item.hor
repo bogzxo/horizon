@@ -1,0 +1,3 @@
+// One row of the list in menu.hor
+let row = compositor.button({ style: "button_flat", size: vec(260, 36) });
+let caption = compositor.label({ parent: row, text: "item", text_scale: 0.2 });

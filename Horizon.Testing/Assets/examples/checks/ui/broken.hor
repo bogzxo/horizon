@@ -1,0 +1,3 @@
+// Wrong on purpose, the check wants to see a layout that fails say why and leave nothing behind
+let fine = compositor.label({ text: "this one is fine" });
+let wrong = compositor.label({ no_such_property: 1 });

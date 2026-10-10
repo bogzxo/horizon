@@ -102,11 +102,47 @@ device is made with VK_KHR_portability_subset, a 1.2 MoltenVK is taken with dyna
 as extensions, and the bindless table is sized from what Metal lets a set hold. None of it has been run on an
 actual Mac yet, it was all worked out by reading, so the first run there is the test.
 
+## The Skyline debugger
+
+A Debug build of anything made with Horizon has `Engine/Debugging/SkylineDebugger` on the engine (`engine.Debugger`),
+F10 brings it up and puts it away again, and hidden there is nothing of it on screen. Up, the game is in a
+container in the middle and the only place anything it draws is seen, with a menu bar over it, the scene tree on
+the left (every entity and its components), the inspector on the right (the fields of whatever is selected, set
+while the game runs, anything with an inside opens up a level down) and a drawer under it with the loaded
+textures, render targets, shaders and buffers, what every pass costs the GPU, and the log. F8 pauses the scene, F9
+steps it a tick, the Game menu slows it down (`SceneManager.Paused`, `Step`, `TimeScale`, which are there in
+every build). `HORIZON_DEBUGGER=on` starts with it up.
+
+Whatever is public and can be set is edited in the inspector without anybody doing anything. `[Inspect]` on a
+private field puts that in as well, `[Inspect(0, 400)]` gives a number a slider, `[HideInInspector]` keeps
+something out (do that to a property that does work when it is read, the inspector reads everything it shows
+eight times a second). Both attributes are in `Horizon.Core` and are there in Release too, doing nothing.
+
+A Release build doesn't compile the folder (the csproj takes `Engine/Debugging` out) and the three places the
+engine touches it are inside `#if DEBUG`, so a game that talks to `engine.Debugger` wraps that the same way. The
+game is drawn at the size of the window as always and the suite copies the finished frame off the window and
+shows the copy smaller, so the numbers are the game's own plus one blit and the pass called ui. The mouse the
+game reads is mapped into the container (`Mouse.Position` is where it is in the game, `WindowPosition` where it
+really is) and withheld while it is over a panel, the keyboard is withheld while something is typed into a box.
+
+## When the UI is painted
+
+A UI hands out the pointer and the keys in its update and is laid out and painted at the end of the tick
+(`UICompositor.Capture`), after every update of that tick, so a name tag a scene puts on a sprite is drawn where
+the sprite is and not where it was a tick ago. `Bounds` read straight after a compositor's update are the ones of
+the tick before. Frames between two ticks blend the quads of the two lists by who painted them
+(`SpriteItem.Key`), list against list when they are the same quads and quad by quad when they aren't, so one
+number that changes every tick doesn't have the rest drawn in steps. A component that paints rows (a menu, a
+list) says so with `UIDrawList.BeginPart(row)` and `EndParts()`, or a highlight coming and going shifts the count
+of everything after it and a rule gets blended with a highlight for a tick. A cursor is none of that, it would
+trail the hand, `UICompositor.Cursor` (a `UICursor`) is placed on the render thread from `Mouse.LivePosition`
+as every frame is drawn. The pacing example (`pacing`) measures all of it, in frames.
+
 ## Building and testing
 
 - `dotnet build Horizon.sln -p:EnableWindowsTargeting=true` on Linux (the HIDL editor is WinForms).
 - `dotnet test Horizon.Tests`.
-- `Horizon.Testing <scene>` from its output folder runs one example, `HORIZON_INPUT_SCRIPT` (a file of lines like
+- `Horizon.Testing <scene>` from its output folder runs one example (`--checks` for every self check in a row), `HORIZON_INPUT_SCRIPT` (a file of lines like
   `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers (the loops and the GPU passes),
   `HORIZON_SCREENSHOT=file.png@3` to see what was drawn (`file.png@3+8x0.5` for eight of them half a second apart), `HORIZON_VULKAN_VALIDATION=1` for the validation layer (when the SDK is installed), `HORIZON_SHADER_CACHE=off`
   to compile every shader anew. A Debug build tells the driver what every Vulkan object is called and labels the GPU
@@ -129,7 +165,7 @@ So nobody has to crawl the tree again. Two libraries and four apps, one solution
   `Graphics` (the Vulkan device in parts, the resource classes, the Slang compiler and preprocessor, descriptions,
   with the plumbing in `Graphics/Vulkan`, context, swapchain, memory, pipelines, descriptors, bindless table, frame
   resources), `Input`, `Engine` (GameEngine, Scene, Scene2D,
-  cameras, Debugging, which is waiting on a new debugger and dashboard, the old ones went), `Rendering` (Renderer2D and the deferred one,
+  cameras, Debugging, the suite a Debug build has on F10, see below), `Rendering` (Renderer2D and the deferred one,
   CameraBlock, Spriting with the sprite batch, atlas, Aseprite reader and sprite sheet definitions, Tiling with the
   tile map and its pathfinder, Particles, Primitives, PostProcessing, Lighting with the light tiles, the occlusion
   and sprite shadow fields and the radiance cascades, Text, Transitions), `UI` (UIX, compositor, modules,
@@ -139,8 +175,16 @@ So nobody has to crawl the tree again. Two libraries and four apps, one solution
   `Assets/fonts/`, `Assets/uix/` (the dead_revolver and flat skins).
 - `Horizon.HIDL/` the scripting language, kept apart because the WinForms editor (`Horizon.HIDL.Editor/`) wants
   it without the engine.
-- `Horizon.Testing/` the example scenes, one per feature, `Examples/{Basics,Engine,Input,Physics,Rendering,UI}` with
-  `Host/TestCatalog.cs` listing them (ids like `quickstart`, `lighting`, `pathtraced`, `fluid`, `ui-selftest`).
+- `Horizon.Testing/` the example scenes, one per thing the engine does, simplest first. `Host/TestCatalog.cs` is
+  the list and the order (ids like `quickstart`, `sprites`, `tilemap`, `lighting`, `pathtraced`, `town`), the levels
+  are the folders `Examples/{FirstSteps,Game,Lighting,Showcase,Internals}`, each one only leaning on the ones
+  before it, with `Examples/Shared/World.cs` for what the map examples share (the blob, lamps out of map objects).
+  `Checks/` is the scenes that drive themselves and say whether the engine still works (`check-ui`,
+  `check-tilemap` and so on, the old `ui-selftest` ids still start them), `Horizon.Testing --checks` runs the lot
+  and leaves with how many failed. `Host/` is the selector and the strip over a running example.
+  The art, maps and layouts of the examples are files in `Assets/examples` (a map opens in Tiled, a layout in
+  Hex), made by the scripts in `Art/` where they are made at all, nothing is painted or written out as a scene
+  starts and no example makes its textures in a shader. A new example brings its files the same way.
   `./Horizon.Testing <id>` runs one headless, see Building and testing above.
 - `Horizon.Hex/` the layout editor, `--selftest --exit` clicks through itself. `Horizon.Tests/` xUnit.
 - `docs/radiance-cascades.md` how the path traced lighting works, for whoever has to touch it or wants to build one.

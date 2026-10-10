@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="20" height="12" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#5c9edb" nextlayerid="10" nextobjectid="8">
+ <properties>
+  <property name="music" value="town"/>
+ </properties>
+ <tileset firstgid="1" source="tiles.tsx"/>
+ <imagelayer id="1" name="clouds" offsety="16" parallaxx="0.2" repeatx="1">
+  <image source="clouds.png" width="64" height="32"/>
+  <properties>
+   <property name="Emissive" type="float" value="1"/>
+   <property name="ScrollX" type="float" value="12"/>
+  </properties>
+ </imagelayer>
+ <group id="2" name="backdrop" opacity="0.5" offsetx="8" parallaxx="0.5">
+  <layer id="3" name="hills" width="20" height="12" opacity="0.5" tintcolor="#80ff80">
+   <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+2,2,0,2,2,0,2,2,0,2,2,0,2,2,0,2,2,0,2,2,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</data>
+  </layer>
+ </group>
+ <layer id="4" name="solid" width="20" height="12">
+  <properties>
+   <property name="IsCollidable" type="bool" value="true"/>
+   <property name="CastsShadows" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+2,2,2,2,2,2,2,2,0,0,2,2,2,2,2,2,2,2,2,2,
+2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+</data>
+ </layer>
+ <layer id="5" name="decor" width="20" height="12">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,1,2147483649,1073741825,3221225473,536870913,2684354561,1610612737,3758096385,0,0,0,3,3,0,5,0,6,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="6" name="front" width="20" height="12" opacity="0.6">
+  <properties>
+   <property name="Foreground" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <objectgroup id="7" name="things">
+  <object id="1" name="lamp" template="objects/light.tx" x="40" y="100">
+   <properties>
+    <property name="light_colour" type="color" value="#ff0000ff"/>
+   </properties>
+  </object>
+  <object id="2" name="p1" type="spawn" x="32" y="96" width="16" height="32">
+   <properties>
+    <property name="player" type="int" value="1"/>
+    <property name="speed" value="2.5"/>
+   </properties>
+  </object>
+  <object id="3" name="zone" x="160" y="64">
+   <polygon points="0,0 32,0 16,24"/>
+  </object>
+  <object id="4" name="sign" gid="6" x="200" y="128" width="32" height="32" rotation="90"/>
+  <object id="5" name="marker" x="8" y="8">
+   <point/>
+  </object>
+  <object id="6" name="note" x="96" y="16" width="80" height="20">
+   <text wrap="1">a note</text>
+  </object>
+ </objectgroup>
+ <objectgroup id="8" name="pillars">
+  <properties>
+   <property name="BlocksLight" type="bool" value="true"/>
+  </properties>
+  <object id="7" name="pillar" x="64" y="128" width="16" height="32"/>
+ </objectgroup>
+</map>

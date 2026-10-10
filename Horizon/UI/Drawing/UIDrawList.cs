@@ -122,9 +122,54 @@ public sealed partial class UIDrawList
         // for as long as the object lives
         owner = (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
         ownerPainted = 0;
+        inParts = false;
     }
 
-    internal void PopOwner() => (owner, ownerPainted) = owners.Pop();
+    internal void PopOwner()
+    {
+        (owner, ownerPainted) = owners.Pop();
+        inParts = false;
+    }
+
+    // The component that is painting in parts, and how many quads it had painted before it started on them
+    private bool inParts;
+    private float partsOwner;
+    private int partsPainted;
+
+    /// <summary>
+    /// Says that what a component paints from here on is one part of it, the row of a list or the item of a menu,
+    /// by a number that stays the same for as long as the part does. Call it at the top of every row and
+    /// <see cref="EndParts"/> after the last.
+    /// <para>
+    /// Quads are told apart from one tick to the next by who painted them and as which of its quads, which is how
+    /// a frame between two ticks blends a quad with itself. A component that paints a quad more on some ticks
+    /// (the highlight under the pointer) has every quad after that one counted one further along, and for a tick
+    /// the rule between two groups of a menu was blended with the highlight of the item next to it. Counted a row
+    /// at a time the extra quad only moves the count within its own row.
+    /// </para>
+    /// </summary>
+    public void BeginPart(int part)
+    {
+        if (!inParts)
+        {
+            inParts = true;
+            (partsOwner, partsPainted) = (owner, ownerPainted);
+        }
+
+        // Another name out of the component's own and the number of the part, cut to what a float holds exactly
+        owner = (HashCode.Combine((int)partsOwner, part) & 0xFFFFFF) + 1;
+        ownerPainted = 0;
+    }
+
+    /// <summary>Goes back to counting quads as the component's own, after the last of its parts.</summary>
+    public void EndParts()
+    {
+        if (!inParts)
+            return;
+
+        inParts = false;
+        (owner, ownerPainted) = (partsOwner, partsPainted);
+    }
 
     internal void End()
     {

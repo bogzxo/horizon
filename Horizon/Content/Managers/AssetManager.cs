@@ -121,6 +121,26 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
+    /// Every asset alive right now, the named ones and the rest, as a list of its own that nobody changes
+    /// afterwards. For whatever wants to show them (the content browser of the Skyline debugger). From any thread.
+    /// </summary>
+    public AssetType[] CopyAll()
+    {
+        lock (sync) return [.. OwnedAssets.Concat(NamedAssets.Values).Distinct()];
+    }
+
+    /// <summary>The name an asset was asked for by, null for one that was simply made.</summary>
+    public string? NameOf(AssetType asset)
+    {
+        foreach (var (name, named) in NamedAssets)
+        {
+            if (ReferenceEquals(named, asset)) return name;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Disposes every asset that isn't in <paramref name="keep"/>. Named assets are left alone:
     /// they are a cache shared by whoever asks for the name next. So is what was made to be shared by everything
     /// (see <see cref="AssetScope.EnterGlobal"/>), which would otherwise go with whoever happened to need it first.

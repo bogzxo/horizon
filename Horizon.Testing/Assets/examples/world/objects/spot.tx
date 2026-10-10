@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<template>
+ <object type="light">
+  <properties>
+   <property name="light_colour" type="color" value="#ffffe0b0"/>
+   <property name="light_cone" type="float" value="70"/>
+   <property name="light_intensity" type="float" value="1.6"/>
+   <property name="light_radius" type="float" value="260"/>
+   <property name="light_type" value="spot"/>
+  </properties>
+  <point/>
+ </object>
+</template>

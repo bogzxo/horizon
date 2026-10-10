@@ -86,7 +86,7 @@ public static class Ease
         }
     }
 
-    private static float In(float t, int power) => MathF.Pow(t, power);
+    // A whole power is multiplying a few times. MathF.Pow gets there through logarithms, the scenic route,
 
     private static float Out(float t, int power) => 1 - MathF.Pow(1 - t, power);
 

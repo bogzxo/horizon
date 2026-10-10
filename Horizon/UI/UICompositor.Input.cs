@@ -15,6 +15,12 @@ namespace Horizon.UI;
 // Where the mouse, its wheel and the keyboard are read and handed to whichever component they are meant for.
 public partial class UICompositor
 {
+    /// <summary>
+    /// Whether this UI reads the wheel as the window has it rather than as the game is given it. For the UI that
+    /// sits between the two and withholds the mouse from the game while it is over one of its own panels.
+    /// </summary>
+    internal bool ReadsWindowMouse { get; set; }
+
     private UIPointer ReadMouse()
     {
         var mouse = GameEngine.Instance.Input.Mouse;
@@ -183,7 +189,7 @@ public partial class UICompositor
     /// </summary>
     private void RouteScroll(UIModule[] snapshot, Vector2 pointer)
     {
-        float wheel = UIKeyboard.PeekScroll();
+        float wheel = ReadsWindowMouse ? UIKeyboard.PeekWindowScroll() : UIKeyboard.PeekScroll();
         float delta = wheel + Interlocked.Exchange(ref pendingScroll, 0.0f);
         if (delta == 0.0f)
             return;

@@ -251,6 +251,13 @@ internal static class UIKeyboard
     public static float PeekScroll() =>
         Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.Scroll;
 
+    /// <summary>
+    /// The same, as the window heard it, whether the wheel is being withheld from the game or not. For the UI that
+    /// is doing the withholding (the Skyline debugger), which would otherwise withhold the wheel from itself.
+    /// </summary>
+    internal static float PeekWindowScroll() =>
+        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.WindowScroll;
+
     /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
     public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
 

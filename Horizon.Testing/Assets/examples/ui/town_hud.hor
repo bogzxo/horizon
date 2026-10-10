@@ -1,0 +1,11 @@
+// The HUD of the town example (TownExample.cs). A group pinned to the corner it lives in, so nothing in it has
+// to know how big the screen is.
+
+compositor.design({ size: vec(1600, 900), fit: "stretch" });
+
+let place = compositor.group({ anchor: "top_left", pos: vec(210, -56) });
+let place_name = compositor.label({ parent: place, pos: vec(0, 18), text: "A night in town", text_scale: 0.3 });
+let street = compositor.progress_bar({ parent: place, pos: vec(0, -14), size: vec(340, 18), progress: 0.0, show_text: false });
+
+// Whatever the map has to say about where the blob is standing, a sign it is next to, a zone it walked into
+let notice = compositor.label({ anchor: "top", pos: vec(0, -120), text: "", text_scale: 0.3 });

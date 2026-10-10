@@ -30,6 +30,14 @@
     <DebugType>None</DebugType>
   </PropertyGroup>
 
+  <!--
+    The Skyline debugger (the menu bar, the scene tree, the inspector, the content browser) is for whoever is making
+    the game, not for whoever plays it. A Release build doesn't compile a line of it.
+  -->
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <Compile Remove="Engine\Debugging\**\*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="DotTiled" Version="1.0.0" />
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />

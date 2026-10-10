@@ -45,7 +45,7 @@ public sealed class SnapshotClock
     // tick published later than the lag goes straight up to it: frames that catch up with the newest tick hold still,
     // which is a lot worse than being a millisecond or two further behind. It comes back down over a second or so
     private const double INTERVAL_SMOOTHING = 0.05;
-    private const double LAG_FALL = 0.005;
+    private const double LAG_FALL = 0.02;
 
     // The most the lag is taken to be, as a share of a tick. There's a tick of room between the newest snapshot and the
     // one two before it to draw from; a tick later than that is a proper hitch whatever is done about it
@@ -73,6 +73,11 @@ public sealed class SnapshotClock
 
     // How far apart publishes come and how long after the moment they stand for, in seconds
     private double interval, lag;
+
+    // How late the last ticks were published, a second of them at the usual rate
+    private const int RECENT = 128;
+    private readonly double[] recent = new double[RECENT];
+    private int recentAt;
     private long lastStamp;
 
     // The renderer's side: when the last frame was, and the time it showed
@@ -122,6 +127,31 @@ public sealed class SnapshotClock
     }
 
     private double DelayLocked() => interval + lag + MARGIN;
+
+    /// <summary>
+    /// How far apart (in seconds) the ticks are meant to come, for a clock that is told (the engine's is, it knows
+    /// its tick rate). 0 for one that has to find out by watching. The first gap between two publishes of a game
+    /// is hardly ever a tick, it is the first scene being set up, and a clock that took that for its interval drew
+    /// everything a tenth of a second in the past and then spent five seconds creeping back, with the frames
+    /// standing on the oldest tick it had all the while.
+    /// </summary>
+    public double NominalInterval
+    {
+        get
+        {
+            lock (sync) return nominal;
+        }
+        set
+        {
+            lock (sync)
+            {
+                nominal = Math.Max(0.0, value);
+                if (nominal > 0.0) interval = nominal;
+            }
+        }
+    }
+
+    private double nominal;
 
     /// <summary>
     /// Starts a capture into a slot the renderer isn't holding. Every <see cref="Snapshot{T}"/> that is published until
@@ -216,6 +246,13 @@ public sealed class SnapshotClock
                 // The newest whole snapshot before the newest one, and the one before that
                 previous = Before(current);
                 int older = previous == current ? current : Before(previous);
+
+                // Before the oldest tick there is to draw from there is nothing either. A frame back there shows that
+                // tick as it is and so does the next, standing still until the moment has crept forward far enough,
+                // which at the pace it is allowed to creep took seconds. Standing still is the hitch already, so
+                // the moment goes straight to where it belongs, as far as there are ticks to show it with
+                if (older != current && shownAt < stamps[older] / frequency)
+                    shownAt = Math.Clamp(now / frequency - DelayLocked(), stamps[older] / frequency, newest);
 
                 // A tick that came early leaves the moment that's shown before the older of the newest two, it's
                 // between the two before them then
@@ -362,8 +399,11 @@ public sealed class SnapshotClock
         {
             double gap = (stamp - lastStamp) / frequency;
 
-            // A stall (a scene being loaded) is no tick interval, it would have everything drawn way in the past for a while
-            if (interval > 0.0)
+            // A stall (a scene being loaded) is no tick interval, it would have everything drawn way in the past for a while.
+            // Told how far apart they are meant to come, nothing is believed that is far off that
+            if (nominal > 0.0)
+                gap = Math.Clamp(gap, nominal * 0.5, nominal * 2.0);
+            else if (interval > 0.0)
                 gap = Math.Min(gap, interval * 4.0);
 
             interval = interval == 0.0 ? gap : interval + (gap - interval) * INTERVAL_SMOOTHING;
@@ -375,6 +415,17 @@ public sealed class SnapshotClock
         if (interval > 0.0)
             late = Math.Min(late, interval * MOST_LAG);
 
-        lag = late > lag ? late : lag + (late - lag) * LAG_FALL;
+        // The latest of the last second or so of ticks is what there has to be room for. Eased down towards the
+        // tick that just came, which is what this did before, the lag settled about where the ticks are late on
+        // average and one in seven of them came later than that, with the frames standing on the newest tick
+        // waiting for every one of them
+        recent[recentAt] = late;
+        recentAt = (recentAt + 1) % RECENT;
+
+        double worst = 0.0;
+        foreach (double one in recent)
+            worst = Math.Max(worst, one);
+
+        lag = worst > lag ? worst : lag + (worst - lag) * LAG_FALL;
     }
 }

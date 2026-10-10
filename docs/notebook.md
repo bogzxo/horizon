@@ -259,3 +259,119 @@ what they did. Objects on a `BlocksLight` layer are still the box round them, th
 bottom of the rectangle, and the offset counts rows from the top while UI space has Y going up. Every character
 portrait (versus screen, character select, the cells) floated at the top of its box with the empty air under the
 feet. It hangs from `rect.Max.Y` now. `Sprite` always had it right.
+
+## The examples, put in order
+
+Horizon.Testing had grown sideways. Thirty one rows in the selector, ten of them UI and four of those the same
+scene again with a pointer clicking through it, five of them the one lighting scene started with different
+flags, a tile map example that wrote its maps out of string literals into the temp folder as it started, and a
+brick wall that was a shader making itself up because nothing in the assets had a normal map. It is twenty one
+examples now, numbered, simplest first, in five levels that are also the folders, and five checks kept apart
+from them.
+
+What was kept as it was, only moved, quickstart, entities, shapes (was primitives), keyboard and mouse, gamepads,
+cameras, tweens, transitions, particles, fluid, pacing and the skin one. They were fine. What they painted in code
+is a file now (`Assets/examples/camera`, `input`, `sprites`, `transitions`), the pictures the old painters made,
+frozen, with the small white ones made by `Art/make_small_art.py`. The camera example still has its `TerrainAt`,
+that is where the land is and the hero asks it, the island picture was painted from it once. The hive glow in the
+entities example is still a texture made in `Initialize`, on purpose, it is there to show who owns what on the GPU.
+
+What is new. `Art/make_world.py` paints one 16 pixel tile set with its normal, specular and occlusion maps (out
+of a height a texel, so they can't disagree with the picture) and writes two maps, `town.tmx` and `cellar.tmx`,
+with their lamps as objects out of templates. The tile map example, the lighting examples, post processing and
+the big one (`town`, everything in one scene with a blob to walk about) all load those. `World.AddLights` is the
+one place a `light_radius` property becomes a `Light2D`. The UI examples are three, a HUD and a panel in C# and
+as a script file, a settings screen out of a layout file, and a gallery of every control with a page each, all
+from `Assets/examples/ui`.
+
+The checks are the old self tests, always driving themselves now (`ISelfCheck` says when one is done and how it
+went), their maps and layouts the exact files the old code used to write, in `Assets/examples/checks`. The tile
+map check's numbers are the numbers in those maps. `--checks` ran 135 of 135 on the day.
+
+The host. `TestDefinition` has a level, a summary, what to look for and where the source is, and the selector
+shows those next to the list for whichever row the pointer or the navigator is on. The strip over an example
+has previous and next on it (Page Up, Page Down) and the keys are on caps. A performance overlay on the engine
+itself for every example looked like it couldn't be had, whatever it makes on the GPU the first time it is drawn
+would count as the running example's and be freed with it (`ReleaseSince`). It can, `PerformanceOverlay` makes
+everything of its own under `AssetScope.EnterGlobal()` now (its `Initialize` and its `Render`, a skin stitches
+its atlas as it is first drawn), which is what a thing that outlives every scene should have been doing all
+along, Fighter2D's was one scene change away from the same hole. It starts out as the one line (`Compact` is the
+default of the constructor now) with the key in yellow next to the numbers, just "F3", a word more had to be too small to read, which the overlay writes
+itself out of its `ToggleKey`, so every game that adds one gets the hint. The host puts it bottom right.
+
+`docs/metrics/raw/run_scenes*.py` have the new ids. `run_validation.py` and the workbook makers still say the
+old ones, they read numbers that were taken under those names, and the old ids are aliases in the catalog, but
+`tilemap` is the example now and `check-tilemap` the checks.
+
+## The Skyline debugger
+
+bogz asked for a built in debugger, a menu bar, a scene tree, a content browser, the game in a container with
+an inspector that sets fields as it runs, there in Debug and cut out of Release. It is `Engine/Debugging`, all
+of it UIX in the flat skin, built in code rather than out of a layout file so there is nothing of it to ship.
+
+How it sits in the engine. The engine adds it to itself before the scene manager (so it has had its say about
+the mouse and keys before a scene reads them) but its `Render` does nothing in its turn, the engine calls
+`Debugger.Draw` after everything else, whatever was added to the engine later. Up, `Draw` blits the window into
+a render target (`CopyWindow`, the one the transitions use) and the dock paints over the whole window with that
+picture in the middle. No redirecting of `BindWindow`, no second viewport size for the game to trip over, the
+game never knows. The compositor of the suite has `Retained` off, the picture changes every frame without a quad
+of the UI changing and a retained UI would show the same frame of the game for ever. First idea was three
+states (hidden, bar only, panels over or around the game), bogz wanted two, hidden or the lot with the game
+only ever in its container, on F10. The examples host had its VSync check on F10, that is F11 now.
+
+The dock (`DebugDock`) hands every part its rectangle in `Arrange`, nothing in there has a size of its own, a
+`ScrollPanel` has no height unless somebody gives it one and this is the somebody. The tree, the asset grid, the
+metrics and the log are each one component that paints its own rows and only the ones in view, a button a row
+would have been thousands of quads for a scene with a few hundred sprites in it.
+
+The inspector is reflection (`Inspectable`, tested in Horizon.Tests under `#if DEBUG`). Rows are made when
+something is selected and read again every 0.12 s. It all runs in the UI update on the simulation thread, the
+same thread and the same moment between ticks the game would set the field itself, so setting is as safe as the
+setter is. A struct is a copy in a box, a level that opened one writes the box back to where it came from after
+every change. `Entity.Tweens` and `UIComponent.Tweens` and `Object` are hidden from it, they make something the
+first time they are read.
+
+Things that bit or nearly did. `Mouse.Position` and friends became computed from `WindowPosition` so the game
+can be handed the pointer as its container has it. A texture can be destroyed by the render thread while a draw
+list that names it is on its way, `SpriteTexture.Index` checks `IsValid` so that is a blank and not a crash, and
+the suite keeps a game picture of the wrong size eight frames before disposing of it. Only what is sampled and
+holds colours gets a thumbnail (`SkylineDebugger.CanShow`), not depth and not the whole number grids.
+
+Not done and worth doing next. Undo, writing tuned values back to wherever they came from, clicking something
+in the game to select it, dragging the panel edges, a timeline for the passes rather than the last frame.
+
+## The UI was a tick behind, and the clock took five seconds to wake up
+
+bogz saw the UI drawing behind in the pacing example and wanted a cursor drawn by the UI that doesn't lag. The
+pacing example got a tag, a UI panel the scene puts on the heart every update, and counts how far it trails in
+frames (everything in there reads in frames now, not percent). It trailed by exactly one tick, 28 frames at
+3400 fps. A compositor is a component of its scene and components update before the scene's own `UpdateState`
+body, so the UI was painted before the scene moved anything. Painting moved to `Capture`, the end of the tick,
+for any compositor that is captured (one that never is, set up with the simulation standing still or driven by
+hand, still paints in its update, `capturedBefore`). The tag is 0.00 behind now. All 135 checks and Hex's 97
+still pass, nothing in them minded `Bounds` being a tick old straight after the update.
+
+Second thing, lists that weren't the same quads from one tick to the next weren't blended at all, the older one
+was shown for the whole tick. One label with a changing number and the whole UI moved in tick steps.
+`BlendByKey` matches quad to quad by `Key` through a dictionary when the lists differ. That made an old glitch
+louder, a menu is one owner and its quads are counted in order, so the hover highlight shifted every later
+quad's key by one and the separator rule blended with the highlight next to it (bogz saw it in Hex's menus).
+`UIDrawList.BeginPart(i)` keys a row at a time, MenuBar, ContextMenu, Dropdown, ListBox, TabPanel and the
+Skyline debugger's own rows use it. Anything new that paints rows with a highlight wants it too.
+
+The pacing readings took ten seconds to settle and that was not the meter. `SnapshotClock` took the first gap
+between two publishes as its tick interval, which is the first scene being set up, a tenth of a second, so
+frames were drawn way in the past, before the oldest of the three ticks it keeps, standing on that tick and
+stepping once a tick, while the shown moment crept forward at the 5 percent it is allowed. The window manager
+tells the clock its interval now (`NominalInterval`), gaps are clamped around it, and a moment that falls before
+the oldest tick goes straight to where it belongs (it was standing still, that is the hitch already). Then the
+steady state turned out to be bad as well, the lag eased down towards the last tick's lateness, settled near the
+average, and one tick in seven came later than that with the frames waiting on the newest tick for it. It holds
+the worst of the last 128 ticks now. Zero frames still from the first reading on. This costs whatever the wake
+up jitter is in delay, a millisecond or so here, which is the right trade.
+
+The cursor. Everything interpolated is a tick and a bit behind by design and the mouse is read once a tick on
+top, fine for a menu and hopeless for a pointer. `UICursor` on a compositor is drawn in `Render` from
+`Mouse.LivePosition` (the packed position the window thread writes, read atomically), over the UI, with a batch
+of its own made the first time. A gamepad cursor hands its position out through `UICursor.Position`, which is
+called on the render thread, so it has to be something that can be read from there.

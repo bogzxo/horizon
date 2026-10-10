@@ -34,26 +34,64 @@ public sealed class Mouse
     private bool _changed, _placed;
 
     /// <summary>
-    /// Where the pointer is in the window, in pixels from its top left corner.
+    /// Where the pointer is in the window, in pixels from its top left corner. With the game shown in a part of the
+    /// window (the editor layout of the Skyline debugger) this is where it is in the game, as if that part were all
+    /// of the window, so nothing that reads the mouse has to know.
     /// </summary>
-    public Vector2 Position { get; private set; }
+    public Vector2 Position => (WindowPosition - ViewOrigin) * ViewScale;
 
     /// <summary>
     /// How far the pointer has moved since the last update.
     /// </summary>
-    public Vector2 Delta { get; private set; }
+    public Vector2 Delta => WindowDelta * ViewScale;
 
     /// <summary>
     /// How far the wheel was turned since the last update, away from the player is positive.
     /// </summary>
-    public float Scroll { get; private set; }
+    public float Scroll => Withheld ? 0.0f : WindowScroll;
 
-    public bool IsDown(MouseButton button) => Known(button) && _down[(int)button];
+    public bool IsDown(MouseButton button) => !Withheld && HeldInWindow(button);
 
     /// <summary>
     /// Whether a button went down since the last update. Only true for that one update however long it is held.
     /// </summary>
-    public bool WasPressed(MouseButton button) => Known(button) && _pressed[(int)button];
+    public bool WasPressed(MouseButton button) => !Withheld && PressedInWindow(button);
+
+    /// <summary>
+    /// Where the pointer is right now, as the window last heard, not as of the last update. From any thread. For
+    /// whatever is drawn where the mouse is (a cursor), which a tick late is a cursor that trails the hand.
+    /// </summary>
+    public Vector2 LivePosition
+    {
+        get
+        {
+            long packed = Interlocked.Read(ref _latest);
+            var position = new Vector2(BitConverter.Int32BitsToSingle((int)(packed >> 32)), BitConverter.Int32BitsToSingle((int)packed));
+            return (position - ViewOrigin) * ViewScale;
+        }
+    }
+
+    /* For whatever sits between the window and the game, which is the Skyline debugger. The game is shown through
+       a part of the window and the mouse is the suite's while it is over one of its panels */
+
+    /// <summary>Where the pointer really is in the window, whatever part of it the game is shown in.</summary>
+    internal Vector2 WindowPosition { get; private set; }
+
+    internal Vector2 WindowDelta { get; private set; }
+
+    internal float WindowScroll { get; private set; }
+
+    /// <summary>The top left corner of the part of the window the game is shown in, and how much bigger the window is than that part.</summary>
+    internal Vector2 ViewOrigin { get; set; }
+
+    internal Vector2 ViewScale { get; set; } = Vector2.One;
+
+    /// <summary>Whether the buttons and the wheel are somebody else's right now, the game sees none of them go down.</summary>
+    internal bool Withheld { get; set; }
+
+    internal bool HeldInWindow(MouseButton button) => Known(button) && _down[(int)button];
+
+    internal bool PressedInWindow(MouseButton button) => Known(button) && _pressed[(int)button];
 
     public bool WasReleased(MouseButton button) => Known(button) && _released[(int)button];
 
@@ -90,13 +128,13 @@ public sealed class Mouse
         var position = new Vector2(BitConverter.Int32BitsToSingle((int)(packed >> 32)), BitConverter.Int32BitsToSingle((int)packed));
 
         // The first time there is nowhere it came from
-        Delta = _placed ? position - Position : Vector2.Zero;
-        Position = position;
+        WindowDelta = _placed ? position - WindowPosition : Vector2.Zero;
+        WindowPosition = position;
         _placed = true;
 
         lock (_scrollLock)
         {
-            Scroll = _scrolled;
+            WindowScroll = _scrolled;
             _scrolled = 0.0f;
         }
 

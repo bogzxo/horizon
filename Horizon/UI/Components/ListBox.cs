@@ -190,6 +190,7 @@ public class ListBox : UIComponent
         int last = Math.Min(items.Length, top + Rows);
         for (int i = top; i < last; i++)
         {
+            list.BeginPart(i - top);
             float rowTop = Bounds.Max.Y - (i - top) * rowHeight;
             UIRect row = new(new Vector2(Bounds.Min.X, rowTop - rowHeight), new Vector2(right, rowTop));
 
@@ -200,6 +201,8 @@ public class ListBox : UIComponent
 
             list.Text(items[i], row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, scale, skin.TextColor * tint, markup: false);
         }
+
+        list.EndParts();
 
         list.PopClip();
 

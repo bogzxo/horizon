@@ -232,6 +232,7 @@ public class MenuBar : UIComponent
 
         for (int i = 0; i < menus.Count; i++)
         {
+            list.BeginPart(i);
             UIRect title = TitleBounds(i);
             bool shown = OpenMenu == menus[i];
 
@@ -241,6 +242,8 @@ public class MenuBar : UIComponent
 
             list.Text(menus[i].Title, title, Origin.Center, scale, shown ? skin.AccentColor : skin.TextColor, markup: false);
         }
+
+        list.EndParts();
     }
 
     protected internal override void PaintPopup(UIDrawList list)
@@ -261,6 +264,8 @@ public class MenuBar : UIComponent
 
         for (int i = 0; i < menu.Items.Count; i++)
         {
+            // An item at a time, or the highlight of one has the rule after it blended with it for a tick
+            list.BeginPart(i);
             MenuItem item = menu.Items[i];
             UIRect area = ItemBounds(i);
 
@@ -291,6 +296,8 @@ public class MenuBar : UIComponent
             if (item.Shortcut.Length > 0)
                 list.Text(item.Shortcut, text, Origin.Right, scale, dim, markup: false);
         }
+
+        list.EndParts();
     }
 
     protected internal override bool PopupContains(Vector2 point) => OpenMenu is not null && ListBounds.Contains(point);

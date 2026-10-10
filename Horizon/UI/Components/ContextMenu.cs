@@ -148,6 +148,7 @@ public sealed class ContextMenu : UIComponent
 
         for (int i = 0; i < shown.Items.Count; i++)
         {
+            list.BeginPart(i);
             MenuItem item = shown.Items[i];
             UIRect area = ItemBounds(i);
 
@@ -176,6 +177,8 @@ public sealed class ContextMenu : UIComponent
             if (item.Shortcut.Length > 0)
                 list.Text(item.Shortcut, text, Origin.Right, scale, dim, markup: false);
         }
+
+        list.EndParts();
     }
 
     protected internal override void OnPointerUp(Vector2 point)

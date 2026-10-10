@@ -786,6 +786,9 @@ public class WindowManager : GameComponent, IDisposable
 
         Loops = [renderStatistics, simulation.Ticks, simulation.Logic, simulation.Physics];
 
+        // The clock is told how far apart the ticks come rather than left to find out, see SnapshotClock.NominalInterval
+        snapshots.NominalInterval = 1.0 / simulation.TickRate;
+
         Log.Info($"[{Name}] Simulating at {simulation.TickRate:0} ticks a second (logic at {simulation.LogicRate:0}, physics at {simulation.PhysicsRate:0}), frames {(Presentation == PresentationMode.Interpolated ? "interpolated between ticks" : "showing the newest tick")}.");
         simulation.Start();
     }

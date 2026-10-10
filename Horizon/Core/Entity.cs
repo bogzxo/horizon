@@ -92,6 +92,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// The tweens of the entity, for animating whatever it has. They move along with its updates, and stop when it is switched off.
     /// Made the first time somebody asks.
     /// </summary>
+    [HideInInspector]
     public TweenContext Tweens => _tweens ?? Interlocked.CompareExchange(ref _tweens, new TweenContext(), null) ?? _tweens;
 
     /// <summary>

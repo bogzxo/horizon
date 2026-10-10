@@ -1,0 +1,28 @@
+// The settings screen of the layout files example (UILayoutsExample.cs). Open it in Hex to push it about with a mouse.
+
+// Made for a 16:9 screen, and kept that shape on any other
+compositor.design({ size: vec(1600, 900), fit: "contain" });
+
+let panel = compositor.stack({ background: "panel", padding: vec(40, 28), spacing: 16, intro: "pop", intro_time: 0.3 });
+let title = compositor.label({ parent: panel, text: "Settings, sort of", text_scale: 0.5 });
+
+// A page per child, named in order. The hints are just text either end of the strip
+let tabs = compositor.tabs({ parent: panel, tabs: ["Sound", "Video", "Mates"], text_scale: 0.3, spacing: 40, prev_hint: "Q", next_hint: "E" });
+
+let sound = compositor.stack({ parent: tabs, spacing: 10 });
+let volume = compositor.selector({ parent: sound, size: vec(440, 44), text_scale: 0.26, options: ["Quiet", "Normal", "Loud", "Neighbours complaining"], value: "Normal" });
+let music = compositor.toggle({ parent: sound, label: "Music", size: vec(440, 44), state: true });
+
+let video = compositor.stack({ parent: tabs, spacing: 10 });
+let quality = compositor.selector({ parent: video, size: vec(440, 44), text_scale: 0.26, options: ["Potato", "Fine", "Lovely"], value: "Fine" });
+let shake = compositor.toggle({ parent: video, label: "Screen shake", size: vec(440, 44) });
+
+// Filled in by the game, an item per mate out of the template next to this file. Hex shows three of them
+let mates = compositor.grid({ parent: tabs, columns: 3, spacing: 8, stagger: 0.05, template: "mate.hor", preview_count: 3 });
+
+let status = compositor.label({ parent: panel, text: "", text_scale: 0.2 });
+
+// The HUD, a group pinned to the top left corner of the design, everything in it placed from its middle
+let hud = compositor.group({ anchor: "top_left", pos: vec(190, -60) });
+let hud_name = compositor.label({ parent: hud, pos: vec(0, 22), text: "Player 1", text_scale: 0.28 });
+let hud_health = compositor.progress_bar({ parent: hud, pos: vec(0, -10), size: vec(320, 22), progress: 0.7 });

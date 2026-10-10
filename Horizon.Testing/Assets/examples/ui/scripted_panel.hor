@@ -1,0 +1,50 @@
+// The panel on the left of the first UI example, the same thing the one on the right is in C#.
+// A layout is a script. Everything it makes is a variable, and the game finds them by those names
+// (layout.Get<Button>("more")). What a button does can be said right here, or left for the game to say.
+
+let panel = compositor.stack({
+    color: vec(0.1, 0.12, 0.17, 0.92),
+    radius: 10,
+    padding: 24,
+    spacing: 16
+});
+
+let heading = compositor.label({ parent: panel, text: "Written as a script", text_scale: 0.45 });
+let charge = compositor.progress_bar({ parent: panel, size: vec(360, 30), progress: 0.5 });
+
+let row = compositor.stack({ parent: panel, direction: "horizontal" });
+
+// A handler written in the layout itself, fine for anything that only touches the UI
+let less = compositor.button({
+    parent: row,
+    label: "Less",
+    on_pressed: func() {
+        charge.progress = charge.progress - 0.1;
+        level.value = charge.progress;
+    }
+});
+
+let more = compositor.button({ parent: row, label: "More" });
+more.on_pressed = func() {
+    charge.progress = charge.progress + 0.1;
+    level.value = charge.progress;
+};
+
+let level = compositor.slider({
+    parent: panel,
+    size: vec(360, 28),
+    value: 0.5,
+    on_changed: func(value) {
+        charge.progress = value;
+    }
+});
+
+let numbers = compositor.toggle({
+    parent: panel,
+    anchor: "left",
+    label: "Show the number",
+    state: true,
+    on_pressed: func(on) {
+        charge.show_text = on;
+    }
+});

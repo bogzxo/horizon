@@ -1,0 +1,87 @@
+// One of everything UIX has, a page at a time (UIControlsExample.cs). The game only adds what each thing does,
+// what there is and where it sits is all in here.
+
+compositor.design({ size: vec(1600, 900), fit: "contain" });
+
+let panel = compositor.stack({ background: "panel", padding: vec(40, 28), spacing: 16, intro: "pop", intro_time: 0.3 });
+let title = compositor.label({ parent: panel, text: "Every control", text_scale: 0.5 });
+let tabs = compositor.tabs({ parent: panel, tabs: ["Pick", "Colour", "Lists", "Text", "Ask"], text_scale: 0.3, spacing: 40, prev_hint: "Q", next_hint: "E" });
+
+/* Pick, the controls that hold one value */
+
+let pick = compositor.stack({ parent: tabs, spacing: 12 });
+
+// More options than the list shows at once, it scrolls, and it opens over whatever is under it
+let fruit = compositor.dropdown({
+    parent: pick, size: vec(480, 44), text_scale: 0.26, max_rows: 5,
+    options: ["apple", "banana", "cherry", "damson", "elderberry", "fig", "grape", "honeydew", "kiwi", "lemon", "mango", "nectarine"],
+    value: "elderberry"
+});
+let difficulty = compositor.selector({ parent: pick, size: vec(480, 44), text_scale: 0.26, options: ["Easy", "Normal", "Hard"], value: "Normal" });
+
+// A slider with ends and steps of its own, and a bar that follows it
+let volume = compositor.slider({ parent: pick, size: vec(480, 28), min: 0, max: 100, step: 5, value: 40 });
+let volume_bar = compositor.progress_bar({ parent: pick, size: vec(480, 26), progress: 0.4 });
+
+// Drag across it to change the number
+let lives = compositor.number_box({ parent: pick, size: vec(480, 40), value: 3 });
+let music = compositor.toggle({ parent: pick, label: "Music", size: vec(480, 44), state: true });
+
+/* Colour */
+
+let colour = compositor.stack({ parent: tabs, spacing: 12 });
+let swatch = compositor.panel({ parent: colour, size: vec(480, 44), color: vec(0.3, 0.7, 1.0, 1.0), radius: 8 });
+let paint = compositor.color_picker({ parent: colour, size: vec(480, 240), color: vec(0.3, 0.7, 1.0, 1.0) });
+
+/* Lists, things there are a lot of */
+
+let lists = compositor.stack({ parent: tabs, direction: "horizontal", spacing: 24 });
+
+// A list box walks its own rows with up and down, and scrolls to keep the chosen one in sight
+let stage_column = compositor.stack({ parent: lists, spacing: 8, anchor: "top" });
+let stage_title = compositor.label({ parent: stage_column, text: "A list box", text_scale: 0.24 });
+let stage = compositor.list({
+    parent: stage_column, size: vec(260, 0), rows: 6, text_scale: 0.24,
+    items: ["Dojo", "Harbour", "Rooftop", "Subway", "Temple", "Junkyard", "Arcade", "Bridge", "Cellar", "Town"]
+});
+
+// A scroll panel is a window onto something taller than it. Its rows come out of a template, the game says how many
+let scroll_column = compositor.stack({ parent: lists, spacing: 8, anchor: "top" });
+let scroll_title = compositor.label({ parent: scroll_column, text: "A scroll panel", text_scale: 0.24 });
+let scroll = compositor.scroll({ parent: scroll_column, size: vec(260, 236), color: vec(0.03, 0.03, 0.05, 1), padding: 4 });
+let rows = compositor.stack({ parent: scroll, spacing: 4, template: "gallery_row.hor", preview_count: 4 });
+
+let grid_column = compositor.stack({ parent: lists, spacing: 8, anchor: "top" });
+let grid_title = compositor.label({ parent: grid_column, text: "A grid", text_scale: 0.24 });
+let cells = compositor.grid({ parent: grid_column, columns: 3, spacing: 8 });
+let cell_1 = compositor.button({ parent: cells, label: "1", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+let cell_2 = compositor.button({ parent: cells, label: "2", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+let cell_3 = compositor.button({ parent: cells, label: "3", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+let cell_4 = compositor.button({ parent: cells, label: "4", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+let cell_5 = compositor.button({ parent: cells, label: "5", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+let cell_6 = compositor.button({ parent: cells, label: "6", style: "button_flat", size: vec(80, 44), lbl_scale: 0.26 });
+
+/* Text */
+
+let text = compositor.stack({ parent: tabs, spacing: 12 });
+let player_name = compositor.textbox({ parent: text, text: "Dave", size: vec(620, 44), text_scale: 0.26, max_length: 24 });
+let clan = compositor.textbox({ parent: text, placeholder: "clan, tab gets you here", size: vec(620, 44), text_scale: 0.26, max_length: 24 });
+
+// Give a label a width and tell it to wrap, and it breaks its own lines and grows downwards to fit them
+let about = compositor.label({
+    parent: text, size: vec(620, 0), wrap: true, align: "top_left", text_scale: 0.22,
+    text: "This label wraps. Whatever does not fit on a line goes onto the next one, broken between words, and the label grows to make room. Icons go in the middle of text too, [icon:pad_a] to confirm and [icon:pad_b] to go back."
+});
+
+// The game puts the on screen keyboard in here, it types into the first box
+let keys = compositor.stack({ parent: text });
+
+/* Ask, things that come up over everything else */
+
+let ask = compositor.stack({ parent: tabs, spacing: 12 });
+let hover = compositor.button({ parent: ask, label: "Rest the pointer here", size: vec(480, 0), tooltip: "A tooltip. Anything can have one, it comes up when the pointer has been still on it for a moment." });
+let question = compositor.button({ parent: ask, label: "Ask me something", size: vec(480, 0) });
+let menu = compositor.button({ parent: ask, label: "Right click me", size: vec(480, 0), style: "button_flat" });
+let locked = compositor.button({ parent: ask, label: "Locked", size: vec(480, 0), enabled: false });
+
+let status = compositor.label({ parent: panel, text: "", text_scale: 0.22 });

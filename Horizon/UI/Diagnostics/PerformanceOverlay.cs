@@ -33,10 +33,10 @@ public enum PerformanceDetail
 /// by another), how uneven the frames come (the slowest in a hundred, the stutters), what every pass of the frame
 /// costs the GPU, how many draws and dispatches a frame is, how much memory the GPU holds, how far in the past frames
 /// are drawn so they can be interpolated, ticks that got dropped, and how much garbage every thread is making. Add
-/// one to the engine and press F3.
+/// one to the engine and it is there, the minimal one to begin with, with the key that gets the rest next to it in yellow.
 /// <code>
-/// engine.AddEntity(new PerformanceOverlay());                          // off until F3
-/// engine.AddEntity(new PerformanceOverlay(PerformanceDetail.Full));    // on from the start
+/// engine.AddEntity(new PerformanceOverlay());                          // the minimal one, F3 for the lot
+/// engine.AddEntity(new PerformanceOverlay(PerformanceDetail.Off));     // not there until F3
 /// </code>
 /// F3 goes Off, Compact, Full and round again (<see cref="ToggleKey"/>, null for no key, then set <see cref="Detail"/>
 /// yourself, from an options screen say). It's a UIX layout like any other, on a screen UI of its own over everything
@@ -63,10 +63,15 @@ public sealed class PerformanceOverlay : GameObject
     private static readonly Vector4 TextColour = new(0.93f, 0.95f, 1.0f, 1.0f);
     private static readonly Vector4 DimColour = new(0.62f, 0.66f, 0.74f, 1.0f);
 
+    // What the hint is written in, the key that goes round the levels of detail, yellow and a bit bigger than
+    // the numbers so it is the one thing in there that reads at a glance
+    private static readonly Vector4 HintColour = new(1.0f, 0.86f, 0.3f, 1.0f);
+    private const float HINT_SCALE = 1.15f;
+
     private UICompositor ui = null!;
     private UIModule module = null!;
     private StackPanel panel = null!;
-    private Label headline = null!, details = null!;
+    private Label headline = null!, details = null!, hint = null!;
     private LoopGraph frames = null!, ticks = null!;
 
     private float refresh;
@@ -85,7 +90,7 @@ public sealed class PerformanceOverlay : GameObject
     /// <summary>How big it's drawn, a unit per pixel at 1.</summary>
     public float Scale { get; set; } = 1.0f;
 
-    public PerformanceOverlay(PerformanceDetail detail = PerformanceDetail.Off)
+    public PerformanceOverlay(PerformanceDetail detail = PerformanceDetail.Compact)
     {
         Name = "Performance Overlay";
         Detail = detail;
@@ -93,6 +98,11 @@ public sealed class PerformanceOverlay : GameObject
 
     public override void Initialize()
     {
+        // It sits on the engine and outlives every scene, so what it makes on the GPU is nobody's. Left to itself
+        // its skin and its buffers would be noted down as the scene's that happened to be up when they were made
+        // and go with it, and the overlay would be drawing out of a texture that isn't there
+        using var shared = Horizon.Content.AssetScope.EnterGlobal();
+
         base.Initialize();
 
         // A UI of its own with a camera of its own, so it doesn't care what the game's cameras are up to
@@ -108,7 +118,10 @@ public sealed class PerformanceOverlay : GameObject
             Radius = 6,
         });
 
-        headline = panel.Add(new Label { Color = TextColour, Align = Origin.Left, Anchor = Origin.Left });
+        // The numbers, and next to them which key there is more behind
+        var top = panel.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 14, Anchor = Origin.Left });
+        headline = top.Add(new Label { Color = TextColour, Align = Origin.Left });
+        hint = top.Add(new Label { Color = HintColour, Align = Origin.Left });
         details = panel.Add(new Label { Color = DimColour, Align = Origin.TopLeft, Anchor = Origin.Left });
         frames = panel.Add(new LoopGraph { Size = new Vector2(LoopStatistics.HISTORY, 44), Anchor = Origin.Left });
         ticks = panel.Add(new LoopGraph { Size = new Vector2(LoopStatistics.HISTORY, 28), Anchor = Origin.Left });
@@ -129,6 +142,15 @@ public sealed class PerformanceOverlay : GameObject
             panel.Anchor = Corner;
             panel.Position = inset;
 
+            // No key, nothing to hint at
+            hint.Visible = ToggleKey is not null;
+            if (ToggleKey is { } toggle)
+            {
+                // Only the key, a word more and it has to be small enough to be no use to anybody
+                hint.Text = toggle.ToString();
+                if (ui.Skin is { } skin) hint.TextScale = skin.TextScale * HINT_SCALE;
+            }
+
             if ((refresh -= dt) <= 0.0f)
             {
                 refresh = REFRESH;
@@ -138,6 +160,13 @@ public sealed class PerformanceOverlay : GameObject
 
         // The UI of the overlay goes along with it, off or on
         base.UpdateState(dt);
+    }
+
+    public override void Render(float dt)
+    {
+        // The same as in Initialize, a skin stitches its atlas together as it is first drawn and that is here
+        using var shared = Horizon.Content.AssetScope.EnterGlobal();
+        base.Render(dt);
     }
 
     /// <summary>
