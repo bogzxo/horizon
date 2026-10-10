@@ -209,6 +209,7 @@ public class Dropdown : UIComponent
 
         for (int row = 0; row < VisibleRows; row++)
         {
+            list.BeginPart(row);
             int option = firstRow + row;
             UIRect area = RowBounds(row);
 
@@ -223,6 +224,8 @@ public class Dropdown : UIComponent
                 option == index ? skin.AccentColor : skin.TextColor,
                 markup: false);
         }
+
+        list.EndParts();
 
         // More options than fit. A mark on the side says where in the list this is.
         if (options.Length > VisibleRows)

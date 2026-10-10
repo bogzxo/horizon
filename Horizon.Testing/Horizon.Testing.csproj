@@ -12,6 +12,12 @@
     <None Update="shaders\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+
+    <!-- The art, maps and layouts of the examples, files like the files of a game. They land next to the engine's
+         own under Assets, in a folder of their own so the two never get in each other's way -->
+    <None Update="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

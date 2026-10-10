@@ -16,9 +16,12 @@ namespace Horizon.UI;
 /// <summary>
 /// Runs a UI: owns the skin and the modules, routes the pointer to the component under it, and draws
 /// everything on top of the scene.
-/// The work is split the way the engine splits it. Input, layout and painting happen in
-/// <see cref="UpdateState"/> on the simulation thread and produce a list of quads; <see cref="Render"/>
-/// only hands the latest list to the sprite renderer, so components never touch the GPU.
+/// The work is split the way the engine splits it. Input, layout and painting happen on the simulation thread
+/// and produce a list of quads; <see cref="Render"/> only hands the latest list to the sprite renderer, so
+/// components never touch the GPU. The pointer and the keys are handed out in <see cref="UpdateState"/>, the
+/// laying out and the painting wait for the end of the tick (<see cref="Capture"/>) so that what is painted is
+/// the UI as every update of the tick left it. Painted in its own update, a name tag the scene puts on a sprite
+/// afterwards was drawn where the sprite had been the tick before, a whole tick behind it.
 /// <para>
 /// Drawn alongside the simulation (see <see cref="RenderFrame.IsDecoupled"/>) the list that was painted last is
 /// published at the end of every tick (<see cref="Capture"/>), and every frame draws the UI at the moment between the
@@ -386,13 +389,44 @@ public partial class UICompositor : GameComponent, IDisposable
         RouteKeyboard(snapshot);
         UpdateTooltip(snapshot, dt);
 
+        foreach (var module in snapshot)
+        {
+            if (module.Enabled)
+                module.Update(dt);
+        }
+
+        // Laid out and painted once everything has had its update, at the end of the tick, see Capture. A UI
+        // nobody captures (set up with the simulation standing still, or updated and drawn by hand) is painted
+        // here and now, as it always was
+        pending = new PendingPaint(snapshot, screen, skin, dt);
+        if (!capturedBefore)
+            PaintPending();
+    }
+
+    private readonly record struct PendingPaint(UIModule[] Modules, UIRect Screen, UISkin Skin, float Delta);
+
+    // What the last update left to be laid out and painted, and whether this UI is captured at the end of its ticks
+    private PendingPaint? pending;
+    private bool capturedBefore;
+
+    /// <summary>
+    /// Helper method to lay the UI out and paint it into the list the next frame is drawn from, with whatever the
+    /// last update handed out. Simulation thread.
+    /// </summary>
+    private void PaintPending()
+    {
+        if (pending is not { } paint)
+            return;
+
+        pending = null;
+        var (snapshot, screen, skin, dt) = paint;
+
         back.Begin(skin, paintFrame, dt);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
                 continue;
 
-            module.Update(dt);
             module.Layout(screen, skin);
             module.Paint(back);
 
@@ -430,6 +464,10 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public override void Capture()
     {
+        // From here on the painting waits for this, the end of the tick
+        capturedBefore = true;
+        PaintPending();
+
         if (captured.BeginPublish() is not { } into)
             return;
 
@@ -477,8 +515,13 @@ public partial class UICompositor : GameComponent, IDisposable
             return true;
         }
 
+        // Two lists of the same quads are blended one with the other as they come. Two that aren't (a number in a
+        // corner changed, something lit up under the pointer) are blended quad by quad wherever the newer one has
+        // a quad the older one had, by who painted it, and the rest of it is shown as it is now. Not blending such
+        // lists at all was how one clock in a HUD had the whole UI drawn in steps a tick apart
         bool sameList = before.Painted == after.Painted;
-        bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete && Blendable(before, after);
+        bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete;
+        bool sameQuads = canBlend && Blendable(before, after);
 
         // A list that changed in steps is shown as it was until the moment is all the way at the newer one
         CapturedList shown = sameList || canBlend || frame.Alpha >= 1.0f || before.Skin != skin || before.Incomplete ? after : before;
@@ -494,7 +537,11 @@ public partial class UICompositor : GameComponent, IDisposable
                 blended = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)after.Count)];
 
             ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-            for (int i = 0; i < b.Length; i++)
+            if (!sameQuads)
+            {
+                BlendByKey(a, b, alpha);
+            }
+            else for (int i = 0; i < b.Length; i++)
             {
                 // The same quad if it shows the same thing the same way, then only where it is, how big and what colour
                 // moved. One that is suddenly somewhere else entirely (a menu that was folded away off screen and
@@ -514,6 +561,28 @@ public partial class UICompositor : GameComponent, IDisposable
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
         pictureCurrent = false;
         return true;
+    }
+
+    // Where every quad of the older list is, by who painted it as which of its quads, for lists that aren't the same quads
+    private readonly Dictionary<Vector2, int> byKey = [];
+
+    /// <summary>
+    /// Helper method to blend the quads of the newer list with the ones of the older list the same component painted
+    /// as the same one of its quads, wherever the older list has it. What is new is shown as it is.
+    /// </summary>
+    private void BlendByKey(ReadOnlySpan<SpriteItem> a, ReadOnlySpan<SpriteItem> b, float alpha)
+    {
+        byKey.Clear();
+        for (int i = 0; i < a.Length; i++)
+            byKey.TryAdd(a[i].Key, i);
+
+        for (int i = 0; i < b.Length; i++)
+        {
+            blended[i] = byKey.TryGetValue(b[i].Key, out int was) &&
+                a[was].Flags == b[i].Flags && a[was].TexMin == b[i].TexMin && a[was].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[was], b[i])
+                    ? SpriteItem.Blend(a[was], b[i], alpha)
+                    : b[i];
+        }
     }
 
     /// <summary>
@@ -626,6 +695,75 @@ public partial class UICompositor : GameComponent, IDisposable
     private void DrawUploaded(float dt)
     {
         using var scope = GameEngine.Instance.Graphics.BeginGpuScope("ui");
+
+        DrawList(dt);
+        DrawCursor();
+    }
+
+    /// <summary>
+    /// A pointer drawn over this UI where the mouse is as each frame is drawn, null for none, which is what it is
+    /// unless somebody sets one. See <see cref="UICursor"/> for why it isn't a component like everything else.
+    /// </summary>
+    public UICursor? Cursor { get; set; }
+
+    // What the cursor is drawn with, made the first time there is one to draw
+    private Horizon.Rendering.Spriting.SpriteBatch? cursorBatch;
+
+    /// <summary>
+    /// Helper method to draw the cursor, straight over whatever the UI put on screen, from where the mouse is now.
+    /// </summary>
+    private void DrawCursor()
+    {
+        if (Cursor is not { Visible: true } cursor)
+            return;
+
+        Vector2 window = GameEngine.Instance.WindowManager.WindowSize;
+        var seen = viewportCamera.Bounds;
+        if (window.X <= 0.0f || window.Y <= 0.0f || seen.Width <= 0.0f)
+            return;
+
+        if (cursorBatch is null)
+        {
+            cursorBatch = new Horizon.Rendering.Spriting.SpriteBatch();
+            cursorBatch.Initialize();
+            cursorBatch.InitializeAll();
+        }
+
+        // Out of the window and into what the camera sees, which has its Y going up
+        Vector2 at = cursor.Position?.Invoke() ?? GameEngine.Instance.Input.Mouse.LivePosition;
+        Vector2 point = new(seen.X + at.X / window.X * seen.Width, seen.Y + (1.0f - at.Y / window.Y) * seen.Height);
+
+        Horizon.Graphics.Texture? texture = cursor.Texture is { IsValid: true } picture ? picture : null;
+        Vector2 size = (cursor.Size != Vector2.Zero ? cursor.Size : texture?.Size ?? new Vector2(12.0f)) * UIScale;
+        Vector2 hotspot = cursor.Hotspot * UIScale;
+
+        // The hotspot is from the top left, the quad from its bottom left
+        Vector2 min = new(point.X - hotspot.X, point.Y + hotspot.Y - size.Y);
+        SpriteItem item = SpriteItem.Rectangle(
+            min,
+            min + size,
+            Vector2.Zero,
+            texture?.Size ?? Vector2.Zero,
+            SpriteItem.PackColor(cursor.Tint),
+            texture is null ? SpriteItem.NoTexture : 0u);
+
+        var before = Horizon.Graphics.RenderState.Save();
+        Horizon.Graphics.RenderState.Blend = true;
+        Horizon.Graphics.RenderState.BlendMode = Horizon.Graphics.BlendMode.Alpha;
+        Horizon.Graphics.RenderState.DepthTest = false;
+
+        ReadOnlySpan<SpriteItem> items = [item];
+        ReadOnlySpan<SpriteTexture> textures = texture is null ? [] : [new SpriteTexture(texture)];
+        cursorBatch.Draw(items, textures, viewportCamera);
+
+        Horizon.Graphics.RenderState.Restore(before);
+    }
+
+    /// <summary>
+    /// Helper method to draw the list that was uploaded last, or lay the picture of it over the frame once more.
+    /// </summary>
+    private void DrawList(float dt)
+    {
 
         // A UI with nothing on it (an overlay that's switched off, say) draws nothing, and in particular doesn't lay an
         // empty picture over the whole screen every frame, which is a full screen pass for fuck all. It's painted

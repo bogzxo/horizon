@@ -42,6 +42,49 @@ public class SceneManager : Entity
     // Absorbed from InstanceManager
     public Scene? CurrentInstance { get; private set; }
 
+    /// <summary>
+    /// Whether the scene stands still. It is drawn as it was left and nothing in it is updated, the engine and
+    /// whatever sits on it (an overlay, the Skyline debugger) carry on. From any thread.
+    /// </summary>
+    public bool Paused
+    {
+        get => _paused;
+        set => _paused = value;
+    }
+
+    /// <summary>
+    /// How fast the scene's time goes by, 1 as it comes, 0.25 for a quarter of the speed. Every update of the scene
+    /// and its physics gets that much of the time that really went by. For looking at something slowly.
+    /// </summary>
+    public float TimeScale
+    {
+        get => _timeScale;
+        set => _timeScale = Math.Clamp(value, 0.0f, 16.0f);
+    }
+
+    private volatile bool _paused;
+    private volatile float _timeScale = 1.0f;
+
+    // The updates a paused scene still gets, see Step
+    private int _stepsState, _stepsPhysics;
+
+    /// <summary>Lets a paused scene have one update (and one of its physics), then it stands still again. From any thread.</summary>
+    public void Step()
+    {
+        Interlocked.Increment(ref _stepsState);
+        Interlocked.Increment(ref _stepsPhysics);
+    }
+
+    /// <summary>Helper method for whether the scene gets this update, paused or not.</summary>
+    private bool Runs(ref int steps)
+    {
+        if (!_paused) return true;
+        if (Volatile.Read(ref steps) <= 0) return false;
+
+        Interlocked.Decrement(ref steps);
+        return true;
+    }
+
     // Whether a scene is waiting to take over. Nothing is updated in the meantime: the scene that is left has
     // said it is done, and the one that takes over isn't set up yet
     private volatile bool _halt = false;
@@ -537,7 +580,8 @@ public class SceneManager : Entity
     {
         if (_halt || !Enabled)
             return;
-        CurrentInstance?.UpdatePhysics(dt);
+        if (Runs(ref _stepsPhysics))
+            CurrentInstance?.UpdatePhysics(dt * _timeScale);
 
         base.UpdatePhysics(dt);
     }
@@ -546,7 +590,8 @@ public class SceneManager : Entity
     {
         if (_halt || !Enabled)
             return;
-        CurrentInstance?.UpdateState(dt);
+        if (Runs(ref _stepsState))
+            CurrentInstance?.UpdateState(dt * _timeScale);
 
         base.UpdateState(dt);
     }

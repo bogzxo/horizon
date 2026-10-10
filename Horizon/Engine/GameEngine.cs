@@ -101,6 +101,15 @@ public class GameEngine : Entity
     /// </summary>
     public double GpuFrameMs => Graphics.GpuFrameMilliseconds;
 
+#if DEBUG
+    /// <summary>
+    /// The debugging suite, the menu bar over the game with the scene tree, the inspector and the rest behind it
+    /// (see <see cref="Debugging.DebugSuite"/>). Only in a Debug build, a Release one hasn't got the class at all,
+    /// so whatever talks to it goes inside of an #if DEBUG as well.
+    /// </summary>
+    public Debugging.DebugSuite Debugger { get; }
+#endif
+
     public GameEngine()
         : this(GameEngineConfiguration.Default) { }
 
@@ -136,6 +145,12 @@ public class GameEngine : Entity
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
         Input = AddComponent<InputManager>();
+
+#if DEBUG
+        // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
+        Debugger = AddEntity(new Debugging.DebugSuite());
+#endif
+
         SceneManager = AddEntity<SceneManager>();
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
@@ -291,6 +306,12 @@ public class GameEngine : Entity
         // drawn mustn't have it count as a leftover of whichever scene was on then. Scenes draw in their own scope
         using (Horizon.Content.AssetScope.EnterGlobal())
             base.Render(dt);
+
+#if DEBUG
+        // Over everything, the suite draws last whatever was added to the engine after it. In its editor layout
+        // it takes the frame as it is now and shows it in a part of the window
+        Debugger.Draw(dt);
+#endif
 
         Horizon.Rendering.CameraBlock.EndFrame();
 

@@ -3,39 +3,65 @@ using Horizon.Engine;
 namespace Horizon.Testing;
 
 /// <summary>
-/// The bit of the engine an example is about. It's the folder the example lives in under Examples/, and the
-/// heading the selector lists it under, in this order.
+/// How far along an example is, which is the order the selector lists them in and the folder they live in under
+/// Examples/. Each level only leans on the ones before it, so reading them top to bottom never has you looking at
+/// something that hasn't been explained yet.
 /// </summary>
-internal enum TestArea
+internal enum TestLevel
 {
-    /// <summary>Start here: entities, sprites, cameras. The stuff every game needs on day one.</summary>
-    Basics,
+    /// <summary>A window, something drawn in it, something read off the keyboard. Day one.</summary>
+    FirstSteps,
 
-    /// <summary>Keyboard, mouse and gamepads.</summary>
-    Input,
+    /// <summary>What a game is put together from, maps, scenes, particles, physics, menus.</summary>
+    MakingAGame,
 
-    /// <summary>Everything that ends up as pixels and isn't a UI: tile maps, lights, particles, post processing.</summary>
-    Rendering,
+    /// <summary>Lights, shadows, the path traced lighting and what goes over the finished picture.</summary>
+    LightAndEffects,
 
-    /// <summary>UIX: layouts, skins, controls and scripting.</summary>
-    UI,
+    /// <summary>The lot in one scene, the way a game would have it.</summary>
+    AllTogether,
 
-    /// <summary>Bodies, fixtures and the particle simulators.</summary>
-    Physics,
+    /// <summary>The guts, for when you want to know why something moves the way it does.</summary>
+    UnderTheHood,
 
-    /// <summary>The guts: threads, frame pacing, tweens and the like.</summary>
-    Engine
+    /// <summary>Not examples. Scenes that drive themselves and say whether the engine still does what it did.</summary>
+    Checks
 }
 
 /// <summary>
-/// One entry of the test selector.
+/// One entry of the selector.
 /// </summary>
-/// <param name="Id">What you pass on the command line to start straight in this test, e.g. <c>dotnet run -- tweens</c>.</param>
-/// <param name="Area">Which heading the selector lists it under.</param>
-/// <param name="Name">What the test's button says.</param>
-/// <param name="Description">A line about what the test shows, written next to its button.</param>
+/// <param name="Id">What you pass on the command line to start straight in it, <c>dotnet run -- tweens</c>.</param>
+/// <param name="Level">Which heading the selector lists it under.</param>
+/// <param name="Name">What its row says.</param>
+/// <param name="Summary">A sentence or two about what there is to see, shown next to the list when it is picked.</param>
+/// <param name="Shows">The parts of the engine it is about, by the names they go by in code, so they can be searched for.</param>
+/// <param name="Source">Where its scene is, from the Horizon.Testing folder.</param>
 /// <param name="Create">
-/// Makes a fresh scene every time the test is started. It's a factory and not a scene on purpose: leaving a test
-/// throws its scene away, GPU stuff and all, so coming back to it starts from scratch.
+/// Makes a fresh scene every time it is started. A factory and not a scene on purpose, leaving an example throws
+/// its scene away, GPU stuff and all, so coming back to it starts from scratch.
 /// </param>
-internal sealed record TestDefinition(string Id, TestArea Area, string Name, string Description, Func<Scene> Create);
+internal sealed record TestDefinition(string Id, TestLevel Level, string Name, string Summary, string[] Shows, string Source, Func<Scene> Create)
+{
+    /// <summary>Where it comes in the list, counted from 1. The checks have no number, they aren't a lesson.</summary>
+    public int Number { get; init; }
+
+    /// <summary>The other names it answers to on the command line, the ids the examples it replaced went by.</summary>
+    public string[] Aliases { get; init; } = [];
+}
+
+/// <summary>
+/// For a scene that checks something by itself and can say how it went, which is what lets the host run every
+/// check one after the other and leave (<c>Horizon.Testing --checks</c>).
+/// </summary>
+internal interface ISelfCheck
+{
+    /// <summary>Whether it has checked everything it was going to.</summary>
+    bool Finished { get; }
+
+    /// <summary>How many of its checks didn't hold.</summary>
+    int Failed { get; }
+
+    /// <summary>How many it made.</summary>
+    int Count { get; }
+}

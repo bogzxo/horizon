@@ -1,0 +1,2 @@
+// One row of the scroll panel in gallery.hor
+let row = compositor.button({ style: "button_flat", size: vec(230, 32), lbl_scale: 0.2 });

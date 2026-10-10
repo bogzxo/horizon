@@ -54,7 +54,7 @@ public sealed class AssetScope
     {
         var guard = new Guard(current, global);
         current = IsReleased ? null : this;
-        global = false;
+        global = false; 
         return guard;
     }
 

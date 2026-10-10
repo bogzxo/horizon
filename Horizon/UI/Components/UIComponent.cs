@@ -126,6 +126,7 @@ public abstract partial class UIComponent
     /// The tweens that are animating this component, moved along once per update for as long as the component
     /// is in a UI. See <see cref="UITweens"/> for the ones that come ready made.
     /// </summary>
+    [Horizon.Core.HideInInspector]
     public TweenContext Tweens => tweens ?? Interlocked.CompareExchange(ref tweens, new TweenContext(), null) ?? tweens;
 
     /// <summary>An invisible component, and everything inside it, is neither drawn nor hit by the pointer.</summary>
@@ -211,6 +212,7 @@ public abstract partial class UIComponent
     /// <summary>
     /// The object scripts see this component as. Its properties are the ones declared in <see cref="DefineScript"/>.
     /// </summary>
+    [Horizon.Core.HideInInspector]
     public ObjectValue Object
     {
         get

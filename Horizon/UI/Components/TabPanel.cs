@@ -200,6 +200,7 @@ public class TabPanel : UIComponent
 
         for (int i = 0; i < ChildSpan.Length; i++)
         {
+            list.BeginPart(i);
             UIRect tab = TabBounds(i);
             bool open = i == Selected;
 
@@ -212,6 +213,8 @@ public class TabPanel : UIComponent
             if (open)
                 list.Rect(new UIRect(tab.Min, new Vector2(tab.Max.X, tab.Min.Y + UNDERLINE)), accent);
         }
+
+        list.EndParts();
 
         if (PreviousHint.Length > 0)
             list.Text(PreviousHint, header, Origin.Left, scale, Vector4.One);

@@ -10,10 +10,14 @@ bin_dir, label, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 seconds = int(sys.argv[4]) if len(sys.argv) > 4 else 15
 passes = int(sys.argv[5]) if len(sys.argv) > 5 else 2
 
-SCENES = ["entities", "sprites", "camera", "transitions", "primitives", "tilemap", "post", "particles",
-          "lighting", "renderer2d", "ui", "ui-screens", "ui-controls", "ui-navigation", "fluid", "tweens", "pacing",
-          "ui-selftest", "ui-layout-selftest", "ui-controls-selftest", "ui-navigation-selftest",
-          "quickstart", "pathtraced"]
+# The ids of Host/TestCatalog.cs. The examples changed names in October 2026 (primitives is shapes, ui-screens is
+# ui-layouts, the self tests are the check- ones), the old ids still start the nearest thing, so a build from before
+# and a build from after can be run with either list, but the numbers of a scene that was rewritten in between
+# (sprites, tilemap, lighting, post, the ui ones) are not the numbers of the same scene
+SCENES = ["quickstart", "sprites", "shapes", "input", "camera", "entities", "tweens", "transitions", "tilemap",
+          "particles", "fluid", "ui", "ui-layouts", "ui-controls", "ui-skin", "lighting", "pathtraced", "post",
+          "town", "pacing",
+          "check-ui", "check-ui-layout", "check-ui-controls", "check-ui-navigation", "check-tilemap"]
 
 script = os.path.join(os.path.dirname(os.path.abspath(out_path)), f"quit{seconds}.txt")
 with open(script, "w") as f:
