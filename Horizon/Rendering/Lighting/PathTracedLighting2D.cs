@@ -43,7 +43,9 @@ public enum LightingMode
 /// the camera, and the rays are turned a little every frame (<see cref="Jitter"/>), so over a few frames every
 /// direction gets looked in and not the same few every time. Without that a light a few pixels across is hit by
 /// some rays and missed by the ones next to them, which is spokes round a small lamp when the camera stands still
-/// and spokes that change places every frame when it creeps along, the whole room shimmering.
+/// and spokes that change places every frame when it creeps along, the whole room shimmering. Every pixel lets go
+/// of what it had when the light there changes by more than it usually wavers (<see cref="Responsiveness"/>), so a
+/// change is taken as it happens and the shimmer is smoothed all the same.
 /// </para>
 /// All of it on the render thread, the settings from any thread.
 /// </summary>
@@ -87,9 +89,11 @@ public sealed class PathTracedLighting2D : IDisposable
     /// How long (in seconds) the light takes to settle, which is what every frame is laid over the ones before it
     /// for, 0 for every frame on its own. A tenth of a second is long enough to be rid of the shimmer and short
     /// enough that a light coming on, or a spark going past, is followed as it happens. It is a time and not a
-    /// number of frames, the light settles as quickly at sixty frames a second as at three thousand, only the
-    /// more frames there are the more of them it is made of. The frames before are moved along with the camera,
-    /// what moves by itself leaves a short tail of its light behind it, which in a dark room looks like light does.
+    /// number of frames, every pixel holds on to so many seconds' worth of light and a frame goes in by how long it
+    /// was, so the light settles as quickly at sixty frames a second as at three thousand, and a slow frame (a
+    /// hitch) counts for more just the once rather than knocking every pixel back for the frames after it. The
+    /// frames before are moved along with the camera, what moves by itself leaves a short tail of its light behind
+    /// it, which in a dark room looks like light does (and see <see cref="Responsiveness"/>).
     /// </summary>
     public float Accumulation { get; set; } = 0.1f;
 
@@ -100,12 +104,50 @@ public sealed class PathTracedLighting2D : IDisposable
     /// </summary>
     public bool Jitter { get; set; } = true;
 
+    /// <summary>
+    /// Whether the light is kept at the size of the renderer (times <see cref="OutputScale"/>) rather than at the
+    /// size it is traced at (<see cref="Scale"/>), and filled in to every pixel over a few frames. The whole grid
+    /// of probes is moved by a fraction of a probe every frame, a different fraction every time, and a pixel takes
+    /// most from the frames that had a probe close to it, which was to give the light detail finer than the probes
+    /// are apart and let Scale come down (the tracing costs the square of it) without the light going soft.
+    /// <para>
+    /// Off unless asked for, because measured it doesn't do that yet. On the dungeon example traced at a quarter
+    /// size it looked a bit better than a quarter size without it and nowhere near half size, and it was less
+    /// steady from frame to frame at any size. The detail is in the picture the rays read what glows from, which
+    /// is still traced at Scale, and moving the probes about does nothing for that. Moving that picture about with
+    /// them is the next step, see docs/radiance-cascades.md. It costs a pass over the light at its full size and
+    /// the memory of four pictures of it at half floats.
+    /// </para>
+    /// </summary>
+    public bool Upscaling { get; set; }
+
+    /// <summary>How big the light is kept while upscaling, as a share of the renderer's size. 1 is every pixel, less saves memory and a little time.</summary>
+    public float OutputScale { get; set; } = 1.0f;
+
+    /// <summary>
+    /// How readily a pixel lets go of the light it had when the light there changes, which is how the light keeps
+    /// up with what moves. Every pixel knows how much its light usually wavers from frame to frame (the shimmer of
+    /// the turning rays, the flicker of a creeping camera), and a change well past that is something that happened,
+    /// a spark flying past, a brazier catching, and the pixel starts again from this frame rather than taking a
+    /// tenth of a second to come round to it. 0 never lets go and every change is smoothed alike, 1 is the usual,
+    /// 2 lets go at half the change. A camera moving needs none of this, the light is moved along with it anyway.
+    /// </summary>
+    public float Responsiveness { get; set; } = 1.0f;
+
     private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
     private readonly List<Texture> cascades = [];
     private Texture? resultA, resultB, radiance;
+
+    // How much the light of every pixel usually wavers, the mean of its brightness and of its square, kept the way
+    // the light is and taking turns with it. See Responsiveness
+    private Texture? momentsA, momentsB;
+
     private bool writeB;
     private uint width, height, cascadeWidth, cascadeHeight;
+
+    // The size the light is kept at, the traced picture's unless it is upscaled
+    private uint outputWidth, outputHeight;
     private int cascadeCount;
     private Vector2? originBefore;
 
@@ -126,8 +168,11 @@ public sealed class PathTracedLighting2D : IDisposable
     /// <summary>What the tracer found last, for the deferred pass. Null before the first frame.</summary>
     public Texture? Result { get; private set; }
 
-    /// <summary>The size of the picture everything is worked out at.</summary>
+    /// <summary>The size of the picture everything is traced at.</summary>
     public Vector2 Size => new(width, height);
+
+    /// <summary>The size the light is kept at, which is <see cref="Size"/> unless it is upscaled.</summary>
+    public Vector2 OutputSize => new(outputWidth, outputHeight);
 
     /// <summary>How many cascades the last frame had.</summary>
     public int CascadeCount => cascadeCount;
@@ -148,11 +193,20 @@ public sealed class PathTracedLighting2D : IDisposable
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
         uint wanted = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.X * scale));
         uint wantedHeight = (uint)MathF.Max(1.0f, MathF.Ceiling(renderer.ViewportSize.Y * scale));
-        Fit(wanted, wantedHeight);
-        if (resultA is null || resultB is null || radiance is null || cascades.Count == 0) return;
+
+        // Read once, it can be changed from another thread halfway through
+        bool upscaling = Upscaling;
+        float output = upscaling ? Math.Clamp(OutputScale, scale, 1.0f) : scale;
+        uint wantedOutput = upscaling ? (uint)MathF.Max(wanted, MathF.Ceiling(renderer.ViewportSize.X * output)) : wanted;
+        uint wantedOutputHeight = upscaling ? (uint)MathF.Max(wantedHeight, MathF.Ceiling(renderer.ViewportSize.Y * output)) : wantedHeight;
+
+        Fit(wanted, wantedHeight, wantedOutput, wantedOutputHeight);
+        if (resultA is null || resultB is null || momentsA is null || momentsB is null || radiance is null || cascades.Count == 0) return;
 
         Texture previous = writeB ? resultA : resultB;
         Texture result = writeB ? resultB : resultA;
+        Texture previousMoments = writeB ? momentsA : momentsB;
+        Texture moments = writeB ? momentsB : momentsA;
 
         // The world is this many units across a pixel of the picture
         float pixelWorld = camera.Bounds.Width / width;
@@ -166,16 +220,23 @@ public sealed class PathTracedLighting2D : IDisposable
         Vector2 shift = carriesOn ? moved!.Value : new Vector2(2.0f);
         lastRun = now;
 
-        // How much of this frame goes into the light, the rest being what the frames before found
-        float blend = carriesOn ? Blend(dt, Accumulation) : 1.0f;
-        float turn = blend < 1.0f && Jitter ? Turn(frames, Describe0Directions()) : 0.0f;
+        // Whether the frames before count at all, and for how long, see Accumulation
+        float settle = carriesOn ? MathF.Max(Accumulation, 0.0f) : 0.0f;
+        bool accumulating = settle > 0.0f;
+        float turn = accumulating && Jitter ? Turn(frames, Describe0Directions()) : 0.0f;
+
+        // Where the probes are moved to this frame, in world units, see Upscaling. Every cascade is moved by the
+        // same distance, the lot moves as one and the merges never notice
+        bool sharpen = upscaling && accumulating;
+        Vector2 nudge = sharpen ? Nudge(frames) * (fittedSpacing * pixelWorld) : Vector2.Zero;
         frames++;
 
         // The furthest cascade looks as far as the far corner, however few of them there are, see MaxCascades
         float diagonal = MathF.Sqrt((float)width * width + (float)height * height);
 
-        // Where the top left of the picture is in the world, which is what the probes are laid out from, see Offset
-        Vector2 topLeft = TopLeftOf(camera);
+        // Where the top left of the picture is in the world, which is what the probes are laid out from, see Offset.
+        // Less the nudge, which moves every probe by it
+        Vector2 topLeft = TopLeftOf(camera) - nudge;
 
         // What the walls throw back, once, for every ray that lands on one to read
         radiancePass.Bind();
@@ -236,18 +297,28 @@ public sealed class PathTracedLighting2D : IDisposable
         resolvePass.Bind();
         cascades[0].Bind(0);
         previous.Bind(1);
+        previousMoments.Bind(2);
         resolvePass.SetUniform("uShift", in shift);
-        resolvePass.SetUniform("uBlend", blend);
-        resolvePass.SetUniform("uSize", Size);
+
+        // How many seconds' worth a pixel may hold on to, and how long this frame was, which is how much of the
+        // frame goes in. A frame that took no time at all still counts for a bit
+        resolvePass.SetUniform("uSettle", settle);
+        resolvePass.SetUniform("uFrameTime", Math.Clamp(dt, 0.0001f, 0.25f));
+        resolvePass.SetUniform("uSharpen", sharpen ? 1.0f : 0.0f);
+        resolvePass.SetUniform("uResponsiveness", MathF.Max(Responsiveness, 0.0f));
+        resolvePass.SetUniform("uSize", OutputSize);
+        resolvePass.SetUniform("uTraceSize", Size);
         resolvePass.SetUniform("uProbeCount", in nearestProbes);
         resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
         resolvePass.SetUniform("uProbeOffset", in nearestOffset);
         resolvePass.SetUniform("uDirections", nearestDirections);
         device.BindStorageImage(0, result);
-        device.Dispatch((width + 7) / 8, (height + 7) / 8);
+        device.BindStorageImage(1, moments);
+        device.Dispatch((outputWidth + 7) / 8, (outputHeight + 7) / 8);
         device.Barrier(BarrierTargets.ShaderImages);
         resolvePass.Unbind();
         device.BindStorageImage(0, null);
+        device.BindStorageImage(1, null);
 
         Result = result;
         writeB = !writeB;
@@ -279,18 +350,6 @@ public sealed class PathTracedLighting2D : IDisposable
     }
 
     /// <summary>
-    /// How much of a frame goes into the light when it is laid over the ones before, for a frame of so many
-    /// seconds and a light that settles in so many (see <see cref="Accumulation"/>). Taken as a decay over time,
-    /// so two frames of half the time leave as much of the old light as one of the whole, whatever the frame rate.
-    /// Never all of the old light, a frame that took no time at all still counts for a bit.
-    /// </summary>
-    internal static float Blend(float dt, float settle)
-    {
-        if (settle <= 0.0f) return 1.0f;
-        return Math.Clamp(1.0f - MathF.Exp(-MathF.Max(dt, 0.0f) / settle), 0.02f, 1.0f);
-    }
-
-    /// <summary>
     /// How far the rays are turned on a frame, in radians, somewhere within the angle between two rays of the
     /// nearest cascade. Every cascade is turned by the same angle, which keeps the four rays a ray splits into
     /// above it inside of its cone, the merges never notice. The angles go round by the golden ratio, so any few
@@ -304,6 +363,30 @@ public sealed class PathTracedLighting2D : IDisposable
         const double GOLDEN = 0.61803398874989485;
         double along = frame * GOLDEN % 1.0;
         return (float)(along * Math.Tau / Math.Max(directions, 1.0f));
+    }
+
+    /// <summary>
+    /// Where in a cell of the probe grid the probes are moved to on a frame, from 0 to 1 each way. Halton's sequence
+    /// in two and three, which fills the cell evenly for any few frames in a row (the first eight have been in
+    /// every quarter of it), and goes round every hundred and twenty eight, too long to see.
+    /// </summary>
+    internal static Vector2 Nudge(uint frame)
+    {
+        uint index = frame % 128 + 1;
+        return new Vector2(Halton(index, 2), Halton(index, 3));
+
+        static float Halton(uint index, uint radix)
+        {
+            float result = 0.0f, fraction = 1.0f;
+            while (index > 0)
+            {
+                fraction /= radix;
+                result += fraction * (index % radix);
+                index /= radix;
+            }
+
+            return result;
+        }
     }
 
     /// <summary>Helper method for how many rays a probe of the nearest cascade has.</summary>
@@ -363,17 +446,20 @@ public sealed class PathTracedLighting2D : IDisposable
     }
 
     /// <summary>Helper method to have every texture be the size that is wanted, made anew when it isn't.</summary>
-    private void Fit(uint wantedWidth, uint wantedHeight)
+    private void Fit(uint wantedWidth, uint wantedHeight, uint wantedOutput, uint wantedOutputHeight)
     {
         int most = Math.Max(1, MaxCascades), spacing = Math.Max(1, ProbeSpacing);
         float interval = MathF.Max(BaseInterval, 1.0f);
 
         if (resultA is not null && width == wantedWidth && height == wantedHeight
+            && outputWidth == wantedOutput && outputHeight == wantedOutputHeight
             && fittedCascades == most && fittedSpacing == spacing && fittedInterval == interval) return;
 
         Release();
         width = wantedWidth;
         height = wantedHeight;
+        outputWidth = wantedOutput;
+        outputHeight = wantedOutputHeight;
         (fittedCascades, fittedSpacing, fittedInterval) = (most, spacing, interval);
 
         // How many cascades it takes to reach across the picture, and how big their textures have to be. A cascade
@@ -402,13 +488,15 @@ public sealed class PathTracedLighting2D : IDisposable
 
         // Kept as they are made. A card that ran out of room halfway used to leave the ones it did make with
         // nobody holding them, and then try the whole lot again the next frame, and the next, god help it
-        resultA = Picture("path traced result a");
-        resultB = Picture("path traced result b");
-        radiance = Picture("wall radiance");
+        resultA = Picture("path traced result a", outputWidth, outputHeight);
+        resultB = Picture("path traced result b", outputWidth, outputHeight);
+        momentsA = Picture("path traced wavering a", outputWidth, outputHeight);
+        momentsB = Picture("path traced wavering b", outputWidth, outputHeight);
+        radiance = Picture("wall radiance", width, height);
 
-        Texture? Picture(string name)
+        Texture? Picture(string name, uint across, uint down)
         {
-            if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var made)) return null;
+            if (!objects.Textures.TryCreate(new TextureDescription { Width = across, Height = down, Definition = CascadeTexture }, out var made)) return null;
             made.Asset.Name = name;
             return made.Asset;
         }
@@ -424,8 +512,10 @@ public sealed class PathTracedLighting2D : IDisposable
         cascades.Clear();
         resultA?.Dispose();
         resultB?.Dispose();
+        momentsA?.Dispose();
+        momentsB?.Dispose();
         radiance?.Dispose();
-        resultA = resultB = radiance = null;
+        resultA = resultB = momentsA = momentsB = radiance = null;
         Result = null;
     }
 

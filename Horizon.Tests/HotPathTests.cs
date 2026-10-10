@@ -3,6 +3,7 @@ using System.Reflection;
 using Horizon.Core;
 using Horizon.Core.Threading;
 using Horizon.Graphics;
+using Horizon.Rendering.Lighting;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Tiling;
 using Horizon.UI;
@@ -68,6 +69,9 @@ public class HotPathTests
         { typeof(UISkin), "TryGetRegion" },
         { typeof(UIFont), "Measure" },
         { typeof(UIFont), "Resolve" },
+
+        // The path traced lighting, every frame it is on
+        { typeof(PathTracedLighting2D), "Run" },
 
         // Sprites and tiles
         { typeof(SpriteBatch), "Draw" },

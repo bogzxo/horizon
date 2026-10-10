@@ -544,3 +544,57 @@ that they are big enough. The `System.Char[]` on the render thread every few sec
 
 The validation layer is not installed on this machine (no Vulkan SDK), so the in place update of the layers has
 not been through it. It is the same `UpdateBuffer` the animated tiles go through every frame.
+
+## The traced light settles over frames now
+
+bogz found the dungeon's path traced light flickering, worst with the camera moving slowly, and asked for it to be
+accumulated over frames, then for the cascade count to be an option, since that is where the cost is.
+
+The cause is written up in `docs/radiance-cascades.md` under "Over frames", in short the things that glow are in
+the screen space sprite field, which shifts under the world pinned rays as the camera creeps. Measured with a
+temporary hook in the dungeon that hid everything that moves in the mushroom cave, switched the lantern off, showed
+the traced light alone and drifted the camera at a steady 3 units a second, then 40 shots a thirtieth of a second
+apart and the second difference over time of the brightness of 20 pixel blocks (a steady drift is a straight line,
+flicker isn't). The hook is gone again, the script that does the sums was `flicker.py` in my scratchpad, nothing
+worth keeping in the repo. The numbers, the jump being that second difference averaged over the lit blocks.
+
+| | standing still | drifting |
+|---|---|---|
+| before | 0.12 | 2.37, 46% of the blocks over 2 |
+| accumulated | 0.03 | 0.34 |
+| accumulated and jittered, 5 cascades | 0.32, 0.40 at 60 fps | 0.50 |
+| the same, 3 cascades | 0.59 at 60 fps | 0.62 |
+| the same, 2 cascades | 1.87 at 60 fps | 1.43, 16% over 2 |
+
+The jitter costs a little steadiness and pays for it in the pictures, without it fewer cascades go blotchy and the
+light round every mushroom has an X in it. One run with six cascades came out at 150 ms of tracing and 11 frames a
+second, twice more on the same settings were 1.5 to 1.9 ms and 400 frames, I put it down to the machine and not
+the code, but if it ever turns up again it is worth a look.
+
+What changed. `PathTracedLighting2D` has `Accumulation` (seconds, 0 for off) and `Jitter`, `Run` works out whether
+last frame is worth anything (not the first, no cut, no gap of a quarter of a second) and hands the resolve the
+shift and how long to settle over, the cascades a turn. `Turn` and `Nudge` are static so
+`Horizon.Tests/PathTracingTests` can check them. `Fit` makes the cascades again when `MaxCascades`, `ProbeSpacing` or `BaseInterval` change, which it
+didn't before (they only counted when the window changed size), and `Describe` goes by what they were made for, not
+what the settings say that moment, or a change from another thread halfway through a frame reads a cascade past
+its end. The furthest cascade's interval runs to the far corner of the picture. `gi_resolve.slang` has the
+history, `gi_cascade.slang` the turn.
+
+Fighter2D has a Light quality row on the Look tab of its options (Low, Medium, High for 3, 4 and all cascades,
+`light_quality` in options.hor, `Screen.TracedCascades`), the fight on the Japan map is 1.1 to 1.4 ms of tracing at
+High and 0.6 to 0.7 at Low and looks the same. The dungeon goes round 6, 4 and 3 on Q and T switches the settling
+off to compare.
+
+Later the same day bogz asked for a more advanced temporal pass, upscaling and motion aware, configurable on the
+renderer. What came of it. Every pixel now holds seconds of light and not frames, which fixed a real fault (a slow
+frame knocked every pixel's count down and it took dozens of frames to recover, the screenshots of the measuring
+were enough to do it). Every pixel keeps the mean and the mean square of its brightness and lets go when it changes
+past three times its usual wavering plus half the light (`Responsiveness`), a touch steadier than without and the
+trail it is meant to shorten is not measured. No velocity buffer, deliberately, the traced light belongs to places
+in the world and the camera shift already follows those, what moves the light is lamps and their effect spreads
+far beyond where they are. `Upscaling` (moving the probes about, keeping the light at full size, a pixel taking
+most from the frames with a probe near it) was built, measured, and left off, it is less steady and doesn't bring
+the detail back. Moving the radiance picture with the probes drew a dotted grid and was taken out again. The full
+story and the numbers are in docs/radiance-cascades.md under "Upscaling, tried". The worktree at HEAD with the same
+measuring hook (`git worktree add` into the scratchpad, the hook copied in) was what showed the frames fault, a
+before and after built side by side and measured back to back beats comparing with numbers from an hour ago.
