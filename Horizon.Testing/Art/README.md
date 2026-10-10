@@ -9,6 +9,10 @@ Run a script from the `Horizon.Testing` folder, it writes over what is there.
   open in Tiled, but anything changed there is gone the next time the script runs, so a map that is going to be
   drawn by hand from now on wants taking out of the script first.
 - `make_small_art.py` paints the white ring, disc and glow the keyboard and the scenes examples tint.
+- `make_dungeon.py` paints the dungeon example's tiles (with their `_normal`, `_specular` and `_ao`) and its
+  sprites and writes `dungeon/dungeon.tmx`. The map is carved out of solid rock a rectangle at a time and
+  furnished by where things go, both near the bottom of the script. What glows in it is on a layer that says
+  so, and that is all it takes for it to light the place.
 
 The rest was painted by code the examples used to carry about with them and has been files since, `sprites/`
 (the blob and the scenery), `camera/` (the island, its minimap and its props) and everything under `checks/`.

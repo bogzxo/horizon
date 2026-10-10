@@ -34,7 +34,8 @@ public class CirclePhysicsFixture(float radius, Vector2 position, string tag="")
                 return false;
         }
     }
-    // Stack allocation free test
+    // Nothing is allocated here, it is all floats. The first two are the circle and where its body is, the other
+    // two the rectangle and where its body is, get that backwards and the two never meet
     public static bool IntersectsCircleAndRectangle(CirclePhysicsFixture circle, RectanglePhysicsFixture rect, Vector2 positionOffset, Vector2 otherPositionOffset)
     {
         // Clamp the circle center to the bounds of the rectangle to find the closest point

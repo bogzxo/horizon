@@ -12,13 +12,13 @@ namespace Horizon.UI;
 /// <summary>
 /// A piece of UI out of a layout file. The components a HIDL script made, by the names the script gave them.
 /// This is how a program gets its UI from files that can be changed (and drawn up in an editor) without
-/// touching the code:
+/// touching the code.
 /// <code>
 /// var layout = UILayout.Load(module, "Assets/ui/menu.hor");
 /// layout.Get&lt;Button&gt;("play").OnPressed = Play;
 /// </code>
 /// Every layout runs in a scope of its own, so two files (or the same file twice) never trip over each
-/// other's names. That is also what makes a layout usable as a template: what isn't known until the program
+/// other's names. That is also what makes a layout usable as a template. What isn't known until the program
 /// runs (a row per save game, a cell per character) is a container in the layout that names the file its
 /// items are made from, and <see cref="Populate(Panel, int)"/> makes as many of them as are needed.
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class UILayout
     /// <summary>The file the layout came from, empty for one that was made from code.</summary>
     public string Path { get; }
 
-    /// <summary>The components the script didn't put inside of another one: the top of what it made.</summary>
+    /// <summary>The components the script didn't put inside of another one, the top of what it made.</summary>
     public IReadOnlyList<UIComponent> Roots => roots;
 
     /// <summary>Every component the script kept in a variable, by the name of the variable.</summary>
@@ -153,7 +153,7 @@ public sealed class UILayout
 
     /// <summary>
     /// Fills a container with an item per thing in a list, and has each one filled in. The usual loop, minus the
-    /// bit everybody gets wrong:
+    /// bit everybody gets wrong.
     /// <code>
     /// layout.Populate("maps", maps, (item, map, i) => item.Get&lt;Label&gt;("name").Text = map.Name);
     /// </code>

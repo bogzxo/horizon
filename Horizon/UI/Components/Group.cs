@@ -6,7 +6,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// A bunch of components that go together: moved, shown, hidden and animated as one. It draws nothing itself and is
+/// A bunch of components that go together, moved, shown, hidden and animated as one. It draws nothing itself and is
 /// as big as what's in it, measured around its middle, so a group is just "these things, here". Hex makes one out of
 /// whatever is selected (ctrl+G) and takes it apart again (ctrl+shift+G), keeping everything where it was on screen.
 /// <code>
@@ -21,7 +21,7 @@ public class Group : Panel
     protected override Vector2 Measure(UISkin skin)
     {
         // Big enough for what's in it wherever it sits. A child placed from the middle reaches as far out as its
-        // place plus half its size; one anchored to an edge just needs its own size, the group can't know better
+        // place plus half its size, one anchored to an edge just needs its own size, the group can't know better
         Vector2 half = Vector2.Zero;
         foreach (var child in ChildSpan)
         {

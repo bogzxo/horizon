@@ -27,7 +27,7 @@ namespace Horizon.Testing.Examples.Game;
 /// <item><see cref="UILayout.Bind{T}(Panel, IReadOnlyList{T}, Action{UILayout, T, int})"/>, a container filled from a
 /// list that keeps changing, an item of it out of a template file (mate.hor). Only what's new gets made (and makes
 /// an entrance), the rest is kept and filled in again. + and - get you more mates or fewer, blocking one gets rid of them.</item>
-/// <item>The <see cref="PerformanceOverlay"/> in the corner is a UIX layout too, the host has one on the engine for every example. F3 cycles it.</item>
+/// <item>The <see cref="PerformanceOverlay"/> in the corner is a UI of its own on the engine, the host has one for every example. One component that paints itself, not a layout, a dashboard has columns to keep and no garbage to make. F3 cycles it.</item>
 /// </list>
 /// Hex (Horizon.Hex) does all of this with a mouse, open settings.hor in it if you'd rather click.
 /// </summary>

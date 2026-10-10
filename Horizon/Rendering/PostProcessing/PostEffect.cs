@@ -7,7 +7,7 @@ using Horizon.Graphics;
 namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
-/// Something that is done to the picture a <see cref="Renderer2D"/> has drawn before it is put on screen: a blur, a
+/// Something that is done to the picture a <see cref="Renderer2D"/> has drawn before it is put on screen, a blur, a
 /// grade, the look of an old screen. Effects are added to <see cref="Renderer2D.PostProcessing"/> and run in the
 /// order they are in, each on what the one before it left. What is laid over everything else instead (a UI) has
 /// effects of its own the same way, see <see cref="PostLayer"/>.
@@ -30,12 +30,12 @@ public abstract class PostEffect : IDisposable
     /// </summary>
     public TweenContext Tweens => tweens ?? Interlocked.CompareExchange(ref tweens, new TweenContext(), null) ?? tweens;
 
-    /// <summary>GL thread, once, before the effect is first run: where its shaders are made.</summary>
+    /// <summary>Render thread, once, before the effect is first run. Where its shaders are made.</summary>
     protected virtual void Initialize()
     { }
 
     /// <summary>
-    /// GL thread, every frame the effect is on. Nothing is blended and nothing is tested while effects run: what is
+    /// Render thread, every frame the effect is on. Nothing is blended and nothing is tested while effects run, what is
     /// drawn replaces what is there.
     /// </summary>
     protected abstract void Render(PostContext context);
@@ -66,13 +66,13 @@ public sealed class PostContext
 {
     internal PostProcessor Processor = null!;
 
-    // Where the result of the effect goes: a target of the chain, or (for the last effect) wherever the renderer is shown
+    // Where the result of the effect goes, a target of the chain or (for the last effect) wherever the renderer is shown
     internal PostTarget? Into;
     internal Action Output = null!;
 
     /// <summary>
-    /// The picture so far: what was drawn, with whatever the effects before this one did to it. Its alpha is how
-    /// much of every pixel there is and its colours come multiplied by that already: all of it for the picture of
+    /// The picture so far, what was drawn with whatever the effects before this one did to it. Its alpha is how
+    /// much of every pixel there is and its colours come multiplied by that already. That is all of it for the picture of
     /// a renderer, but a <see cref="PostLayer"/> is see-through wherever nothing was drawn. An effect that is to
     /// work on both passes the alpha on, and treats it like the colours.
     /// </summary>
@@ -112,7 +112,7 @@ public sealed class PostContext
     }
 
     /// <summary>
-    /// Whether the effect passed the picture on as it was without drawing anything (see <see cref="Copy"/>): the next
+    /// Whether the effect passed the picture on as it was without drawing anything (see <see cref="Copy"/>), the next
     /// effect reads the same picture this one was handed.
     /// </summary>
     internal bool PassedOn { get; set; }
@@ -120,7 +120,7 @@ public sealed class PostContext
     /// <summary>Passes the picture on as it is, for an effect that finds it has nothing to do this frame.</summary>
     public void Copy()
     {
-        // Another effect comes after this one: it simply reads the picture this one was handed, which costs nothing.
+        // Another effect comes after this one, it simply reads the picture this one was handed, which costs nothing.
         // Only the last effect has to put the picture where it is shown
         if (Into is not null)
         {

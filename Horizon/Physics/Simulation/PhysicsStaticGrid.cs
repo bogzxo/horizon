@@ -6,7 +6,7 @@ namespace Horizon.Physics.Simulation;
 
 /// <summary>
 /// Sorts the fixtures of every static body into a grid, so that finding what is near a point doesn't mean testing the whole map.
-/// A map is thousands of tiles and there can be thousands of particles, testing each against each is not an option.
+/// A map is thousands of tiles and there can be thousands of particles, testing each against each is how a CPU gets set on fire.
 /// </summary>
 internal sealed class PhysicsStaticGrid
 {
@@ -51,7 +51,7 @@ internal sealed class PhysicsStaticGrid
     public int Height => _height;
 
     /// <summary>
-    /// Everything in the grid, and which of it touches which cell: the shapes touching cell i (y * Width + x) are
+    /// Everything in the grid, and which of it touches which cell. The shapes touching cell i (y * Width + x) are
     /// CellShapes[CellStart[i]..CellStart[i + 1]]. None of these arrays is written to once the grid is built,
     /// a rebuild makes new ones, so they can be held on to by whoever needs the map as it was.
     /// </summary>

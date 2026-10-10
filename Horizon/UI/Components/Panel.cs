@@ -6,7 +6,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// A container. On its own it is invisible and just groups its children; give it a
+/// A container. On its own it is invisible and just groups its children. Give it a
 /// <see cref="Background"/> or a <see cref="Color"/> and it becomes a backdrop that also stops the
 /// pointer from reaching what is behind it.
 /// Unless given a size it wraps its largest child plus its padding.

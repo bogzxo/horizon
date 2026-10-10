@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.Input;
 using Horizon.Physics;
@@ -20,16 +21,23 @@ namespace Horizon.Testing.Examples.Showcase;
 /// <summary>
 /// Everything the other examples show, in one scene, the way a game has it. The street of the tile map example
 /// with its lamps lit and its walls throwing shadows, a blob you walk and jump along it who throws one of his own,
-/// rain that lands on the roofs and the ground, a HUD out of a layout file, and the glass of an old telly over
-/// the lot. There is nothing new in here, which is the point, it is the other examples added to one another and
-/// each part is a few lines because the engine does the rest.
+/// rain that lands on the roofs, the ground and him, a HUD out of a layout file, and the glass of an old telly
+/// over the world. There is nothing new in here, which is the point, it is the other examples added to one another
+/// and each part is a few lines because the engine does the rest.
 /// <para>
 /// How it is put together, from the outside in. A <see cref="Renderer2D"/> is the screen and has the tube on it.
 /// In it a <see cref="DeferredRenderer2D"/> is the world, lit. In that go the map, a batch with the blob, the rain
-/// and the map's front layer, in the order they are drawn. The HUD is added to the screen too, so it is behind the
-/// glass and not lit. The map says where the player starts, where the lamps hang and what its signs read, and
-/// its solid layer is the colliders the blob stands on, the walls the lamps are blocked by and the ground the
-/// rain lands on, all three from the one layer.
+/// and the map's front layer, in the order they are drawn. The HUD is the scene's own and drawn after the screen,
+/// so it is in front of the glass. A tube bends and smears whatever is behind it, which suits a street at night
+/// and makes small print something to squint at. The map says where the player starts, where the lamps hang and
+/// what its signs read, and its solid layer is the walls the lamps are blocked by and, as one body in a
+/// <see cref="PhysicsWorld"/>, what the blob stands on and the rain lands on.
+/// </para>
+/// <para>
+/// The blob is a body in that world as well, pushed about by a <see cref="CharacterController2D"/>. The keys don't
+/// set how fast he goes, they push, so he gets up to speed, slows to a stop and skids when he turns round, and
+/// his jump is as high as the button is held for. The world does the rest, stops him at the walls, lands him on
+/// the roofs and has the rain bounce off his head.
 /// </para>
 /// </summary>
 public class TownExample : Scene, ITestControls
@@ -39,10 +47,14 @@ public class TownExample : Scene, ITestControls
     // How many pixels of the screen a pixel of the art is
     private const float PIXEL = 3.0f;
 
-    // How the blob gets about, in units (art pixels) a second
-    private const float WALK_SPEED = 80.0f;
-    private const float JUMP_SPEED = 215.0f;
+    // How the blob gets about, in units (art pixels) a second, and how hard the street pulls him down. How quickly
+    // he gets up to that speed and back down from it is the controller's to say, see CharacterController2D
+    private const float WALK_SPEED = 88.0f;
+    private const float JUMP_SPEED = 225.0f;
     private const float GRAVITY = 620.0f;
+
+    // How fast he has to come down for it to show
+    private const float HARD_LANDING = 150.0f;
 
     // The box of him that bumps into things, a bit narrower than he is drawn
     private static readonly Vector2 Body = new(10.0f, 10.0f);
@@ -58,8 +70,8 @@ public class TownExample : Scene, ITestControls
     // Listed on screen by the test host
     public IReadOnlyList<TestControl> Controls { get; } =
     [
-        new("A / D, arrows", "walk"),
-        new("Space", "jump"),
+        new("A / D, arrows, stick", "walk"),
+        new("Space", "jump, held for a higher one"),
         new("L", "the lantern he carries"),
         new("F", "path traced lighting"),
         new("R", "rain"),
@@ -74,17 +86,18 @@ public class TownExample : Scene, ITestControls
     private OcclusionMap2D? _occlusion;
     private CrtEffect _tube = null!;
     private Sprite _hero = null!;
+    private CharacterController2D _walker = null!;
+    private Vector2 _heroSize;
     private Light2D _lantern = null!;
     private ParticleRenderer2D _rain = null!;
     private ProgressBar _street = null!;
     private Label _notice = null!;
 
-    private List<TileMapBox> _colliders = [];
     private readonly List<(Vector2 Min, Vector2 Max, string Says)> _zones = [];
     private readonly List<(Vector2 Position, string Says)> _signs = [];
 
-    private Vector2 _position, _velocity, _eye;
-    private bool _grounded, _raining = true;
+    private Vector2 _position, _eye;
+    private bool _raining = true;
     private float _rainDue;
 
     public TownExample()
@@ -142,18 +155,38 @@ public class TownExample : Scene, ITestControls
         var actors = _world.AddEntity(new SpriteBatch());
         _hero = World.CreateBlob(actors);
         _hero.CastsShadows = true;
+        _heroSize = _hero.Transform.Size;
 
-        // One layer of the map, three jobs. What the lamps are blocked by...
+        // One layer of the map, two jobs. What the lamps are blocked by...
         _world.Occlusion = _occlusion = _map.CreateOcclusion();
 
-        // ...what the blob stands on...
-        _colliders = _map.BuildColliders();
-
-        // ...and what the rain lands on, as a body in a physics world, which is all the world is here for
+        // ...and, as one body in a physics world, what the blob stands on and the rain lands on. The street pulls
+        // down on whatever is a body in it, the rain has a gravity of its own because rain is a lot floatier
         var physics = AddComponent<PhysicsWorld>();
+        physics.Gravity = new Vector2(0.0f, -GRAVITY);
+
         var ground = physics.CreateBody(PhysicsBodySimulationType.Static);
-        foreach (TileMapBox box in _colliders)
+        foreach (TileMapBox box in _map.BuildColliders())
             ground.CreateRectangularFixture(box.Min, box.Size);
+
+        // The two ends of the street, walls nobody sees and a good way taller than anybody jumps
+        var wall = new Vector2(16.0f, _map.Size.Y + 600.0f);
+        ground.CreateRectangularFixture(new Vector2(_map.Min.X - wall.X, _map.Min.Y - 200.0f), wall);
+        ground.CreateRectangularFixture(new Vector2(_map.Max.X, _map.Min.Y - 200.0f), wall);
+
+        // And the blob, a body in the same world with somebody steering it. He is squashed as he lands and
+        // stretched as he jumps, which is the two lines that make a box with a face on it look like it is alive
+        _walker = AddComponent(new CharacterController2D(physics, _position, Body) { MaxSpeed = WALK_SPEED, JumpSpeed = JUMP_SPEED });
+        _walker.Jumped += () => Squash(new Vector2(0.8f, 1.22f), 0.24f);
+        _walker.Landed += speed =>
+        {
+            if (speed < HARD_LANDING) return;
+
+            Squash(new Vector2(1.28f, 0.72f), 0.3f);
+
+            // What he lands in when it is raining, out to both sides
+            if (_raining) _rain.AddCone(_walker.Position + new Vector2(0.0f, 1.0f), Vector2.UnitY, MathF.PI * 0.8f, 10, 70);
+        };
 
         _rain = _world.AddEntity(new ParticleRenderer2D(4096, new PhysicsParticleSimulator2D(physics) { Radius = 1.0f, Restitution = 0.25f, Friction = 6.0f })
         {
@@ -184,9 +217,11 @@ public class TownExample : Scene, ITestControls
             CastsShadows = false
         });
 
-        /* The HUD, behind the glass with the rest but not lit */
+        /* The HUD, in front of the glass. It is the scene's and not the screen's, so it is drawn after the screen
+           is, tube and all, straight onto the frame. Behind the glass it was scan lines and a bend through every
+           letter, and a HUD nobody can read is decoration */
 
-        var hud = _screen.AddComponent(new UICompositor(_screenCamera));
+        var hud = AddComponent(new UICompositor(_screenCamera));
         var layout = hud.CreateModule().LoadLayout(HUD);
         _street = layout.Get<ProgressBar>("street");
         _notice = layout.Get<Label>("notice");
@@ -206,70 +241,51 @@ public class TownExample : Scene, ITestControls
         if (keyboard.WasPressed(Key.R)) _raining = !_raining;
         if (keyboard.WasPressed(Key.L)) _lantern.Enabled = !_lantern.Enabled;
 
-        float walk = keyboard.Axis(Key.A, Key.D) + keyboard.Axis(Key.Left, Key.Right)
+        // What the player wants, which is all the keys are. A stick held halfway is a walk at half the speed
+        float walk = keyboard.Axis(Key.A, Key.D) + keyboard.Axis(Key.Left, Key.Right) + (pad?.LeftStick.X ?? 0.0f)
             + (pad?.IsDown(GamepadInput.DPadRight) == true ? 1.0f : 0.0f) - (pad?.IsDown(GamepadInput.DPadLeft) == true ? 1.0f : 0.0f);
-        bool jump = keyboard.WasPressed(Key.Space) || keyboard.WasPressed(Key.Up) || keyboard.WasPressed(Key.W) || pad?.WasPressed(GamepadInput.A) == true;
 
-        MoveHero(Math.Clamp(walk, -1.0f, 1.0f), jump, dt);
+        _walker.Move = new Vector2(Math.Clamp(walk, -1.0f, 1.0f), 0.0f);
+        _walker.HoldingJump = keyboard.IsDown(Key.Space) || keyboard.IsDown(Key.Up) || keyboard.IsDown(Key.W) || pad?.IsDown(GamepadInput.A) == true;
+
+        if (keyboard.WasPressed(Key.Space) || keyboard.WasPressed(Key.Up) || keyboard.WasPressed(Key.W) || pad?.WasPressed(GamepadInput.A) == true)
+            _walker.Jump();
+
+        ShowHero();
         FollowHero(dt);
         Rain(dt);
         ReadTheRoom();
     }
 
     /// <summary>
-    /// Helper method to move the blob. A box against the boxes of the map, sideways first and then up and down,
-    /// which is all a platformer needs to stand on things and bump into them.
+    /// Helper method to put the sprite where the body is. The world moved it, in its physics step, all there is
+    /// left to do is look the part.
     /// </summary>
-    private void MoveHero(float walk, bool jump, float dt)
+    private void ShowHero()
     {
-        _velocity.X = walk * WALK_SPEED;
-        _velocity.Y -= GRAVITY * dt;
-        if (jump && _grounded) _velocity.Y = JUMP_SPEED;
+        _position = _walker.Position;
 
-        // Sideways, and out of whatever that walked him into
-        _position.X += _velocity.X * dt;
-        _position.X = Math.Clamp(_position.X, _map.Min.X + Body.X, _map.Max.X - Body.X);
-        foreach (TileMapBox box in _colliders)
-        {
-            if (!Touches(box)) continue;
-            _position.X = _velocity.X > 0.0f ? box.Min.X - Body.X / 2.0f : box.Min.X + box.Size.X + Body.X / 2.0f;
-        }
-
-        // Then up or down, landing on what is under him and bumping his head on what is over him
-        _position.Y += _velocity.Y * dt;
-        _grounded = false;
-        foreach (TileMapBox box in _colliders)
-        {
-            if (!Touches(box)) continue;
-
-            if (_velocity.Y <= 0.0f)
-            {
-                _position.Y = box.Min.Y + box.Size.Y;
-                _grounded = true;
-            }
-            else
-            {
-                _position.Y = box.Min.Y - Body.Y;
-            }
-
-            _velocity.Y = 0.0f;
-        }
-
-        // The sprite follows. Its Position is where his feet are (Origin.Bottom), and the art faces right
+        // The sprite's position is where his feet are (Origin.Bottom) and so is the body's, and the art faces right
         _hero.Transform.Position = _position;
-        if (walk != 0.0f) _hero.Flipped = walk < 0.0f;
-        _hero.SetAnimation(_grounded && walk == 0.0f ? "idle" : "hop");
+        _hero.Flipped = _walker.Facing.X < 0.0f;
+
+        // Stood still is on the ground and all but stopped. Sliding to a halt is still hopping, he has not got there yet
+        bool still = _walker.Grounded && MathF.Abs(_walker.Velocity.X) < 8.0f;
+        _hero.SetAnimation(still ? "idle" : "hop");
 
         // In the middle of him. It throws no shadows, so being inside the sprite that carries it is no trouble
         _lantern.Position = _position + LanternHold;
     }
 
-    /// <summary>Helper method for whether his box is in a box of the map, by more than a hair.</summary>
-    private bool Touches(TileMapBox box)
+    /// <summary>
+    /// Helper method to pull the blob out of shape and let him spring back to the size he is. Out of his own size
+    /// every time and not out of the one he has right now, or a hop straight after a landing settles a bit fatter
+    /// than he started and ten hops on he is a pancake.
+    /// </summary>
+    private void Squash(Vector2 by, float duration)
     {
-        const float hair = 0.01f;
-        return _position.X + Body.X / 2.0f > box.Min.X + hair && _position.X - Body.X / 2.0f < box.Min.X + box.Size.X - hair
-            && _position.Y + Body.Y > box.Min.Y + hair && _position.Y < box.Min.Y + box.Size.Y - hair;
+        _hero.Transform.Size = _heroSize * by;
+        _hero.TweenSize(_heroSize, duration).SetEasing(Easing.OutBack);
     }
 
     /// <summary>Helper method to have the camera go after him, smoothly, and never look past the edge of the map.</summary>

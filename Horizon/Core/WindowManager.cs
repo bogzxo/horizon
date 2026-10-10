@@ -36,7 +36,7 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// There are three of them. The thread the window was made on (the one <see cref="Run"/> is called on) hears what the
 /// system has to say about the window and its input, about a thousand times a second whatever the frames are doing,
 /// and is the only one that may change the window. Frames are drawn on a thread of their own, the only one that may
-/// talk to the GPU. The game is simulated on a third (see <see cref="SimulationLoop"/>): its logic and its physics,
+/// talk to the GPU. The game is simulated on a third (see <see cref="SimulationLoop"/>), its logic and its physics,
 /// one tick after another, each at a rate of its own. So a frame that takes its time doesn't make the input late,
 /// and a window that is being dragged about doesn't stop the drawing.
 /// </para>
@@ -46,7 +46,7 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// at the moment between them the frame is due to show (<see cref="Presentation"/>). So whatever moves goes the same
 /// distance for the same time from frame to frame, however many frames there are a second, and a frame that takes
 /// its time doesn't hold the game up (or the other way round). The simulation only stands still for what has to
-/// happen on this thread with nobody touching the game: setting up what was added to it (<see cref="EntityLifecycle"/>),
+/// happen on this thread with nobody touching the game, which is setting up what was added to it (<see cref="EntityLifecycle"/>),
 /// swapping scenes, and whatever else asks for it (<see cref="RequestExclusive"/>). It does that at the end of a tick,
 /// and the next frame gets it done before it draws.
 /// </para>
@@ -118,7 +118,7 @@ public class WindowManager : GameComponent, IDisposable
     private volatile DisplayState display;
 
     /// <summary>
-    /// How drawing and each of the loops of the engine are doing: how often they come round, how long their turns
+    /// How drawing and each of the loops of the engine are doing, how often they come round, how long their turns
     /// take and how unevenly they come. The simulation's are there once it has been started, which is after the first frame.
     /// </summary>
     public IReadOnlyList<LoopStatistics> Loops { get; private set; }
@@ -146,17 +146,17 @@ public class WindowManager : GameComponent, IDisposable
     public DisplayState DisplayState => display;
 
     /// <summary>
-    /// The screen aspect ratio (w/h)
+    /// How wide what is drawn into is for how high, the width over the height.
     /// </summary>
     public float AspectRatio => display.AspectRatio;
 
     /// <summary>
-    /// The viewport size.
+    /// How big what is drawn into is, in pixels.
     /// </summary>
     public Vector2 ViewportSize => display.ViewportSize;
 
     /// <summary>
-    /// The window size.
+    /// How big the window is, in pixels.
     /// </summary>
     public Vector2 WindowSize => display.WindowSize;
 
@@ -209,20 +209,20 @@ public class WindowManager : GameComponent, IDisposable
 
     /// <summary>
     /// Raised on the thread of the window every time it has heard what the system had to say (keys, the mouse,
-    /// gamepads coming and going), about a thousand times a second: the moment for whoever samples input to look at
+    /// gamepads coming and going), about a thousand times a second. The moment for whoever samples input to look at
     /// the devices, and for whatever else may only be done on this thread (the clipboard).
     /// </summary>
     public event Action? EventsProcessed;
 
     /// <summary>
-    /// Raised on the thread that draws, at the start of a frame, with the simulation standing still: the place for
+    /// Raised on the thread that draws, at the start of a frame, with the simulation standing still. The place for
     /// whatever has to be done on that thread without anybody touching the game (swapping scenes). Whoever has
     /// something of the kind says so with <see cref="RequestExclusive"/> and checks whether it is still there to be done.
     /// </summary>
     public event Action<float>? Exclusive;
 
     /// <summary>
-    /// Asks for <see cref="Exclusive"/> to be raised as soon as it can be: at the start of the next frame, after the
+    /// Asks for <see cref="Exclusive"/> to be raised as soon as it can be, which is at the start of the next frame, after the
     /// simulation has finished the tick it is in. From any thread.
     /// </summary>
     public void RequestExclusive() => exclusiveRequested = true;
@@ -234,12 +234,12 @@ public class WindowManager : GameComponent, IDisposable
 
     private volatile bool closing;
 
-    // copy of initial WindowOptions instance.
+    // what the window was asked to be when it was made, kept as it was
     public readonly WindowOptions WindowOptions;
 
     public WindowManager(in WindowManagerConfiguration config)
     {
-        // GLFW has no Vulkan to offer on a Mac, SDL has (through a Metal surface) and can be told where MoltenVK is
+        // GLFW has no Vulkan to offer on a Mac (cheers, Apple), SDL has (through a Metal surface) and can be told where MoltenVK is
         if (OperatingSystem.IsMacOS())
         {
             LoadMoltenVK();
@@ -277,7 +277,7 @@ public class WindowManager : GameComponent, IDisposable
 
         Presentation = config.Presentation;
 
-        // Create a window with the specified options.
+        // What the window is asked to be. Vulkan gets no say in how it is paced, see below
         WindowOptions = WindowOptions.Default with
         {
             // Vulkan, so the window only has a surface to offer and the device does the rest
@@ -308,7 +308,6 @@ public class WindowManager : GameComponent, IDisposable
         };
         framePeriod = PeriodOf(Display.FramesPerSecond);
 
-        // Create the window.
         this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
         SubscribeWindowEvents();
     }
@@ -390,7 +389,7 @@ public class WindowManager : GameComponent, IDisposable
     private void DrawFrame(float dt)
     {
         // The time the last frame spent on exclusive work (setting a scene up can take a good while) is time the game
-        // stood still: it isn't time for what moves by the frames to move on by, or a transition would jump the moment
+        // stood still. It isn't time for what moves by the frames to move on by, or a transition would jump the moment
         // the scene it was covering up is there
         dt = Math.Max(0.0f, dt - stalled);
         stalled = 0.0f;
@@ -443,7 +442,7 @@ public class WindowManager : GameComponent, IDisposable
     /// <summary>
     /// Helper method to do whatever has to happen on this thread with nobody touching the game, at the start of a frame.
     /// </summary>
-    /// <param name="always">Whether the simulation is standing still for it: if not, only what doesn't touch the game is done.</param>
+    /// <param name="always">Whether the simulation is standing still for it. If not, only what doesn't touch the game is done.</param>
     private void DoExclusiveWork(float dt, bool always)
     {
         long started = Stopwatch.GetTimestamp();
@@ -482,7 +481,7 @@ public class WindowManager : GameComponent, IDisposable
 
     private void WindowResize(Silk.NET.Maths.Vector2D<int> size)
     {
-        // Minimised windows say they are nothing by nothing, which nobody can draw into
+        // Minimised windows say they are nothing by nothing, which nobody can draw into, not even Jesus
         if (size.X <= 0 || size.Y <= 0) return;
 
         UpdateViewport();
@@ -502,7 +501,7 @@ public class WindowManager : GameComponent, IDisposable
     /// Changes how the window is shown and how often it is drawn. From any thread.
     /// <para>
     /// It takes hold at the start of the next frame, before anything of that frame is set up or drawn. So a scene that is set in the same
-    /// update as this is called is made for the window as it is going to be, which is the way to do it: nothing that was made for the
+    /// update as this is called is made for the window as it is going to be, which is the way to do it. Nothing that was made for the
     /// old size (a renderer, a camera) is resized, a scene that is to fit the new one has to be made again.
     /// </para>
     /// </summary>
@@ -516,8 +515,8 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to do what <see cref="Apply"/> was asked for. On the thread that draws, at the start of a frame:
-    /// how often frames are drawn and swapped is up to that thread, the window itself is changed on its own thread
+    /// Helper method to do what <see cref="Apply"/> was asked for. On the thread that draws, at the start of a frame.
+    /// How often frames are drawn and swapped is up to that thread, the window itself is changed on its own thread
     /// while this one waits, so the frame finds it the way it was asked to be.
     /// </summary>
     private void ApplyPendingDisplay()
@@ -532,6 +531,18 @@ public class WindowManager : GameComponent, IDisposable
             pendingDisplay = null;
         }
 
+        ApplyDisplay(settings);
+    }
+
+    /// <summary>
+    /// Helper method to make the display what somebody asked it to be. Apart from <see cref="ApplyPendingDisplay"/>
+    /// on purpose, and it has to stay apart. There is a lambda in here that needs the settings, and what a lambda
+    /// needs is put on the heap as the method it is written in starts, not when it gets to the lambda. Written in
+    /// there this was 48 bytes of garbage every single frame, to find out that nothing was pending and leave again.
+    /// The whole engine made nothing else on the render thread, the bastard.
+    /// </summary>
+    private void ApplyDisplay(DisplaySettings settings)
+    {
         framePeriod = PeriodOf(settings.FramesPerSecond);
         Graphics?.SetVSync(settings.VSync);
 
@@ -648,7 +659,7 @@ public class WindowManager : GameComponent, IDisposable
 
         IsRunning = true;
 
-        // Create the window. Everything that draws happens on a thread of its own, see DrawFrames
+        // The window, and then everything that draws happens on a thread of its own, see DrawFrames
         _window.Initialize();
 
         renderThread = new Thread(DrawFrames)
@@ -687,7 +698,7 @@ public class WindowManager : GameComponent, IDisposable
         // Whatever is let go of from here on is let go of here, GPU and all
         EntityLifecycle.ClaimRenderThread();
 
-        // Dispose and unload
+        // One last listen to the system, so the window gets to hear it is closed
         _window.DoEvents();
 
         renderFailure?.Throw();
@@ -794,7 +805,7 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// What the simulation loop runs: the engine's updates, and the publishing of a snapshot at the end of every tick.
+    /// What the simulation loop runs, the engine's updates and the publishing of a snapshot at the end of every tick.
     /// </summary>
     private sealed class Host(WindowManager window) : ISimulationHost
     {
@@ -822,7 +833,7 @@ public class WindowManager : GameComponent, IDisposable
                 long parked = Stopwatch.GetTimestamp();
                 window.Rendezvous();
 
-                // Stood still for longer than a tick (a scene was set up): carried on from now rather than raced
+                // Stood still for longer than a tick (a scene was set up), so it carries on from now rather than racing
                 // through the ticks that were missed, which would be published all at once and late, and have the
                 // frames drawn further in the past for a while just as the new scene is uncovered
                 if (window.simulation is { } loop && Stopwatch.GetTimestamp() - parked > Stopwatch.Frequency / loop.TickRate)
@@ -842,7 +853,7 @@ public class WindowManager : GameComponent, IDisposable
         if (simulationResumed.Wait(LONGEST_SET_UP_WAIT))
             return;
 
-        // Nobody came (no frames are being drawn): take it back, unless a frame took it just now, then wait for it to be done
+        // Nobody came (no frames are being drawn, lovely). Take it back, unless a frame took it just now, then wait for it to be done
         if (simulationParked.Wait(0))
             return;
 
@@ -908,6 +919,8 @@ public class WindowManager : GameComponent, IDisposable
         _window.Reset();
         _window.Dispose();
         windowWake.Dispose();
+        simulationParked.Dispose();
+        simulationResumed.Dispose();
         allocations?.Dispose();
 
         Log.Info($"[{Name}] Disposed!");

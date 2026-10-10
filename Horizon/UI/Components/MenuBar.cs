@@ -7,7 +7,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// One line of a <see cref="Menu"/>: something to do, or a rule between two groups of them.
+/// One line of a <see cref="Menu"/>, something to do or a rule between two groups of them.
 /// </summary>
 public sealed class MenuItem
 {
@@ -33,7 +33,7 @@ public sealed class MenuItem
 }
 
 /// <summary>
-/// One of the menus of a <see cref="MenuBar"/>: a word on the bar and the list that opens under it.
+/// One of the menus of a <see cref="MenuBar"/>, a word on the bar and the list that opens under it.
 /// </summary>
 public sealed class Menu(string title)
 {
@@ -67,7 +67,7 @@ public sealed class Menu(string title)
 /// <summary>
 /// A strip of menus. A row of words, each of which opens a list of things to do under it. Clicking a word opens
 /// its menu, clicking an item does what it says and closes it, clicking anywhere else closes it without doing
-/// anything. The menus are put together in code:
+/// anything. The menus are put together in code.
 /// <code>
 /// Menu file = bar.AddMenu("File");
 /// file.Add("Open...", OpenPressed, "Ctrl+O");

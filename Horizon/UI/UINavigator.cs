@@ -8,9 +8,9 @@ using Silk.NET.Input;
 namespace Horizon.UI;
 
 /// <summary>
-/// Drives a module without a pointer: a gamepad or the keyboard walking from one component to the next, with one
+/// Drives a module without a pointer, a gamepad or the keyboard walking from one component to the next, with one
 /// of them selected at a time (lit the way the pointer lights it, see <see cref="UIComponent.IsSelected"/>) and the
-/// confirm button doing what a click would. Every module has one, see <see cref="UIModule.Navigation"/>:
+/// confirm button doing what a click would. Every module has one, see <see cref="UIModule.Navigation"/>.
 /// <code>
 /// var nav = layout.Module.Navigation;
 /// nav.SelectFirst();
@@ -173,7 +173,7 @@ public sealed class UINavigator
             float along = forward - Extent(from, direction) - Extent(candidate.Bounds, direction);
             float aside = (offset - forward * direction).Length();
 
-            // Ahead is in front and within a cone of the way, widened by how far the two reach across it: a grid cell
+            // Ahead is in front and within a cone of the way, widened by how far the two reach across it. A grid cell
             // under this one is, the next column over at the same height isn't
             Vector2 across = new(-direction.Y, direction.X);
             float reach = Extent(from, across) + Extent(candidate.Bounds, across);
@@ -207,7 +207,7 @@ public sealed class UINavigator
     private static float Extent(UIRect rect, Vector2 direction) =>
         MathF.Abs(direction.X) * rect.Width * 0.5f + MathF.Abs(direction.Y) * rect.Height * 0.5f;
 
-    /// <summary>Does to the selected component what a click would: presses a button, flips a toggle, opens a dropdown.</summary>
+    /// <summary>Does to the selected component what a click would, presses a button, flips a toggle, opens a dropdown.</summary>
     public void Activate()
     {
         if (Current is { } current && IsSelectable(current))
@@ -252,7 +252,7 @@ public sealed class UINavigator
             Move(0, 1);
     }
 
-    /// <summary>Whether a component is there to be selected right now: in the scope, shown, and switched on.</summary>
+    /// <summary>Whether a component is there to be selected right now, which is in the scope, shown and switched on.</summary>
     private bool IsSelectable(UIComponent component)
     {
         if (!component.Navigable || !component.EnabledInHierarchy || component.Module != module)

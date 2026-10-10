@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The engine, all of it in one library: logging, the core (entities, threading, windowing), content management,
-    the OpenGL layer, input, the web host, the engine itself, rendering, the UI and physics. Each keeps its own
+    The engine, all of it in one library. Logging, the core (entities, threading, windowing), content management,
+    the Vulkan device, input, the engine itself, rendering, the UI and physics. Each keeps its own
     namespace (Horizon.Core, Horizon.Rendering, Horizon.UI, ...) and folder, but there is nothing between them that
-    can't see the rest: the UI can be used by the engine's own debugging and the physics draws its outlines with
+    can't see the rest, so the UI can be used by the engine's own debugging and the physics draws its outlines with
     the renderer's primitives. Only the scripting language (Horizon.HIDL) is a project of its own, as it has an
     editor that wants nothing of the engine.
   -->
@@ -62,7 +62,7 @@
 
   <!--
     What the engine needs next to it at run time, at the same paths whichever game it is in: its shaders, the fonts
-    the UI comes with, the UI skins, and the pages of the web dashboard. A game that packs itself into one file
+    the UI comes with and the UI skins. A game that packs itself into one file
     (see Fighter2D) picks these up from here.
   -->
   <ItemGroup>

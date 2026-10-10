@@ -101,9 +101,10 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
 
         // One bulk copy of only the live particles into this frame's region of the stream, which waits for the GPU
         // to be done reading it (three frames on, it is)
+        int live;
         lock (frameLock)
         {
-            int live = frontCount;
+            live = frontCount;
             Span<ParticleInstance> into = instances.Begin(live);
             if (into.IsEmpty)
                 return false;
@@ -113,7 +114,9 @@ public sealed class CpuParticleSimulator2D : ParticleSimulator2D
         }
 
         instances.BindRange(INSTANCES_BINDING);
-        draw = new ParticleDraw((uint)frontCount, 0);
+        // As many as were copied. The count can have moved on by now (the simulation swapped again) and drawing
+        // by the new one drew a few particles nobody had written, whatever was lying about in the buffer
+        draw = new ParticleDraw((uint)live, 0);
         return true;
     }
 

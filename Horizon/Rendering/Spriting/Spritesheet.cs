@@ -1,6 +1,5 @@
 using Horizon.Logging;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 
 using Horizon.Engine;
 using Horizon.Graphics;
@@ -50,7 +49,7 @@ public class SpriteSheet
         var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/" + defFileName));
         if (!success)
         {
-            Log.Error($"Malformed sprite definition!\r\b{msg}");
+            Log.Error($"Malformed sprite definition!\n{msg}");
             return (false, null!, null!);
         }
 
@@ -90,7 +89,7 @@ public class SpriteSheet
                 else { Log.Error("Invalid sprite grid width!"); return (false, null!, null!); }
 
                 if (grid_size.Properties["h"] is NumberValue grid_height) gridSizeY = grid_height.Value;
-                else { Log.Error("Invalid sprite grid width!"); return (false, null!, null!); }
+                else { Log.Error("Invalid sprite grid height!"); return (false, null!, null!); }
             }
 
             SpriteSheet sheet;
@@ -154,25 +153,6 @@ public class SpriteSheet
             Texture = texture,
             SpriteSize = spriteSize,
             SingleSpriteSize = spriteSize / new Vector2(Math.Max(1, texture.Width), Math.Max(1, texture.Height))
-        };
-    }
-
-    /// <summary>Gets the static texture coordinates of a named sprite.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal Vector2[] GetTextureCoordinates(string name)
-    {
-        if (!Sprites.TryGetValue(name, out var sprite))
-            return Array.Empty<Vector2>();
-
-        Vector2 topLeftTexCoord = sprite.Position / new Vector2(Width, Height);
-        Vector2 bottomRightTexCoord = (sprite.Position + sprite.Size) / new Vector2(Width, Height);
-
-        return new Vector2[]
-        {
-            topLeftTexCoord,
-            new Vector2(bottomRightTexCoord.X, topLeftTexCoord.Y),
-            bottomRightTexCoord,
-            new Vector2(topLeftTexCoord.X, bottomRightTexCoord.Y)
         };
     }
 }

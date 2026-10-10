@@ -24,12 +24,12 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
     /// <summary>The size of the window, in pixels.</summary>
     protected static Vector2 ScreenSize => GameEngine.Instance.WindowManager.ViewportSize;
 
-    /// <summary>GL thread, once, before the transition first draws. Where its shaders are made.</summary>
+    /// <summary>Render thread, once, before the transition first draws. Where its shaders are made.</summary>
     protected virtual void Initialize()
     { }
 
     /// <summary>
-    /// GL thread, once a frame for as long as the transition runs. Nothing is blended and nothing is tested, what is drawn replaces what is there.
+    /// Render thread, once a frame for as long as the transition runs. Nothing is blended and nothing is tested, what is drawn replaces what is there.
     /// See <see cref="SceneTransition.Render"/> for what the cover is and when a scene is arriving.
     /// </summary>
     protected abstract void Draw(float cover, bool arriving, float dt);
@@ -114,7 +114,7 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
 
     /// <summary>
     /// Told the transition that just ended is over. The copy of the frame is kept for the next time (it is made anew
-    /// when the window is another size): making it at the start of every transition is a hitch right when the player
+    /// when the window is another size), making it at the start of every transition is a hitch right when the player
     /// pressed something. See <see cref="Dispose"/> for letting go of it. Whoever overrides this calls this one as well.
     /// </summary>
     public override void Finish()
@@ -122,7 +122,7 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
 
     /// <summary>
     /// Lets go of every picture the transition keeps between one time and the next, for a transition that isn't going
-    /// to be used again. GL thread, and not while it runs. Whoever overrides this to let go of more calls this one as well.
+    /// to be used again. Render thread, and not while it runs. Whoever overrides this to let go of more calls this one as well.
     /// </summary>
     public virtual void Dispose()
     {

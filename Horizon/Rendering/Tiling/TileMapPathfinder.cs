@@ -16,7 +16,7 @@ public enum TileMapMove
 }
 
 /// <summary>
-/// Somebody who finds their way across a map, as far as the tiles are concerned: how big they are and what they can do.
+/// Somebody who finds their way across a map, as far as the tiles are concerned, how big they are and what they can do.
 /// </summary>
 /// <param name="Size">How wide and high they are, in the world's units. They need that much room to stand somewhere.</param>
 /// <param name="Walks">Whether they walk along the floor at all (something that flies finds a way through the air instead).</param>
@@ -25,7 +25,7 @@ public enum TileMapMove
 public readonly record struct TileMapAgent(Vector2 Size, bool Walks = true, float JumpHeight = 0.0f, float JumpDistance = 0.0f);
 
 /// <summary>
-/// One stop of a path across a map: where to stand (the feet, on the floor in the middle of the tile) and how to get there.
+/// One stop of a path across a map, where to stand (the feet, on the floor in the middle of the tile) and how to get there.
 /// </summary>
 /// <param name="Position">Where the feet go, in the world.</param>
 /// <param name="X">The column of the tile, the way Tiled counts them.</param>
@@ -34,7 +34,7 @@ public readonly record struct TileMapAgent(Vector2 Size, bool Walks = true, floa
 public readonly record struct TileMapPathStep(Vector2 Position, int X, int Y, TileMapMove Move);
 
 /// <summary>
-/// Finds the way across a <see cref="TileMap"/> for whoever walks it without a player steering them: a dummy going
+/// Finds the way across a <see cref="TileMap"/> for whoever walks it without a player steering them, a dummy going
 /// after the player, a character strolling over to somewhere. The floor is every tile somebody can stand on (one that
 /// isn't solid with a solid one under it, and room above for whoever is asking, see <see cref="TileMapAgent"/>) and
 /// the way is found over that floor with walks along it, jumps up and across whatever a jump can clear, and drops off
@@ -99,7 +99,7 @@ public sealed class TileMapPathfinder
     }
 
     /// <summary>
-    /// Whether somebody can stand on a tile: it isn't solid, the one under it is, and there is room above for them.
+    /// Whether somebody can stand on a tile. It isn't solid, the one under it is, and there is room above for them.
     /// </summary>
     public bool CanStand(int x, int y, in TileMapAgent agent)
     {
@@ -109,7 +109,7 @@ public sealed class TileMapPathfinder
         return HasRoom(x, y, agent);
     }
 
-    /// <summary>Whether there is room for somebody standing in a tile: the tiles they take up are all open.</summary>
+    /// <summary>Whether there is room for somebody standing in a tile, the tiles they take up are all open.</summary>
     private bool HasRoom(int x, int y, in TileMapAgent agent)
     {
         int rows = Math.Max(1, (int)MathF.Ceiling(agent.Size.Y / Map.TileSize.Y));
@@ -127,11 +127,11 @@ public sealed class TileMapPathfinder
         return true;
     }
 
-    /// <summary>Where the feet of somebody standing in a tile are: the middle of its bottom edge.</summary>
+    /// <summary>Where the feet of somebody standing in a tile are, the middle of its bottom edge.</summary>
     public Vector2 FeetOf(int x, int y) => Map.TileToWorld(x, y) - new Vector2(0.0f, Map.TileSize.Y * 0.5f);
 
     /// <summary>
-    /// The tile of the floor nearest to a spot of the world that somebody can stand on: the floor under the spot
+    /// The tile of the floor nearest to a spot of the world that somebody can stand on, the floor under the spot
     /// first, then whatever is nearest around it. Null if there is none anywhere near.
     /// </summary>
     public (int X, int Y)? NearestFloor(Vector2 world, in TileMapAgent agent)
@@ -238,7 +238,7 @@ public sealed class TileMapPathfinder
         Vector2.Distance(new Vector2(a.X, a.Y) * Map.TileSize, new Vector2(b.X, b.Y) * Map.TileSize);
 
     /// <summary>
-    /// Helper method for everywhere one can get to from a tile of the floor in one move: the tiles beside it along the
+    /// Helper method for everywhere one can get to from a tile of the floor in one move, the tiles beside it along the
     /// floor, what a jump reaches up and across, and the floor below its ledges.
     /// </summary>
     private void Neighbours(int x, int y, in TileMapAgent agent, List<((int X, int Y) Tile, TileMapMove Move, float Cost)> into)
@@ -280,7 +280,7 @@ public sealed class TileMapPathfinder
         if (jumpRows <= 0 && jumpColumns <= 0)
             return;
 
-        // Up and across: every tile of the floor a jump reaches whose way isn't blocked. Straight up is the tile
+        // Up and across, every tile of the floor a jump reaches whose way isn't blocked. Straight up is the tile
         // above a ledge, the rest are reached across the gap in between
         for (int dy = -jumpRows; dy <= 0; dy++)
         {
@@ -304,7 +304,7 @@ public sealed class TileMapPathfinder
     }
 
     /// <summary>
-    /// Helper method to say whether a jump from one tile of the floor to another has the room it needs: the tiles
+    /// Helper method to say whether a jump from one tile of the floor to another has the room it needs, the tiles
     /// along the way (over the top of the two, as a jump goes up before it comes down) are open.
     /// </summary>
     private bool ClearArc(int fromX, int fromY, int toX, int toY, in TileMapAgent agent)
@@ -318,7 +318,7 @@ public sealed class TileMapPathfinder
             float t = i / (float)steps;
             int x = fromX + (int)MathF.Round((toX - fromX) * t);
 
-            // The arc: from the start up to the peak and down to the end, every column has to be open from where the
+            // The arc. From the start up to the peak and down to the end, every column has to be open from where the
             // feet are at that moment up to the head
             float arc = fromY + (toY - fromY) * t - (1.0f - MathF.Abs(t * 2.0f - 1.0f)) * (fromY - peak + 0.0f) * 0.5f;
             int feet = (int)MathF.Floor(arc);

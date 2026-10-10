@@ -6,7 +6,7 @@ namespace Horizon.Core.Components;
 /// <summary>
 /// Where something is in a flat world, which way it is turned and how big it is.
 /// <para>
-/// The model matrix is only worked out when it is asked for after something changed, not on every change: moving
+/// The model matrix is only worked out when it is asked for after something changed, not on every change. Moving
 /// something about a few times in an update costs nothing more than moving it once.
 /// </para>
 /// </summary>
@@ -31,7 +31,7 @@ public class TransformComponent2D : GameComponent
     public int Epoch { get; private set; }
 
     /// <summary>
-    /// You may override this as a means to fight Z axis clipping.
+    /// How far along Z it sits. For when two things at the same depth fight over who is in front.
     /// </summary>
     public float ZOffset
     {
@@ -44,7 +44,7 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// Sets the origin around which the position is considered.
+    /// Which point of the thing its position is the position of, its middle unless said otherwise.
     /// </summary>
     public Origin Origin
     {
@@ -58,16 +58,17 @@ public class TransformComponent2D : GameComponent
 
     private Vector2 GetOriginOffset()
     {
-        // Assuming your base generic box vertices go from -0.5 to +0.5
+        // The quad everything is drawn as goes from -0.5 to 0.5 either way
         return origin switch
         {
             Origin.Center => new Vector2(0f, 0f),
 
-            // Stretching from the right means the right edge stays pinned at x=0
+            // Pinned by its right edge, so the rest of it is to the left of where it is
             Origin.Right => new Vector2(-0.5f, 0f),
             Origin.Left => new Vector2(0.5f, 0f),
 
-            Origin.Top => new Vector2(0f, -0.5f),  // Note: Y-sign depends on whether your engine is Y-up or Y-down
+            // Up is up, the world has its Y going up
+            Origin.Top => new Vector2(0f, -0.5f),
             Origin.Bottom => new Vector2(0f, 0.5f),
 
             Origin.TopLeft => new Vector2(0.5f, -0.5f),
@@ -89,7 +90,7 @@ public class TransformComponent2D : GameComponent
         float radians = float.DegreesToRadians(rot);
         float cos = MathF.Cos(radians), sin = MathF.Sin(radians);
 
-        // The same as translate * scale * rotate * translate, written out: a 2D transform has six numbers worth working out
+        // The same as translate * scale * rotate * translate, written out. A 2D transform has six numbers worth working out, the other ten are along for the ride
         float ax = size.X * cos, ay = size.X * sin;
         float bx = -size.Y * sin, by = size.Y * cos;
         float ox = originOffset.X, oy = originOffset.Y;
@@ -102,7 +103,7 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// The model matrix representing the transformation of the game entity.
+    /// The matrix that puts the unit quad where the thing is, turned and sized. Worked out the first time it is asked for after a change.
     /// </summary>
     public Matrix4x4 ModelMatrix
     {
@@ -119,7 +120,7 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// Gets or sets the position of the game entity in 3D space.
+    /// Where it is in the world.
     /// </summary>
     public Vector2 Position
     {
@@ -132,7 +133,7 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// Gets or sets the rotation angles of the game entity in degrees around each axis (X, Y, and Z).
+    /// Which way it is turned, in degrees, anticlockwise.
     /// </summary>
     public float Rotation
     {
@@ -145,16 +146,15 @@ public class TransformComponent2D : GameComponent
     }
 
     /// <summary>
-    /// Sets the transform position relative to the center of the object.
+    /// Puts the thing so that its top left corner is at a position, rather than its middle.
     /// </summary>
-    /// <param name="position"></param>
     public void SetPositionRelativeToOrigin(Vector2 position)
     {
         Position = position + size / new Vector2(2, -2);
     }
 
     /// <summary>
-    /// Gets or sets the size in pixels.
+    /// How big it is, in units of the world.
     /// </summary>
     public Vector2 Size
     {
@@ -173,7 +173,7 @@ public class TransformComponent2D : GameComponent
     public void Snap() => Epoch++;
 
     /// <summary>
-    /// Initializes the transform component.
+    /// Nothing to make on the GPU, the matrix is just worked out afresh the first time it is wanted.
     /// </summary>
     public override void Initialize()
     {

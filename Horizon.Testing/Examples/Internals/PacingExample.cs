@@ -19,7 +19,7 @@ namespace Horizon.Testing.Examples.Internals;
 /// <summary>
 /// How evenly things move on screen. Sprites cross the screen at a steady speed, one moved by the logic and one by
 /// the physics, the camera pans along with them if asked to, and a UI marker is tweened back and forth at a steady
-/// speed too. Whatever moves at a steady speed ought to move the same distance for the same time between two frames;
+/// speed too. Whatever moves at a steady speed ought to move the same distance for the same time between two frames, and
 /// how far off that it is, in frames (a step that is 0.1 of a frame off went a tenth further or less far than it
 /// should have), is what the meter in the corner shows (and the log, every couple of seconds, for runs nobody
 /// watches). A judder that can hardly be seen is a number here.
@@ -29,6 +29,13 @@ namespace Horizon.Testing.Examples.Internals;
 /// it trails behind is the last line of the meter. T has a number in the UI change every tick, which is what a
 /// HUD with a clock in it does all day and used to be enough to have the whole UI drawn in steps. The pink
 /// square by the mouse is a <see cref="UICursor"/>, wave the mouse about and see whether it keeps up.
+/// </para>
+/// <para>
+/// A UI is only drawn anew so many times a second (<see cref="UICompositor.FrameRateLimit"/>, 120 unless told
+/// otherwise), which at a few thousand frames a second has the tag and the marker standing still for most of the
+/// frames and trailing the heart by a few of them. That is the limit doing what it is for and the meter says so, L
+/// takes it off to see what the UI does with every frame to itself. At a refresh rate there is nothing to see
+/// either way.
 /// </para>
 /// </summary>
 public class PacingExample : Scene, ITestControls
@@ -49,6 +56,7 @@ public class PacingExample : Scene, ITestControls
     [
         new("C", "camera follows / stands still"),
         new("T", "a number in the UI that changes every tick"),
+        new("L", "the UI drawn 120 times a second at the most / every frame"),
         new("F6", "interpolated / newest tick")
     ];
 
@@ -160,7 +168,7 @@ public class PacingExample : Scene, ITestControls
         position.X += SPEED * dt;
         if (position.X > SPAN / 2.0f)
         {
-            // Back in on the other side: put there, not moved there, so no frame shows it on its way across
+            // Back in on the other side, put there and not moved there, so no frame shows it on its way across
             position.X -= SPAN;
             runners.Break();
         }
@@ -188,6 +196,9 @@ public class PacingExample : Scene, ITestControls
         if (Engine.Input.Keyboard.WasPressed(Key.T))
             tickingOn = !tickingOn;
 
+        if (Engine.Input.Keyboard.WasPressed(Key.L))
+            compositor.FrameRateLimit = compositor.FrameRateLimit > 0.0f ? 0.0f : UICompositor.DefaultFrameRateLimit;
+
         // What every game does with a name tag, after it has moved whoever the tag belongs to. The UI is laid out
         // against what the camera sees, in its own units
         float scale = compositor.UIScale > 0.0f ? compositor.UIScale : 1.0f;
@@ -212,7 +223,7 @@ public class PacingExample : Scene, ITestControls
     }
 
     /// <summary>
-    /// Where the runners are drawn, as the renderer sees them this frame: between the last two ticks when drawn
+    /// Where the runners are drawn, as the renderer sees them this frame, between the last two ticks when drawn
     /// alongside the simulation (the way the sprite batch blends them), as they are with it standing still.
     /// Measured on the render thread.
     /// </summary>
@@ -235,7 +246,7 @@ public class PacingExample : Scene, ITestControls
     private static readonly uint MarkerColor = SpriteItem.PackColor(new Vector4(0.0f, 0.86f, 1.0f, 1.0f));
 
     /// <summary>
-    /// Where the UI draws the marker this frame, as uploaded to be drawn: the real thing, blended or not. Render thread,
+    /// Where the UI draws the marker this frame, as uploaded to be drawn, the real thing, blended or not. Render thread,
     /// after the UI was drawn.
     /// </summary>
     internal float? DrawnMarker()
@@ -265,6 +276,11 @@ public class PacingExample : Scene, ITestControls
         return null;
     }
 
+    /// <summary>How often the UI is drawn anew, for the meter.</summary>
+    internal string Limit => compositor.FrameRateLimit > 0.0f
+        ? $"{compositor.FrameRateLimit:0} times a second at the most (L)"
+        : "every frame (L)";
+
     // Where the camera is as the frame shows it, the UI is drawn against what it sees
     internal float CameraX => camera.Position.X;
 
@@ -278,13 +294,13 @@ public class PacingExample : Scene, ITestControls
     }
 
     /// <summary>
-    /// Watches every frame on the render thread: how far the runners got since the last one against how far a
+    /// Watches every frame on the render thread, how far the runners got since the last one against how far a
     /// steady speed would have taken them in that time.
     /// </summary>
     internal sealed class PacingProbe : GameComponent
     {
         private readonly PacingExample scene;
-        private readonly Track logic = new(), physics = new(), marker = new(backAndForth: true);
+        private readonly Track logic = new(), physics = new(), marker = new(backAndForth: true, held: true);
 
         // How far the tag was behind the heart, added up over the frames it was measured in
         private double trailing;
@@ -353,10 +369,11 @@ public class PacingExample : Scene, ITestControls
                 $"logic runner: {logic.Describe()}\n" +
                 $"physics runner: {physics.Describe()}\n" +
                 $"UI marker: {marker.Describe()}\n" +
-                $"UI tag: {tag}";
+                $"UI tag: {tag}\n" +
+                $"UI drawn: {scene.Limit}";
 
             summary = text;
-            Log.Info($"[Pacing] {frames / frameTime:0} fps, {scene.Mode} | logic {logic.Describe()} | physics {physics.Describe()} | UI {marker.Describe()} | tag {tag}");
+            Log.Info($"[Pacing] {frames / frameTime:0} fps, {scene.Mode} | logic {logic.Describe()} | physics {physics.Describe()} | UI {marker.Describe()} | tag {tag} | UI drawn {scene.Limit}");
 
             logic.Reset();
             physics.Reset();
@@ -370,8 +387,13 @@ public class PacingExample : Scene, ITestControls
         /// <summary>
         /// The steps one runner took between frames, against the steps a steady speed takes.
         /// </summary>
-        /// <param name="backAndForth">For something that turns round at the ends: the steps are measured either way, and the frames it turns round in not at all.</param>
-        private sealed class Track(bool backAndForth = false)
+        /// <param name="backAndForth">For something that turns round at the ends. The steps are measured either way, and the frames it turns round in not at all.</param>
+        /// <param name="held">
+        /// For something that isn't drawn anew every frame, a piece of UI under <see cref="UICompositor.FrameRateLimit"/>.
+        /// A frame it stands still in is no step that went wrong, it is a frame it wasn't drawn in, and the step it
+        /// takes when it is drawn again is held against all of the time since it last took one.
+        /// </param>
+        private sealed class Track(bool backAndForth = false, bool held = false)
         {
             private float last;
             private bool hasLast;
@@ -379,22 +401,42 @@ public class PacingExample : Scene, ITestControls
             private int count, standing, doubled;
             private double error, expected;
 
+            // How long it has been since the last step, for one that is held
+            private double waited;
+
             public void Note(float? drawn, double interval)
             {
                 if (drawn is not { } x)
                 {
                     hasLast = false;
+                    waited = 0.0;
                     return;
                 }
 
                 if (hasLast && interval > 0.0)
                 {
                     double step = x - last;
+
+                    if (held)
+                    {
+                        // Not drawn anew in this frame, which is what the limit is for. It counts as a frame that
+                        // stood still and as time the next step has to make up for
+                        waited += interval;
+                        if (step == 0.0)
+                        {
+                            standing++;
+                            return;
+                        }
+
+                        interval = waited;
+                        waited = 0.0;
+                    }
+
                     double steady = SPEED * interval;
 
                     if (backAndForth)
                     {
-                        // Turned round (or stood at the end) in this frame: nothing steady about it
+                        // Turned round (or stood at the end) in this frame, nothing steady about it
                         bool turned = Math.Sign(step) != Math.Sign(lastStep);
                         lastStep = step;
                         last = x;
@@ -423,9 +465,10 @@ public class PacingExample : Scene, ITestControls
             /// How far off the steps are, on average (root mean square), in frames, a steady frame's step being 1, and
             /// in units of the world (a pixel each at this zoom). 0 is as smooth as it gets, 1 is a step that was a whole
             /// frame out, which is a frame that stood still or one that went twice as far. The frames are what to watch
-            /// at a refresh rate; uncapped the frames are so short that a step a few hundredths of a pixel out is already
+            /// at a refresh rate. Uncapped the frames are so short that a step a few hundredths of a pixel out is already
             /// a fair part of one, so look at the pixels too. Also how many frames showed no step at all, and how many a
-            /// step and a half or more.
+            /// step and a half or more. One that is held is counted in its own steps, the ones it was drawn anew in, and
+            /// says how many of the frames those were.
             /// </summary>
             public string Describe()
             {
@@ -433,7 +476,9 @@ public class PacingExample : Scene, ITestControls
 
                 double rms = Math.Sqrt(error / count);
                 double mean = expected / count;
-                return $"off by {rms / mean:0.000} frames ({rms:0.000} px), {standing} of {count} frames still, {doubled} double steps";
+                return held
+                    ? $"off by {rms / mean:0.000} of a step ({rms:0.000} px), drawn anew in {count} of {count + standing} frames, {doubled} double steps"
+                    : $"off by {rms / mean:0.000} frames ({rms:0.000} px), {standing} of {count} frames still, {doubled} double steps";
             }
 
             public void Reset()

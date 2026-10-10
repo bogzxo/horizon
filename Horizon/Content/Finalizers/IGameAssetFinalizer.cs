@@ -3,18 +3,18 @@ using Horizon.Graphics;
 namespace Horizon.Content.Disposers;
 
 /// <summary>
-/// Generic interface implementing a way to aggregate and efficiently unload a array of assets.
+/// How a kind of asset is freed, one at a time or the lot at once.
 /// </summary>
 public interface IGameAssetFinalizer<AssetType>
     where AssetType : IGpuObject
 {
     /// <summary>
-    /// Unloads all of a designated asset type.
+    /// Frees a whole bunch of them in one go.
     /// </summary>
     public static abstract void DisposeAll(in IEnumerable<AssetType> assets);
 
     /// <summary>
-    /// Unloads one of a designated asset type.
+    /// Frees one.
     /// </summary>
     public static abstract void Dispose(in AssetType asset);
 }

@@ -4,7 +4,7 @@ namespace Horizon.Core;
 
 /// <summary>
 /// How the window is shown and how often it is drawn, which is everything about it that can be changed while the game runs.
-/// Hand one to <see cref="WindowManager.Apply"/>, from an options screen say:
+/// Hand one to <see cref="WindowManager.Apply"/>, from an options screen say.
 /// <code>
 /// engine.WindowManager.Apply(engine.WindowManager.Display with { Fullscreen = true });
 /// </code>

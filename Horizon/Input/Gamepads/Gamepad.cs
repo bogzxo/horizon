@@ -4,7 +4,7 @@ using Silk.NET.Input;
 namespace Horizon.Input;
 
 /// <summary>
-/// One gamepad as the game sees it: a slot that stays the same for as long as the game runs, the bindings of whoever
+/// One gamepad as the game sees it, a slot that stays the same for as long as the game runs, the bindings of whoever
 /// plays on it, and what is held this update and what was held the one before.
 /// The device behind it can come and go. When it is unplugged the slot stays, with its bindings, and reads as
 /// nothing held until a device is plugged in again, so player two is still player two afterwards.
@@ -16,12 +16,12 @@ public sealed class Gamepad
     private uint held, heldBefore;
     private GamepadBindings bindings;
 
-    // Some drivers rest their triggers at -1 rather than at 0. There is no asking which, so a trigger is
+    // Some drivers rest their triggers at -1 rather than at 0, because of course they do. There is no asking which, so a trigger is
     // taken to be one of those from the first time it reads below zero.
     private bool leftTriggerFromMinusOne, rightTriggerFromMinusOne;
 
     // What the device was last seen holding by the thread of the window, and every button it was seen holding since the
-    // simulation last took a look: a press that came and went between two updates is still a press
+    // simulation last took a look. A press that came and went between two updates is still a press
     private readonly Lock sampleLock = new();
     private GamepadSnapshot sampled;
     private uint heldSinceTaken;
@@ -57,7 +57,7 @@ public sealed class Gamepad
     /// </summary>
     public bool IsVirtual { get; }
 
-    /// <summary>Whether there is anything to read: a device is plugged in, or the gamepad is virtual.</summary>
+    /// <summary>Whether there is anything to read, a device is plugged in or the gamepad is virtual.</summary>
     public bool IsConnected => IsVirtual || Device is not null;
 
     /// <summary>
@@ -82,7 +82,7 @@ public sealed class Gamepad
     public float RightTrigger { get; private set; }
 
     /// <summary>
-    /// An input that went down this update, if any did. This is what a menu for changing bindings waits for:
+    /// An input that went down this update, if any did. This is what a menu for changing bindings waits for.
     /// <c>if (pad.Pressed is { } input) pad.Bindings.Rebind("jump", input);</c>
     /// </summary>
     public GamepadInput? Pressed
@@ -121,15 +121,15 @@ public sealed class Gamepad
     public bool WasReleased(GamepadInput input) => (heldBefore & ~held & GamepadInputs.Bit(input)) != 0;
 
     /// <summary>
-    /// Whether an action is held: every input of one of the combinations it is bound to is down, and no bigger
+    /// Whether an action is held, which is every input of one of the combinations it is bound to is down, and no bigger
     /// combination that contains it is (with A + B bound to something, holding both isn't A and isn't B).
     /// </summary>
     public bool IsDown(string action) => bindings.IsActive(action, held);
 
-    /// <summary>Whether an action started this update: it is held and wasn't before.</summary>
+    /// <summary>Whether an action started this update, it is held and wasn't before.</summary>
     public bool WasPressed(string action) => bindings.IsActive(action, held) && !bindings.IsActive(action, heldBefore);
 
-    /// <summary>Whether an action ended this update: it was held and isn't any more.</summary>
+    /// <summary>Whether an action ended this update, it was held and isn't any more.</summary>
     public bool WasReleased(string action) => !bindings.IsActive(action, held) && bindings.IsActive(action, heldBefore);
 
     /// <summary>
@@ -161,7 +161,7 @@ public sealed class Gamepad
     }
 
     /// <summary>
-    /// Moves this gamepad on by one update to what a snapshot says. The manager does this for real devices;
+    /// Moves this gamepad on by one update to what a snapshot says. The manager does this for real devices,
     /// for a virtual gamepad it is the game's to call, once per update.
     /// </summary>
     public void Update(in GamepadSnapshot raw)
@@ -231,7 +231,7 @@ public sealed class Gamepad
 
     /// <summary>
     /// Looks at the device and keeps what it is doing for the next update. On the thread of the window, every time it
-    /// has heard what the system had to say: that is when the device is refreshed, and reading it from anywhere else
+    /// has heard what the system had to say. That is when the device is refreshed, and reading it from anywhere else
     /// could catch it halfway.
     /// </summary>
     internal void Sample()
@@ -258,8 +258,12 @@ public sealed class Gamepad
         if (Device is not { IsConnected: true } device)
             return raw;
 
-        foreach (var button in device.Buttons)
+        // By number rather than with a foreach. The list is handed out as an interface, a foreach over that
+        // makes an enumerator on the heap, and this is run a thousand times a second for every gamepad
+        var buttons = device.Buttons;
+        for (int i = 0; i < buttons.Count; i++)
         {
+            var button = buttons[i];
             if (button.Pressed && GamepadInputs.TryFromButton(button.Name, out var input))
                 raw.Buttons |= GamepadInputs.Bit(input);
         }

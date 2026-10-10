@@ -4,8 +4,8 @@
 // has a quarter of the probes, four times the rays and an interval four times as long, so each costs the same and
 // a handful of them reach across the whole picture. A cascade is merged with the one above it as it is made, each
 // of its rays carrying on into the four rays above that it splits into, averaged over the four nearest probes. The
-// result is the light arriving at every probe from every direction, with no noise in it and nothing to smooth over
-// frames. See gi_resolve.slang for what the picture makes of the nearest cascade.
+// result is the light arriving at every probe from every direction. See gi_resolve.slang for what the picture
+// makes of the nearest cascade, and how it is laid over the frames before.
 //
 // What the rays gather is the light that doesn't come straight from a lamp. The lamps themselves are the deferred
 // pass's, which lights every pixel by them with shadows (see direct.slang), so a ray only stops at a wall. A wall
@@ -36,6 +36,7 @@ struct Params
     float uUpperDirections;
     int uHasUpper;
     float uPixelWorld;        // how big a pixel of the picture is in world units
+    float uRotation;          // how far every ray is turned this frame, in radians, see PathTracedLighting2D.Turn
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -142,7 +143,8 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
     // The probes are pinned to the world rather than the picture, see PathTracedLighting2D.Offset
     float2 probePixels = (float2(probe) + 0.5) * params.uProbeSpacing + params.uProbeOffset;
-    float angle = (float(direction) + 0.5) / params.uDirections * TAU;
+    // Turned by the same angle in every cascade, so the four rays above that a ray carries on into stay in its cone
+    float angle = (float(direction) + 0.5) / params.uDirections * TAU + params.uRotation;
     float2 ray = float2(cos(angle), sin(angle));
 
     float4 found = trace(probePixels, ray);

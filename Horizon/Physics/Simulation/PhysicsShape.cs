@@ -14,7 +14,7 @@ internal struct PhysicsShape
     public float Radius;
     public bool IsCircle;
 
-    // For an outline: its pieces (two points each, relative to the origin) and how many points of the array are its
+    // For an outline, its pieces (two points each, relative to the origin) and how many points of the array are its
     public Vector2[]? Outline;
     public int OutlineCount;
     public Vector2 Origin;
@@ -68,7 +68,7 @@ internal struct PhysicsShape
     }
 
     /// <summary>
-    /// Helper method to measure a point against an outline: whether it is inside, and the nearest point of the outline.
+    /// Helper method to measure a point against an outline, whether it is inside and the nearest point of the outline.
     /// </summary>
     private readonly bool MeasureOutline(Vector2 point, out Vector2 nearest, out float distanceSquared)
     {
@@ -133,7 +133,7 @@ internal struct PhysicsShape
             bool inside = MeasureOutline(position, out Vector2 edge, out float nearestSquared);
             if (!inside && nearestSquared >= radius * radius) return false;
 
-            // Out by the nearest way there is: away from the outline from outside of it, through it from inside
+            // Out by the nearest way there is, away from the outline from outside of it and through it from inside
             float gap = MathF.Sqrt(nearestSquared);
             Vector2 towards = Origin + edge - position;
 

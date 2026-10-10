@@ -143,7 +143,7 @@ public class ProgressBar : UIComponent
 
         if (ShowText)
         {
-            // Formatted on the stack: this runs every update and shouldn't leave a string behind each time.
+            // Formatted on the stack, this runs every update and shouldn't leave a string behind each time.
             Span<char> text = stackalloc char[8];
             ((int)MathF.Round(progress * 100.0f)).TryFormat(text, out int length);
             text[length++] = '%';

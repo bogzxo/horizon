@@ -9,9 +9,9 @@ using Horizon.Graphics;
 namespace Horizon.UI.Drawing;
 
 /// <summary>
-/// Hands a <see cref="UIDrawList"/> to the sprite renderer: the UI has no shader or buffers of its own, its
+/// Hands a <see cref="UIDrawList"/> to the sprite renderer. The UI has no shader or buffers of its own, its
 /// quads are <see cref="SpriteItem"/>s and a <see cref="SpriteBatch"/> draws them. What is left to do here
-/// is the GL state a UI needs around that (blending on, depth off) and saying which textures the quads show.
+/// is the state a UI needs around that (blending on, depth off) and saying which textures the quads show.
 /// </summary>
 internal sealed class UIRenderer
 {
@@ -82,7 +82,7 @@ internal sealed class UIRenderer
     }
 
     /// <summary>
-    /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own: a list as
+    /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own, a list as
     /// it was captured at the end of a tick, or two of those blended. They are free to be reused afterwards.
     /// </summary>
     public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, ReadOnlySpan<TextureAtlas> listAtlases = default)

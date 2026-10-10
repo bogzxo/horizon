@@ -13,7 +13,7 @@ public enum LoopMode
 }
 
 /// <summary>
-/// Something that changes over a stretch of time: a value moving to where it should end up, or a
+/// Something that changes over a stretch of time, a value moving to where it should end up, or a
 /// <see cref="TweenSequenceBuilder">sequence</see> of those. A tween is made with <see cref="To(Func{float}, Action{float}, float, float, Func{bool}?)"/>
 /// and its overloads, set up by chaining (<c>.SetEasing(Easing.OutBack).SetLoops(2).OnComplete(...)</c>) and does
 /// nothing until a <see cref="TweenContext"/> plays it, which is also what moves it along every update.
@@ -159,7 +159,7 @@ public abstract class Tween
 
     /// <summary>
     /// Starts the tween from the beginning, or carries on if it was paused. A tween only moves while a
-    /// context ticks it: play a new tween through <see cref="TweenContext.Play"/>, after that this works too.
+    /// context ticks it, so play a new tween through <see cref="TweenContext.Play"/>, after that this works too.
     /// </summary>
     public Tween Play()
     {
@@ -186,7 +186,7 @@ public abstract class Tween
         finished?.TrySetResult();
     }
 
-    /// <summary>Jumps to the end: everything is put where the tween would have left it.</summary>
+    /// <summary>Jumps to the end, everything is put where the tween would have left it.</summary>
     public void Complete()
     {
         if (IsFinished)

@@ -13,7 +13,7 @@ public static class Log
 {
     /// <summary>
     /// Raised for every message that is written, on the thread that writes it, for whatever shows the log besides the
-    /// console and the file: the in-game console (<c>Horizon.Engine.Debugging.ConsoleOverlay</c>). Keep it quick, the
+    /// console and the file, the log drawer of the Skyline debugger for one. Keep it quick, the
     /// game is waiting.
     /// </summary>
     public static event Action<LogLevel, string>? Written;

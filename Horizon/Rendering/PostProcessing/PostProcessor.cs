@@ -5,14 +5,14 @@ using Horizon.Graphics;
 namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
-/// The effects a <see cref="Renderer2D"/> puts its picture through before it is shown, in the order they run:
+/// The effects a <see cref="Renderer2D"/> puts its picture through before it is shown, in the order they run.
 /// <code>
 /// renderer.PostProcessing.Add(new CrtEffect());
 /// renderer.PostProcessing.Add(new CrtEffect { PixelSize = 2 });
 /// </code>
 /// The picture is handed from one effect to the next through two targets that take turns, however many effects
 /// there are, and the last one draws straight to where the renderer is shown. A renderer without any effects (or
-/// with all of them off) doesn't go through here at all: it costs what it cost before there was any of this.
+/// with all of them off) doesn't go through here at all, it costs what it cost before there was any of this.
 /// Effects can be added, removed and switched on and off from any thread.
 /// A <see cref="PostLayer"/> has one of these as well, for what is laid over the picture rather than part of it.
 /// </summary>

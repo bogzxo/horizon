@@ -1,21 +1,20 @@
 using Horizon.Logging;
 using System.Numerics;
-using System.Runtime.CompilerServices;
-
-using Horizon.Logging.Loggers;
 
 using Horizon.Core.Components;
 using Horizon.Core.Tweening;
 using Horizon.Engine;
-using Horizon.HIDL;
-using Horizon.HIDL.Runtime;
 using Horizon.Graphics;
 
 namespace Horizon.Rendering.Spriting;
 
+/// <summary>
+/// Something a <see cref="SpriteBatch"/> draws, a picture out of a sprite sheet or an atlas with a place, a size, a
+/// tint and whatever animation it is playing. Make one, tell it what to show (<see cref="ConfigureSpriteSheet"/> or
+/// <see cref="ConfigureAtlas"/>) and add it to a batch, it draws nothing by itself.
+/// </summary>
 public class Sprite : GameObject
 {
-
     public SpriteSheet Spritesheet { get; protected set; }
     public SpriteSheetAnimationManager AnimationManager { get; protected set; }
     public SpriteBatch Batch { get; internal set; }
@@ -27,6 +26,9 @@ public class Sprite : GameObject
 
     // What the frames of the sprite go by in the atlas, and which of them is showing
     private string[] _atlasFrames = [];
+
+    // The same frames as the atlas keeps them, with where each one ended up once that is known, see AtlasFrames
+    private AtlasFrames? _atlasCache;
     private float _atlasFrameTime, _atlasFrameTimer;
     private int _atlasFrame;
 
@@ -113,7 +115,6 @@ public class Sprite : GameObject
         get => Transform.Size.X < 0;
     }
 
-    //public bool IsAnimated { get; set; }
     public string FrameName { get; private set; }
 
     public virtual TransformComponent2D Transform { get; init; }
@@ -130,13 +131,13 @@ public class Sprite : GameObject
     }
 
     /// <summary>
-    /// Adds the animation.
+    /// Adds an animation, a run of frames next to each other on the sprite sheet.
     /// </summary>
-    /// <param name="name">The name.</param>
-    /// <param name="position">The position in normalized coordinates.</param>
-    /// <param name="length">The animation length in frames.</param>
-    /// <param name="frameTime">The frame time.</param>
-    /// <param name="inSize">Custom frame size.</param>
+    /// <param name="name">What it is called, which is what <see cref="SetAnimation"/> asks for.</param>
+    /// <param name="position">Where its first frame is on the sheet, counted in sprites from the top left.</param>
+    /// <param name="length">How many frames it has.</param>
+    /// <param name="frameTime">How long every frame is shown for, in seconds.</param>
+    /// <param name="inSize">How big a frame is in texels, the size of the sprite if nobody says.</param>
     public void AddAnimation(
         string name,
         Vector2 position,
@@ -145,12 +146,13 @@ public class Sprite : GameObject
         Vector2? inSize = null
     )
     {
-        AnimationManager ??= AddComponent(new SpriteSheetAnimationManager(inSize!.Value));
+        // Without a size the frames are as big as the sprite is drawn, which blew up with a null before
+        AnimationManager ??= AddComponent(new SpriteSheetAnimationManager(inSize ?? Vector2.Abs(Transform.Size)));
         AnimationManager.AddAnimation(name, position, length, frameTime, inSize);
     }
 
     /// <summary>
-    /// Adds a range of animations.
+    /// Adds a whole lot of animations in one go.
     /// </summary>
     public void AddAnimationRange(
         (string name, Vector2 position, uint length, float frameTime, Vector2? inSize)[] animations
@@ -160,45 +162,12 @@ public class Sprite : GameObject
             AddAnimation(name, position, length, frameTime, inSize);
     }
 
-    /// <summary>
-    /// Gets the texture coordinates with respect to the configured sprite sheet.
-    /// </summary>
-    /// <param name="name">The name.</param>
-    /// <returns></returns>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal Vector2[] GetAnimatedTextureCoordinates(string name)
-    {
-        if (!AnimationManager.Animations.TryGetValue(name, out var sprite))
-        {
-            //ConcurrentLogger.Instance.Log(
-            //    Logging.LogLevel.Error,
-            //    $"Attempt to get sprite '{name}' which doesn't exist!"
-            //); TODO: FIX
-            return Array.Empty<Vector2>();
-        }
-
-        // Calculate texture coordinates for the sprite
-        Vector2 topLeftTexCoord = Vector2.Zero;
-        Vector2 bottomRightTexCoord = topLeftTexCoord + Spritesheet.SingleSpriteSize;
-
-        return new Vector2[]
-        {
-            topLeftTexCoord,
-            new Vector2(bottomRightTexCoord.X, topLeftTexCoord.Y),
-            bottomRightTexCoord,
-            new Vector2(topLeftTexCoord.X, bottomRightTexCoord.Y)
-        };
-    }
-
-
     public void ConfigureSpriteSheet(SpriteSheet spriteSheet, string name)
     {
         this.Spritesheet = (spriteSheet);
         this.AnimationManager ??= AddComponent(new SpriteSheetAnimationManager(spriteSheet));
 
         this.FrameName = name;
-
-        //this.IsAnimated = AnimationManager.Animations.Any();
     }
 
     /// <summary>
@@ -216,7 +185,11 @@ public class Sprite : GameObject
             return false;
         }
 
-        _atlasFrames = atlas.Request(source);
+        // The atlas hands back the same frames for the same sprite every time, so changing animation is a look up
+        // and not a fresh pile of strings
+        AtlasFrames frames = atlas.Frames(source);
+        _atlasCache = frames;
+        _atlasFrames = frames.Keys;
         _atlasFrameTime = source.FrameTime;
         _atlasFrameTimer = 0.0f;
         _atlasFrame = 0;
@@ -252,15 +225,15 @@ public class Sprite : GameObject
     internal bool TryCreateItem(bool mask, out SpriteItem item)
     {
         Vector2 texMin, texMax;
-        AtlasRegion? trimmed = null;
+        Matrix4x4 model = UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix;
 
         if (Atlas is { } atlas)
         {
-            // The frame can change under us (it is advanced on the simulation thread), the array it indexes can't
-            string[] frames = _atlasFrames;
+            // The frame can change under us (it is advanced on the simulation thread), what it indexes can't
+            AtlasFrames? frames = _atlasCache;
             int frame = _atlasFrame;
 
-            if (frames.Length == 0 || !atlas.TryGet(frames[frame < frames.Length ? frame : 0], out var region))
+            if (frames is null || frames.Keys.Length == 0 || !frames.TryGet(atlas, frame < frames.Keys.Length ? frame : 0, out AtlasRegion region))
             {
                 item = default;
                 return false;
@@ -268,31 +241,38 @@ public class Sprite : GameObject
 
             texMin = region.Position;
             texMax = region.Position + region.Size;
-            trimmed = region.Trimmed ? region : null;
+
+            // An atlas that trims kept only part of the frame, the quad shrinks to where that part was. The quad runs
+            // from -0.5 to 0.5 with the top of the texture at the top, so a frame's rows count down from there
+            if (region.Trimmed)
+            {
+                Vector2 scale = region.Size / region.FrameSize;
+                Vector2 centre = new(
+                    (region.Offset.X + region.Size.X * 0.5f) / region.FrameSize.X - 0.5f,
+                    0.5f - (region.Offset.Y + region.Size.Y * 0.5f) / region.FrameSize.Y);
+
+                // Scale, then move, then the model, which is two whole matrix multiplications to change six
+                // numbers. Written out it is this, and every fighter on screen comes through here every tick
+                float ax = model.M11, ay = model.M12, bx = model.M21, by = model.M22;
+                model.M41 += centre.X * ax + centre.Y * bx;
+                model.M42 += centre.X * ay + centre.Y * by;
+                model.M11 = ax * scale.X;
+                model.M12 = ay * scale.X;
+                model.M21 = bx * scale.Y;
+                model.M22 = by * scale.Y;
+            }
         }
         else
         {
-            // a frame can span several cells of the sheet, the frames of an animation follow each other to the right
-            Vector2 size = Spritesheet.SpriteSize * new Vector2(1 + GetFrameSpan(), 1);
-
-            texMin = GetFrameOffset() * new Vector2(Spritesheet.Width, Spritesheet.Height) + new Vector2(size.X * GetFrameIndex(), 0);
+            // One look at the animation, it used to be three, each of them hashing the name all over again.
+            // A frame can span several cells of the sheet, the frames of an animation follow each other to the right
+            var (definition, index) = AnimationManager[FrameName];
+            Vector2 size = Spritesheet.SpriteSize * new Vector2(1 + definition.Span, 1);
+            texMin = definition.Position * Spritesheet.SingleSpriteSize * new Vector2(Spritesheet.Width, Spritesheet.Height) + new Vector2(size.X * index, 0);
             texMax = texMin + size;
         }
 
         bool flashed = FlashAmount > 0.0f;
-
-        Matrix4x4 model = UseStencilBuffer && mask ? StencilTransform.ModelMatrix : Transform.ModelMatrix;
-
-        // An atlas that trims kept only part of the frame, the quad shrinks to where that part was. The quad runs
-        // from -0.5 to 0.5 with the top of the texture at the top, so a frame's rows count down from there
-        if (trimmed is { } cut)
-        {
-            Vector2 scale = cut.Size / cut.FrameSize;
-            Vector2 centre = new(
-                (cut.Offset.X + cut.Size.X * 0.5f) / cut.FrameSize.X - 0.5f,
-                0.5f - (cut.Offset.Y + cut.Size.Y * 0.5f) / cut.FrameSize.Y);
-            model = Matrix4x4.CreateScale(scale.X, scale.Y, 1.0f) * Matrix4x4.CreateTranslation(centre.X, centre.Y, 0.0f) * model;
-        }
 
         item = SpriteItem.FromModel(
             model,
@@ -301,6 +281,7 @@ public class Sprite : GameObject
             SpriteItem.PackColor(flashed ? FlashColor with { W = Tint.W } : Tint),
             (Smooth ? SpriteItem.SmoothFlag : 0) | (flashed ? SpriteItem.FlashFlag : 0) | (flashed && FlashLights ? SpriteItem.LampFlag : 0) | (CastsShadows && !mask ? SpriteItem.ShadowFlag : 0));
         item.Ring = flashed ? MathF.Min(FlashAmount, 1.0f) : 0.0f;
+
         return true;
     }
 
@@ -330,7 +311,7 @@ public class Sprite : GameObject
     public Vector2 GetSize() => Spritesheet.SpriteSize * new Vector2(GetFrameSpan(), 1);
 
     /// <summary>
-    /// This is the amount of tiles in the right direction (+X) that the sprite goes on in the spritesheet.
+    /// How many more cells of the sheet to the right a frame of the animation takes up, 0 for a frame of one cell.
     /// </summary>
     public uint GetFrameSpan()
     {

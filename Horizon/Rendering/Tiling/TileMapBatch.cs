@@ -209,6 +209,13 @@ internal sealed class TileMapGpu : IDisposable
     private readonly List<Tile> packed = [];
     private readonly List<Chunk> chunkList = [];
     private readonly List<Layer> layerList = [];
+
+    // The layers as they were last sent up, to tell whether they have to go up again
+    private Layer[] uploadedLayers = [];
+    private int uploadedLayerCount;
+
+    // Where the tiles of a batch that changed are turned into what the GPU reads, kept from one time to the next
+    private Tile[] patching = [];
     private int tileCapacity;
     private bool packedOnce;
 
@@ -219,8 +226,12 @@ internal sealed class TileMapGpu : IDisposable
     /// Brings the GPU side up to date with the layers as they are to be drawn this frame. Every layer's settings go
     /// up, and the tiles of any batch that changed. A batch that grew or shrank has the whole map packed anew.
     /// </summary>
-    /// <param name="shown">Every layer and how it is shown this frame, with the batches of each.</param>
-    public bool Sync(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    /// <param name="shown">
+    /// Every layer and how it is shown this frame, with the batches of each. A list by its own name and not by an
+    /// interface, walked through an interface it makes an enumerator on the heap every time, and it is walked
+    /// several times a frame. The performance overlay had that down as a hundred and fifty kilobytes a second.
+    /// </param>
+    public bool Sync(List<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
     {
         if (!EnsureShaders()) return false;
 
@@ -229,9 +240,34 @@ internal sealed class TileMapGpu : IDisposable
         foreach (var (_, settings, _) in shown) layerList.Add(settings);
         if (layerList.Count == 0) return false;
 
-        layers ??= GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
-        layers.Name = "tile map layers";
-        layers.Upload<Layer>(CollectionsMarshal.AsSpan(layerList));
+        if (layers is null)
+        {
+            layers = GpuBuffer.Create(new BufferDescription(BufferUsage.Storage, BufferAccess.Static));
+            layers.Name = "tile map layers";
+        }
+
+        // Only when they are not what is up there already. An upload while the GPU is still reading the last one is
+        // a whole new buffer (made, bound, named, the old one thrown away), and a map that is drawn in two goes
+        // (the foreground after everybody else) came through here twice a frame with the very same layers. A
+        // camera that stands still, a menu, a paused fight, all of it for nothing
+        ReadOnlySpan<Layer> wanted = CollectionsMarshal.AsSpan(layerList);
+        if (!MemoryMarshal.AsBytes(wanted).SequenceEqual(MemoryMarshal.AsBytes(uploadedLayers.AsSpan(0, uploadedLayerCount))))
+        {
+            // Over what is there when there are as many layers as there were, which is every time but the first.
+            // A layer that drifts or a camera that moves changes them every frame, and uploading them was a new
+            // buffer every frame for a few hundred bytes, made, given memory, bound and named, with the old one
+            // thrown away after it. Written over in place they go up in order with the draws, and the culling
+            // that comes next ends the pass anyway, so it breaks nothing that wasn't about to be broken
+            if (wanted.Length == uploadedLayerCount)
+                layers.Update(wanted);
+            else
+                layers.Upload(wanted);
+
+            if (uploadedLayers.Length < wanted.Length)
+                uploadedLayers = new Layer[wanted.Length];
+            wanted.CopyTo(uploadedLayers);
+            uploadedLayerCount = wanted.Length;
+        }
 
         // Whether the chunks still line up with what was packed last time
         bool repack = !packedOnce;
@@ -250,7 +286,7 @@ internal sealed class TileMapGpu : IDisposable
     }
 
     /// <summary>Helper method to lay every tile of every layer out in one buffer, chunk after chunk, and the chunks with them.</summary>
-    private void Pack(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    private void Pack(List<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
     {
         packed.Clear();
         chunkList.Clear();
@@ -313,7 +349,7 @@ internal sealed class TileMapGpu : IDisposable
     }
 
     /// <summary>Helper method to send up only the batches that changed, in place.</summary>
-    private void Patch(IReadOnlyList<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
+    private void Patch(List<(TileMapLayer Layer, Layer Settings, bool Foreground)> shown, Func<string, TileMapTexture> textureOf)
     {
         if (tiles is null) return;
 
@@ -326,10 +362,13 @@ internal sealed class TileMapGpu : IDisposable
 
                 TileMapTexture texture = textureOf(batch.ImagePath);
                 var span = CollectionsMarshal.AsSpan(batch.Instances);
-                var converted = new Tile[span.Length];
-                for (int i = 0; i < span.Length; i++) converted[i] = Convert(span[i], (uint)layerIndex, texture);
+                // Into the same array every time. A layer of water animates every frame, and a fresh array of
+                // every tile of it every frame was forty kilobytes of garbage a batch for the collector to weep over
+                if (patching.Length < span.Length)
+                    patching = new Tile[Math.Max(span.Length, patching.Length * 2)];
+                for (int i = 0; i < span.Length; i++) patching[i] = Convert(span[i], (uint)layerIndex, texture);
 
-                tiles.Update<Tile>(converted, (nint)(batch.First * Marshal.SizeOf<Tile>()));
+                tiles.Update<Tile>(patching.AsSpan(0, span.Length), (nint)(batch.First * Marshal.SizeOf<Tile>()));
             }
         }
     }

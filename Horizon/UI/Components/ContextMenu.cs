@@ -7,7 +7,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// The list that pops up where you right click: cut, copy, delete, bring to front, that sort of thing. It's the same
+/// The list that pops up where you right click, with cut, copy, delete, bring to front, that sort of thing. It's the same
 /// <see cref="Menu"/> a <see cref="MenuBar"/> opens, so whatever builds one builds the other.
 /// <code>
 /// row.OnContextMenu = point =>

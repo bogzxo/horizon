@@ -6,7 +6,7 @@ namespace Horizon.UI;
 public static class OriginExtensions
 {
     /// <summary>
-    /// Where an origin sits on a unit square centred on zero, Y-up: <see cref="Origin.TopLeft"/> is (-0.5, 0.5).
+    /// Where an origin sits on a unit square centred on zero with Y going up, so <see cref="Origin.TopLeft"/> is (-0.5, 0.5).
     /// </summary>
     public static Vector2 ToVector(this Origin origin) => origin switch
     {

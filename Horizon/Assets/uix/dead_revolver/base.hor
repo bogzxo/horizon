@@ -1,14 +1,14 @@
-// What every theme of the Dead Revolver skin has in common. This isn't a skin to load by itself: load blue.hor,
+// What every theme of the Dead Revolver skin has in common. This isn't a skin to load by itself, load blue.hor,
 // red.hor or one of the others, which inherit from it and only say which colour of the art they are.
 //
 // The art is looked up in sprites.hor by name, in the theme of the skin. Components find the sprites that are named
 // after what they ask for by themselves (a button asks for "button", "button_hover" and "button_pressed"), so only
 // what goes by another name in the pack is listed under regions. A region is the name of a sprite, or an object
-// when there is more to say: { sprite: "bar_fill", tint: vec(r, g, b, a) }.
+// when there is more to say, like { sprite: "bar_fill", tint: vec(r, g, b, a) }.
 //
 // Icons are what [icon:name] in a text draws. Every sprite is an icon by its own name already, the ones listed here
-// are for giving a sprite a shorter name, or for making an icon out of a blank sprite with a tint and a label:
-// a white round button in green with an A on it is the A button of a gamepad.
+// are for giving a sprite a shorter name, or for making an icon out of a blank sprite with a tint and a label.
+// A white round button in green with an A on it is the A button of a gamepad.
 
 let skin = {
     sprites: "sprites.hor",

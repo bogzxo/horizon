@@ -1,7 +1,7 @@
 namespace Horizon.Core.Tweening;
 
 /// <summary>
-/// Puts tweens together into one: <see cref="Append"/> adds a tween after everything so far,
+/// Puts tweens together into one. <see cref="Append"/> adds a tween after everything so far,
 /// <see cref="Join"/> adds one that plays alongside the last one appended.
 /// <code>
 /// Tween.Sequence()

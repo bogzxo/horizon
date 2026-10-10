@@ -72,7 +72,7 @@ public sealed class Mouse
     }
 
     /* For whatever sits between the window and the game, which is the Skyline debugger. The game is shown through
-       a part of the window and the mouse is the suite's while it is over one of its panels */
+       a part of the window and the mouse is the debugger's while it is over one of its panels */
 
     /// <summary>Where the pointer really is in the window, whatever part of it the game is shown in.</summary>
     internal Vector2 WindowPosition { get; private set; }
@@ -175,7 +175,7 @@ public sealed class Mouse
             }
             else if (_down[button])
             {
-                // Pressed this very update: held for it, let go of at the next
+                // Pressed this very update, so it is held for it and let go of at the next
                 if (_pressed[button]) _tapped[button] = true;
                 else
                 {

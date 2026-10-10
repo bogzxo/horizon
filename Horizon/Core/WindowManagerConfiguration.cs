@@ -41,7 +41,7 @@ public readonly struct WindowManagerConfiguration
 
     /// <summary>
     /// How frames show the simulation, see <see cref="PresentationMode"/>. Interpolated
-    /// unless said otherwise: smooth at any frame rate, at most a tick behind.
+    /// unless said otherwise, smooth at any frame rate, at most a tick behind.
     /// </summary>
     public readonly PresentationMode Presentation { get; init; } = PresentationMode.Interpolated;
 

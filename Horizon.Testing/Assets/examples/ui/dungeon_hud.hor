@@ -1,0 +1,16 @@
+// The HUD of the dungeon example (DungeonExample.cs). A group pinned to the corner it lives in, so nothing in it has
+// to know how big the screen is, a line along the bottom for whatever the room has to say, and a call across the
+// middle for the end of it.
+
+compositor.design({ size: vec(1600, 900), fit: "stretch" });
+
+let place = compositor.group({ anchor: "top_left", pos: vec(210, -56) });
+let place_name = compositor.label({ parent: place, pos: vec(0, 18), text: "Down in the dark", text_scale: 0.3 });
+let health = compositor.progress_bar({ parent: place, pos: vec(0, -14), size: vec(340, 18), progress: 1.0, show_text: false });
+let found = compositor.label({ parent: place, pos: vec(0, -46), text: "", text_scale: 0.22 });
+
+// Whatever the room has to say, a zone the blob walked into or something that just happened
+let notice = compositor.label({ anchor: "bottom", pos: vec(0, 120), text: "", text_scale: 0.3 });
+
+// Only ever says one thing, at the very end
+let banner = compositor.label({ anchor: "center", pos: vec(0, 140), text: "", text_scale: 0.75 });

@@ -375,3 +375,172 @@ top, fine for a menu and hopeless for a pointer. `UICursor` on a compositor is d
 `Mouse.LivePosition` (the packed position the window thread writes, read atomically), over the UI, with a batch
 of its own made the first time. A gamepad cursor hands its position out through `UICursor.Position`, which is
 called on the render thread, so it has to be something that can be read from there.
+
+## The once over
+
+bogz asked for a once over of the engine project, comments in the house voice (no colons, the odd swear), small
+problems fixed, things made quicker where it was free. `Horizon/` has no comment with a colon or a semicolon
+stapling two clauses left in it, the `.hor` skins included (what is left there is `[icon:name]` and
+`{ sprite: "x" }`, which is the syntax and not punctuation). The other projects (Testing, Hex, HIDL, the tests)
+were not swept, about 170 lines of that kind are still in them.
+
+What turned up that was actually wrong, for whoever wonders why a line changed.
+
+- `RectanglePhysicsFixture.TestIntersection` against a circle handed the two body positions over the wrong way
+  round, so a box asked about a circle measured the circle from where the box's body stood. With both fixtures
+  in the middle of their bodies the mistake cancels out, which is how it lived. Nothing in the engine, the
+  examples or Fighter2D uses circles against boxes that way round, so nothing changes on screen.
+- Both CPU particle simulators (the plain one and the fluid one) copied the live count under the lock and then
+  drew by the count as it was after the lock, which the simulation can have swapped by then. A few particles
+  nobody had written, now and then.
+- `Camera.WorldToScreen(Vector2)` returned clip space, not the window pixels its name and doc promise. Nothing
+  called it.
+- `SpriteSheetAnimationManager.GetFrameCount` returned the index of the frame instead of how many there are.
+- `UIDrawList.Quad` masked the texture slot out of the flags with 0xFF where the slot is wider than that.
+- `AssetManager` logged the name of the asset where it meant its own.
+- `WindowManager.Dispose` left its two semaphores undisposed, `PathTracedLighting2D.Fit` left pictures with
+  nobody holding them when the card ran out of room halfway.
+
+And what got cheaper. `LoopStatistics` keeps its peak as turns come and go instead of walking 240 of them three
+thousand times a second, the easings multiply their whole powers out instead of calling `MathF.Pow`, a sprite
+looks its frames up once (`AtlasFrames`, cached per source in the atlas) and applies a trimmed frame's scale to
+its matrix by hand, the tile map only sends its layers up when their bytes changed (it came through twice a
+frame with the same ones), reuses the array it converts changed tiles into and hands the GPU side the same
+delegate every frame, `UIFont` finds the first 256 glyphs in a table, a vertex array is walked as a plain array
+at every draw instead of a sorted dictionary, a clear in the middle of a pass counts its attachments on the
+stack, the gamepad reads its buttons by index, and a few buffers are named when they are made instead of every
+frame.
+
+Hint to self, a tile map layer buffer wants to be a `StreamBuffer` at first sight and must not be, the map is
+synced twice a frame (background and foreground) and the second sync would wait on the fences of the first.
+Skipping the upload when nothing changed gets the same win without that.
+
+New tests that came out of it, `PhysicsFixtureTests`, `EaseTests` (the powers against `MathF.Pow`),
+`LoopStatisticsTests` (the peak against going over the whole history).
+
+## The UI has a frame rate limit
+
+`UICompositor.FrameRateLimit`, 120 by default (`DefaultFrameRateLimit` for a game that wants another for all of
+its UIs, 0 for none). It gates the one place the render thread spends anything on a UI that moves, the blend of
+the last two captured lists and the upload (`UploadCaptured`, and the newest list upload for a UI nobody
+captures). A frame that isn't due returns before either and `DrawList` does what it always did with nothing
+new, lays the retained picture over (one quad) or draws the quads that are up there again. So the limit needs
+no code in the drawing at all, and a UI that is not retained (the Skyline debugger, anything inside a lit
+renderer) still saves the blend and the upload.
+
+The checks that must not be skipped are before the gate, an unfinished UI still reports itself every frame.
+The cursor is not under it. A skin swap resets it so the first list in the new skin goes straight up.
+
+The rule is `RefreshDue`, due when this frame is nearer to the moment than the next one will be (time since the
+last refresh plus half a frame against the interval). Plain "has the interval gone by" beats against a refresh
+rate, a screen of 144 under a limit of 120 would get five frames out of six and a screen of exactly 120 would
+drop one whenever a frame came in a hair early. Rounding to the nearest frame gives 144 and 165 every frame,
+240 every other, 360 every third, all evenly, and uncapped it comes to 118 to 122 a second. The price is that a
+limit can be gone over by up to half again at an awkward rate (anything up to 180 is every frame). The frame
+time is measured in the compositor with a stopwatch and smoothed, not taken from `dt`.
+
+Measured in the pacing example on this machine, 3650 fps with the limit against 3150 without, the UI tag half
+a refresh behind the heart (1.45 px at 360 px a second) where it was dead on without. That trailing is what a
+limit is, it is only there to see uncapped and the example says so (L toggles). The marker track in the probe
+had to learn about held pictures, a frame the UI wasn't drawn in is not a step that went wrong, it counts the
+time towards the next step it does take.
+
+All of it is on the render thread. The simulation still lays out and paints every tick, a limit under the tick
+rate does not make that any cheaper, and painting less often than a tick would break what the blending is
+built on (two lists a tick apart).
+
+## The performance overlay got a face
+
+It was a headline, one label with twelve lines of text in it and two bar graphs. Now `PerformanceOverlay` is the
+entity and the timers and nothing else, `PerformanceSample` is what it reads off the engine (four times a second
+for the numbers, ten for the graphs) and `PerformanceBoard` is one component that paints the lot, the pill for
+Compact and the card for Full. The public side is what it was, `Detail`, `ToggleKey`, `Corner`, `Scale` and the
+three values of the enum, Fighter2D's options screen needed nothing.
+
+Painted by hand and not laid out of labels because a number in a label is a string, forty of them four times a
+second in the one place that reports the garbage. `PerformanceInk` is 96 characters the numbers are formatted
+into with `TryFormat` and drawn from as a span. The allocation log (`HORIZON_LOG_ALLOCATIONS`) shows nothing of
+the overlay's on the simulation thread with the card up. Two things to watch for if anybody adds to it. A
+collection expression for a span inside a method (`ReadOnlySpan<float> steps = [1, 2, 5]`) made a
+`RuntimeFieldInfoStub` every call in a Debug build, a static array doesn't. And a `foreach` over an
+`IReadOnlyList` boxes its enumerator, by index it doesn't.
+
+Every section is one method, `float Header(UIDrawList? list, UIRect area)` and so on, that says how tall it is
+and draws itself if it is handed a list. `Lay` calls them without one to measure and with one to paint, so the
+two can't drift apart. A card that would be taller than the screen (`MaxHeight`, the overlay sets it from what
+its camera sees) puts its sections in two columns, which is what 720 lines get. The lines of the GPU section
+never get fewer while the card is up (`rowsHeld`), a card that grows and shrinks by a line hops about in its corner.
+
+The graphs. `LoopStatistics` has a timeline now, 120 slices of a tenth of a second (`LoopSlice`, the work and the
+gap between turns, on average and at the worst), filled in `Record` under the same lock. The old graph was the
+last 240 turns, which at three thousand frames a second is the last 70 milliseconds, redrawn four times a
+second, noise. A hitch stays on the timeline for twelve seconds. A turn longer than a slice fills as many slices
+as it was long so a second stays a second. The top of a graph is a round number two and a half times the median
+slice (`FrameUsualMs`), not the worst and not the mean, I tried both. One 300 ms frame as a scene loads and the
+worst gives a flat line with a pole in it for twelve seconds, and the mean is dragged up by the same five slices.
+Spikes over the top are cut off there and coloured by how bad they were, the number under the graph says how long.
+`Ceiling` rounds to 1, 1.5, 2, 3, 5, 7.5 times a power of ten, and a test caught it rounding 1 up to 1.5 (ten
+times a hundredth ten times over is not one in floats).
+
+The GPU bar is cut up by what the passes are made of, not by the frame's own passes. A game has one renderer that
+is 99 parts in a hundred and a bar of one colour. A pass with parts is its parts and then, in its own colour,
+what they don't account for. The same name under the same parent is one line with a count (particles x8). Lines
+are in frame order and coloured by line, sorted by cost two passes that cost about the same swapped places four
+times a second.
+
+The text. Everything is the skin's own text scale (12 px) or bigger. I had labels at 0.84 of it and at ten
+pixels this font's f is a plus sign and "waits" reads "wails". What a thing is called and what it is are told
+apart by colour, dim and bright, not by size.
+
+Things the new overlay pointed at that I did not chase. The render thread makes about 48 bytes a frame in every
+example, a closure and an `Action` from `GraphicsDevice.RetireBuffer`, so some buffer is thrown away and made
+anew every single frame (a `Static` buffer uploaded to while the GPU still reads it, most likely the shapes or
+the sprites). That is a `vkCreateBuffer` a frame as well as the garbage and wants a `StreamBuffer` or a list of
+structs to retire into. The tile map boxed an enumerator several times a frame (`Sync` took its layers as an
+`IReadOnlyList`), that one I did fix, it takes the `List` now.
+
+## The render thread makes no garbage now
+
+bogz asked for the render thread's garbage to be found and fixed, the 48 bytes a frame the new overlay showed in
+every example and more in the ones with a tile map. All of it was one trap, sprung three times on the render
+thread and twice more on the simulation's.
+
+How it was found, for the next time. `HORIZON_LOG_ALLOCATIONS=3` names the types, and they were
+`<>c__DisplayClass102_0`, `<>c__DisplayClass133_0` and `System.Action`. The runtime only gives the name of the
+nested class, not whose it is, so a throwaway test went through every method of the compiled engine looking for a
+`newobj` of anything called `<>c__DisplayClass` (`Module.ResolveMethod` on the token after every 0x73) and wrote
+down who makes which and whether it is the first thing the method does. 65 methods make one as they start, nearly
+all of them fine (setting up a tween, finding a layer by name, the debugger's inspector). The ones that are not
+fine are the ones that run all the time. That search is `HotPathTests` now, pointed at a list of such methods.
+
+The trap. A lambda that uses a local or a parameter has it moved into an object, and the compiler makes that
+object where the variable is declared, which for a parameter or a local at the top is the start of the method.
+Leaving early does not help, the object is made already.
+
+- `WindowManager.ApplyPendingDisplay` ran every frame, found nothing pending and left, having made 48 bytes for
+  `OnWindowThread(() => ApplyWindow(settings))` two lines further down. All the garbage of an idle render thread.
+  The lambda lives in `ApplyDisplay` now.
+- `GraphicsDevice.RetireBuffer` was a lambda and a delegate for every buffer thrown away. Buffers go onto
+  `FrameResources.RetiredBuffers` as a handle and its memory and are freed in `Reset` with the rest.
+- What threw a buffer away every frame was the tile map. `layers.Upload` on a buffer the GPU still reads gets it
+  new memory (that is what `Upload` promises), and the layers change whenever the camera moves or a layer drifts.
+  With as many layers as before they are written over with `Update`, in order with the draws, straight before
+  the culling dispatch that ends the pass anyway. Only the first sync of a frame ever writes, the second finds
+  the same bytes.
+- `UISkin.TryGetIcon` made one for every icon in every text every time it was painted, for the lambda that names
+  an animated icon's frames once. `NameFrames` does that. An input display is nothing but icons.
+- `TileMap.ResolveTileLocked` made one for every tile looked up, found or not, for `tilesets.Find(set => ...)`.
+  A loop.
+
+Measured after, `HORIZON_LOG_LOOPS` says 0 bytes a turn for the render loop in quickstart, shapes, sprites, ui,
+tilemap, particles, lighting, pathtraced and town, Debug and Release, and in a fight on the Japan map in
+Fighter2D. It was 48 everywhere, 116 in the tile map example and 168 in town. The simulation of a fight still
+allocates about 450 bytes a tick, which is the game's side and was not looked at.
+
+Not everything the log shows is steady. The particle example showed `ParticleState2D[]` on the simulation thread
+in one run and not in another. That is the two pending arrays of a simulator growing to the size of a burst the
+first time each of them meets one (a left click is 8000 particles), and somebody clicked in the window. After
+that they are big enough. The `System.Char[]` on the render thread every few seconds is the log line itself.
+
+The validation layer is not installed on this machine (no Vulkan SDK), so the in place update of the layers has
+not been through it. It is the same `UpdateBuffer` the animated tiles go through every frame.

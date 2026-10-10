@@ -3,14 +3,14 @@ using System.Numerics;
 namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
-/// Shows the picture the way a picture tube would: soft dots along scan lines and glass that bulges, without a
-/// shadow mask. The lines don't cost the picture its brightness: what a line leaves dark is made up for by driving
+/// Shows the picture the way a picture tube would, soft dots along scan lines and glass that bulges, without a
+/// shadow mask. The lines don't cost the picture its brightness, what a line leaves dark is made up for by driving
 /// it harder and, for what is too bright for that, by a wider beam that fills the gaps (so dark colours have crisp
-/// lines and bright ones bloom). See shaders/post/crt.frag for where the look comes from and what it costs.
-/// It wants to be the last effect: it draws at the size of whatever the renderer is shown on, the finer that is
+/// lines and bright ones bloom). See shaders/post/crt.slang for where the look comes from and what it costs.
+/// It wants to be the last effect. It draws at the size of whatever the renderer is shown on, the finer that is
 /// against the picture the more of the tube there is to see.
 /// <para>
-/// The tube has a resolution of its own, a dot for every pixel of the art rather than of the screen: for pixel art
+/// The tube has a resolution of its own, a dot for every pixel of the art rather than of the screen. For pixel art
 /// that is drawn at twice its size, <see cref="PixelSize"/> is 2. Scan lines only show for what they are once each
 /// is three or four pixels of the screen thick, on anything finer they blend into an even softness (and a bigger
 /// <see cref="PixelSize"/> than the art has trades detail for lines).
@@ -28,7 +28,7 @@ public sealed class CrtEffect : PostEffect
     private const string UNIFORM_MAX_BLOOM = "uMaxBloom";
     private const string UNIFORM_WARP = "uWarp";
 
-    // The softest a scan line can be: any softer and it gives more light over a line than the picture has, with
+    // The softest a scan line can be, any softer and it gives more light over a line than the picture has, with
     // nothing left to make up for
     private const float SOFTEST_SCAN = -5.0f;
 
@@ -41,7 +41,7 @@ public sealed class CrtEffect : PostEffect
     /// <summary>How many dots a scan line has and how many lines there are, for a tube of a fixed size whatever the picture is. Null to go by <see cref="PixelSize"/>.</summary>
     public Vector2? Resolution { get; set; }
 
-    /// <summary>How quickly a scan line falls off into the dark between it and the next: -8 is soft, -16 is hard.</summary>
+    /// <summary>How quickly a scan line falls off into the dark between it and the next, -8 is soft and -16 is hard.</summary>
     public float ScanlineHardness { get; set; } = -12.0f;
 
     /// <summary>How quickly the wide beam falls off that fills the gaps between the lines of what is bright, from -2 to -4.</summary>
@@ -53,7 +53,7 @@ public sealed class CrtEffect : PostEffect
     /// </summary>
     public float MaxBloom { get; set; } = 1.0f;
 
-    /// <summary>How quickly a dot falls off into the one next to it: -2 is soft, -4 is hard.</summary>
+    /// <summary>How quickly a dot falls off into the one next to it, -2 is soft and -4 is hard.</summary>
     public float PixelHardness { get; set; } = -3.0f;
 
     /// <summary>How much the glass bulges, sideways and upwards. Zero is flat, an eighth is a goldfish bowl.</summary>
@@ -78,7 +78,7 @@ public sealed class CrtEffect : PostEffect
         }
 
         // The picture at the size of the tube. Four reads spread over what a dot stands for, each blended between
-        // the pixels around it: at twice the size that is exactly the four pixels of a dot, at the same size they
+        // the pixels around it. At twice the size that is exactly the four pixels of a dot, at the same size they
         // all land on the one pixel there is.
         Vector2 ratio = context.SourceSize / resolution;
         Vector2 spread = new Vector2(SpreadOf(ratio.X), SpreadOf(ratio.Y)) / context.SourceSize;

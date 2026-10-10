@@ -11,7 +11,7 @@ namespace Horizon.Input;
 /// The engine has one of these already (<c>Engine.Input.Gamepads</c>), a game hardly ever needs to make its own.
 /// Every gamepad gets a <see cref="Gamepad.Slot"/> that it keeps when it is unplugged and plugged back in, and
 /// bindings of its own that start out as a copy of <see cref="DefaultBindings"/>. Games ask a gamepad for actions
-/// ("jump") rather than buttons, and change what an action is bound to per gamepad:
+/// ("jump") rather than buttons, and change what an action is bound to per gamepad.
 /// <code>
 /// var gamepads = Engine.Input.Gamepads;
 /// gamepads.DefaultBindings.Bind("jump", GamepadInput.A).Bind("attack", GamepadInput.X, GamepadInput.RightTrigger);
@@ -49,7 +49,7 @@ public class GamepadInputManager : Entity
     private volatile bool _sampling;
 
     /// <summary>
-    /// Every gamepad there has been a use for so far, by slot: the ones plugged in, the ones that were, and the
+    /// Every gamepad there has been a use for so far, by slot. The ones plugged in, the ones that were, and the
     /// ones a loaded file had bindings for. See <see cref="Gamepad.IsConnected"/> for which is which.
     /// </summary>
     public GamepadList Gamepads => new(_gamepads);
@@ -99,7 +99,7 @@ public class GamepadInputManager : Entity
         }
     }
 
-    // Event driven callbacks, raised during the update
+    // Raised during the update, when one is plugged in and when one is pulled out
     public event Action<Gamepad>? OnGamepadConnected;
     public event Action<Gamepad>? OnGamepadDisconnected;
 
@@ -182,7 +182,7 @@ public class GamepadInputManager : Entity
 
     /// <summary>
     /// Looks at every device and keeps what it is doing for the next update. On the thread of the window, every time it
-    /// has heard what the system had to say, which is when the devices are refreshed. The engine does this; a manager
+    /// has heard what the system had to say, which is when the devices are refreshed. The engine does this, a manager
     /// that nobody samples reads its devices in its update instead.
     /// </summary>
     public void SampleDevices()
@@ -260,7 +260,7 @@ public class GamepadInputManager : Entity
     }
 
     /// <summary>
-    /// Adds a gamepad that isn't a device: it takes a slot and has bindings like any other, and reads as whatever
+    /// Adds a gamepad that isn't a device. It takes a slot and has bindings like any other, and reads as whatever
     /// the game hands to <see cref="Gamepad.Update(in GamepadSnapshot)"/>. For replays, for letting an AI play
     /// through the same code a player does, and for tests.
     /// </summary>
@@ -280,7 +280,7 @@ public class GamepadInputManager : Entity
     }
 
     /// <summary>
-    /// Everything there is to save as a HIDL object: the default bindings, and the bindings of every slot
+    /// Everything there is to save as a HIDL object, the default bindings, and the bindings of every slot
     /// together with the name of the device that was last in it.
     /// <code>
     /// {
@@ -359,7 +359,7 @@ public class GamepadInputManager : Entity
 
     /// <summary>
     /// Loads what <see cref="Save"/> wrote, or a file somebody wrote by hand. Nothing changes if the file
-    /// isn't there or can't be evaluated; a file that only gets some things wrong is taken over for the rest.
+    /// isn't there or can't be evaluated, and a file that only gets some things wrong is taken over for the rest.
     /// </summary>
     /// <param name="problems">What was wrong with the file, if anything. Empty if it loaded cleanly.</param>
     /// <returns>Whether the file was there and declared the gamepads.</returns>
@@ -379,7 +379,7 @@ public class GamepadInputManager : Entity
     {
         problems = [];
 
-        // A runtime of its own: nothing a bindings file declares has any business in another script's scope.
+        // A runtime of its own, nothing a bindings file declares has any business in another script's scope.
         HIDLRuntime runtime = new();
         var (success, result) = runtime.Evaluate(text);
 
@@ -440,7 +440,7 @@ public class GamepadInputManager : Entity
     }
 
     /// <summary>
-    /// The slot a device that was just plugged in goes to: the lowest one that is waiting for a device of that
+    /// The slot a device that was just plugged in goes to. The lowest one that is waiting for a device of that
     /// name (the same gamepad coming back, or the one a file was saved with), failing that the lowest one that
     /// is waiting at all, failing that a new one.
     /// </summary>

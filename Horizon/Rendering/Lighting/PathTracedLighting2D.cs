@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 
 using Horizon.Engine;
@@ -33,10 +34,16 @@ public enum LightingMode
 /// same and five or six of them reach across the whole picture. Every ray marches the distance field of the walls and
 /// stops at the first one, and a cascade is merged with the one above it as it is made
 /// (shaders/lighting/gi_cascade.slang). What the nearest cascade ends up with is the light arriving at every pixel
-/// from every direction that didn't come straight from a lamp (gi_resolve.slang), with no noise in it, nothing to
-/// smooth over frames and nothing to reproject. The lamps themselves light everything through the deferred pass,
-/// shadows and all. Walls throw back what falls on them, including what the tracer found last frame, which is how
-/// light bounces more than once, and what glows is its own light.
+/// from every direction that didn't come straight from a lamp (gi_resolve.slang). The lamps themselves light
+/// everything through the deferred pass, shadows and all. Walls throw back what falls on them, including what the
+/// tracer found last frame, which is how light bounces more than once, and what glows is its own light.
+/// </para>
+/// <para>
+/// Every frame's light is laid over what the frames before it found (<see cref="Accumulation"/>), moved along with
+/// the camera, and the rays are turned a little every frame (<see cref="Jitter"/>), so over a few frames every
+/// direction gets looked in and not the same few every time. Without that a light a few pixels across is hit by
+/// some rays and missed by the ones next to them, which is spokes round a small lamp when the camera stands still
+/// and spokes that change places every frame when it creeps along, the whole room shimmering.
 /// </para>
 /// All of it on the render thread, the settings from any thread.
 /// </summary>
@@ -57,7 +64,14 @@ public sealed class PathTracedLighting2D : IDisposable
     /// <summary>How far (in pixels of the picture) the rays of the nearest cascade reach. Each cascade up reaches four times further.</summary>
     public float BaseInterval { get; set; } = 4.0f;
 
-    /// <summary>The most cascades there are, however big the picture. Each one is as dear as the last.</summary>
+    /// <summary>
+    /// The most cascades there are, however big the picture, which is what the lighting costs. Every one is as dear
+    /// as the last, so four instead of six is a third off. The furthest of them always looks as far as the far
+    /// corner of the picture, fewer of them loses no light, what it loses is how finely light from far off is
+    /// looked for (the far cascade has fewer rays for its distance than the one above it would have had), and
+    /// <see cref="Jitter"/> makes most of that back over a few frames. It can be changed while the game runs,
+    /// from an options screen say, the cascades are made again on the next frame.
+    /// </summary>
     public int MaxCascades { get; set; } = 6;
 
     /// <summary>How much of the light that falls on a wall it throws back, 0 to 1. Over 1 and it feeds on itself.</summary>
@@ -69,6 +83,23 @@ public sealed class PathTracedLighting2D : IDisposable
     /// <summary>How much of the renderer's ambient is still there with the tracer on, which fills the dark in by itself.</summary>
     public float AmbientScale { get; set; } = 0.5f;
 
+    /// <summary>
+    /// How long (in seconds) the light takes to settle, which is what every frame is laid over the ones before it
+    /// for, 0 for every frame on its own. A tenth of a second is long enough to be rid of the shimmer and short
+    /// enough that a light coming on, or a spark going past, is followed as it happens. It is a time and not a
+    /// number of frames, the light settles as quickly at sixty frames a second as at three thousand, only the
+    /// more frames there are the more of them it is made of. The frames before are moved along with the camera,
+    /// what moves by itself leaves a short tail of its light behind it, which in a dark room looks like light does.
+    /// </summary>
+    public float Accumulation { get; set; } = 0.1f;
+
+    /// <summary>
+    /// Whether the rays are turned a little every frame while the light is accumulated, see <see cref="Accumulation"/>.
+    /// On, the light round a small lamp is round. Off, the rays go the same ways every frame, which is steadier
+    /// frame by frame and shows the spokes between them.
+    /// </summary>
+    public bool Jitter { get; set; } = true;
+
     private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
     private readonly List<Texture> cascades = [];
@@ -77,6 +108,18 @@ public sealed class PathTracedLighting2D : IDisposable
     private uint width, height, cascadeWidth, cascadeHeight;
     private int cascadeCount;
     private Vector2? originBefore;
+
+    // What the cascades were made for, see Fit. Changing any of it makes them again
+    private int fittedCascades, fittedSpacing;
+    private float fittedInterval;
+
+    // How many frames there have been, which is how far the rays are turned (see Turn), and when the last one was.
+    // A frame that comes long after the last (the lighting was off for a while) starts again from nothing
+    private uint frames;
+    private long lastRun;
+
+    // How long after the last frame one still carries on from it, in seconds
+    private const double GAP = 0.25;
 
     private Technique? radiancePass, cascadePass, resolvePass;
 
@@ -113,7 +156,23 @@ public sealed class PathTracedLighting2D : IDisposable
 
         // The world is this many units across a pixel of the picture
         float pixelWorld = camera.Bounds.Width / width;
-        Vector2 shift = MeasureShift(camera) ?? Vector2.Zero;
+
+        // Whether last frame's light is worth anything, it is not the first time, the camera didn't cut, and the
+        // lighting wasn't off for a while in between. When it is not, it is read from nowhere, the bounce of the
+        // radiance pass and the history of the resolve both find nothing outside of the picture
+        long now = Stopwatch.GetTimestamp();
+        Vector2? moved = MeasureShift(camera);
+        bool carriesOn = moved is not null && lastRun != 0 && (now - lastRun) / (double)Stopwatch.Frequency < GAP;
+        Vector2 shift = carriesOn ? moved!.Value : new Vector2(2.0f);
+        lastRun = now;
+
+        // How much of this frame goes into the light, the rest being what the frames before found
+        float blend = carriesOn ? Blend(dt, Accumulation) : 1.0f;
+        float turn = blend < 1.0f && Jitter ? Turn(frames, Describe0Directions()) : 0.0f;
+        frames++;
+
+        // The furthest cascade looks as far as the far corner, however few of them there are, see MaxCascades
+        float diagonal = MathF.Sqrt((float)width * width + (float)height * height);
 
         // Where the top left of the picture is in the world, which is what the probes are laid out from, see Offset
         Vector2 topLeft = TopLeftOf(camera);
@@ -140,6 +199,7 @@ public sealed class PathTracedLighting2D : IDisposable
         cascadePass.SetUniform("uSize", Size);
         cascadePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
         cascadePass.SetUniform("uPixelWorld", pixelWorld);
+        cascadePass.SetUniform("uRotation", turn);
 
         for (int i = cascadeCount - 1; i >= 0; i--)
         {
@@ -148,6 +208,7 @@ public sealed class PathTracedLighting2D : IDisposable
             Describe(hasUpper ? i + 1 : i, out Vector2 upperProbes, out float upperSpacing, out float upperDirections, out _, out _);
             Vector2 offset = Offset(topLeft, pixelWorld, spacing);
             Vector2 upperOffset = Offset(topLeft, pixelWorld, upperSpacing);
+            if (!hasUpper) end = MathF.Max(end, diagonal);
 
             cascadePass.SetUniform("uProbeCount", in probes);
             cascadePass.SetUniform("uProbeSpacing", spacing);
@@ -174,6 +235,9 @@ public sealed class PathTracedLighting2D : IDisposable
 
         resolvePass.Bind();
         cascades[0].Bind(0);
+        previous.Bind(1);
+        resolvePass.SetUniform("uShift", in shift);
+        resolvePass.SetUniform("uBlend", blend);
         resolvePass.SetUniform("uSize", Size);
         resolvePass.SetUniform("uProbeCount", in nearestProbes);
         resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
@@ -214,6 +278,41 @@ public sealed class PathTracedLighting2D : IDisposable
         }
     }
 
+    /// <summary>
+    /// How much of a frame goes into the light when it is laid over the ones before, for a frame of so many
+    /// seconds and a light that settles in so many (see <see cref="Accumulation"/>). Taken as a decay over time,
+    /// so two frames of half the time leave as much of the old light as one of the whole, whatever the frame rate.
+    /// Never all of the old light, a frame that took no time at all still counts for a bit.
+    /// </summary>
+    internal static float Blend(float dt, float settle)
+    {
+        if (settle <= 0.0f) return 1.0f;
+        return Math.Clamp(1.0f - MathF.Exp(-MathF.Max(dt, 0.0f) / settle), 0.02f, 1.0f);
+    }
+
+    /// <summary>
+    /// How far the rays are turned on a frame, in radians, somewhere within the angle between two rays of the
+    /// nearest cascade. Every cascade is turned by the same angle, which keeps the four rays a ray splits into
+    /// above it inside of its cone, the merges never notice. The angles go round by the golden ratio, so any few
+    /// frames in a row are spread out over the whole angle and none of them are near each other, rather than
+    /// whatever a random number felt like. Turned by a fraction of a cone a ray is the same ray as far as the
+    /// nearest cascade goes, and every cascade further out sees that fraction of a cone of its own, each of them
+    /// is swept over a few frames.
+    /// </summary>
+    internal static float Turn(uint frame, float directions)
+    {
+        const double GOLDEN = 0.61803398874989485;
+        double along = frame * GOLDEN % 1.0;
+        return (float)(along * Math.Tau / Math.Max(directions, 1.0f));
+    }
+
+    /// <summary>Helper method for how many rays a probe of the nearest cascade has.</summary>
+    private float Describe0Directions()
+    {
+        Describe(0, out _, out _, out float directions, out _, out _);
+        return directions;
+    }
+
     /// <summary>Helper method for where the top left of the picture is in the world.</summary>
     private static Vector2 TopLeftOf(Camera camera)
     {
@@ -227,17 +326,21 @@ public sealed class PathTracedLighting2D : IDisposable
     /// <summary>Helper method for what a cascade is, how many probes, how far apart, how many rays each, over which distances.</summary>
     private void Describe(int cascade, out Vector2 probes, out float spacing, out float directions, out float start, out float end)
     {
-        int baseSpacing = Math.Max(1, ProbeSpacing);
-        spacing = baseSpacing * (1 << cascade);
-        directions = 4.0f * MathF.Pow(4.0f, cascade);
+        // What the cascades were made for, not what the settings say this moment. Those can be changed from
+        // another thread halfway through a frame, and a cascade described by one and made by the other is a
+        // texture read past its end
+        spacing = fittedSpacing * (1 << cascade);
+
+        // Four to the cascade, which is two shifted and no business of Pow's. This is asked a dozen times a frame
+        float four = MathF.ScaleB(1.0f, 2 * cascade);
+        directions = 4.0f * four;
 
         // One more each way than the picture takes, the grid is pinned to the world and may start up to a spacing
         // before the picture does, see Offset
         probes = new Vector2(MathF.Ceiling(width / spacing) + 1.0f, MathF.Ceiling(height / spacing) + 1.0f);
 
-        float interval = MathF.Max(BaseInterval, 1.0f);
-        start = interval * (MathF.Pow(4.0f, cascade) - 1.0f) / 3.0f;
-        end = interval * (MathF.Pow(4.0f, cascade + 1) - 1.0f) / 3.0f;
+        start = fittedInterval * (four - 1.0f) / 3.0f;
+        end = fittedInterval * (four * 4.0f - 1.0f) / 3.0f;
     }
 
     /// <summary>
@@ -262,18 +365,23 @@ public sealed class PathTracedLighting2D : IDisposable
     /// <summary>Helper method to have every texture be the size that is wanted, made anew when it isn't.</summary>
     private void Fit(uint wantedWidth, uint wantedHeight)
     {
-        if (resultA is not null && width == wantedWidth && height == wantedHeight) return;
+        int most = Math.Max(1, MaxCascades), spacing = Math.Max(1, ProbeSpacing);
+        float interval = MathF.Max(BaseInterval, 1.0f);
+
+        if (resultA is not null && width == wantedWidth && height == wantedHeight
+            && fittedCascades == most && fittedSpacing == spacing && fittedInterval == interval) return;
 
         Release();
         width = wantedWidth;
         height = wantedHeight;
+        (fittedCascades, fittedSpacing, fittedInterval) = (most, spacing, interval);
 
         // How many cascades it takes to reach across the picture, and how big their textures have to be. A cascade
         // texture is probes times rays each way, which can run a little past the picture
         float diagonal = MathF.Sqrt(width * width + height * height);
         cascadeCount = 0;
         cascadeWidth = cascadeHeight = 0;
-        for (int i = 0; i < Math.Max(1, MaxCascades); i++)
+        for (int i = 0; i < most; i++)
         {
             Describe(i, out Vector2 probes, out _, out float directions, out float start, out _);
             if (i > 0 && start >= diagonal) break;
@@ -292,17 +400,21 @@ public sealed class PathTracedLighting2D : IDisposable
             cascades.Add(made.Asset);
         }
 
-        if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var a)) return;
-        if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var b)) return;
-        if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var r)) return;
-        resultA = a.Asset;
-        resultB = b.Asset;
-        radiance = r.Asset;
-        resultA.Name = "path traced result a";
-        resultB.Name = "path traced result b";
-        radiance.Name = "wall radiance";
+        // Kept as they are made. A card that ran out of room halfway used to leave the ones it did make with
+        // nobody holding them, and then try the whole lot again the next frame, and the next, god help it
+        resultA = Picture("path traced result a");
+        resultB = Picture("path traced result b");
+        radiance = Picture("wall radiance");
+
+        Texture? Picture(string name)
+        {
+            if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = CascadeTexture }, out var made)) return null;
+            made.Asset.Name = name;
+            return made.Asset;
+        }
 
         originBefore = null;
+        lastRun = 0;
         Result = null;
     }
 

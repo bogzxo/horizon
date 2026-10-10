@@ -2,7 +2,7 @@ namespace Horizon.Graphics;
 
 /// <summary>
 /// What kind of texture to make, what its texels are, how it is read, and what it is for. The presets cover what the
-/// engine itself makes; a texture that wants something else is made with a definition of its own.
+/// engine itself makes, a texture that wants something else is made with a definition of its own.
 /// </summary>
 public readonly record struct TextureDefinition(
     PixelFormat Format,

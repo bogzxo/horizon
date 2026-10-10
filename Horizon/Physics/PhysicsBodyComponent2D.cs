@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Numerics;
-using System.Text;
+﻿using System.Numerics;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -23,7 +19,8 @@ public class PhysicsBodyComponent2D : GameComponent
     /// </summary>
     public List<IPhysicsFixture> ParticleFixtures { get; init; } = [];
 
-    // TODO: this should not be publicly mutable, the physics world simulation loop should change it
+    // TODO this should not be publicly mutable, the simulation loop of the world should be the only one moving it.
+    // Everybody and their dog teleports bodies through here meanwhile
     public Vector2 Position { get; set; }
 
     public Vector2 Velocity { get; internal set; }
@@ -31,6 +28,16 @@ public class PhysicsBodyComponent2D : GameComponent
     public float Mass { get; set; } = 1.0f;
     public float Restitution { get; set; } = 0.3f;
     public float LinearDrag { get; set; } = 0.0f;
+
+    /// <summary>
+    /// Whether a move that would end inside of the map is taken as far as it goes, up against whatever is in the
+    /// way, rather than not taken at all. Off, which is what it is unless somebody says so, a body that would have
+    /// hit the floor this step stays where it was, as much as a step of falling short of it, stops dead and then
+    /// falls the rest of the way from standing. Nobody sees that of a crate. Of somebody landing from a jump it
+    /// is a hitch three pixels off the ground, every single landing, so a <see cref="CharacterController2D"/>
+    /// has it on.
+    /// </summary>
+    public bool StopsFlush { get; set; }
 
     /// <summary>
     /// Bodies with the same group pass straight through each other, and don't count as touching either.
@@ -109,7 +116,7 @@ public class PhysicsBodyComponent2D : GameComponent
 
     public override void Render(float dt)
     {
-        // physics bodies do not render directly; transform is updated in state.
+        // physics bodies have nothing to draw, the transform is brought along in UpdateState
     }
 
     public override void UpdateState(float dt)

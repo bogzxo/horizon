@@ -9,12 +9,12 @@ namespace Horizon.UI.Components;
 
 /// <summary>
 /// A single line of text that can be edited. While it has the focus (it was clicked, or
-/// <see cref="UIComponent.Focus"/> was called) whatever is typed on the keyboard goes into it;
-/// an <see cref="OnScreenKeyboard"/> or any other code can type into it with <see cref="Insert(char)"/>
+/// <see cref="UIComponent.Focus"/> was called) whatever is typed on the keyboard goes into it,
+/// and an <see cref="OnScreenKeyboard"/> or any other code can type into it with <see cref="Insert(char)"/>
 /// and <see cref="Backspace"/>, focused or not.
 /// <para>
-/// It has a caret that typing happens at and a selection that typing replaces, and the keys that go with them:
-/// the arrows, home and end move the caret (a word at a time with control, selecting with shift), backspace and
+/// It has a caret that typing happens at and a selection that typing replaces, and the keys that go with them.
+/// The arrows, home and end move the caret (a word at a time with control, selecting with shift), backspace and
 /// delete take a character (a word with control, and go on doing it while they are held), control with A selects
 /// everything, and control with C, X and V copy, cut and paste. Clicking puts the caret where the click was,
 /// dragging selects.

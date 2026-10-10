@@ -13,7 +13,7 @@ public enum HidlToken
     // let, const, func and the rest of the words the language keeps to itself, and true, false and null
     Keyword,
 
-    // The key of an object ("padding" in padding: 8) or something reached with a dot
+    // The key of an object ("padding" in `padding: 8`) or something reached with a dot
     Property,
 
     // Anything that is called, which is whatever has a bracket after it

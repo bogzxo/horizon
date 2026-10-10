@@ -59,7 +59,7 @@ internal static class UIScript
         _ => throw new Exception($"{what} has to be a number, a vec(horizontal, vertical) or a vec(left, top, right, bottom).")
     };
 
-    /// <summary>The name of an enum value, written the way scripts write names: "top_left" for TopLeft.</summary>
+    /// <summary>The name of an enum value, written the way scripts write names, "top_left" for TopLeft.</summary>
     public static T ToEnum<T>(IRuntimeValue value, string what) where T : struct, Enum
     {
         if (value is StringValue text && Enum.TryParse(text.Value.Replace("_", string.Empty), true, out T result))

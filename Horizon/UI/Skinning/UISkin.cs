@@ -12,7 +12,7 @@ using Horizon.UI.Scripting;
 namespace Horizon.UI.Skinning;
 
 /// <summary>
-/// The look of a UI: the art the components draw with, a font, and the colours and sizes components use
+/// The look of a UI, the art the components draw with, a font and the colours and sizes components use
 /// unless told otherwise.
 /// The art comes from a sprite sheet definition (or straight out of an image) and is stitched into an
 /// atlas of the skin's own, one piece at a time as it is first asked for. So a skin can sit on top of a
@@ -86,7 +86,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>
     /// How many units on screen a texel of the art takes up. Pixel art is usually drawn at two or three
-    /// times its size; everything a region measures (its size, its borders) is scaled along.
+    /// times its size, and everything a region measures (its size, its borders) is scaled along.
     /// </summary>
     public float ArtScale { get; private set; } = 1.0f;
 
@@ -185,8 +185,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     }
 
     /// <summary>
-    /// Puts the art that was asked for since the last time into the atlas. Has to be called on the GL
-    /// thread; the compositor does, before it draws.
+    /// Puts the art that was asked for since the last time into the atlas. Has to be called on the render
+    /// thread, the compositor does before it draws.
     /// </summary>
     /// <returns>Whether any art arrived.</returns>
     internal bool Update()
@@ -210,8 +210,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>
     /// Finds an icon by name the way a text that is written in a set of icons does (<c>[icons:playstation]</c>,
-    /// see <see cref="UIFont"/>): if the set has another icon for that name, that is the one. A set is how the
-    /// same text shows the buttons of whichever gamepad is being held: the text says <c>[icon:pad_a]</c>, and the
+    /// see <see cref="UIFont"/>). If the set has another icon for that name, that is the one. A set is how the
+    /// same text shows the buttons of whichever gamepad is being held. The text says <c>[icon:pad_a]</c>, and the
     /// set of a gamepad whose buttons aren't called that says what to draw for it. A name the set says nothing
     /// about is the icon it always is, and so is every name in a set the skin doesn't have.
     /// </summary>
@@ -259,7 +259,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     private readonly ConcurrentDictionary<string, Vector2> imageSizes = new();
 
     /// <summary>
-    /// How big an image file is, in pixels: what an image drawn out of it whole measures. Zero if it isn't there or
+    /// How big an image file is, in pixels, which is what an image drawn out of it whole measures. Zero if it isn't there or
     /// isn't a PNG. From any thread, the file is only looked at the first time.
     /// </summary>
     public Vector2 ImageSize(string path) => imageSizes.GetOrAdd(path, static path =>
@@ -283,7 +283,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     });
 
     /// <summary>
-    /// An image file, the whole of it, as a piece of art of the skin: stitched into the atlas the first time it is
+    /// An image file, the whole of it, as a piece of art of the skin, stitched into the atlas the first time it is
     /// asked for (and there by the next frame), drawn at the scale of the UI like the rest of the skin. For art that
     /// belongs to a layout rather than the skin, a logo say. PNG only.
     /// </summary>
@@ -310,13 +310,13 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     }
 
     /// <summary>
-    /// Finds an icon by name, the way an <c>[icon:name]</c> tag does: an icon the skin declares, or
+    /// Finds an icon by name, the way an <c>[icon:name]</c> tag does, an icon the skin declares or
     /// failing that the region of that name.
     /// </summary>
     public bool TryGetIcon(ReadOnlySpan<char> name, out UIIcon icon) => TryGetIcon(name, 0.0f, out icon);
 
     /// <summary>
-    /// Finds an icon by name at a moment in time, for the ones that animate: an icon whose art has frames shows
+    /// Finds an icon by name at a moment in time, for the ones that animate. An icon whose art has frames shows
     /// whichever frame is due at that time, round and round. Zero is the first frame, always.
     /// </summary>
     /// <param name="time">Seconds, from whenever. Only how far along the animation is comes out of it.</param>
@@ -337,8 +337,9 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             int frame = phase < play ? (int)(phase / art.FrameTime) % art.Frames : 0;
             if (frame > 0)
             {
-                // The names are made once, this is asked on every draw of every icon
-                art.FrameNames ??= [.. Enumerable.Range(0, art.Frames).Select(i => $"{art.Region}#{i}")];
+                // The names are made once, this is asked on every draw of every icon. And made somewhere else,
+                // see NameFrames for what making them in here cost
+                art.FrameNames ??= NameFrames(art);
 
                 // A frame that isn't in the atlas yet is asked for by this, and the first one stands in until it is
                 if (TryGetRegion(art.FrameNames[frame], out var due))
@@ -358,6 +359,22 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// </summary>
     public bool TryGetIcon(ReadOnlySpan<char> name, ReadOnlySpan<char> set, float time, out UIIcon icon) =>
         TryGetIcon(ResolveIcon(name, set), time, out icon);
+
+    /// <summary>
+    /// Helper method to name the frames of an icon that animates. A loop in a method of its own. It was a lambda
+    /// inside of <see cref="TryGetIcon(ReadOnlySpan{char}, float, out UIIcon)"/> that needed the icon, and what a
+    /// lambda needs is put on the heap as the method it is written in starts. So every icon in every text made
+    /// an object every time it was drawn, a hundred and twenty times a second each, to name frames that had
+    /// their names already. An input display is nothing but icons.
+    /// </summary>
+    private static string[] NameFrames(IconArt art)
+    {
+        var names = new string[art.Frames];
+        for (int i = 0; i < names.Length; i++)
+            names[i] = $"{art.Region}{FRAME_SEPARATOR}{i}";
+
+        return names;
+    }
 
     float IUIIconSource.IconScale => IconScale;
 
@@ -461,7 +478,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>
     /// The skin of a file and a theme, loaded the first time it is asked for and the same one for everybody from
-    /// then on. This is what a UI gets its skin with. Has to run on the GL thread. It is never disposed of,
+    /// then on. This is what a UI gets its skin with. Has to run on the render thread. It is never disposed of,
     /// whoever asks next (the next screen) finds it as it was left, with all the art that was ever drawn from it
     /// in its atlas already. Null if the skin can't be loaded, which has been logged, and is tried again the next time.
     /// </summary>
@@ -482,8 +499,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>
     /// Loads a skin from a HIDL definition (see Assets/uix/dead_revolver/skin.hor for one that explains
-    /// itself), a new one that is the caller's own and theirs to dispose of: see <see cref="Shared"/> for the one
-    /// a UI normally draws with. Has to run on the GL thread. Logs what went wrong and returns null if the skin can't be loaded.
+    /// itself), a new one that is the caller's own and theirs to dispose of, see <see cref="Shared"/> for the one
+    /// a UI normally draws with. Has to run on the render thread. Logs what went wrong and returns null if the skin can't be loaded.
     /// </summary>
     /// <param name="theme">Which of the skin's themes to load, null for the one the file says is its usual one.</param>
     public static UISkin? Load(string directory, string file, string? theme = null)

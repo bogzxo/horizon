@@ -1,19 +1,19 @@
 // The Dead Revolver skin, the look of every UI unless it asks for another one.
 //
 // It comes in a number of themes, the same art in another colour. Everything up to "themes" is what they have in
-// common; under "themes" every one of them lists only what it does differently, and whoever loads the skin says
+// common, and under "themes" every one of them lists only what it does differently, and whoever loads the skin says
 // which one they want (the one called "theme" if they don't).
 //
 // The art is looked up in sprites.hor by name, in the theme of the skin. Components find the sprites that are named
 // after what they ask for by themselves (a button asks for "button", "button_hover" and "button_pressed"), so only
 // what goes by another name in the pack is listed under regions. A region is the name of a sprite, or an object
-// when there is more to say: { sprite: "bar_fill", tint: vec(r, g, b, a) }.
+// when there is more to say, like { sprite: "bar_fill", tint: vec(r, g, b, a) }.
 //
 // Icons are what [icon:name] in a text draws. Every sprite is an icon by its own name already, the ones listed here
-// are for giving a sprite a shorter name, or for making an icon out of a blank sprite with a tint and a label:
-// a white round button in green with an A on it is the A button of a gamepad.
+// are for giving a sprite a shorter name, or for making an icon out of a blank sprite with a tint and a label.
+// A white round button in green with an A on it is the A button of a gamepad.
 // An icon can also carry a symbol, another sprite drawn small in the middle of it, which is how the buttons of a
-// PlayStation gamepad are made: there is no letter for a triangle.
+// PlayStation gamepad are made, there is no letter for a triangle and Sony never asked the alphabet.
 // Every icon is drawn as tall as the line of text it is in. Icons that belong together but whose art isn't all the
 // same height (the arrows, up and down are flatter than left and right) say how many pixels of art make a line with
 // height, which draws them all at the one scale.

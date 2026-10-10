@@ -114,7 +114,7 @@ public sealed class InputManager : GameComponent
 
     public override void UpdateState(float dt)
     {
-        // Switched off, nothing is read and whatever was pressed stays where it was (development: "InputManager listens to Enabled")
+        // Switched off, nothing is read and whatever was pressed stays where it was (development said "InputManager listens to Enabled", so it bloody well does)
         if (!Enabled) return;
 
         Keyboard.Update();

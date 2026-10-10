@@ -30,7 +30,7 @@ public class ScrollPanel : Panel
     /// <summary>How far one notch of the wheel moves the content.</summary>
     public float WheelStep { get; set; } = 48.0f;
 
-    /// <summary>How far down the content can go: what of it doesn't fit.</summary>
+    /// <summary>How far down the content can go, which is what of it doesn't fit.</summary>
     public float MaxOffset => MathF.Max(0.0f, contentHeight - Bounds.Shrink(Padding).Height);
 
     /// <summary>Scrolls all the way down, for content that grows at its end (a log).</summary>

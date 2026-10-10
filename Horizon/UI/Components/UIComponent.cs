@@ -25,7 +25,7 @@ public enum UIFill
 }
 
 /// <summary>
-/// The ways a component can make its entrance, see <see cref="UIComponent.Intro"/>. In a layout file:
+/// The ways a component can make its entrance, see <see cref="UIComponent.Intro"/>. In a layout file that is
 /// <c>intro: "pop"</c>, or <c>intro: "slide", intro_offset: vec(-300, 0)</c> to come in from the left.
 /// </summary>
 public enum UIIntro
@@ -43,7 +43,7 @@ public enum UIIntro
 }
 
 /// <summary>
-/// The base of everything in a UI: a node in a tree that knows where it sits inside its parent, how to
+/// The base of everything in a UI, a node in a tree that knows where it sits inside its parent, how to
 /// paint itself and what to do with the pointer.
 /// A component owns nothing on the GPU. The compositor lays the tree out and paints it on the logic
 /// thread, so a component can be created, changed and moved around at any time, from C# or from a script.
@@ -109,7 +109,7 @@ public abstract partial class UIComponent
 
     /// <summary>
     /// Moves where the component and everything inside it is drawn, away from where the layout put it.
-    /// Nothing around it moves along: this is for animating, see <see cref="UITweens"/>. Y points up.
+    /// Nothing around it moves along, this is for animating, see <see cref="UITweens"/>. Y points up.
     /// </summary>
     public Vector2 VisualOffset { get; set; }
 
@@ -135,7 +135,7 @@ public abstract partial class UIComponent
     /// <summary>
     /// The layer the component is on, with everything inside it that doesn't name one of its own. Empty for none.
     /// A layer is a name several parts of a layout share so they can be shown and hidden together, see
-    /// <see cref="UIModule.SetLayerVisible"/>: the screens of a menu that are laid over each other in one file,
+    /// <see cref="UIModule.SetLayerVisible"/>. The screens of a menu that are laid over each other in one file,
     /// or an overlay that is only up some of the time. A component on a hidden layer is neither drawn nor hit
     /// by the pointer, but keeps its place in the layout and whatever <see cref="Visible"/> says.
     /// </summary>
@@ -158,7 +158,7 @@ public abstract partial class UIComponent
 
     /// <summary>
     /// Whether the component names a layer that is hidden in its module. Whatever is inside of it is hidden with
-    /// it, which this doesn't say for them: see <see cref="IsHiddenByLayer"/>.
+    /// it, which this doesn't say for them, see <see cref="IsHiddenByLayer"/>.
     /// </summary>
     public bool IsOnHiddenLayer => Layer.Length > 0 && Module is { } owner && owner.IsLayerHidden(Layer);
 
@@ -299,7 +299,7 @@ public abstract partial class UIComponent
         return true;
     }
 
-    /* Layout: sizes are worked out from the leaves up, then places are handed out from the root down. */
+    /* Layout. Sizes are worked out from the leaves up, then places are handed out from the root down */
 
     internal Vector2 MeasureTree(UISkin skin)
     {
@@ -367,8 +367,8 @@ public abstract partial class UIComponent
     /// How far above the rest of its module the component is drawn. Zero, for nearly everything, is in its place
     /// among its siblings, painter's order. Anything above zero is drawn after everything else in the module (the
     /// higher the later, so the more on top) and gets the pointer first, which is for the odd thing that has to sit
-    /// over its neighbours whatever order the layout has them in: a badge over a card, a drag handle. It isn't cut off
-    /// by what it is inside of any more. In a layout file: <c>z: 1</c>.
+    /// over its neighbours whatever order the layout has them in, a badge over a card, a drag handle. It isn't cut off
+    /// by what it is inside of any more. In a layout file that is <c>z: 1</c>.
     /// </summary>
     public int ZOffset { get; set; }
 

@@ -10,10 +10,10 @@ namespace Horizon.Input;
 /// Which inputs of a gamepad trigger which actions, and how far a stick or a trigger has to be pushed to count.
 /// Actions are whatever the game calls them ("jump", "attack"). An action is bound to any number of combinations,
 /// each of them one input or several that have to be held together (A, or A + B), and is held while any one of
-/// them is. A combination takes over from the smaller ones inside of it: with A + B bound to something, holding
+/// them is. A combination takes over from the smaller ones inside of it. With A + B bound to something, holding
 /// both is that and neither what A nor what B is bound to by itself.
 /// Every gamepad has bindings of its own, so two players can play with different ones.
-/// Bindings are saved as a HIDL object, with the actions by name and their inputs by name:
+/// Bindings are saved as a HIDL object, with the actions by name and their inputs by name.
 /// <code>
 /// {
 ///     deadzone: 0.2,
@@ -176,7 +176,7 @@ public sealed class GamepadBindings
     public string Describe(string action) => Describe(CombinationsOf(action));
 
     /// <summary>
-    /// Whether an action is triggered by a set of held inputs: one of its combinations is held in full,
+    /// Whether an action is triggered by a set of held inputs, one of its combinations is held in full
     /// and no bigger combination that contains it is.
     /// </summary>
     /// <param name="held">The bits of everything that is held, see <see cref="Gamepad.HeldMask"/>.</param>
@@ -240,7 +240,7 @@ public sealed class GamepadBindings
 
     /// <summary>
     /// Takes over what a HIDL object says, see the summary of the class for what one looks like. What it doesn't
-    /// mention stays as it is: an action the file has never heard of (added to the game after it was saved) keeps
+    /// mention stays as it is, an action the file has never heard of (added to the game after it was saved) keeps
     /// what it is bound to here. Inputs that go by a name nobody knows are reported, and the combination they
     /// are part of is skipped.
     /// </summary>
@@ -373,7 +373,7 @@ public sealed class GamepadBindings
 
     private static void Validate(string action)
     {
-        // Anything else couldn't be saved: actions are the keys of an object in the file.
+        // Anything else couldn't be saved, actions are the keys of an object in the file.
         if (!HIDLWriter.IsIdentifier(action))
             throw new ArgumentException($"'{action}' can't be the name of an action, it has to be an identifier.", nameof(action));
     }

@@ -133,6 +133,11 @@ GBuffer fsMain(Varyings input)
     float cornerPixel = max(fwidth(fromMiddle), 0.00001);
     float2 uv = input.texel * input.texelSize;
 
+    // How far a step of one screen pixel is across the texture, either way. Text takes its samples around the
+    // middle of the pixel by these, see below
+    float2 uvAcross = ddx(uv), uvDown = ddy(uv);
+    float texelsAPixel = max(length(ddx(input.texel)), length(ddy(input.texel)));
+
     // A distance field is read between its texels like any smooth picture, the pixel art filter below keeps the
     // texels hard and at a big size that made a staircase of every edge
     float4 tex = float4(1.0, 1.0, 1.0, 1.0);
@@ -140,7 +145,7 @@ GBuffer fsMain(Varyings input)
     {
         tex = (input.flags & SMOOTH_FLAG) != 0u && (input.flags & FIELD_FLAG) == 0u
             ? smoothTexel(uTextures[NonUniformResourceIndex(texture)], input.texel, box)
-            : uTextures[NonUniformResourceIndex(texture)].SampleGrad(uv, ddx(uv), ddy(uv));
+            : uTextures[NonUniformResourceIndex(texture)].SampleGrad(uv, uvAcross, uvDown);
     }
 
     // The texture only says where the ink is (fonts), the colour is all the item's
@@ -153,8 +158,25 @@ GBuffer fsMain(Varyings input)
     float fieldPixel = max(fwidth(field), 0.0001);
     if ((input.flags & FIELD_FLAG) != 0u)
     {
-        float ink = clamp((field - 0.5) / fieldPixel + 0.5, 0.0, 1.0);
-        tex = float4(1.0, 1.0, 1.0, ink);
+        // How much the field changes over one screen pixel. The item says how much it changes over one texel
+        // (it rides in on the ring, which a glyph has no other use for), and a pixel is so many texels. Going by
+        // how different the field is from the pixel next door is the fall back, and a poor one for small text,
+        // where next door is four texels off and on the far side of another stroke
+        float pixel = input.ring > 0.0 ? max(input.ring * texelsAPixel, 0.0001) : fieldPixel;
+
+        // Four samples to the pixel and not one, each worth a quarter of it and with half the pixel to smooth its
+        // own edge over. The field is drawn a good deal smaller than it was made (twelve pixels to the em out of
+        // forty eight), so one sample in the middle of a pixel stood for sixteen texels it never looked at. The
+        // middle leg of an m fell between two of them more often than not and every "ms" read "ns", which is a
+        // million times out and still not the worst thing this file has done
+        float edge = pixel * 0.5;
+        float ink = 0.0;
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.125 + uvDown * 0.375, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.375 + uvDown * 0.125, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.375 - uvDown * 0.125, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.125 - uvDown * 0.375, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
+
+        tex = float4(1.0, 1.0, 1.0, ink * 0.25);
     }
 
     // A quarter of a disc. Inside of its edge, and (for the corner of an outline) outside of the hole in it

@@ -32,7 +32,10 @@ public class RectanglePhysicsFixture(Vector2 position, Vector2 size, string tag=
             case PhysicsFixtureShape.Circle:
                 {
                     var circle = (CirclePhysicsFixture)other;
-                    return CirclePhysicsFixture.IntersectsCircleAndRectangle(circle, this, positionOffset, otherPositionOffset);
+                    // The circle is the other one here, so it is the other body's position that goes with it. These two
+                    // were the wrong way round for as long as this has existed, a box asked about a circle measured the
+                    // circle from where the box's body stood. Nobody noticed because nobody uses circles, the cowards
+                    return CirclePhysicsFixture.IntersectsCircleAndRectangle(circle, this, otherPositionOffset, positionOffset);
                 }
             default:
                 return false;

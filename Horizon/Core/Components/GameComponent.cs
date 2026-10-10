@@ -3,7 +3,7 @@ namespace Horizon.Core.Components;
 /// <summary>
 /// A component that does nothing until it is told what to do. It has the name, the parent and the switch every
 /// component needs, and every one of its turns is empty, so whoever makes a component from this only writes the
-/// turns it has something to do in:
+/// turns it has something to do in.
 /// <code>
 /// public sealed class Spinner : GameComponent
 /// {

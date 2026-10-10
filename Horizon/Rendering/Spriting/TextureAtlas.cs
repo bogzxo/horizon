@@ -12,10 +12,7 @@ using Horizon.Graphics;
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
-/// Where a piece of art ended up in a <see cref="TextureAtlas"/>, in texels from its top left.
-/// </summary>
-/// <summary>
-/// Where something is in an atlas. <paramref name="Position"/> and <paramref name="Size"/> are the texels that were
+/// Where something is in an atlas, in texels from its top left. <paramref name="Position"/> and <paramref name="Size"/> are the texels that were
 /// kept. An atlas that trims (see <see cref="TextureAtlas.Trim"/>) keeps only the opaque part of a frame, and then
 /// <paramref name="Offset"/> says where that part sits in the frame as it was asked for and <paramref name="FrameSize"/>
 /// how big that frame was, so whoever draws it can put it back where it belongs.
@@ -29,9 +26,41 @@ public readonly record struct AtlasRegion(Vector2 Position, Vector2 Size, Vector
 }
 
 /// <summary>
+/// The frames of one sprite in an atlas, by the names they go by, with where each of them is once the atlas has it.
+/// Whatever is in an atlas stays where it is for good, so a frame is only ever looked up by its name once. After
+/// that it is an array read, where it used to be the hashing of a string as long as a file path for every sprite
+/// on every tick.
+/// </summary>
+internal sealed class AtlasFrames(string[] keys)
+{
+    public readonly string[] Keys = keys;
+
+    private readonly AtlasRegion[] regions = new AtlasRegion[keys.Length];
+    private readonly bool[] known = new bool[keys.Length];
+
+    /// <summary>Where a frame is in the atlas, false while its art hasn't been put in yet.</summary>
+    public bool TryGet(TextureAtlas atlas, int frame, out AtlasRegion region)
+    {
+        if (Volatile.Read(ref known[frame]))
+        {
+            region = regions[frame];
+            return true;
+        }
+
+        if (!atlas.TryGet(Keys[frame], out region))
+            return false;
+
+        // The region first and then the word that it is there, for whoever reads it from the other thread
+        regions[frame] = region;
+        Volatile.Write(ref known[frame], true);
+        return true;
+    }
+}
+
+/// <summary>
 /// One texture that pieces of any number of images are stitched into, so that everything showing them can be drawn
 /// together (see <see cref="SpriteItem"/>) instead of once for every image.
-/// Only what is asked for with <see cref="Request"/> goes in: a sheet of thousands of sprites costs nothing but the ones
+/// Only what is asked for with <see cref="Request"/> goes in, a sheet of thousands of sprites costs nothing but the ones
 /// that are used. Asking can be done from any thread and at any time, the art shows up in the atlas the next time
 /// <see cref="Update"/> runs on the render thread. Whatever is in the atlas stays where it is for good, so the
 /// position of a region never has to be looked up twice.
@@ -49,6 +78,9 @@ public sealed class TextureAtlas : IDisposable
 
     private readonly ConcurrentQueue<Pending> _pending = new();
     private readonly ConcurrentDictionary<string, byte> _requested = new();
+
+    // The frames of every sprite that was asked for, so asking again is one look up, see Frames
+    private readonly ConcurrentDictionary<SpriteSource, AtlasFrames> _frames = new();
     private readonly List<Segment> _skyline = [];
     private long _used;
     private int _placed;
@@ -132,9 +164,23 @@ public sealed class TextureAtlas : IDisposable
     /// <summary>
     /// Asks for a sprite of a <see cref="SpriteSheetDefinition"/> to be put into the atlas, every frame of it. Thread-safe.
     /// </summary>
-    /// <returns>The names its frames go by in the atlas, in order, to look them up with <see cref="TryGet"/>.</returns>
-    public string[] Request(in SpriteSource sprite)
+    /// <returns>
+    /// The names its frames go by in the atlas, in order, to look them up with <see cref="TryGet"/>. The same array
+    /// every time the same sprite is asked for, so read it and leave it be.
+    /// </returns>
+    public string[] Request(in SpriteSource sprite) => Frames(sprite).Keys;
+
+    /// <summary>
+    /// Asks for a sprite the way <see cref="Request(in SpriteSource)"/> does and hands back its frames as something
+    /// that remembers where each of them ended up. Made once a sprite. A fighter changes animation a few times a
+    /// second, and every change used to write the name of every frame out again, forty odd characters apiece,
+    /// to ask for art that had been in the atlas since the fight began. Thread-safe.
+    /// </summary>
+    internal AtlasFrames Frames(in SpriteSource sprite)
     {
+        if (_frames.TryGetValue(sprite, out AtlasFrames? known))
+            return known;
+
         string[] keys = new string[Math.Max(sprite.Frames, 1)];
         for (int frame = 0; frame < keys.Length; frame++)
         {
@@ -145,7 +191,7 @@ public sealed class TextureAtlas : IDisposable
             Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height);
         }
 
-        return keys;
+        return _frames.GetOrAdd(sprite, new AtlasFrames(keys));
     }
 
     /// <summary>
@@ -219,9 +265,6 @@ public sealed class TextureAtlas : IDisposable
         return batch.Count > 0;
     }
 
-    /// <summary>
-    /// Helper method to find a free spot, on a shelf that fits or on a new one underneath the others.
-    /// </summary>
     // The smallest box around the pixels that aren't fully transparent
     private static void OpaqueBounds(in SpritePixels part, out int left, out int top, out int width, out int height)
     {
@@ -254,6 +297,9 @@ public sealed class TextureAtlas : IDisposable
         height = maxY - minY + 1;
     }
 
+    /// <summary>
+    /// Helper method to find a free spot along the skyline, growing the atlas if there is none left.
+    /// </summary>
     private bool TryPlace(int width, int height, out int x, out int y, ref bool grown)
     {
         x = y = 0;

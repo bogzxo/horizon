@@ -66,11 +66,11 @@ public static class Ease
                     : (MathF.Sqrt(1 - (-2 * t + 2) * (-2 * t + 2)) + 1) / 2;
 
             case Easing.InBack: return (BACK + 1) * t * t * t - BACK * t * t;
-            case Easing.OutBack: return 1 + (BACK + 1) * MathF.Pow(t - 1, 3) + BACK * MathF.Pow(t - 1, 2);
+            case Easing.OutBack: return 1 + (BACK + 1) * Power(t - 1, 3) + BACK * Power(t - 1, 2);
             case Easing.InOutBack:
                 return t < 0.5f
-                    ? MathF.Pow(2 * t, 2) * ((BACK_IN_OUT + 1) * 2 * t - BACK_IN_OUT) / 2
-                    : (MathF.Pow(2 * t - 2, 2) * ((BACK_IN_OUT + 1) * (t * 2 - 2) + BACK_IN_OUT) + 2) / 2;
+                    ? Power(2 * t, 2) * ((BACK_IN_OUT + 1) * 2 * t - BACK_IN_OUT) / 2
+                    : (Power(2 * t - 2, 2) * ((BACK_IN_OUT + 1) * (t * 2 - 2) + BACK_IN_OUT) + 2) / 2;
 
             case Easing.InElastic: return 1 - OutElastic(1 - t);
             case Easing.OutElastic: return OutElastic(t);
@@ -87,11 +87,22 @@ public static class Ease
     }
 
     // A whole power is multiplying a few times. MathF.Pow gets there through logarithms, the scenic route,
+    // and every tween on screen comes through here every update
+    private static float Power(float t, int power)
+    {
+        float result = t;
+        for (int i = 1; i < power; i++)
+            result *= t;
 
-    private static float Out(float t, int power) => 1 - MathF.Pow(1 - t, power);
+        return result;
+    }
+
+    private static float In(float t, int power) => Power(t, power);
+
+    private static float Out(float t, int power) => 1 - Power(1 - t, power);
 
     private static float InOut(float t, int power) =>
-        t < 0.5f ? MathF.Pow(2 * t, power) / 2 : 1 - MathF.Pow(-2 * t + 2, power) / 2;
+        t < 0.5f ? Power(2 * t, power) / 2 : 1 - Power(-2 * t + 2, power) / 2;
 
     private static float OutElastic(float t)
     {

@@ -106,7 +106,7 @@ public sealed class BlurTransition : ScreenTransition
 
     public override void Finish()
     {
-        // The pictures it blurs into are kept for the next time: making them anew is a hitch at the start of every
+        // The pictures it blurs into are kept for the next time, making them anew is a hitch at the start of every
         // transition, keeping them is a few pictures of half the size of the screen
         oldShare = 0.0f;
 

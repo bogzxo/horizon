@@ -13,7 +13,7 @@ namespace Horizon.UI.Skinning;
 /// </param>
 /// <param name="Scale">How many units on screen a texel takes up. Pixel art is drawn at a whole multiple of its size.</param>
 /// <param name="Tint">Multiplied into whatever the art is drawn with, for skins that recolour a piece of art.</param>
-/// <param name="Frames">How many frames the art has. The region is the first; the others are "name#1", "name#2" and so on.</param>
+/// <param name="Frames">How many frames the art has. The region is the first, the others are "name#1", "name#2" and so on.</param>
 /// <param name="FrameTime">How long each frame of an animation is shown for, in seconds.</param>
 /// <param name="Content">
 /// How far in from each edge (in texels) whatever goes on top of the art sits, for art that isn't the same
@@ -43,7 +43,7 @@ public readonly record struct UIRegion(
 }
 
 /// <summary>
-/// Something small that can be drawn in a line of text with an <c>[icon:name]</c> tag: a region of the skin,
+/// Something small that can be drawn in a line of text with an <c>[icon:name]</c> tag, a region of the skin
 /// optionally recoloured and with a short label on top. A blank round button with an "A" on it makes a
 /// gamepad prompt without needing art for every button.
 /// </summary>

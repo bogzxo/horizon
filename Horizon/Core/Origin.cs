@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Horizon.Rendering;
+﻿namespace Horizon.Rendering;
 
 /// <summary>
 /// Does this even need docs? its a byte ig...

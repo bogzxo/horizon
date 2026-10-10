@@ -49,7 +49,7 @@ public partial class UIModule
 
     public HIDLRuntime Runtime { get; init; } = new();
 
-    // While a layout is being built: what the components it doesn't put anywhere go into (the screen if
+    // While a layout is being built, what the components it doesn't put anywhere go into (the screen if
     // nothing), and a note of each of them.
     private readonly Lock captureLock = new();
     private UIComponent? captureParent;
@@ -86,7 +86,7 @@ public partial class UIModule
     {
         Runtime.UserScope.DeclareSystem("compositor", new ObjectValue(factories));
 
-        // compositor.design({ size: vec(1600, 900), fit: "contain" }): the screen the layout was made for. Only
+        // `compositor.design({ size: vec(1600, 900), fit: "contain" })` says what screen the layout was made for. Only
         // means something for a layout that is the whole module (not one built inside a component, a template)
         factories["design"] = new NativeFunctionValue((args, _) =>
         {
@@ -138,7 +138,7 @@ public partial class UIModule
 
     /// <summary>
     /// Lets scripts create a kind of component as compositor.name({ ... }). The object is optional and
-    /// can set any property the component exposes, including parent to put it inside another component;
+    /// can set any property the component exposes, including parent to put it inside another component,
     /// a component without a parent is added to the module itself.
     /// </summary>
     public void Register<T>(string name) where T : UIComponent, new()

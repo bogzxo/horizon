@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 
 using Horizon.Core.Components;
+using Horizon.Core.Diagnostics;
 using Horizon.Core.Primitives;
 using Horizon.Core.Threading;
 using Horizon.Core.Tweening;
@@ -72,7 +73,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     private TweenContext? _tweens;
 
-    // What the entity is made of as of every snapshot, which is what a frame that is drawn from snapshots walks: the
+    // What the entity is made of as of every snapshot, which is what a frame that is drawn from snapshots walks. The
     // lists are the copies that are swapped whole, so holding on to them costs nothing and they never change underneath
     private readonly Snapshot<Node> _node = new();
 
@@ -96,7 +97,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     public TweenContext Tweens => _tweens ?? Interlocked.CompareExchange(ref _tweens, new TweenContext(), null) ?? _tweens;
 
     /// <summary>
-    /// Called after the constructor, guaranteeing that there will be a valid GL context.
+    /// Called after the constructor, on the render thread, with the GPU there to be talked to.
     /// Calls PostInit after it is complete, do NOT forget base.Initialize()!!!
     /// </summary>
     public virtual void Initialize()
@@ -116,7 +117,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public virtual void Render(float dt)
     {
-        // Drawn alongside the simulation, from what it published: nothing here may be set up or looked at as it is now
+        // Drawn alongside the simulation, from what it published, so nothing here may be set up or looked at as it is now
         RenderFrame frame = RenderFrame.Active;
         if (frame.IsDecoupled)
         {
@@ -174,7 +175,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// <summary>
     /// Publishes what the entity is made of, and has its children and components publish whatever they draw. Called on
     /// the simulation thread at the end of every tick, for everything that is set up and switched on, the way
-    /// <see cref="UpdateState"/> is: an entity that draws something of its own publishes it here (and calls this base
+    /// <see cref="UpdateState"/> is. An entity that draws something of its own publishes it here (and calls this base
     /// method, or nothing in it is drawn), see <see cref="Snapshot{T}"/>.
     /// </summary>
     public virtual void Capture()
@@ -189,14 +190,36 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
 
             if (i < 64) on |= 1UL << i;
-            if (component is ISnapshotSource source) source.Capture();
+            if (component is not ISnapshotSource source) continue;
+
+            // Measured while anybody is counting what things allocate, see AllocationLog. A UI paints here
+            if (AllocationLog.Tracking)
+            {
+                long before = AllocationLog.Begin(out long nested);
+                source.Capture();
+                AllocationLog.End(component, before, nested);
+            }
+            else
+            {
+                source.Capture();
+            }
         }
 
         Entity[] children = _childrenCache;
         foreach (Entity child in children)
         {
             if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
-            child.Capture();
+
+            if (AllocationLog.Tracking)
+            {
+                long before = AllocationLog.Begin(out long nested);
+                child.Capture();
+                AllocationLog.End(child, before, nested);
+            }
+            else
+            {
+                child.Capture();
+            }
         }
 
         _node.Publish(new Node(children, components, on));
@@ -253,6 +276,13 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     {
         bool waiting = Volatile.Read(ref _waiting) > 0;
 
+        // With somebody counting what things allocate, the same walk with every stop measured
+        if (AllocationLog.Tracking)
+        {
+            UpdateMeasured(dt, physics: true, waiting);
+            return;
+        }
+
         foreach (IGameComponent component in _componentsCache)
         {
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
@@ -266,11 +296,46 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
     }
 
+    /// <summary>
+    /// Helper method to update the components and the children the way <see cref="UpdateState"/> and
+    /// <see cref="UpdatePhysics"/> do, measuring what each of them allocates on the way, see <see cref="AllocationLog"/>.
+    /// Apart from the two so they stay the plain loops they are when nobody is counting, which is always but for
+    /// the odd afternoon somebody wants to know where the garbage comes from.
+    /// </summary>
+    private void UpdateMeasured(float dt, bool physics, bool waiting)
+    {
+        foreach (IGameComponent component in _componentsCache)
+        {
+            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+
+            long before = AllocationLog.Begin(out long nested);
+            if (physics) component.UpdatePhysics(dt);
+            else component.UpdateState(dt);
+            AllocationLog.End(component, before, nested);
+        }
+
+        foreach (Entity child in _childrenCache)
+        {
+            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+
+            long before = AllocationLog.Begin(out long nested);
+            if (physics) child.UpdatePhysics(dt);
+            else child.UpdateState(dt);
+            AllocationLog.End(child, before, nested);
+        }
+    }
+
     public virtual void UpdateState(float dt)
     {
         _tweens?.Tick(dt);
 
         bool waiting = Volatile.Read(ref _waiting) > 0;
+
+        if (AllocationLog.Tracking)
+        {
+            UpdateMeasured(dt, physics: false, waiting);
+            return;
+        }
 
         foreach (IGameComponent component in _componentsCache)
         {

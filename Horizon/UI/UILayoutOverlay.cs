@@ -6,7 +6,7 @@ using Horizon.UI.Drawing;
 namespace Horizon.UI;
 
 /// <summary>
-/// Draws the layout of a UI over it, as <see cref="UILayoutOverlayOptions"/> ask for it: the edges of every
+/// Draws the layout of a UI over it, as <see cref="UILayoutOverlayOptions"/> ask for it, the edges of every
 /// component, the padding inside of them and the gaps stacks leave between their children. It is painted into
 /// the same list as the UI itself, after it, so it lines up with what is on screen whatever the camera does.
 /// </summary>

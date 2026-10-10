@@ -42,7 +42,11 @@ maps live on the GPU as chunks a compute pass culls into one indirect draw, part
 the GPU and drawn indirect, lights are sorted into screen tiles, the occlusion map is a signed distance field the
 shadows march, sprites that cast shadows do so through a distance field of the picture built every frame, and the
 path traced lighting is radiance cascades in compute. The performance overlay (`UI/Diagnostics/PerformanceOverlay`,
-F3) shows what every pass of a frame costs the GPU, the threads, the unevenness of the frames and the garbage.
+F3) is a pill with the frame rate in it or, once more, a card with the last twelve seconds of frames, the threads,
+what every pass of a frame costs the GPU as a bar, what the frame asked of the device, the memory and the garbage.
+It is one component that paints itself (`PerformanceBoard`) out of what was last read (`PerformanceSample`), and
+it makes no garbage doing it, numbers are written into the same few characters (`PerformanceInk`) and never into
+a string. Every loop keeps a timeline for it, a slice a tenth of a second (`LoopStatistics.CopyTimeline`).
 
 ## Read the notebook
 
@@ -138,12 +142,33 @@ of everything after it and a rule gets blended with a highlight for a tick. A cu
 trail the hand, `UICompositor.Cursor` (a `UICursor`) is placed on the render thread from `Mouse.LivePosition`
 as every frame is drawn. The pacing example (`pacing`) measures all of it, in frames.
 
+How often a UI is put together and drawn anew is held to `UICompositor.FrameRateLimit`, 120 times a second unless
+told otherwise (`UICompositor.DefaultFrameRateLimit` for every UI made after it is set, 0 for no limit). At three
+thousand frames a second a moving UI was blended, sent up and drawn three thousand times a second, now the frames
+in between lay the picture of the last time over once more. It is rounded to whole frames, the UI is drawn anew on
+the frame nearest to when it is due, so a screen of 144 gets it every frame and one of 240 every other, never five
+out of six. Only the drawing is held back, the pointer, the updates and the painting go at the simulation's rate
+and the cursor is drawn every frame regardless. Uncapped the UI trails what the scene draws by half a refresh on
+average, which the pacing example shows and L there takes the limit off to compare.
+
+## Garbage
+
+The render thread allocates nothing in a frame, in the examples and in a fight, and it is meant to stay that way.
+The trap that got it there three times over is a lambda that uses a local or a parameter of the method it is
+written in. What it uses is put on the heap as the method starts, not when the lambda is reached, so a method
+that runs every frame and has such a lambda on a path it never takes makes an object every frame. The lambda
+goes in a method of its own that is handed what it needs. `Horizon.Tests/HotPathTests` reads the compiled engine
+and fails if one of the methods it lists (the frame, the buffers, the UI, sprites and tiles) makes one, add to
+the list when something new runs every frame. A buffer that changes every frame is written over with `Update` or
+is a `StreamBuffer`, `Upload` on one the GPU still reads is a new Vulkan buffer every time.
+
 ## Building and testing
 
 - `dotnet build Horizon.sln -p:EnableWindowsTargeting=true` on Linux (the HIDL editor is WinForms).
 - `dotnet test Horizon.Tests`.
 - `Horizon.Testing <scene>` from its output folder runs one example (`--checks` for every self check in a row), `HORIZON_INPUT_SCRIPT` (a file of lines like
-  `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers (the loops and the GPU passes),
+  `6 quit`) to quit after a while, `HORIZON_LOG_LOOPS=1` for the numbers (the loops and the GPU passes, and how many
+  bytes a turn every loop allocates), `HORIZON_LOG_ALLOCATIONS=3` for what every thread allocates by type,
   `HORIZON_SCREENSHOT=file.png@3` to see what was drawn (`file.png@3+8x0.5` for eight of them half a second apart), `HORIZON_VULKAN_VALIDATION=1` for the validation layer (when the SDK is installed), `HORIZON_SHADER_CACHE=off`
   to compile every shader anew. A Debug build tells the driver what every Vulkan object is called and labels the GPU
   scopes, so RenderDoc reads "sprites.slang pipeline" and "path tracing" rather than handles

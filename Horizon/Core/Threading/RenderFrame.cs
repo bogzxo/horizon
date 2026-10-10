@@ -19,7 +19,7 @@ public enum PresentationMode : byte
 }
 
 /// <summary>
-/// What a frame is drawn from: the two snapshots it holds (see <see cref="SnapshotClock"/>) and how far between them
+/// What a frame is drawn from, the two snapshots it holds (see <see cref="SnapshotClock"/>) and how far between them
 /// the moment it shows lies. The frame that is being drawn is <see cref="Active"/>, on the render thread, which is how
 /// everything that draws gets at it without it being handed down through every <c>Render</c>.
 /// </summary>
@@ -64,7 +64,7 @@ public readonly record struct RenderFrame(
     public bool HasSnapshot => Clock is not null && CurrentSlot >= 0;
 
     /// <summary>
-    /// Whether what draws has to draw from snapshots: the frame has them, and the simulation is running alongside it
+    /// Whether what draws has to draw from snapshots. The frame has them, and the simulation is running alongside it
     /// so nothing that draws may read the game itself, only what was published. Otherwise (setting a scene up with the
     /// simulation standing still, before the first tick) the game itself is there to be read.
     /// </summary>

@@ -54,7 +54,7 @@ public enum GamepadKind
 /// <summary>
 /// What a gamepad reads as at one moment, before any deadzone or binding is applied to it.
 /// This stores the buttons that are down, the sticks from -1 to 1 with up and right positive, and the triggers from 0 to 1.
-/// A real gamepad is read into one of these every update; a gamepad that isn't a device at all (a replay, an AI,
+/// A real gamepad is read into one of these every update, and a gamepad that isn't a device at all (a replay, an AI,
 /// a test) is driven by handing them to <see cref="Gamepad.Update(in GamepadSnapshot)"/>.
 /// </summary>
 public struct GamepadSnapshot
@@ -110,7 +110,7 @@ public static class GamepadInputs
 
     public static uint Bit(GamepadInput input) => 1u << (int)input;
 
-    // What the gamepads of a PlayStation call themselves, depending on the model and on who is asking.
+    // What the gamepads of a PlayStation call themselves, depending on the model and on who is asking. Sony never did settle on one
     private static readonly string[] PlayStationNames =
         ["playstation", "dualsense", "dualshock", "sony", "ps3", "ps4", "ps5", "wireless controller"];
 

@@ -36,7 +36,7 @@ public abstract class SceneTransition
 
     /// <summary>
     /// Told once the transition has nothing left to draw. Either the new scene is all the way uncovered, or another transition took over half way.
-    /// Render thread. The transition may well be used again later: what is only good for this one time (a picture of the old scene) is done with here,
+    /// Render thread. The transition may well be used again later, so what is only good for this one time (a picture of the old scene) is done with here,
     /// what can be drawn into again next time (the pictures it works in) may as well be kept.
     /// </summary>
     public virtual void Finish()

@@ -6,7 +6,7 @@ namespace Horizon.Rendering.Particles.Simulation;
 
 /// <summary>
 /// The simulated state of one particle. 24 bytes, laid out exactly like the std430
-/// <c>Particle</c> struct in shaders/particle/simulate.comp.
+/// <c>Particle</c> struct in shaders/particle/simulate.slang.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct ParticleState2D

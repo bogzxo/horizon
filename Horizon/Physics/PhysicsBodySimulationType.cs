@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.Numerics;
-using System.Text;
-
-namespace Horizon.Physics;
+﻿namespace Horizon.Physics;
 
 public enum PhysicsBodySimulationType
 {

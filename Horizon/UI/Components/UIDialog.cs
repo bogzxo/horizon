@@ -14,7 +14,7 @@ namespace Horizon.UI.Components;
 public readonly record struct DialogChoice(string Label, Action? Picked = null);
 
 /// <summary>
-/// A question in a box over everything else in its module: a title, a line or two about it and a button for every
+/// A question in a box over everything else in its module, a title, a line or two about it and a button for every
 /// answer. Nothing behind it can be clicked or walked to until it is answered, and escape is the last answer (the one
 /// that changes nothing, by convention). For "save your changes?", "quit?" and the like.
 /// <code>

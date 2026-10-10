@@ -9,9 +9,9 @@ using Horizon.Graphics;
 namespace Horizon.Content.Managers;
 
 /// <summary>
-/// A class build around creating, managing and disposing of game assets in a reliable thread-safe manner.
+/// Makes the assets of one kind, keeps track of who they belong to and frees them again, so nobody has to remember to.
 /// <para>
-/// What it keeps track of is safe to get at from any thread, but the assets themselves are on the GPU: they are made
+/// What it keeps track of is safe to get at from any thread, but the assets themselves are on the GPU. They are made
 /// and freed on the thread that draws, and it says so (once) in the log when that isn't where it's asked to.
 /// </para>
 /// </summary>
@@ -28,18 +28,18 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         name;
 
     /// <summary>
-    /// All keyed assets.
+    /// Everything that was asked for by a name, by that name.
     /// </summary>
     public ConcurrentDictionary<string, AssetType> NamedAssets { get; init; }
 
     /// <summary>
-    /// All unnamed but managed assets.
+    /// Everything there is, the named ones among them.
     /// </summary>
     public List<AssetType> OwnedAssets { get; init; }
 
     /// <summary>
     /// Whether what is made here belongs to the scope it is made in (see <see cref="AssetScope"/>) and goes when
-    /// that is released. Switched off for assets that are better kept for good once they exist: shaders take
+    /// that is released. Switched off for assets that are better kept for good once they exist, shaders take
     /// long to make and next to no memory to keep.
     /// </summary>
     public bool Scoped { get; set; } = true;
@@ -48,10 +48,10 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     private readonly Dictionary<uint, AssetScope> owners = [];
 
     // The unnamed assets made to be shared by everything (see AssetScope.EnterGlobal), by their handles.
-    // RemoveUnnamedExcept never touches them: they'd go with whatever happened to need them first
+    // RemoveUnnamedExcept never touches them, they'd go with whatever happened to need them first
     private readonly HashSet<uint> shared = [];
 
-    // Which scopes use every named asset, and the names that are used by somebody outside of any scope: those
+    // Which scopes use every named asset, and the names that are used by somebody outside of any scope. Those
     // are never freed for want of users
     private readonly Dictionary<string, HashSet<AssetScope>> users = [];
     private readonly HashSet<string> pinned = [];
@@ -72,9 +72,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Sets a delegate which will be called on events.
+    /// Says where what the manager has to say goes, which is the log.
     /// </summary>
-    /// <param name="callback"></param>
     public void SetMessageCallback(in Action<LogLevel, string> callback) =>
         this.MessageCallback = callback;
 
@@ -129,19 +128,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         lock (sync) return [.. OwnedAssets.Concat(NamedAssets.Values).Distinct()];
     }
 
-    /// <summary>The name an asset was asked for by, null for one that was simply made.</summary>
-    public string? NameOf(AssetType asset)
-    {
-        foreach (var (name, named) in NamedAssets)
-        {
-            if (ReferenceEquals(named, asset)) return name;
-        }
-
-        return null;
-    }
-
     /// <summary>
-    /// Disposes every asset that isn't in <paramref name="keep"/>. Named assets are left alone:
+    /// Disposes every asset that isn't in <paramref name="keep"/>. Named assets are left alone,
     /// they are a cache shared by whoever asks for the name next. So is what was made to be shared by everything
     /// (see <see cref="AssetScope.EnterGlobal"/>), which would otherwise go with whoever happened to need it first.
     /// </summary>
@@ -151,25 +139,24 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         lock (sync)
         {
             var named = NamedAssets.Values.Select(asset => asset.Handle).ToHashSet();
-            var stale = OwnedAssets
-                .Where(asset => !keep.Contains(asset.Handle) && !named.Contains(asset.Handle) && !shared.Contains(asset.Handle))
-                .ToArray();
-
-            foreach (var asset in stale)
+            // One pass over the list. Taking them out one at a time shuffled the whole list along for every
+            // single one of them, which is a lot of shuffling for a scene with a few hundred things in it
+            return OwnedAssets.RemoveAll(asset =>
             {
+                if (keep.Contains(asset.Handle) || named.Contains(asset.Handle) || shared.Contains(asset.Handle))
+                    return false;
+
                 owners.Remove(asset.Handle);
                 AssetDisposerType.Dispose(asset);
-                OwnedAssets.Remove(asset);
-            }
-
-            return stale.Length;
+                return true;
+            });
         }
     }
 
     /// <summary>
-    /// Creates a new named managed instance of an asset from a description.
+    /// Makes an asset under a name, for everybody who asks for that name afterwards to share.
     /// </summary>
-    /// <returns>The newly created asset.</returns>
+    /// <returns>Whether it could be made. Why not is in the result, and in the log.</returns>
     public bool TryCreate(
         in string name,
         in AssetDescriptionType description,
@@ -183,33 +170,34 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
 
             if (result.Status != AssetCreationStatus.Success)
             {
-                MessageCallback?.Invoke(LogLevel.Error, $"[{name}] {result.Message}");
+                MessageCallback?.Invoke(LogLevel.Error, $"[{this.name}] '{name}' couldn't be made. {result.Message}");
                 return false;
             }
 
             MessageCallback?.Invoke(
                 LogLevel.Info,
-                $"[{name}] Successfully created {assetName} '{name}'!"
+                $"[{this.name}] Successfully created {assetName} '{name}'!"
             );
 
             OwnedAssets.Add(result.Asset);
 
             if (!NamedAssets.TryAdd(name, OwnedAssets[OwnedAssets.Count - 1]))
-                MessageCallback?.Invoke(LogLevel.Error, $"[{name}] Failed to add {assetName}!");
+                MessageCallback?.Invoke(LogLevel.Error, $"[{this.name}] Failed to add {assetName} '{name}'!");
             else
                 Retain(name);
 
-            if (result.Status > 0 && result.Message?.CompareTo(string.Empty) != 0)
-                MessageCallback?.Invoke(LogLevel.Info, $"[{name}] {result.Message}");
+            // Made, and it had something to say about it anyway
+            if (!string.IsNullOrEmpty(result.Message))
+                MessageCallback?.Invoke(LogLevel.Info, $"[{this.name}] '{name}', {result.Message}");
 
             return true;
         }
     }
 
     /// <summary>
-    /// Creates a new unnamed managed instance of an asset from a description.
+    /// Makes an asset with no name, which belongs to whatever scope it is made in.
     /// </summary>
-    /// <returns>The newly created asset.</returns>
+    /// <returns>Whether it could be made. Why not is in the result, and in the log.</returns>
     public bool TryCreate(
         in AssetDescriptionType description,
         out AssetCreationResult<AssetType> result
@@ -234,7 +222,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
 
     /// <summary>
     /// Helper method to say (once) that an asset is being made somewhere other than on the thread that draws, which
-    /// is the only one with the GPU: whatever is made there is broken in ways that are a pain in the arse to track down.
+    /// is the only one with the GPU. Whatever is made anywhere else is broken in ways that are a pain in the arse to track down.
     /// </summary>
     private void CheckThread()
     {
@@ -275,8 +263,8 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Frees what a scope has: every unnamed asset that was made in it, and every named asset that no other
-    /// scope uses (and nobody outside of any scope ever asked for). GL thread, once nothing draws with any of it.
+    /// Frees what a scope has, every unnamed asset that was made in it, and every named asset that no other
+    /// scope uses (and nobody outside of any scope ever asked for). Render thread, once nothing draws with any of it.
     /// </summary>
     /// <returns>How many assets were freed.</returns>
     public int Release(AssetScope scope)
@@ -288,12 +276,15 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             var mine = owners.Where(owner => ReferenceEquals(owner.Value, scope)).Select(owner => owner.Key).ToHashSet();
             if (mine.Count > 0)
             {
-                foreach (var asset in OwnedAssets.Where(asset => mine.Contains(asset.Handle)).ToArray())
+                // In one pass, see RemoveUnnamedExcept
+                count += OwnedAssets.RemoveAll(asset =>
                 {
+                    if (!mine.Contains(asset.Handle))
+                        return false;
+
                     AssetDisposerType.Dispose(asset);
-                    OwnedAssets.Remove(asset);
-                    count++;
-                }
+                    return true;
+                });
 
                 foreach (uint handle in mine)
                     owners.Remove(handle);
@@ -314,7 +305,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Decorator method for managing an instance of an asset manually.
+    /// Takes an asset somebody made by hand under its wing, so it is freed with the rest.
     /// </summary>
     public AssetType Add(AssetType asset)
     {
@@ -327,7 +318,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Removes an unnamed object.
+    /// Frees an asset and forgets it.
     /// </summary>
     public bool Remove(AssetType asset)
     {
@@ -352,7 +343,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Removes an object via finding its reference through a handle.
+    /// Frees the asset with a handle and forgets it.
     /// </summary>
     public bool Remove(uint handle)
     {
@@ -366,7 +357,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Removes a named object from management.
+    /// Frees the asset of a name and forgets it.
     /// </summary>
     public bool Remove(string name)
     {
@@ -386,16 +377,16 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     }
 
     /// <summary>
-    /// Dispose method for children classes and extensions.
+    /// For a manager derived from this one that has more of its own to free.
     /// </summary>
-    /// <returns>Count of other assets disposed.</returns>
+    /// <returns>How many more it freed.</returns>
     protected virtual int DisposeOther()
     {
         return 0;
     }
 
     /// <summary>
-    /// Disposes all managed assets.
+    /// Frees every asset there is. The end of the engine.
     /// </summary>
     public void Dispose()
     {

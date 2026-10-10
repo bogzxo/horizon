@@ -2,7 +2,7 @@ namespace Horizon.UI;
 
 /// <summary>
 /// How a module that was designed for one screen (see <see cref="UIModule.DesignSize"/>) goes onto a screen of
-/// another shape. Phones, ultrawides, a window somebody dragged into a silly shape: the layout has to cope.
+/// another shape. Phones, ultrawides, a window somebody dragged into a silly shape for a laugh, the layout has to cope with the lot.
 /// </summary>
 public enum UIFit
 {
@@ -14,7 +14,7 @@ public enum UIFit
     Contain,
 
     /// <summary>
-    /// Scaled the same way, but the layout gets the whole screen to itself: anchoring to an edge goes to the edge
+    /// Scaled the same way, but the layout gets the whole screen to itself. Anchoring to an edge goes to the edge
     /// of the screen, and a wider screen is more room. What a HUD wants, its health bars up in the corners.
     /// </summary>
     Stretch,
