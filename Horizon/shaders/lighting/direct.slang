@@ -1,12 +1,13 @@
-// The lights of a DeferredRenderer2D and what blocks them, shared by everything that lights a point of the world
-// directly, the deferred pass that puts the picture on screen and the path traced lighting. A pixel only looks at
-// the lights of its tile of the screen (see light_tiles.slang), and a shadow is a few steps through the signed
-// distance field of the occlusion map (see sdf_build.slang) rather than a walk from cell to cell.
-// DeferredRenderer2D.BindLighting sets all of this, the shader that includes it puts LIGHTING_PARAMS in its Params.
+// The lights of a DeferredRenderer2D and what gets in their way. Everything that lights a point of the world
+// straight from a lamp includes this, the deferred pass that puts the picture on screen and the path tracer when
+// it wants to know how bright a wall is. A pixel only bothers with the lights of its own tile of the screen (see
+// light_tiles.slang), and a shadow is a handful of hops through a signed distance field (see sdf_rows.slang and
+// sprite_field.slang) rather than a crawl from cell to cell like some kind of animal.
+// DeferredRenderer2D.BindLighting sets the lot up, the shader that includes this puts LIGHTING_PARAMS in its Params.
 
 #include <common/camera.slang>
 
-// Must match DeferredRenderer2D.LightData (80 bytes).
+// Must match DeferredRenderer2D.LightData (80 bytes), so no, you can't just add a float.
 struct Light
 {
     float2 position;
@@ -51,16 +52,23 @@ static const uint TILE_LIGHTS = TILE_WORDS - 1u;
     int uHasSprites; \
     float uSpritePixelWorld;
 
-// Everything that blocks light as the marches see it, see LIGHTING_FIELD.
+// Everything that blocks light, the way the marches see it. Made once a thread by LIGHTING_FIELD and then handed
+// about, because it carries a few numbers that are worked out once so the marches don't have to work them out at
+// every single step. The world to picture mapping in particular. That used to be a full 4x4 matrix multiply per
+// step per ray, which for a few hundred thousand rays of forty steps is a galactus amount of multiplying to find
+// out where on the screen you are, when a 2D camera is an offset and a scale and nothing else.
 struct Field
 {
     bool hasWalls;           // whether there is an occlusion map
     float2 origin;           // where its field starts in the world
     float2 cellSize;         // the size of a texel of it, in world units
-    float2 size;             // how many texels it is
+    float2 extent;           // how big the whole field is, in world units
+    float2 invExtent;        // and one over that, for the texel of a world position without a divide
     bool hasSprites;         // whether the sprites that block light left a field of their own
     float spritePixelWorld;  // the size of a texel of that, in world units
     bool insideShadows;      // whether a point inside a wall takes the shadows its face does, see DeferredRenderer2D.ShadowsInsideWalls
+    float2 pictureScale;     // world to picture, picture = world * scale + offset. Orthographic, or this is a lie
+    float2 pictureOffset;
 };
 
 Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int hasSprites, float spritePixelWorld, int insideShadows)
@@ -69,15 +77,27 @@ Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int h
     field.hasWalls = hasWalls != 0;
     field.origin = origin;
     field.cellSize = cellSize;
-    field.size = size;
+    field.extent = cellSize * size;
+    field.invExtent = 1.0 / max(field.extent, 1e-6);
     field.hasSprites = hasSprites != 0;
     field.spritePixelWorld = spritePixelWorld;
     field.insideShadows = insideShadows != 0;
+
+    // Three points through the real matrix and the mapping falls out, that is the whole trick. The deferred
+    // renderer only ever has a Camera2D looking at it, which is orthographic, so the mapping is affine and w is 1
+    field.pictureOffset = pictureOf(float2(0.0, 0.0));
+    field.pictureScale = float2(pictureOf(float2(1.0, 0.0)).x, pictureOf(float2(0.0, 1.0)).y) - field.pictureOffset;
     return field;
 }
 
 // The field out of a Params that has LIGHTING_PARAMS in it.
 #define LIGHTING_FIELD(p) makeField(p.uHasField, p.uFieldOrigin, p.uFieldCellSize, p.uFieldSize, p.uHasSprites, p.uSpritePixelWorld, p.uShadowsInside)
+
+// Where on the picture (0 to 1) a point of the world lands, the cheap way. See Field.
+float2 pictureOfFast(float2 world, Field field)
+{
+    return world * field.pictureScale + field.pictureOffset;
+}
 
 // Whether there is anything to march at all.
 bool hasAnything(Field field)
@@ -112,22 +132,24 @@ float wallsDistance(float2 position, Field field)
 {
     if (!field.hasWalls) return 1e9;
 
-    float2 texel = (position - field.origin) / (field.cellSize * field.size);
+    float2 texel = (position - field.origin) * field.invExtent;
     float2 inside = clamp(texel, 0.0, 1.0);
     float distance = uTexField.SampleLevel(inside, 0.0).r;
 
-    // Outside of the field the nearest wall is at least as far as the edge of it
-    float2 outside = max(abs(texel - 0.5) - 0.5, 0.0) * field.cellSize * field.size;
-    return any(outside > 0.0) ? max(distance, 0.0) + length(outside) : distance;
+    // Inside the field, which is nearly always, that is the answer and we are out of here before the square
+    // root below gets a look in. Outside of it the nearest wall is at least as far as the edge of the field
+    float2 outside = max(abs(texel - 0.5) - 0.5, 0.0);
+    if (all(outside <= 0.0)) return distance;
+    return max(distance, 0.0) + length(outside * field.extent);
 }
 
 // How far the nearest sprite that blocks light is, negative inside one, counting what glows as blocking if asked
-// (the path traced lighting does, it is what lights things). The sprites only block on the picture.
+// (the path traced lighting does, a lamp is a thing a ray stops at). The sprites only exist on the picture.
 float spritesDistance(float2 position, Field field, bool glowing)
 {
     if (!field.hasSprites) return 1e9;
 
-    float2 picture = pictureOf(position);
+    float2 picture = pictureOfFast(position, field);
     if (any(picture < 0.0) || any(picture > 1.0)) return 1e9;
 
     float2 sprites = uTexSprites.SampleLevel(picture, 0.0).rg;
@@ -145,12 +167,13 @@ float wallDistance(float2 position, Field field)
     return wallDistance(position, field, false);
 }
 
-// Walks a ray that starts inside a wall out of it, which is smooth in where it starts (stepping out a texel at a
-// time draws contours over everything solid, every pixel of a floor is inside the floor). Something solid is lit
-// as what it is, the face of it that is drawn, not the inside of a wall, so its own wall never shadows it whichever
-// way the ray goes. The field only says how deep the point is, the way out along the ray is that over how squarely
-// the ray meets the surface, which the slope of the field gives, with a floor on it for rays going the other way.
-// False for a ray that never gets out, which is lit as if the wall weren't there. Leaves t at the surface.
+// Walks a ray that starts inside a wall out of it. Something solid is lit as what it is, the face of it that is
+// drawn, not the inside of a wall, so its own wall never shadows it whichever way the ray goes. It has to be smooth
+// in where it starts. Stepping out a texel at a time drew contour lines over every floor in the game (every pixel
+// of a floor is inside the floor, think about it), so instead the field says how deep the point is and the slope
+// of the field says how squarely the ray meets the surface, and the way out is the one over the other, with a floor
+// on the squareness for rays that are basically going along the wall. False for a ray that never gets out, which is
+// lit as if the wall weren't there. Leaves t at the surface.
 bool leaveWall(float2 from, float2 direction, inout float t, Field field, bool glowing)
 {
     float d = wallDistance(from, field, glowing);
@@ -187,15 +210,15 @@ int tileOf(float2 picture, float2 tileCounts, float2 tileScreen)
     return (tile.y * int(tileCounts.x) + tile.x) * int(TILE_WORDS);
 }
 
-// How much of a light gets to a point, going through the distance field towards it. A light with a size isn't
-// hidden all at once, the way to it narrows to a penumbra along the edge of whatever is in the way. How wide the
-// penumbra is follows from how near the way passes to a wall and how far along it that is, and the two readings of
-// the field either side of the nearest point say where that was better than either of them alone.
+// How much of a light gets to a point, by marching the distance field towards it. A light with a size isn't hidden
+// all at once, the way to it narrows to a penumbra along the edge of whatever is in the way. How wide the penumbra
+// is follows from how near the way passes to a wall and how far along it that was, and the two readings of the
+// field either side of the nearest point say where that was better than either of them alone.
 // A sprite in the way only takes spriteShadow of the light (1 for all of it, which is what a wall takes), so a
-// fighter can be told to throw a shadow without putting the lantern out. And a sprite the light is inside of, a
-// fighter standing right in front of the lamp, doesn't shadow it at all. The march walks on through every sprite
-// it meets, and one it is still inside of when it reaches the light is one the light is behind, which is the
-// fighter in front of the lamp, so that one is let off. That is a few steps of the field, no colliders, no lists.
+// fighter can throw a shadow without putting the lantern out. And a sprite the light is inside of, a fighter
+// standing right in front of the lamp, doesn't shadow it at all. The march walks on through every sprite it meets,
+// and one it is still inside of when it reaches the light is one the light is behind, which is the fighter in front
+// of the lamp, so that one is let off. A few steps of a texture, no colliders, no lists, no fucking about.
 // A point inside a wall (the body of the ground under a fighter) takes no sprite shadows at all, a sprite's shadow
 // stops at the tiles rather than running on down through them.
 float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
@@ -298,7 +321,8 @@ float lightReach(Light l, float2 position, bool shadows, float softness, Field f
         float radiusSquared = l.radius * l.radius;
         if (distanceSquared >= radiusSquared) return 0.0;
 
-        // Brightest in the middle, fading smoothly to nothing at the edge
+        // Brightest in the middle, fading smoothly to nothing at the edge. Squared distances all the way, nobody
+        // needs the actual distance here
         falloff = 1.0 - distanceSquared / radiusSquared;
         falloff *= falloff;
 

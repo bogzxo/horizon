@@ -80,6 +80,11 @@ internal static class TestCatalog
             ["ParticleRenderer2D", "CpuParticleSimulator2D", "ComputeParticleSimulator2D"],
             "Examples/Game/ParticleExample.cs", () => new ParticleExample()),
 
+        new("meshes", TestLevel.MakingAGame, "A bit of 3D",
+            "A floor, a crate, a ball, a can and hills built out of vertices by hand, lit by one sun and seen through a camera with a lens that goes round them. The same renderers and screen, with depth.",
+            ["Renderer3D", "Mesh3D", "Vertex3D", "Camera3D", "TransformComponent3D", "CullMode"],
+            "Examples/Game/MeshesExample.cs", () => new MeshesExample()) { Aliases = ["3d", "models"] },
+
         new("fluid", TestLevel.MakingAGame, "Physics and fluid",
             "Water and sand poured into basins that spill into one another, a crate to drop in, and rain that lands on all of it.",
             ["PhysicsWorld", "PhysicsFluidParticleSimulator2D", "PhysicsParticleSimulator2D", "fixtures"],

@@ -239,6 +239,8 @@ public sealed class PathTracedLighting2D : IDisposable
         Vector2 topLeft = TopLeftOf(camera) - nudge;
 
         // What the walls throw back, once, for every ray that lands on one to read
+        using (device.BeginGpuScope("wall radiance"))
+        {
         radiancePass.Bind();
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color0, UNIT_ALBEDO);
         renderer.FrameBuffer.BindAttachment(AttachmentPoint.Color2, UNIT_MATERIAL);
@@ -251,8 +253,10 @@ public sealed class PathTracedLighting2D : IDisposable
         device.BindStorageImage(0, radiance);
         device.Dispatch((width + 7) / 8, (height + 7) / 8);
         device.Barrier(BarrierTargets.ShaderImages);
+        }
 
         // The cascades, from the furthest in, each merged into the one above it as it is made
+        using var tracing = device.BeginGpuScope("cascades");
         cascadePass.Bind();
         radiance.Bind(UNIT_RADIANCE);
         renderer.BindLighting(cascadePass);
@@ -275,12 +279,13 @@ public sealed class PathTracedLighting2D : IDisposable
             cascadePass.SetUniform("uProbeSpacing", spacing);
             cascadePass.SetUniform("uProbeOffset", in offset);
             cascadePass.SetUniform("uDirections", directions);
+            cascadePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(directions));
             cascadePass.SetUniform("uIntervalStart", start);
             cascadePass.SetUniform("uIntervalEnd", end);
             cascadePass.SetUniform("uUpperProbeCount", in upperProbes);
             cascadePass.SetUniform("uUpperSpacing", upperSpacing);
             cascadePass.SetUniform("uUpperOffset", in upperOffset);
-            cascadePass.SetUniform("uUpperDirections", upperDirections);
+            cascadePass.SetUniform("uUpperDirectionsSqrt", MathF.Sqrt(upperDirections));
             cascadePass.SetUniform("uHasUpper", hasUpper);
 
             // The top cascade has nothing above it, it is given something harmless to read
@@ -290,10 +295,13 @@ public sealed class PathTracedLighting2D : IDisposable
             device.Barrier(BarrierTargets.ShaderImages);
         }
 
+        tracing.Dispose();
+
         // And what every pixel sees out of the nearest one
         Describe(0, out Vector2 nearestProbes, out float nearestSpacing, out float nearestDirections, out _, out _);
         Vector2 nearestOffset = Offset(topLeft, pixelWorld, nearestSpacing);
 
+        using var resolving = device.BeginGpuScope("gi resolve");
         resolvePass.Bind();
         cascades[0].Bind(0);
         previous.Bind(1);
@@ -312,6 +320,8 @@ public sealed class PathTracedLighting2D : IDisposable
         resolvePass.SetUniform("uProbeSpacing", nearestSpacing);
         resolvePass.SetUniform("uProbeOffset", in nearestOffset);
         resolvePass.SetUniform("uDirections", nearestDirections);
+        resolvePass.SetUniform("uDirectionsSqrt", MathF.Sqrt(nearestDirections));
+        resolvePass.SetUniform("uCascadeSize", new Vector2(cascadeWidth, cascadeHeight));
         device.BindStorageImage(0, result);
         device.BindStorageImage(1, moments);
         device.Dispatch((outputWidth + 7) / 8, (outputHeight + 7) / 8);

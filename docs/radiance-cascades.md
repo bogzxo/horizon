@@ -2,7 +2,7 @@
 
 The "fancy" lighting of a `DeferredRenderer2D` is radiance cascades (Alexander Sannikov's idea, from Path of Exile 2),
 done for a flat world in compute. This is the whole of it, written down because it is one of those things that is
-obvious once it clicks and a wall before. The code is `Rendering/Lighting/PathTracedLighting2D.cs` and the three
+obvious once it clicks and a wall before. The code is `Rendering/2D/Lighting/PathTracedLighting2D.cs` and the three
 shaders `gi_radiance.slang`, `gi_cascade.slang` and `gi_resolve.slang` under `shaders/lighting`.
 
 ## The question it answers
@@ -178,6 +178,29 @@ them and jump about by 0.6 drifting. Two still go blotchy and shimmer about as m
 cascade has sixteen rays for the whole picture, and no amount of frames makes that up. `MaxCascades` can be changed
 while the game runs (the cascades are made again on the next frame), Fighter2D has it as Light quality on its
 options screen, Low being three, Medium four and High all of them, and the dungeon example goes round them on Q.
+
+## Where the time goes
+
+Measured on the dungeon's cave and the cellar at 1600 by 900 (five cascades at half size, about 1.5 ms of GPU),
+with a scope round every dispatch for an afternoon. The wall radiance is 0.05 ms, the resolve 0.03, everything
+else is the cascades, and not evenly. Cascade 0 is 0.08 ms, 1 is 0.19, 2 and 3 are 0.3 to 0.7 and 4 is 0.25 to
+0.45. "Every cascade costs the same" is true of the ray count and false of the rays. A far probe is sixteen or
+thirty two pixels from the next, so the threads of a workgroup sample the fields far apart from each other and
+the cache gets nothing out of it, where cascade 0's probes are two pixels apart and every sample is next to the
+last. The marches themselves are sphere traces, so the step is the distance to the nearest thing, and in a cave
+of mushrooms or a cloud of sparks the nearest thing is always a pixel or two off.
+
+What was tried and what it came to, so nobody does it again expecting different. The world to picture mapping per
+step was a 4x4 matrix multiply and is an affine scale and offset now (worked out once per thread in `makeField`,
+`pictureOfFast`), the walls' field lookup divides once per thread instead of per step and only takes a square
+root when the point is off the map, the merge with the cascade above reads its four probes as one hardware
+bilinear sample per direction instead of four loads, and the square roots of the direction counts come in as
+uniforms. All correct, all cheaper on paper, none of it measurable against the frame to frame noise, which tells
+you the pass is bound on texture reads and not on arithmetic. Letting the far cascades take bigger minimum steps
+(half a pixel doubling from cascade 2) didn't move the numbers either and would have let a far ray step over a
+spark, so it came out again. The things that do move the numbers are the ones a game can set, `MaxCascades`
+(three is about half), `Scale` and `ProbeSpacing`. The next real thing to try is the thread layout of the far
+cascades, so a workgroup's rays sample near each other, or a lower resolution copy of the fields for them.
 
 ## If you are implementing it yourself
 

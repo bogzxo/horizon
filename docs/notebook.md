@@ -97,7 +97,7 @@ comments are fine. If a sentence sounds like a press release, rewrite it.
 
 ## Text
 
-- Fonts are signed distance fields now (`Rendering/Text/DistanceFieldFont.cs`). A TrueType file goes through
+- Fonts are signed distance fields now (`Rendering/2D/Text/DistanceFieldFont.cs`). A TrueType file goes through
   stb_truetype (StbTrueTypeSharp, pure managed, MIT) straight into distances at 48 px to the em, packed on shelves
   into an R8 atlas, kerning kept. A BMFont bitmap (the pixel fonts the dead_revolver skin uses) has its picture's
   coverage turned into distances by an exact transform, halved if it is a big one. Both give metrics at 96 px to
@@ -598,3 +598,41 @@ the detail back. Moving the radiance picture with the probes drew a dotted grid 
 story and the numbers are in docs/radiance-cascades.md under "Upscaling, tried". The worktree at HEAD with the same
 measuring hook (`git worktree add` into the scratchpad, the hook copied in) was what showed the frames fault, a
 before and after built side by side and measured back to back beats comparing with numbers from an hour ago.
+
+bogz then asked for the 2D path tracing shaders to be optimised, naming the square roots, and recommented in the
+house voice. Both done, and the honest finding is in docs/radiance-cascades.md under "Where the time goes", the
+square roots were never the cost, the pass is bound on texture reads of the far cascades, and the tidying that
+went in (affine world to picture mapping in `direct.slang`, hardware bilinear for the merge and the resolve, the
+root of the direction count as a uniform, an early out for a world with nothing in it) is right and cheap and
+measured as nothing against the noise. The tracer now has three GPU scopes, wall radiance, cascades and gi
+resolve, which the overlay and `HORIZON_LOG_LOOPS` show. The comments of `direct.slang`, `gi_cascade.slang`,
+`gi_radiance.slang` and `gi_resolve.slang` are rewritten, the sdf and sprite field shaders were not touched. A
+screenshot diff of the pathtraced example is no use for checking a shader change, its white light follows the
+mouse, the dungeon's cave standing still is.
+
+## Horizon has a third dimension now
+
+bogz asked for the engine to be generalised to 3D (and then dropped the second half, importing animated models and
+baking them to pixel art sprites, so none of that is here, and there is no model loader, no skeleton and no
+3D lighting beyond one sun). What there is.
+
+- `Rendering` is three folders now, `Common` (Renderer2D the container, CameraBlock, post processing, transitions),
+  `2D` (everything flat) and `3D`. Moved with git mv, the namespaces stayed, `2D` is no name for one, and the 3D
+  files are `Horizon.Rendering.Meshes`.
+- `Camera3D`, a lens (perspective or orthographic), `LookAt`, and `Ray` for what the pointer is over. System.Numerics
+  puts depth in 0 to 1 and the engine's clip correction folds that into the top half, one bit of depth lost, noted
+  in the camera rather than fixed, two conventions in one engine is worse.
+- `TransformComponent3D`, position, quaternion, scale, a lazy matrix.
+- `Mesh3D` (and `Vertex3D`), your own triangles or one of the shapes (`Cube`, `Box`, `Plane`, `Sphere`,
+  `Cylinder`), `ComputeNormals` for triangles you built the positions of, lit by `Mesh3D.Sun` and `Ambient` through
+  `shaders/models/mesh.slang`, which writes the G-buffer like everything else so it can sit in any renderer.
+- `Renderer3D`, a `Renderer2D` whose children get the depth test, through a `DepthForChildren` hook.
+- `CullMode` on the device, in the pipeline key (not a dynamic state, it didn't need to be), and on `RenderState`
+  along with `DepthWrite`, both saved and restored with the rest.
+- The `meshes` example in Making a game.
+
+The winding. The front of a triangle is anticlockwise as seen from outside, and the pipeline's FrontFace is
+CounterClockwise, same as it always was. I reasoned that the clip correction's Y flip would turn that round, set
+Clockwise, and culled every front in the engine, the sphere showed its inside and the floor vanished. Why the flip
+doesn't turn the winding I have not worked out and the comment doesn't pretend to. Look, don't think, when it's a
+handedness question, a cube with its backs culled settles it in one screenshot.

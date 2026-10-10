@@ -40,10 +40,33 @@ public readonly record struct BlendMode(
 public static class RenderState
 {
     /// <summary>Everything this class keeps, to hand back to <see cref="Restore"/>.</summary>
-    public readonly record struct Saved(bool Blend, bool DepthTest, BlendMode BlendMode);
+    public readonly record struct Saved(bool Blend, bool DepthTest, BlendMode BlendMode, bool DepthWrite, CullMode Cull);
 
-    private static bool blend, depthTest;
+    private static bool blend, depthTest, depthWrite = true;
     private static BlendMode blendMode = BlendMode.Replace;
+    private static CullMode cull;
+
+    /// <summary>Whether what is drawn writes its depth as well as reading it. On unless told otherwise, glass turns it off.</summary>
+    public static bool DepthWrite
+    {
+        get => depthWrite;
+        set
+        {
+            depthWrite = value;
+            GraphicsDevice.Current.SetDepthWrite(value);
+        }
+    }
+
+    /// <summary>Which side of every triangle is thrown away, none for anything flat, see <see cref="CullMode"/>.</summary>
+    public static CullMode Cull
+    {
+        get => cull;
+        set
+        {
+            cull = value;
+            GraphicsDevice.Current.SetCullMode(value);
+        }
+    }
 
     /// <summary>Whether what is drawn is mixed with what is there (see <see cref="BlendMode"/>) or simply replaces it.</summary>
     public static bool Blend
@@ -77,12 +100,14 @@ public static class RenderState
         }
     }
 
-    public static Saved Save() => new(blend, depthTest, blendMode);
+    public static Saved Save() => new(blend, depthTest, blendMode, depthWrite, cull);
 
     public static void Restore(in Saved saved)
     {
         blendMode = saved.BlendMode;
         Blend = saved.Blend;
         DepthTest = saved.DepthTest;
+        DepthWrite = saved.DepthWrite;
+        Cull = saved.Cull;
     }
 }
