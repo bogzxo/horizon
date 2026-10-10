@@ -20,6 +20,7 @@ internal sealed unsafe class PipelineCache : IDisposable
         BlendMode BlendMode,
         bool ColorWrite,
         Topology Topology,
+        CullMode Cull,
         ulong VertexLayout,
         ulong Attachments);
 
@@ -229,7 +230,12 @@ internal sealed unsafe class PipelineCache : IDisposable
             {
                 SType = StructureType.PipelineRasterizationStateCreateInfo,
                 PolygonMode = PolygonMode.Fill,
-                CullMode = CullModeFlags.None,
+                CullMode = key.Cull switch { CullMode.Back => CullModeFlags.BackBit, CullMode.Front => CullModeFlags.FrontBit, _ => CullModeFlags.None },
+
+                // Anticlockwise is the front, as the triangles of every shape in the engine go round seen from
+                // outside. A first try at reasoning this through the clip correction's Y flip came out Clockwise
+                // and culled every front in the engine, the sphere showed its inside and the floor vanished.
+                // Checked by looking at a cube with its backs culled, which is the only argument that counts here
                 FrontFace = FrontFace.CounterClockwise,
                 LineWidth = 1.0f
             };

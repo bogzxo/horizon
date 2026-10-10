@@ -49,6 +49,13 @@ public class Renderer2D : GameObject
     /// </summary>
     protected internal virtual bool HoldsPicture => true;
 
+    /// <summary>
+    /// Whether what is in the renderer is drawn with the depth test on, nearer things over further ones whatever
+    /// order they come in. Off, everything is flat and drawn in order, which is what sprites want. A
+    /// <see cref="Renderer3D"/> has it on.
+    /// </summary>
+    protected virtual bool DepthForChildren => false;
+
     // The renderer that is drawing its children right now, which is what a renderer among those children is shown in
     private static Renderer2D? current;
 
@@ -159,10 +166,12 @@ public class Renderer2D : GameObject
 
         FrameBuffer.Bind();
 
-        // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something.
-        // What is see-through is blended over what is there already, in every attachment alike, the alpha that comes
-        // out of that is how much of the pixel is covered
-        RenderState.DepthTest = false;
+        // Everything is flat and drawn back to front, nothing is to be thrown out for being behind something
+        // (unless this is a 3D renderer, where that is the whole idea). What is see-through is blended over what is
+        // there already, in every attachment alike, the alpha that comes out of that is how much of the pixel is covered
+        RenderState.DepthTest = DepthForChildren;
+        RenderState.DepthWrite = true;
+        RenderState.Cull = CullMode.None;
         RenderState.Blend = true;
         RenderState.BlendMode = BlendMode.Alpha;
 

@@ -42,6 +42,7 @@ public sealed unsafe partial class GraphicsDevice
 
     // And the state that is
     private bool depthTest, depthWrite = true, stencilTest;
+    private CullMode cullMode;
     private CompareFunction stencilFunction = CompareFunction.Always;
     private int stencilReference;
     private uint stencilCompareMask = 0xFF, stencilWriteMask = 0xFF;
@@ -310,6 +311,9 @@ public sealed unsafe partial class GraphicsDevice
         dynamicDirty = true;
     }
 
+    /// <summary>Which side of every triangle is thrown away from here on, see <see cref="CullMode"/>. Part of the pipeline, not a dynamic state.</summary>
+    public void SetCullMode(CullMode mode) => cullMode = mode;
+
     public void SetDepthWrite(bool enabled)
     {
         depthWrite = enabled;
@@ -364,7 +368,7 @@ public sealed unsafe partial class GraphicsDevice
         EnsureRendering();
 
         var key = new PipelineCache.GraphicsKey(
-            boundShader.Handle, blend, blendMode, colorWrite, topology,
+            boundShader.Handle, blend, blendMode, colorWrite, topology, cullMode,
             boundVertexArray?.LayoutKey ?? 0,
             targetIsWindow ? WindowFormatKey : boundTarget!.FormatKey);
 

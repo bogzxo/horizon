@@ -1,5 +1,17 @@
 namespace Horizon.Graphics;
 
+/// <summary>
+/// Which side of a triangle is thrown away before it is drawn. The front of a triangle is the side its vertices go
+/// round anticlockwise on, as seen on the screen with Y up, the usual way. Everything flat is drawn with none,
+/// a sprite is seen from both sides, a closed shape in 3D culls its backs and is drawn in half the time.
+/// </summary>
+public enum CullMode
+{
+    None,
+    Back,
+    Front
+}
+
 /// <summary>What a run of vertices is drawn as.</summary>
 public enum Topology
 {
