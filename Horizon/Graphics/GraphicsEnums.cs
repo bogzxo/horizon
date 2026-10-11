@@ -124,7 +124,10 @@ public enum PixelFormat
     Depth24Stencil8,
 
     /// <summary>32 bits of depth, no stencil.</summary>
-    Depth32F
+    Depth32F,
+
+    /// <summary>Four whole numbers, for a shader to pack whatever it likes into (what the voxel tracer's eye rays hit).</summary>
+    Rgba32Uint
 }
 
 /// <summary>What a buffer is for, which decides what the GPU lets it be bound as.</summary>

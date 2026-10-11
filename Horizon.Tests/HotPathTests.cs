@@ -6,6 +6,7 @@ using Horizon.Graphics;
 using Horizon.Rendering.Lighting;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Tiling;
+using Horizon.Rendering.Voxels;
 using Horizon.UI;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
@@ -72,6 +73,13 @@ public class HotPathTests
 
         // The path traced lighting, every frame it is on
         { typeof(PathTracedLighting2D), "Run" },
+
+        // The voxel path tracer, every frame, and what it sends up of the world
+        { typeof(VoxelRenderer), "BeforeResolve" },
+        { typeof(VoxelRenderer), "Upload" },
+        { typeof(VoxelRenderer), "WriteFrame" },
+        { typeof(VoxelRenderer), "RunBloom" },
+        { typeof(VoxelRenderer), "BindWorld" },
 
         // Sprites and tiles
         { typeof(SpriteBatch), "Draw" },

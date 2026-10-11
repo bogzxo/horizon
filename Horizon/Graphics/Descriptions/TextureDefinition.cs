@@ -61,6 +61,7 @@ public readonly record struct TextureDefinition(
         PixelFormat.Rg32Uint => 8,
         PixelFormat.Rgba16F => 8,
         PixelFormat.Rgba32F => 16,
+        PixelFormat.Rgba32Uint => 16,
         _ => 4
     };
 

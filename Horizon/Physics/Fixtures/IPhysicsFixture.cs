@@ -9,4 +9,10 @@ public interface IPhysicsFixture
     public bool TestIntersection(in IPhysicsFixture other, Vector2 positionOffset, Vector2 otherPositionOffset);
     public bool IsTouching { get; internal set; }
     public HashSet<IPhysicsFixture> ActiveContacts { get; }
+
+    /// <summary>
+    /// What colour the debug view (<see cref="PhysicsWorld.RenderDebug"/>) outlines it in, null for the colour of the kind
+    /// of body it's on. For telling one fixture from the rest, a fighting game's hitbox from its hurtbox.
+    /// </summary>
+    public Vector3? DebugColour { get; set; }
 }

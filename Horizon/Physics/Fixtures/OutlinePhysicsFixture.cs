@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 namespace Horizon.Physics.Fixtures;
 
@@ -17,6 +17,7 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
     public string Tag { get; init; } = tag;
     public bool IsTouching { get; set; }
     public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
+    public Vector3? DebugColour { get; set; }
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Outline;
 
     // Two points for every piece of the outline, one after the other. Kept between outlines so setting one doesn't allocate

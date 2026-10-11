@@ -37,6 +37,9 @@ public class GamepadInputManager : Entity
 
     private IInputContext? _inputContext;
     private readonly List<Gamepad> _gamepads = [];
+
+    // The keyboards that are read as gamepads, moved on at the start of every update
+    private readonly List<KeyboardGamepad> _keyboards = [];
     private readonly List<string> _actionScratch = [];
 
     // Devices come and go on the thread of the window, the gamepads are only ever touched during an update.
@@ -168,6 +171,10 @@ public class GamepadInputManager : Entity
                 gamepad.Poll(sampling);
         }
 
+        // Which for the keyboard is us, off the keys as the update before this one left them
+        foreach (KeyboardGamepad keyboard in _keyboards)
+            keyboard.Update();
+
         foreach (var gamepad in _gamepads)
         {
             if (gamepad.IsConnected && gamepad.Pressed is not null)
@@ -268,6 +275,29 @@ public class GamepadInputManager : Entity
     {
         var gamepad = new Gamepad(_gamepads.Count, Sanitize(name), DefaultBindings.Clone(), isVirtual: true);
         _gamepads.Add(gamepad);
+        OnGamepadConnected?.Invoke(gamepad);
+        return gamepad;
+    }
+
+    /// <summary>
+    /// Adds the keyboard as a gamepad, see <see cref="KeyboardGamepad"/>. It takes the slot a loaded file had a
+    /// gamepad of that name in, with the bindings it was saved with, or a new one. Call it after the bindings are
+    /// loaded for that reason.
+    /// </summary>
+    /// <param name="keys">Which key is which input, <see cref="KeyboardGamepad.DefaultKeys"/> if null.</param>
+    public Gamepad AddKeyboardGamepad(Keyboard keyboard, IReadOnlyList<(Silk.NET.Input.Key Key, GamepadInput Input)>? keys = null, string name = "Keyboard")
+    {
+        name = Sanitize(name);
+
+        // A slot that is waiting for a device of this name is the keyboard of the last run
+        int waiting = _gamepads.FindIndex(known => !known.IsConnected && known.Name == name);
+        var bindings = waiting >= 0 ? _gamepads[waiting].Bindings.Clone() : DefaultBindings.Clone();
+        var gamepad = new Gamepad(waiting >= 0 ? waiting : _gamepads.Count, name, bindings, isVirtual: true) { Kind = GamepadKind.Keyboard };
+
+        if (waiting >= 0) _gamepads[waiting] = gamepad;
+        else _gamepads.Add(gamepad);
+
+        _keyboards.Add(new KeyboardGamepad(gamepad, keyboard, keys ?? KeyboardGamepad.DefaultKeys));
         OnGamepadConnected?.Invoke(gamepad);
         return gamepad;
     }

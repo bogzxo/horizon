@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Horizon.Core;
@@ -570,13 +570,13 @@ public class PhysicsWorld : GameComponent
             {
                 if (fixture is CirclePhysicsFixture c)
                 {
-                    shapes.Circle(body.Position + c.Position, c.Radius, width, colour);
+                    shapes.Circle(body.Position + c.Position, c.Radius, width, c.DebugColour ?? colour);
                 }
                 else if (fixture is OutlinePhysicsFixture outline)
                 {
                     var pieces = outline.Segments;
                     for (int i = 0; i + 1 < pieces.Length; i += 2)
-                        shapes.Line(body.Position + pieces[i], body.Position + pieces[i + 1], width, colour);
+                        shapes.Line(body.Position + pieces[i], body.Position + pieces[i + 1], width, outline.DebugColour ?? colour);
                 }
                 else if (fixture is RectanglePhysicsFixture r)
                 {
@@ -584,7 +584,7 @@ public class PhysicsWorld : GameComponent
                         new Vector2(body.Position.X + r.Bounds.Left, body.Position.Y + r.Bounds.Top),
                         new Vector2(body.Position.X + r.Bounds.Right, body.Position.Y + r.Bounds.Bottom),
                         width,
-                        colour);
+                        r.DebugColour ?? colour);
                 }
             }
         }

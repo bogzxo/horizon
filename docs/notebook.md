@@ -636,3 +636,118 @@ CounterClockwise, same as it always was. I reasoned that the clip correction's Y
 Clockwise, and culled every front in the engine, the sphere showed its inside and the floor vanished. Why the flip
 doesn't turn the winding I have not worked out and the comment doesn't pretend to. Look, don't think, when it's a
 handedness question, a cube with its backs culled settles it in one screenshot.
+
+And `AutoVoxel/`, the Minecraft clone from June 2024, is back on disk and in `Horizon.sln` as bogz asked, from
+commit 6daa35f, 29 files, no binaries. It references seven projects that no longer exist (Horizon.OpenGL,
+Horizon.Engine, Horizon.Rendering and so on, the engine was split then and drew with OpenGL) and Silk.NET.OpenGL
+on net8, so it didn't build. It's been rebuilt since, see AutoVoxel came back below.
+
+## The UI pack is Aseprite files now
+
+bogz asked for the skin's PNGs to become Aseprite files with every theme on a layer, read and packed into the one
+atlas like the sprites. The atlas part was there already (`UISkin.Atlas`, a `TextureAtlas`, stitches whatever is
+drawn into one texture as it is first asked for), what changed is where the pixels come from.
+
+- `AsepriteDocument.ReadFrame(frame, layer)` reads one top level layer on its own (a group with what is in it),
+  switched on or not, and `TopLayers` lists them. A themed file has one layer switched on so a person can look at it.
+- `SpriteSource.Layer`, carried through `TextureAtlas.Request`/`KeyFor` (the key has the layer in it, two themes
+  are two regions) and `SpriteImages.Read`.
+- `themes: "layers"` in a sheet file makes the layers the themes, bottom one the fallback unless it says, and the
+  theme only picks the layer, a sprite is in the same place on all of them. `block` and `states` still work along a
+  layer (the buttons have hover, pressed, selected and three unnamed looks as blocks 1 to 6). A PNG with block
+  themes still works for a pack that comes that way.
+
+The conversion. The five images whose themes the sheet named (buttons, panels, form elements, value bars, cursors)
+were split by the sheet's own block table. The buttons had 21 blocks no sprite named, three more looks of every
+theme in the same theme order, they went onto every theme's layer after the four named states. The nine images
+nobody names (banners, decorators, grid, grid_animated, jewel, lists, skill_tree, tooltips, value_slots) are one
+layer called art each, every colour still side by side. I tried telling their themes apart by colour, measured off
+the named ones, and it got even the named ones wrong (tan and gold swapped, white taken for tan) and split the
+others into the wrong number of copies, so nothing was guessed. Splitting them is the same job as naming their
+sprites. The unthemed ones (hearts, stars, selectors, the click effects, the gamepads and keyboard) are one layer.
+
+Checked three ways. Every sprite of the old sheet against the new in every theme, every frame, through the engine's
+own reader, 3720 sprite and theme pairs and 7430 frames, the same alpha everywhere and the same colour wherever
+there is alpha. Every file read whole against its PNG, the layered ones block by block. And Aseprite itself (Steam,
+`Aseprite.exe -b`) exported layers by name that matched the PNGs pixel for pixel, re-saved every file, and the
+engine read Aseprite's own files the same again, which is what is in the repo. The one difference there is,
+cursors.png had ten thousand fully see-through pixels with a colour in them (value_slots 240), which compositing
+makes black, nobody sees them and the sprite shader premultiplies before it blends.
+
+## AutoVoxel came back, path traced
+
+bogz asked for AutoVoxel (the 2024 Minecraft clone, OpenGL, meshed chunks) to be brought up to the new engine with
+everything overhauled, a finite world drawn all at once with levels of detail, path traced, the best structure for it,
+trees and little 3D foliage, a menu, a 3D character controller and colliders in the engine, eye candy, and then a
+plan for survival. Then said performance, the render distance and the shaders were what mattered most. The old code
+went (it's in git at 6daa35f), the new lot is in CLAUDE.md under Voxels and the plan in docs/autovoxel-survival-plan.md.
+
+Why a sparse 64-tree. A ray through an octree goes down a level every halving, the 64-tree every quartering, half the
+levels, and one 64 bit mask says which of 64 cells are empty at once. A grid of bricks spends memory on every empty
+brick and every ray walks every one of them across the sky. The literature (and dubiousconst282's write up of exactly
+this) has 64-trees ahead of both, and in practice the eye rays of a 2048 world cost 1 to 3 ms at 1600 x 900.
+
+What I learned, measured, the hard way.
+
+- Register pressure was the biggest single thing. The first eye pass had the eye ray, the shadow ray and the water's
+  two rays in one shader. A stripped shader with only the eye ray took 1.6 ms where the full one, returning straight
+  after its eye ray, took 2.5. So the traces are a pass each (primary, surface, sunlight, and indirect plus
+  bounce_light), and the hit goes between them packed in an Rgba32Uint (`packHit`, the device got that format for it).
+  Caching the node in registers instead of reading it every step did nothing measurable, the reads were all in cache.
+- Water was nearly half the eye pass. Reflection rays off the far sea skim along it for hundreds of blocks to show
+  something smaller than a pixel. Now only within about 0.6 voxels a pixel (a few hundred blocks), at most 320 long,
+  coarse, and the refraction ray stops at 48 and is skipped at a low angle. Stopping the refraction at a distance
+  showed as a ring round the camera on the shallows, it fades out over a band now.
+- The heat map (`DebugView` 1) showed the eye rays are mostly a few dozen steps, the far grazing terrain more. The
+  level of detail barely kicks in at 1600 x 900 before a couple of thousand blocks, a pixel is a block that far, so
+  the detail setting buys little. The cost was never the eye rays far off, it was everything sent from where they land.
+- Ore sprinkled on a two voxel grid was in one of seven of the bottom nodes underground and two thirds of an 8192
+  world's memory (a node with one ore voxel in it keeps all 64 voxels). Veins on the four voxel grid, the size of the
+  bottom nodes, took 8192 from 3.1 GB to 2.4. The deepslate line went onto that grid as well.
+- An 8192 world is two billion voxel bytes, right at the size of the biggest .NET array. Every capacity sum is in
+  longs now and a world too big says so instead of going negative. A two material encoding of the bottom nodes is the
+  next step for memory, it's in the plan.
+- The bounce rays go through foliage and take leaves as solid (`TRACE_COARSE`), stop at 256 blocks and cost half what
+  they did. Nobody can see the shadow of a tuft of grass in bounced light.
+- Clouds marched in six steps showed as stripes along the horizon, every pixel stepping at the same depths. The start
+  of the march is jittered per pixel per frame and the TAA does the rest.
+- Lava, glowstone and lamps were flat white blobs. Their glow is their emission times their tile's pattern now, and
+  the eye adapts (exposure.slang), so a cave isn't black and lava doesn't blind.
+- The tour (`--tour`) was worth building first. Keyboard and mouse can't be scripted (the input script is gamepad
+  only), so the game drives its own camera to a list of places and takes its own screenshots, including two that
+  move (to see what the TAA does) and one that digs and builds through the player like the mouse would. The camera
+  ended up inside trees twice before the places it picks checked for open sky.
+
+Numbers, RTX 3060, a 2048 world. 1600 x 900, 4.7 to 8.3 ms a frame. 1920 x 1080, 6.4 to 11.3. A 4096 world takes
+7 s to make and 783 MB, an 8192 one 29 s and 2.4 GB, and both draw as quickly as a 2048 one. The render thread
+makes no garbage, every loop at 0 bytes a turn, and the voxel renderer is in HotPathTests.
+
+The tour saves its world as "tour" in %LocalAppData%/AutoVoxel/worlds at the end, delete it after a test run, an
+8192 one is half a gigabyte.
+
+## The camera snapped and the light breathed
+
+bogz played AutoVoxel and said the camera snapped and the picture breathed when panning, wanted the render scale at
+100% (it was, the softness was the TAA), the world made round the player while playing instead of before, and asked
+what had been done for speed, frustum and occlusion culling if nothing.
+
+- The camera. Logged every frame (`HORIZON_VOXEL_TRACE=1`), the tour's tick driven turn was exactly 69 degrees a second
+  frame after frame, so the blending between ticks was fine. The mouse is what wasn't, a hundred and twenty ticks a
+  second take the mouse in uneven lumps and the view turned in steps a tick late. `Camera3D.LiveLook` now gives the
+  look of every frame on the render thread, the player works it out of `Mouse.LivePosition` (the window pumps its
+  events every millisecond) from where the last tick left it. Can't be scripted, the input script is a gamepad.
+- The breathing. The bounces after the first were read off last frame's screen, so what was lighting a wall changed
+  with what was on screen and the light pumped as the camera panned. They come out of a hash grid radiance cache in
+  the world now (cache.slang), every seen face writes into it, every bounce ray reads it. A tour stop that swings the
+  camera back and forth takes a picture at the same end of every swing, all three came out at the same brightness.
+  The exposure adapts slower and less as well, and the TAA reads its history through Catmull-Rom instead of bilinear,
+  which was a little blur every frame laid over itself.
+- Culling. A ray tracer has it built in, a ray only goes where the camera looks and stops at the first thing it hits.
+  What does the work instead is the tree skipping empty space whole, the level of detail, the passes split up, the
+  water's and the bounce light's rays kept short and coarse. Said so rather than adding culling that would do nothing.
+- Streaming. `VoxelStreamer` makes columns on all cores but two, nearest the player first, into a tree made empty with
+  room for what's coming (`EstimateNodes`, `EstimateVoxels`). The renderer grows its buffers on the card when the tree
+  outgrows them (`GraphicsDevice.CopyBuffer`, new this round) instead of sending it all again, and saves don't compact
+  any more (a compacted tree is new arrays and all of it up again), loading does. A 2048 world is playable in half a
+  second and all made 2.4 s later, a 4096 one 6.7 s later. The chunk arrays come out of a pool, made new they were a
+  hundred megabytes a second of garbage and the collections held up the render thread, frames of 20 ms. 7 ms now.

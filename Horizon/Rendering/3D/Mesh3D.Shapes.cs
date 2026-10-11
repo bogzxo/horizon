@@ -88,8 +88,10 @@ public partial class Mesh3D
                 uint a = (uint)(ring * (segments + 1) + segment);
                 uint b = a + (uint)segments + 1;
 
-                // Round anticlockwise seen from outside, with the seam on the far side so the texture runs
-                indices.AddRange([a, a + 1, b, a + 1, b + 1, b]);
+                // Round anticlockwise seen from outside. The top ring is all one point (the pole) and so is the
+                // bottom one, so the triangle that would have two corners there is left out, it has no area
+                if (ring > 0) indices.AddRange([a, a + 1, b]);
+                if (ring < rings - 1) indices.AddRange([a + 1, b + 1, b]);
             }
         }
 

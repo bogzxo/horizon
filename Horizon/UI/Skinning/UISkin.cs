@@ -245,7 +245,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         if (name.Length == 0 || Describe(name) is not { } art)
             return false;
 
-        Atlas.Request(art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height);
+        Atlas.Request(art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height, art.Source.Layer);
         if (!Atlas.TryGet(art.Key, out var placed))
             return false;
 
@@ -471,7 +471,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             scale,
             tint,
             // The same pixels asked for under two names are only stitched in once.
-            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height));
+            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer));
     }
 
     public void Dispose() => Atlas.Dispose();

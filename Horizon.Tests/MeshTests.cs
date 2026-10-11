@@ -36,8 +36,9 @@ public class MeshTests
         Assert.Equal(24, vertices.Length);
         Assert.Equal(12, indices.Length / 3);
 
+        // Two triangles a cell, less the one at each pole that would have no area
         var (ball, ballIndices) = Built("sphere");
-        Assert.Equal(24 * 16 * 2, ballIndices.Length / 3);
+        Assert.Equal(24 * 16 * 2 - 24 * 2, ballIndices.Length / 3);
         Assert.All(ball, vertex => Assert.Equal(0.5f, vertex.Position.Length(), 4));
     }
 

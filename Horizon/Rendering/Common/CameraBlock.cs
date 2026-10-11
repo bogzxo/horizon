@@ -55,6 +55,9 @@ public static class CameraBlock
     /// <summary>The camera the block was last written for, null before the first.</summary>
     public static Camera? Current => heldCamera;
 
+    /// <summary>How many frames have begun, for whatever is worked out once a frame and kept for the rest of it.</summary>
+    public static long FrameNumber => frameNumber;
+
     /// <summary>
     /// Starts the frame's block. Called by the engine at the start of every frame, with how big what is drawn into
     /// is and how the clocks stand.

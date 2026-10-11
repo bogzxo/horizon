@@ -1,12 +1,18 @@
 // The sprites of Dead Revolver's pixel UI pack, by name.
 //
-// Every image of the pack holds the same art several times over, once for every colour it comes in. A sprite is
-// written down once, for the first copy, and found in the others by the theme it is asked for in. An image says
-//   block     how wide one copy of the art is, in pixels
-//   themes    which copy every theme starts at, counted in blocks from the left of the image
+// The images are Aseprite files, open them in Aseprite. Every colour the art comes in (a theme) is a layer of its
+// own, all of them in the same place, so a sprite is written down once and found on whichever layer the theme it is
+// asked for in says. Only one layer is switched on in every file so there is something to look at, the game reads
+// them all whatever their eyes say. A new theme is a new layer, called what the theme is to be called, nothing in
+// here has to change for it. The images that come in one colour only have one layer, called art. Of the pack's other
+// images (banners, decorators, grid, grid_animated, jewel, lists, skill_tree, tooltips, value_slots) nothing is named
+// here yet and they are one layer each, every colour of them side by side as it came, until somebody names their
+// sprites and splits them into layers while they are at it. An image says
+//   themes    "layers", for an image with its themes on its layers
+//   block     how wide one copy of the art is, in pixels, for an image that has other states (below)
 //   fallback  the theme that is used when a sprite is asked for in a theme the image doesn't come in
-//             (the first one listed if it doesn't say)
-//   states    the other states the art of every theme is followed by, and how many blocks along each of them is.
+//             (the bottom layer if it doesn't say)
+//   states    the other states the art is followed by on every layer, and how many blocks along each of them is.
 //             With states { hover: 1 } every sprite of the image is there a second time as "name_hover"
 //   size      how big the sprites of the image are, for images that are a grid of them, a number or
 //             vec(width, height). A sprite can still say otherwise with a w and an h of its own
@@ -27,15 +33,20 @@
 // that go down. A sprite can also be asked for in a theme of its own, whatever the skin's theme is, as "round_blank@white".
 //
 // This file is a program. Anything written down over and over is better written as a loop, see the keyboard below.
-// Only sprites that are used get loaded, so there is no harm in naming more of the pack here than a UI needs.
-// The rectangles were measured off the images, see the pack itself for what else there is to name.
+// Only sprites that are used get loaded, and they are stitched into one texture for the whole skin as they are first
+// drawn (see TextureAtlas), so there is no harm in naming more of the pack here than a UI needs, and none in a file
+// being big. The rectangles were measured off the images, see the pack itself for what else there is to name.
+//
+// (They were PNGs once, with the themes side by side in blocks and a table here saying which block was which. A
+// PNG with blocks still works, themes: { white: 0, dark: 1 } and a block, for a pack that comes that way.)
 
-// Buttons. Every theme is followed by its other states, so every sprite here is there four times over,
-// "button", "button_hover", "button_pressed" and "button_selected".
+// Buttons. Every layer has the art followed by its other states, so every sprite here is there four times over,
+// "button", "button_hover", "button_pressed" and "button_selected". Blocks 4, 5 and 6 of every layer are three more
+// looks the pack has for the same buttons, which nobody has given a name yet.
 let buttons = {
-    file: "buttons.png",
+    file: "buttons.aseprite",
     block: 208,
-    themes: { white: 14, dark: 18, tan: 22, gold: 26, red: 30, purple: 34, blue: 38 },
+    themes: "layers",
     fallback: "blue",
     states: { hover: 1, pressed: 2, selected: 3 },
     sprites: {
@@ -53,9 +64,8 @@ let buttons = {
 
 // Panels and frames.
 let panels = {
-    file: "panels.png",
-    block: 1120,
-    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    file: "panels.aseprite",
+    themes: "layers",
     fallback: "blue",
     sprites: {
         panel:        { x: 16, y: 128, w: 48, h: 48, border: 6 },
@@ -75,9 +85,8 @@ let panels = {
 // Check boxes, radio buttons, switches, sliders and the small round buttons. There is no tan one,
 // the white one stands in for it.
 let form = {
-    file: "form_elements.png",
-    block: 512,
-    themes: { white: 0, dark: 1, gold: 2, red: 3, purple: 4, blue: 5 },
+    file: "form_elements.aseprite",
+    themes: "layers",
     fallback: "white",
     sprites: {
         check_off:         { x: 256, y: 40, w: 8, h: 8, border: 2 },
@@ -123,9 +132,8 @@ let form = {
 // Health and progress bars. There is no blue one, skins of the themes this image doesn't come in get the white
 // one, which takes a tint well.
 let bars = {
-    file: "value_bars.png",
-    block: 480,
-    themes: { white: 0, green: 1, gold: 2, red: 3, purple: 4 },
+    file: "value_bars.aseprite",
+    themes: "layers",
     fallback: "white",
     sprites: {
         bar_frame:      { x: 16, y: 168, w: 32, h: 8, border: vec(4, 2, 4, 3) },
@@ -138,9 +146,8 @@ let bars = {
 
 // Cursors and small tool icons, on a grid of 16 by 16.
 let cursors = {
-    file: "cursors.png",
-    block: 288,
-    themes: { white: 0, dark: 1, tan: 2, gold: 3, red: 4, purple: 5, blue: 6 },
+    file: "cursors.aseprite",
+    themes: "layers",
     fallback: "blue",
     size: 16,
     sprites: {
@@ -170,7 +177,7 @@ let cursors = {
 
 // Hearts, 16 by 16 each. These come in their own colours rather than in themes.
 let hearts = {
-    file: "hearts.png",
+    file: "hearts.aseprite",
     size: 16,
     sprites: {
         heart_purple:       { x: 0, y: 0 },
@@ -190,7 +197,7 @@ let hearts = {
 
 // Stars, 18 by 15 each. The coloured ones have four frames, the same star glinting, and a flat one without.
 let stars = {
-    file: "stars.png",
+    file: "stars.aseprite",
     size: vec(18, 15),
     sprites: {
         star_empty:       { x: 0, y: 0 },
@@ -207,7 +214,7 @@ let stars = {
 
 // Things to put around whatever is selected, 48 by 48 each and white so they can be tinted.
 let selectors = {
-    file: "selectors.png",
+    file: "selectors.aseprite",
     sprites: {
         selector:       { x: 13, y: 13, w: 22, h: 22, border: 11 },
         selector_round: { x: 61, y: 13, w: 22, h: 22, border: 11 },
@@ -219,7 +226,7 @@ let selectors = {
 
 // An effect for where a click landed, 5 frames of 21 by 21.
 let click_cross = {
-    file: "ClickEffects_Cross.png",
+    file: "ClickEffects_Cross.aseprite",
     size: 21,
     sprites: {
         click_cross: { x: 0, y: 0, frames: 5, time: 0.05 }
@@ -228,7 +235,7 @@ let click_cross = {
 
 // An effect for where a click landed, 5 frames of 21 by 21.
 let click_crosshair = {
-    file: "ClickEffects_Crosshair.png",
+    file: "ClickEffects_Crosshair.aseprite",
     size: 21,
     sprites: {
         click_crosshair: { x: 0, y: 0, frames: 5, time: 0.05 }
@@ -237,7 +244,7 @@ let click_crosshair = {
 
 // An effect for where a click landed, 5 frames of 21 by 21.
 let click_ripple = {
-    file: "ClickEffects_Ripple.png",
+    file: "ClickEffects_Ripple.aseprite",
     size: 21,
     sprites: {
         click_ripple: { x: 0, y: 0, frames: 5, time: 0.05 }
@@ -246,7 +253,7 @@ let click_ripple = {
 
 // An effect for where a click landed, 5 frames of 21 by 21.
 let click_square = {
-    file: "ClickEffects_Square.png",
+    file: "ClickEffects_Square.aseprite",
     size: 21,
     sprites: {
         click_square: { x: 0, y: 0, frames: 5, time: 0.05 }
@@ -255,7 +262,7 @@ let click_square = {
 
 // An effect for where a click landed, 9 frames of 21 by 21.
 let click_star = {
-    file: "ClickEffects_Star.png",
+    file: "ClickEffects_Star.aseprite",
     size: 21,
     sprites: {
         click_star: { x: 0, y: 0, frames: 9, time: 0.05 }
@@ -273,7 +280,7 @@ func pressable(sprites, name, x, y, frames_x, w, h) {
 
 // The Xbox gamepad. The round buttons, the bumpers and the triggers are 16 by 16 and the d-pad is bigger.
 let xbox = {
-    file: "gdb-xbox.png",
+    file: "gdb-xbox.aseprite",
     sprites: {
         xbox_dpad:       { x: 132, y: 52, w: 24, h: 24 },
         xbox_dpad_up:    { x: 51, y: 499, w: 26, h: 26 },
@@ -302,7 +309,7 @@ pressable(xbox.sprites, "xbox_rb", 112, 544, 144, 16, 16);
 
 // The PlayStation gamepad, the same way.
 let playstation = {
-    file: "gdb-playstation.png",
+    file: "gdb-playstation.aseprite",
     sprites: {
         ps_l3: { x: 80, y: 304, w: 16, h: 16 },
         ps_r3: { x: 192, y: 304, w: 16, h: 16 },
@@ -324,7 +331,7 @@ pressable(playstation.sprites, "ps_options", 16, 256, 48, 16, 16);
 // key being pressed, the key as it sits, going down, down, and back up. A key is 16 by 16 in a grid of 16, the wide
 // ones 24 and the space bar 104. The four keyboards aren't quite the same distance apart, so every key lists its frames.
 let keyboard = {
-    file: "gdb-keyboard.png",
+    file: "gdb-keyboard.aseprite",
     sprites: {
         mouse:        { x: 505, y: 146, w: 15, h: 28 },
         mouse_left:   { x: 537, y: 146, w: 15, h: 28 },

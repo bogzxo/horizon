@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using System.Numerics;
 
 using Horizon.Core;
@@ -29,7 +29,7 @@ public abstract class Camera : GameObject
     // What was published at the end of every tick, and what was worked out of it for the frame that is being drawn
     private readonly Snapshot<Pose> pose = new();
     private Shown shown;
-    private long shownCurrent = -1, shownPrevious = -1;
+    private long shownCurrent = -1, shownPrevious = -1, shownFrame = -1;
     private float shownAlpha = float.NaN;
 
     public Matrix4x4 View
@@ -83,6 +83,13 @@ public abstract class Camera : GameObject
 
     /// <summary>Which way the camera looks.</summary>
     protected virtual Vector3 LookDirection => CameraFront;
+
+    /// <summary>
+    /// Which way the camera looks in the frame being drawn, given which way it looked between the two ticks the frame
+    /// falls between. That one, unless a camera knows better (see <see cref="Camera3D.LiveLook"/>). Render thread.
+    /// </summary>
+    protected virtual Vector3 ShownLook(Vector3 blended) => blended;
+
 
     /// <summary>
     /// What of a flat world the camera sees from a place through a lens, nothing for a camera that doesn't look at one.
@@ -160,7 +167,11 @@ public abstract class Camera : GameObject
             return false;
         }
 
-        if (current.CurrentSequence == shownCurrent && current.PreviousSequence == shownPrevious && current.Alpha == shownAlpha)
+        // Once a frame, whatever is asked for it after gets the same pose. A camera whose look comes from the mouse (see
+        // Camera3D.LiveLook) read it anew for every matrix somebody asked for, and a frame whose rays and whose
+        // reprojection were a hair apart smeared under its own anti aliasing
+        long frameNumber = Rendering.CameraBlock.FrameNumber;
+        if (current.CurrentSequence == shownCurrent && current.PreviousSequence == shownPrevious && current.Alpha == shownAlpha && frameNumber == shownFrame)
         {
             frame = shown;
             return true;
@@ -173,10 +184,11 @@ public abstract class Camera : GameObject
         }
 
         Vector3 position = Snapped(at.Position, at.Anchor);
+        Vector3 front = ShownLook(at.Front);
 
-        Matrix4x4 lookAt = Matrix4x4.CreateLookAt(position, position + at.Front, at.Up);
+        Matrix4x4 lookAt = Matrix4x4.CreateLookAt(position, position + front, at.Up);
         shown = new Shown(lookAt, at.Projection, lookAt * at.Projection, BoundsAt(position, at.Projection));
-        (shownCurrent, shownPrevious, shownAlpha) = (current.CurrentSequence, current.PreviousSequence, current.Alpha);
+        (shownCurrent, shownPrevious, shownAlpha, shownFrame) = (current.CurrentSequence, current.PreviousSequence, current.Alpha, frameNumber);
 
         frame = shown;
         return true;

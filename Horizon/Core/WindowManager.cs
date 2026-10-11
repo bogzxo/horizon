@@ -618,6 +618,16 @@ public class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
+    /// Has something done to the window on its thread the next time it looks, without waiting for it. From any thread,
+    /// for whatever GLFW only lets the thread of the window touch (the cursor, say).
+    /// </summary>
+    internal void PostToWindow(Action work)
+    {
+        windowWork.Enqueue(work);
+        windowWake.Set();
+    }
+
+    /// <summary>
     /// Helper method to do whatever the thread that draws asked to have done to the window. Thread of the window.
     /// </summary>
     private void DoWindowWork()
