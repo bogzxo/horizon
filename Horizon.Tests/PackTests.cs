@@ -27,10 +27,17 @@ public class PackTests
     }
 
     /// <summary>
-    /// Helper method to read the size of a PNG without decoding it. Width and height follow the signature and the first chunk's length and name.
+    /// Helper method to read the size of an image without decoding it. An Aseprite file says so in its header, a PNG
+    /// has width and height after the signature and the first chunk's length and name.
     /// </summary>
-    private static (int Width, int Height) PngSize(string path)
+    private static (int Width, int Height) ImageSize(string path)
     {
+        if (AsepriteDocument.IsAseprite(path))
+        {
+            var document = AsepriteDocument.Open(path);
+            return (document.Width, document.Height);
+        }
+
         using var file = File.OpenRead(path);
         Span<byte> header = stackalloc byte[24];
         file.ReadExactly(header);
@@ -53,7 +60,11 @@ public class PackTests
                 Assert.True(sheet.TryGetSprite(name, theme, out var sprite), $"'{name}' can't be looked up.");
 
                 if (!sizes.TryGetValue(sprite.Path, out var size))
-                    sizes[sprite.Path] = size = PngSize(sprite.Path);
+                    sizes[sprite.Path] = size = ImageSize(sprite.Path);
+
+                // On a layer the file has, for an image that keeps its themes on layers
+                if (sprite.Layer is { } layer && !AsepriteDocument.Open(sprite.Path).HasLayer(layer))
+                    wrong.Add($"{name}@{theme ?? "default"} is on the layer '{layer}', which {Path.GetFileName(sprite.Path)} hasn't got");
 
                 for (int frame = 0; frame < sprite.Frames; frame++)
                 {
@@ -65,6 +76,64 @@ public class PackTests
         }
 
         Assert.True(wrong.Count == 0, string.Join("\n", wrong));
+    }
+
+    [Fact]
+    public void DeadRevolverKeepsItsThemesOnLayers()
+    {
+        string directory = Path.Combine(Repo(), PACK);
+        var sheet = SpriteSheetDefinition.Load(directory, "sprites.hor");
+
+        // Every theme the pack comes in is a layer of one of its files
+        Assert.Equal(["blue", "dark", "gold", "green", "purple", "red", "tan", "white"], sheet.Themes.OrderBy(t => t));
+
+        // A theme picks the layer and nothing else, the sprite is in the same place on every one
+        Assert.True(sheet.TryGetSprite("button", "red", out var red));
+        Assert.True(sheet.TryGetSprite("button", "white", out var white));
+        Assert.Equal("red", red.Layer);
+        Assert.Equal("white", white.Layer);
+        Assert.Equal((red.X, red.Y), (white.X, white.Y));
+        Assert.EndsWith("buttons.aseprite", red.Path);
+
+        // And they are different art
+        Assert.False(red.ReadFrame(0)!.Value.Data.AsSpan().SequenceEqual(white.ReadFrame(0)!.Value.Data));
+
+        // The other states are blocks along the layer, as they always were
+        Assert.True(sheet.TryGetSprite("button_hover", "red", out var hover));
+        Assert.Equal(red.X + 208, hover.X);
+        Assert.Equal("red", hover.Layer);
+
+        // A theme the image doesn't come in is its fallback, and one of its own (name@theme) beats the one asked for
+        Assert.True(sheet.TryGetSprite("button", "nonsense", out var unknown));
+        Assert.Equal("blue", unknown.Layer);
+        Assert.True(sheet.TryGetSprite("button@white", "red", out var own));
+        Assert.Equal("white", own.Layer);
+
+        // The form elements have no tan, so tan is their fallback
+        Assert.True(sheet.TryGetSprite("round_check", "tan", out var check));
+        Assert.Equal("white", check.Layer);
+
+        // An image of one colour is read as it looks, no layer named
+        Assert.True(sheet.TryGetSprite("heart", "red", out var heart));
+        Assert.Null(heart.Layer);
+    }
+
+    [Fact]
+    public void ALayerIsReadOnItsOwnWhetherItIsSwitchedOnOrNot()
+    {
+        var document = AsepriteDocument.Open(Path.Combine(Repo(), PACK, "panels.aseprite"));
+        Assert.Equal(["white", "dark", "tan", "gold", "red", "purple", "blue"], document.TopLayers);
+
+        // Only blue is switched on in the file, so the frame as it looks is blue, and white read by name is not
+        byte[] shown = document.ReadFrame(0);
+        byte[] blue = document.ReadFrame(0, "blue");
+        byte[] white = document.ReadFrame(0, "white");
+
+        Assert.True(shown.AsSpan().SequenceEqual(blue));
+        Assert.False(white.AsSpan().SequenceEqual(blue));
+        Assert.Contains(white, b => b != 0);
+
+        Assert.Throws<ArgumentException>(() => document.ReadFrame(0, "nonsense"));
     }
 
     [Fact]

@@ -22,8 +22,9 @@ public readonly record struct AsepriteTag(string Name, int From, int To, int Dir
 /// layers when they're asked for (and kept, so the atlas and the box tracer don't both pay for it) and every tag is
 /// an animation. Read once per file, see <see cref="Open"/> and <see cref="Forget"/>.
 /// <para>
-/// What's read is RGBA, grayscale and indexed files, any number of layers (hidden ones left out, groups honoured),
-/// raw, linked and zlib compressed cels, layer and cel opacity, tags. What isn't is blend modes other than normal
+/// What's read is RGBA, grayscale and indexed files, any number of layers (hidden ones left out, groups honoured,
+/// or one layer on its own by name whether it's hidden or not, see <see cref="ReadFrame(int, string)"/>), raw,
+/// linked and zlib compressed cels, layer and cel opacity, tags. What isn't is blend modes other than normal
 /// (they're drawn as normal and said so once), tilemap layers, external files. Enough for sprites drawn in it.
 /// </para>
 /// </summary>
@@ -52,7 +53,9 @@ public sealed class AsepriteDocument
 
     private static readonly Dictionary<string, AsepriteDocument> cache = [];
 
-    private readonly record struct Layer(string Name, bool Visible, bool Group, bool Tilemap, int Depth, int Blend, byte Opacity);
+    // Visible is whether it shows in the frame as a whole, a hidden group hides everything in it. OwnVisible is its
+    // own eye in Aseprite, which is what counts when it's asked for by name and its parent is hidden
+    private readonly record struct Layer(string Name, bool Visible, bool Group, bool Tilemap, int Depth, int Blend, byte Opacity, bool OwnVisible);
 
     // Where a cel's pixels are in the file (or which frame they're linked to), for putting the frame together later
     private readonly record struct Cel(int Layer, int X, int Y, int Width, int Height, byte Opacity, ushort Kind, int DataOffset, int DataLength, int LinkedFrame);
@@ -66,6 +69,7 @@ public sealed class AsepriteDocument
     private readonly int[] durations;
     private readonly AsepriteTag[] tags;
     private readonly byte[]?[] rendered;
+    private readonly Dictionary<(int Frame, string Layer), byte[]> renderedLayers = [];
     private bool warnedBlend;
 
     /// <summary>Where it was read from.</summary>
@@ -124,6 +128,69 @@ public sealed class AsepriteDocument
 
         tag = default;
         return false;
+    }
+
+    /// <summary>
+    /// The names of the layers at the top of the file, bottom first, groups among them (a group being everything in
+    /// it), tilemaps left out. The UI skins keep a theme on each of these, see <see cref="ReadFrame(int, string)"/>.
+    /// </summary>
+    public IReadOnlyList<string> TopLayers
+    {
+        get
+        {
+            var names = new List<string>();
+            foreach (var layer in layers)
+            {
+                if (layer.Depth == 0 && !layer.Tilemap) names.Add(layer.Name);
+            }
+
+            return names;
+        }
+    }
+
+    /// <summary>Whether there is a layer of that name at the top of the file, see <see cref="TopLayers"/>.</summary>
+    public bool HasLayer(string name) => FindTopLayer(name) >= 0;
+
+    /// <summary>
+    /// A frame of one layer on its own, RGBA from the top left, <see cref="Width"/> by <see cref="Height"/>. A group
+    /// is everything in it that is switched on, in the order Aseprite draws it. Whether the layer itself is switched
+    /// on doesn't matter, a file that keeps one theme on each of its layers has all but one switched off so it can
+    /// be looked at, and every one of them is still wanted. Put together the first time, kept after. Not to be written to.
+    /// </summary>
+    public byte[] ReadFrame(int frame, string layer)
+    {
+        if ((uint)frame >= (uint)FrameCount)
+            throw new ArgumentOutOfRangeException(nameof(frame), $"'{Path}' has {FrameCount} frames, there is no frame {frame}.");
+
+        int index = FindTopLayer(layer);
+        if (index < 0)
+            throw new ArgumentException($"'{Path}' has no layer called '{layer}'.", nameof(layer));
+
+        lock (renderedLayers)
+        {
+            if (renderedLayers.TryGetValue((frame, layer), out var known)) return known;
+
+            // The layer and everything under it, which is every layer after it until one as far out as it is
+            var included = new HashSet<int> { index };
+            for (int i = index + 1; i < layers.Count && layers[i].Depth > layers[index].Depth; i++)
+            {
+                if (layers[i].OwnVisible) included.Add(i);
+            }
+
+            byte[] pixels = Render(frame, included);
+            renderedLayers[(frame, layer)] = pixels;
+            return pixels;
+        }
+    }
+
+    private int FindTopLayer(string name)
+    {
+        for (int i = 0; i < layers.Count; i++)
+        {
+            if (layers[i].Depth == 0 && !layers[i].Tilemap && layers[i].Name == name) return i;
+        }
+
+        return -1;
     }
 
     /// <summary>How long a frame is shown for, in seconds.</summary>
@@ -250,7 +317,7 @@ public sealed class AsepriteDocument
             }
         }
 
-        layers.Add(new Layer(name, visible, type == LAYER_GROUP, type == LAYER_TILEMAP, U16(at + 4), blend, opacity));
+        layers.Add(new Layer(name, visible, type == LAYER_GROUP, type == LAYER_TILEMAP, U16(at + 4), blend, opacity, (flags & LAYER_VISIBLE) != 0));
     }
 
     private void ReadCel(int frame, int at, int end)
@@ -327,7 +394,8 @@ public sealed class AsepriteDocument
         }
     }
 
-    private byte[] Render(int frame)
+    /// <param name="only">The layers to draw whether they're switched on or not, null for the frame as it looks.</param>
+    private byte[] Render(int frame, HashSet<int>? only = null)
     {
         var pixels = new byte[Width * Height * 4];
 
@@ -335,7 +403,8 @@ public sealed class AsepriteDocument
         foreach (var cel in CelsInOrder(frame))
         {
             var layer = cel.Layer < layers.Count ? layers[cel.Layer] : default;
-            if (!layer.Visible || layer.Group || layer.Tilemap) continue;
+            if (layer.Group || layer.Tilemap) continue;
+            if (only is null ? !layer.Visible : !only.Contains(cel.Layer)) continue;
 
             Cel source = cel;
             if (cel.Kind == CEL_LINKED)

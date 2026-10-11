@@ -75,7 +75,8 @@ internal static class SpriteImages
     /// A part of an image (a frame of an Aseprite file, for a path that is one), copied out. Null if it can't be
     /// read or isn't inside the image, which has been logged.
     /// </summary>
-    public static SpritePixels? Read(string path, int x, int y, int width, int height)
+    /// <param name="layer">One layer of an Aseprite file on its own, null for the frame as it looks. Nothing for anything else.</param>
+    public static SpritePixels? Read(string path, int x, int y, int width, int height, string? layer = null)
     {
         if (width < 1 || height < 1) return null;
 
@@ -100,7 +101,16 @@ internal static class SpriteImages
                 return null;
             }
 
-            byte[] whole = document.ReadFrame(frame);
+            byte[] whole;
+            try
+            {
+                whole = layer is null ? document.ReadFrame(frame) : document.ReadFrame(frame, layer);
+            }
+            catch (ArgumentException e)
+            {
+                Log.Error($"[SpriteImages] {e.Message}");
+                return null;
+            }
             if (width == document.Width && height == document.Height && x % document.Width == 0 && y == 0)
                 return new SpritePixels(whole, width, height);
 

@@ -42,7 +42,7 @@ public class MeshesExample : Scene, ITestControls
     ];
 
     private Camera3D _camera = null!;
-    private Mesh3D _crate = null!, _ball = null!, _can = null!, _hills = null!;
+    private Mesh3D _floor = null!, _crate = null!, _ball = null!, _can = null!, _hills = null!;
     private Vertex3D[] _hillVertices = [];
     private uint[] _hillIndices = [];
 
@@ -70,9 +70,10 @@ public class MeshesExample : Scene, ITestControls
             throw new Exception($"Couldn't make a texture out of {BRICKS}: {bricks.Message}");
         }
 
-        var floor = world.AddEntity(Mesh3D.Plane(12.0f, 12.0f, 6.0f));
-        floor.Texture = bricks.Asset;
-        floor.Tint = new Vector4(0.7f, 0.72f, 0.75f, 1.0f);
+        // Plain, the brick atlas has see-through tiles in it and the shader throws those away, which with the
+        // sampler clamping past 1 left one sixth of the floor and took an hour to see
+        _floor = world.AddEntity(Mesh3D.Plane(12.0f, 12.0f));
+        _floor.Tint = new Vector4(0.62f, 0.6f, 0.58f, 1.0f);
 
         _crate = world.AddEntity(Mesh3D.Cube(1.4f));
         _crate.Texture = bricks.Asset;
@@ -146,7 +147,7 @@ public class MeshesExample : Scene, ITestControls
         if (keyboard.WasPressed(Key.C))
         {
             _culling = !_culling;
-            _crate.Cull = _ball.Cull = _can.Cull = _culling ? CullMode.Back : CullMode.None;
+            _floor.Cull = _crate.Cull = _ball.Cull = _can.Cull = _culling ? CullMode.Back : CullMode.None;
         }
 
         if (_turning) _yaw += ORBIT_SPEED * dt;

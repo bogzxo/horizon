@@ -97,6 +97,25 @@ public sealed unsafe partial class GraphicsDevice
         buffer.LastUse = NextSubmission;
     }
 
+    /// <summary>
+    /// Copies a stretch of one buffer into another on the GPU, in order with the draws. For a buffer that has to grow
+    /// without everything in it being sent up again (the voxel world, made bigger while it's being played in).
+    /// </summary>
+    public void CopyBuffer(GpuBuffer from, GpuBuffer to, nuint bytes, nint fromOffset = 0, nint toOffset = 0)
+    {
+        if (bytes == 0 || !from.IsValid || !to.IsValid || from.Buffer.Handle == 0 || to.Buffer.Handle == 0) return;
+        if ((ulong)fromOffset + bytes > from.Size || (ulong)toOffset + bytes > to.Size)
+            throw new ArgumentOutOfRangeException(nameof(bytes), $"{bytes} bytes don't fit, from {fromOffset} of {from.Size} to {toOffset} of {to.Size}.");
+
+        EndRendering();
+        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit, PipelineStageFlags2.TransferBit, AccessFlags2.TransferReadBit | AccessFlags2.TransferWriteBit);
+        var region = new BufferCopy((ulong)fromOffset, (ulong)toOffset, bytes);
+        Vk.CmdCopyBuffer(cmd, from.Buffer, to.Buffer, 1, in region);
+        GlobalBarrier(PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit, PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit);
+        from.LastUse = NextSubmission;
+        to.LastUse = NextSubmission;
+    }
+
     /// <summary>Fills a texture with a colour, whatever is bound. For the pictures that are blended into themselves and have to start empty.</summary>
     public void ClearTexture(Texture texture, Vector4 color)
     {

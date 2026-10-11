@@ -48,7 +48,10 @@ public enum GamepadInput : byte
 public enum GamepadKind
 {
     Xbox,
-    PlayStation
+    PlayStation,
+
+    // Not a gamepad at all, the keyboard read as one (see KeyboardGamepad). What it has printed on it is letters
+    Keyboard
 }
 
 /// <summary>

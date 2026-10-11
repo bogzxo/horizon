@@ -366,7 +366,7 @@ public sealed partial class SkylineDebugger : GameObject
         texture.IsValid &&
         texture.BindlessIndex != BindlessTextures.NONE &&
         (texture.Definition.Usage & TextureUsage.Sampled) != 0 &&
-        texture.Definition.Format is not (PixelFormat.Rg32Uint or PixelFormat.Depth24Stencil8 or PixelFormat.Depth32F);
+        texture.Definition.Format is not (PixelFormat.Rg32Uint or PixelFormat.Rgba32Uint or PixelFormat.Depth24Stencil8 or PixelFormat.Depth32F);
 
     public override void Render(float dt)
     {

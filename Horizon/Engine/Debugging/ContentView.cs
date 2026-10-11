@@ -194,7 +194,7 @@ internal sealed class ContentView : UIComponent
             PixelFormat.R8 => 1,
             PixelFormat.R16F => 2,
             PixelFormat.Rg32F or PixelFormat.Rg32Uint or PixelFormat.Rgba16F => 8,
-            PixelFormat.Rgba32F => 16,
+            PixelFormat.Rgba32F or PixelFormat.Rgba32Uint => 16,
             _ => 4
         };
 

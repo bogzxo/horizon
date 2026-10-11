@@ -80,6 +80,25 @@ public class Camera3D : Camera
 
     protected override Vector3 LookDirection => look;
 
+    /// <summary>
+    /// Which way the camera looks right now, asked on the render thread as every frame is drawn, for a first person
+    /// camera turned by the mouse. Without it the look is the one of the last two ticks, blended, which is smooth for
+    /// anything the simulation turns and isn't for a mouse. A mouse moves between ticks, a hundred and twenty a second
+    /// hand it over in uneven lumps, and the picture turned in steps a tick behind the hand, which on a screen faster
+    /// than the ticks looked like the camera snapping. Read off <see cref="Input.Mouse.LivePosition"/> (which the
+    /// window hears about every millisecond) this is the hand as it is for every frame. Return zero for the blended
+    /// one (a menu is up, a cutscene has the camera), and don't allocate, it's the render thread.
+    /// </summary>
+    public Func<Vector3>? LiveLook { get; set; }
+
+    protected override Vector3 ShownLook(Vector3 blended)
+    {
+        if (LiveLook is not { } live) return blended;
+
+        Vector3 now = live();
+        return now.LengthSquared() > 1e-12f ? Vector3.Normalize(now) : blended;
+    }
+
     public Camera3D(float aspectRatio = 16.0f / 9.0f)
     {
         aspect = MathF.Max(aspectRatio, 0.01f);

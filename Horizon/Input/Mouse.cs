@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Numerics;
 
 using Silk.NET.Input;
@@ -31,7 +31,32 @@ public sealed class Mouse
     private float _scrolled;
     private readonly Lock _scrollLock = new();
 
-    private bool _changed, _placed;
+    private bool _changed, _placed, _captured;
+
+    // The mice of the window and how to get something done on its thread, which is the only one that may change the cursor
+    private IInputContext? _context;
+    private Action<Action>? _toWindow;
+    private Action? _applyCapture;
+
+    /// <summary>
+    /// Whether the pointer is locked to the window and hidden, for a game that looks around with the mouse (anything
+    /// first person). While it is, <see cref="Delta"/> is how far the mouse was moved, with no edge of the window or
+    /// the screen to stop it, raw from the device where the system has that. <see cref="Position"/> means nothing
+    /// then. From any thread, it is done on the window's the next time it looks, and the first update after it
+    /// changes has no movement, or the pointer jumping to the middle reads as a flick of the wrist.
+    /// </summary>
+    public bool Captured
+    {
+        get => _captured;
+        set
+        {
+            if (_captured == value) return;
+
+            _captured = value;
+            _placed = false;
+            if (_applyCapture is not null) _toWindow?.Invoke(_applyCapture);
+        }
+    }
 
     /// <summary>
     /// Where the pointer is in the window, in pixels from its top left corner. With the game shown in a part of the
@@ -97,8 +122,12 @@ public sealed class Mouse
 
     private static bool Known(MouseButton button) => (uint)button < BUTTONS;
 
-    internal void Attach(IInputContext context)
+    internal void Attach(IInputContext context, Action<Action>? toWindow = null)
     {
+        _context = context;
+        _toWindow = toWindow;
+        _applyCapture = ApplyCapture;
+
         foreach (IMouse mouse in context.Mice)
         {
             Place(mouse.Position);
@@ -110,6 +139,22 @@ public sealed class Mouse
             {
                 lock (_scrollLock) _scrolled += wheel.Y;
             };
+        }
+    }
+
+    /// <summary>Helper method to lock the pointer or let it go, as <see cref="Captured"/> says. Thread of the window.</summary>
+    private void ApplyCapture()
+    {
+        if (_context is null) return;
+
+        foreach (IMouse mouse in _context.Mice)
+        {
+            ICursor cursor = mouse.Cursor;
+            CursorMode mode = !_captured ? CursorMode.Normal
+                : cursor.IsSupported(CursorMode.Raw) ? CursorMode.Raw
+                : CursorMode.Disabled;
+
+            if (cursor.IsSupported(mode)) cursor.CursorMode = mode;
         }
     }
 

@@ -70,7 +70,7 @@ public sealed class TextureAtlas : IDisposable
     private const int PADDING = 2;          // Texels kept clear between two regions, so neither bleeds into the other
     private const int MAX_HEIGHT = 16384;   // As tall as it is allowed to grow, or what the card takes if that's less
 
-    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height);
+    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer);
 
     // The top edge of what's been packed, left to right, as a run of flat segments. A new region goes on the
     // lowest segment it fits on (the skyline packer), which fills the holes rows would leave
@@ -146,11 +146,12 @@ public sealed class TextureAtlas : IDisposable
     /// </summary>
     /// <param name="x">The left edge of the part, in pixels from the left of the image.</param>
     /// <param name="y">The top edge of the part, in pixels from the top of the image.</param>
-    public void Request(string key, string imagePath, int x, int y, int width, int height)
+    /// <param name="layer">One layer of an Aseprite file on its own, null for the picture as it looks.</param>
+    public void Request(string key, string imagePath, int x, int y, int width, int height, string? layer = null)
     {
         if (_requested.TryAdd(key, 0))
         {
-            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height));
+            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height, layer));
         }
     }
 
@@ -158,8 +159,8 @@ public sealed class TextureAtlas : IDisposable
     /// The name a part of an image goes by when nobody gives it one. The same part asked for twice (by a UI and by a
     /// sprite, say) is only put in once this way.
     /// </summary>
-    public static string KeyFor(string imagePath, int x, int y, int width, int height) =>
-        $"{imagePath}|{x},{y},{width},{height}";
+    public static string KeyFor(string imagePath, int x, int y, int width, int height, string? layer = null) =>
+        layer is null ? $"{imagePath}|{x},{y},{width},{height}" : $"{imagePath}|{layer}|{x},{y},{width},{height}";
 
     /// <summary>
     /// Asks for a sprite of a <see cref="SpriteSheetDefinition"/> to be put into the atlas, every frame of it. Thread-safe.
@@ -187,8 +188,8 @@ public sealed class TextureAtlas : IDisposable
             // Wherever the sheet says the frame is, to the right of the one before unless it says otherwise
             (int x, int y) = sprite.FrameAt(frame);
 
-            keys[frame] = KeyFor(sprite.Path, x, y, sprite.Width, sprite.Height);
-            Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height);
+            keys[frame] = KeyFor(sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
+            Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
         }
 
         return _frames.GetOrAdd(sprite, new AtlasFrames(keys));
@@ -233,7 +234,7 @@ public sealed class TextureAtlas : IDisposable
         foreach (var pending in batch)
         {
             // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for
-            if (SpriteImages.Read(pending.Path, pending.X, pending.Y, pending.Width, pending.Height) is not { } part) continue;
+            if (SpriteImages.Read(pending.Path, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
 
             // Only the pixels that are anything, if asked. A frame of nothing at all keeps one clear texel so it's drawn as nothing
             int left = 0, top = 0, width = part.Width, height = part.Height;

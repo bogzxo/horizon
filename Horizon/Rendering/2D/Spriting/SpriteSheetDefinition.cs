@@ -23,9 +23,10 @@ namespace Horizon.Rendering.Spriting;
 /// <param name="FrameTime">How long every frame of an animation is shown for, in seconds.</param>
 /// <param name="Step">How far the next frame is from the one before, when the frames are laid out evenly. One sprite's width to the right unless the sheet says.</param>
 /// <param name="FramePositions">Where every frame after the first is, for frames that aren't laid out evenly. Null when they are.</param>
+/// <param name="Layer">The layer of an Aseprite file the sprite is on, for a sheet that keeps a theme on each. Null for the picture as it looks.</param>
 public readonly record struct SpriteSource(
     string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
-    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null)
+    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null, string? Layer = null)
 {
     /// <summary>
     /// The pixels of one frame, RGBA from the top left, for whoever wants to look at the art itself (tracing boxes
@@ -35,7 +36,7 @@ public readonly record struct SpriteSource(
     public SpritePixels? ReadFrame(int frame)
     {
         (int x, int y) = FrameAt(Math.Clamp(frame, 0, Math.Max(Frames - 1, 0)));
-        return SpriteImages.Read(Path, x, y, Width, Height);
+        return SpriteImages.Read(Path, x, y, Width, Height, Layer);
     }
 
     /// <summary>
@@ -58,7 +59,9 @@ public readonly record struct SpriteSource(
 /// for one that explains itself). It only says where everything is, nothing is loaded. Pair it with a
 /// <see cref="TextureAtlas"/> to have the sprites that are actually used stitched together.
 /// Sheets that hold the same art in a number of colours can say so by naming their themes. A sprite is then written down
-/// once, for the first copy of the art, and looked up in whichever theme is wanted.
+/// once, for the first copy of the art, and looked up in whichever theme is wanted. An Aseprite file can keep every
+/// theme on a layer of its own instead (<c>themes: "layers"</c>), all at the same place, and then its layers are
+/// its themes, adding a theme is adding a layer and nobody counts blocks.
 /// The same goes for art that is repeated for its states (a button, the same button hovered, the same button pressed).
 /// An image names its states and every sprite in it can be asked for as "name_hover" without being written down again.
 /// A sheet file is a program, so what is written down over and over (a key for every key of a keyboard) can be written
@@ -82,6 +85,7 @@ public sealed class SpriteSheetDefinition
         public Vector2 Cell;                                    // How big a cell of the grid is, for sprites written by their cell. Zero for no grid
         public Vector2 Origin;                                  // Where the grid starts
         public Dictionary<string, int> States = [];             // The other states every sprite comes in, and how many blocks along they are
+        public bool Layered;                                    // Whether the themes are the layers of an Aseprite file rather than blocks of the image
     }
 
     private readonly record struct SpriteDefinition(
@@ -189,8 +193,14 @@ public sealed class SpriteSheetDefinition
 
         var image = sprite.Image;
         int block = sprite.Block;
+        string? layer = null;
 
-        if (image.Block != default)
+        if (image.Layered)
+        {
+            // Every theme is in the same place on a layer of its own, the theme only picks the layer
+            layer = theme is not null && image.Themes.ContainsKey(theme) ? theme : image.Fallback;
+        }
+        else if (image.Block != default)
         {
             if (theme is null || !image.Themes.TryGetValue(theme, out int themeBlock))
             {
@@ -210,7 +220,8 @@ public sealed class SpriteSheetDefinition
             sprite.Frames,
             sprite.FrameTime,
             sprite.Step,
-            Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y));
+            Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y),
+            layer);
 
         if (frame < 0)
         {
@@ -285,10 +296,38 @@ public sealed class SpriteSheetDefinition
             };
         }
 
-        if (properties.TryGetValue("themes", out var themesValue))
+        if (properties.TryGetValue("themes", out var themesValue) && themesValue is StringValue { Value: "layers" })
+        {
+            // The themes are the layers of the file, whatever it has, bottom first
+            if (!AsepriteDocument.IsAseprite(image.Path))
+                throw new Exception($"Image '{name}' has its themes on layers, so it has to be an Aseprite file.");
+
+            AsepriteDocument document;
+            try
+            {
+                document = AsepriteDocument.Open(image.Path);
+            }
+            catch (Exception e)
+            {
+                throw new Exception($"Image '{name}' couldn't be read: {e.Message}");
+            }
+
+            image.Layered = true;
+            var layers = document.TopLayers;
+            for (int i = 0; i < layers.Count; i++)
+            {
+                image.Themes[layers[i]] = i;
+                _themes.Add(layers[i]);
+                if (image.Fallback.Length == 0) image.Fallback = layers[i];
+            }
+
+            if (layers.Count == 0)
+                throw new Exception($"Image '{name}' has its themes on layers and '{image.Path}' has no layers.");
+        }
+        else if (properties.TryGetValue("themes", out themesValue))
         {
             if (themesValue is not ObjectValue themes)
-                throw new Exception($"{name}.themes has to be an object.");
+                throw new Exception($"{name}.themes has to be an object, or \"layers\" for an Aseprite file with a theme on every layer.");
             if (image.Block == default)
                 throw new Exception($"Image '{name}' has themes, so it has to say how far apart its blocks are.");
 
