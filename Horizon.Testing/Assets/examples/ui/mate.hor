@@ -1,0 +1,2 @@
+// One mate of the grid in settings.hor. The game makes as many of these as it has mates and fills each one in
+let mate = compositor.button({ style: "button_flat", size: vec(140, 44), lbl_scale: 0.22, intro: "pop", intro_time: 0.2 });

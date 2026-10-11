@@ -1,0 +1,13 @@
+// Where each piece of art is in art.png, in pixels from its top left. The picture is made by Art/make_input_art.py
+let art = {
+    file: "art.png",
+    sprites: {
+        ring:  { x: 0, y: 0, w: 128, h: 128 },
+        disc:  { x: 128, y: 0, w: 64, h: 64 },
+        pixel: { x: 194, y: 2, w: 4, h: 4 }
+    }
+};
+
+let sheet = {
+    images: { art }
+};
