@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -12,19 +12,17 @@
     <None Update="shaders\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+
+    <!-- The art, maps and layouts of the examples, files like the files of a game. They land next to the engine's
+         own under Assets, in a folder of their own so the two never get in each other's way -->
+    <None Update="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Horizon.Content\Horizon.Content.csproj" />
-    <ProjectReference Include="..\Horizon.Core\Horizon.Core.csproj" />
-    <ProjectReference Include="..\Horizon.Engine\Horizon.Engine.csproj" />
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
     <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
-    <ProjectReference Include="..\Horizon.Input\Horizon.Input.csproj" />
-    <ProjectReference Include="..\Horizon.OpenGL\Horizon.OpenGL.csproj" />
-    <ProjectReference Include="..\Horizon.Physics\Horizon.Physics.csproj" />
-    <ProjectReference Include="..\Horizon.Rendering.UIX\Horizon.Rendering.UIX.csproj" />
-    <ProjectReference Include="..\Horizon.Rendering\Horizon.Rendering.csproj" />
-    <ProjectReference Include="..\Horizon.Webhost\Horizon.Webhost.csproj" />
   </ItemGroup>
 
 </Project>

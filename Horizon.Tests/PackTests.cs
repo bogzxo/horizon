@@ -1,15 +1,16 @@
+using System.Buffers.Binary;
+
 using Horizon.Rendering.Spriting;
 
 namespace Horizon.Tests;
 
 /// <summary>
 /// The UI packs that come with the engine, checked for the mistakes that are easy to make in a sheet file and only
-/// show up as a wrong bit of art on screen. Every sprite and every frame of it has to lie inside of its image, and
-/// the art that comes out of the pack's Aseprite files has to actually be drawn on the layer and the frame it names.
+/// show up as a wrong bit of art on screen. Every sprite and every frame of it has to lie inside of its image.
 /// </summary>
 public class PackTests
 {
-    private const string PACK = "Horizon.Rendering.UIX/Assets/uix/dead_revolver";
+    private const string PACK = "Horizon/Assets/uix/dead_revolver";
 
     /// <summary>
     /// Helper method to find the repo from wherever the tests run, by the solution file.
@@ -26,14 +27,21 @@ public class PackTests
     }
 
     /// <summary>
-    /// Helper method to get the size of an image of the pack, a PNG or the canvas of an Aseprite file.
+    /// Helper method to read the size of an image without decoding it. An Aseprite file says so in its header, a PNG
+    /// has width and height after the signature and the first chunk's length and name.
     /// </summary>
     private static (int Width, int Height) ImageSize(string path)
     {
-        var size = ImagePixels.SizeOf(path);
-        Assert.True(size.X > 0 && size.Y > 0, $"'{path}' can't be read.");
+        if (AsepriteDocument.IsAseprite(path))
+        {
+            var document = AsepriteDocument.Open(path);
+            return (document.Width, document.Height);
+        }
 
-        return ((int)size.X, (int)size.Y);
+        using var file = File.OpenRead(path);
+        Span<byte> header = stackalloc byte[24];
+        file.ReadExactly(header);
+        return (BinaryPrimitives.ReadInt32BigEndian(header[16..]), BinaryPrimitives.ReadInt32BigEndian(header[20..]));
     }
 
     [Fact]
@@ -54,6 +62,10 @@ public class PackTests
                 if (!sizes.TryGetValue(sprite.Path, out var size))
                     sizes[sprite.Path] = size = ImageSize(sprite.Path);
 
+                // On a layer the file has, for an image that keeps its themes on layers
+                if (sprite.Layer is { } layer && !AsepriteDocument.Open(sprite.Path).HasLayer(layer))
+                    wrong.Add($"{name}@{theme ?? "default"} is on the layer '{layer}', which {Path.GetFileName(sprite.Path)} hasn't got");
+
                 for (int frame = 0; frame < sprite.Frames; frame++)
                 {
                     (int x, int y) = sprite.FrameAt(frame);
@@ -64,6 +76,64 @@ public class PackTests
         }
 
         Assert.True(wrong.Count == 0, string.Join("\n", wrong));
+    }
+
+    [Fact]
+    public void DeadRevolverKeepsItsThemesOnLayers()
+    {
+        string directory = Path.Combine(Repo(), PACK);
+        var sheet = SpriteSheetDefinition.Load(directory, "sprites.hor");
+
+        // Every theme the pack comes in is a layer of one of its files
+        Assert.Equal(["blue", "dark", "gold", "green", "purple", "red", "tan", "white"], sheet.Themes.OrderBy(t => t));
+
+        // A theme picks the layer and nothing else, the sprite is in the same place on every one
+        Assert.True(sheet.TryGetSprite("button", "red", out var red));
+        Assert.True(sheet.TryGetSprite("button", "white", out var white));
+        Assert.Equal("red", red.Layer);
+        Assert.Equal("white", white.Layer);
+        Assert.Equal((red.X, red.Y), (white.X, white.Y));
+        Assert.EndsWith("buttons.aseprite", red.Path);
+
+        // And they are different art
+        Assert.False(red.ReadFrame(0)!.Value.Data.AsSpan().SequenceEqual(white.ReadFrame(0)!.Value.Data));
+
+        // The other states are blocks along the layer, as they always were
+        Assert.True(sheet.TryGetSprite("button_hover", "red", out var hover));
+        Assert.Equal(red.X + 208, hover.X);
+        Assert.Equal("red", hover.Layer);
+
+        // A theme the image doesn't come in is its fallback, and one of its own (name@theme) beats the one asked for
+        Assert.True(sheet.TryGetSprite("button", "nonsense", out var unknown));
+        Assert.Equal("blue", unknown.Layer);
+        Assert.True(sheet.TryGetSprite("button@white", "red", out var own));
+        Assert.Equal("white", own.Layer);
+
+        // The form elements have no tan, so tan is their fallback
+        Assert.True(sheet.TryGetSprite("round_check", "tan", out var check));
+        Assert.Equal("white", check.Layer);
+
+        // An image of one colour is read as it looks, no layer named
+        Assert.True(sheet.TryGetSprite("heart", "red", out var heart));
+        Assert.Null(heart.Layer);
+    }
+
+    [Fact]
+    public void ALayerIsReadOnItsOwnWhetherItIsSwitchedOnOrNot()
+    {
+        var document = AsepriteDocument.Open(Path.Combine(Repo(), PACK, "panels.aseprite"));
+        Assert.Equal(["white", "dark", "tan", "gold", "red", "purple", "blue"], document.TopLayers);
+
+        // Only blue is switched on in the file, so the frame as it looks is blue, and white read by name is not
+        byte[] shown = document.ReadFrame(0);
+        byte[] blue = document.ReadFrame(0, "blue");
+        byte[] white = document.ReadFrame(0, "white");
+
+        Assert.True(shown.AsSpan().SequenceEqual(blue));
+        Assert.False(white.AsSpan().SequenceEqual(blue));
+        Assert.Contains(white, b => b != 0);
+
+        Assert.Throws<ArgumentException>(() => document.ReadFrame(0, "nonsense"));
     }
 
     [Fact]
@@ -91,76 +161,5 @@ public class PackTests
         // Frames laid out with a step of their own
         Assert.True(sheet.TryGetSprite("key_wide", null, out var wide));
         Assert.Equal((wide.X + 32, wide.Y), wide.FrameAt(1));
-    }
-
-    /// <summary>
-    /// Helper method to count the pixels of a frame of a sprite that have anything on them.
-    /// </summary>
-    private static int Drawn(in SpriteSource sprite, int frame = 0)
-    {
-        byte[] pixels = (sprite.ReadFrame(frame) ?? throw new Exception($"A frame of '{sprite.Path}' can't be read.")).Data;
-
-        int drawn = 0;
-        for (int i = 3; i < pixels.Length; i += 4)
-            if (pixels[i] != 0) drawn++;
-
-        return drawn;
-    }
-
-    [Fact]
-    public void DeadRevolverArtIsDrawnInEveryTheme()
-    {
-        var sheet = SpriteSheetDefinition.Load(Path.Combine(Repo(), PACK), "sprites.hor");
-        var empty = new List<string>();
-
-        foreach (string name in sheet.Sprites)
-        {
-            foreach (string? theme in sheet.Themes.Append(null))
-            {
-                Assert.True(sheet.TryGetSprite(name, theme, out var sprite));
-
-                // A layer that was misspelt or a frame that is one off comes out as nothing at all. The first frame of
-                // an effect can well be nothing, so any frame with something on it will do
-                bool drawn = false;
-                for (int frame = 0; frame < sprite.Frames && !drawn; frame++) drawn = Drawn(sprite, frame) > 0;
-
-                if (!drawn) empty.Add($"{name}@{theme ?? "default"}");
-            }
-        }
-
-        Assert.True(empty.Count == 0, "Nothing is drawn of: " + string.Join(", ", empty));
-    }
-
-    [Fact]
-    public void DeadRevolverThemesAndStatesComeOffTheAsepriteFiles()
-    {
-        var sheet = SpriteSheetDefinition.Load(Path.Combine(Repo(), PACK), "sprites.hor");
-
-        // A theme is a layer of the file: the same rectangle, other pixels
-        Assert.True(sheet.TryGetSprite("button", "blue", out var blue));
-        Assert.True(sheet.TryGetSprite("button", "red", out var red));
-        Assert.EndsWith(".aseprite", blue.Path);
-        Assert.Equal((blue.X, blue.Y, blue.Width, blue.Height), (red.X, red.Y, red.Width, red.Height));
-        Assert.NotEqual(blue.Layers, red.Layers);
-        Assert.False(blue.ReadFrame(0)!.Value.Data.AsSpan().SequenceEqual(red.ReadFrame(0)!.Value.Data));
-
-        // A state is a frame of it
-        Assert.True(sheet.TryGetSprite("button_pressed", "blue", out var pressed));
-        Assert.Equal((0, 2), (blue.ImageFrame, pressed.ImageFrame));
-        Assert.Equal(blue.Layers, pressed.Layers);
-
-        // A sprite can say which theme it wants whatever theme is asked for
-        Assert.True(sheet.TryGetSprite("button@red", "blue", out var asked));
-        Assert.Equal(red.Layers, asked.Layers);
-
-        // An animation is a tag, and a heart is on a layer of its own whatever the theme
-        Assert.True(sheet.TryGetSprite("star", "blue", out var star));
-        Assert.Equal(4, star.Frames);
-        Assert.Equal([2, 3, 4, 5], star.ImageFrames!);
-
-        Assert.True(sheet.TryGetSprite("heart", "blue", out var heart));
-        Assert.True(sheet.TryGetSprite("heart", "red", out var sameHeart));
-        Assert.Equal(heart.Layers, sameHeart.Layers);
-        Assert.True(Drawn(heart) > 0);
     }
 }

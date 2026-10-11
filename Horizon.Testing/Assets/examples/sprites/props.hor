@@ -1,0 +1,16 @@
+// The atlas's side of the art, where every prop is in props.png, in pixels from its top left. See
+// Assets/uix/dead_revolver/sprites.hor in the engine for one that explains every option
+let props = {
+    file: "props.png",
+    sprites: {
+        grass: { x: 0, y: 0, w: 16, h: 16 },
+        dirt:  { x: 16, y: 0, w: 16, h: 16 },
+        cloud: { x: 0, y: 16, w: 32, h: 16 },
+        coin:  { x: 0, y: 32, w: 12, h: 12, frames: 4, time: 0.12 },
+        dot:   { x: 48, y: 32, w: 4, h: 4 }
+    }
+};
+
+let sheet = {
+    images: { props }
+};

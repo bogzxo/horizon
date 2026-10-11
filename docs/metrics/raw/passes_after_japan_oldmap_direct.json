@@ -1,0 +1,25 @@
+{
+ "label": "after japan old map direct",
+ "seconds": 12,
+ "runs": {
+  "--map japan --content /tmp/claude-0/-home-user/0915fcfe-7f5e-5042-9906-5106f56d79e2/scratchpad/oldcontent": {
+   "exit": 0,
+   "gpu_ms": 183.33666666666667,
+   "passes": {
+    "DeferredRenderer2D": 170.84,
+    ">tile map": 20.068,
+    ">sprites": 0.6466666666666666,
+    ">particles": 0.8075,
+    ">sprite shadows": 73.69333333333333,
+    ">light tiles": 1.1233333333333333,
+    ">light cells": 20.143333333333334,
+    ">post effects": 33.82,
+    "ui": 5.42,
+    ">resolve": 17.525
+   },
+   "render_fps": 1.3333333333333333,
+   "render_ms": 164.05333333333334,
+   "errors": []
+  }
+ }
+}

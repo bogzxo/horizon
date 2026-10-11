@@ -1,0 +1,9 @@
+// The panel the layout check loads. Its list is filled from item.hor, an item a row
+let box = compositor.stack({
+    color: vec(0.1, 0.12, 0.17, 0.92),
+    padding: 20,
+    spacing: 10
+});
+let heading = compositor.label({ parent: box, text: "Out of a layout file", text_scale: 0.3 });
+let list = compositor.stack({ parent: box, spacing: 4, template: "item.hor", preview_count: 2 });
+let go = compositor.button({ parent: box, label: "Go", style: "button_flat", size: vec(160, 40), lbl_scale: 0.24 });

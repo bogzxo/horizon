@@ -1,0 +1,927 @@
+{
+ "label": "opengl",
+ "seconds": 12,
+ "scenes": {
+  "entities": [
+   {
+    "exit": 0,
+    "wall_s": 13.425048112869263,
+    "render": {
+     "rate": 1810.4285714285713,
+     "ms": 0.5871428571428572,
+     "worst_ms": 1.85,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.355,
+     "worst_ms": 1.11,
+     "bytes_per_turn": 3075.5
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.011666666666666667,
+     "worst_ms": 0.1,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 70,
+    "setup_make_ms": 13,
+    "setup_warm_ms": 57,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 10,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 11
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "sprites": [
+   {
+    "exit": 0,
+    "wall_s": 13.255725145339966,
+    "render": {
+     "rate": 1982.5714285714287,
+     "ms": 0.5028571428571429,
+     "worst_ms": 1.4,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.20666666666666667,
+     "worst_ms": 0.6,
+     "bytes_per_turn": 0.5
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.01,
+     "worst_ms": 0.02,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 42,
+    "setup_make_ms": 28,
+    "setup_warm_ms": 14,
+    "finalized": {
+     "FrameBufferObjects": 3,
+     "Textures": 10,
+     "RenderBufferObjects": 0,
+     "Shaders": 3,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 10
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "camera": [
+   {
+    "exit": 0,
+    "wall_s": 13.731210947036743,
+    "render": {
+     "rate": 1834.7142857142858,
+     "ms": 0.5428571428571429,
+     "worst_ms": 1.13,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.34,
+     "worst_ms": 3.07,
+     "bytes_per_turn": 69.83333333333333
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.02,
+     "worst_ms": 0.1,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 94,
+    "setup_make_ms": 53,
+    "setup_warm_ms": 40,
+    "finalized": {
+     "FrameBufferObjects": 3,
+     "Textures": 11,
+     "RenderBufferObjects": 0,
+     "Shaders": 3,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 10
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "transitions": [
+   {
+    "exit": 0,
+    "wall_s": 13.231801509857178,
+    "render": {
+     "rate": 1481.2857142857142,
+     "ms": 0.7071428571428572,
+     "worst_ms": 2.73,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.3983333333333333,
+     "worst_ms": 0.74,
+     "bytes_per_turn": 234.83333333333334
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.01,
+     "worst_ms": 0.05,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": null,
+    "setup_make_ms": null,
+    "setup_warm_ms": null,
+    "finalized": {
+     "FrameBufferObjects": 12,
+     "Textures": 21,
+     "RenderBufferObjects": 0,
+     "Shaders": 7,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 10
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "primitives": [
+   {
+    "exit": 0,
+    "wall_s": 13.673775434494019,
+    "render": {
+     "rate": 1333.4285714285713,
+     "ms": 0.9271428571428572,
+     "worst_ms": 196.85,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.265,
+     "worst_ms": 0.72,
+     "bytes_per_turn": 120.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.01,
+     "worst_ms": 0.04,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 69,
+    "setup_make_ms": 54,
+    "setup_warm_ms": 14,
+    "finalized": {
+     "FrameBufferObjects": 3,
+     "Textures": 8,
+     "RenderBufferObjects": 0,
+     "Shaders": 5,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 3,
+     "BufferObjects": 8
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "tilemap": [
+   {
+    "exit": 0,
+    "wall_s": 13.79348349571228,
+    "render": {
+     "rate": 1757.4285714285713,
+     "ms": 0.5714285714285715,
+     "worst_ms": 1.16,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.615,
+     "worst_ms": 1.13,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.05,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 92,
+    "setup_make_ms": 41,
+    "setup_warm_ms": 51,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 8,
+     "RenderBufferObjects": 0,
+     "Shaders": 3,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 8,
+     "BufferObjects": 23
+    },
+    "checks": [
+     [
+      20,
+      20
+     ]
+    ],
+    "gl_errors": 0,
+    "errors": [
+     "[Error] [TileMap] The map 'C:\\Users\\bogda\\AppData\\Local\\Temp\\horizon-tilemap-test\\nowhere.tmx' doesn't exist."
+    ]
+   }
+  ],
+  "post": [
+   {
+    "exit": 0,
+    "wall_s": 13.862898588180542,
+    "render": {
+     "rate": 953.4285714285714,
+     "ms": 1.0457142857142858,
+     "worst_ms": 1.81,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.22,
+     "worst_ms": 0.42,
+     "bytes_per_turn": 160.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.02,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 208,
+    "setup_make_ms": 110,
+    "setup_warm_ms": 98,
+    "finalized": {
+     "FrameBufferObjects": 10,
+     "Textures": 21,
+     "RenderBufferObjects": 0,
+     "Shaders": 10,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 8,
+     "BufferObjects": 24
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "particles": [
+   {
+    "exit": 0,
+    "wall_s": 13.517051458358765,
+    "render": {
+     "rate": 1498.5714285714287,
+     "ms": 0.67,
+     "worst_ms": 1.38,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.6933333333333334,
+     "worst_ms": 2.6,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 39,
+    "setup_make_ms": 34,
+    "setup_warm_ms": 4,
+    "finalized": {
+     "FrameBufferObjects": 1,
+     "Textures": 4,
+     "RenderBufferObjects": 0,
+     "Shaders": 4,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 4,
+     "BufferObjects": 10
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "lighting": [
+   {
+    "exit": 0,
+    "wall_s": 13.696110010147095,
+    "render": {
+     "rate": 820.1428571428571,
+     "ms": 1.2214285714285713,
+     "worst_ms": 4.03,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 122.0,
+     "ms": 0.18166666666666667,
+     "worst_ms": 1.2,
+     "bytes_per_turn": 0.16666666666666666
+    },
+    "physics": {
+     "rate": 122.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 83,
+    "setup_make_ms": 51,
+    "setup_warm_ms": 32,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 10,
+     "RenderBufferObjects": 0,
+     "Shaders": 7,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 4,
+     "BufferObjects": 12
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "renderer2d": [
+   {
+    "exit": 0,
+    "wall_s": 13.631163835525513,
+    "render": {
+     "rate": 1597.0,
+     "ms": 0.6228571428571429,
+     "worst_ms": 1.01,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.07666666666666667,
+     "worst_ms": 0.19,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.12,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 43,
+    "setup_make_ms": 21,
+    "setup_warm_ms": 22,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 7,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 4,
+     "BufferObjects": 11
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui": [
+   {
+    "exit": 0,
+    "wall_s": 13.486295938491821,
+    "render": {
+     "rate": 1901.7142857142858,
+     "ms": 0.5242857142857144,
+     "worst_ms": 0.97,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.19833333333333333,
+     "worst_ms": 0.48,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 18,
+    "setup_make_ms": 11,
+    "setup_warm_ms": 6,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-screens": [
+   {
+    "exit": 0,
+    "wall_s": 13.52530837059021,
+    "render": {
+     "rate": 1671.2857142857142,
+     "ms": 0.5971428571428571,
+     "worst_ms": 1.22,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.23333333333333334,
+     "worst_ms": 2.55,
+     "bytes_per_turn": 12.333333333333334
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.02,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 54,
+    "setup_make_ms": 26,
+    "setup_warm_ms": 28,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 6
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": [
+     "[Error] [UISkin] Failed to load 'Assets/uix/flat/skin.hor': 'Assets/uix/flat/skin.hor' doesn't exist."
+    ]
+   }
+  ],
+  "ui-controls": [
+   {
+    "exit": 0,
+    "wall_s": 13.515047788619995,
+    "render": {
+     "rate": 1877.2857142857142,
+     "ms": 0.5271428571428571,
+     "worst_ms": 1.1,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.3433333333333333,
+     "worst_ms": 1.95,
+     "bytes_per_turn": 83.5
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 27,
+    "setup_make_ms": 15,
+    "setup_warm_ms": 12,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-navigation": [
+   {
+    "exit": 0,
+    "wall_s": 13.494237661361694,
+    "render": {
+     "rate": 1715.7142857142858,
+     "ms": 0.5828571428571429,
+     "worst_ms": 1.12,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.5483333333333333,
+     "worst_ms": 1.91,
+     "bytes_per_turn": 59.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 23,
+    "setup_make_ms": 8,
+    "setup_warm_ms": 15,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "fluid": [
+   {
+    "exit": 0,
+    "wall_s": 13.981727361679077,
+    "render": {
+     "rate": 1619.0,
+     "ms": 0.6185714285714285,
+     "worst_ms": 1.84,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 113.0,
+     "ms": 0.21166666666666667,
+     "worst_ms": 1.3,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 113.33333333333333,
+     "ms": 7.341666666666667,
+     "worst_ms": 16.15,
+     "bytes_per_turn": 97.5
+    },
+    "setup_ms": 50,
+    "setup_make_ms": 19,
+    "setup_warm_ms": 31,
+    "finalized": {
+     "FrameBufferObjects": 1,
+     "Textures": 4,
+     "RenderBufferObjects": 0,
+     "Shaders": 5,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 5,
+     "BufferObjects": 18
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "tweens": [
+   {
+    "exit": 0,
+    "wall_s": 13.522522687911987,
+    "render": {
+     "rate": 1692.2857142857142,
+     "ms": 0.59,
+     "worst_ms": 1.16,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.45666666666666667,
+     "worst_ms": 0.71,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 25,
+    "setup_make_ms": 21,
+    "setup_warm_ms": 4,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [
+     [
+      13,
+      13
+     ]
+    ],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "pacing": [
+   {
+    "exit": 0,
+    "wall_s": 13.515945672988892,
+    "render": {
+     "rate": 1719.2857142857142,
+     "ms": 0.5828571428571429,
+     "worst_ms": 1.16,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.20166666666666666,
+     "worst_ms": 0.42,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 14,
+    "setup_make_ms": 4,
+    "setup_warm_ms": 10,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 7,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 6
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-selftest": [
+   {
+    "exit": 0,
+    "wall_s": 13.486040830612183,
+    "render": {
+     "rate": 1828.857142857143,
+     "ms": 0.5485714285714286,
+     "worst_ms": 1.09,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.2,
+     "worst_ms": 1.09,
+     "bytes_per_turn": 33.666666666666664
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 20,
+    "setup_make_ms": 13,
+    "setup_warm_ms": 7,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [
+     [
+      13,
+      13
+     ]
+    ],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-layout-selftest": [
+   {
+    "exit": 0,
+    "wall_s": 13.52597188949585,
+    "render": {
+     "rate": 1871.7142857142858,
+     "ms": 0.5328571428571429,
+     "worst_ms": 0.98,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.28833333333333333,
+     "worst_ms": 2.01,
+     "bytes_per_turn": 153.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 30,
+    "setup_make_ms": 20,
+    "setup_warm_ms": 9,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-controls-selftest": [
+   {
+    "exit": 0,
+    "wall_s": 13.521613121032715,
+    "render": {
+     "rate": 1891.857142857143,
+     "ms": 0.5271428571428571,
+     "worst_ms": 1.1,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.325,
+     "worst_ms": 2.48,
+     "bytes_per_turn": 87.5
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 29,
+    "setup_make_ms": 16,
+    "setup_warm_ms": 13,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "ui-navigation-selftest": [
+   {
+    "exit": 0,
+    "wall_s": 13.459961652755737,
+    "render": {
+     "rate": 1833.857142857143,
+     "ms": 0.5457142857142857,
+     "worst_ms": 1.2,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.575,
+     "worst_ms": 3.94,
+     "bytes_per_turn": 41.166666666666664
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 28,
+    "setup_make_ms": 10,
+    "setup_warm_ms": 17,
+    "finalized": {
+     "FrameBufferObjects": 2,
+     "Textures": 6,
+     "RenderBufferObjects": 0,
+     "Shaders": 2,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 5
+    },
+    "checks": [
+     [
+      41,
+      41
+     ]
+    ],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "quickstart": [
+   {
+    "exit": 0,
+    "wall_s": 13.736580610275269,
+    "render": {
+     "rate": 330.0,
+     "ms": 3.03,
+     "worst_ms": 3.83,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.07333333333333333,
+     "worst_ms": 0.13,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.01,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 164,
+    "setup_make_ms": 16,
+    "setup_warm_ms": 148,
+    "finalized": {
+     "FrameBufferObjects": 10,
+     "Textures": 19,
+     "RenderBufferObjects": 0,
+     "Shaders": 9,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 2,
+     "BufferObjects": 7
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ],
+  "pathtraced": [
+   {
+    "exit": 0,
+    "wall_s": 13.610139608383179,
+    "render": {
+     "rate": 256.2857142857143,
+     "ms": 3.9014285714285712,
+     "worst_ms": 4.81,
+     "bytes_per_turn": 48.0
+    },
+    "logic": {
+     "rate": 120.0,
+     "ms": 0.18166666666666667,
+     "worst_ms": 1.14,
+     "bytes_per_turn": 0.0
+    },
+    "physics": {
+     "rate": 120.0,
+     "ms": 0.0,
+     "worst_ms": 0.07,
+     "bytes_per_turn": 0.0
+    },
+    "setup_ms": 68,
+    "setup_make_ms": 26,
+    "setup_warm_ms": 42,
+    "finalized": {
+     "FrameBufferObjects": 9,
+     "Textures": 17,
+     "RenderBufferObjects": 0,
+     "Shaders": 12,
+     "QueryObjects": 4,
+     "VertexArrayObjects": 4,
+     "BufferObjects": 12
+    },
+    "checks": [],
+    "gl_errors": 0,
+    "errors": []
+   }
+  ]
+ }
+}

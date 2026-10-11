@@ -1,0 +1,27 @@
+{
+ "label": "ph2",
+ "engine_projects": 2,
+ "engine_project_names": [
+  "Horizon",
+  "Horizon.HIDL"
+ ],
+ "all_projects": 6,
+ "engine_cs_files": 254,
+ "engine_cs_loc": 37457,
+ "all_cs_files": 372,
+ "all_cs_loc": 58293,
+ "shader_files": 35,
+ "shader_loc": 2156,
+ "shader_versions": {
+  "460": 31,
+  "none (include)": 4
+ },
+ "glsl_versions_in_use": [
+  "460"
+ ],
+ "bind_based_buffer_calls": 0,
+ "named_uniform_camera_sets": 0,
+ "encodeMotion_copies": 1,
+ "project_references": 8,
+ "package_references": 9
+}

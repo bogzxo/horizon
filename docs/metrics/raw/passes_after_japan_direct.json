@@ -1,0 +1,25 @@
+{
+ "label": "after japan direct",
+ "seconds": 12,
+ "runs": {
+  "--map japan": {
+   "exit": 0,
+   "gpu_ms": 234.47666666666666,
+   "passes": {
+    "DeferredRenderer2D": 220.75666666666666,
+    ">tile map": 21.772000000000002,
+    ">sprites": 0.31666666666666665,
+    ">particles": 0.8985,
+    ">sprite shadows": 73.97333333333333,
+    ">light tiles": 0.5366666666666666,
+    ">light cells": 67.05666666666667,
+    ">post effects": 28.07,
+    "ui": 5.586,
+    ">resolve": 17.22
+   },
+   "render_fps": 1,
+   "render_ms": 199.42000000000002,
+   "errors": []
+  }
+ }
+}
