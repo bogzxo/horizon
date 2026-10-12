@@ -131,12 +131,12 @@ internal static class TestCatalog
 
         new("town", TestLevel.AllTogether, "A night in town",
             "Everything above in one scene, the way a game has it. A map with its lamps and colliders, a blob you walk and jump about it with some weight to him, lit and shadowed, rain that lands on him, the tube over the street and a HUD out of a layout file in front of it.",
-            ["TileMap", "DeferredRenderer2D", "PhysicsWorld", "CharacterController2D", "ParticleRenderer2D", "UILayout", "PostProcessing"],
+            ["TileMap", "DeferredRenderer2D", "PhysicsWorld", "CharacterController2D", "ParticleRenderer2D", "UILayout", "PostProcessing", "BloomEffect"],
             "Examples/Showcase/TownExample.cs", () => new TownExample()),
 
         new("dungeon", TestLevel.AllTogether, "Down in the dark",
             "A dungeon from above, and a game. Three crystals, a gate that wants them and slimes in the way, lit by whatever in it glows, the lava, the mushrooms, the crystals he carries and the sparks he throws, with everything that moves a body in one physics world.",
-            ["LightingMode.PathTraced", "Emissive", "FlashLights", "CharacterController2D", "PhysicsWorld.BodiesPush", "ApplyRadialImpulse", "PhysicsParticleSimulator2D", "TileMap"],
+            ["LightingMode.PathTraced", "Emissive", "FlashLights", "BloomEffect", "CharacterController2D", "PhysicsWorld.BodiesPush", "ApplyRadialImpulse", "PhysicsParticleSimulator2D", "TileMap"],
             "Examples/Showcase/DungeonExample.cs", () => new DungeonExample()) { Aliases = ["crawler"] },
 
         new("village", TestLevel.AllTogether, "A day in the village",

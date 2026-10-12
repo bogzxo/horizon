@@ -851,6 +851,11 @@ post effect over post targets, five levels, before the exposure. The lab's ambie
 it, the two together were the washout as much as anything. Post effects are 0.6 to 1 ms at 1600 by 900 on the
 3060, of which the deferred resolve itself is a third (a lit renderer resolves inside its own post chain).
 
+The bloom went onto the dungeon and the town as well (V in both, on the lit world before the town's tube so the
+glow goes through the glass) and into Fighter2D as an option next to the CRT, `bloom` in options.hor, the numbers
+in `DeferedStyle`, put on by `Screen.AddBloom` in the fight and the map preview, before the versus blur and the
+CRT. Half a millisecond of post on the Japan fight at 1600 by 900, the lanterns and the sakura glow.
+
 Not done. The villagers have one picture a way they face (the pack's NPC sheet has no walk frames), so they hop a
 step at a time, which reads fine. Nobody wanders between rooms. The hero never bumps a villager who is mid step,
 their body moves with them but the hero is quicker. The haze is a share of the traced light at every pixel and
