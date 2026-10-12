@@ -23,6 +23,14 @@ internal sealed unsafe class Swapchain : IDisposable
     public Extent2D Extent { get; private set; }
     public bool VSync { get; private set; }
 
+    /// <summary>
+    /// Whether the swapchain is the size it was asked to be whatever the surface is, which is the case on a Mac, where
+    /// MoltenVK stretches it over the layer. It calls a swapchain like that suboptimal on every frame, and one that is
+    /// made anew for being suboptimal would be made anew every frame, so there suboptimal is no news. The window
+    /// says when its size changes and the swapchain is made anew for that, see GraphicsDevice.BeginFrame.
+    /// </summary>
+    private static bool SizedByHand => OperatingSystem.IsMacOS();
+
     /// <summary>The picture that was acquired for this frame, -1 while there isn't one.</summary>
     public int Current { get; private set; } = -1;
 
@@ -76,7 +84,10 @@ internal sealed unsafe class Swapchain : IDisposable
             else if (modes.Contains(PresentModeKHR.MailboxKhr)) mode = PresentModeKHR.MailboxKhr;
             else if (modes.Contains(PresentModeKHR.FifoRelaxedKhr)) mode = PresentModeKHR.FifoRelaxedKhr;
         }
-        Extent2D extent = capabilities.CurrentExtent.Width != uint.MaxValue
+        // The size of the surface where the surface has one, which is the only size most drivers take. MoltenVK takes
+        // any and stretches it over the layer, which is how a fullscreen window on a Retina screen is drawn at the
+        // size the game was set to rather than at every pixel the screen has, see WindowManager.RenderSize
+        Extent2D extent = capabilities.CurrentExtent.Width != uint.MaxValue && !OperatingSystem.IsMacOS()
             ? capabilities.CurrentExtent
             : new Extent2D(
                 Math.Clamp(width, capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
@@ -145,6 +156,16 @@ internal sealed unsafe class Swapchain : IDisposable
     {
         SwapchainKHR old = Handle;
         DestroyViews();
+
+        // MoltenVK calls a swapchain that was handed the one before it suboptimal for as long as it lives, whatever
+        // size it is, and a suboptimal one is made anew, so resizing the window once had it remade every frame from
+        // then on. On a Mac the old one goes first and the new one starts from nothing
+        if (OperatingSystem.IsMacOS() && old.Handle != 0)
+        {
+            context.KhrSwapchain.DestroySwapchain(context.Device, old, null);
+            old = default;
+        }
+
         Create(width, height, vsync, old);
         if (old.Handle != 0) context.KhrSwapchain.DestroySwapchain(context.Device, old, null);
     }
@@ -154,7 +175,7 @@ internal sealed unsafe class Swapchain : IDisposable
     {
         uint index = 0;
         Result result = context.KhrSwapchain.AcquireNextImage(context.Device, Handle, ulong.MaxValue, signal, default, &index);
-        suboptimal = result == Result.SuboptimalKhr;
+        suboptimal = result == Result.SuboptimalKhr && !SizedByHand;
 
         if (result is Result.Success or Result.SuboptimalKhr)
         {
@@ -194,8 +215,8 @@ internal sealed unsafe class Swapchain : IDisposable
             result = context.KhrSwapchain.QueuePresent(context.GraphicsQueue, in presentInfo);
 
         Current = -1;
-        if (result is Result.ErrorOutOfDateKhr or Result.SuboptimalKhr) return false;
-        VulkanContext.Check(result, "presenting");
+        if (result == Result.ErrorOutOfDateKhr || (result == Result.SuboptimalKhr && !SizedByHand)) return false;
+        if (result != Result.SuboptimalKhr) VulkanContext.Check(result, "presenting");
         return true;
     }
 

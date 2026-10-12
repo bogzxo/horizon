@@ -39,7 +39,12 @@ internal class Program
     public static void Main(string[] args)
     {
         bool selfTest = args.Contains(ARGUMENT_SELF_TEST);
-        string workspace = ValueOf(args, ARGUMENT_WORKSPACE) ?? DEFAULT_WORKSPACE;
+
+        // A workspace or the layouts to check that were named are meant from wherever the editor was started, the
+        // rest (its skin, its fonts, the layouts folder nobody named) is next to it
+        string workspace = ValueOf(args, ARGUMENT_WORKSPACE) is { } named ? Path.GetFullPath(named) : DEFAULT_WORKSPACE;
+        string[] check = [.. ValuesOf(args, ARGUMENT_CHECK).Select(Path.GetFullPath)];
+        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
         if (selfTest)
         {
@@ -56,7 +61,7 @@ internal class Program
             Workspace: workspace,
             SelfTest: selfTest,
             Wheel: args.Contains(ARGUMENT_WHEEL),
-            Check: ValuesOf(args, ARGUMENT_CHECK),
+            Check: check,
             Exit: args.Contains(ARGUMENT_EXIT),
             Exercise: args.Contains(ARGUMENT_EXERCISE),
             Browse: args.Contains(ARGUMENT_BROWSE),

@@ -82,6 +82,14 @@ internal sealed unsafe class VulkanContext : IDisposable
     /// </summary>
     public bool IsPortability { get; private set; }
 
+    /// <summary>
+    /// Whether the card takes how many indirect draws there are out of a buffer (vkCmdDrawIndirectCount), and whether
+    /// it takes more than one indirect draw in a call at all. MoltenVK has the second and not the first.
+    /// </summary>
+    public bool HasDrawIndirectCount { get; private set; }
+
+    public bool HasMultiDrawIndirect { get; private set; }
+
     // Every queue is submitted to under this, the render thread and whoever uploads on a transfer queue included
     public readonly Lock QueueLock = new();
 
@@ -480,6 +488,8 @@ internal sealed unsafe class VulkanContext : IDisposable
         MaxUpdateAfterBindSamplers = indexingProperties.MaxDescriptorSetUpdateAfterBindSamplers;
         UpdateUnusedWhilePending = available12.DescriptorBindingUpdateUnusedWhilePending;
         IsPortability = deviceExtensions.Contains(PORTABILITY_SUBSET);
+        HasDrawIndirectCount = available12.DrawIndirectCount;
+        HasMultiDrawIndirect = available.Features.MultiDrawIndirect;
 
         if (!available12.DescriptorIndexing || !available12.DescriptorBindingSampledImageUpdateAfterBind || !available12.ShaderSampledImageArrayNonUniformIndexing || !available12.RuntimeDescriptorArray)
             throw new InvalidOperationException($"{DeviceName} hasn't got descriptor indexing with update after bind, which the bindless textures can't do without.");
@@ -510,7 +520,8 @@ internal sealed unsafe class VulkanContext : IDisposable
             DescriptorBindingUpdateUnusedWhilePending = available12.DescriptorBindingUpdateUnusedWhilePending,
             ShaderSampledImageArrayNonUniformIndexing = true,
             RuntimeDescriptorArray = true,
-            HostQueryReset = available12.HostQueryReset
+            HostQueryReset = available12.HostQueryReset,
+            DrawIndirectCount = available12.DrawIndirectCount
         };
 
         var features11 = new PhysicalDeviceVulkan11Features
@@ -526,6 +537,7 @@ internal sealed unsafe class VulkanContext : IDisposable
             PNext = &features11,
             Features = new PhysicalDeviceFeatures
             {
+                MultiDrawIndirect = available.Features.MultiDrawIndirect,
                 FragmentStoresAndAtomics = available.Features.FragmentStoresAndAtomics,
                 VertexPipelineStoresAndAtomics = available.Features.VertexPipelineStoresAndAtomics,
                 ShaderStorageImageWriteWithoutFormat = available.Features.ShaderStorageImageWriteWithoutFormat,

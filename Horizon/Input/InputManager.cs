@@ -105,7 +105,7 @@ public sealed class InputManager : GameComponent
         Native = context;
 
         Keyboard.Attach(context);
-        Mouse.Attach(context, window.PostToWindow);
+        Mouse.Attach(context, window.PostToWindow, window.PointerToPixels);
 
         // Before the gamepads of the window are let in, so the one of a script is the first there is
         PlayScriptOfEnvironment();

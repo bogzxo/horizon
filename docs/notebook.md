@@ -751,3 +751,66 @@ what had been done for speed, frustum and occlusion culling if nothing.
   any more (a compacted tree is new arrays and all of it up again), loading does. A 2048 world is playable in half a
   second and all made 2.4 s later, a 4096 one 6.7 s later. The chunk arrays come out of a pool, made new they were a
   hundred megabytes a second of garbage and the collections held up the render thread, frames of 20 ms. 7 ms now.
+
+## The first run on an actual Mac
+
+It was two things, both in the window and neither in the Vulkan that was worked out by reading (that part held, an
+M1 comes up as Vulkan 1.3 through the MoltenVK next to the exe, first go). M1, macOS 26, a Retina screen.
+
+- `SetDefaultIcon` throws IndexOutOfRange out of Silk's SDL window before anything is drawn, so every app died in
+  `Load`. It is skipped on a Mac, a window has no icon there anyway.
+- SDL's window says its framebuffer is the size of the window in points (1440 by 752) and the Metal layer is in
+  pixels (2880 by 1504). The swapchain takes the surface's extent, never came out the size BeginFrame asked for and
+  was made anew every single frame, 644 swapchains in six seconds and a black window. `WindowManager.DrawableSize`
+  asks SDL_Vulkan_GetDrawableSize instead, and `PixelScale` is pixels to a point, which the mouse is multiplied by
+  (SDL says where the pointer is in points) and the screen size too.
+- A window is asked for in pixels and a Mac counts in points, so every size is divided by `PixelScale` on its way
+  to the window (`InPoints`, at `Load` for the first one, the scale isn't known before there is a window). 1600 by 900
+  is 1600 by 900 pixels there too, which on a Retina laptop is a small window, and it is what makes the resolutions
+  of Fighter2D mean what they say.
+- MoltenVK calls a swapchain that was made with `OldSwapchain` suboptimal for the rest of its life, same size or
+  not. Suboptimal means make it anew here, so one resize and it was remade every frame for good, 120 a second.
+  `Swapchain.Recreate` destroys the old one first on a Mac and hands nothing over.
+- Fullscreen through Silk's SDL window is the kind that changes the mode of the screen, to the one nearest the
+  window (2048 by 1280 on this laptop) and the window stays that size coming back. `SetFullscreen` asks SDL for
+  SDL_WINDOW_FULLSCREEN_DESKTOP itself on a Mac. A window that is made fullscreen (`config.Fullscreen`) still goes
+  Silk's way, Fighter2D gets there through `Apply` and is fine.
+- `dotnet run` and VS Code start a thing in the folder of its project, not next to its exe, and every path in the
+  engine is relative, so no shaders and no skins and a window with nothing in it. Testing, AutoVoxel and Hex set
+  the current directory to `AppContext.BaseDirectory` first thing now, like Fighter2D and the hitbox editor did.
+- The windows were black for whoever sat in front of them, all of them, while `HORIZON_SCREENSHOT` showed every
+  frame as it should be. A screenshot is read back off the swapchain, it says nothing about what got to the screen.
+  The surface was made on the render thread, and on a Mac making it is SDL adding a Metal view to the window, which
+  only the main thread may do. From any other the view is there, the layer is there, frames are presented into it
+  and the system never shows it. `WindowThreadSurface` has the surface made on the thread of the window.
+- To see what a Mac really shows without the screen recording permission, a process may take a picture of its own
+  windows. A dylib with a constructor that calls CGWindowListCreateImage on `[NSApp windows]` after a few seconds,
+  loaded with DYLD_INSERT_LIBRARIES, does it with nothing changed in the engine. Use that, not the screenshot,
+  for anything about windows on a Mac.
+- Tile maps drew nothing on a Mac, no tiles at all, only what was drawn over them. `vkCmdDrawIndirectCount` isn't
+  there on MoltenVK (`drawIndirectCount` is false, nobody asked) and calling it anyway does nothing and says
+  nothing. `GraphicsDevice.DrawIndirectCount` draws all of `maxDraws` with `vkCmdDrawIndirect` where the count
+  can't come out of a buffer, which for the tile map is the same thing, the cull writes a draw for every chunk
+  and no instances for the ones out of view. Both features are asked for at device creation now where they exist.
+- Fullscreen on a Mac (the green button or `SetFullscreen`) keeps drawing at the size the window was set to and
+  the system stretches that over the whole screen, no bars, `WindowManager.RenderSize`. Three things it took.
+  The swapchain on a Mac is the size it is asked for, not the surface's (`Swapchain.Create`). SDL sets the
+  layer's drawable size back to the window's on every resize, so the swapchain is made anew once whenever the
+  window changes even at the same size (`GraphicsDevice.SurfaceChanged`), or the picture sits small in a corner.
+  And suboptimal is ignored there (`SizedByHand`), MoltenVK says it on every frame of a stretched swapchain.
+  `SDL_Vulkan_GetDrawableSize` reads that same drawable size, so the pixels of the window come from
+  `SDL_GetWindowSizeInPixels`. The green button is seen by the window's style mask, SDL doesn't count it.
+- Native AOT for a Mac works as it is, `dotnet publish -c Release -r osx-arm64` for Fighter2D and the same with
+  `-p:PublishAot=true -p:InvariantGlobalization=true` for Testing. An app bundle is the publish folder as
+  `Contents/MacOS` and an `Info.plist` with `NSHighResolutionCapable`, they sit next to the publish folders.
+  A first launch of a new exe takes a few seconds before anything shows.
+- Still to look at there. The UI is laid out in pixels, so Hex and the hitbox editor (maximised, 2880 across) read
+  small on a Retina screen. AutoVoxel maximised or big is slow on an M1, 6 fps at 2880 by 1504.
+
+In Horizon.Testing, much like how there is a Night in town demo and the dungeon demo, add a demo for isometric 2d rendering of a pokemon themed town where you seamlessly enter the buildings. 
+
+Make use of the Pathtraced lighting for effects and add some basic NPCs that wander around, create the map in tiled, and download the assets from itch.io instead of creating some yourself, make sure to write clean, understandable code that is a good base for anyone wanting to use the engine, using my commeny style.
+
+You may need to implement new engine features to allow this, figure a way to have enterable buildings, such as seperate TMX files for each buildng and a doorway on the texture on the main map that loads in and fades the room over the rest of the outside map, or something like that.
+
+Figure a way to factor in realtime lighting effects and shadows into the demo, this may require fixing and extending the shadow mapping system as currently it is quite lacking and exhibits visual bugs, but implement and debug these on your own

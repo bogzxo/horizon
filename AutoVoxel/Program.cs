@@ -22,6 +22,10 @@ internal static class Program
 {
     private static void Main(string[] args)
     {
+        // The shaders, the skins and the content are next to the exe, and `dotnet run` (or an editor that isn't
+        // Visual Studio) starts it in the folder of the project instead, where there are none of them
+        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
         GameSettings.Load();
 
         // --size 1920x1080 for a window of another size than the usual

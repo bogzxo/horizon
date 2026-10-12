@@ -56,6 +56,10 @@ internal class Program
 
     public static void Main(string[] args)
     {
+        // The shaders, the skins and Assets/examples are next to the exe, and `dotnet run` (or an editor that isn't
+        // Visual Studio) starts it in the folder of the project instead, where there are none of them
+        Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
         // A 1600 by 900 window, logic and physics each ticking 120 times a second. Change any of that with a
         // `with` (UpdatesPerSecond, PhysicsUpdatesPerSecond, Presentation, VSync and friends).
         using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "Horizon examples", VSync = false });
