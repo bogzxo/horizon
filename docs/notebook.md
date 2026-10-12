@@ -807,10 +807,3 @@ M1 comes up as Vulkan 1.3 through the MoltenVK next to the exe, first go). M1, m
 - Still to look at there. The UI is laid out in pixels, so Hex and the hitbox editor (maximised, 2880 across) read
   small on a Retina screen. AutoVoxel maximised or big is slow on an M1, 6 fps at 2880 by 1504.
 
-In Horizon.Testing, much like how there is a Night in town demo and the dungeon demo, add a demo for isometric 2d rendering of a pokemon themed town where you seamlessly enter the buildings. 
-
-Make use of the Pathtraced lighting for effects and add some basic NPCs that wander around, create the map in tiled, and download the assets from itch.io instead of creating some yourself, make sure to write clean, understandable code that is a good base for anyone wanting to use the engine, using my commeny style.
-
-You may need to implement new engine features to allow this, figure a way to have enterable buildings, such as seperate TMX files for each buildng and a doorway on the texture on the main map that loads in and fades the room over the rest of the outside map, or something like that.
-
-Figure a way to factor in realtime lighting effects and shadows into the demo, this may require fixing and extending the shadow mapping system as currently it is quite lacking and exhibits visual bugs, but implement and debug these on your own
