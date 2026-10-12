@@ -119,7 +119,7 @@ public class DeferredRenderer2D : Renderer2D
         public LightState[] Lights = new LightState[16];
         public int Count;
         public Vector3 Ambient;
-        public float LightingPixelSize, Shininess, SpecularIntensity, ShadowSoftness;
+        public float LightingPixelSize, Shininess, SpecularIntensity, ShadowSoftness, WallHeight, SpriteHeight;
         public bool Shadows, SpriteShadows, ShadowsInsideWalls;
         public OcclusionMap2D? Occlusion;
         public AmbientOcclusion2D.State AmbientOcclusion;
@@ -139,6 +139,8 @@ public class DeferredRenderer2D : Renderer2D
     internal float ShownShininess => shownAfter?.Shininess ?? Shininess;
     internal float ShownSpecularIntensity => shownAfter?.SpecularIntensity ?? SpecularIntensity;
     internal float ShownShadowSoftness => shownAfter?.ShadowSoftness ?? ShadowSoftness;
+    internal float ShownWallHeight => shownAfter?.WallHeight ?? WallHeight;
+    internal float ShownSpriteHeight => shownAfter?.SpriteHeight ?? SpriteHeight;
     internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
     internal bool ShownSpriteShadows => shownAfter?.SpriteShadows ?? SpriteShadows;
     internal OcclusionMap2D? ShownOcclusion => shownAfter is null ? Occlusion : shownAfter.Occlusion;
@@ -194,6 +196,10 @@ public class DeferredRenderer2D : Renderer2D
     private int uploadedLights;
     private bool lightsUploaded;
 
+    // Whether the lamps' glow is the tracer's to put in the air this frame (see PathTracedLighting2D.GlowSpread),
+    // in which case the passes that light straight from the lamps leave it out
+    private bool glowInAir;
+
     // The lights sorted into the tiles of the screen, once a frame, for every pass that lights
     private readonly LightTiles tiles = new();
 
@@ -247,6 +253,24 @@ public class DeferredRenderer2D : Renderer2D
     /// say, hard from a light without a size.
     /// </summary>
     public float ShadowSoftness { get; set; } = 12.0f;
+
+    /// <summary>
+    /// How tall what blocks light (the <see cref="Occlusion"/>) stands off the ground, in world units, for a world
+    /// seen from above. 0, the default, is taller than any light, a wall shadows everything behind it however far,
+    /// which is right for a world seen from the side. Given a height, a light hangs over the world by its
+    /// <see cref="Light2D.Height"/> and a wall only shadows what its height can hide from a lamp that high, a tall
+    /// house throws far and a fence throws a step, and a directional light's <see cref="Light2D.Reach"/> is how far
+    /// a wall this tall throws under it. See <see cref="SpriteHeight"/> for the people.
+    /// </summary>
+    public float WallHeight { get; set; }
+
+    /// <summary>
+    /// How tall the sprites that block light (<see cref="Spriting.Sprite.CastsShadows"/>) stand off the ground,
+    /// the way <see cref="WallHeight"/> says it for the walls. 0 for as tall as any light. A person is a head or two
+    /// shorter than a house, so under a ceiling lamp they throw a short shadow at their feet and not one across the
+    /// room, and under the sun a shorter one than the houses by as much shorter as they are.
+    /// </summary>
+    public float SpriteHeight { get; set; }
 
     protected override RenderTarget CreateFrameBuffer(in uint width, in uint height) =>
         CreateFrameBuffer(
@@ -339,6 +363,8 @@ public class DeferredRenderer2D : Renderer2D
             into.Shininess = Shininess;
             into.SpecularIntensity = SpecularIntensity;
             into.ShadowSoftness = ShadowSoftness;
+            into.WallHeight = WallHeight;
+            into.SpriteHeight = SpriteHeight;
             into.Shadows = Shadows;
             into.SpriteShadows = SpriteShadows;
             into.ShadowsInsideWalls = ShadowsInsideWalls;
@@ -400,6 +426,7 @@ public class DeferredRenderer2D : Renderer2D
         UploadLights(camera);
 
         bool traced = Lighting == LightingMode.PathTraced && device.Supports(GraphicsFeature.PathTracedLighting);
+        glowInAir = traced && PathTracing.GlowSpread > 0.0f;
 
         // The shadows of the sprites, out of what they drew this frame. Only when there is something to make them
         // of and a light to throw them, a frame without a caster in it (or without a light) has no field to build.
@@ -409,7 +436,7 @@ public class DeferredRenderer2D : Renderer2D
         if (wantsField)
         {
             using var shadows = device.BeginGpuScope("sprite shadows");
-            spriteField = spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld);
+            spriteField = spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld, PathTracing.SpritesBlock);
         }
         else
         {
@@ -488,6 +515,9 @@ public class DeferredRenderer2D : Renderer2D
         technique.SetUniform("uShininess", MathF.Max(ShownShininess, 1.0f));
         technique.SetUniform("uSpecularIntensity", MathF.Max(ShownSpecularIntensity, 0.0f));
         technique.SetUniform("uShadowSoftness", MathF.Max(ShownShadowSoftness, 0.0f));
+        technique.SetUniform("uWallHeight", MathF.Max(ShownWallHeight, 0.0f));
+        technique.SetUniform("uSpriteHeight", MathF.Max(ShownSpriteHeight, 0.0f));
+        technique.SetUniform("uGlowScale", glowInAir ? 0.0f : 1.0f);
         technique.SetUniform("uTileCounts", tiles.Counts);
         technique.SetUniform("uTileScreen", tiles.Screen);
 

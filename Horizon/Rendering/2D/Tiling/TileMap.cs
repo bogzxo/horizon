@@ -75,7 +75,7 @@ public sealed class TileMap : GameObject
     /// <summary>The whole map at the end of a tick.</summary>
     private sealed class CapturedMap
     {
-        public float Time;
+        public float Time, Opacity;
         public Vector2 Origin, ParallaxOrigin;
         public bool SnapParallax;
         public CapturedLayer[] Layers = [];
@@ -91,6 +91,13 @@ public sealed class TileMap : GameObject
 
     /// <summary>Where the bottom left corner of the map is in the world.</summary>
     public Vector2 Origin { get; set; }
+
+    /// <summary>
+    /// How much of the whole map there is, from 0 (none of it is drawn at all) to 1, on top of what every layer
+    /// says for itself. For fading a map in over another one, see <see cref="TileMapRooms"/>. Set it from the
+    /// updates, it takes at the next frame.
+    /// </summary>
+    public float Opacity { get; set; } = 1.0f;
 
     /// <summary>The size of the map in tiles. For a map without edges (infinite) that is the box around everything in it.</summary>
     public int Width { get; }
@@ -946,6 +953,7 @@ public sealed class TileMap : GameObject
         if (captured.BeginPublish() is { } into)
         {
             into.Time = time;
+            into.Opacity = Opacity;
             into.Origin = Origin;
             into.ParallaxOrigin = ParallaxOrigin;
             into.SnapParallax = SnapParallax;
@@ -1020,6 +1028,12 @@ public sealed class TileMap : GameObject
         bool snapParallax = after?.SnapParallax ?? SnapParallax;
         float shownTime = after is null ? time : blend ? Interpolate.Linear(before!.Time, after.Time, alpha) : after.Time;
 
+        // A map that is faded out altogether (a room nobody is in, see TileMapRooms) is not drawn at all, and one
+        // halfway is blended between the ticks like the rest of what moves
+        float opacity = after is null ? Opacity : blend ? Interpolate.Linear(before!.Opacity, after.Opacity, alpha) : after.Opacity;
+        if (opacity <= 0.0f)
+            return;
+
         var view = camera.Bounds;
         var viewMin = new Vector2(view.X, view.Y);
         var viewMax = new Vector2(view.X + view.Width, view.Y + view.Height);
@@ -1077,7 +1091,7 @@ public sealed class TileMap : GameObject
                 GeometryScale = Vector2.One / Vector2.Max(worldSize, Vector2.One),
                 OcclusionMaps = Math.Clamp(OcclusionMapStrength, 0.0f, 1.0f),
                 Emissive = state.Emissive,
-                Tint = new Vector4(state.Tint, state.Opacity)
+                Tint = new Vector4(state.Tint, state.Opacity * opacity)
             }, state.IsForeground));
         }
 

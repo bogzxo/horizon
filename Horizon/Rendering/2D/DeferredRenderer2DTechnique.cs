@@ -17,6 +17,8 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
     private const string UNIFORM_LIGHTING_MODE = "uLightingMode";
     private const string UNIFORM_GI_STRENGTH = "uGiStrength";
     private const string UNIFORM_GI_AMBIENT_SCALE = "uGiAmbientScale";
+    private const string UNIFORM_FOG = "uFog";
+    private const string UNIFORM_AIR_SLOT = "uAirSlot";
     private const string UNIFORM_AO_ENABLED = "uAoEnabled";
     private const string UNIFORM_AO_SAMPLES = "uAoSamples";
     private const string UNIFORM_AO_RADIUS = "uAoRadius";
@@ -73,6 +75,12 @@ public class DeferredRenderer2DTechnique : Renderer2DTechnique
             renderer.PathTracing.Result!.Bind(GI_UNIT);
             SetUniform(UNIFORM_GI_STRENGTH, MathF.Max(renderer.PathTracing.Strength, 0.0f));
             SetUniform(UNIFORM_GI_AMBIENT_SCALE, Math.Clamp(renderer.PathTracing.AmbientScale, 0.0f, 1.0f));
+
+            // The light in the air, the haze and the lamps' glow spread by the tracer, which comes in through
+            // the bindless table, every unit of the shader being taken
+            SetUniform(UNIFORM_FOG, MathF.Max(renderer.PathTracing.Fog, 0.0f));
+            Texture? air = renderer.PathTracing.Air;
+            SetUniform(UNIFORM_AIR_SLOT, air is { IsValid: true } ? air.BindlessIndex : Graphics.Vulkan.BindlessTextures.NONE);
         }
 
         // The ambient occlusion, the baked maps come along in the material attachment

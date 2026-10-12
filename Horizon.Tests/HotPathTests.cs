@@ -4,6 +4,7 @@ using Horizon.Core;
 using Horizon.Core.Threading;
 using Horizon.Graphics;
 using Horizon.Rendering.Lighting;
+using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Tiling;
 using Horizon.Rendering.Voxels;
@@ -71,8 +72,14 @@ public class HotPathTests
         { typeof(UIFont), "Measure" },
         { typeof(UIFont), "Resolve" },
 
-        // The path traced lighting, every frame it is on
+        // The path traced lighting, every frame it is on, and the exposure that follows the picture
         { typeof(PathTracedLighting2D), "Run" },
+        { typeof(ExposureEffect), "Render" },
+        { typeof(BloomEffect), "Render" },
+
+        // The rooms, told where the player is every tick
+        { typeof(TileMapRooms), "Walk" },
+        { typeof(TileMapRooms), "DoorAt" },
 
         // The voxel path tracer, every frame, and what it sends up of the world
         { typeof(VoxelRenderer), "BeforeResolve" },

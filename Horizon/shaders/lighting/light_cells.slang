@@ -48,7 +48,7 @@ void csMain(uint3 id : SV_DispatchThreadID)
 
         light = directLight(
             position, picture, normal, hasNormal, shine,
-            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness,
+            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness, params.uGlowScale,
             LIGHTING_FIELD(params), params.uTileCounts, params.uTileScreen,
             highlights, glow);
     }

@@ -139,6 +139,11 @@ internal static class TestCatalog
             ["LightingMode.PathTraced", "Emissive", "FlashLights", "CharacterController2D", "PhysicsWorld.BodiesPush", "ApplyRadialImpulse", "PhysicsParticleSimulator2D", "TileMap"],
             "Examples/Showcase/DungeonExample.cs", () => new DungeonExample()) { Aliases = ["crawler"] },
 
+        new("village", TestLevel.AllTogether, "A day in the village",
+            "A town from above with doors you can walk through. Every building's inside is a map of its own, laid over the street and faded up as you step in, lit by the path tracer with a sun that goes round, windows that come on at dusk, an eye that gets used to the dark, and villagers who wander and have something to say. The art is two packs off itch.io (Tiny RPG Town by ansimuz, CC0, and AxulArt's interior, CC BY 4.0).",
+            ["TileMapRooms", "TileMapDoor", "TileMap.Opacity", "LightingMode.PathTraced", "LightType.Directional", "DeferredRenderer2D.WallHeight", "ExposureEffect", "CharacterController2D", "TileMapPathfinder"],
+            "Examples/Showcase/VillageExample.cs", () => new VillageExample()) { Aliases = ["town-doors", "hometown"] },
+
         /* Under the hood */
 
         new("pacing", TestLevel.UnderTheHood, "Frame pacing",

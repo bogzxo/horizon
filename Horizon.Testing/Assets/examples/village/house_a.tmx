@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="12" height="9" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#000000" nextlayerid="5" nextobjectid="5">
+ <properties>
+    <property name="name" value="Home"/>
+    <property name="ambient" type="color" value="#ff4a4238"/>
+    <property name="GeometryOcclusion" type="bool" value="true"/>
+    <property name="WallHeight" type="float" value="12"/>
+ </properties>
+ <tileset firstgid="1" source="interior.tsx"/>
+ <layer id="1" name="floor" width="12" height="9">
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,112,112,112,112,112,112,112,
+112,112,112,112,112,88,112,112,112,112,112,112
+</data>
+ </layer>
+ <layer id="2" name="wall" width="12" height="9">
+  <properties>
+   <property name="CastsShadows" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+1,2,2,2,2,2,2,2,2,2,2,3,
+13,14,89,14,14,14,14,14,14,89,14,15,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="3" name="furniture" width="12" height="9">
+  <properties>
+   <property name="CastsShadows" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+0,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0,
+26,27,0,45,0,0,0,0,0,18,19,0,
+38,39,0,0,0,0,0,42,43,30,31,0,
+0,0,0,0,0,0,52,54,55,64,0,56,
+0,0,0,0,0,0,0,66,67,0,0,68,
+20,0,0,0,0,0,0,0,0,0,0,0,
+32,0,0,0,0,0,0,0,0,0,0,0,
+0,0,0,0,0,0,0,0,0,0,0,0
+</data>
+ </layer>
+ <layer id="4" name="solid" width="12" height="9" visible="0">
+  <properties>
+   <property name="IsCollidable" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+100,100,100,100,100,100,100,100,100,100,100,100,
+100,100,100,100,100,100,100,100,100,100,100,100,
+100,100,0,100,0,0,0,0,0,100,100,100,
+100,100,0,0,0,0,0,100,100,100,100,100,
+100,0,0,0,0,0,100,100,100,100,0,100,
+100,0,0,0,0,0,0,100,100,0,0,100,
+100,0,0,0,0,0,0,0,0,0,0,100,
+100,0,0,0,0,0,0,0,0,0,0,100,
+100,100,100,100,100,0,100,100,100,100,100,100
+</data>
+ </layer>
+ <objectgroup id="4" name="things">
+  <object id="1" name="out" type="door" x="80" y="112" width="16" height="32">
+   <properties>
+    <property name="door" type="file" value="village.tmx"/>
+    <property name="arrive" value="house_a"/>
+    <property name="direction" value="down"/>
+   </properties>
+  </object>
+  <object id="2" name="lamp" type="light" x="104" y="56">
+   <properties>
+    <property name="light_colour" type="color" value="#ffffd0a0"/>
+    <property name="light_radius" type="float" value="150"/>
+    <property name="light_intensity" type="float" value="1.0"/>
+    <property name="light_glow" type="float" value="0.3"/>
+    <property name="light_height" type="float" value="70"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="3" name="house_a 3" type="npc" x="56" y="56">
+   <properties>
+    <property name="look" type="int" value="1"/>
+    <property name="says" value="You're back! Dinner's on. Go and see what the professor wants first, he's been pacing."/>
+    <property name="wanders" type="bool" value="false"/>
+    <property name="faces" value="down"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="4" name="room" type="zone" x="0" y="0" width="192" height="144">
+   <properties>
+    <property name="says" value="Home"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>
