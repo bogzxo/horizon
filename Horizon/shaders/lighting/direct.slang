@@ -50,7 +50,10 @@ static const uint TILE_LIGHTS = TILE_WORDS - 1u;
     float2 uTileCounts; \
     float2 uTileScreen; \
     int uHasSprites; \
-    float uSpritePixelWorld;
+    float uSpritePixelWorld; \
+    float uWallHeight; \
+    float uSpriteHeight; \
+    float uGlowScale;
 
 // Everything that blocks light, the way the marches see it. Made once a thread by LIGHTING_FIELD and then handed
 // about, because it carries a few numbers that are worked out once so the marches don't have to work them out at
@@ -67,11 +70,13 @@ struct Field
     bool hasSprites;         // whether the sprites that block light left a field of their own
     float spritePixelWorld;  // the size of a texel of that, in world units
     bool insideShadows;      // whether a point inside a wall takes the shadows its face does, see DeferredRenderer2D.ShadowsInsideWalls
+    float wallHeight;        // how tall what blocks light stands off the ground, 0 for taller than any light, see DeferredRenderer2D.WallHeight
+    float spriteHeight;      // the same for the sprites that block light
     float2 pictureScale;     // world to picture, picture = world * scale + offset. Orthographic, or this is a lie
     float2 pictureOffset;
 };
 
-Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int hasSprites, float spritePixelWorld, int insideShadows)
+Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int hasSprites, float spritePixelWorld, int insideShadows, float wallHeight, float spriteHeight)
 {
     Field field;
     field.hasWalls = hasWalls != 0;
@@ -82,6 +87,8 @@ Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int h
     field.hasSprites = hasSprites != 0;
     field.spritePixelWorld = spritePixelWorld;
     field.insideShadows = insideShadows != 0;
+    field.wallHeight = wallHeight;
+    field.spriteHeight = spriteHeight;
 
     // Three points through the real matrix and the mapping falls out, that is the whole trick. The deferred
     // renderer only ever has a Camera2D looking at it, which is orthographic, so the mapping is affine and w is 1
@@ -91,7 +98,7 @@ Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int h
 }
 
 // The field out of a Params that has LIGHTING_PARAMS in it.
-#define LIGHTING_FIELD(p) makeField(p.uHasField, p.uFieldOrigin, p.uFieldCellSize, p.uFieldSize, p.uHasSprites, p.uSpritePixelWorld, p.uShadowsInside)
+#define LIGHTING_FIELD(p) makeField(p.uHasField, p.uFieldOrigin, p.uFieldCellSize, p.uFieldSize, p.uHasSprites, p.uSpritePixelWorld, p.uShadowsInside, p.uWallHeight, p.uSpriteHeight)
 
 // Where on the picture (0 to 1) a point of the world lands, the cheap way. See Field.
 float2 pictureOfFast(float2 world, Field field)
@@ -221,12 +228,34 @@ int tileOf(float2 picture, float2 tileCounts, float2 tileScreen)
 // of the lamp, so that one is let off. A few steps of a texture, no colliders, no lists, no fucking about.
 // A point inside a wall (the body of the ground under a fighter) takes no sprite shadows at all, a sprite's shadow
 // stops at the tiles rather than running on down through them.
-float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
+// And things have a height, if the field says so. Seen from above a lamp hangs over the room, and a fellow stood
+// next to it throws a shadow a step long and not one across the whole floor, which is what he did when every light
+// was a point in the floor and every wall a wall to the sky. The ray from the lamp down to the point passes over
+// whatever stands between at some height, the nearer the point the lower, and only what is taller than that is in
+// the way. Which comes out as, a wall of height h only shadows the points within distance * h / lampHeight of
+// itself along the ray, so the march towards the lamp need go no further than that from the point, and a wall it
+// meets past that is one the light clears. Walls and sprites have a height each, so the houses throw long and the
+// people short. A directional light (the sun) says how far a wall throws with its reach and the sprites throw by
+// how much lower they are. With no heights given everything is taller than every light, the way it always was.
+float shadow(float2 from, float2 to, float size, Field field, float spriteShadow, float lightHeight, bool directional)
 {
     float2 way = to - from;
     float distance = length(way);
     if (distance < 0.001) return 1.0;
     float2 direction = way / distance;
+
+    // How far from the point a wall, and a sprite, can be and still stand between it and the light
+    float wallsReach = distance, spritesReach = distance;
+    if (directional)
+    {
+        if (field.wallHeight > 0.0 && field.spriteHeight > 0.0) spritesReach = distance * min(field.spriteHeight / field.wallHeight, 1.0);
+    }
+    else if (lightHeight > 0.0)
+    {
+        if (field.wallHeight > 0.0 && field.wallHeight < lightHeight) wallsReach = distance * field.wallHeight / lightHeight;
+        if (field.spriteHeight > 0.0 && field.spriteHeight < lightHeight) spritesReach = distance * field.spriteHeight / lightHeight;
+    }
+    float furthest = max(wallsReach, spritesReach);
 
     // A point inside something solid is lit as the face of it the light sees, the way out is walked first and the
     // march starts clear of the surface
@@ -247,45 +276,60 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     float previous = 1e9;
     bool sprites = field.hasSprites && !inWall;
     bool inside = false;
+    float enteredAt = 0.0;
     for (int step = 0; step < 32; step++)
     {
-        if (t >= distance) break;
+        if (t >= furthest) break;
 
         float2 at = from + direction * t;
-        float d = sprites ? wallsDistance(at, field) : wallDistance(at, field, false);
+        float walls = sprites ? wallsDistance(at, field) : wallDistance(at, field, false);
+        float d = walls;
+
+        // The nearest thing that is near enough along the way to be tall enough to count, for the penumbra. A
+        // wall or a sprite further along than its reach is one the light clears, and no edge to narrow past.
+        // Every sprite used to throw a soft wedge the length of the room whatever its hard shadow said, the
+        // penumbra never asked how tall it was
+        float edge = t + walls <= wallsReach ? walls : 1e9;
 
         if (sprites)
         {
-            // Sprites on their own, which the march goes through, a step at a time while inside of one
+            // Sprites on their own, which the march goes through, a step at a time while inside of one (and in
+            // bigger steps through one that is too far off to be tall enough, it is only being got past)
             float ds = spritesDistance(at, field, false);
             if (ds < 0.05)
             {
+                if (!inside) enteredAt = t;
                 inside = true;
-                t += max(abs(ds), 0.5 * texel);
+                t += max(abs(ds), (t > spritesReach ? 2.0 : 0.5) * texel);
                 continue;
             }
 
-            // Out the other side of one, which was in the way after all
+            // Out the other side of one, which was in the way after all, if it was near enough to be tall enough
             if (inside)
             {
                 inside = false;
-                through *= 1.0 - spriteShadow;
-                if (through <= 0.0) return 0.0;
+                if (enteredAt <= spritesReach)
+                {
+                    through *= 1.0 - spriteShadow;
+                    if (through <= 0.0) return 0.0;
+                }
             }
 
             d = min(d, ds);
+            if (t + ds <= spritesReach) edge = min(edge, ds);
         }
 
-        if (d < 0.05) return 0.0;
+        // A wall, in the way if it is near enough for its height, cleared by the light if not
+        if (walls < 0.05) return t <= wallsReach ? 0.0 : visible * visible * (3.0 - 2.0 * visible) * through;
 
-        // The nearer the way passes to a wall, the less of a sized light is seen past it. Closing in on a wall, the
+        // The nearer the way passes to an edge, the less of a sized light is seen past it. Closing in on one, the
         // last two readings say where the nearest point was, going away from one they say nothing of the sort
-        if (size > 0.0)
+        if (size > 0.0 && edge < 1e8)
         {
-            float y = d < previous ? d * d / (2.0 * previous) : 0.0;
-            float nearest = sqrt(max(d * d - y * y, 0.0));
+            float y = edge < previous ? edge * edge / (2.0 * previous) : 0.0;
+            float nearest = sqrt(max(edge * edge - y * y, 0.0));
             visible = min(visible, nearest * distance / (size * max(t - surface - y, 0.5)));
-            previous = d;
+            previous = edge;
         }
 
         t += max(d, 0.5);
@@ -296,9 +340,14 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     return visible * visible * (3.0 - 2.0 * visible) * through;
 }
 
+float shadow(float2 from, float2 to, float size, Field field, float spriteShadow)
+{
+    return shadow(from, to, size, field, spriteShadow, 0.0, false);
+}
+
 float shadow(float2 from, float2 to, float size, Field field)
 {
-    return shadow(from, to, size, field, 1.0);
+    return shadow(from, to, size, field, 1.0, 0.0, false);
 }
 
 // How much of a light arrives at a point of the world, before the surface has its say. Its brightness over the
@@ -337,17 +386,18 @@ float lightReach(Light l, float2 position, bool shadows, float softness, Field f
 
     float reach = l.intensity * falloff;
     if (shadows && hasAnything(field) && l.castsShadows > 0.5)
-        reach *= shadow(position, position + toLight, l.size + softness, field, l.spriteShadow);
+        reach *= shadow(position, position + toLight, l.size + softness, field, l.spriteShadow, l.height, l.type == LIGHT_DIRECTIONAL);
 
     return reach;
 }
 
 // The light every light of a tile throws straight onto a point of the world. What is shiny mirrors the lights
 // (highlights, in the light's own colour) and what hangs in the air around a light (glow) come out separately, they
-// aren't multiplied by the surface.
+// aren't multiplied by the surface. glowScale is how much of the glow is put down here, 0 when the path tracer
+// is doing the air instead (see gi_air.slang), or a lamp would hang in the air twice over.
 float3 directLight(
     float2 position, float2 picture, float3 normal, bool hasNormal, float shine,
-    int lightCount, bool shadows, float shininess, float softness,
+    int lightCount, bool shadows, float shininess, float softness, float glowScale,
     Field field, float2 tileCounts, float2 tileScreen,
     out float3 highlights, out float3 glow)
 {
@@ -375,7 +425,7 @@ float3 directLight(
         float facing = hasNormal ? clamp(dot(normal, direction) / max(direction.z, 0.05), 0.0, 2.0) : 1.0;
 
         light += l.color * (reach * facing);
-        glow += l.color * (reach * falloff * l.glow);
+        glow += l.color * (reach * falloff * l.glow * glowScale);
 
         if (shine > 0.0)
         {

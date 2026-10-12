@@ -47,8 +47,9 @@ internal sealed class SpriteShadows : IDisposable
     /// <param name="material">The material attachment of the G-buffer, over 0.5 in the green where something blocks light.</param>
     /// <param name="surface">The surface attachment of the G-buffer, the blue of which is how emissive a pixel is.</param>
     /// <param name="pixelWorld">How big a pixel of the picture is in world units.</param>
+    /// <param name="spritesBlockRays">Whether the second distance counts what blocks as well as what glows, see <see cref="PathTracedLighting2D.SpritesBlock"/>.</param>
     /// <returns>The field, null if it couldn't be made.</returns>
-    public Texture? Build(Texture material, Texture surface, uint pictureWidth, uint pictureHeight, float pixelWorld)
+    public Texture? Build(Texture material, Texture surface, uint pictureWidth, uint pictureHeight, float pixelWorld, bool spritesBlockRays = true)
     {
         int scale = Math.Clamp(Scale, 1, 8);
         if (!EnsureShaders() || !Fit(pictureWidth, pictureHeight, scale)) return null;
@@ -63,6 +64,7 @@ internal sealed class SpriteShadows : IDisposable
         seed.SetUniform("uSize", in size);
         seed.SetUniform("uCells", in grid);
         seed.SetUniform("uScale", scale);
+        seed.SetUniform("uSpritesBlock", spritesBlockRays);
         material.Bind(0);
         surface.Bind(1);
         device.BindStorageImage(0, seedsA);
@@ -95,6 +97,7 @@ internal sealed class SpriteShadows : IDisposable
         field.SetUniform("uScale", scale);
         field.SetUniform("uFar", far);
         field.SetUniform("uPixelWorld", pixelWorld);
+        field.SetUniform("uSpritesBlock", spritesBlockRays);
         material.Bind(0);
         surface.Bind(1);
         device.BindStorageImage(0, from);

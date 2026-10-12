@@ -807,3 +807,53 @@ M1 comes up as Vulkan 1.3 through the MoltenVK next to the exe, first go). M1, m
 - Still to look at there. The UI is laid out in pixels, so Hex and the hitbox editor (maximised, 2880 across) read
   small on a Retina screen. AutoVoxel maximised or big is slow on an M1, 6 fps at 2880 by 1504.
 
+## The village, doors you walk through and a sun that goes round
+
+bogz asked for a Pokémon looking town from above with buildings you walk into without a cut, villagers, the path
+traced lighting doing day and night, art off itch.io and not painted here, and whatever engine work that took.
+Then, as it went, the path tracing on from the start, PBR maps for the sheets, no absolute paths in the doors, the
+normal map turned down, and a gamma and an eye that adapts because the lit houses at night were a white hole.
+
+What came of it. `TileMapRooms` in the engine (every map behind a door read up front, a room placed so you stand
+just inside its door back, faded up over the street with the new `TileMap.Opacity`, colliders and occlusion swapped
+as you go), `DeferredRenderer2D.WallHeight` and `SpriteHeight` with lamps hanging over the world by their height,
+`PathTracedLighting2D.SpritesBlock`, `ExposureEffect`, and the `village` example (`VillageExample.cs` and its
+People and Sky parts), 23rd in the list. The art is Tiny RPG Town (ansimuz, CC0) and AxulArt's interior (CC BY),
+got with curl off itch.io (the page's csrf token, a POST to download_url, a POST to file/{id}, see the memory
+note), cut up by `Art/make_village.py`.
+
+What was wrong with the shadows from above, found by standing in the lab. Every sprite threw a soft wedge the
+length of the room, and it was not the hard shadow (that stops where the march says) but the penumbra, which
+narrowed the light past every sprite the march went by however far off, because the sized light estimate never
+asked how tall a thing was. With the heights in, the march goes no further from the point than a thing that tall
+can reach and the penumbra only counts what is near enough, and a person under a ceiling lamp throws a step. The
+other half was the tracer, with the sprites as walls to the bounced light everybody trailed a shadow of it across
+the floor and had a halo of their own bounce, which from the side is a crate against a lit wall and right, and from
+above is nonsense, hence `SpritesBlock`.
+
+Things that cost time. A door one tile square is never stepped into by somebody walking a path one tile wide, their
+middle bumps the frame as often as not, so a door is the doorway and the step in front of it and the far door's
+`Landing` is a step clear of it. The scripted walk to the cave dropped the hero a pixel below the path and the
+stream stopped him, two hours of reading the door code for a `hold DPadDown 0.35` that wanted to be 0.2. The
+normal maps worked out of the lightness of pixel art want a strength of about a half, at 2 every roof tile was a
+cobble under the low sun. The grass tiles of the pack come in three shades and a block of a lighter one stood out
+as a square once the sun went down, so it is one grass all over.
+
+Then bogz looked at the lab and said the sprites sat on top of the lighting, washed out, and asked for better
+volumetric lighting in the tracer and a bloom. The lab was a white floor with a halo of the lamp's glow put down
+by the deferred pass, hard edged, and everybody stood on it flat. What went in. `PathTracedLighting2D.Fog`, a
+share of what the tracer finds laid over the picture as a haze whatever is under it, so the light hangs in the
+room and the people stand in it. `GlowSpread`, the lamps' glow worked out shadowed at the tracer's size in a pass
+of its own (gi_air.slang, 0.04 ms) and smeared with the post blur, which gives a soft pool under a lamp and a
+shaft out of a window, read by the deferred shader through the bindless table because its texture units were
+all spoken for. And `BloomEffect`, the voxel renderer's bloom (Jimenez's thirteen taps down, a tent up) as a
+post effect over post targets, five levels, before the exposure. The lab's ambient went down and its lamp with
+it, the two together were the washout as much as anything. Post effects are 0.6 to 1 ms at 1600 by 900 on the
+3060, of which the deferred resolve itself is a third (a lit renderer resolves inside its own post chain).
+
+Not done. The villagers have one picture a way they face (the pack's NPC sheet has no walk frames), so they hop a
+step at a time, which reads fine. Nobody wanders between rooms. The hero never bumps a villager who is mid step,
+their body moves with them but the hero is quicker. The haze is a share of the traced light at every pixel and
+not a march through the air, a shaft out of a window is the glow pass's and the bounce's, not scattered along
+its length, which would be the next thing if anybody wants god rays.
+

@@ -1,0 +1,11 @@
+// The HUD of the village example (VillageExample.cs). Where you are and what time it is, up in the corner, and
+// a line along the bottom for whoever is talking.
+
+compositor.design({ size: vec(1600, 900), fit: "stretch" });
+
+let place = compositor.group({ anchor: "top_left", pos: vec(210, -56) });
+let place_name = compositor.label({ parent: place, pos: vec(0, 18), text: "Hometown", text_scale: 0.3 });
+let clock = compositor.label({ parent: place, pos: vec(0, -14), text: "", text_scale: 0.22 });
+
+// What the one you walked up to has to say, or a hint
+let notice = compositor.label({ anchor: "bottom", pos: vec(0, 120), text: "", text_scale: 0.3 });

@@ -76,6 +76,7 @@ public class TownExample : Scene, ITestControls
         new("F", "path traced lighting"),
         new("R", "rain"),
         new("C", "the picture tube"),
+        new("V", "the bloom, the glow round the lamps"),
     ];
 
     private readonly Camera2D _camera, _screenCamera;
@@ -85,6 +86,7 @@ public class TownExample : Scene, ITestControls
     private DeferredRenderer2D _world = null!;
     private OcclusionMap2D? _occlusion;
     private CrtEffect _tube = null!;
+    private BloomEffect _bloom = null!;
     private Sprite _hero = null!;
     private CharacterController2D _walker = null!;
     private Vector2 _heroSize;
@@ -149,6 +151,10 @@ public class TownExample : Scene, ITestControls
             LightingPixelSize = 1.0f
         });
         _world.AmbientOcclusion.Enabled = true;
+
+        // A glow round the lanterns and the lit windows. On the world and not the screen, so it goes through
+        // the tube with the rest of the picture rather than over the glass, see BloomEffect
+        _bloom = _world.PostProcessing.Add(new BloomEffect { Threshold = 0.7f, Intensity = 0.3f });
 
         _world.AddEntity(_map);
 
@@ -238,6 +244,7 @@ public class TownExample : Scene, ITestControls
 
         if (keyboard.WasPressed(Key.F)) _world.Lighting = _world.Lighting == LightingMode.Direct ? LightingMode.PathTraced : LightingMode.Direct;
         if (keyboard.WasPressed(Key.C)) _tube.Enabled = !_tube.Enabled;
+        if (keyboard.WasPressed(Key.V)) _bloom.Enabled = !_bloom.Enabled;
         if (keyboard.WasPressed(Key.R)) _raining = !_raining;
         if (keyboard.WasPressed(Key.L)) _lantern.Enabled = !_lantern.Enabled;
 
