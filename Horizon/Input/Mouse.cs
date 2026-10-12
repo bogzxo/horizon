@@ -122,7 +122,8 @@ public sealed class Mouse
 
     private static bool Known(MouseButton button) => (uint)button < BUTTONS;
 
-    internal void Attach(IInputContext context, Action<Action>? toWindow = null)
+    /// <param name="toPixels">Turns where the system says the pointer is into the pixel that is under it, see <see cref="Core.WindowManager.PointerToPixels"/>.</param>
+    internal void Attach(IInputContext context, Action<Action>? toWindow = null, Func<Vector2, Vector2>? toPixels = null)
     {
         _context = context;
         _toWindow = toWindow;
@@ -130,9 +131,10 @@ public sealed class Mouse
 
         foreach (IMouse mouse in context.Mice)
         {
-            Place(mouse.Position);
+            // A Mac says where the pointer is in points, everything in here goes by the pixels that are drawn into
+            Place(toPixels?.Invoke(mouse.Position) ?? mouse.Position);
 
-            mouse.MouseMove += (_, position) => Place(position);
+            mouse.MouseMove += (_, position) => Place(toPixels?.Invoke(position) ?? position);
             mouse.MouseDown += (_, button) => _heard.Enqueue((button, true));
             mouse.MouseUp += (_, button) => _heard.Enqueue((button, false));
             mouse.Scroll += (_, wheel) =>

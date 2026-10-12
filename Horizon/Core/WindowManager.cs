@@ -161,6 +161,12 @@ public class WindowManager : GameComponent, IDisposable
     public Vector2 WindowSize => display.WindowSize;
 
     /// <summary>
+    /// How many pixels of what is drawn into there are to one of whatever the system counts the window and the pointer
+    /// in. One everywhere but on a Mac, where it is two on a Retina screen and whatever it comes to in fullscreen. From any thread.
+    /// </summary>
+    public Vector2 PixelScale { get; private set; } = Vector2.One;
+
+    /// <summary>
     /// The size of the screen the window is on, in pixels. A window can't usefully be any bigger than this.
     /// </summary>
     public Vector2 ScreenSize => display.ScreenSize;
@@ -352,14 +358,35 @@ public class WindowManager : GameComponent, IDisposable
             if (WindowOptions.WindowState != WindowState.Maximized)
                 _window.Center();
 
-            _window.SetDefaultIcon();
+            // SDL's window falls over its own default icon (it indexes past the end of the list it was handed), and a
+            // Mac has no icon on a window anyway, the one in the Dock comes from the bundle
+            if (!OperatingSystem.IsMacOS())
+                _window.SetDefaultIcon();
 
             _input = _window.CreateInput();
 
             UpdateViewport();
+
+            // The window was made before anybody could know what a point is worth on this screen, so on a Retina one
+            // it came out twice the size it was asked to be. Put right now that it is known
+            if (WindowOptions.WindowState == WindowState.Normal && screenScale != Vector2.One)
+            {
+                _window.Size = InPoints(new Vector2(WindowOptions.Size.X, WindowOptions.Size.Y));
+                _window.Center();
+                UpdateViewport();
+            }
+
             UpdateScreenSize();
         };
     }
+
+    /// <summary>
+    /// Helper method to turn a size in pixels, which is what everybody asks for a window in, into whatever the system
+    /// counts its windows in. The same thing everywhere but on a Mac with a Retina screen, where a point is two pixels.
+    /// </summary>
+    private Silk.NET.Maths.Vector2D<int> InPoints(Vector2 pixels) => new(
+        Math.Max(1, (int)MathF.Round(pixels.X / screenScale.X)),
+        Math.Max(1, (int)MathF.Round(pixels.Y / screenScale.Y)));
 
     /// <summary>
     /// Helper method to get everything that draws going, on the thread that draws, before its first frame.
@@ -370,8 +397,16 @@ public class WindowManager : GameComponent, IDisposable
         SnapshotClock.Active = snapshots;
 
         // The device belongs to this thread from here on, it is the one that records and submits every frame
+        Silk.NET.Core.Contexts.IVkSurface surface = _window.VkSurface ?? throw new InvalidOperationException("The window has no Vulkan surface, is the Vulkan loader installed?");
+
+        // On a Mac making the surface is SDL putting a Metal view into the window, and a view may only be put into a
+        // window by the main thread. Done from this one nothing complains and every frame is drawn and presented,
+        // into a layer the system never got told about, so the window stays blank
+        if (OperatingSystem.IsMacOS())
+            surface = new WindowThreadSurface(surface, OnWindowThread);
+
         Graphics = new GraphicsDevice(
-            _window.VkSurface ?? throw new InvalidOperationException("The window has no Vulkan surface, is the Vulkan loader installed?"),
+            surface,
             (uint)ViewportSize.X,
             (uint)ViewportSize.Y,
             Display.VSync);
@@ -475,8 +510,67 @@ public class WindowManager : GameComponent, IDisposable
 
     private void UpdateViewport()
     {
-        var size = new Vector2(_window.FramebufferSize.X, _window.FramebufferSize.Y);
+        var drawable = DrawableSize();
+        var size = RenderSize(drawable);
         display = display with { ViewportSize = size, WindowSize = size };
+
+        // What the system counts the window and the pointer in against the pixels the screen really has, 2 on a
+        // Retina one, and against what is drawn into, which is another number (and not the same one across as down)
+        // while a fullscreen window is drawn small and stretched over the screen
+        var points = new Vector2(_window.Size.X, _window.Size.Y);
+        bool known = points.X > 0 && points.Y > 0;
+        screenScale = known ? drawable / points : Vector2.One;
+        PixelScale = known ? size / points : Vector2.One;
+    }
+
+    private Vector2 screenScale = Vector2.One;
+
+    /// <summary>
+    /// Helper method to turn where the system says the pointer is in the window into the pixel of what is drawn that
+    /// is under it. From any thread.
+    /// </summary>
+    internal Vector2 PointerToPixels(Vector2 pointer) => pointer * PixelScale;
+
+    /// <summary>
+    /// Helper method to decide how big what is drawn into is, given how many pixels the window has. They are the same
+    /// thing everywhere but in a fullscreen window on a Mac. A Retina screen is five million pixels, and going
+    /// fullscreen (the green button or the game's own) would have a game that was set to 1280 by 720 draw all of
+    /// them and crawl. So it stays the size it was set to, nothing has to be laid out again and whatever was in
+    /// the middle still is, and the system stretches the picture over the whole of the screen (MoltenVK takes a
+    /// swapchain of another size than its layer). No bars, bogz doesn't want them, so 16 by 9 on a 16 by 10 laptop
+    /// comes out a tenth taller than it was drawn.
+    /// </summary>
+    private Vector2 RenderSize(Vector2 drawable)
+    {
+        if (!OperatingSystem.IsMacOS() || !IsFullscreen())
+            return drawable;
+
+        Vector2 set = Display.WindowSize;
+        if (set.X < 1.0f || set.Y < 1.0f || set.X >= drawable.X || set.Y >= drawable.Y)
+            return drawable;
+
+        return new Vector2(MathF.Floor(set.X), MathF.Floor(set.Y));
+    }
+
+    /// <summary>
+    /// Helper method to ask how many pixels there are to draw into. On a Mac the window is counted in points and SDL's
+    /// window says those for its framebuffer too, while the Metal layer underneath (and so the swapchain) is in the
+    /// pixels of the screen, twice as many each way on a Retina one. A swapchain that never comes out the size it was
+    /// asked for is made anew every frame and nothing is ever shown, so SDL is asked how many pixels the window has.
+    /// Not how big the layer's drawables are (SDL_Vulkan_GetDrawableSize), that is whatever MoltenVK set them to for
+    /// the swapchain, which in fullscreen is the size the game was set to and no measure of the screen at all.
+    /// </summary>
+    private unsafe Vector2 DrawableSize()
+    {
+        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        {
+            int width = 0, height = 0;
+            Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowSizeInPixels((Silk.NET.SDL.Window*)handle, &width, &height);
+            if (width > 0 && height > 0)
+                return new Vector2(width, height);
+        }
+
+        return new Vector2(_window.FramebufferSize.X, _window.FramebufferSize.Y);
     }
 
     private void WindowResize(Silk.NET.Maths.Vector2D<int> size)
@@ -486,6 +580,11 @@ public class WindowManager : GameComponent, IDisposable
 
         UpdateViewport();
         resized = true;
+
+        // SDL sets the layer's drawables to the size of the window whenever that changes, and a swapchain that stays
+        // the size it was (a window going fullscreen on a Mac, see RenderSize) is then shown small in a corner of
+        // them until it is made anew
+        Graphics?.SurfaceChanged();
     }
 
     private void UpdateScreenSize()
@@ -494,7 +593,8 @@ public class WindowManager : GameComponent, IDisposable
             return;
 
         var size = monitor.VideoMode.Resolution ?? monitor.Bounds.Size;
-        display = display with { ScreenSize = new Vector2(size.X, size.Y) };
+        // In the same pixels as the viewport, a Mac counts its screen in points like it does its windows
+        display = display with { ScreenSize = new Vector2(size.X, size.Y) * screenScale };
     }
 
     /// <summary>
@@ -556,18 +656,18 @@ public class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void ApplyWindow(DisplaySettings settings)
     {
-        bool fullscreen = _window.WindowState == WindowState.Fullscreen;
+        bool fullscreen = IsFullscreen();
         if (settings.Fullscreen)
         {
             if (!fullscreen)
-                _window.WindowState = WindowState.Fullscreen;
+                SetFullscreen(true);
         }
         else
         {
             if (fullscreen)
-                _window.WindowState = WindowState.Normal;
+                SetFullscreen(false);
 
-            var size = new Silk.NET.Maths.Vector2D<int>(Math.Max(1, (int)settings.WindowSize.X), Math.Max(1, (int)settings.WindowSize.Y));
+            var size = InPoints(settings.WindowSize);
             if (_window.Size != size)
             {
                 _window.Size = size;
@@ -578,6 +678,53 @@ public class WindowManager : GameComponent, IDisposable
         // The window says so itself when its size changes, but not always in time for the frame that is about to be drawn
         UpdateViewport();
         UpdateScreenSize();
+    }
+
+    // What SDL calls a window that is fullscreen at all, and one that is so by covering the desktop as it is
+    private const uint SDL_FULLSCREEN = 0x1, SDL_FULLSCREEN_DESKTOP = 0x1001;
+
+    /// <summary>
+    /// Helper method to say whether the window is fullscreen. Thread of the window.
+    /// </summary>
+    private unsafe bool IsFullscreen()
+    {
+        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        {
+            if ((Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowFlags((Silk.NET.SDL.Window*)handle) & SDL_FULLSCREEN) != 0)
+                return true;
+
+            // The green button takes a window into a fullscreen of the system's own that SDL was never asked for
+            // and doesn't count, the window itself knows
+            return _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, RegisterSelector("styleMask")) & NS_FULLSCREEN) != 0;
+        }
+
+        return _window.WindowState == WindowState.Fullscreen;
+    }
+
+    // NSWindowStyleMaskFullScreen
+    private const ulong NS_FULLSCREEN = 1ul << 14;
+
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern nuint MsgSend(nint receiver, nint selector);
+
+    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "sel_registerName")]
+    private static extern nint RegisterSelector([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPStr)] string name);
+
+    /// <summary>
+    /// Helper method to take the window into fullscreen or back out of it. Thread of the window. On a Mac SDL is asked
+    /// itself, for the kind that covers the desktop as it is. What Silk asks for there is the kind that changes what
+    /// the screen is set to, to whatever mode is nearest the window, which on a laptop came out as 2048 by 1280 of
+    /// all things and left the window that size when it came back.
+    /// </summary>
+    private unsafe void SetFullscreen(bool fullscreen)
+    {
+        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        {
+            Silk.NET.SDL.SdlProvider.SDL.Value.SetWindowFullscreen((Silk.NET.SDL.Window*)handle, fullscreen ? SDL_FULLSCREEN_DESKTOP : 0);
+            return;
+        }
+
+        _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
     }
 
     /// <summary>
@@ -812,6 +959,23 @@ public class WindowManager : GameComponent, IDisposable
 
         Log.Info($"[{Name}] Simulating at {simulation.TickRate:0} ticks a second (logic at {simulation.LogicRate:0}, physics at {simulation.PhysicsRate:0}), frames {(Presentation == PresentationMode.Interpolated ? "interpolated between ticks" : "showing the newest tick")}.");
         simulation.Start();
+    }
+
+    /// <summary>
+    /// A window's Vulkan surface that is made on the thread of the window whoever asks for it, see <see cref="SetUpDrawing"/>.
+    /// </summary>
+    private sealed unsafe class WindowThreadSurface(Silk.NET.Core.Contexts.IVkSurface inner, Action<Action> onWindowThread) : Silk.NET.Core.Contexts.IVkSurface
+    {
+        public Silk.NET.Core.Native.VkNonDispatchableHandle Create<T>(Silk.NET.Core.Native.VkHandle instance, T* allocator) where T : unmanaged
+        {
+            // A pointer can't go into a lambda, an address can
+            nint address = (nint)allocator;
+            Silk.NET.Core.Native.VkNonDispatchableHandle made = default;
+            onWindowThread(() => made = inner.Create(instance, (T*)address));
+            return made;
+        }
+
+        public byte** GetRequiredExtensions(out uint count) => inner.GetRequiredExtensions(out count);
     }
 
     /// <summary>

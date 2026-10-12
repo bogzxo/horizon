@@ -238,6 +238,14 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /* The frame */
 
     /// <summary>
+    /// Says that the window underneath changed in a way the size of what is drawn doesn't show, so the swapchain is
+    /// made anew at the start of the next frame whatever size it is. From any thread.
+    /// </summary>
+    public void SurfaceChanged() => surfaceChanged = true;
+
+    private volatile bool surfaceChanged;
+
+    /// <summary>
     /// Starts a frame for a window of a size. Takes the next picture of the swapchain (made anew if the window
     /// changed size) and starts the clocks. Nothing is drawn into the window until this has been called.
     /// </summary>
@@ -249,6 +257,12 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         {
             Frame.HasImage = false;
             return;
+        }
+
+        if (surfaceChanged)
+        {
+            surfaceChanged = false;
+            swapchainStale = true;
         }
 
         if (swapchainStale || swapchain.Width != width || swapchain.Height != height || swapchain.VSync != vsync)

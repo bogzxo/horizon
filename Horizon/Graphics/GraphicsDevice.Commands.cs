@@ -63,13 +63,32 @@ public sealed unsafe partial class GraphicsDevice
     /// <summary>
     /// Draws whatever the commands in a buffer say (VkDrawIndirectCommand, 16 bytes each), as many of them as another
     /// buffer says there are. For draws a compute pass worked out, see tilemap_cull.slang.
+    /// <para>
+    /// A card that can't take the count out of a buffer (MoltenVK, so every Mac) draws all of <paramref name="maxDraws"/>
+    /// instead, so whoever fills the commands in has to fill every one of them in, with no instances for a draw that
+    /// isn't wanted. The tile map does. Without this the call did nothing at all there and a map had no tiles.
+    /// </para>
     /// </summary>
     public void DrawIndirectCount(Topology topology, GpuBuffer commands, nint commandsOffset, GpuBuffer count, nint countOffset, uint maxDraws)
     {
         if (maxDraws == 0 || !commands.IsValid || !count.IsValid || commands.Buffer.Handle == 0 || count.Buffer.Handle == 0) return;
         if (!PrepareDraw(topology)) return;
 
-        Vk.CmdDrawIndirectCount(cmd, commands.Buffer, (ulong)commandsOffset, count.Buffer, (ulong)countOffset, maxDraws, 16);
+        if (Context.HasDrawIndirectCount)
+        {
+            Vk.CmdDrawIndirectCount(cmd, commands.Buffer, (ulong)commandsOffset, count.Buffer, (ulong)countOffset, maxDraws, 16);
+        }
+        else if (Context.HasMultiDrawIndirect || maxDraws == 1)
+        {
+            Vk.CmdDrawIndirect(cmd, commands.Buffer, (ulong)commandsOffset, maxDraws, 16);
+        }
+        else
+        {
+            // Not even several at once, so one after the other
+            for (uint draw = 0; draw < maxDraws; draw++)
+                Vk.CmdDrawIndirect(cmd, commands.Buffer, (ulong)commandsOffset + draw * 16, 1, 16);
+        }
+
         commands.LastUse = count.LastUse = NextSubmission;
         Statistics.Counting.DrawCalls++;
     }
