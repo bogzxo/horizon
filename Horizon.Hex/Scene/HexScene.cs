@@ -53,7 +53,7 @@ internal sealed partial class HexScene : Scene
     // What can be added, in the order the buttons for it come.
     private static readonly string[] Palette =
     [
-        "stack", "grid", "panel", "scroll", "label", "button", "toggle", "textbox", "number_box", "selector",
+        "stack", "collapsible", "grid", "panel", "scroll", "label", "button", "toggle", "textbox", "number_box", "selector",
         "dropdown", "list", "slider", "color_picker", "progress_bar", "image", "tabs", "divider", "spacer",
         "readout", "meter", "graph", "segments"
     ];
@@ -67,7 +67,8 @@ internal sealed partial class HexScene : Scene
         ["align"] = Origins,
         ["fill"] = ["none", "horizontal", "vertical", "both"],
         ["direction"] = ["vertical", "horizontal"],
-        ["intro"] = ["none", "pop", "fade", "slide"]
+        ["intro"] = ["none", "pop", "fade", "slide"],
+        ["hover"] = ["none", "grow", "shrink", "lift", "nudge", "pulse", "glow"]
     };
 
     // The numbers that have a slider next to them, and what its ends are.
@@ -76,7 +77,9 @@ internal sealed partial class HexScene : Scene
         ["progress"] = (0.0f, 1.0f),
         ["intro_time"] = (0.0f, 2.0f),
         ["intro_delay"] = (0.0f, 2.0f),
-        ["stagger"] = (0.0f, 0.5f)
+        ["stagger"] = (0.0f, 0.5f),
+        ["hover_time"] = (0.0f, 0.5f),
+        ["collapse_time"] = (0.0f, 0.5f)
     };
 
     // How wide what a property is set with is, which is whatever the properties have left next to what it is
@@ -199,6 +202,7 @@ internal sealed partial class HexScene : Scene
         layers = layout.Get<StackPanel>("layers");
 
         nameBox = layout.Get<TextBox>("name_box");
+        layout.Get<Button>("play_button").OnPressed = PlayIntros;
         tabs = layout.Get<StackPanel>("tabs");
         tree = layout.Get<StackPanel>("tree");
         treeTitle = layout.Get<Label>("tree_title");
@@ -297,6 +301,8 @@ internal sealed partial class HexScene : Scene
 
         if (codeDirty) ShowCode();
 
+        RevealInTree();
+
         if (tabsDirty) RebuildTabs();
         if (treeDirty) RebuildTree();
         if (inspectorDirty) RebuildInspector();
@@ -348,6 +354,9 @@ internal sealed partial class HexScene : Scene
 
         // Where the pointer is in the layout, in its own units, for lining things up by number
         coords.Text = overCanvas ? $"{inLayout.X:0}, {inLayout.Y:0}" : string.Empty;
+
+        // The hover of what is pointed at, so it can be seen while it is set up. Not while it is being dragged about
+        HoldHover(overCanvas && !dragging ? document.Module.FindAt(pointer.Position) : null);
 
         if (UpdateCanvasView(inChrome, overCanvas, pressed))
         {

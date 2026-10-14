@@ -59,6 +59,14 @@ internal sealed partial class HexScene
             return last;
         };
 
+        // Scrolls the properties to the row of a property, the way somebody would before clicking it. The rows are in
+        // sections now and the ones further down are out of sight at the start
+        void Reveal(string editor)
+        {
+            test.Run(() => inspectorScroll.ScrollIntoView(editors[editor]));
+            test.Wait();
+        }
+
         // Something out of one of the menus. A click on its word on the bar, and one on the item in the list that opens
         void Pick(string title, Func<string> item)
         {
@@ -198,11 +206,17 @@ internal sealed partial class HexScene
 
         /* Entrances */
 
+        Reveal("intro_time");
         test.Click(At(() => editors["intro"]));
         test.Click(Option("intro", 1));
         test.Wait();
         test.Check("intro: a component can be told to pop in", () => button!.Intro == UIIntro.Pop && Code().Contains("intro: \"pop\""));
         test.Check("intro: and does so straight away, to be looked at", () => button!.Tweens.Count > 0);
+        test.Run(() => document.SettleIntros());
+        test.Wait();
+        test.Click(At(() => layout.Get<Button>("play_button")));
+        test.Wait();
+        test.Check("intro: the play button next to the name of the layout plays them again", () => button!.Tweens.Count > 0);
 
         test.Click(At(() => ((StackPanel)editors["intro_time"]).Children[0]));
         test.Wait();
@@ -269,6 +283,19 @@ internal sealed partial class HexScene
         test.Run(() => Type((TextBox)editors["name"], "start_button"));
         test.Wait();
 
+        // Resting on what a property is called says what it does, and so does resting on its editor
+        UIComponent CaptionOf(string property) => editors[property].Parent!.Parent!.Children[0];
+        test.Hover(At(() => CaptionOf("pos")));
+        test.Settle(0.8f);
+        test.Check("help: resting on a property's name brings up what it does", () =>
+            compositor.TooltipOf == CaptionOf("pos") && compositor.TooltipOf!.Tooltip.Contains("anchor"));
+        test.Hover(At(() => editors["anchor"]));
+        test.Settle(0.8f);
+        test.Check("help: and so does resting on its editor", () =>
+            compositor.TooltipOf is { } helping && helping.Tooltip.Contains("parent") && helping != CaptionOf("pos"));
+        test.Hover(Part("canvas", 0.5f, 0.5f));
+        test.Wait();
+
         /* The canvas */
 
         test.Click(Part("canvas", 0.04f, 0.06f));
@@ -302,9 +329,8 @@ internal sealed partial class HexScene
 
         ColorPicker Picker() => (ColorPicker)((StackPanel)editors["color"]).Children[0];
 
-        // The colour is the last but one of what a label has, in a small window that is past the end of the inspector
-        test.Run(() => inspectorScroll.Offset = inspectorScroll.MaxOffset);
-        test.Wait();
+        // The colour is the last but one of what a label has, in a small window that is past the end of what is in sight
+        Reveal("color");
         test.Check("colour: a colour has a picker and its four numbers", () =>
             editors["color"] is StackPanel { Children: [ColorPicker, StackPanel { Children.Count: 4 }] });
         test.Click(In(() => Picker().AlphaBounds, 0.5f, 0.97f));
@@ -317,6 +343,54 @@ internal sealed partial class HexScene
         test.Check("colour: the other strip picks the hue", () => ((Label)label!).Color is { X: < 0.2f, Y: > 0.8f, W: > 0.9f });
         test.Check("colour: and the numbers follow", () =>
             ((StackPanel)editors["color"]).Children[1].Children[1] is NumberBox green && Near(green.Value, ((Label)label!).Color!.Value.Y, 0.002f));
+
+        /* The sections of the properties, the tab key, and the tree keeping up with what is selected */
+
+        Collapsible Section(string editor)
+        {
+            UIComponent? at = editors[editor];
+            while (at is not null and not Collapsible)
+                at = at.Parent;
+            return (Collapsible)at!;
+        }
+
+        test.Check("sections: the properties are in sections by what they are about", () =>
+            Section("intro").Title == "entrance" && Section("pos").Title == "placement" && Section("color").Title == "label");
+        Reveal("intro");
+        test.Click(In(() => Section("intro").HeaderBounds, 0.5f, 0.5f));
+        test.WaitFor(() => Section("intro").Openness == 0.0f, 1.0f);
+        test.Check("sections: a click on the bar folds it away, and only it", () =>
+            Section("intro") is { Expanded: false, Openness: 0.0f } && Section("pos").Expanded);
+        test.Run(() => Select(stack));
+        test.Wait();
+        test.Run(() => Select(label));
+        test.Wait();
+        test.Check("sections: and it stays folded for the next thing selected", () => !Section("intro").Expanded);
+        Reveal("intro");
+        test.Click(In(() => Section("intro").HeaderBounds, 0.5f, 0.5f));
+        test.WaitFor(() => Section("intro").Openness == 1.0f, 1.0f);
+        test.Check("sections: and out again", () => Section("intro") is { Expanded: true, Openness: 1.0f });
+
+        test.Click(At(() => editors["text"]));
+        test.Wait();
+        test.Run(() => compositor.FocusNext());
+        test.Wait();
+        test.Check("tab: the next box has all of what is in it picked out, to type over", () =>
+            compositor.Focus is TextBox { Text.Length: > 0 } next && next != editors["text"] && next.Selection == next.Text);
+        test.Run(() => compositor.FocusNext(-1));
+        test.Wait();
+        test.Check("tab: and shift goes back, all of it picked out again", () =>
+            compositor.Focus == editors["text"] && ((TextBox)editors["text"]).Selection == ((TextBox)editors["text"]).Text);
+        test.Run(() => compositor.Focus = null);
+
+        test.Run(() => treeScroll.Offset = treeScroll.MaxOffset);
+        test.Run(() => Select(stack));
+        test.WaitFor(() => !treeReveal, 1.0f);
+        test.Wait();
+        test.Check("tree: selecting something scrolls its row into sight", () =>
+            treeRows[stack!].Bounds is var row && treeScroll.Bounds.Contains(row.Center) && treeScroll.Bounds.Shrink(treeScroll.Padding).Max.Y >= row.Max.Y - 0.5f);
+        test.Run(() => Select(label));
+        test.Wait();
 
         Pick("Edit", () => "Move up");
         test.Wait();

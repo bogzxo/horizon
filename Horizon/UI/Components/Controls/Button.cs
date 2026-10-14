@@ -80,6 +80,11 @@ public class Button : UIComponent
     // Lit as the chosen one, by whoever set it or by a navigator standing on it
     private bool Chosen => Selected || IsSelected;
 
+    protected override bool ShowsAsChosen => Chosen;
+
+    // The body, the marker of the chosen one and the label are counted as parts of their own, see Paint
+    private const int BODY_PART = 0, MARKER_PART = 1, LABEL_PART = 2;
+
     protected override Vector2 Measure(UISkin skin)
     {
         Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
@@ -99,6 +104,11 @@ public class Button : UIComponent
         bool hovered = enabled && (IsHovered || Chosen) && !down;
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
 
+        // The hover box and the marker are quads that come and go, and counted along with the rest they pushed the
+        // label a quad further on, so the frame between two ticks blended a letter with the hover box and the label
+        // flashed white. In parts the count only shifts inside the part it happened in
+        list.BeginPart(BODY_PART);
+
         // A state the skin has no art of its own for is drawn with the plain button's.
         bool stateArt = skin.TryGetRegion(down ? pressedStyle : hovered ? hoverStyle : style, out var region);
         if (stateArt || skin.TryGetRegion(style, out region))
@@ -115,8 +125,11 @@ public class Button : UIComponent
         }
 
         // The marker of the chosen one sits one of its own pixels outside of the button.
+        list.BeginPart(MARKER_PART);
         if (enabled && Chosen && skin.TryGetRegion(SELECTION_REGION, out var marker))
             list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
+
+        list.BeginPart(LABEL_PART);
 
         // The label is centred on what the padding leaves over, which is the face of the button when
         // the art has a lip or a shadow along one side. It sinks with the button.
@@ -130,6 +143,7 @@ public class Button : UIComponent
             Origin.Center,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
             (hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
+        list.EndParts();
     }
 
     /// <summary>

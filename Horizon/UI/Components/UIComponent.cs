@@ -381,13 +381,22 @@ public abstract partial class UIComponent
         if (ZOffset > 0 && Module is { } owner && owner.Raise(this))
             return;
 
-        bool animated = VisualOffset != Vector2.Zero || VisualScale != Vector2.One || Opacity < 1.0f;
+        // What the tweens did to it, with the hover on top, see UIComponent.Hover
+        Vector2 offset = VisualOffset, scale = VisualScale;
+        if (hoverness > 0.0f)
+            ApplyHover(ref offset, ref scale);
+
+        bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
         if (animated)
-            list.PushVisual(VisualOffset, VisualScale, Bounds.Center, Opacity);
+            list.PushVisual(offset, scale, Bounds.Center, Opacity);
 
         // Every quad is ours by name, see UIDrawList.PushOwner
         list.PushOwner(this);
         Paint(list);
+
+        if (hoverness > 0.0f && Hover == UIHover.Glow)
+            PaintHoverGlow(list);
+
         PaintChildren(list);
 
         // The tabs of the edges that can be dragged, over whatever is in it
@@ -424,6 +433,11 @@ public abstract partial class UIComponent
     internal void UpdateTree(float dt)
     {
         tweens?.Tick(dt);
+
+        // Still settling back down after the hover was taken off is a hover as well
+        if (Hover != UIHover.None || hoverness > 0.0f)
+            StepHover(dt);
+
         Update(dt);
 
         foreach (var child in children)

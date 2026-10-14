@@ -219,6 +219,9 @@ public partial class UICompositor : GameComponent, IDisposable
     private UIComponent? hovered;
     private UIComponent? pressed;
 
+    /// <summary>The topmost component the pointer is over, null for none. Simulation thread.</summary>
+    public UIComponent? HoveredComponent => hovered;
+
     // The part of a highlighted component its tabs are painted as, a number no component gives a part of its own
     private const int GRIPS_PART = -7004;
 

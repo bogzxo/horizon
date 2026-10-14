@@ -71,6 +71,12 @@ public class HotPathTests
         { typeof(UISkin), "TryGetRegion" },
         { typeof(UIFont), "Measure" },
         { typeof(UIFont), "Resolve" },
+        { typeof(Horizon.UI.Components.UIComponent), "UpdateTree" },
+        { typeof(Horizon.UI.Components.UIComponent), "PaintTree" },
+        { typeof(Horizon.UI.Components.UIComponent), "StepHover" },
+        { typeof(Horizon.UI.Components.UIComponent), "ApplyHover" },
+        { typeof(Horizon.UI.Components.Collapsible), "Paint" },
+        { typeof(Horizon.UI.Components.Collapsible), "PaintChildren" },
 
         // The path traced lighting, every frame it is on, and the exposure that follows the picture
         { typeof(PathTracedLighting2D), "Run" },

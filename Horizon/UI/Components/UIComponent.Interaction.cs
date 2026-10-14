@@ -66,7 +66,9 @@ public abstract partial class UIComponent
                 return hit;
         }
 
-        return HitTestVisible && Bounds.Contains(point) ? this : null;
+        // Something with a tooltip can be pointed at to read it, even what is otherwise only drawn (a label). It
+        // takes the press as well then, which a label does nothing with
+        return (HitTestVisible || Tooltip.Length > 0) && Bounds.Contains(point) ? this : null;
     }
 
     /// <summary>The pointer was pressed on this component.</summary>

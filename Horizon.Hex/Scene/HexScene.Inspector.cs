@@ -5,6 +5,7 @@ using Horizon.HIDL.Runtime;
 using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
+using Horizon.UI.Scripting;
 
 namespace Horizon.Hex;
 
@@ -65,8 +66,16 @@ internal sealed partial class HexScene
                 Say($"'{text}' can't be its name: taken, or not a name a variable can have", error: true);
             }
         };
-        AddRow("name", nameEditor);
-        AddRow("kind", new Label(UIModule.KindOf(selected) ?? selected.GetType().Name)
+        string kind = UIModule.KindOf(selected) ?? selected.GetType().Name;
+
+        // The rows go into folding sections by what they are about, the kind's own after what everything has, so a
+        // long list of properties is the part somebody is working on and not a wall of it
+        var sections = new Dictionary<string, Collapsible>();
+        foreach (string title in SectionOrder)
+            sections[title == KIND_SECTION ? kind.Replace('_', ' ') : title] = null!;
+
+        AddRow(Section(sections, SectionOf("name", kind)), "name", nameEditor);
+        AddRow(Section(sections, SectionOf("kind", kind)), "kind", new Label(kind)
         {
             Align = Origin.Left,
             TextScale = EDITOR_TEXT,
@@ -76,8 +85,76 @@ internal sealed partial class HexScene
         foreach (var (name, value) in HexDocument.ReadProperties(selected))
         {
             if (CreateEditor(selected, name, value) is { } editor)
-                AddRow(name, editor);
+                AddRow(Section(sections, SectionOf(name, kind)), name, editor);
         }
+    }
+
+    // The sections of the properties, in the order they come, the one named after the kind standing in for its own
+    private const string KIND_SECTION = "*";
+    private static readonly string[] SectionOrder = ["general", KIND_SECTION, "placement", "hover", "entrance", "resizing"];
+
+    // Which sections were folded away, by title, kept from one thing selected to the next and the one after
+    private readonly HashSet<string> foldedSections = [];
+
+    /// <summary>Helper method to say which section of the properties a property goes in.</summary>
+    private static string SectionOf(string name, string kind) => name switch
+    {
+        "name" or "kind" or "visible" or "enabled" or "layer" or "tooltip" => "general",
+        "pos" or "size" or "anchor" or "pivot" or "fill" or "padding" or "scale" or "z" => "placement",
+        "resize" or "min_size" or "max_size" => "resizing",
+        _ when name.StartsWith("hover") => "hover",
+        _ when name.StartsWith("intro") => "entrance",
+        _ => kind.Replace('_', ' ')
+    };
+
+    /// <summary>
+    /// Helper method to find the section a row goes into, making it the first time it is asked for. It is put in its
+    /// place among the ones there are by the order they come in, whichever of them happened to be made first.
+    /// </summary>
+    private Collapsible Section(Dictionary<string, Collapsible> sections, string title)
+    {
+        if (sections.TryGetValue(title, out var section) && section is not null)
+            return section;
+
+        section = new Collapsible(title)
+        {
+            Fill = UIFill.Horizontal,
+            TextScale = EDITOR_TEXT,
+            HeaderHeight = 24,
+            Spacing = 5,
+            Padding = new UIEdges(0, 6, 0, 8),
+            Expanded = !foldedSections.Contains(title)
+        };
+        section.OnToggled = open =>
+        {
+            if (open) foldedSections.Remove(title);
+            else foldedSections.Add(title);
+        };
+
+        sections[title] = section;
+
+        // Before the first one made already that comes after it, and after what is said over all of them
+        int index = inspector.Children.TakeWhile(child => child is not Collapsible).Count();
+        foreach (var (other, made) in sections)
+        {
+            if (other == title)
+                break;
+            if (made is not null && made.Parent == inspector)
+                index = inspector.Children.ToList().IndexOf(made) + 1;
+        }
+
+        inspector.Insert(index, section);
+        return section;
+    }
+
+    /// <summary>
+    /// Helper method to play the entrance of everything in the layout from the start, the way loading it in a
+    /// program does. The whole of it and not only what is selected, a delay means nothing without the rest.
+    /// </summary>
+    private void PlayIntros()
+    {
+        document.PlayIntros();
+        Say("playing the entrances, F5 does it again");
     }
 
     // The properties that name a piece of art of the skin, the look of anything that has one, a panel's backdrop,
@@ -87,13 +164,18 @@ internal sealed partial class HexScene
     // The menu of art that was opened last, for the self-test to find its tiles
     private ArtPicker? artPicker;
 
-    private void AddRow(string name, UIComponent editor)
+    private void AddRow(UIComponent section, string name, UIComponent editor)
     {
         // The row itself is the template the inspector names, the editor goes into the room it leaves for one
-        var row = layout.Instantiate(inspector.Template, inspector);
+        var row = layout.Instantiate(inspector.Template, section);
 
         row.Get<Label>("caption").Text = name.Replace('_', ' ');
         row.Get<StackPanel>("editor").Add(editor);
+
+        // What the property does, on its name and on whatever is in the editor that has nothing of its own to say
+        string help = UIPropertyHelp.Describe(document.Selected is { } shown ? UIModule.KindOf(shown) : null, name);
+        row.Get<Label>("caption").Tooltip = help;
+        row.Get<StackPanel>("editor").Tooltip = help;
         editors[name] = editor;
     }
 

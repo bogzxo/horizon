@@ -230,6 +230,12 @@ internal sealed class HexDocument
             case Divider divider: divider.Size = new System.Numerics.Vector2(240, 0); break;
             case Spacer spacer: spacer.Space = 24; break;
             case ScrollPanel scroll: scroll.Size = new System.Numerics.Vector2(240, 160); scroll.Color = backdrop; break;
+            case Collapsible section:
+                section.Title = "Section";
+                section.Size = new System.Numerics.Vector2(260, 0);
+                section.Padding = new UIEdges(12);
+                section.Color = backdrop;
+                break;
             case StackPanel stack: stack.Padding = new UIEdges(16); stack.Color = backdrop; break;
             case GridPanel grid: grid.Padding = new UIEdges(16); grid.Color = backdrop; break;
             case TabPanel tabs:

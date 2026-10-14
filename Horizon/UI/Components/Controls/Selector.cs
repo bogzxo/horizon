@@ -131,6 +131,10 @@ public class Selector : UIComponent
         Vector4 ink = skin.TextColor;
 
         bool lit = enabled && (IsHovered || IsSelected);
+
+        // The body and the words as parts of their own, the hover box comes and goes and counted with the words it had
+        // them blended with it for a frame between two ticks, a white flash (see UIDrawList.BeginPart)
+        list.BeginPart(0);
         if ((lit && skin.TryGetRegion(hoverStyle, out var art)) || skin.TryGetRegion(style, out art))
         {
             list.NineSlice(art, Bounds, tint);
@@ -145,6 +149,7 @@ public class Selector : UIComponent
                 list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
         }
 
+        list.BeginPart(1);
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
         Vector4 arrows = skin.AccentColor * tint;
 
@@ -153,6 +158,7 @@ public class Selector : UIComponent
         list.Text(Value, content, Origin.Center, scale, ink * tint, markup: false);
 
         PaintSelection(list);
+        list.EndParts();
     }
 
     protected internal override void OnPointerUp(Vector2 point)
