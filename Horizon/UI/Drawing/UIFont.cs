@@ -53,6 +53,21 @@ public sealed class UIFont
     /// <summary>The height of a line of text at scale 1, in pixels.</summary>
     public float LineHeight { get; }
 
+    /// <summary>How far down from the top of a line the letters sit, at scale 1, in pixels.</summary>
+    public float Baseline { get; }
+
+    /// <summary>
+    /// How much wider every bold letter is than the plain one, at scale 1, in pixels. Its ink grows into the field by
+    /// <see cref="BOLD_GROWTH"/> of the spread either side (BOLD_FLAG in sprites.slang), the letter is made room for.
+    /// </summary>
+    public float BoldAdvance { get; }
+
+    /// <summary>How far a bold letter's edge goes out into the field, a share of the field's value at the edge. Must match sprites.slang.</summary>
+    public const float BOLD_GROWTH = 0.2f;
+
+    /// <summary>How far an italic letter leans, across for every unit up.</summary>
+    public const float ITALIC_SLANT = 0.2f;
+
     /// <summary>
     /// How much the field changes from one texel of the atlas to the next on its way across an edge (half of it
     /// is the whole spread). Every glyph is drawn with this so the shader knows how wide a screen pixel is in the
@@ -78,6 +93,11 @@ public sealed class UIFont
             tallest = MathF.Max(tallest, glyph.Offset.Y + glyph.Size.Y);
 
         LineHeight = Field.LineHeight > 0 ? Field.LineHeight : tallest;
+        Baseline = Field.Base > 0 ? MathF.Min(Field.Base, LineHeight) : LineHeight * 0.8f;
+
+        // The field goes from the middle to nothing over the spread, so the edge moving by a share of the middle
+        // moves it by that share of the spread, on both sides of every stroke
+        BoldAdvance = Field.Spread * BOLD_GROWTH;
 
         // The spread is in the pixels the glyphs are measured in, the shader wants it in texels of the atlas, and
         // any glyph that has both sizes says how the two compare
@@ -251,6 +271,28 @@ public sealed class UIFont
         }
 
         return new Vector2(MathF.Max(widest, width), lines * LineHeight * scale);
+    }
+
+    /// <summary>
+    /// How wide one line of text is in a style, a bold letter being wider than a plain one. Nothing in it is a line
+    /// break. For whoever lays text out a piece at a time (<see cref="UIRichText"/>).
+    /// </summary>
+    /// <param name="icons">The set of icons the text is written in from the start, see <c>[icons:set]</c>.</param>
+    public float MeasureLine(ReadOnlySpan<char> text, float scale, UITextStyle style, ReadOnlySpan<char> icons, bool markup = true)
+    {
+        float width = 0.0f;
+        float bold = (style & UITextStyle.Bold) != 0 ? BoldAdvance * scale : 0.0f;
+
+        for (int at = 0; at < text.Length;)
+        {
+            int before = at;
+            float advance = Advance(text, ref at, scale, ref icons, markup);
+
+            // A step of one character is a letter, which gets fatter. A tag (an icon) is as wide as its art
+            width += advance + (at - before == 1 ? bold : 0.0f);
+        }
+
+        return width;
     }
 
     /// <summary>

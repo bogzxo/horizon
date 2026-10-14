@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -477,7 +478,7 @@ public class TextBox : UIComponent
 
             UIRect face = button.Shrink(new UIEdges(3.0f));
             list.Box(face, (over ? skin.HoverColor : skin.ControlColor with { W = skin.ControlColor.W * 0.35f }) * tint);
-            list.Text(ButtonLabel, face, Origin.Center, scale, ink * tint, markup: false);
+            list.Text(Localisation.Resolve(ButtonLabel), face, Origin.Center, scale, ink * tint, markup: false);
 
             content = ButtonOnRight
                 ? new UIRect(content.Min, new Vector2(MathF.Min(content.Max.X, button.Min.X - 4.0f), content.Max.Y))
@@ -515,7 +516,7 @@ public class TextBox : UIComponent
         if (!empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
         else if (!focused)
-            list.Text(Placeholder, line, Origin.Left, scale, ink * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.45f));
+            list.Text(Localisation.Resolve(Placeholder), line, Origin.Left, scale, ink * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.45f));
         list.PopClip();
 
         if (focused && blink < BLINK_INTERVAL)

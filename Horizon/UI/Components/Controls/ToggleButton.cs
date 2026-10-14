@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 
+using Horizon.Content;
 using Horizon.Rendering;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
@@ -61,7 +62,7 @@ public class ToggleButton : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
-        Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        Vector2 label = skin.Font.Measure(Localisation.Resolve(Label), LabelScale > 0.0f ? LabelScale : skin.TextScale);
         float gap = label.X > 0.0f ? skin.Spacing : 0.0f;
 
         return new Vector2(skin.ToggleSize + gap + label.X, MathF.Max(skin.ToggleSize, label.Y));
@@ -90,7 +91,7 @@ public class ToggleButton : UIComponent
             list.Box(indicator, (State ? skin.AccentColor : skin.ControlColor) * tint);
 
         list.Text(
-            Label,
+            Localisation.Resolve(Label),
             new UIRect(new Vector2(indicator.Max.X + skin.Spacing, Bounds.Min.Y), Bounds.Max),
             Origin.Left,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,

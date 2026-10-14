@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -203,7 +204,7 @@ public class ListBox : UIComponent
             else if (IsHovered && enabled && Hovering(row))
                 list.Rect(row, skin.HoverColor);
 
-            list.Text(items[i], row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, scale, skin.TextColor * tint, markup: false);
+            list.Text(Localisation.Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, scale, skin.TextColor * tint, markup: false);
         }
 
         list.EndParts();

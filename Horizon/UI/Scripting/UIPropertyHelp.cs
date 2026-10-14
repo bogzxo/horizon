@@ -137,6 +137,7 @@ public static class UIPropertyHelp
         ["graph.unit"] = "what the values are counted in, written after the top of the graph in its corner",
         ["unit_color"] = "the colour of the unit, the number's fainter if it is left at nothing",
         ["unit_scale"] = "how big the unit is written, 0 for the skin's size, which next to a big number is smaller than it",
+        ["markdown"] = "reads the text as markdown, **bold**, *italic*, `code`, # headings, - lists, > quotes, --- rules and [links](somewhere). The [b], [i], [color:#ff8040] and [size:1.5] tags work whether it is on or not",
         ["wrap"] = "breaks text that is wider than the label into more lines instead of running off the edge",
         ["region"] = "which piece of the skin's art it shows, the ... button shows them all",
         ["file"] = "a PNG to show instead of a piece of the skin, the path from the game's folder",

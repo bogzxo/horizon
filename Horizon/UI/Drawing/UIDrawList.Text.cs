@@ -58,7 +58,16 @@ public sealed partial class UIDrawList
     /// Draws text with the top left corner of its first line at <paramref name="position"/>.
     /// </summary>
     /// <param name="markup">Whether <c>[icon:name]</c> tags are drawn as icons. Off for text somebody typed.</param>
-    public void Text(ReadOnlySpan<char> text, Vector2 position, float scale, Vector4 color, bool markup = true)
+    public void Text(ReadOnlySpan<char> text, Vector2 position, float scale, Vector4 color, bool markup = true) =>
+        Text(text, position, scale, color, markup, UITextStyle.None, default);
+
+    /// <summary>
+    /// Draws text in a style, bold, italic or both, with the top left corner of its first line at
+    /// <paramref name="position"/>. A bold letter is wider than a plain one by <see cref="UIFont.BoldAdvance"/>, which
+    /// <see cref="UIFont.MeasureLine"/> knows about.
+    /// </summary>
+    /// <param name="icons">The set of icons the text is written in from the start, for a piece of a longer text that said so earlier.</param>
+    public void Text(ReadOnlySpan<char> text, Vector2 position, float scale, Vector4 color, bool markup, UITextStyle style, ReadOnlySpan<char> icons)
     {
         UIFont font = Skin.Font;
         uint packed = SpriteItem.PackColor(color);
@@ -68,8 +77,11 @@ public sealed partial class UIDrawList
         position = new Vector2(MathF.Round(position.X), MathF.Round(position.Y));
         Vector2 pen = position;
 
-        // The set of icons the text says it is written in, from where it says so
-        ReadOnlySpan<char> icons = default;
+        // Bold is the field's edge further out, and room made for it. Italic leans every letter over about the line it sits on
+        bool bold = (style & UITextStyle.Bold) != 0;
+        uint glyphFlags = FONT_SLOT | SpriteItem.FieldFlag | (bold ? SpriteItem.BoldFlag : 0u);
+        float boldAdvance = bold ? font.BoldAdvance * scale : 0.0f;
+        float slant = (style & UITextStyle.Italic) != 0 ? UIFont.ITALIC_SLANT : 0.0f;
 
         for (int i = 0; i < text.Length; i++)
         {
@@ -108,16 +120,15 @@ public sealed partial class UIDrawList
                 Vector2 topLeft = new(pen.X + glyph.Offset.X * scale, pen.Y - glyph.Offset.Y * scale);
                 Vector2 glyphSize = glyph.Size * scale;
 
-                Quad(
-                    new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y)),
-                    glyph.Position,
-                    glyph.Position + glyph.TexelSize,
-                    packed,
-                    FONT_SLOT | SpriteItem.FieldFlag,
-                    font.FieldSlope);
+                var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y));
+
+                if (slant == 0.0f)
+                    Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, packed, glyphFlags, font.FieldSlope);
+                else
+                    Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, packed, glyphFlags, font.FieldSlope, slant, pen.Y - font.Baseline * scale);
             }
 
-            pen.X += glyph.XAdvance * scale;
+            pen.X += glyph.XAdvance * scale + boldAdvance;
             if (i + 1 < text.Length) pen.X += font.Kerning(character, text[i + 1]) * scale;
         }
     }

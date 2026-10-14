@@ -523,7 +523,15 @@ public sealed partial class UIDrawList
     private static Vector4 RegionTint(in UIRegion region) => region.Tint == default ? Vector4.One : region.Tint;
 
     // texTopLeft is the texel the top left corner of the rectangle shows, texBottomRight the bottom right.
-    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring = 0.0f)
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring = 0.0f) =>
+        Quad(rect, texTopLeft, texBottomRight, color, flags, ring, 0.0f, 0.0f);
+
+    /// <summary>
+    /// Helper method to add a quad that leans, its top moved across by <paramref name="slant"/> for every unit it is
+    /// above <paramref name="upright"/> (and its bottom the other way below it), which is an italic letter leaning
+    /// over the line it stands on. It is clipped as the upright rectangle it was before it leant.
+    /// </summary>
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright)
     {
         UIRect visible = rect.Intersect(clip);
         if (visible.IsEmpty)
@@ -576,6 +584,14 @@ public sealed partial class UIDrawList
         ref SpriteItem item = ref items[itemCount++];
         item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
         item.Ring = ring;
+
+        if (slant != 0.0f)
+        {
+            // Where the leaning starts, in the same space as the corners, and the corners slid across about it
+            float pivot = (upright * visualScale.Y + visualOffset.Y) * scale.Y + origin.Y;
+            item.Origin.X += slant * (min.Y - pivot);
+            item.AxisY.X = slant * (max.Y - min.Y);
+        }
         item.Key = new Vector2(owner, ownerPainted++);
     }
 

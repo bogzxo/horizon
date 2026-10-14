@@ -1,5 +1,6 @@
 ﻿using System.Numerics;
 
+using Horizon.Content;
 using Horizon.Rendering;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
@@ -87,7 +88,7 @@ public class Button : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
-        Vector2 label = skin.Font.Measure(Label, LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        Vector2 label = skin.Font.Measure(Localisation.Resolve(Label), LabelScale > 0.0f ? LabelScale : skin.TextScale);
         bool hasArt = skin.TryGetRegion(style, out var region);
 
         // Art that says where its label goes is given that much room around it, otherwise the skin decides.
@@ -138,7 +139,7 @@ public class Button : UIComponent
         if (down)
             area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
         list.Text(
-            Label,
+            Localisation.Resolve(Label),
             area,
             Origin.Center,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
