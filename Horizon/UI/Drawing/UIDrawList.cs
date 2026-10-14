@@ -381,6 +381,78 @@ public sealed partial class UIDrawList
         }
     }
 
+    /// <summary>
+    /// Draws a region of another skin than the one the list is drawn in, stretched over a rectangle. For showing
+    /// the art of one skin in a UI that wears another, an editor showing what a game's skin has.
+    /// </summary>
+    public void Region(UISkin from, in UIRegion region, UIRect rect, Vector4 tint)
+    {
+        if (ReferenceEquals(from, Skin))
+        {
+            Region(region, rect, tint);
+            return;
+        }
+
+        // Its atlas is kept up with ours from here on, what was just asked of it is stitched in before it is drawn
+        if (!atlases.Contains(from.Atlas)) atlases.Add(from.Atlas);
+        if (from.Atlas.Texture.Handle == 0) return;
+
+        Image(from.Atlas.Texture, rect, region.Position, region.Position + region.TexelSize, tint * RegionTint(region));
+    }
+
+    /// <summary>
+    /// The same for art that stretches, see <see cref="NineSlice(in UIRegion, UIRect, Vector4)"/>. The corners keep
+    /// their size and the edges stretch along their length.
+    /// </summary>
+    public void NineSlice(UISkin from, in UIRegion region, UIRect rect, Vector4 tint)
+    {
+        if (rect.IsEmpty)
+            return;
+
+        if (ReferenceEquals(from, Skin))
+        {
+            NineSlice(region, rect, tint);
+            return;
+        }
+
+        UIEdges border = region.Border;
+        if (border == default)
+        {
+            Region(from, region, rect, tint);
+            return;
+        }
+
+        if (!atlases.Contains(from.Atlas)) atlases.Add(from.Atlas);
+        if (from.Atlas.Texture.Handle == 0) return;
+
+        float left = border.Left * region.Scale, right = border.Right * region.Scale;
+        float top = border.Top * region.Scale, bottom = border.Bottom * region.Scale;
+        float squeezeX = MathF.Min(1.0f, rect.Width / (left + right));
+        float squeezeY = MathF.Min(1.0f, rect.Height / (top + bottom));
+
+        Vector2 texMin = region.Position;
+        Vector2 texMax = region.Position + region.TexelSize;
+
+        ReadOnlySpan<float> xs = [rect.Min.X, rect.Min.X + left * squeezeX, rect.Max.X - right * squeezeX, rect.Max.X];
+        ReadOnlySpan<float> ys = [rect.Max.Y, rect.Max.Y - top * squeezeY, rect.Min.Y + bottom * squeezeY, rect.Min.Y];
+        ReadOnlySpan<float> us = [texMin.X, texMin.X + border.Left, texMax.X - border.Right, texMax.X];
+        ReadOnlySpan<float> vs = [texMin.Y, texMin.Y + border.Top, texMax.Y - border.Bottom, texMax.Y];
+
+        Vector4 colour = tint * RegionTint(region);
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 3; column++)
+            {
+                Image(
+                    from.Atlas.Texture,
+                    new UIRect(new Vector2(xs[column], ys[row + 1]), new Vector2(xs[column + 1], ys[row])),
+                    new Vector2(us[column], vs[row]),
+                    new Vector2(us[column + 1], vs[row + 1]),
+                    colour);
+            }
+        }
+    }
+
     /// <summary>Draws a whole texture that isn't part of the skin, such as a portrait or an icon.</summary>
     public void Image(Texture texture, UIRect rect, Vector4 tint) =>
         Image(texture, rect, Vector2.Zero, new Vector2(texture.Width, texture.Height), tint);
@@ -455,7 +527,15 @@ public sealed partial class UIDrawList
     {
         UIRect visible = rect.Intersect(clip);
         if (visible.IsEmpty)
+        {
+            // Cut away altogether, but it still counts as one of its owner's quads. A quad is told apart from
+            // one tick to the next by who painted it and as which of theirs, and if the ones that are out of
+            // sight weren't counted, every quad after one that slides out under a clip would be taken for the
+            // one before it and blended with that for a tick. Panning a layout about under the edge of an
+            // editor's canvas was a flicker of boxes turning into their neighbours
+            ownerPainted++;
             return;
+        }
 
         // Everything is axis aligned, so clipping is just a matter of trimming the quad and showing
         // the matching part of the texture.

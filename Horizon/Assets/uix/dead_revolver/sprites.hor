@@ -218,8 +218,8 @@ let selectors = {
     sprites: {
         selector:       { x: 13, y: 13, w: 22, h: 22, border: 11 },
         selector_round: { x: 61, y: 13, w: 22, h: 22, border: 11 },
-        selector_bold:  { x: 110, y: 14, w: 20, h: 20, border: 11 },
-        selector_thin:  { x: 158, y: 14, w: 20, h: 20, border: 11 },
+        selector_bold:  { x: 110, y: 14, w: 20, h: 20, border: 10 },
+        selector_thin:  { x: 158, y: 14, w: 20, h: 20, border: 10 },
         selector_box:   { x: 396, y: 12, w: 24, h: 24, border: 4 }
     }
 };

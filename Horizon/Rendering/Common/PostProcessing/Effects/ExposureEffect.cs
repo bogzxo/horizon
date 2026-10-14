@@ -26,6 +26,7 @@ public sealed class ExposureEffect : PostEffect
     private const string UNIFORM_EXPOSURE = "uExposure";
     private const string UNIFORM_GAMMA = "uGamma";
     private const string UNIFORM_KNEE = "uKnee";
+    private const string UNIFORM_DARK_GAMMA = "uDarkGamma";
 
     private const string UNIFORM_DELTA_TIME = "uDeltaTime";
     private const string UNIFORM_KEY = "uKey";
@@ -56,6 +57,13 @@ public sealed class ExposureEffect : PostEffect
     public float Gamma { get; set; } = 1.0f;
 
     /// <summary>
+    /// A gamma on top of <see cref="Gamma"/> that only comes in as the eye gets used to the dark, all of it at
+    /// <see cref="MostAdapted"/> and none of it in a scene the eye hasn't had to adapt to. This is the one for
+    /// lifting a night, a plain gamma lifts noon just as much and noon goes to milk. 1 for none.
+    /// </summary>
+    public float DarkGamma { get; set; } = 1.0f;
+
+    /// <summary>
     /// Where the bright end starts to be rolled off towards white rather than cut, 0 to 1. Everything up to it is
     /// left alone. 1 for no roll off at all.
     /// </summary>
@@ -68,11 +76,15 @@ public sealed class ExposureEffect : PostEffect
     /// </summary>
     public float Adaptation { get; set; } = 0.5f;
 
-    /// <summary>The middle grey the average brightness is brought towards, 0.18 the usual.</summary>
-    public float Key { get; set; } = 0.18f;
+    /// <summary>
+    /// The brightness the average of the picture is brought towards. The picture comes in as it goes to the
+    /// screen (lit, rolled off, 0 to 1), where the middle is about a third, the 0.18 of the books is for light
+    /// that hasn't been through a curve yet and made everything look too dark to the meter.
+    /// </summary>
+    public float Key { get; set; } = 0.35f;
 
     /// <summary>The least the adapted part of the exposure may be, under 1 and a bright noon is brought down.</summary>
-    public float LeastAdapted { get; set; } = 1.0f;
+    public float LeastAdapted { get; set; } = 0.8f;
 
     /// <summary>The most it may be, how far into the dark the eye goes. 1.6 is some, 4 is a cat.</summary>
     public float MostAdapted { get; set; } = 1.6f;
@@ -128,6 +140,8 @@ public sealed class ExposureEffect : PostEffect
         draw.SetUniform(UNIFORM_EXPOSURE, MathF.Max(Exposure, 0.0f));
         draw.SetUniform(UNIFORM_GAMMA, MathF.Max(Gamma, 0.05f));
         draw.SetUniform(UNIFORM_KNEE, Math.Clamp(Knee, 0.0f, 1.0f));
+        draw.SetUniform(UNIFORM_DARK_GAMMA, MathF.Max(DarkGamma, 0.05f));
+        draw.SetUniform(UNIFORM_MOST, MathF.Max(MostAdapted, 1.001f));
         if (adapted is not null) draw.BindBuffer(ADAPTED_BINDING, adapted);
         context.Source.Bind(0);
         context.Draw();

@@ -41,7 +41,7 @@ internal sealed class UIBasicsCheck : Scene, ITestControls, ISelfCheck
         // 1. Setup Camera and Compositor
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;
-        _compositor = AddComponent(new UICompositor(cam));
+        _compositor = AddComponent(new UICompositor(cam, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE));
 
         // Nobody is at the wheel, the pointer is the script's
         _compositor.PointerSource = () => _selfTest.Pointer;

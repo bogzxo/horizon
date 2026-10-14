@@ -23,6 +23,7 @@
 // An icon whose sprite has frames animates in the text, which is how the buttons blink a press now and then.
 
 let skin = {
+    title: "Dead Revolver",
     sprites: "sprites.hor",
     theme: "blue",
     font: { dir: "Assets/fonts/klaxon_mono/", file: "klaxon_mono.fnt" },
@@ -150,6 +151,7 @@ let skin = {
             regions: { progress_fill: { sprite: "bar_fill", tint: vec(0, 0.86, 1, 1.0) } }
         },
         purple: { accent_color: vec(0.71, 0.59, 0.94, 1.0) },
+        sakura: { accent_color: vec(0.96, 0.6, 0.72, 1.0) },
         red: { accent_color: vec(0.92, 0.27, 0.23, 1.0) },
         gold: { accent_color: vec(0.94, 0.81, 0.63, 1.0) },
         tan: {

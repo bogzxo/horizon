@@ -20,6 +20,10 @@ namespace Horizon.UI.Skinning;
 /// on every side. A button with a lip along the bottom has its label on the face above it. Empty for art
 /// that leaves this to the skin.
 /// </param>
+/// <param name="TextColor">
+/// The colour of whatever is written on top of the art, for art whose face isn't the colour the rest of the skin
+/// writes on (a dark button in a skin of light ones). See-through for art that leaves it to the skin, see <see cref="TextOr"/>.
+/// </param>
 public readonly record struct UIRegion(
     Vector2 Position,
     Vector2 TexelSize,
@@ -28,8 +32,12 @@ public readonly record struct UIRegion(
     Vector4 Tint = default,
     int Frames = 1,
     float FrameTime = 0.1f,
-    UIEdges Content = default)
+    UIEdges Content = default,
+    Vector4 TextColor = default)
 {
+    /// <summary>The colour to write on top of the art in, its own if it has one and what the skin says otherwise.</summary>
+    public Vector4 TextOr(Vector4 otherwise) => TextColor.W > 0.0f ? TextColor : otherwise;
+
     /// <summary>The size of the art on screen when nothing stretches it.</summary>
     public Vector2 Size => TexelSize * Scale;
 

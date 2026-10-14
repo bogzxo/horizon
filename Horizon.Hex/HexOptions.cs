@@ -12,4 +12,5 @@ namespace Horizon.Hex;
 /// <param name="Exercise">Whether the layouts that are checked are changed, saved, opened again and put back as well.</param>
 /// <param name="Scale">How big the editor draws itself, null for what it was left at the last time.</param>
 /// <param name="Browse">Whether the editor starts by asking which layout to open.</param>
-internal sealed record HexOptions(string? Open, string Workspace, bool SelfTest, bool Wheel, string[] Check, bool Exit, bool Exercise = false, float? Scale = null, bool Browse = false);
+/// <param name="Watch">Whether the self-test goes slowly enough to follow, it is over in a few seconds otherwise.</param>
+internal sealed record HexOptions(string? Open, string Workspace, bool SelfTest, bool Wheel, string[] Check, bool Exit, bool Exercise = false, float? Scale = null, bool Browse = false, bool Watch = false);

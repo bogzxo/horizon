@@ -1,0 +1,61 @@
+// The Adventure skin, planks and parchment or riveted steel, for a game with a sword in it. The art is UI Pack
+// Pixel Adventure by Kenney, CC0, see the README next to this.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the
+// hearts) and what the components' art is called. Everything it says itself is what it does differently. Its
+// sprites go by the same names (sprites.hor here falls back on Dead Revolver's for whatever this pack hasn't
+// got), so a layout written for that skin comes up in this one.
+//
+// It is a light skin in both of its themes, the faces of everything are parchment or pale steel and written on in
+// something dark. What is chosen is red on wood and blue on steel and written on in cream, which the sprites say
+// themselves (text_color in sprites.hor).
+// The font is Cascadia Mono at 55 pixels to the em, which is what makes a letter of it as wide as one of Dead
+// Revolver's font. A layout that says how big its text is means it in that font, so the two have to agree.
+// Comments can't go inside of the object, the parser won't have it.
+
+let bark = vec(0.27, 0.17, 0.08, 1.0);
+let ink = vec(0.13, 0.17, 0.23, 1.0);
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Adventure",
+    sprites: "sprites.hor",
+    theme: "wood",
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 55 },
+
+    art_scale: 3,
+    text_scale: 0.4,
+    hover_color: vec(1.0, 1.0, 1.0, 0.16),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.45),
+    bar_text_color: vec(1.0, 0.95, 0.84, 1.0),
+    text_shadow_color: vec(0.0, 0.0, 0.0, 0.7),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+
+    button_padding: vec(18, 12),
+    progress_inset: vec(9, 9),
+    toggle_size: 30,
+    spacing: 12,
+
+    themes: {
+        wood: {
+            text_color: bark,
+            control_text_color: bark,
+            panel_color: vec(1.0, 0.94, 0.82, 1.0),
+            field_color: vec(1.0, 0.94, 0.82, 1.0),
+            control_color: vec(0.76, 0.53, 0.28, 1.0),
+            border_color: vec(0.42, 0.28, 0.14, 1.0),
+            accent_color: vec(0.8, 0.36, 0.31, 1.0),
+            regions: { selection: { sprite: "selector", tint: vec(0.42, 0.28, 0.14, 1.0) } }
+        },
+        steel: {
+            text_color: ink,
+            control_text_color: ink,
+            panel_color: vec(0.58, 0.67, 0.76, 1.0),
+            field_color: vec(0.58, 0.67, 0.76, 1.0),
+            control_color: vec(0.46, 0.54, 0.62, 1.0),
+            border_color: vec(0.31, 0.37, 0.43, 1.0),
+            accent_color: vec(0.24, 0.42, 0.6, 1.0),
+            regions: { selection: { sprite: "selector", tint: vec(0.2, 0.26, 0.33, 1.0) } }
+        }
+    }
+};

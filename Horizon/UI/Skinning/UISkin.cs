@@ -35,14 +35,15 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>What the skin file says a region is. A sprite of the sheet, or a rectangle of an image.</summary>
     private readonly record struct RegionSource(
-        string? Sprite, string? Path, int X, int Y, int Width, int Height, UIEdges? Border, UIEdges? Content, float? Scale, Vector4 Tint);
+        string? Sprite, string? Path, int X, int Y, int Width, int Height, UIEdges? Border, UIEdges? Content, float? Scale, Vector4 Tint,
+        Vector4 TextColor = default);
 
     /// <summary>What the skin file says an icon is.</summary>
     private readonly record struct IconSource(
         string Region, string Label, Vector4? LabelColor, string? Symbol = null, Vector4 SymbolColor = default, float SymbolSize = 0.5f, float Height = 0.0f);
 
     /// <summary>A name worked out down to the pixels it stands for, which can be done before any of it is loaded.</summary>
-    private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key);
+    private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key, Vector4 TextColor = default);
 
     /// <summary>An icon worked out the same way. One with frames animates in text, the names of its frames are made once.</summary>
     private sealed record IconArt(
@@ -233,6 +234,21 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     }
 
     /// <summary>
+    /// The names of every piece of art the skin has, the regions it declares and the sprites of its sheet, in
+    /// the order of the alphabet. What <see cref="TryGetRegion"/> can be asked for, for a menu to pick one from
+    /// (see <see cref="Components.ArtPicker"/>).
+    /// </summary>
+    public IEnumerable<string> ArtNames
+    {
+        get
+        {
+            var names = new SortedSet<string>(sources.Keys, StringComparer.OrdinalIgnoreCase);
+            if (Sheet is { } sheet) names.UnionWith(sheet.Sprites);
+            return names;
+        }
+    }
+
+    /// <summary>
     /// Finds a piece of art by name. A region the skin declares, or failing that any sprite of its sheet
     /// ("name#2" being the third frame of one that has frames). Art that is asked for the first time isn't
     /// there until the next frame is drawn, as it has to be stitched into the atlas first.
@@ -250,7 +266,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             return false;
 
         region = new UIRegion(
-            placed.Position, placed.Size, art.Border, art.Scale, art.Tint, art.Source.Frames, art.Source.FrameTime, art.Content);
+            placed.Position, placed.Size, art.Border, art.Scale, art.Tint, art.Source.Frames, art.Source.FrameTime, art.Content, art.TextColor);
         regions[name] = region;
         return true;
     }
@@ -434,6 +450,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         UIEdges? content = null;
         float scale = ArtScale;
         Vector4 tint = Vector4.One;
+        Vector4 textColor = default;
+        float? ownScale = null;
 
         if (sources.TryGetValue(name, out var declared))
         {
@@ -456,13 +474,18 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
             border = declared.Border;
             content = declared.Content;
-            scale = declared.Scale ?? ArtScale;
+            ownScale = declared.Scale;
             tint = declared.Tint;
+            textColor = declared.TextColor;
         }
         else if (Sheet is null || !Sheet.TryGetSprite(name + frame, Theme, out source))
         {
             return null;
         }
+
+        // Art that says how big it wants to be is drawn that big, pixel art borrowed from another pack keeps its
+        // pixels the size they were drawn for whatever this skin draws its own at
+        scale = ownScale ?? (source.Scale > 0.0f ? source.Scale : ArtScale);
 
         return new Art(
             source,
@@ -471,7 +494,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             scale,
             tint,
             // The same pixels asked for under two names are only stitched in once.
-            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer));
+            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer),
+            textColor.W > 0.0f ? textColor : source.TextColor);
     }
 
     public void Dispose() => Atlas.Dispose();

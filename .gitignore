@@ -402,4 +402,6 @@ FodyWeavers.xsd
 
 
 **/*.sync-conflict*
+/docs/notebook.md
+/Horizon/Art
 /CLAUDE.md

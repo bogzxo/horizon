@@ -801,6 +801,144 @@ internal sealed class HexDocument
         });
     }
 
+    /// <summary>
+    /// Moves components a place up or down among their siblings, which is the order the tree lists them in and a
+    /// stack lays them out in. Ones that are next to each other move together and keep their order, and one that
+    /// is at the end already stays there.
+    /// </summary>
+    /// <param name="by">Less than nothing for up (towards the first), more for down.</param>
+    /// <returns>Whether anything moved.</returns>
+    public bool Move(IReadOnlyList<UIComponent> components, int by)
+    {
+        bool moved = false;
+
+        // The ones nearest the way they are going go first, or they would be in the way of the ones behind them
+        var ordered = by < 0 ? components : components.Reverse();
+        foreach (var component in ordered)
+        {
+            if (component.Parent is not { } parent)
+                continue;
+
+            int index = IndexIn(parent, component);
+            int target = index + Math.Sign(by);
+            if (target < 0 || target >= parent.Children.Count)
+                continue;
+
+            // Not past one that is moving as well and got stuck at the end, they keep their order
+            UIComponent neighbour = parent.Children[target];
+            if (components.Contains(neighbour) || previews.Contains(neighbour))
+                continue;
+
+            moved |= parent.MoveChild(component, target);
+        }
+
+        return moved;
+    }
+
+    /// <summary>
+    /// Takes a component out of the container it is in and puts it after that container, in whatever that is in.
+    /// </summary>
+    /// <returns>Whether it could be done, with the reason why not if it couldn't.</returns>
+    public bool MoveOut(UIComponent component, out string problem)
+    {
+        problem = string.Empty;
+        if (component.Parent is not { } parent || parent == Module.Root)
+        {
+            problem = $"{NameOf(component)} is on the screen already, there is nothing to take it out of";
+            return false;
+        }
+
+        if (parent is TabPanel || parent.Parent is TabPanel)
+        {
+            problem = "a page belongs to its tabs, and what goes next to a page would be a page without a tab";
+            return false;
+        }
+
+        UIComponent outer = parent.Parent ?? Module.Root;
+        outer.Insert(IndexIn(outer, parent) + 1, component);
+        return true;
+    }
+
+    /// <summary>
+    /// Puts a component into the container that comes right before it among its siblings, at the end of it, which
+    /// is where it would be had it been listed a step further in. For tabs that is the page that is open.
+    /// </summary>
+    public bool MoveInto(UIComponent component, out string problem)
+    {
+        problem = string.Empty;
+        UIComponent parent = component.Parent ?? Module.Root;
+        int index = IndexIn(parent, component);
+
+        UIComponent? into = index > 0 ? parent.Children[index - 1] : null;
+        if (into is TabPanel tabs)
+            into = tabs.Selected >= 0 && tabs.Selected < tabs.Children.Count ? tabs.Children[tabs.Selected] : null;
+
+        if (into is not Panel || previews.Contains(into))
+        {
+            problem = $"what comes before {NameOf(component)} isn't something things go into, move it under a stack or a panel first";
+            return false;
+        }
+
+        into.Add(component);
+        return true;
+    }
+
+    /// <summary>
+    /// Writes components and everything in them as the code that makes them, the way a layout file has them, for
+    /// putting them down somewhere else (<see cref="Paste"/>), in this layout or another.
+    /// </summary>
+    public string Copy(IReadOnlyList<UIComponent> components)
+    {
+        var code = new StringBuilder();
+        foreach (var top in components)
+        {
+            var subtree = new List<(UIComponent, int)>();
+            Collect(top, 0, subtree);
+
+            foreach (var (component, _) in subtree)
+                WriteComponent(code, component, top: top);
+        }
+
+        return code.ToString();
+    }
+
+    /// <summary>
+    /// Makes what <see cref="Copy"/> wrote, in a container or on the screen. Everything keeps the name it had
+    /// where that is free and gets a new one where it isn't.
+    /// </summary>
+    /// <returns>The tops of what was made, empty with the reason why if the code wouldn't run.</returns>
+    public List<UIComponent> Paste(string code, UIComponent? parent, out string problem)
+    {
+        problem = string.Empty;
+
+        UILayout made;
+        try
+        {
+            made = UILayout.LoadCode(Module, code, parent, Path ?? string.Empty);
+        }
+        catch (Exception e)
+        {
+            problem = e.Message;
+            return [];
+        }
+
+        foreach (var (name, part) in made.Parts)
+            names[part] = names.ContainsValue(name) ? FreeName(UIModule.KindOf(part) ?? "component") : name;
+
+        var tops = made.Roots.ToList();
+        foreach (var top in tops)
+        {
+            NameOf(top);
+
+            // Nudged so a copy put down on top of what it was copied from can be seen to be there
+            top.Position += new Vector2(16, -16);
+        }
+
+        SettleIntros();
+        RefreshPreviews();
+        return tops;
+    }
+
     private static int IndexIn(UIComponent parent, UIComponent child)
     {
         var children = parent.Children;

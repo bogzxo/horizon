@@ -68,6 +68,13 @@ internal sealed class AtlasFrames(string[] keys)
 public sealed class TextureAtlas : IDisposable
 {
     private const int PADDING = 2;          // Texels kept clear between two regions, so neither bleeds into the other
+
+    /// <summary>
+    /// Whether what is in the atlas is smoothed when it is drawn bigger or smaller than it is. Pixel art wants
+    /// this off (which it is), art that was drawn big to be shown small wants it on. Set before anything is
+    /// asked of the atlas, the texture is made the way this says the first time it is needed.
+    /// </summary>
+    public bool Smooth { get; set; }
     private const int MAX_HEIGHT = 16384;   // As tall as it is allowed to grow, or what the card takes if that's less
 
     private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer);
@@ -425,7 +432,7 @@ public sealed class TextureAtlas : IDisposable
                         {
                             Width = (uint)_width,
                             Height = (uint)_height,
-                            Definition = TextureDefinition.RgbaUnsignedByteNearest
+                            Definition = Smooth ? TextureDefinition.RgbaUnsignedByte : TextureDefinition.RgbaUnsignedByteNearest
                         },
                         out var result))
                 {

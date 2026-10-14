@@ -83,7 +83,7 @@ internal sealed class UIControlsCheck : Scene, ITestControls, ISelfCheck
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;
 
-        _compositor = AddComponent(new UICompositor(cam) { DesignSize = DesignSize });
+        _compositor = AddComponent(new UICompositor(cam, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE) { DesignSize = DesignSize });
 
         // Nobody is at the wheel, the pointer is the script's
         _compositor.PointerSource = () => _selfTest.Pointer;
@@ -189,11 +189,13 @@ internal sealed class UIControlsCheck : Scene, ITestControls, ISelfCheck
         test.Check("intro: everything with an entrance starts out hidden", () =>
             third.Opacity == 0.0f && third.Tweens.Count > 0 && card.Tweens.Count > 0 && first.VisualOffset.X < -100);
 
-        test.Hover(away, 0.1f);
+        // Until the first is well on its way, however long that takes on this machine, and not a guess at it
+        test.Hover(away);
+        test.WaitFor(() => first.Opacity > 0.5f, 1.0f);
         test.Check("intro: the first one is on its way while the last one waits its turn", () =>
             first.Opacity > 0.5f && third.Opacity == 0.0f);
 
-        test.Hover(away, 1.2f);
+        test.WaitFor(() => card.Tweens.Count == 0 && first.Tweens.Count == 0 && second.Tweens.Count == 0 && third.Tweens.Count == 0, 3.0f);
         test.Check("intro: in the end everything is where it belongs", () =>
             new UIComponent[] { card, first, second, third }.All(component =>
                 component.Opacity == 1.0f && component.VisualOffset == Vector2.Zero && component.VisualScale == Vector2.One && component.Tweens.Count == 0));

@@ -41,7 +41,7 @@ public class GameEngine : Entity
     /// <summary>
     /// The camera of the scene that is on screen, or the one of the engine if the scene hasn't got one.
     /// </summary>
-    public Camera ActiveCamera => SceneManager.CurrentInstance?.ActiveCamera ?? DefaultCamera;
+    public Camera ActiveCamera => SceneManager.ActiveScene?.ActiveCamera ?? DefaultCamera;
 
     /// <summary>
     /// The camera that is used while no scene says otherwise. It looks at the middle of the world, a unit a pixel.
@@ -63,6 +63,12 @@ public class GameEngine : Entity
     public ObjectManager ObjectManager { get; }
     public WindowManager WindowManager { get; }
     public SceneManager SceneManager { get; }
+
+    /// <summary>
+    /// What the window shows until the first scene has something to draw, see <see cref="Engine.LoadingScreen"/>.
+    /// Set it up before <see cref="Run()"/>.
+    /// </summary>
+    public LoadingScreen LoadingScreen { get; } = new();
 
     /// <summary>
     /// The keyboard, the mouse and the gamepads.
@@ -154,6 +160,7 @@ public class GameEngine : Entity
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+        WindowManager.DeviceReady = ShowLoadingScreen;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
@@ -217,6 +224,11 @@ public class GameEngine : Entity
             }
         });
     }
+
+    /// <summary>
+    /// Helper method to put the loading screen in the window, the moment there is a device to draw it with.
+    /// </summary>
+    private void ShowLoadingScreen() => LoadingScreen.Present(Graphics, WindowManager.ViewportSize);
 
     /// <summary>
     /// Has a scene take over from the one that is on screen, the way the scene manager is set to do it. From any thread.
@@ -299,6 +311,16 @@ public class GameEngine : Entity
 
         // The camera every shader draws through, bound for the frame. Whoever draws says which camera, see CameraBlock.Use
         Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
+
+        // Still under everything until the first scene draws. The frame a scene is set up on and the ones before
+        // it has had a tick have nothing of it in them, and would be a blink of black between the two
+        if (LoadingScreen.IsUp)
+        {
+            if (SceneManager.IsStarting)
+                LoadingScreen.Draw(WindowManager.ViewportSize);
+            else
+                LoadingScreen.IsUp = false;
+        }
 
         // Whatever is drawn outside of a scene makes what it makes on the GPU for everybody, the same as when it's
         // set up (see EntityLifecycle.Scope above). An overlay on the engine that makes its layer the first time it's

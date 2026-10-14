@@ -51,6 +51,11 @@ public abstract partial class UIComponent
             point = Bounds.Center + (point - VisualOffset - Bounds.Center) / VisualScale;
         }
 
+        // An edge that can be dragged is found before anything inside of the component is, whatever sits against
+        // it (a scroll bar, a button) would have it otherwise. See Resizable
+        if (Resizable != UIResize.None && GripAt(point) != UIResize.None)
+            return this;
+
         if (ClipsChildren && !Bounds.Contains(point))
             return null;
 
@@ -190,7 +195,11 @@ public abstract partial class UIComponent
     /// <summary>How long the entrance takes, in seconds.</summary>
     public float IntroTime { get; set; } = DEFAULT_INTRO_TIME;
 
-    /// <summary>How long the component stays hidden before its entrance starts, in seconds.</summary>
+    /// <summary>
+    /// How long the component stays hidden before its entrance starts, in seconds. Everything inside of it waits
+    /// that long as well, on top of whatever delay it has of its own, a panel that comes in late brings what is in
+    /// it in late with it.
+    /// </summary>
     public float IntroDelay { get; set; }
 
     /// <summary>Where a component that slides in comes from, relative to where it belongs, (-300, 0) is from the left.</summary>
@@ -207,7 +216,7 @@ public abstract partial class UIComponent
     /// <summary>
     /// Plays the entrance of this component and of everything inside it that has one.
     /// </summary>
-    /// <param name="delay">Seconds to wait on top of each component's own delay.</param>
+    /// <param name="delay">Seconds to wait on top of each component's own delay and the delays of whatever it is inside of.</param>
     public void PlayIntro(float delay = 0.0f)
     {
         float wait = IntroDelay + delay;
@@ -227,12 +236,15 @@ public abstract partial class UIComponent
                 break;
         }
 
-        // One after the other, for a container that says so
+        // What is inside waits as long as this does, its delay is theirs as well. A child that made its entrance
+        // while its parent was still waiting to make its own showed up on its own in the middle of nothing, or
+        // was never seen to come in at all because the parent was still see-through. And one after the other on
+        // top of that, for a container that says so
         float step = this is Panel panel ? panel.Stagger : 0.0f;
         var snapshot = children;
 
         for (int i = 0; i < snapshot.Length; i++)
-            snapshot[i].PlayIntro(delay + i * step);
+            snapshot[i].PlayIntro(wait + i * step);
     }
 
     /* The keyboard */

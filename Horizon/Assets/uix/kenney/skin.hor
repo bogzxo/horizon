@@ -1,0 +1,83 @@
+// The Kenney skin, chunky and bright, white panels with solid buttons on them in one of five colours. The art
+// is UI Pack by Kenney, CC0, see the README next to this. The font is Cascadia Mono at 55 pixels to the em,
+// which is what makes a letter of it as wide as one of Dead Revolver's font. A layout that says how big its text
+// is means it in that font, so the two have to agree. The pack's own font is too wide for any of that.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the
+// hearts) and what the components' art is called. Everything it says itself is what it does differently. Its
+// sprites go by the same names (sprites.hor here falls back on Dead Revolver's for whatever this pack hasn't
+// got), so a layout written for that skin comes up in this one.
+//
+// It is a light skin, text is slate on white. The solid buttons are written on in white, which their sprites say
+// themselves (text_color in sprites.hor), and the two themes whose buttons are too light for white (yellow and
+// grey) say otherwise for theirs under regions. A region that is an object with a sprite and a text_color is
+// that sprite written on in that colour.
+//
+// Under icons is how many pixels of the art make a line of text, for the icons this pack has art of its own for
+// (the arrows). The numbers the Dead Revolver skin gives them are for its art, which is half as tall, and left
+// at those an arrow in a line of text came out twice as tall as the line.
+// Comments can't go inside of the object, the parser won't have it.
+
+let slate = vec(0.2, 0.22, 0.3, 1.0);
+
+func dark_buttons() {
+    let regions = {};
+    let names = ["button", "button_pill", "button_slant", "tab_left", "tab_right"];
+    let states = ["", "_hover", "_pressed"];
+    for (i in range(names.count)) {
+        for (j in range(states.count)) {
+            regions[names[i] + states[j]] = { sprite: names[i] + states[j], text_color: slate };
+        }
+    }
+    regions["button_flat_selected"] = { sprite: "button_flat_selected", text_color: slate };
+    regions["header"] = { sprite: "header", text_color: slate };
+    return regions;
+}
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Kenney",
+    sprites: "sprites.hor",
+    theme: "blue",
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 55 },
+
+    art_scale: 2,
+    text_scale: 0.4,
+    text_color: slate,
+    control_text_color: slate,
+    control_color: vec(0.855, 0.863, 0.906, 1.0),
+    field_color: vec(1.0, 1.0, 1.0, 1.0),
+    border_color: vec(0.6, 0.6, 0.69, 1.0),
+    panel_color: vec(0.94, 0.945, 0.965, 1.0),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    hover_color: vec(0.2, 0.22, 0.3, 0.1),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.45),
+    bar_text_color: vec(1.0, 1.0, 1.0, 1.0),
+    text_shadow_color: vec(0.1, 0.12, 0.2, 0.6),
+    icon_label_color: vec(1.0, 1.0, 1.0, 1.0),
+    icon_scale: 1.33,
+
+    button_padding: vec(16, 10),
+    progress_inset: vec(6, 6),
+    toggle_size: 28,
+    spacing: 12,
+
+    regions: {
+        selection: { sprite: "selector", tint: slate }
+    },
+
+    icons: {
+        up: { sprite: "arrow_up", height: 19 },
+        down: { sprite: "arrow_down", height: 19 },
+        left: { sprite: "arrow_left", height: 19 },
+        right: { sprite: "arrow_right", height: 19 }
+    },
+
+    themes: {
+        blue: { accent_color: vec(0.11, 0.62, 0.84, 1.0) },
+        green: { accent_color: vec(0.36, 0.72, 0.3, 1.0) },
+        red: { accent_color: vec(0.9, 0.34, 0.3, 1.0) },
+        yellow: { accent_color: vec(0.85, 0.62, 0.05, 1.0), regions: dark_buttons() },
+        grey: { accent_color: vec(0.45, 0.47, 0.56, 1.0), regions: dark_buttons() }
+    }
+};

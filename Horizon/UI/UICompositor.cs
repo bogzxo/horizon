@@ -218,6 +218,12 @@ public partial class UICompositor : GameComponent, IDisposable
     private bool pointerWasDown;
     private UIComponent? hovered;
     private UIComponent? pressed;
+
+    // The part of a highlighted component its tabs are painted as, a number no component gives a part of its own
+    private const int GRIPS_PART = -7004;
+
+    // The component whose edge the pointer is on or has hold of, see UIComponent.Resizable
+    private UIComponent? gripped;
     private UIComponent? focus;
 
     // How long (in seconds) the pointer has to rest on a component before its tooltip comes up, and how far it can
@@ -314,10 +320,29 @@ public partial class UICompositor : GameComponent, IDisposable
     // The compositor whose component has the keyboard, null while none does. There is one keyboard, so one of these
     private static UICompositor? focusOwner;
 
+    // Whether the skin is whichever one the game is set to (UISkins) and not one this UI asked for, the theme it
+    // would like of that one, and which change of the setting it has caught up with
+    private bool followsSkins;
+    private string? wantedTheme;
+    private int skinsVersion;
+
+    /// <summary>
+    /// A UI in the skin the game is set to, see <see cref="UISkins"/>, which is the Dead Revolver one until
+    /// somebody picks another. It changes its look along with that setting.
+    /// </summary>
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
-    /// <param name="theme">Which theme of the usual skin to draw the UI in ("red", "gold"), null for the one the skin says is its usual one.</param>
+    /// <param name="theme">
+    /// Which theme of the skin to draw the UI in ("red", "gold"), null for the one the game is set to. A skin
+    /// that has no theme of that name is drawn in the one the game is set to as well.
+    /// </param>
     public UICompositor(in Camera2D viewportCamera, string? theme = null)
-        : this(viewportCamera, DEFAULT_SKIN_DIRECTORY, DEFAULT_SKIN_FILE, theme) { }
+    {
+        this.viewportCamera = viewportCamera;
+        followsSkins = true;
+        wantedTheme = theme;
+        skinsVersion = UISkins.Version;
+        (skinDirectory, skinFile, skinTheme) = UISkins.Resolve(theme);
+    }
 
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
     /// <param name="skinDirectory">The directory holding the skin definition and its art.</param>
@@ -393,20 +418,65 @@ public partial class UICompositor : GameComponent, IDisposable
     public void SetSkin(string directory, string file, string? theme = null)
     {
         lock (skinLock)
+        {
+            // A skin of its own from here on, whatever the game is set to
+            followsSkins = false;
             requestedSkin = (directory, file, theme);
+        }
     }
+
+    /// <summary>
+    /// Goes (back) to the skin the game is set to, see <see cref="UISkins"/>, and follows it from here on. Safe
+    /// from any thread, like <see cref="SetSkin"/>.
+    /// </summary>
+    /// <param name="theme">Which theme of it this UI would like, null for the one the game is set to.</param>
+    public void FollowSkins(string? theme = null)
+    {
+        lock (skinLock)
+        {
+            followsSkins = true;
+            wantedTheme = theme;
+            skinsVersion = UISkins.Version;
+            requestedSkin = UISkins.Resolve(theme);
+        }
+    }
+
+    /// <summary>Whether the UI is in the skin the game is set to and not in one of its own.</summary>
+    public bool FollowsSkins => followsSkins;
 
     /// <summary>
     /// Swaps the UI over to another theme of the skin it has, see <see cref="UISkin.Themes"/> for the ones
     /// there are. Safe from any thread, like <see cref="SetSkin"/>.
     /// </summary>
-    public void SetTheme(string? theme) => SetSkin(skinDirectory, skinFile, theme);
+    public void SetTheme(string? theme)
+    {
+        lock (skinLock)
+        {
+            // Following the game's skin it is the theme this UI would like of whichever skin that is
+            if (followsSkins)
+            {
+                wantedTheme = theme;
+                requestedSkin = UISkins.Resolve(theme);
+            }
+            else
+            {
+                requestedSkin = (skinDirectory, skinFile, theme);
+            }
+        }
+    }
 
     private void LoadRequestedSkin()
     {
         (string Directory, string File, string? Theme)? request;
         lock (skinLock)
         {
+            // The game was set to another skin since this UI last looked
+            if (followsSkins && skinsVersion != UISkins.Version)
+            {
+                skinsVersion = UISkins.Version;
+                requestedSkin = UISkins.Resolve(wantedTheme);
+            }
+
             request = requestedSkin;
             requestedSkin = null;
         }
@@ -500,19 +570,41 @@ public partial class UICompositor : GameComponent, IDisposable
             module.Layout(screen, skin);
             module.Paint(back);
 
+            // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
+            // the boxes of the layout debugger and the mark round what is picked were not, they ran on out of the
+            // canvas over the lists next to it and whatever was behind
+            if (module.Clip is { } cut)
+                back.PushClip(cut);
+
             // On top of the module and with its transform, so the layout lines up with what it is the layout of.
             if (module.ShowInLayoutDebugger && LayoutOverlay is { } overlay)
                 UILayoutOverlay.Paint(back, module, overlay, module.ToLocal(lastPointer));
 
             // Whatever an editor has picked out is marked whether the debugger is open or not.
             if (Highlighted is { } highlighted && highlighted.Module == module)
+            {
                 UILayoutOverlay.PaintHighlight(back, highlighted);
+
+                // With the tabs of the edges an editor lets it be dragged by
+                // As a part of it that is nobody else's, like everything that is drawn about a component
+                if (HighlightGrips != UIResize.None)
+                {
+                    back.PushOwner(highlighted);
+                    back.BeginPart(GRIPS_PART);
+                    highlighted.PaintGrips(back, HighlightGrips, HighlightLitGrips);
+                    back.EndParts();
+                    back.PopOwner();
+                }
+            }
 
             foreach (var marked in Highlights)
             {
                 if (marked.Module == module && marked != Highlighted)
                     UILayoutOverlay.PaintHighlight(back, marked);
             }
+
+            if (module.Clip is not null)
+                back.PopClip();
         }
         back.End();
 
@@ -697,6 +789,16 @@ public partial class UICompositor : GameComponent, IDisposable
     /// A component of this UI that is marked out from the rest, null for none. What an editor has selected.
     /// </summary>
     public UIComponent? Highlighted { get; set; }
+
+    /// <summary>
+    /// The edges of <see cref="Highlighted"/> that get a tab drawn on them, the way a component that is
+    /// <see cref="UIComponent.Resizable"/> has them, for an editor that lets what it marks out be dragged bigger.
+    /// The editor does the dragging (<see cref="UIComponent.EdgesAt"/>, <see cref="UIComponent.BeginResize"/>).
+    /// </summary>
+    public UIResize HighlightGrips { get; set; }
+
+    /// <summary>Which of <see cref="HighlightGrips"/> are lit, the pointer being on them or having hold of them.</summary>
+    public UIResize HighlightLitGrips { get; set; }
 
     /// <summary>
     /// More components marked out the way <see cref="Highlighted"/> is, for an editor with several selected.

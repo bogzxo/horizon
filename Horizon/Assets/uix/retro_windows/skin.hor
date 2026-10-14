@@ -1,0 +1,58 @@
+// The Retro Windows skin, grey boxes with a white edge up the left and a black one down the right, the way a
+// desktop looked when it came on fifteen floppies. The art is Retro Windows GUI by Comp-3 Interactive, see the
+// README next to this.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the
+// hearts) and what the components' art is called. Everything it says itself is what it does differently. Its
+// sprites go by the same names (sprites.hor here falls back on Dead Revolver's for whatever this pack hasn't
+// got), so a layout written for that skin comes up in this one.
+//
+// The themes are colour schemes, the same art with its six colours swapped. Text is black on all of them, on a
+// title bar (header) it is white, which the sprite says itself.
+// The font is Cascadia Mono at 55 pixels to the em, which is what makes a letter of it as wide as one of Dead
+// Revolver's font. A layout that says how big its text is means it in that font, so the two have to agree.
+// Comments can't go inside of the object, the parser won't have it.
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Retro Windows",
+    sprites: "sprites.hor",
+    theme: "classic",
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 55 },
+
+    art_scale: 2,
+    text_scale: 0.4,
+    text_color: vec(0.0, 0.0, 0.0, 1.0),
+    control_text_color: vec(0.0, 0.0, 0.0, 1.0),
+    control_color: vec(0.83, 0.815, 0.784, 1.0),
+    field_color: vec(1.0, 1.0, 1.0, 1.0),
+    border_color: vec(0.5, 0.5, 0.5, 1.0),
+    panel_color: vec(0.83, 0.815, 0.784, 1.0),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    hover_color: vec(0.0, 0.0, 0.5, 0.14),
+    accent_color: vec(0.0, 0.0, 0.5, 1.0),
+    highlight_color: vec(0.0, 0.0, 0.5, 1.0),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.45),
+    bar_text_color: vec(1.0, 1.0, 1.0, 1.0),
+    text_shadow_color: vec(0.0, 0.0, 0.0, 0.9),
+    icon_label_color: vec(1.0, 1.0, 1.0, 1.0),
+    icon_scale: 1.33,
+
+    button_padding: vec(14, 8),
+    progress_inset: vec(4, 4),
+    toggle_size: 26,
+    spacing: 10,
+
+    regions: {
+        slider_handle: "slider_knob",
+        selection: { sprite: "selector", tint: vec(0.0, 0.0, 0.0, 1.0) }
+    },
+
+    themes: {
+        classic: { accent_color: vec(0.0, 0.0, 0.5, 1.0) },
+        desert: { accent_color: vec(0.0, 0.5, 0.5, 1.0), panel_color: vec(0.835, 0.8, 0.733, 1.0), control_color: vec(0.835, 0.8, 0.733, 1.0) },
+        eggplant: { accent_color: vec(0.345, 0.22, 0.376, 1.0), panel_color: vec(0.565, 0.69, 0.66, 1.0), control_color: vec(0.565, 0.69, 0.66, 1.0) },
+        rainy: { accent_color: vec(0.31, 0.396, 0.49, 1.0), panel_color: vec(0.753, 0.78, 0.816, 1.0), control_color: vec(0.753, 0.78, 0.816, 1.0) },
+        rose: { accent_color: vec(0.624, 0.376, 0.44, 1.0), panel_color: vec(0.812, 0.686, 0.718, 1.0), control_color: vec(0.812, 0.686, 0.718, 1.0) }
+    }
+};

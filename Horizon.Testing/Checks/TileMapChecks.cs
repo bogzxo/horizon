@@ -64,7 +64,7 @@ internal sealed class TileMapChecks : Scene, ITestControls, ISelfCheck
         AddEntity(_map.Foreground);
 
         var viewport = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
-        _compositor = AddComponent(new UICompositor(viewport) { DesignSize = DesignSize });
+        _compositor = AddComponent(new UICompositor(viewport, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE) { DesignSize = DesignSize });
     }
 
     public override void PostInit()
