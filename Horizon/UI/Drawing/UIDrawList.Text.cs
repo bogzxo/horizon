@@ -93,6 +93,15 @@ public sealed partial class UIDrawList
                 continue;
             }
 
+            // $(name), an icon of UISymbols, as tall as the line wants it
+            if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth))
+            {
+                Symbol(symbol, UISymbols.InText(pen, lineHeight), color);
+                pen.X += symbolWidth;
+                i += symbolLength - 1;
+                continue;
+            }
+
             if (markup && character == '[' && font.TryReadIconSet(text[i..], out var set, out int skipped))
             {
                 icons = set;

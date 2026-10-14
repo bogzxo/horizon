@@ -46,7 +46,7 @@ public class Panel : UIComponent
     /// </summary>
     public float Stagger { get; set; }
 
-    private bool HasBackdrop => Background.Length > 0 || Color is not null;
+    protected bool HasBackdrop => Background.Length > 0 || Color is not null;
 
     protected override bool HitTestVisible => HasBackdrop;
 

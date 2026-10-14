@@ -51,7 +51,7 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// and the next frame gets it done before it draws.
 /// </para>
 /// </summary>
-public class WindowManager : GameComponent, IDisposable
+public partial class WindowManager : GameComponent, IDisposable
 {
     private readonly IWindow _window;
     private IInputContext _input;
@@ -222,6 +222,7 @@ public class WindowManager : GameComponent, IDisposable
         {
             title = value;
             titleChanged = true;
+            WakeWindow();
         }
     }
 
@@ -252,12 +253,20 @@ public class WindowManager : GameComponent, IDisposable
     /// Asks for <see cref="Exclusive"/> to be raised as soon as it can be, which is at the start of the next frame, after the
     /// simulation has finished the tick it is in. From any thread.
     /// </summary>
-    public void RequestExclusive() => exclusiveRequested = true;
+    public void RequestExclusive()
+    {
+        exclusiveRequested = true;
+        RequestFrames();
+    }
 
     /// <summary>
     /// Asks the window to close, which ends <see cref="Run"/> once the frame that is being drawn is done. From any thread.
     /// </summary>
-    public void Close() => closing = true;
+    public void Close()
+    {
+        closing = true;
+        WakeWindow();
+    }
 
     private volatile bool closing;
 
@@ -310,7 +319,10 @@ public class WindowManager : GameComponent, IDisposable
             // Vulkan, so the window only has a surface to offer and the device does the rest
             API = GraphicsAPI.DefaultVulkan,
             Title = config.WindowTitle ?? string.Empty,
-            WindowState = config.Fullscreen ? WindowState.Fullscreen : config.Maximized ? WindowState.Maximized : WindowState.Normal,
+            // A frameless window maximised by Windows covers the taskbar, that one is maximised by hand once it is made, see Run
+            WindowState = config.Fullscreen ? WindowState.Fullscreen
+                : config.Maximized && !(config.CustomFrame && OperatingSystem.IsWindows()) ? WindowState.Maximized
+                : WindowState.Normal,
             Size = new Silk.NET.Maths.Vector2D<int>(
                 (int)config.WindowSize.X,
                 (int)config.WindowSize.Y
@@ -327,7 +339,15 @@ public class WindowManager : GameComponent, IDisposable
             // shows whatever the system had lying around in it. A Mac gets it shown as it always was, nobody has
             // ever made SDL's window hidden there and the first run is not the time to find out
             IsVisible = OperatingSystem.IsMacOS(),
+
+            // Without the system's frame the UI draws a title bar of its own (TitleBar), see WindowManager.Frame
+            WindowBorder = config.CustomFrame ? WindowBorder.Hidden : WindowBorder.Resizable,
         };
+
+        CustomFrame = config.CustomFrame;
+        Mode = config.Mode;
+        Behaviour = config.Behaviour ?? (config.Mode == RunMode.Application ? ApplicationBehaviour.All : ApplicationBehaviour.None);
+        maximizeWhenMade = config.Maximized && config.CustomFrame && OperatingSystem.IsWindows() && !config.Fullscreen;
 
         display = new DisplayState(config.WindowSize, config.WindowSize, config.WindowSize);
 
@@ -390,6 +410,8 @@ public class WindowManager : GameComponent, IDisposable
                 _window.SetDefaultIcon();
 
             _input = _window.CreateInput();
+            ListenForInput();
+            SetUpWaiting();
 
             UpdateViewport();
 
@@ -616,6 +638,8 @@ public class WindowManager : GameComponent, IDisposable
 
     private void WindowResize(Silk.NET.Maths.Vector2D<int> size)
     {
+        RequestFrames();
+
         // Minimised windows say they are nothing by nothing, which nobody can draw into, not even Jesus
         if (size.X <= 0 || size.Y <= 0) return;
 
@@ -798,7 +822,7 @@ public class WindowManager : GameComponent, IDisposable
                 done.Set();
             }
         });
-        windowWake.Set();
+        WakeWindow();
 
         done.Wait();
         if (failed is not null)
@@ -812,7 +836,7 @@ public class WindowManager : GameComponent, IDisposable
     internal void PostToWindow(Action work)
     {
         windowWork.Enqueue(work);
-        windowWake.Set();
+        WakeWindow();
     }
 
     /// <summary>
@@ -859,6 +883,8 @@ public class WindowManager : GameComponent, IDisposable
 
         // The window, and then everything that draws happens on a thread of its own, see DrawFrames
         _window.Initialize();
+        if (maximizeWhenMade)
+            SetMaximized(true);
 
         renderThread = new Thread(DrawFrames)
         {
@@ -880,8 +906,9 @@ public class WindowManager : GameComponent, IDisposable
                 if (_window.IsClosing && !MayClose())
                     _window.IsClosing = false;
 
-                // Woken up early for whatever the thread that draws needs done to the window
-                windowWake.WaitOne(EVENT_POLL);
+                // Woken up early for whatever the thread that draws needs done to the window. An application waits for the
+                // system while nothing is happening instead, see WindowManager.Application
+                WaitForEvents();
             }
         }
         finally
@@ -916,8 +943,15 @@ public class WindowManager : GameComponent, IDisposable
         EventsProcessed?.Invoke();
 
         DoWindowWork();
+        TrackFrame();
 
-        if (closing) _window.Close();
+        // Asked once. Left set, a window whose program said not yet (something unsaved) was asked again a thousand times a
+        // second, and the program put its question up again every tick, never to be answered
+        if (closing)
+        {
+            closing = false;
+            _window.Close();
+        }
 
         if (titleChanged)
         {
@@ -940,6 +974,7 @@ public class WindowManager : GameComponent, IDisposable
             while (!renderStopping)
             {
                 renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
+                WaitForDemand();
                 WaitForFrame();
                 renderStatistics.SetState(LoopStatistics.LoopState.Working);
 
@@ -979,7 +1014,7 @@ public class WindowManager : GameComponent, IDisposable
             // Thrown again on the thread that runs the window, which is where whoever ran it is waiting
             renderFailure = ExceptionDispatchInfo.Capture(e);
             closing = true;
-            windowWake.Set();
+            WakeWindow();
         }
         finally
         {
@@ -996,6 +1031,8 @@ public class WindowManager : GameComponent, IDisposable
     private void StartSimulation()
     {
         simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new Host(this));
+        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
+            simulation.IsIdle = IdleNow;
 
         Loops = [renderStatistics, simulation.Ticks, simulation.Logic, simulation.Physics];
 

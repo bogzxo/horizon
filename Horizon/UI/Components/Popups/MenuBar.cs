@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Rendering;
 using Horizon.UI.Drawing;
@@ -7,7 +7,8 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// One line of a <see cref="Menu"/>, something to do or a rule between two groups of them.
+/// One line of a <see cref="Menu"/>, something to do, a rule between two groups of them, or a menu of its own that
+/// opens to the side when the pointer rests on it.
 /// </summary>
 public sealed class MenuItem
 {
@@ -17,40 +18,70 @@ public sealed class MenuItem
     /// <summary>What is written at the far end of the item, which is where the keys that do the same thing go.</summary>
     public string Shortcut { get; set; } = string.Empty;
 
+    /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) in front of it. Empty for none.</summary>
+    public string Icon { get; set; } = string.Empty;
+
     /// <summary>What picking the item does.</summary>
     public Action? OnPicked { get; set; }
 
     /// <summary>Asked whenever the menu is drawn or clicked. Whether the item can be picked right now. Always, if nothing is set.</summary>
     public Func<bool>? IsEnabled { get; set; }
 
-    /// <summary>Asked whenever the menu is drawn. Whether the item has a mark in front of it, for one that switches something on and off.</summary>
+    /// <summary>Asked whenever the menu is drawn. Whether the item has a tick in front of it, for one that switches something on and off.</summary>
     public Func<bool>? IsChecked { get; set; }
+
+    /// <summary>Asked whenever the menu is drawn. Whether the item is there at all right now. Always, if nothing is set.</summary>
+    public Func<bool>? IsVisible { get; set; }
+
+    /// <summary>The menu the item opens to the side, null for an item that does something itself.</summary>
+    public Menu? Submenu { get; init; }
 
     /// <summary>Whether this is a rule between two groups of items rather than an item.</summary>
     public bool IsSeparator { get; init; }
 
-    internal bool Enabled => !IsSeparator && (IsEnabled?.Invoke() ?? true);
+    internal bool Shown => IsVisible?.Invoke() ?? true;
+
+    internal bool Enabled => !IsSeparator && Shown && (IsEnabled?.Invoke() ?? true);
 }
 
 /// <summary>
-/// One of the menus of a <see cref="MenuBar"/>, a word on the bar and the list that opens under it.
+/// A list of things to do, one of the menus of a <see cref="MenuBar"/> (a word on the bar and the list that opens
+/// under it), what a <see cref="ContextMenu"/> shows, or a menu inside another one.
 /// </summary>
 public sealed class Menu(string title)
 {
     private readonly List<MenuItem> items = [];
 
-    /// <summary>The word on the bar.</summary>
+    /// <summary>The word on the bar, or what the item that opens it says.</summary>
     public string Title { get; set; } = title;
+
+    /// <summary>
+    /// Asked whenever the bar is drawn. Whether the menu is on it right now, for a menu that only means something
+    /// some of the time. Always, if nothing is set.
+    /// </summary>
+    public Func<bool>? IsVisible { get; set; }
 
     public IReadOnlyList<MenuItem> Items => items;
 
+    internal bool Shown => IsVisible?.Invoke() ?? true;
+
     /// <summary>Adds something to do at the end of the menu.</summary>
+    /// <param name="icon">One of the icons every skin has (<see cref="UISymbols"/>) in front of it.</param>
     /// <returns>The item, to say more about (when it can be picked, whether it is checked).</returns>
-    public MenuItem Add(string label, Action picked, string shortcut = "")
+    public MenuItem Add(string label, Action picked, string shortcut = "", string icon = "")
     {
-        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = shortcut };
+        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = shortcut, Icon = icon };
         items.Add(item);
         return item;
+    }
+
+    /// <summary>Adds a menu of its own at the end of this one, which opens to the side when the pointer rests on it.</summary>
+    /// <returns>The menu, to add to.</returns>
+    public Menu AddMenu(string title, string icon = "")
+    {
+        var submenu = new Menu(title);
+        items.Add(new MenuItem { Label = title, Icon = icon, Submenu = submenu });
+        return submenu;
     }
 
     /// <summary>Adds a rule after what is there, unless there is nothing there or a rule already.</summary>
@@ -62,35 +93,50 @@ public sealed class Menu(string title)
 
     /// <summary>Empties the menu, for one whose items are put together again when what they stand for changes.</summary>
     public void Clear() => items.Clear();
+
+    /// <summary>Every item of the menu and of the menus inside of it that does something, with the titles of the menus it is in.</summary>
+    public IEnumerable<(MenuItem Item, string Path)> Everything(string path = "")
+    {
+        string here = path.Length > 0 ? $"{path} > {Title}" : Title;
+        foreach (MenuItem item in items)
+        {
+            if (item.Submenu is { } submenu)
+            {
+                foreach (var inside in submenu.Everything(here))
+                    yield return inside;
+            }
+            else if (!item.IsSeparator && item.OnPicked is not null)
+            {
+                yield return (item, here);
+            }
+        }
+    }
 }
 
 /// <summary>
 /// A strip of menus. A row of words, each of which opens a list of things to do under it. Clicking a word opens
 /// its menu, clicking an item does what it says and closes it, clicking anywhere else closes it without doing
-/// anything. The menus are put together in code.
+/// anything. An item can be a menu of its own, which opens to the side as the pointer goes over it. The menus are
+/// put together in code.
 /// <code>
 /// Menu file = bar.AddMenu("File");
-/// file.Add("Open...", OpenPressed, "Ctrl+O");
+/// file.Add("Open...", OpenPressed, "Ctrl+O", icon: "folder-opened");
 /// file.AddSeparator();
 /// file.Add("Save", Save).IsEnabled = () => document.IsChanged;
+/// Menu recent = file.AddMenu("Open recent");
 /// </code>
-/// A layout only says where the bar goes (<c>compositor.menu_bar</c>), what is in it is up to the program.
+/// A menu that only means something some of the time says so with <see cref="Menu.IsVisible"/> and is left off the
+/// bar the rest of it. A layout only says where the bar goes (<c>compositor.menu_bar</c>), what is in it is up to the program.
 /// </summary>
 public class MenuBar : UIComponent
 {
-    private const float BORDER = 2.0f;
     private const float TITLE_PADDING = 12.0f;
-    private const float ITEM_PADDING = 12.0f;
-
-    // The room kept in front of every item for the mark of the ones that are checked, and between an item and its shortcut
-    private const float CHECK_WIDTH = 16.0f;
-    private const float SHORTCUT_GAP = 28.0f;
-
-    // How tall a separator is against an item
-    private const float SEPARATOR_SHARE = 0.4f;
 
     private readonly List<Menu> menus = [];
     private int open = -1;
+
+    // The list of the open menu, and the lists open off it
+    private MenuPanel? panel;
 
     public IReadOnlyList<Menu> Menus => menus;
 
@@ -99,6 +145,9 @@ public class MenuBar : UIComponent
 
     /// <summary>The menu that is open right now, null if none is.</summary>
     public Menu? OpenMenu => IsPopupOpen && open >= 0 && open < menus.Count ? menus[open] : null;
+
+    /// <summary>The menu open off an item of the open menu (the deepest, when they go further), null for none.</summary>
+    public Menu? OpenSubmenu => OpenMenu is not null ? Panel?.OpenSubmenu : null;
 
     protected override bool HitTestVisible => true;
 
@@ -117,108 +166,85 @@ public class MenuBar : UIComponent
 
     private float TextScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
-    private float RowHeight(UISkin skin) => MathF.Round(skin.Font.LineHeight * TextScaleOf(skin) + skin.ButtonPadding.Total.Y * 0.6f);
+    private float TitleWidth(UISkin skin, Menu menu) => skin.Font.Measure(menu.Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
 
     protected override Vector2 Measure(UISkin skin)
     {
         float width = 0.0f;
         foreach (Menu menu in menus)
-            width += skin.Font.Measure(menu.Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
+        {
+            if (menu.Shown)
+                width += TitleWidth(skin, menu);
+        }
 
-        return new Vector2(width, RowHeight(skin));
+        return new Vector2(width, MenuPanel.RowHeight(skin, TextScale));
     }
 
-    /// <summary>Where the word of one of the menus is on the bar, in the space of the module.</summary>
+    /// <summary>Where the word of one of the menus is on the bar, in the space of the module. Empty for one that isn't on it.</summary>
     public UIRect TitleBounds(int index)
     {
-        if (Skin is not { } skin || index < 0 || index >= menus.Count)
+        if (Skin is not { } skin || index < 0 || index >= menus.Count || !menus[index].Shown)
             return default;
 
         float left = Bounds.Min.X;
         for (int i = 0; i < index; i++)
-            left += skin.Font.Measure(menus[i].Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
+        {
+            if (menus[i].Shown)
+                left += TitleWidth(skin, menus[i]);
+        }
 
-        float width = skin.Font.Measure(menus[index].Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
-        return new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + width, Bounds.Max.Y));
+        return new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + TitleWidth(skin, menus[index]), Bounds.Max.Y));
     }
 
     /// <summary>Where the word of a menu is on the bar, by what it says.</summary>
     public UIRect TitleBounds(string title) => TitleBounds(menus.FindIndex(menu => menu.Title == title));
 
-    /// <summary>Where the list of the menu that is open is, in the space of the module. Empty while none is.</summary>
-    public UIRect ListBounds
+    // The list of the open menu, made when it opens and again if the skin changes under it
+    private MenuPanel? Panel
     {
         get
         {
-            if (OpenMenu is not { } menu || Skin is not { } skin)
-                return default;
+            if (OpenMenu is not { } menu || Skin is not { } skin || Module is not { } module)
+                return null;
 
-            float scale = TextScaleOf(skin), row = RowHeight(skin);
-            float width = 0.0f, height = 0.0f;
-
-            foreach (MenuItem item in menu.Items)
+            if (panel is null || panel.Menu != menu)
             {
-                height += item.IsSeparator ? MathF.Round(row * SEPARATOR_SHARE) : row;
-
-                float shortcut = item.Shortcut.Length > 0 ? skin.Font.Measure(item.Shortcut, scale, markup: false).X + SHORTCUT_GAP : 0.0f;
-                width = MathF.Max(width, CHECK_WIDTH + skin.Font.Measure(item.Label, scale, markup: false).X + shortcut + ITEM_PADDING * 2.0f);
+                UIRect title = TitleBounds(open);
+                panel = new MenuPanel(menu, skin, TextScale, new Vector2(title.Min.X, title.Min.Y), module.Frame, title.Width);
             }
 
-            // Under its word, and no narrower than it
-            UIRect title = TitleBounds(open);
-            width = MathF.Max(width, title.Width) + BORDER * 2.0f;
-
-            return new UIRect(
-                new Vector2(title.Min.X, title.Min.Y - height - BORDER * 2.0f),
-                new Vector2(title.Min.X + width, title.Min.Y));
+            return panel;
         }
     }
+
+    /// <summary>Where the list of the menu that is open is, in the space of the module. Empty while none is.</summary>
+    public UIRect ListBounds => Panel?.Bounds ?? default;
 
     /// <summary>Where one of the items of the open menu is, counted from the top and with the separators counted too.</summary>
-    public UIRect ItemBounds(int index)
-    {
-        if (OpenMenu is not { } menu || Skin is not { } skin || index < 0 || index >= menu.Items.Count)
-            return default;
+    public UIRect ItemBounds(int index) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, index) : default;
 
-        UIRect list = ListBounds.Shrink(new UIEdges(BORDER));
-        float row = RowHeight(skin);
-        float top = list.Max.Y;
+    /// <summary>Where an item of the open menu, or of a menu open off it, is by what it says. Empty if there is no such item.</summary>
+    public UIRect ItemBounds(string label) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, label) : default;
 
-        for (int i = 0; i < index; i++)
-            top -= menu.Items[i].IsSeparator ? MathF.Round(row * SEPARATOR_SHARE) : row;
-
-        float height = menu.Items[index].IsSeparator ? MathF.Round(row * SEPARATOR_SHARE) : row;
-        return new UIRect(new Vector2(list.Min.X, top - height), new Vector2(list.Max.X, top));
-    }
-
-    /// <summary>Where an item of the open menu is, by what it says. Empty if the open menu has no such item.</summary>
-    public UIRect ItemBounds(string label)
-    {
-        if (OpenMenu is not { } menu)
-            return default;
-
-        for (int i = 0; i < menu.Items.Count; i++)
-        {
-            if (menu.Items[i].Label == label)
-                return ItemBounds(i);
-        }
-
-        return default;
-    }
+    /// <summary>Opens the menu of an item of the open menu, by what it says, as resting the pointer on it would.</summary>
+    public bool OpenSubmenuOf(string label) =>
+        Skin is { } skin && Module is { } module && Panel is { } shown && shown.OpenSubmenuOf(skin, module.Frame, label);
 
     /// <summary>Opens one of the menus, closing whichever was open.</summary>
     public void Open(int index)
     {
-        if (index < 0 || index >= menus.Count || !EnabledInHierarchy)
+        if (index < 0 || index >= menus.Count || !EnabledInHierarchy || !menus[index].Shown)
             return;
 
         open = index;
+        panel = null;
         OpenPopup();
     }
 
     public void Close()
     {
         open = -1;
+        panel = null;
         ClosePopup();
     }
 
@@ -233,6 +259,9 @@ public class MenuBar : UIComponent
         for (int i = 0; i < menus.Count; i++)
         {
             list.BeginPart(i);
+            if (!menus[i].Shown)
+                continue;
+
             UIRect title = TitleBounds(i);
             bool shown = OpenMenu == menus[i];
 
@@ -248,59 +277,32 @@ public class MenuBar : UIComponent
 
     protected internal override void PaintPopup(UIDrawList list)
     {
-        if (OpenMenu is not { } menu)
+        if (Panel is not { } shown || Module is not { } module)
             return;
 
-        UISkin skin = list.Skin;
-        float scale = TextScaleOf(skin);
-
-        // Whatever is under the list must not show through it.
-        UIRect bounds = ListBounds;
-        list.Box(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
-        list.Frame(bounds, BORDER, skin.AccentColor);
-
         Vector2 pointer = Pointer;
-        Vector4 dim = skin.TextColor * skin.DisabledTint;
-
-        for (int i = 0; i < menu.Items.Count; i++)
-        {
-            // An item at a time, or the highlight of one has the rule after it blended with it for a tick
-            list.BeginPart(i);
-            MenuItem item = menu.Items[i];
-            UIRect area = ItemBounds(i);
-
-            if (item.IsSeparator)
-            {
-                float middle = MathF.Round(area.Center.Y);
-                list.Rect(new UIRect(new Vector2(area.Min.X + ITEM_PADDING, middle), new Vector2(area.Max.X - ITEM_PADDING, middle + 1.0f)), dim);
-                continue;
-            }
-
-            bool enabled = item.Enabled;
-            if (enabled && area.Contains(pointer))
-                list.Rect(area, skin.HoverColor);
-
-            UIRect content = area.Shrink(new UIEdges(ITEM_PADDING, 0.0f));
-
-            if (item.IsChecked?.Invoke() == true)
-            {
-                // A small square in the room every item keeps for it
-                float side = MathF.Round(area.Height * 0.3f);
-                Vector2 corner = new(content.Min.X, MathF.Round(content.Center.Y - side * 0.5f));
-                list.Rect(new UIRect(corner, corner + new Vector2(side)), skin.AccentColor);
-            }
-
-            UIRect text = new(new Vector2(content.Min.X + CHECK_WIDTH, content.Min.Y), content.Max);
-            list.Text(item.Label, text, Origin.Left, scale, enabled ? skin.TextColor : dim, markup: false);
-
-            if (item.Shortcut.Length > 0)
-                list.Text(item.Shortcut, text, Origin.Right, scale, dim, markup: false);
-        }
-
-        list.EndParts();
+        shown.Track(list.Skin, module.Frame, pointer);
+        shown.Paint(list, pointer);
     }
 
-    protected internal override bool PopupContains(Vector2 point) => OpenMenu is not null && ListBounds.Contains(point);
+    protected override void Update(float dt)
+    {
+        // Going along the bar with a menu open opens the menu of the word the pointer is on, the way every menu bar does
+        if (OpenMenu is null || !IsHovered)
+            return;
+
+        Vector2 pointer = Pointer;
+        for (int i = 0; i < menus.Count; i++)
+        {
+            if (i != open && TitleBounds(i).Contains(pointer))
+            {
+                Open(i);
+                return;
+            }
+        }
+    }
+
+    protected internal override bool PopupContains(Vector2 point) => Panel?.Contains(point) ?? false;
 
     protected internal override void OnPointerUp(Vector2 point)
     {
@@ -326,27 +328,18 @@ public class MenuBar : UIComponent
             return;
         }
 
-        if (OpenMenu is not { } menu)
+        if (Panel is not { } shown || Skin is not { } skin)
             return;
 
-        for (int i = 0; i < menu.Items.Count; i++)
-        {
-            if (!ItemBounds(i).Contains(point))
-                continue;
+        MenuItem? item = shown.Pick(skin, point, out bool inside);
 
-            MenuItem item = menu.Items[i];
-
-            // A separator or something that can't be picked right now leaves the menu open
-            if (!item.Enabled)
-                return;
-
-            Close();
-            item.OnPicked?.Invoke();
+        // A separator, a menu of its own or something that can't be picked right now leaves the menu open
+        if (item is null && inside)
             return;
-        }
 
-        // Let go of somewhere else never mind then.
+        // Let go of somewhere else never mind then
         Close();
+        item?.OnPicked?.Invoke();
     }
 
     protected override void DefineScript()

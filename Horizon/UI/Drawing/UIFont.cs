@@ -26,6 +26,7 @@ internal interface IUIIconSource
 /// <see cref="Skinning.UISkin.TryGetIcon"/>), sized to sit in the line. A tag that names no icon is left as it is written.
 /// <c>[icons:set]</c> draws nothing itself and has every icon after it in the text come from that set of the skin, so
 /// <c>"[icons:playstation][icon:pad_a] pick"</c> shows whatever the skin says a PlayStation gamepad has for pad_a.
+/// <c>$(name)</c> is one of the icons every skin has, see <see cref="UISymbols"/>.
 /// </summary>
 public sealed class UIFont
 {
@@ -248,6 +249,13 @@ public sealed class UIFont
                 continue;
             }
 
+            if (markup && character == '$' && UISymbols.TryRead(text[i..], LineHeight * scale, out _, out int symbolLength, out float symbolWidth))
+            {
+                width += symbolWidth;
+                i += symbolLength - 1;
+                continue;
+            }
+
             if (markup && character == ICON_TAG[0])
             {
                 if (TryReadIconSet(text[i..], out var set, out int skipped))
@@ -404,6 +412,12 @@ public sealed class UIFont
     private float Advance(ReadOnlySpan<char> text, ref int at, float scale, ref ReadOnlySpan<char> icons, bool markup)
     {
         char character = text[at];
+
+        if (markup && character == '$' && UISymbols.TryRead(text[at..], LineHeight * scale, out _, out int symbolLength, out float symbolWidth))
+        {
+            at += symbolLength;
+            return symbolWidth;
+        }
 
         if (markup && character == ICON_TAG[0])
         {

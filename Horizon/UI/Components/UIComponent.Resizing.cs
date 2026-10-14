@@ -198,13 +198,19 @@ public abstract partial class UIComponent
     /// Helper method to draw the tabs of the edges that can be dragged, over the component and what is in it. A
     /// short bar in the middle of each, and the whole edge lit while the pointer is on it or has hold of it.
     /// </summary>
-    private void PaintGrips(UIDrawList list) => PaintGrips(list, Resizable, ActiveGrip);
+    // Its own tabs are drawn where it is held, which is round the edge by GripSize in and GripReach out
+    private void PaintGrips(UIDrawList list) => PaintGrips(list, Resizable, ActiveGrip, (GripReach - GripSize) * 0.5f);
 
     /// <summary>
     /// Helper method to draw the tabs of some edges whether they can be dragged or not, for whoever marks a
     /// component out from outside (the compositor, for an editor).
     /// </summary>
-    internal void PaintGrips(UIDrawList list, UIResize edges, UIResize held)
+    /// <param name="outward">
+    /// How far out from the edge the middle of where it is held is, so the tab is drawn under the pointer that has hold
+    /// of it. Hex holds its panels mostly outside (the scroll bars are inside) and the tab was drawn inside, a few
+    /// pixels off the pointer. Never so far it is off the screen, a panel against the side of it still shows its tab.
+    /// </param>
+    internal void PaintGrips(UIDrawList list, UIResize edges, UIResize held, float outward = float.NaN)
     {
         UISkin skin = list.Skin;
         UIRect bounds = Bounds;
@@ -233,19 +239,34 @@ public abstract partial class UIComponent
                 _ => new Vector2(bounds.Center.X, bounds.Min.Y)
             };
 
-            // Just inside of the edge, so a panel against the side of the screen still shows its tab
+            // Where it is held (or just inside of the edge for an editor marking one out), and never past the frame of the
+            // screen, so a panel against the side of it still shows its tab
+            float shift = float.IsNaN(outward) ? -(TAB_THICKNESS * 0.5f + 1.0f) : outward;
+            if (Module is { } module)
+            {
+                UIRect frame = module.Frame;
+                float room = edge switch
+                {
+                    UIResize.Left => middle.X - frame.Min.X,
+                    UIResize.Right => frame.Max.X - middle.X,
+                    UIResize.Top => frame.Max.Y - middle.Y,
+                    _ => middle.Y - frame.Min.Y
+                };
+                shift = MathF.Min(shift, room - TAB_THICKNESS * 0.5f - 1.0f);
+            }
+
             Vector2 inward = edge switch
             {
-                UIResize.Left => new Vector2(TAB_THICKNESS * 0.5f + 1.0f, 0.0f),
-                UIResize.Right => new Vector2(-TAB_THICKNESS * 0.5f - 1.0f, 0.0f),
-                UIResize.Top => new Vector2(0.0f, -TAB_THICKNESS * 0.5f - 1.0f),
-                _ => new Vector2(0.0f, TAB_THICKNESS * 0.5f + 1.0f)
+                UIResize.Left => new Vector2(-shift, 0.0f),
+                UIResize.Right => new Vector2(shift, 0.0f),
+                UIResize.Top => new Vector2(0.0f, shift),
+                _ => new Vector2(0.0f, -shift)
             };
 
             if (active)
             {
                 Vector2 whole = upright ? new Vector2(2.0f, along) : new Vector2(along, 2.0f);
-                list.Rect(UIRect.FromCenter(middle + inward * 0.5f, whole), lit);
+                list.Rect(UIRect.FromCenter(middle + inward, whole), lit);
             }
 
             Vector2 size = upright ? new Vector2(TAB_THICKNESS, tab) : new Vector2(tab, TAB_THICKNESS);

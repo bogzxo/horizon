@@ -183,7 +183,8 @@ internal static class UIKeyboard
             Key.Delete => (control ? WORD_DELETE : DELETE, true),
             // With control enter is somebody's shortcut (put the code in), not a new line
             Key.Enter or Key.KeypadEnter => (control ? NOTHING : ENTER, false),
-            Key.Tab => (shift ? SHIFT_TAB : TAB, false),
+            // With control tab is somebody's shortcut too (the next document), not an indent
+            Key.Tab => (control ? NOTHING : shift ? SHIFT_TAB : TAB, false),
             Key.Escape => (ESCAPE, false),
             Key.Left => ((shift, control) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
             Key.Right => ((shift, control) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),

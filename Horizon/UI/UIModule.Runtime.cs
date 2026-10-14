@@ -140,6 +140,12 @@ public partial class UIModule
         Register<Meter>("meter");
         Register<Graph>("graph");
         Register<SegmentBar>("segments");
+        Register<Symbol>("symbol");
+        Register<StatusBar>("status_bar");
+        Register<TabStrip>("tab_strip");
+        Register<Breadcrumbs>("breadcrumbs");
+        Register<TitleBar>("title_bar");
+        Register<WindowPanel>("window");
     }
 
     /// <summary>

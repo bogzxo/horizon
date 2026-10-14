@@ -355,7 +355,13 @@ public class SceneManager : Entity
     /// has just been set is not shown while anything in it says this, it is given another turn instead (up to a
     /// point). At any other time it does nothing.
     /// </summary>
-    public void ReportUnfinished() => _unfinished = true;
+    public void ReportUnfinished()
+    {
+        _unfinished = true;
+
+        // Something isn't ready to be shown yet, the frames that find out when it is have to be drawn
+        GameEngine.Instance?.WindowManager?.RequestFrames();
+    }
 
     /// <summary>
     /// Sets a scene up ahead of it being shown (made, its assets loaded, warmed up), at the start of the next frame,

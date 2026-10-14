@@ -242,6 +242,35 @@ public partial class UICompositor : GameComponent, IDisposable
     // Scratch for cutting a tooltip into lines, see UITooltip
     internal List<(int Start, int Length)> TooltipLines { get; } = [];
 
+    // A tooltip that is markdown, laid out once for as long as it is the same text
+    internal UIRichText TooltipRich { get; } = new();
+
+    private System.Collections.Frozen.FrozenDictionary<string, string>? strings;
+
+    /// <summary>
+    /// Texts of this UI's own, what an <c>@key</c> in it is looked up in before the game's language. For a program whose
+    /// UI isn't the game's (an editor that shows a game's layouts in the game's language next to its own UI in its
+    /// own), see <see cref="Horizon.Content.Localisation.ReadFile"/>. Null for the game's language alone.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Strings
+    {
+        get => strings;
+        set => strings = value is null ? null : value as System.Collections.Frozen.FrozenDictionary<string, string> ?? System.Collections.Frozen.FrozenDictionary.ToFrozenDictionary(value);
+    }
+
+    /// <summary>
+    /// What a text of this UI is shown as, a key looked up in its <see cref="Strings"/> and then in the game's language,
+    /// anything else the text itself. Makes no garbage.
+    /// </summary>
+    public string Resolve(string text)
+    {
+        if (strings is not null && text.Length > 1 && text[0] == '@' && text[1] != '@'
+            && strings.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(text.AsSpan(1), out string? own))
+            return own;
+
+        return Horizon.Content.Localisation.Resolve(text);
+    }
+
     /// <summary>
     /// Called with what was pasted (control with V) while nothing in the UI had the focus. For an editor that pastes
     /// things rather than text. Null for nothing, which is what it is unless somebody sets it.
@@ -614,6 +643,9 @@ public partial class UICompositor : GameComponent, IDisposable
         // Nothing happened. What was painted is what is on screen already, and nobody needs to hear about it
         if (paintedFrame > 0 && back.SameAs(front))
             return;
+
+        // Something did, a window that only draws when something changed has frames to draw (see RunMode.Application)
+        GameEngine.Instance?.WindowManager?.NoteChange();
 
         lock (frameLock)
         {

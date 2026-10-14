@@ -74,6 +74,27 @@ public class LocalisationTests : IDisposable
     }
 
     [Fact]
+    public void A_list_of_lines_is_one_text_and_a_file_reads_without_being_loaded()
+    {
+        string path = Path.Combine(folder, "help.hor");
+        File.WriteAllText(path, """
+            let strings = {
+                about: [
+                    "# Hex",
+                    "",
+                    "The layout editor."
+                ]
+            };
+            """);
+
+        Localisation.Load(folder);
+        var read = Localisation.ReadFile(path);
+
+        Assert.Equal("# Hex\n\nThe layout editor.", read["about"]);
+        Assert.False(Localisation.Has("about"));
+    }
+
+    [Fact]
     public void The_folder_is_found_next_to_the_layouts()
     {
         string layouts = Path.Combine(folder, "ui", "layouts");

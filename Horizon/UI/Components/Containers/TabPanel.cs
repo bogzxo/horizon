@@ -78,7 +78,7 @@ public class TabPanel : UIComponent
     protected override bool HitTestVisible => true;
 
     /// <summary>What the tab of a page says.</summary>
-    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Localisation.Resolve(tabs[index]) : $"Tab {index + 1}";
+    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : $"Tab {index + 1}";
 
     /// <summary>Opens a page, wrapping round past either end.</summary>
     public void Select(int index)
@@ -135,8 +135,8 @@ public class TabPanel : UIComponent
         float scale = TextScaleOf(skin);
         float strip = 0.0f;
         for (int i = 0; i < ChildSpan.Length; i++)
-            strip += skin.Font.Measure(TitleOf(i), scale, markup: false).X + Spacing;
-        strip += skin.Font.Measure(Localisation.Resolve(PreviousHint), scale).X + skin.Font.Measure(Localisation.Resolve(NextHint), scale).X;
+            strip += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
+        strip += skin.Font.Measure(Resolve(PreviousHint), scale).X + skin.Font.Measure(Resolve(NextHint), scale).X;
 
         return new Vector2(MathF.Max(page.X, strip), page.Y + HeaderOf(skin) + Spacing * 0.5f) + Padding.Total;
     }
@@ -167,13 +167,13 @@ public class TabPanel : UIComponent
 
         float total = 0.0f;
         for (int i = 0; i < ChildSpan.Length; i++)
-            total += skin.Font.Measure(TitleOf(i), scale, markup: false).X + (i > 0 ? Spacing : 0.0f);
+            total += skin.Font.Measure(TitleOf(i), scale).X + (i > 0 ? Spacing : 0.0f);
 
         float left = header.Center.X - total * 0.5f;
         for (int i = 0; i < index; i++)
-            left += skin.Font.Measure(TitleOf(i), scale, markup: false).X + Spacing;
+            left += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
 
-        float width = skin.Font.Measure(TitleOf(index), scale, markup: false).X;
+        float width = skin.Font.Measure(TitleOf(index), scale).X;
         return new UIRect(new Vector2(left - Spacing * 0.25f, header.Min.Y), new Vector2(left + width + Spacing * 0.25f, header.Max.Y));
     }
 
@@ -208,7 +208,7 @@ public class TabPanel : UIComponent
             if (!open && IsHovered && tab.Contains(pointer))
                 list.Box(tab, skin.HoverColor);
 
-            list.Text(TitleOf(i), tab, Origin.Center, scale, open ? accent : dim, markup: false);
+            list.Text(TitleOf(i), tab, Origin.Center, scale, open ? accent : dim);
 
             // The open one is underlined, which reads as a tab whatever the skin looks like
             if (open)
@@ -218,9 +218,9 @@ public class TabPanel : UIComponent
         list.EndParts();
 
         if (PreviousHint.Length > 0)
-            list.Text(Localisation.Resolve(PreviousHint), header, Origin.Left, scale, Vector4.One);
+            list.Text(Resolve(PreviousHint), header, Origin.Left, scale, Vector4.One);
         if (NextHint.Length > 0)
-            list.Text(Localisation.Resolve(NextHint), header, Origin.Right, scale, Vector4.One);
+            list.Text(Resolve(NextHint), header, Origin.Right, scale, Vector4.One);
     }
 
     protected internal override void OnPointerUp(Vector2 point)

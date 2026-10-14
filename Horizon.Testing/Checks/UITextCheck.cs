@@ -47,7 +47,7 @@ internal sealed class UITextCheck : Scene, ISelfCheck
 
     private Label _plain = null!, _bold = null!, _italic = null!, _big = null!, _unknown = null!, _unknownPlain = null!;
     private Label _heading = null!, _paragraph = null!, _list = null!, _wrapped = null!, _escaped = null!, _escapedPlain = null!;
-    private Label _link = null!, _code = null!, _showcase = null!;
+    private Label _link = null!, _code = null!, _showcase = null!, _symbols = null!, _noSymbol = null!;
     private CodeEditor _editor = null!;
     private string _clicked = string.Empty;
 
@@ -99,6 +99,8 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         _escapedPlain = Add(column, "*not italic*");
         _link = Add(column, "[click me](somewhere)", markdown: true);
         _link.OnLink = where => _clicked = where;
+        _symbols = Add(column, "$(save) Save $(git-branch) main $(error) 2 $(warning) 1");
+        _noSymbol = Add(column, "$(not_an_icon)");
 
         // Code to edit, fed keys the way the keyboard hands them over
         _editor = module.AddComponent(new CodeEditor("let a = 1;")
@@ -159,6 +161,12 @@ internal sealed class UITextCheck : Scene, ISelfCheck
 
         test.Click(() => _link.Module!.ToWorld(new Vector2(_link.Bounds.Min.X + 20.0f, _link.Bounds.Center.Y)));
         test.Check("link: a click on one says where it goes", () => _clicked == "somewhere");
+
+        test.Check("symbols: the icons loaded, both spellings of a name", () =>
+            UISymbols.IsLoaded && UISymbols.Names.Count > 500 && UISymbols.TryGet("git-branch", out char dashed) && UISymbols.TryGet("git_branch", out char underscored) && dashed == underscored);
+        test.Check("symbols: $(name) is an icon about as wide as a line is tall, one there isn't is written as it is", () =>
+            _symbols.DesiredSize.X < _compositor.Skin!.Font.Measure("$(save) Save $(git-branch) main $(error) 2 $(warning) 1", SCALE, markup: false).X * 0.7f
+            && _noSymbol.DesiredSize.X >= _compositor.Skin!.Font.Measure("$(not_an_icon)", SCALE, markup: false).X - 1.0f);
 
         /* The editor of code, fed the keys the keyboard turns into (UIKeyboard) */
 
