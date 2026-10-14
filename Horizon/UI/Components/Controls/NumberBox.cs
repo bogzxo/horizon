@@ -20,6 +20,11 @@ public class NumberBox : TextBox
     private float dragStart;
     private bool dragged;
 
+    // The number as it was last written out, so a box at rest doesn't write it again every tick (a string a tick, a
+    // window full of properties made kilobytes of them)
+    private string? shown;
+    private float shownFor;
+
     /// <summary>The number in the box.</summary>
     public float Value
     {
@@ -94,8 +99,17 @@ public class NumberBox : TextBox
         base.Update(dt);
 
         // Tidied up once whoever was typing has left, "007" and "" both stand for a number.
-        if (!IsFocused && !IsPressed && Text != Format(number))
-            Text = Format(number);
+        if (IsFocused || IsPressed)
+            return;
+
+        if (shown is null || !shownFor.Equals(number))
+        {
+            shown = Format(number);
+            shownFor = number;
+        }
+
+        if (Text != shown)
+            Text = shown;
     }
 
     private void Report(float value)
