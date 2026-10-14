@@ -105,6 +105,19 @@ public sealed partial class UISkin
         }
     }
 
+    /// <summary>
+    /// What a skin file says about itself without loading any of it, what it wants to be called, the themes it
+    /// comes in and which of them is its usual one. Throws, saying what is wrong, for a file that can't be read.
+    /// </summary>
+    public static (string? Title, string[] Themes, string? UsualTheme) Describe(string directory, string file)
+    {
+        var properties = ReadProperties(directory, file, 0);
+        string? title = properties.TryGetValue("title", out var titled) ? UIScript.ToText(titled, "title") : null;
+        string[] themes = ApplyTheme(properties, null);
+        string? usual = properties.TryGetValue("theme", out var theme) ? UIScript.ToText(theme, "theme") : null;
+        return (title, themes, usual);
+    }
+
     private static UISkin Read(string directory, Dictionary<string, IRuntimeValue> properties)
     {
         string fontDirectory = DEFAULT_FONT_DIRECTORY;
@@ -140,6 +153,11 @@ public sealed partial class UISkin
 
         var skin = new UISkin(new UIFont(fontDirectory, fontFile, fontSize), sheet, theme);
 
+        // Art that was drawn big to be shown small (art_scale under one) is smoothed on its way down, pixel art
+        // never is. Before any of it is asked for, the atlas makes its texture the way this says
+        if (properties.TryGetValue("smooth", out var smooth))
+            skin.Atlas.Smooth = UIScript.ToBoolean(smooth, "smooth");
+
         // Before anything else. It is what every region is scaled by unless it says otherwise.
         if (properties.TryGetValue("art_scale", out var artScale))
             skin.ArtScale = UIScript.ToNumber(artScale, "art_scale");
@@ -148,7 +166,7 @@ public sealed partial class UISkin
         {
             switch (key)
             {
-                case "texture" or "font" or "sprites" or "theme" or "art_scale":
+                case "texture" or "font" or "sprites" or "theme" or "art_scale" or "title" or "smooth":
                     break;
 
                 case "text_scale":
@@ -340,8 +358,12 @@ public sealed partial class UISkin
             ? UIScript.ToColor(tintValue, $"{name}.tint")
             : Vector4.One;
 
+        Vector4 textColor = properties.TryGetValue("text_color", out var textValue)
+            ? UIScript.ToColor(textValue, $"{name}.text_color")
+            : default;
+
         if (properties.TryGetValue("sprite", out var spriteName))
-            return new RegionSource(UIScript.ToText(spriteName, $"{name}.sprite"), null, 0, 0, 0, 0, border, content, scale, tint);
+            return new RegionSource(UIScript.ToText(spriteName, $"{name}.sprite"), null, 0, 0, 0, 0, border, content, scale, tint, textColor);
 
         if (texture is null)
             throw new Exception($"Region '{name}' is a rectangle, but the skin names no texture to cut it out of.");
@@ -353,7 +375,7 @@ public sealed partial class UISkin
 
         // A rectangle with no border isn't stretched as a nine-slice, which is what null would leave to the sprite.
         return new RegionSource(
-            null, texture, Number("x"), Number("y"), Number("w"), Number("h"), border ?? default(UIEdges), content ?? default(UIEdges), scale, tint);
+            null, texture, Number("x"), Number("y"), Number("w"), Number("h"), border ?? default(UIEdges), content ?? default(UIEdges), scale, tint, textColor);
     }
 
     /// <summary>

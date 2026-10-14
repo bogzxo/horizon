@@ -34,6 +34,7 @@ internal sealed class TestHost : GameObject
         new("PgUp  PgDn", "previous and next example"),
         new("F1", "fold this away"),
         new("F3", "more of the performance numbers, or none"),
+        new("F6  F7", "the next UI skin, the next theme of it"),
         new("F10", "the Skyline debugger, in a debug build"),
     ];
 
@@ -72,7 +73,7 @@ internal sealed class TestHost : GameObject
         // own Initialize), so the whole overlay can be built right here in the constructor.
         // ForScreen gives the UI a camera of its own that it keeps the size of the window, which is exactly what a
         // HUD laid over everything wants. No camera to make, no remembering to resize it.
-        var compositor = AddComponent(UICompositor.ForScreen());
+        var compositor = AddComponent(UICompositor.ForScreen(UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE));
 
         overlay = compositor.CreateModule();
         overlay.Enabled = false;
@@ -205,6 +206,17 @@ internal sealed class TestHost : GameObject
 
         if (keyboard.WasPressed(Key.PageUp)) Step(-1);
         if (keyboard.WasPressed(Key.PageDown)) Step(1);
+
+        // The skin every example's UI is drawn in, which is the game's one setting for it (UISkins). The strip
+        // and the selector are in a skin of their own and stay as they are
+        if (keyboard.WasPressed(Key.F6))
+        {
+            var skin = Horizon.UI.Skinning.UISkins.Step(1);
+            Horizon.Logging.Log.Info($"[TestHost] The UI is in {skin.Title} now.");
+        }
+
+        if (keyboard.WasPressed(Key.F7) && Horizon.UI.Skinning.UISkins.StepTheme(1) is { } theme)
+            Horizon.Logging.Log.Info($"[TestHost] The UI is in the {theme} theme now.");
 
         // Stays as you left it from one example to the next
         if (keyboard.WasPressed(Key.F1))

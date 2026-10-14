@@ -389,6 +389,11 @@ public abstract partial class UIComponent
         list.PushOwner(this);
         Paint(list);
         PaintChildren(list);
+
+        // The tabs of the edges that can be dragged, over whatever is in it
+        if (Resizable != UIResize.None)
+            PaintGrips(list);
+
         list.PopOwner();
 
         if (animated)

@@ -1,0 +1,93 @@
+// The Sci-Fi skin, the one that isn't pixel art. Flat panes of pale glass with round corners and solid bars
+// in one of five colours, drawn out of art twice the size it is shown at so it stays sharp on a big screen or
+// with the UI scaled up. The art is UI Pack Sci-Fi by Kenney, CC0, see the README next to this.
+//
+// What makes it the high resolution one is two lines. art_scale 0.5 has every pixel of the art take half a unit
+// of the screen, and smooth has the atlas filter it on the way down, where every other skin is pixel art that
+// must not be. The font is Cascadia Mono, a distance field like every font, which is smooth at any size anyway.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the
+// hearts) and what the components' art is called. Its sprites go by the same names (sprites.hor here falls back
+// on Dead Revolver's for whatever this pack hasn't got, at the three times its size that art was drawn for), so
+// a layout written for that skin comes up in this one.
+//
+// It is a light skin, text is slate on glass. The solid bars are written on in white, which their sprites say
+// themselves (text_color in sprites.hor), and the two themes whose bars are too light for white (yellow and
+// grey) say otherwise for theirs under regions.
+//
+// Under icons is how many pixels of the art make a line of text, for the icons whose art isn't simply drawn as
+// tall as the line (the arrows, the sticks, the mouse). The numbers the Dead Revolver skin gives them are for
+// its art, a few pixels tall, and this pack's is sixty four. Left at those they came out five lines tall.
+// Comments can't go inside of the object, the parser won't have it.
+
+let slate = vec(0.18, 0.2, 0.28, 1.0);
+
+func dark_bars() {
+    let regions = {};
+    let names = ["button", "button_pill", "button_slant", "tab_left", "tab_right"];
+    let states = ["", "_hover", "_pressed"];
+    for (i in range(names.count)) {
+        for (j in range(states.count)) {
+            regions[names[i] + states[j]] = { sprite: names[i] + states[j], text_color: slate };
+        }
+    }
+    regions["button_flat_selected"] = { sprite: "button_flat_selected", text_color: slate };
+    regions["header"] = { sprite: "header", text_color: slate };
+    return regions;
+}
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Sci-Fi",
+    sprites: "sprites.hor",
+    theme: "blue",
+    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 55 },
+
+    art_scale: 0.5,
+    smooth: true,
+    text_scale: 0.4,
+    text_color: slate,
+    control_text_color: slate,
+    control_color: vec(0.855, 0.863, 0.906, 1.0),
+    field_color: vec(0.0, 0.0, 0.0, 0.3),
+    border_color: vec(0.59, 0.59, 0.64, 1.0),
+    panel_color: vec(0.855, 0.863, 0.906, 1.0),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    hover_color: vec(0.18, 0.2, 0.28, 0.1),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.45),
+    bar_text_color: vec(1.0, 1.0, 1.0, 1.0),
+    text_shadow_color: vec(0.05, 0.07, 0.12, 0.7),
+    icon_label_color: vec(1.0, 1.0, 1.0, 1.0),
+    icon_scale: 1.33,
+
+    button_padding: vec(20, 10),
+    progress_inset: vec(0, 0),
+    toggle_size: 26,
+    spacing: 12,
+
+    regions: {
+        selection: { sprite: "selector", tint: slate }
+    },
+
+    icons: {
+        up: { sprite: "arrow_up", height: 40 },
+        down: { sprite: "arrow_down", height: 40 },
+        left: { sprite: "arrow_left", height: 40 },
+        right: { sprite: "arrow_right", height: 40 },
+        stick_up: { sprite: "xbox_stick_up", height: 64 },
+        stick_down: { sprite: "xbox_stick_down", height: 64 },
+        stick_left: { sprite: "xbox_stick_left", height: 64 },
+        stick_right: { sprite: "xbox_stick_right", height: 64 },
+        mouse_left: { sprite: "mouse_left", height: 64 },
+        mouse_right: { sprite: "mouse_right", height: 64 },
+        mouse_middle: { sprite: "mouse_middle", height: 64 }
+    },
+
+    themes: {
+        blue: { accent_color: vec(0.11, 0.62, 0.84, 1.0) },
+        green: { accent_color: vec(0.36, 0.72, 0.3, 1.0) },
+        red: { accent_color: vec(0.9, 0.34, 0.3, 1.0) },
+        yellow: { accent_color: vec(0.85, 0.62, 0.05, 1.0), regions: dark_bars() },
+        grey: { accent_color: vec(0.45, 0.47, 0.56, 1.0), regions: dark_bars() }
+    }
+};

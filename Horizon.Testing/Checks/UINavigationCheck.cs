@@ -81,7 +81,7 @@ internal sealed class UINavigationCheck : Scene, ITestControls, ISelfCheck
         var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
         ActiveCamera = cam;
 
-        _compositor = AddComponent(new UICompositor(cam) { DesignSize = DesignSize });
+        _compositor = AddComponent(new UICompositor(cam, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE) { DesignSize = DesignSize });
 
         // Nobody is at the wheel, the pointer is the script's
         _compositor.PointerSource = () => _selfTest.Pointer;

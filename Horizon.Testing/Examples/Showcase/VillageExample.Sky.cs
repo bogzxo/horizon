@@ -29,7 +29,9 @@ public partial class VillageExample
     // How many fireflies come out a second over the pond at night
     private const float FIREFLY_RATE = 7.0f;
 
-    private static readonly Vector3 DayAmbient = new(0.92f, 0.92f, 0.86f);
+    // The sky and the sun at noon come to about 1 between them, which is the art as it was painted. With a sky
+    // of nearly 1 and a sun of nearly 1 on top noon was twice what the screen can show and came out as milk
+    private static readonly Vector3 DayAmbient = new(0.5f, 0.52f, 0.5f);
     private static readonly Vector3 NightAmbient = new(0.14f, 0.16f, 0.32f);
     private static readonly Vector3 NoonSun = new(1.0f, 0.97f, 0.9f);
     private static readonly Vector3 LowSun = new(1.0f, 0.62f, 0.34f);
@@ -172,7 +174,7 @@ public partial class VillageExample
 
         _sun.Direction = -MathF.PI + MathF.PI * Math.Clamp((_hour - 6.0f) / 12.0f, 0.0f, 1.0f);
         _sun.Reach = Lerp(150.0f, 26.0f, daylight);
-        _sun.Intensity = MathF.Pow(daylight, 0.55f) * 0.85f * outdoors;
+        _sun.Intensity = MathF.Pow(daylight, 0.55f) * 0.6f * outdoors;
         _sun.Color = Vector3.Lerp(LowSun, NoonSun, daylight);
         _sun.Enabled = _sun.Intensity > 0.01f;
 
@@ -185,6 +187,10 @@ public partial class VillageExample
         Vector3 ambient = _rooms.Current == _rooms.Outside ? sky : Vector3.Lerp(World.AmbientOf(_rooms.Current.Map), sky, outdoors);
         _world.Ambient = ambient;
         _world.PathTracing.AmbientScale = Lerp(0.6f, 0.9f, day);
+
+        // The haze is the night's, a lamp in the dark. Under the sun the air is clear, and the sun's own bounce
+        // laid over the whole picture as haze was a good part of the washout
+        if (_hazy) _world.PathTracing.Fog = HAZE * Lerp(1.0f, 0.15f, day);
 
         foreach (Lamp lamp in _lamps)
         {

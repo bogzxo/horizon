@@ -177,6 +177,16 @@ internal static class TestCatalog
             "The navigator driven from code. Walking menus and grids, list boxes, tabbing and pasting, tooltips, dialogs and what is on top of what.",
             ["UINavigator", "UIDialog", "ListBox"],
             "Checks/UINavigationCheck.cs", () => new UINavigationCheck()) { Aliases = ["ui-navigation-selftest"] },
+
+        new("check-ui-skins", TestLevel.Checks, "UI, skins and themes",
+            "Every skin under Assets/uix in every theme it has, one after the other on the same controls. Whether each comes up, has its art and holds a layout made for another, and the setting they are picked with.",
+            ["UISkins", "UISkin", "SpriteSheetDefinition"],
+            "Checks/UISkinsCheck.cs", () => new UISkinsCheck()),
+
+        new("check-ui-parts", TestLevel.Checks, "UI, the newer parts",
+            "Edges dragged to resize, readouts, graphs and meters that make no garbage, the button in a text box and its menu of art, a dialog with controls in it, the picker of skins and the performance overlay out of its layouts.",
+            ["UIResize", "Readout", "Graph", "ArtPicker", "PerformanceFace"],
+            "Checks/UIPartsCheck.cs", () => new UIPartsCheck()),
     ]);
 
     /// <summary>Finds an example by its id, or by one of the ids the examples before it went by, whatever the case. Null if there's no such thing.</summary>

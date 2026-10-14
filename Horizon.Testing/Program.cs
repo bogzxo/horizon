@@ -62,7 +62,16 @@ internal class Program
 
         // A 1600 by 900 window, logic and physics each ticking 120 times a second. Change any of that with a
         // `with` (UpdatesPerSecond, PhysicsUpdatesPerSecond, Presentation, VSync and friends).
-        using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "Horizon examples", VSync = false });
+        // A run of the checks goes by updates (see UISelfTest) with nobody watching, so it gets twice as many a
+        // second and is done in half the time. More than that and the updates outrun the frames, which is where a
+        // skin stitches its art in. Everything else is as a game has it
+        bool checking = args.Length > 0 && args[0] == CHECKS;
+        using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with
+        {
+            WindowTitle = "Horizon examples",
+            VSync = false,
+            UpdatesPerSecond = checking ? 240.0 : 120.0
+        });
 
         // The host goes on the engine itself rather than in a scene, so it outlives every scene it swaps between
         var host = engine.AddEntity(new TestHost(TestCatalog.Tests));
@@ -71,6 +80,11 @@ internal class Program
         // for none. On the engine like the host, so it is there whatever scene is up. Bottom right, which is the
         // one corner the examples leave alone
         engine.AddEntity(new Horizon.UI.PerformanceOverlay { Corner = Horizon.Rendering.Origin.BottomRight });
+
+        // The skin the examples were left in the last time (the selector has the setting, F6 and F7 step it). Not
+        // for a run of the checks, those want the same skin every time
+        if (args.Length == 0 || !args[0].StartsWith("check", StringComparison.OrdinalIgnoreCase) && args[0] != CHECKS)
+            Horizon.UI.Skinning.UISkins.Remember(Path.Combine(AppContext.BaseDirectory, "examples_skin.txt"));
 
         // `dotnet run -- particles` starts straight in an example, by its id. Without one, or with one that doesn't
         // exist, you get the selector.

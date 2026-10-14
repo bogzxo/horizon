@@ -74,6 +74,10 @@ public partial class VillageExample : Scene, ITestControls
     private const float EARSHOT = 22.0f;
     private const float SAID_FOR = 4.5f;
 
+    // How much of the traced light hangs in the air at night, see PathTracedLighting2D.Fog. By day there is next to none
+    private const float HAZE = 0.25f;
+    private bool _hazy = true;
+
     public override Camera ActiveCamera { get; protected set; }
 
     // Listed on screen by the test host
@@ -162,7 +166,7 @@ public partial class VillageExample : Scene, ITestControls
         // The air. Some of the light the tracer finds hangs in the air as a haze whatever is under it, and the
         // lamps' glow is worked out shadowed and smeared through the air by the tracer rather than put down hard
         // edged by the deferred pass, so a window throws a soft shaft and a ceiling lamp a soft pool
-        _world.PathTracing.Fog = 0.25f;
+        _world.PathTracing.Fog = HAZE;
         _world.PathTracing.GlowSpread = 12.0f;
 
         // The picture brought to a brightness before it is shown, twice over. A glow round whatever the lamps
@@ -173,9 +177,11 @@ public partial class VillageExample : Scene, ITestControls
         _bloom = _world.PostProcessing.Add(new BloomEffect { Threshold = 0.7f, Intensity = 0.4f, Levels = 5 });
         _exposure = _world.PostProcessing.Add(new ExposureEffect
         {
-            Gamma = 1.12f,
+            // The lift is the dark's alone, by day the picture goes through as it was lit
+            DarkGamma = 1.15f,
             Knee = 0.8f,
             Adaptation = 0.35f,
+            LeastAdapted = 0.85f,
             MostAdapted = 1.35f
         });
 
@@ -222,7 +228,8 @@ public partial class VillageExample : Scene, ITestControls
         if (keyboard.WasPressed(Key.H) || pad?.WasPressed(GamepadInput.RightStick) == true)
         {
             bool haze = _world.PathTracing.Fog > 0.0f;
-            _world.PathTracing.Fog = haze ? 0.0f : 0.25f;
+            _hazy = !haze;
+            _world.PathTracing.Fog = haze ? 0.0f : HAZE;
             _world.PathTracing.GlowSpread = haze ? 0.0f : 12.0f;
         }
         if (keyboard.WasPressed(Key.T) || pad?.WasPressed(GamepadInput.Y) == true) _hurry = !_hurry;

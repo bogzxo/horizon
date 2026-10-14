@@ -20,6 +20,22 @@ public abstract partial class UIComponent
     /// <summary>
     /// Declares the properties scripts can read and write on this component, with the Expose methods.
     /// </summary>
+    /// <summary>
+    /// Helper method to take the name of a style out of the name of one of its pieces. A style is what the
+    /// regions of a component are called less what they end in ("toggle" for "toggle_on" and "toggle_off"), and
+    /// whoever picks one by eye out of a skin's art picks a piece, so that is taken as meaning the style it is of.
+    /// </summary>
+    protected static string StyleStem(string name, string ending, string other = "")
+    {
+        if (name.EndsWith(ending, StringComparison.Ordinal))
+            return name[..^ending.Length];
+
+        if (other.Length > 0 && name.EndsWith(other, StringComparison.Ordinal))
+            return name[..^other.Length];
+
+        return name;
+    }
+
     protected virtual void DefineScript()
     {
         Expose("pos", () => Position, value => Position = value);
@@ -59,6 +75,8 @@ public abstract partial class UIComponent
             "intro_easing",
             () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : (IRuntimeValue)new NullValue(),
             value => IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, "intro_easing"));
+
+        DefineResizeScript();
 
         Expose(
             "parent",

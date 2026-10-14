@@ -1,0 +1,809 @@
+using Horizon.Logging;
+using System;
+using System.Collections.Generic;
+using System.Threading;
+
+using Horizon.Core;
+
+using Horizon.Core.Components;
+using Horizon.Core.Threading;
+using Horizon.Core.Tweening;
+
+
+namespace Horizon.Engine.Components;
+
+// There used to be an InstanceManager<Scene> under this. It went, so publishing AOT has no Activator or reflection to moan about.
+/// <summary>
+/// Holds the scene that is on screen and swaps it for another one when asked to.
+/// <para>
+/// A swap happens all at once, on the render thread, at the start of a frame. The new scene is set up, all of it
+/// (see <see cref="Entity.InitializeAll"/>), and run until it has everything it shows (see
+/// <see cref="ReportUnfinished"/>), and the scene that is left is freed with everything it had on the GPU (see
+/// <see cref="Scene.Assets"/>). Only then is a frame drawn. So the frame before a swap is the old scene as it
+/// was, the frame after it is the new scene whole, and nothing in between is ever shown or updated. No empty
+/// frame, no frame of a scene that is still missing its UI, and no update of a scene that is half set up.
+/// </para>
+/// <para>
+/// A swap doesn't have to be a hard cut. Give the manager a <see cref="Transition"/> and every scene change covers the
+/// old scene up first, swaps while nobody can see and uncovers the new one. See <see cref="SceneTransition"/>.
+/// </para>
+/// <para>
+/// And a scene doesn't have to be thrown away to make room for another. <see cref="PushScene"/> puts a scene on top
+/// of the one on screen, which is kept exactly as it is underneath, an options screen over a fight, an inventory
+/// over a level, a cutscene over the map. <see cref="PopScene"/> takes the top one away and the one under it is
+/// back on screen as it was left, nothing set up again. What happens to a scene while it is underneath is said as
+/// it is pushed (<see cref="SceneBelow"/>), it can stand still unseen, keep being updated (a network fight has
+/// to keep talking to the other machine), keep being drawn behind the scene on top (which is then an overlay), or
+/// both. Scenes can be stacked as deep as anybody likes. <see cref="SetScene(Scene)"/> swaps the scene on top and
+/// leaves what is under it alone, so a pushed screen can go on to screens of its own and come back,
+/// <see cref="ResetTo"/> throws the lot away for one scene.
+/// </para>
+/// </summary>
+public class SceneManager : Entity
+{
+    // What a change of scene does with the scene that is on screen and whatever is underneath it
+    private enum Way
+    {
+        // The scene on screen is left for the new one, what is underneath stays
+        Swap,
+
+        // The scene on screen is kept underneath the new one
+        Push,
+
+        // The scene on screen is left for the one underneath it
+        Pop,
+
+        // The scene on screen and everything underneath it are left for the new one
+        Reset
+    }
+
+    // A scene that is kept underneath, and how
+    private readonly record struct Kept(Scene Scene, SceneBelow How);
+
+    // The scenes underneath the one on screen, the bottom one first. Swapped whole under the lock, so a turn can
+    // walk the array it has without one
+    private volatile Kept[] _below = [];
+
+    // What the change that is waiting does, and how the scene it pushes under is kept
+    private Way _incomingChange;
+    private SceneBelow _incomingBelow;
+
+    // The scene of the stack that is being updated or drawn right now on this thread, see ActiveScene
+    [ThreadStatic] private static Scene? _acting;
+
+    /// <summary>
+    /// The scene whose turn it is on this thread right now, the one on screen unless a scene underneath it is
+    /// being updated or drawn. What a scene finds when it asks the engine for the camera is its own this way,
+    /// and not that of the scene on top of it.
+    /// </summary>
+    public Scene? ActiveScene => _acting ?? CurrentInstance;
+
+    /// <summary>How many scenes are kept underneath the one on screen, see <see cref="PushScene"/>.</summary>
+    public int Depth => _below.Length;
+
+    /// <summary>Whether there is a scene underneath the one on screen to go back to, see <see cref="PopScene"/>.</summary>
+    public bool CanPop => _below.Length > 0;
+
+    // The most turns a scene that was just set gets to finish itself before it is shown as it is
+    private const int MAX_WARM_UP = 8;
+
+    // The longest step a transition takes in one frame. Setting a scene up can take a while, and the fade shouldn't skip to its end because of it
+    private const float MAX_TRANSITION_STEP = 1.0f / 30.0f;
+
+    // Only one tween moves the cover at a time, covering up takes over from uncovering and the other way round
+    private const string COVER_CHANNEL = "cover";
+
+    // The scene that is on screen. Still called what the InstanceManager called it, which this class ate
+    public Scene? CurrentInstance { get; private set; }
+
+    /// <summary>
+    /// Whether the scene stands still. It is drawn as it was left and nothing in it is updated, the engine and
+    /// whatever sits on it (an overlay, the Skyline debugger) carry on. From any thread.
+    /// </summary>
+    public bool Paused
+    {
+        get => _paused;
+        set => _paused = value;
+    }
+
+    /// <summary>
+    /// How fast the scene's time goes by, 1 as it comes, 0.25 for a quarter of the speed. Every update of the scene
+    /// and its physics gets that much of the time that really went by. For looking at something slowly.
+    /// </summary>
+    public float TimeScale
+    {
+        get => _timeScale;
+        set => _timeScale = Math.Clamp(value, 0.0f, 16.0f);
+    }
+
+    private volatile bool _paused;
+    private volatile float _timeScale = 1.0f;
+
+    // The updates a paused scene still gets, see Step
+    private int _stepsState, _stepsPhysics;
+
+    /// <summary>Lets a paused scene have one update (and one of its physics), then it stands still again. From any thread.</summary>
+    public void Step()
+    {
+        Interlocked.Increment(ref _stepsState);
+        Interlocked.Increment(ref _stepsPhysics);
+    }
+
+    /// <summary>Helper method for whether the scene gets this update, paused or not.</summary>
+    private bool Runs(ref int steps)
+    {
+        if (!_paused) return true;
+        if (Volatile.Read(ref steps) <= 0) return false;
+
+        Interlocked.Decrement(ref steps);
+        return true;
+    }
+
+    // Whether a scene is waiting to take over. Nothing is updated in the meantime, the scene that is left has
+    // said it is done, and the one that takes over isn't set up yet
+    private volatile bool _halt = false;
+
+    // The scene that takes over at the next frame, and what guards it, scenes are set from any thread
+    private readonly Lock _changeLock = new();
+    private Scene? _incoming;
+
+    // The scenes that have been left and are still to be freed
+    private readonly List<Scene> _retired = [];
+
+    // Whether something that was drawn this frame said it isn't all there yet
+    private bool _unfinished;
+
+    // How long the last scene took to be made and to be warmed up, for the log
+    private double _setUpMs, _warmUpMs;
+
+    // Whether a scene has ever been drawn
+    private bool _shown;
+
+    /// <summary>
+    /// Whether the first scene is still on its way, set and not drawn yet. The engine keeps its loading screen up
+    /// for as long. False for a game that never sets a scene.
+    /// </summary>
+    internal bool IsStarting => !_shown && (CurrentInstance is not null || _incoming is not null);
+
+    // The transition that is covering or uncovering the screen right now, and the one the waiting scene comes in with
+    private readonly TweenContext _tweens = new();
+    private SceneTransition? _running, _incomingTransition;
+
+    // A scene that is to be set up ahead of being shown at the next chance, and one that has been, set up, warmed up
+    // and waiting, so the swap to it costs nothing (see Preload)
+    private Scene? _toPreload, _preloaded;
+
+    // The transition that drew over the last frame, which is how it is known when one has stopped
+    private SceneTransition? _drawn;
+
+    // How much of the screen is covered, 0 is none of it and 1 is all of it. And whether it is on its way to all of it
+    private float _cover;
+    private volatile bool _covering;
+
+    // Whether the scene under the cover is the new one already, and whether the old one is on its very last frame
+    private bool _arriving;
+    private volatile bool _lastFrame;
+
+    /// <summary>
+    /// The transition every scene change goes through, unless it is handed one of its own.
+    /// Null (which is what it is until somebody sets one) for a hard cut.
+    /// </summary>
+    public SceneTransition? Transition { get; set; }
+
+    // How to make a scene of a kind when all there is to go by is its type, see RegisterScene
+    private readonly Dictionary<Type, Func<Scene>> _sceneFactories = new();
+
+
+    /// <summary>
+    /// Says how a scene of a kind is made, for whoever only has its type to ask with (<see cref="ChangeInstance(Type)"/>).
+    /// Nothing is found by reflection, so this is safe to publish AOT.
+    /// </summary>
+    public void RegisterScene<TScene>(Func<TScene> factory) where TScene : Scene
+    {
+        _sceneFactories[typeof(TScene)] = factory;
+    }
+
+    /// <summary>
+    /// Has a new scene of a kind take over, the old name for <see cref="SetScene{TScene}()"/>.
+    /// </summary>
+    public void ChangeInstance<TScene>() where TScene : Scene, new()
+    {
+        SetScene(new TScene());
+    }
+
+    /// <summary>
+    /// Has a new scene of a kind take over from the one that is on screen.
+    /// </summary>
+    public void SetScene<TScene>() where TScene : Scene, new()
+    {
+        SetScene(new TScene());
+    }
+
+    /// <summary>
+    /// Has a new scene of a type take over. The type has to have been registered with <see cref="RegisterScene"/>
+    /// first, there is no making one out of thin air any more.
+    /// </summary>
+    public void ChangeInstance(Type type)
+    {
+        if (_sceneFactories.TryGetValue(type, out var factory))
+        {
+            SetScene(factory());
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"Scene type '{type.Name}' is not registered. For Native AOT, " +
+                "use ChangeInstance<T>() or call RegisterScene() during engine startup."
+            );
+        }
+    }
+
+    /// <summary>
+    /// Has a scene take over from the one that is on screen, through the <see cref="Transition"/> if there is one. From any thread.
+    /// </summary>
+    public void SetScene(Scene scene) => SetScene(scene, Transition);
+
+    /// <summary>
+    /// Has a scene take over from the one that is on screen. From any thread.
+    /// Without a transition that happens at the start of the next frame, and the scene that is left is not updated any more.
+    /// With one the scene that is left stays on screen (and keeps getting updated) for as long as it takes to cover it up,
+    /// so a scene that has set another one should stop listening to its buttons.
+    /// </summary>
+    /// <param name="transition">How this one change is made, null for a hard cut whatever <see cref="Transition"/> says.</param>
+    public void SetScene(Scene scene, SceneTransition? transition) => Set(scene, transition, Way.Swap, SceneBelow.Suspended);
+
+    /// <summary>
+    /// Puts a scene on top of the one that is on screen, which is kept as it is underneath until the new one is
+    /// popped (<see cref="PopScene"/>). From any thread. The scene underneath is told (<see cref="Scene.OnSuspended"/>,
+    /// <see cref="Scene.IsSuspended"/>) and should stop listening to its buttons while it is under there, the
+    /// way one that is leaving does.
+    /// </summary>
+    /// <param name="transition">How the change is made, null for a hard cut. An overlay usually wants none.</param>
+    /// <param name="below">What becomes of the scene underneath while it is there, see <see cref="SceneBelow"/>.</param>
+    public void PushScene(Scene scene, SceneTransition? transition = null, SceneBelow below = SceneBelow.Suspended) =>
+        Set(scene, transition, Way.Push, below);
+
+    /// <summary>
+    /// Takes the scene on screen away and puts the one underneath it back, as it was left. From any thread.
+    /// </summary>
+    /// <returns>False if there is nothing underneath to go back to, nothing happens then.</returns>
+    public bool PopScene(SceneTransition? transition = null)
+    {
+        Scene under;
+        lock (_changeLock)
+        {
+            if (_below.Length == 0) return false;
+            under = _below[^1].Scene;
+        }
+
+        Set(under, transition, Way.Pop, SceneBelow.Suspended);
+        return true;
+    }
+
+    /// <summary>
+    /// Has a scene take over from the one on screen and from every scene kept underneath it, all of which are
+    /// left. For going back to the main menu from three screens deep. From any thread.
+    /// </summary>
+    public void ResetTo(Scene scene, SceneTransition? transition = null) => Set(scene, transition, Way.Reset, SceneBelow.Suspended);
+
+    // Helper method for whether a scene is one of those kept underneath, with the lock held or not
+    private bool IsBelow(Scene scene)
+    {
+        foreach (Kept kept in _below)
+        {
+            if (ReferenceEquals(kept.Scene, scene)) return true;
+        }
+
+        return false;
+    }
+
+    private void Set(Scene scene, SceneTransition? transition, Way change, SceneBelow below)
+    {
+        lock (_changeLock)
+        {
+            // Whoever is on screen is on their way out from here on, and can tell
+            if (CurrentInstance is { } leaving && !ReferenceEquals(leaving, scene))
+                leaving.IsLeaving = true;
+
+            // One that was set and never got as far as being shown. One that is kept underneath was only going
+            // to be gone back to, and stays where it is
+            if (_incoming is not null && !ReferenceEquals(_incoming, scene) && !_incoming.Persistent && !IsBelow(_incoming))
+            {
+                lock (_retired) _retired.Add(_incoming);
+            }
+
+            _incoming = scene;
+            _incomingTransition = transition;
+            _incomingChange = change;
+            _incomingBelow = below;
+
+            // Set up ahead for a scene that isn't the one coming after all
+            RetirePreloadedUnless(scene);
+
+            // Nothing to cover up, the scene takes over at the next frame
+            if (transition is null || CurrentInstance is null)
+            {
+                Halt();
+                return;
+            }
+
+            // Already on the way to covered, the scene that was just set simply takes the place of the one that was waiting
+            if (_covering) return;
+
+            _covering = true;
+            _arriving = false;
+            _running = transition;
+
+            // Set up now, while the old scene is covered up, rather than at the moment it is all the way covered. The
+            // wait (loading a scene can take a good while) is when the button was pressed, and the transition itself
+            // plays out smoothly with nothing left to do at its height but swap
+            QueuePreload(scene);
+
+            // Covered all the way is not the moment to swap yet. The old scene is drawn once more like that first,
+            // which is the frame a transition gets to remember it by
+            _tweens.Play(
+                Tween.To(() => _cover, cover => _cover = cover, 1.0f, MathF.Max(0.0f, transition.OutTime))
+                    .SetEasing(transition.OutEasing)
+                    .OnComplete(() => _lastFrame = true),
+                COVER_CHANNEL);
+        }
+    }
+
+    /// <summary>
+    /// For whatever is drawn in a scene and finds it can't show all of itself yet, a UI that hasn't been updated
+    /// once, art that is still on its way to the GPU. Called while drawing, on the render thread. A scene that
+    /// has just been set is not shown while anything in it says this, it is given another turn instead (up to a
+    /// point). At any other time it does nothing.
+    /// </summary>
+    public void ReportUnfinished() => _unfinished = true;
+
+    /// <summary>
+    /// Sets a scene up ahead of it being shown (made, its assets loaded, warmed up), at the start of the next frame,
+    /// so that setting it later swaps to it straight away. For a scene that is pretty sure to come next, the fight
+    /// while the map is being picked, the next level while this one is being played. From any thread.
+    /// <para>
+    /// One scene is kept like that at a time, so preloading another, or setting a scene that isn't it, lets go of it
+    /// (unless it is <see cref="Scene.Persistent"/>). Setting a scene with a transition preloads it by itself.
+    /// </para>
+    /// </summary>
+    public void Preload(Scene scene)
+    {
+        lock (_changeLock)
+        {
+            RetirePreloadedUnless(scene);
+            QueuePreload(scene);
+        }
+    }
+
+    // Helper method to have a scene set up at the next chance, unless it is on screen or set up already. With the lock held
+    private void QueuePreload(Scene scene)
+    {
+        // One that is kept underneath was set up long ago
+        if (ReferenceEquals(scene, CurrentInstance) || ReferenceEquals(scene, _preloaded) || IsBelow(scene))
+            return;
+
+        _toPreload = scene;
+        GameEngine.Instance?.WindowManager.RequestExclusive();
+    }
+
+    // Helper method to let go of whatever was set up ahead that isn't a scene, with the lock held
+    private void RetirePreloadedUnless(Scene scene)
+    {
+        if (_toPreload is not null && !ReferenceEquals(_toPreload, scene))
+            _toPreload = null;
+
+        if (_preloaded is not { } kept || ReferenceEquals(kept, scene))
+            return;
+
+        _preloaded = null;
+        if (!kept.Persistent)
+        {
+            lock (_retired) _retired.Add(kept);
+        }
+    }
+
+    /// <summary>
+    /// Helper method to set up the scene that is to be preloaded. Render thread, at the start of a frame, with the
+    /// simulation standing still.
+    /// </summary>
+    private void PreloadNow(float dt)
+    {
+        Scene? scene;
+        lock (_changeLock)
+        {
+            scene = _toPreload;
+            _toPreload = null;
+        }
+
+        if (scene is null || ReferenceEquals(scene, CurrentInstance) || ReferenceEquals(scene, _preloaded) || IsBelow(scene))
+            return;
+
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        int turns;
+        using (scene.Assets.Enter())
+            turns = SetUp(scene, dt);
+
+        lock (_changeLock)
+        {
+            // Swapped for another while it was being set up, it goes with the rest of what was left
+            if (_incoming is not null && !ReferenceEquals(_incoming, scene) && !scene.Persistent)
+            {
+                lock (_retired) _retired.Add(scene);
+            }
+            else
+            {
+                _preloaded = scene;
+            }
+        }
+
+        Log.Info($"[SceneManager] Set up '{(scene.Name.Length > 0 ? scene.Name : scene.GetType().Name)}' ahead in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
+
+        // What the warm up drew is not for showing
+        var graphics = GameEngine.Instance.Graphics;
+        graphics.BindWindow();
+        graphics.Clear(Horizon.Graphics.ClearTargets.All);
+    }
+
+    /// <summary>
+    /// Helper method to stop updating the scene that is on screen and have the one that was set take over, which
+    /// happens at the start of the next frame with the simulation standing still (see <see cref="WindowManager.Exclusive"/>).
+    /// </summary>
+    private void Halt()
+    {
+        _halt = true;
+        GameEngine.Instance?.WindowManager.RequestExclusive();
+    }
+
+    public override void Initialize()
+    {
+        base.Initialize();
+
+        // Swapping scenes sets one up and frees the other, which only the render thread can do and nobody else may watch
+        GameEngine.Instance.WindowManager.Exclusive += dt =>
+        {
+            if (_toPreload is not null)
+                PreloadNow(dt);
+
+            if (_halt)
+                Change(dt);
+        };
+    }
+
+    public override void Capture()
+    {
+        // What is drawn underneath is published as well, bottom first like it is drawn
+        foreach (Kept kept in _below)
+        {
+            if ((kept.How & SceneBelow.Drawn) == 0 || !kept.Scene.Enabled) continue;
+
+            _acting = kept.Scene;
+            kept.Scene.Capture();
+            _acting = null;
+        }
+
+        // The scene is not a child of ours, it is updated and drawn by hand, and published the same way
+        if (CurrentInstance is { Enabled: true } scene)
+            scene.Capture();
+
+        base.Capture();
+    }
+
+    public override void Render(float dt)
+    {
+        // The cover is moved along here rather than with the updates, those stop while a scene is being swapped
+        _tweens.Tick(MathF.Min(dt, MAX_TRANSITION_STEP));
+
+        // Drawn alongside the simulation, the scene is drawn once it has been published. Not the frame it was swapped in
+        // on, before it has had a tick, but every one after
+        RenderFrame frame = RenderFrame.Active;
+
+        // The scenes underneath that are still drawn, the bottom one first, each through its own camera
+        foreach (Kept kept in _below)
+        {
+            Scene under = kept.Scene;
+            if ((kept.How & SceneBelow.Drawn) == 0 || under.IsDisposed || (frame.IsDecoupled && !under.WasCaptured(frame))) continue;
+
+            _acting = under;
+            using (under.Assets.Enter())
+                under.Render(dt);
+            _acting = null;
+        }
+
+        if (CurrentInstance is { IsDisposed: false } scene && (!frame.IsDecoupled || scene.WasCaptured(frame)))
+        {
+            // Whatever is made while the scene is drawn (most things are only made when they are first needed)
+            // is the scene's
+            using (scene.Assets.Enter())
+                scene.Render(dt);
+
+            _shown = true;
+        }
+
+        base.Render(dt);
+
+        // Whoever drew over the last frame and doesn't any more is done, and is told so it can let go of what it kept
+        SceneTransition? drawing = _cover > 0.0f ? _running : null;
+        if (!ReferenceEquals(_drawn, drawing))
+        {
+            _drawn?.Finish();
+            _drawn = drawing;
+        }
+
+        // Over everything, whatever the scene drew last
+        drawing?.Render(_cover, _arriving, dt);
+
+        // That was the last frame of the old scene, the new one takes over at the start of the next
+        if (_lastFrame)
+        {
+            _lastFrame = false;
+            Halt();
+        }
+    }
+
+    /// <summary>
+    /// Helper method to take the cover off again once the scene under it has been swapped, the way the transition
+    /// the scene came in with wants it. Without one the cover is simply gone.
+    /// </summary>
+    private void Uncover(SceneTransition? transition)
+    {
+        _covering = false;
+        _lastFrame = false;
+
+        if (transition is null)
+        {
+            _tweens.Kill(COVER_CHANNEL);
+            _cover = 0.0f;
+            _running = null;
+            return;
+        }
+
+        // From all the way covered, also for a scene that had nothing before it to cover up (the first one)
+        _running = transition;
+        _arriving = true;
+        _cover = 1.0f;
+        _tweens.Play(
+            Tween.To(() => _cover, cover => _cover = cover, 0.0f, MathF.Max(0.0f, transition.InTime)).SetEasing(transition.InEasing),
+            COVER_CHANNEL);
+    }
+
+    /// <summary>
+    /// Helper method to swap the scene on screen for the one that was set. Render thread, at the start of a frame,
+    /// with the simulation standing still (see <see cref="WindowManager.Exclusive"/>).
+    /// </summary>
+    private void Change(float dt)
+    {
+        Scene? incoming;
+        SceneTransition? transition;
+        Way change;
+        SceneBelow how;
+        lock (_changeLock)
+        {
+            incoming = _incoming;
+            transition = _incomingTransition;
+            change = _incomingChange;
+            how = _incomingBelow;
+            _incoming = null;
+            _incomingTransition = null;
+            _incomingChange = Way.Swap;
+            _halt = false;
+        }
+
+        Scene? left = CurrentInstance;
+        if (ReferenceEquals(incoming, left))
+        {
+            Uncover(transition);
+            DisposeRetired();
+            return;
+        }
+
+        // What becomes of the scenes underneath. A pop only goes back to the scene that is right under the one on
+        // screen, if that has changed since it was asked for (somebody set another scene in between) it is a swap
+        bool back = false, kept = false;
+        lock (_changeLock)
+        {
+            Kept[] below = _below;
+            switch (change)
+            {
+                case Way.Pop when below.Length > 0 && ReferenceEquals(below[^1].Scene, incoming):
+                    _below = below[..^1];
+                    back = true;
+                    break;
+
+                case Way.Push when left is not null && incoming is not null:
+                    _below = [.. below, new Kept(left, how)];
+                    kept = true;
+                    break;
+
+                case Way.Reset:
+                    _below = [];
+                    lock (_retired)
+                    {
+                        foreach (Kept under in below)
+                        {
+                            if (!under.Scene.Persistent && !ReferenceEquals(under.Scene, incoming)) _retired.Add(under.Scene);
+                        }
+                    }
+                    break;
+            }
+        }
+
+        CurrentInstance = incoming;
+
+        if (kept)
+        {
+            // Underneath from here on. It was leaving the screen, it has left now, and it is told
+            left!.IsSuspended = true;
+            left.OnSuspended();
+        }
+
+        if (incoming is not null)
+        {
+            // One that was kept and is back has been left before
+            incoming.IsLeaving = false;
+
+            bool ready;
+            lock (_changeLock)
+            {
+                ready = back || ReferenceEquals(_preloaded, incoming);
+                if (ReferenceEquals(_preloaded, incoming)) _preloaded = null;
+            }
+
+            if (back)
+            {
+                incoming.IsSuspended = false;
+                incoming.OnResumed();
+            }
+
+            // Set up ahead (see Preload), there is nothing left to do but show it
+            if (!ready)
+            {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                int turns;
+                using (incoming.Assets.Enter())
+                    turns = SetUp(incoming, dt);
+
+                Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
+
+                // What the warm up drew is not for showing
+                var graphics = GameEngine.Instance.Graphics;
+                graphics.BindWindow();
+                graphics.Clear(Horizon.Graphics.ClearTargets.All);
+            }
+        }
+
+        // The scene that is left goes last, once the new one has everything it needs. What the two share by name
+        // stays where it is that way, rather than being freed and loaded all over again
+        if (left is { Persistent: false } && !kept)
+        {
+            lock (_retired) _retired.Add(left);
+        }
+
+        DisposeRetired();
+
+        // Last, so the time all of the above took is not time the new scene spends half uncovered
+        Uncover(incoming is null ? null : transition);
+    }
+
+    /// <summary>
+    /// Helper method to set a scene up until it is ready to be shown, with everything it makes noted as its own.
+    /// </summary>
+    /// <returns>How many turns it took to warm the scene up.</returns>
+    private int SetUp(Scene scene, float dt)
+    {
+        scene.Enabled = false;
+        scene.Parent = Parent; // pass through the engine.
+
+        // The scene, and then everything it added while it was at it, all the way down
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        scene.Initialize();
+        scene.InitializeAll();
+        scene.Enabled = true;
+        _setUpMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        started = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        // Everything in the scene exists now, but a scene isn't whole the moment it does. A lot is only made on
+        // the GPU the first time it is drawn, a UI has nothing to draw before it has been updated, and art that
+        // is asked for while painting arrives a frame later. Shown right away that is a few frames of a
+        // background without its UI. So it is drawn and updated here, unseen, until nothing in it says it is
+        // still missing something. All of this ends up in one frame, which is drawn over afterwards
+        int turn = 0;
+        for (; turn < MAX_WARM_UP; turn++)
+        {
+            _unfinished = false;
+            scene.Render(dt);
+
+            if (!_unfinished && turn > 0)
+                break;
+
+            scene.UpdateState(dt);
+            scene.UpdatePhysics(dt);
+
+            // What those updates added is set up before it is drawn or updated, as it is while the game runs
+            EntityLifecycle.Flush();
+
+            // It set another scene from its very first update, which is the one to show then
+            if (_halt)
+                break;
+        }
+
+        _unfinished = false;
+        _warmUpMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        return Math.Min(turn + 1, MAX_WARM_UP);
+    }
+
+    /// <summary>
+    /// Frees the scenes that were left, with everything they had. What a scene holds is disposed of first, the
+    /// way it wants to go, and whatever is left of what it made on the GPU after that is freed for it. Not
+    /// everything cleans up after itself, and a scene mustn't depend on that to not leak.
+    /// </summary>
+    private void DisposeRetired()
+    {
+        Scene[] gone;
+        lock (_retired)
+        {
+            if (_retired.Count == 0) return;
+
+            gone = [.. _retired];
+            _retired.Clear();
+        }
+
+        foreach (Scene scene in gone)
+        {
+            try
+            {
+                scene.Enabled = false;
+                scene.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Log.Error($"[SceneManager] '{scene.Name}' didn't go quietly: {exception.Message}");
+            }
+
+            int freed = GameEngine.Instance.ObjectManager.Release(scene.Assets);
+            Log.Info($"[SceneManager] Left '{scene.Assets.Name}', freed the {freed} GPU objects it still had.");
+        }
+    }
+
+    public override void UpdatePhysics(float dt)
+    {
+        if (_halt || !Enabled)
+            return;
+        if (Runs(ref _stepsPhysics))
+        {
+            // The scenes underneath that are still running go first, the bottom one first
+            foreach (Kept kept in _below)
+            {
+                if ((kept.How & SceneBelow.Updated) == 0 || !kept.Scene.Enabled) continue;
+
+                _acting = kept.Scene;
+                kept.Scene.UpdatePhysics(dt * _timeScale);
+                _acting = null;
+            }
+
+            CurrentInstance?.UpdatePhysics(dt * _timeScale);
+        }
+
+        base.UpdatePhysics(dt);
+    }
+
+    public override void UpdateState(float dt)
+    {
+        if (_halt || !Enabled)
+            return;
+        if (Runs(ref _stepsState))
+        {
+            foreach (Kept kept in _below)
+            {
+                if ((kept.How & SceneBelow.Updated) == 0 || !kept.Scene.Enabled) continue;
+
+                _acting = kept.Scene;
+                kept.Scene.UpdateState(dt * _timeScale);
+                _acting = null;
+            }
+
+            CurrentInstance?.UpdateState(dt * _timeScale);
+        }
+
+        base.UpdateState(dt);
+    }
+}

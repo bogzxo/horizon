@@ -51,7 +51,7 @@ internal sealed class TestSelectorScene : Scene
         // the engine's. The UI brings its own camera with ForScreen and keeps it the size of the window.
         // And UI components own nothing on the GPU, so the whole screen can be put together right here in the
         // constructor. The compositor makes what it needs in its own Initialize, on the render thread.
-        var compositor = AddComponent(UICompositor.ForScreen());
+        var compositor = AddComponent(UICompositor.ForScreen(UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE));
         compositor.DesignSize = DesignSize;
         module = compositor.CreateModule();
 
@@ -65,6 +65,13 @@ internal sealed class TestSelectorScene : Scene
             TextScale = 0.25f,
             Color = HostStyle.Dim
         });
+
+        // The skin the examples' UI is drawn in, the game's one setting for it (UISkins). Every UI made with
+        // new UICompositor(camera) follows it, F6 and F7 step it while an example runs. This screen and the strip
+        // over an example asked for a skin of their own and stay as they are
+        var looks = screen.Add(new StackPanel { Anchor = Origin.Left, Direction = UIDirection.Horizontal, Spacing = 12 });
+        looks.Add(new Label("The examples' UI is drawn in") { TextScale = 0.25f, Color = HostStyle.Dim });
+        looks.Add(new SkinPicker { TextScale = 0.25f });
 
         var body = screen.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 20 });
 

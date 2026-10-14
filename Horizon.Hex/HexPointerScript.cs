@@ -8,11 +8,26 @@ namespace Horizon.Hex;
 /// A pointer that follows a script rather than the mouse, for the editor to test itself with. Moves, presses,
 /// things to do and things to check are queued up front and played back one after the other. The checks are
 /// printed as they run, with a tally at the end.
+/// <para>
+/// It goes by updates and not by the clock. A move is a couple of updates, a press is one, and the wait after
+/// something was done is the three it takes for the editor to put its lists together again and lay them out,
+/// which is all any of it ever needed, the rest was a pointer gliding about for nobody. <see cref="Pace"/> slows it
+/// down to something a person can follow. Only what really does take time (a dialog popping up, an entrance
+/// playing) is waited for by the clock, with <see cref="Settle"/>.
+/// </para>
 /// </summary>
 internal sealed class HexPointerScript
 {
-    private const float MOVE_TIME = 0.16f;
-    private const float PRESS_TIME = 0.08f;
+    // In updates, at a pace of 1
+    private const int MOVE_UPDATES = 2;
+    private const int PRESS_UPDATES = 1;
+    private const int WAIT_UPDATES = 3;
+
+    /// <summary>How many times slower than flat out it goes, 1 for as fast as the editor can keep up with, 8 or so to watch.</summary>
+    public int Pace { get; init; } = 1;
+
+    private float MOVE_TIME => MOVE_UPDATES * Pace;
+    private float PRESS_TIME => PRESS_UPDATES * Pace;
 
     // One of these. Glide to a target with the button in a given state, wait for something, run something, check something.
     private readonly record struct Step(
@@ -23,7 +38,8 @@ internal sealed class HexPointerScript
         Func<bool>? Check = null,
         Action? Action = null,
         Func<bool>? Until = null,
-        bool Secondary = false);
+        bool Secondary = false,
+        bool Seconds = false);
 
     private readonly Queue<Step> steps = new();
     private Step? current;
@@ -42,10 +58,10 @@ internal sealed class HexPointerScript
     public UIPointer Pointer => new(position, down, secondary);
 
     /// <summary>Moves to a target and stays there for a while.</summary>
-    public void Hover(Func<Vector2> target, float duration = MOVE_TIME)
+    public void Hover(Func<Vector2> target)
     {
         Glide(target, false, MOVE_TIME);
-        Glide(target, false, duration);
+        Glide(target, false, MOVE_TIME);
     }
 
     public void Click(Func<Vector2> target)
@@ -72,13 +88,20 @@ internal sealed class HexPointerScript
         Glide(end, false, PRESS_TIME);
     }
 
-    /// <summary>Lets some time pass with the pointer where it is, for the UI to catch up with what was done to it.</summary>
-    public void Wait(float seconds = 0.12f) =>
-        steps.Enqueue(new Step(Duration: seconds));
+    /// <summary>
+    /// Lets a few updates pass with the pointer where it is, for the UI to catch up with what was done to it (its
+    /// lists put together again, and laid out the update after).
+    /// </summary>
+    public void Wait() =>
+        steps.Enqueue(new Step(Duration: WAIT_UPDATES * Pace));
 
-    /// <summary>Waits for something to be the case, for no longer than a while.</summary>
+    /// <summary>Lets time pass by the clock, for what takes time whatever the pace is, an entrance, a pop, a tween.</summary>
+    public void Settle(float seconds) =>
+        steps.Enqueue(new Step(Duration: seconds, Seconds: true));
+
+    /// <summary>Waits for something to be the case, for no longer than a while (in seconds).</summary>
     public void WaitFor(Func<bool> until, float timeout) =>
-        steps.Enqueue(new Step(Duration: timeout, Until: until));
+        steps.Enqueue(new Step(Duration: timeout, Until: until, Seconds: true));
 
     /// <summary>Queues a condition to test once everything queued before it has played out.</summary>
     public void Check(string name, Func<bool> check) =>
@@ -139,7 +162,8 @@ internal sealed class HexPointerScript
             return;
         }
 
-        elapsed += dt;
+        // By the clock for what asked for it, by the update for everything else
+        elapsed += step.Seconds ? dt : 1.0f;
 
         if (step.Target is null)
         {

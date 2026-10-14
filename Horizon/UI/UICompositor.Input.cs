@@ -264,6 +264,21 @@ public partial class UICompositor
         }
         secondaryWasDown = pointer.SecondaryDown;
 
+        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held
+        UIResize grip = over is not null && pressed is null ? over.GripAt(over.Module!.ToLocal(pointer.Position)) : UIResize.None;
+        UIComponent? gripOwner = grip != UIResize.None ? over : null;
+        if (!ReferenceEquals(gripped, gripOwner) || (gripOwner is not null && gripOwner.ActiveGrip != grip))
+        {
+            if (gripped is { IsResizing: false })
+                gripped.ActiveGrip = UIResize.None;
+
+            if (gripOwner is not null)
+                gripOwner.ActiveGrip = grip;
+
+            if (gripped is null || !gripped.IsResizing)
+                gripped = gripOwner;
+        }
+
         // While something is held nothing else reacts to the pointer passing over it.
         UIComponent? hover = pressed is null || pressed == over ? over : null;
         if (hover != hovered)
@@ -294,12 +309,21 @@ public partial class UICompositor
             {
                 pressed = over;
                 pressed.IsPressed = true;
-                pressed.OnPointerDown(pressed.Module!.ToLocal(pointer.Position));
+
+                // On an edge that can be dragged the press is the start of that, and none of the component's business
+                Vector2 at = pressed.Module!.ToLocal(pointer.Position);
+                if (pressed.GripAt(at) is var edges && edges != UIResize.None)
+                    pressed.BeginResize(edges, at);
+                else
+                    pressed.OnPointerDown(at);
             }
         }
         else if (pointer.Down && pressed is not null)
         {
-            pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
+            if (pressed.IsResizing)
+                pressed.DragResize(pressed.Module!.ToLocal(pointer.Position));
+            else
+                pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
         }
         else if (!pointer.Down && pressed is not null)
         {
@@ -307,10 +331,20 @@ public partial class UICompositor
             pressed = null;
 
             released.IsPressed = false;
-            released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
 
-            if (released == over)
-                released.OnClick();
+            if (released.IsResizing)
+            {
+                // Letting go of an edge is not a click on whatever the edge belongs to
+                released.EndResize();
+                if (ReferenceEquals(gripped, released)) gripped = null;
+            }
+            else
+            {
+                released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
+
+                if (released == over)
+                    released.OnClick();
+            }
         }
 
         pointerWasDown = pointer.Down;

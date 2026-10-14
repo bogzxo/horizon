@@ -18,6 +18,7 @@ internal class Program
     private const string ARGUMENT_EXERCISE = "--exercise";
     private const string ARGUMENT_SCALE = "--scale";
     private const string ARGUMENT_BROWSE = "--browse";
+    private const string ARGUMENT_WATCH = "--watch";
 
     // Where layouts go when nobody says otherwise, next to the editor
     private const string DEFAULT_WORKSPACE = "layouts";
@@ -33,6 +34,7 @@ internal class Program
     /// <item><c>--exercise</c> also edits, saves, reopens and undoes every layout that is checked. It writes over them, so point it at copies.</item>
     /// <item><c>--scale 1.25</c> draws the editor that much bigger, rather than as big as it was left the last time (the selector in its toolbar).</item>
     /// <item><c>--selftest</c> has the editor click through itself and print how that went, <c>--wheel</c> makes it wait for the real mouse wheel as well.</item>
+    /// <item><c>--watch</c> has the self-test go slowly enough to follow by eye, left to itself it is over in a few seconds.</item>
     /// <item><c>--exit</c> closes the editor once its checks or its self-test are done, with an exit code of 1 if anything failed.</item>
     /// </list>
     /// </summary>
@@ -65,6 +67,7 @@ internal class Program
             Exit: args.Contains(ARGUMENT_EXIT),
             Exercise: args.Contains(ARGUMENT_EXERCISE),
             Browse: args.Contains(ARGUMENT_BROWSE),
+            Watch: args.Contains(ARGUMENT_WATCH),
             // The editor testing itself starts out the same size every time, unless it is told which
             Scale: float.TryParse(ValueOf(args, ARGUMENT_SCALE), CultureInfo.InvariantCulture, out float scale) ? scale : selfTest ? 1.0f : null);
 
@@ -75,9 +78,17 @@ internal class Program
         {
             WindowConfiguration = WindowManagerConfiguration.Default1600x900 with
             {
-                WindowTitle = "Horizon.Hex",
+                WindowTitle = "Horizon Hex (Extended UI Editor & Dynamic Compositor)",
                 WindowSize = size ?? WindowManagerConfiguration.Default1600x900.WindowSize,
-                Maximized = size is null
+                Maximized = size is null,
+                VSync = true,
+                FramesPerSecond = 240,
+
+                // The editor testing itself goes by updates (see HexPointerScript), so with nobody watching it gets
+                // twice as many a second and is done in half the time. More than that and the updates outrun the
+                // frames, which is where a skin stitches its art in and a dialog goes away, and checks start
+                // failing for no fault of the editor
+                UpdatesPerSecond = selfTest && !options.Watch ? 240.0 : 120.0
             }
         });
 

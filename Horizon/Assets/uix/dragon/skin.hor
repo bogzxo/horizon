@@ -1,0 +1,61 @@
+// The Dragon skin, gold dragons curled round the corners of everything and banners the red of a shrine gate.
+// The art is Tiny RPG Dragon Regalia GUI by tiopalada, CC0, see the README next to this. It is the skin Fighter2D
+// comes up in, picked to go with its Japan map, lanterns and a cherry tree in the rain at night.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the
+// hearts) and what the components' art is called. Everything it says itself is what it does differently. Its
+// sprites go by the same names (sprites.hor here falls back on Dead Revolver's for whatever this pack hasn't
+// got), so a layout written for that skin comes up in this one, and the font is that skin's own.
+//
+// Night is the pack with its blue taken down to indigo, azure is the pack as it comes. Text is the cream of
+// paper on both.
+//
+// Under icons is how many pixels of the art make a line of text, for the icons this pack has art of its own for
+// (the arrows). The numbers the Dead Revolver skin gives them are for its art, which is half as tall, and left
+// at those an arrow in a line of text came out twice as tall as the line.
+// Comments can't go inside of the object, the parser won't have it.
+
+let paper = vec(1.0, 0.95, 0.85, 1.0);
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Dragon",
+    sprites: "sprites.hor",
+    theme: "night",
+
+    art_scale: 2,
+    text_scale: 0.4,
+    text_color: paper,
+    control_text_color: paper,
+    hover_color: vec(1.0, 0.85, 0.3, 0.12),
+    highlight_color: vec(0.98, 0.83, 0.18, 1.0),
+    accent_color: vec(0.95, 0.09, 0.42, 1.0),
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.45),
+    bar_text_color: paper,
+    text_shadow_color: vec(0.07, 0.08, 0.29, 0.9),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    control_color: vec(0.3, 0.28, 0.51, 1.0),
+    field_color: vec(0.07, 0.08, 0.29, 1.0),
+    border_color: vec(0.96, 0.63, 0.23, 1.0),
+
+    button_padding: vec(18, 12),
+    progress_inset: vec(8, 8),
+    toggle_size: 30,
+    spacing: 12,
+
+    regions: {
+        selection: { sprite: "selector", tint: vec(0.98, 0.83, 0.18, 1.0) }
+    },
+
+    icons: {
+        up: { sprite: "arrow_up", height: 18 },
+        down: { sprite: "arrow_down", height: 18 },
+        left: { sprite: "arrow_left", height: 18 },
+        right: { sprite: "arrow_right", height: 18 }
+    },
+
+    themes: {
+        night: { panel_color: vec(0.12, 0.13, 0.26, 0.96) },
+        azure: { panel_color: vec(0.26, 0.58, 0.84, 1.0) }
+    }
+};
