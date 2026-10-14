@@ -491,9 +491,44 @@ public sealed partial class UIDrawList
     /// </summary>
     /// <param name="texTopLeft">The top left corner of the part, in pixels from the top left of the texture.</param>
     /// <param name="texBottomRight">Its bottom right corner.</param>
-    public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint)
+    public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint) =>
+        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture));
+
+    /// <summary>
+    /// Draws an icon of <see cref="UISymbols"/> (Codicons) filling a square, the biggest that fits in the rectangle,
+    /// in the middle of it. Nothing if the icons haven't loaded.
+    /// </summary>
+    public void Symbol(char code, UIRect rect, Vector4 color)
     {
-        // Two custom images fit in a run next to the atlas and the font, a third means a new run.
+        if (!UISymbols.TryGetGlyph(code, out var glyph))
+            return;
+
+        // The em of the font is the square every icon is drawn in, its picture is somewhere inside of that
+        float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
+        float scale = side / UISymbols.Em;
+        Vector2 corner = Vector2.Round(rect.Center - new Vector2(side * 0.5f, -side * 0.5f));
+
+        Vector2 topLeft = new(corner.X + glyph.Offset.X * scale, corner.Y - glyph.Offset.Y * scale);
+        Vector2 size = glyph.Size * scale;
+        var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - size.Y), new Vector2(topLeft.X + size.X, topLeft.Y));
+
+        Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color),
+            ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
+    }
+
+    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, nothing if there is none by it.</summary>
+    public void Symbol(ReadOnlySpan<char> name, UIRect rect, Vector4 color)
+    {
+        if (UISymbols.TryGet(name, out char code))
+            Symbol(code, rect, color);
+    }
+
+    /// <summary>
+    /// Helper method for the slot of a texture that isn't the skin's in the run being made. Two of them fit in a run
+    /// next to the atlas and the font, a third means a new run.
+    /// </summary>
+    private uint ImageSlot(Texture texture)
+    {
         uint slot;
         if (texture == runImage0)
             slot = IMAGE_SLOT;
@@ -516,7 +551,7 @@ public sealed partial class UIDrawList
             slot = IMAGE_SLOT;
         }
 
-        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), slot);
+        return slot;
     }
 
     // A region that was made without a tint has none, rather than one that makes it invisible.

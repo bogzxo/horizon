@@ -327,6 +327,17 @@ public sealed partial class UISkin
                 case "punctuation": colors.Punctuation = read; break;
                 case "line_number": colors.LineNumber = read; break;
                 case "directive": colors.Directive = read; break;
+                case "declaration": colors.Declaration = read; break;
+                case "builtin": colors.Builtin = read; break;
+                case "type": colors.Type = read; break;
+                case "constant": colors.Constant = read; break;
+                case "reference": colors.Reference = read; break;
+                case "escape": colors.Escape = read; break;
+                case "markup": colors.Markup = read; break;
+                case "operator": colors.Operator = read; break;
+                case "bracket1": colors.Bracket1 = read; break;
+                case "bracket2": colors.Bracket2 = read; break;
+                case "bracket3": colors.Bracket3 = read; break;
                 default: throw new Exception($"'{name}' isn't something code is coloured by.");
             }
         }

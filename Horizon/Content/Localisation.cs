@@ -86,6 +86,10 @@ public static class Localisation
         lock (missingLock)
             missing.Clear();
 
+        // The other languages are read again from the new folder, or after a change, as they are asked for
+        lock (othersLock)
+            others.Clear();
+
         Language = language;
         Folder = folder;
         Log.Info($"[Localisation] {language}, {texts.Count} texts out of {folder}.");
@@ -127,6 +131,45 @@ public static class Localisation
         }
 
         return null;
+    }
+
+    /// <summary>The languages there are in the folder the loaded one came out of, empty with none loaded.</summary>
+    public static IReadOnlyList<string> Languages => Folder.Length > 0 ? Available(Folder) : [];
+
+    // The other languages of the folder, read the first time something asks what they say, by the file they are in
+    private static readonly Dictionary<string, FrozenDictionary<string, string>?> others = [];
+    private static readonly Lock othersLock = new();
+
+    /// <summary>
+    /// What a key says in another language of the loaded one's folder, without loading it, null if it hasn't got it. For
+    /// an editor that shows a key in every language there is. Each is read once.
+    /// </summary>
+    public static string? In(string language, string key)
+    {
+        if (language == Language)
+            return texts.TryGetValue(key, out string? here) ? here : null;
+
+        string file = Path.Combine(Folder, language + ".hor");
+        FrozenDictionary<string, string>? read;
+        lock (othersLock)
+        {
+            if (!others.TryGetValue(file, out read))
+            {
+                try
+                {
+                    read = File.Exists(file) ? Read(File.ReadAllText(file), file) : null;
+                }
+                catch (Exception e)
+                {
+                    Log.Warning($"[Localisation] {e.Message}");
+                    read = null;
+                }
+
+                others[file] = read;
+            }
+        }
+
+        return read is not null && read.TryGetValue(key, out string? said) ? said : null;
     }
 
     /// <summary>Every key the language has, for whatever offers them to somebody typing one.</summary>
@@ -247,6 +290,28 @@ public static class Localisation
         return read.ToFrozenDictionary();
     }
 
+    private static string JoinLines(ListValue lines, string key, string file)
+    {
+        var joined = new StringBuilder();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (lines[i] is not StringValue line)
+                throw new Exception($"{file} has a line of {key} that isn't a text.");
+
+            if (i > 0) joined.Append('\n');
+            joined.Append(line.Value);
+        }
+
+        return joined.ToString();
+    }
+
+    /// <summary>
+    /// Reads a file of texts the way a language is read, without loading it as the language. For texts a program keeps
+    /// apart from the game's (an editor's own help, while the game's language is loaded for its layouts).
+    /// </summary>
+    /// <exception cref="Exception">The file isn't there, didn't run, or isn't texts, the message says which.</exception>
+    public static IReadOnlyDictionary<string, string> ReadFile(string path) => Read(File.ReadAllText(path), path);
+
     private static void Flatten(Dictionary<string, IRuntimeValue> values, string prefix, Dictionary<string, string> into, string file)
     {
         foreach (var (name, value) in values)
@@ -263,8 +328,14 @@ public static class Localisation
                     Flatten(inside, key, into, file);
                     break;
 
+                // A long text a line to a text of the list, the lines joined, so a page of help is written the way it
+                // reads and coloured the way code is, and not one line a screen wide or a string that runs over lines
+                case ListValue lines:
+                    into[key] = JoinLines(lines, key, file);
+                    break;
+
                 default:
-                    throw new Exception($"{file} has {key} as something that isn't a text or an object of them.");
+                    throw new Exception($"{file} has {key} as something that isn't a text, a list of lines of one, or an object of them.");
             }
         }
     }

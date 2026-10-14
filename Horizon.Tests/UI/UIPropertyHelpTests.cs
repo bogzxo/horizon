@@ -36,6 +36,12 @@ public class UIPropertyHelpTests
         { "meter", new Meter() },
         { "graph", new Graph() },
         { "segments", new SegmentBar() },
+        { "symbol", new Symbol() },
+        { "status_bar", new StatusBar() },
+        { "tab_strip", new TabStrip() },
+        { "breadcrumbs", new Breadcrumbs() },
+        { "title_bar", new TitleBar() },
+        { "window", new WindowPanel() },
     };
 
     [Theory]

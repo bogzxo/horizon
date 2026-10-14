@@ -15,6 +15,7 @@ internal static class UITooltip
 {
     // How wide a tooltip is at most before its text wraps, and the room around the text
     private const float MAX_WIDTH = 320.0f;
+    private const float MAX_RICH_WIDTH = 520.0f;
     private const float PADDING = 8.0f;
 
     // How far from the pointer the box sits, so the pointer doesn't cover its first word
@@ -25,14 +26,24 @@ internal static class UITooltip
     /// </summary>
     /// <param name="point">Where the pointer is, in the module's units.</param>
     /// <param name="lines">Scratch for cutting the text into lines, reused from one frame to the next.</param>
-    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines)
+    /// <param name="rich">Where a tooltip that is markdown is laid out, null for one that is plain words.</param>
+    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich = null)
     {
         var skin = list.Skin;
-        float scale = skin.TextScale * 0.75f;
-        text = Localisation.Resolve(text);
+        float scale = skin.TextScale * 0.85f;
+        text = module.Compositor.Resolve(text);
 
-        skin.Font.Wrap(text, scale, MAX_WIDTH, lines, markup: false);
-        Vector2 size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
+        Vector2 size;
+        if (rich is not null)
+        {
+            rich.Build(text, skin.Font, scale, MAX_RICH_WIDTH, markdown: true);
+            size = new Vector2(rich.Width, rich.Height) + new Vector2(PADDING * 2.0f);
+        }
+        else
+        {
+            skin.Font.Wrap(text, scale, MAX_WIDTH, lines, markup: false);
+            size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
+        }
 
         // Its top left corner hangs off the pointer, and the whole box stays inside the frame of the module
         UIRect frame = module.Frame;
@@ -46,6 +57,13 @@ internal static class UITooltip
 
         list.Box(box, skin.PanelColor with { W = 1.0f });
         list.Frame(box, 1.0f, skin.AccentColor);
+
+        if (rich is not null)
+        {
+            rich.Paint(list, box.Shrink(new UIEdges(PADDING)), Origin.TopLeft, skin.TextColor);
+            return;
+        }
+
         list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), box.Shrink(new UIEdges(PADDING)), Origin.TopLeft, scale, skin.TextColor, markup: false);
     }
 }

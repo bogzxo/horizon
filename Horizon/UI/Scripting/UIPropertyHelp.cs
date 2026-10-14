@@ -49,6 +49,18 @@ public static class UIPropertyHelp
         ["text_scale"] = "how big its text is written, 0 for the skin's size, numbers mean sizes in Dead Revolver's font whatever the skin",
         ["style"] = "which piece of the skin's art it wears, the ... button shows them all to pick one by eye. A style is the name less what its pieces end in (_hover, _on, _frame)",
         ["align"] = "where in its box the text sits, left, center, right, top_left and so on",
+        ["icon_color"] = "the colour of its icon, the skin's accent if it is left at nothing",
+        ["window_buttons"] = "whether it has the window's minimise, maximise and close at its right end",
+        ["closable"] = "whether its title bar has an x that closes it",
+        ["resize_grip"] = "whether it has a grip in its bottom right corner that drags it bigger and smaller",
+        ["movable"] = "whether its title bar drags it about",
+        ["title_height"] = "how tall its title bar is",
+        ["pixel_sized"] = "whether its height, title and buttons are in the window's pixels, so it doesn't grow when the UI is drawn bigger",
+        ["title_bar.height"] = "how tall the bar is when nothing in it is taller",
+        ["title_bar.title"] = "what the bar says, the window's own title when it is left empty",
+        ["window.title"] = "what its title bar says",
+        ["text_color"] = "the colour of the words on it, the skin's own if it is left at nothing",
+        ["icon"] = "one of the icons every skin has, VS Code's Codicons by name (save, folder, git-branch, play), in front of the words or on its own with none. $(name) does the same in any text",
 
         // ---- containers ----
 

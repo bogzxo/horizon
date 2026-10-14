@@ -183,6 +183,9 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
         // The font can't know what an icon is, but text has to make room for them.
         font.Icons = this;
+
+        // The icons every skin has, $(name), loaded with the first skin on the thread that loads skins
+        UISymbols.EnsureLoaded();
     }
 
     /// <summary>

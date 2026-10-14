@@ -177,6 +177,7 @@ namespace Horizon.UI
 
         // What a tooltip says and where it goes, set by the compositor for the module the pointer is resting in
         private string? tooltip;
+        private bool tooltipMarkdown;
         private Vector2 tooltipAt;
 
         public UIModule(UICompositor compositor)
@@ -191,10 +192,12 @@ namespace Horizon.UI
         /// Has the module draw a tooltip on top of everything in it on its next paint, null for none. Compositor.
         /// </summary>
         /// <param name="point">Where the pointer is, in the module's units.</param>
-        internal void ShowTooltip(string? text, Vector2 point)
+        /// <param name="markdown">Whether the text is markdown, see <see cref="UIComponent.TooltipMarkdown"/>.</param>
+        internal void ShowTooltip(string? text, Vector2 point, bool markdown = false)
         {
             tooltip = text;
             tooltipAt = point;
+            tooltipMarkdown = markdown;
         }
 
         /// <summary>
@@ -313,7 +316,7 @@ namespace Horizon.UI
 
             // And a tooltip over everything, popups included
             if (tooltip is { Length: > 0 } text)
-                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines);
+                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null);
         }
 
         internal UIComponent? HitTest(Vector2 point)

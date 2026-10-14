@@ -21,6 +21,38 @@ public partial class UICompositor
     /// </summary>
     internal bool ReadsWindowMouse { get; set; }
 
+    /// <summary>
+    /// Whether a press on the edges of a window that has none of the system's frame drags them, the way the frame would
+    /// (see <c>WindowManagerConfiguration.CustomFrame</c> and <see cref="Components.TitleBar"/>). One UI of the window
+    /// says so, the one its title bar is in.
+    /// </summary>
+    public bool ResizesWindow { get; set; }
+
+    // How near the edge of the window the pointer has hold of it, in the window's pixels
+    private const float WINDOW_EDGE = 6.0f;
+
+    /// <summary>Which edges of the window the pointer is on, none unless this UI drags them and the window has no frame.</summary>
+    public WindowEdges WindowEdgeAt()
+    {
+        // A UI driven by something other than the mouse (a script testing it) has no business with the real window's edges
+        if (!ResizesWindow || PointerSource is not null || GameEngine.Instance?.WindowManager is not { CustomFrame: true, IsMaximized: false } window)
+            return WindowEdges.None;
+
+        Vector2 at = GameEngine.Instance.Input.Mouse.WindowPosition;
+        var size = window.Window.Size;
+        var edges = WindowEdges.None;
+
+        // Off the window altogether is no edge of it
+        if (at.X < 0.0f || at.Y < 0.0f || at.X > size.X || at.Y > size.Y)
+            return WindowEdges.None;
+
+        if (at.X <= WINDOW_EDGE) edges |= WindowEdges.Left;
+        if (at.X >= size.X - WINDOW_EDGE) edges |= WindowEdges.Right;
+        if (at.Y <= WINDOW_EDGE) edges |= WindowEdges.Top;
+        if (at.Y >= size.Y - WINDOW_EDGE) edges |= WindowEdges.Bottom;
+        return edges;
+    }
+
     private UIPointer ReadMouse()
     {
         var mouse = GameEngine.Instance.Input.Mouse;
@@ -45,7 +77,7 @@ public partial class UICompositor
             Escape(snapshot);
 
         // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
-        if (keyboard.WasPressed(Key.Tab) && focus is not null && !focus.KeepsTab)
+        if (keyboard.WasPressed(Key.Tab) && !keyboard.Control && focus is not null && !focus.KeepsTab)
             FocusNext(snapshot, keyboard.Shift ? -1 : 1);
 
         if (focus is null)
@@ -181,7 +213,7 @@ public partial class UICompositor
 
         tooltipModule = module;
         TooltipOf = showing;
-        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer));
+        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer), showing.TooltipMarkdown);
     }
 
     /// <summary>The component whose tooltip is up right now, null while none is.</summary>
@@ -295,7 +327,12 @@ public partial class UICompositor
             hovered = hover;
         }
 
-        if (pointer.Down && !pointerWasDown)
+        // An edge of a window without the system's frame, dragged by the window itself, nothing in the UI gets the press
+        if (pointer.Down && !pointerWasDown && WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
+        {
+            GameEngine.Instance.WindowManager.BeginResize(windowEdges);
+        }
+        else if (pointer.Down && !pointerWasDown)
         {
             // Pressing anywhere but on what is open closes it.
             foreach (var module in snapshot)

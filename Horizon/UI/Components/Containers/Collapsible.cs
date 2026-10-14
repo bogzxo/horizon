@@ -144,7 +144,7 @@ public class Collapsible : StackPanel
         contentHeight = content.Y;
 
         float header = HeaderOf(skin);
-        float title = skin.Font.Measure(Localisation.Resolve(Title), TextScaleOf(skin), markup: false).X + header * 1.5f;
+        float title = skin.Font.Measure(Resolve(Title), TextScaleOf(skin), markup: false).X + header * 1.5f;
 
         return new Vector2(MathF.Max(content.X, title), header + content.Y * openness);
     }
@@ -199,7 +199,7 @@ public class Collapsible : StackPanel
         PaintArrow(list, arrow, size, color);
 
         UIRect text = new(new Vector2(arrow.X + size * 0.5f + indent * 0.75f, header.Min.Y), new Vector2(header.Max.X - indent, header.Max.Y));
-        list.Text(Localisation.Resolve(Title), text, Origin.Left, TextScaleOf(skin), color, markup: false);
+        list.Text(Resolve(Title), text, Origin.Left, TextScaleOf(skin), color, markup: false);
         list.EndParts();
     }
 

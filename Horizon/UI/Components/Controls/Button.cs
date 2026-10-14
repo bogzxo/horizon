@@ -26,6 +26,15 @@ public class Button : UIComponent
 
     public string Label { get; set; } = string.Empty;
 
+    /// <summary>
+    /// One of the icons every skin has (<see cref="UISymbols"/>, a Codicon by name, "save", "git-branch") in front of the
+    /// label, or the whole of the button with no label. Empty for none.
+    /// </summary>
+    public string Icon { get; set; } = string.Empty;
+
+    // The icon and the label written as one text, made again only when either changes
+    private string shownIcon = string.Empty, shownLabel = string.Empty, shown = string.Empty;
+
     /// <summary>The scale of the label, or zero to use the skin's.</summary>
     public float LabelScale { get; set; }
 
@@ -86,9 +95,26 @@ public class Button : UIComponent
     // The body, the marker of the chosen one and the label are counted as parts of their own, see Paint
     private const int BODY_PART = 0, MARKER_PART = 1, LABEL_PART = 2;
 
+    /// <summary>What is written on the button, its icon as $(name) in front of its label.</summary>
+    private string Shown()
+    {
+        string label = Resolve(Label);
+        if (Icon.Length == 0)
+            return label;
+
+        if (!ReferenceEquals(Icon, shownIcon) || !ReferenceEquals(label, shownLabel))
+        {
+            shownIcon = Icon;
+            shownLabel = label;
+            shown = label.Length > 0 ? $"$({Icon}) {label}" : $"$({Icon})";
+        }
+
+        return shown;
+    }
+
     protected override Vector2 Measure(UISkin skin)
     {
-        Vector2 label = skin.Font.Measure(Localisation.Resolve(Label), LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        Vector2 label = skin.Font.Measure(Shown(), LabelScale > 0.0f ? LabelScale : skin.TextScale);
         bool hasArt = skin.TryGetRegion(style, out var region);
 
         // Art that says where its label goes is given that much room around it, otherwise the skin decides.
@@ -139,7 +165,7 @@ public class Button : UIComponent
         if (down)
             area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
         list.Text(
-            Localisation.Resolve(Label),
+            Shown(),
             area,
             Origin.Center,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
@@ -202,6 +228,7 @@ public class Button : UIComponent
         base.DefineScript();
 
         Expose("label", () => Label, value => Label = value);
+        Expose("icon", () => Icon, value => Icon = value);
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);

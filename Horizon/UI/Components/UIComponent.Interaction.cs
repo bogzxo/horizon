@@ -142,6 +142,19 @@ public abstract partial class UIComponent
     public string Tooltip { get; set; } = string.Empty;
 
     /// <summary>
+    /// What a text is to be shown as, a key (<c>@main_menu.quit</c>) being the text by it in the texts of the compositor the
+    /// component is in, or else of the game's language (<see cref="Horizon.Content.Localisation.Resolve"/>). Every component that shows
+    /// a text the program or a layout gave it goes through this. Makes no garbage.
+    /// </summary>
+    protected internal string Resolve(string text) => Module?.Compositor is { } compositor ? compositor.Resolve(text) : Horizon.Content.Localisation.Resolve(text);
+
+    /// <summary>
+    /// Whether the tooltip is markdown (headings, **bold**, `code`, lists, see <see cref="Label.Markdown"/>) and the
+    /// tags and $(icons) of a label, rather than plain words. A wider box, for a hint about a piece of code say.
+    /// </summary>
+    public bool TooltipMarkdown { get; set; }
+
+    /// <summary>
     /// Helper method to draw the rim that says "this one" around a component a navigator is on. Called by the
     /// components that have no look of their own for it, after they have painted themselves.
     /// </summary>

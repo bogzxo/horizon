@@ -124,7 +124,7 @@ public class Label : UIComponent
         float width = Wrap ? WrapWidth() : 0.0f;
 
         // What it says, a key in a layout being the text of it in the language that is loaded, see Localisation
-        string text = Localisation.Resolve(Text);
+        string text = Resolve(Text);
 
         // Styled text lays itself out, and is as wide as it was told to wrap to when it was
         drawnRich = UsesRichText(text);
@@ -154,7 +154,7 @@ public class Label : UIComponent
     {
         UISkin skin = list.Skin;
         Vector4 color = Color ?? skin.TextColor;
-        string text = Localisation.Resolve(Text);
+        string text = Resolve(Text);
 
         if (drawnRich)
         {

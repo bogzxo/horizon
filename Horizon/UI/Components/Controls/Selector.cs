@@ -156,7 +156,7 @@ public class Selector : UIComponent
 
         list.Text("<", content, Origin.Left, scale, arrows, markup: false);
         list.Text(">", content, Origin.Right, scale, arrows, markup: false);
-        list.Text(Localisation.Resolve(Value), content, Origin.Center, scale, ink * tint, markup: false);
+        list.Text(Resolve(Value), content, Origin.Center, scale, ink * tint, markup: false);
 
         PaintSelection(list);
         list.EndParts();
