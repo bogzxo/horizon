@@ -14,6 +14,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          # HIDL is a submodule (bogzxo/hidl at Horizon.HIDL)
+          submodules: recursive
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v3
