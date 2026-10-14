@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -215,7 +216,7 @@ public class Dropdown : UIComponent
         list.BeginPart(1);
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
 
-        list.Text(Value, content, Origin.Left, scale, ink * tint, markup: false);
+        list.Text(Localisation.Resolve(Value), content, Origin.Left, scale, ink * tint, markup: false);
         list.Text(IsOpen ? "^" : "v", content, Origin.Right, scale, skin.AccentColor * tint, markup: false);
 
         PaintSelection(list);
@@ -244,7 +245,7 @@ public class Dropdown : UIComponent
                 list.Rect(area, skin.HoverColor);
 
             list.Text(
-                options[option],
+                Localisation.Resolve(options[option]),
                 area.Shrink(new UIEdges(10.0f, 0.0f)),
                 Origin.Left,
                 scale,

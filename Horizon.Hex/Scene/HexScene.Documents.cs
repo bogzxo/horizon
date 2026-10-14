@@ -90,6 +90,10 @@ internal sealed partial class HexScene
         target.Name = Path.GetFileNameWithoutExtension(path);
         target.Path = path;
 
+        // A game's layouts name their texts by key, "@main_menu.quit", which reads as the text only with the game's
+        // languages loaded. They are next to the layouts, a localisation folder somewhere up the path
+        UseLanguagesNear(path);
+
         var (success, message) = target.Load(File.ReadAllText(path), path);
         Show(target);
 
@@ -294,5 +298,24 @@ internal sealed partial class HexScene
         recordPending = false;
 
         Show(documents.Count > 0 ? documents[^1] : NewDocument());
+    }
+
+    /// <summary>
+    /// Helper method to load the languages of whatever game a layout belongs to, the default one if there is one and
+    /// the first there is otherwise, so the texts it names by key read the way they do in the game. Nothing changes
+    /// for a layout that isn't near any.
+    /// </summary>
+    private void UseLanguagesNear(string path)
+    {
+        if (Horizon.Content.Localisation.FindNear(path) is not { } folder || folder == Horizon.Content.Localisation.Folder)
+            return;
+
+        var languages = Horizon.Content.Localisation.Available(folder);
+        if (languages.Count == 0)
+            return;
+
+        string language = languages.Contains(Horizon.Content.Localisation.DEFAULT_LANGUAGE) ? Horizon.Content.Localisation.DEFAULT_LANGUAGE : languages[0];
+        if (Horizon.Content.Localisation.Load(folder, language))
+            Say($"the texts of this layout are in {language}, out of {folder}");
     }
 }

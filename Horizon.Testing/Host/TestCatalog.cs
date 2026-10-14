@@ -187,6 +187,11 @@ internal static class TestCatalog
             "Edges dragged to resize, readouts, graphs and meters that make no garbage, the button in a text box and its menu of art, a dialog with controls in it, the picker of skins and the performance overlay out of its layouts.",
             ["UIResize", "Readout", "Graph", "ArtPicker", "PerformanceFace"],
             "Checks/UIPartsCheck.cs", () => new UIPartsCheck()),
+
+        new("check-ui-text", TestLevel.Checks, "UI, styled text and markdown",
+            "Bold, italic, colours and sizes out of tags in square brackets, and markdown in a label, headings, lists, quotes, code, rules and links, wrapped and clicked.",
+            ["UIRichText", "Label", "UITextStyle"],
+            "Checks/UITextCheck.cs", () => new UITextCheck()),
     ]);
 
     /// <summary>Finds an example by its id, or by one of the ids the examples before it went by, whatever the case. Null if there's no such thing.</summary>

@@ -44,6 +44,11 @@ static const uint FLASH_FLAG = 0x80000u;
 static const uint SHADOW_FLAG = 0x100000u;
 static const uint FIELD_FLAG = 0x200000u;
 static const uint LAMP_FLAG = 0x400000u;
+static const uint BOLD_FLAG = 0x800000u;
+
+// How far out into the field the edge of a bold glyph is, as a share of the field's value at the edge. Must match
+// UIFont.BOLD_GROWTH, which widens every bold letter by as much as the ink grows
+static const float BOLD_GROWTH = 0.2;
 
 struct Varyings
 {
@@ -170,11 +175,15 @@ GBuffer fsMain(Varyings input)
         // middle leg of an m fell between two of them more often than not and every "ms" read "ns", which is a
         // million times out and still not the worst thing this file has done
         float edge = pixel * 0.5;
+
+        // Bold is the same letter with its edge further out, where the field is lower, so the strokes are fatter
+        float middle = (input.flags & BOLD_FLAG) != 0u ? 0.5 - 0.5 * BOLD_GROWTH : 0.5;
+
         float ink = 0.0;
-        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.125 + uvDown * 0.375, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
-        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.375 + uvDown * 0.125, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
-        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.375 - uvDown * 0.125, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
-        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.125 - uvDown * 0.375, 0.0).r - 0.5) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.125 + uvDown * 0.375, 0.0).r - middle) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.375 + uvDown * 0.125, 0.0).r - middle) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv + uvAcross * 0.375 - uvDown * 0.125, 0.0).r - middle) / edge + 0.5, 0.0, 1.0);
+        ink += clamp((uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv - uvAcross * 0.125 - uvDown * 0.375, 0.0).r - middle) / edge + 0.5, 0.0, 1.0);
 
         tex = float4(1.0, 1.0, 1.0, ink * 0.25);
     }

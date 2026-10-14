@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -28,6 +29,7 @@ internal static class UITooltip
     {
         var skin = list.Skin;
         float scale = skin.TextScale * 0.75f;
+        text = Localisation.Resolve(text);
 
         skin.Font.Wrap(text, scale, MAX_WIDTH, lines, markup: false);
         Vector2 size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);

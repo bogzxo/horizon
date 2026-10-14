@@ -371,6 +371,7 @@ internal sealed partial class HexScene
         test.WaitFor(() => Section("intro").Openness == 1.0f, 1.0f);
         test.Check("sections: and out again", () => Section("intro") is { Expanded: true, Openness: 1.0f });
 
+        Reveal("text");
         test.Click(At(() => editors["text"]));
         test.Wait();
         test.Run(() => compositor.FocusNext());

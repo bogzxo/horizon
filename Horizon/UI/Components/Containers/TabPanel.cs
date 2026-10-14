@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -77,7 +78,7 @@ public class TabPanel : UIComponent
     protected override bool HitTestVisible => true;
 
     /// <summary>What the tab of a page says.</summary>
-    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? tabs[index] : $"Tab {index + 1}";
+    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Localisation.Resolve(tabs[index]) : $"Tab {index + 1}";
 
     /// <summary>Opens a page, wrapping round past either end.</summary>
     public void Select(int index)
@@ -135,7 +136,7 @@ public class TabPanel : UIComponent
         float strip = 0.0f;
         for (int i = 0; i < ChildSpan.Length; i++)
             strip += skin.Font.Measure(TitleOf(i), scale, markup: false).X + Spacing;
-        strip += skin.Font.Measure(PreviousHint, scale).X + skin.Font.Measure(NextHint, scale).X;
+        strip += skin.Font.Measure(Localisation.Resolve(PreviousHint), scale).X + skin.Font.Measure(Localisation.Resolve(NextHint), scale).X;
 
         return new Vector2(MathF.Max(page.X, strip), page.Y + HeaderOf(skin) + Spacing * 0.5f) + Padding.Total;
     }
@@ -217,9 +218,9 @@ public class TabPanel : UIComponent
         list.EndParts();
 
         if (PreviousHint.Length > 0)
-            list.Text(PreviousHint, header, Origin.Left, scale, Vector4.One);
+            list.Text(Localisation.Resolve(PreviousHint), header, Origin.Left, scale, Vector4.One);
         if (NextHint.Length > 0)
-            list.Text(NextHint, header, Origin.Right, scale, Vector4.One);
+            list.Text(Localisation.Resolve(NextHint), header, Origin.Right, scale, Vector4.One);
     }
 
     protected internal override void OnPointerUp(Vector2 point)
