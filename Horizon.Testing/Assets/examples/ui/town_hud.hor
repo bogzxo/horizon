@@ -1,5 +1,6 @@
 // The HUD of the town example (TownExample.cs). A group pinned to the corner it lives in, so nothing in it has
 // to know how big the screen is.
+#define layout
 
 compositor.design({ size: vec(1600, 900), fit: "stretch" });
 

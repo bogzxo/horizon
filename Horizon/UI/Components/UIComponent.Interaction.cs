@@ -258,6 +258,12 @@ public abstract partial class UIComponent
     protected internal virtual bool Focusable => false;
 
     /// <summary>
+    /// Whether tab is typed into this component while it has the focus rather than moving the focus on, which an
+    /// editor of code wants for indenting.
+    /// </summary>
+    protected internal virtual bool KeepsTab => false;
+
+    /// <summary>
     /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the
     /// pointer or not. Does nothing while the component isn't in a module.
     /// </summary>

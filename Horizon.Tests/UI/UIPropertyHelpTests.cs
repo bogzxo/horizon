@@ -31,6 +31,7 @@ public class UIPropertyHelpTests
         { "color_picker", new ColorPicker() },
         { "menu_bar", new MenuBar() },
         { "code", new CodeView() },
+        { "code_editor", new CodeEditor() },
         { "readout", new Readout() },
         { "meter", new Meter() },
         { "graph", new Graph() },

@@ -48,6 +48,7 @@ internal sealed class UITextCheck : Scene, ISelfCheck
     private Label _plain = null!, _bold = null!, _italic = null!, _big = null!, _unknown = null!, _unknownPlain = null!;
     private Label _heading = null!, _paragraph = null!, _list = null!, _wrapped = null!, _escaped = null!, _escapedPlain = null!;
     private Label _link = null!, _code = null!, _showcase = null!;
+    private CodeEditor _editor = null!;
     private string _clicked = string.Empty;
 
     public UITextCheck()
@@ -98,6 +99,15 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         _escapedPlain = Add(column, "*not italic*");
         _link = Add(column, "[click me](somewhere)", markdown: true);
         _link.OnLink = where => _clicked = where;
+
+        // Code to edit, fed keys the way the keyboard hands them over
+        _editor = module.AddComponent(new CodeEditor("let a = 1;")
+        {
+            Anchor = Origin.BottomLeft,
+            Position = new Vector2(380, 40),
+            Size = new Vector2(760, 220),
+            TextScale = 0.25f
+        });
         _code = Add(column, "```\nline one\nline two\n```", markdown: true);
 
         _showcase = module.AddComponent(new Label(SHOWCASE)
@@ -150,7 +160,112 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         test.Click(() => _link.Module!.ToWorld(new Vector2(_link.Bounds.Min.X + 20.0f, _link.Bounds.Center.Y)));
         test.Check("link: a click on one says where it goes", () => _clicked == "somewhere");
 
+        /* The editor of code, fed the keys the keyboard turns into (UIKeyboard) */
+
+        void Keys(params char[] keys)
+        {
+            foreach (char key in keys)
+                _editor.OnTextInput(key);
+        }
+
+        void Typed(string text)
+        {
+            foreach (char character in text)
+                _editor.OnTextInput(character == '\n' ? UIKeyboard.ENTER : character);
+        }
+
+        test.Run(() =>
+        {
+            _editor.Focus();
+            Keys(UIKeyboard.TEXT_END);
+            Typed("\nlet b = {");
+            Keys(UIKeyboard.ENTER);
+            Typed("c: 2");
+        });
+        test.Wait();
+        test.Check("code: typed in, a bracket closes itself and enter goes in a level", () =>
+            _editor.Text == "let a = 1;\nlet b = {\n    c: 2\n}" && _editor.Document.Caret == new UITextPosition(2, 8));
+
+        test.Run(() => Keys(UIKeyboard.UP, UIKeyboard.HOME, UIKeyboard.SELECT_DOWN, UIKeyboard.SELECT_END, UIKeyboard.TAB));
+        test.Check("code: tab with a selection over lines indents them", () => _editor.Text == "let a = 1;\n    let b = {\n        c: 2\n}");
+        test.Run(() => Keys(UIKeyboard.SHIFT_TAB));
+        test.Check("code: shift tab takes them back out", () => _editor.Text == "let a = 1;\nlet b = {\n    c: 2\n}");
+
+        test.Run(() => Keys(UIKeyboard.TEXT_START, UIKeyboard.TOGGLE_COMMENT));
+        test.Check("code: control with slash makes a line a comment", () => _editor.Text.StartsWith("// let a = 1;"));
+        test.Run(() => Keys(UIKeyboard.UNDO));
+        test.Check("code: and undo takes it back", () => _editor.Text.StartsWith("let a = 1;"));
+
+        test.Run(() =>
+        {
+            Keys(UIKeyboard.TEXT_END);
+            Typed("\nlet = ;");
+        });
+        test.WaitFor(() => _editor.SyntaxError is not null, 2.0f);
+        test.Check("code: what doesn't parse is found a moment later, on its line", () => _editor.SyntaxError is { Line: 4 });
+        test.Run(() => Keys(UIKeyboard.SELECT_HOME, UIKeyboard.SELECT_HOME, UIKeyboard.BACKSPACE, UIKeyboard.BACKSPACE));
+        test.WaitFor(() => _editor.SyntaxError is null, 2.0f);
+        test.Check("code: and is gone once it is gone", () => _editor.SyntaxError is null && _editor.Document.LineCount == 4);
+
+        test.Run(() =>
+        {
+            Keys(UIKeyboard.TEXT_END);
+            _editor.OnPaste("\nlet pasted = [1, 2];");
+        });
+        test.Check("code: a paste goes in with its lines", () => _editor.Text.EndsWith("}\nlet pasted = [1, 2];") && _editor.Document.LineCount == 5);
+
+        test.Run(() =>
+        {
+            Keys(UIKeyboard.TEXT_END);
+            Typed("\nlet x = pas");
+        });
+        test.Wait();
+        test.Check("complete: a word being typed is offered the names in the code", () =>
+            _editor.CompletionOpen && _editor.Completions.Any(item => item.Text == "pasted"));
+        test.Run(() => Keys(UIKeyboard.ENTER));
+        test.Check("complete: enter picks it, and makes no new line", () =>
+            !_editor.CompletionOpen && _editor.Text.EndsWith("let x = pasted") && _editor.Document.LineCount == 6);
+
+        test.Run(() =>
+        {
+            Typed(" + ");
+            Keys(UIKeyboard.COMPLETE);
+        });
+        test.Check("complete: control and space opens it with nothing typed, the language's words in it", () =>
+            _editor.CompletionOpen && _editor.Completions.Any(item => item.Text == "let"));
+        test.Run(() => Keys(UIKeyboard.LEFT));
+        test.Check("complete: going somewhere else shuts it", () => !_editor.CompletionOpen);
+
+        // A tab is as wide as four spaces, not as wide as a space (the font has none)
+        test.Run(() => _editor.Text = "\tx\n    x");
+        test.Wait();
+        test.Check("code: a tab is drawn and pointed at as wide as four spaces", TabColumnsMatch);
+
+        test.Run(() => _editor.Unfocus());
         test.Hover(() => new Vector2(-5000, -5000));
+    }
+
+    // Whether the x after a tab starts where the x after four spaces does, by which column the editor says points are in
+    private bool TabColumnsMatch()
+    {
+        float? tabbed = null, spaced = null;
+        UIRect bounds = _editor.Bounds;
+
+        for (float x = bounds.Min.X; x < bounds.Min.X + 600.0f; x += 1.0f)
+        {
+            if (tabbed is null && _editor.PositionAt(new Vector2(x, ProbeY(0))).Column >= 2) tabbed = x;
+            if (spaced is null && _editor.PositionAt(new Vector2(x, ProbeY(1))).Column >= 5) spaced = x;
+        }
+
+        return tabbed is { } a && spaced is { } b && MathF.Abs(a - b) <= 1.5f;
+    }
+
+    // The middle of a line of the editor, up and down
+    private float ProbeY(int line)
+    {
+        UIRect bounds = _editor.Bounds;
+        float lineHeight = (_compositor.Skin?.Font.LineHeight ?? 1.0f) * 0.25f;
+        return bounds.Max.Y - _editor.Padding.Top - lineHeight * (line + 0.5f);
     }
 
     public override void UpdateState(float dt)

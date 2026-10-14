@@ -1,5 +1,6 @@
 // The HUD of the village example (VillageExample.cs). Where you are and what time it is, up in the corner, and
 // a line along the bottom for whoever is talking.
+#define layout
 
 compositor.design({ size: vec(1600, 900), fit: "stretch" });
 

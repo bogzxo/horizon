@@ -9,6 +9,7 @@
 // The card is a stack of two columns. On a screen tall enough for the lot they are put one under the other (the
 // engine turns the stack), on a short one they stay side by side. The lines of the GPU's passes are not in here,
 // they are performance_pass.hor, one copy for every pass.
+#define layout
 
 let card = compositor.stack({
     padding: 14,

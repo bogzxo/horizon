@@ -24,7 +24,10 @@ public enum HidlToken
     Comment,
 
     // Brackets, commas, operators and whatever else is left
-    Punctuation
+    Punctuation,
+
+    // A line that starts with a #, #define layout and the rest
+    Directive
 }
 
 /// <summary>
@@ -98,6 +101,9 @@ public static class HidlHighlighter
         {
             case TokenType.Comment:
                 return HidlToken.Comment;
+
+            case TokenType.Directive:
+                return HidlToken.Directive;
 
             case TokenType.TextLiteral:
                 return HidlToken.Text;

@@ -1,6 +1,7 @@
 // One line of the GPU's passes in the performance overlay's card, see performance_card.hor. The engine makes a
 // copy for every pass there is room for, colours the chip and moves it and the name in a bit for a pass that is
 // a part of the one above it.
+#define layout
 
 let pass = compositor.panel({
     size: vec(404, 16)

@@ -129,6 +129,9 @@ public static class Localisation
         return null;
     }
 
+    /// <summary>Every key the language has, for whatever offers them to somebody typing one.</summary>
+    public static IEnumerable<string> Keys => texts.Keys;
+
     /// <summary>Whether the language has a text by that key.</summary>
     public static bool Has(string key) => texts.ContainsKey(key);
 
