@@ -4,6 +4,7 @@
 // last few seconds of them as a little graph and the key that gets the rest. The engine finds the parts by their
 // names (UI/Diagnostics/PerformanceFace.cs), see performance_card.hor for what that means for whoever edits this.
 // Every number has a size as wide as the widest it gets, or the pill would breathe in and out with them.
+#define layout
 
 let pill = compositor.stack({
     padding: vec(13, 0, 7, 0),

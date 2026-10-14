@@ -80,6 +80,8 @@ public class HotPathTests
         { typeof(Horizon.UI.Components.Label), "Paint" },
         { typeof(Horizon.UI.Components.Label), "Measure" },
         { typeof(UIRichText), "Paint" },
+        { typeof(Horizon.UI.Components.CodeEditor), "Paint" },
+        { typeof(Horizon.UI.Components.CodeEditor), "UpdateTooltip" },
 
         // The path traced lighting, every frame it is on, and the exposure that follows the picture
         { typeof(PathTracedLighting2D), "Run" },

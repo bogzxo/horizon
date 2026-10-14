@@ -19,6 +19,9 @@ public sealed class UISyntaxColors
     public Vector4 Comment { get; set; } = new(0.45f, 0.5f, 0.58f, 1.0f);
     public Vector4 Punctuation { get; set; } = new(0.6f, 0.65f, 0.74f, 1.0f);
 
+    /// <summary>A directive, a line that starts with a #.</summary>
+    public Vector4 Directive { get; set; } = new(0.95f, 0.55f, 0.75f, 1.0f);
+
     /// <summary>The numbers down the side of a code view.</summary>
     public Vector4 LineNumber { get; set; } = new(0.34f, 0.38f, 0.46f, 1.0f);
 
@@ -31,6 +34,7 @@ public sealed class UISyntaxColors
         HidlToken.Number => Number,
         HidlToken.Comment => Comment,
         HidlToken.Punctuation => Punctuation,
+        HidlToken.Directive => Directive,
         _ => Name
     };
 }

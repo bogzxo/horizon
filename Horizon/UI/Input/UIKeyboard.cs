@@ -70,6 +70,53 @@ internal static class UIKeyboard
     public const char WORD_BACKSPACE = '\u0019';
     public const char WORD_DELETE = '\u001A';
 
+    /*
+     * The keys only text of more than one line has a use for, a code editor. They are characters out of the private
+     * use area, which no keyboard types, so a text box that doesn't know them only has to leave the area alone
+     * (see IsEditingKey).
+     */
+
+    /// <summary>The caret goes a line up or down, and the same with shift held.</summary>
+    public const char UP = '\uE000';
+    public const char DOWN = '\uE001';
+    public const char SELECT_UP = '\uE002';
+    public const char SELECT_DOWN = '\uE003';
+
+    /// <summary>A screen's worth up or down.</summary>
+    public const char PAGE_UP = '\uE004';
+    public const char PAGE_DOWN = '\uE005';
+    public const char SELECT_PAGE_UP = '\uE006';
+    public const char SELECT_PAGE_DOWN = '\uE007';
+
+    /// <summary>Control with home and with end, the start and the end of the whole text rather than of the line.</summary>
+    public const char TEXT_START = '\uE008';
+    public const char TEXT_END = '\uE009';
+    public const char SELECT_TEXT_START = '\uE00A';
+    public const char SELECT_TEXT_END = '\uE00B';
+
+    /// <summary>Control with Z, and with Y or shift and Z.</summary>
+    public const char UNDO = '\uE00C';
+    public const char REDO = '\uE00D';
+
+    /// <summary>Control with slash, the lines of the selection are made comments or made code again.</summary>
+    public const char TOGGLE_COMMENT = '\uE00E';
+
+    /// <summary>Control with D, the line (or the selection) once more after itself.</summary>
+    public const char DUPLICATE = '\uE00F';
+
+    /// <summary>Control with space, what is being typed is offered what it could be.</summary>
+    public const char COMPLETE = '\uE012';
+
+    /// <summary>Alt with up and with down, the line (or the lines of the selection) swapped with the one above or below.</summary>
+    public const char MOVE_LINES_UP = '\uE010';
+    public const char MOVE_LINES_DOWN = '\uE011';
+
+    // What a key that types nothing at all comes to, never put in the queue
+    private const char NOTHING = '\0';
+
+    /// <summary>Whether a character is one of the keys of the private use area above rather than anything typed.</summary>
+    public static bool IsEditingKey(char character) => character is >= '\uE000' and <= '\uE0FF';
+
     // Nobody reads the queue while nothing has the focus, so it has to stop growing by itself
     private const int MAX_PENDING = 256;
 
@@ -127,19 +174,33 @@ internal static class UIKeyboard
     {
         bool control = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
         bool shift = keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight);
+        bool alt = keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight);
 
         // What the key means, and whether holding it does it over and over
         (char code, bool repeats) = key switch
         {
             Key.Backspace => (control ? WORD_BACKSPACE : BACKSPACE, true),
             Key.Delete => (control ? WORD_DELETE : DELETE, true),
-            Key.Enter or Key.KeypadEnter => (ENTER, false),
+            // With control enter is somebody's shortcut (put the code in), not a new line
+            Key.Enter or Key.KeypadEnter => (control ? NOTHING : ENTER, false),
             Key.Tab => (shift ? SHIFT_TAB : TAB, false),
             Key.Escape => (ESCAPE, false),
             Key.Left => ((shift, control) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
             Key.Right => ((shift, control) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
-            Key.Home => (shift ? SELECT_HOME : HOME, false),
-            Key.End => (shift ? SELECT_END : END, false),
+            Key.Home => ((shift, control) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
+            Key.End => ((shift, control) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
+            Key.Up when alt => (MOVE_LINES_UP, true),
+            Key.Down when alt => (MOVE_LINES_DOWN, true),
+            Key.Up => (shift ? SELECT_UP : UP, true),
+            Key.Down => (shift ? SELECT_DOWN : DOWN, true),
+            Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
+            Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
+            Key.Z when control && shift => (REDO, true),
+            Key.Z when control => (UNDO, true),
+            Key.Y when control => (REDO, true),
+            Key.Slash when control => (TOGGLE_COMMENT, false),
+            Key.D when control => (DUPLICATE, false),
+            Key.Space when control => (COMPLETE, false),
             Key.A when control => (SELECT_ALL, false),
             Key.C when control => (COPY, false),
             Key.X when control => (CUT, false),

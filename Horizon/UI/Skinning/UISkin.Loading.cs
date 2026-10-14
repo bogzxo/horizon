@@ -326,6 +326,7 @@ public sealed partial class UISkin
                 case "comment": colors.Comment = read; break;
                 case "punctuation": colors.Punctuation = read; break;
                 case "line_number": colors.LineNumber = read; break;
+                case "directive": colors.Directive = read; break;
                 default: throw new Exception($"'{name}' isn't something code is coloured by.");
             }
         }

@@ -187,6 +187,27 @@ public class WindowManager : GameComponent, IDisposable
     public IWindow Window => _window;
 
     /// <summary>
+    /// Asked when the window is about to close because somebody asked it to (its X, alt and F4), false keeps it open. For
+    /// a program with something unsaved that wants to ask first, which it does on its own thread and closes the window
+    /// itself once it is happy, answering true then. Called on the thread of the window, so it has to be quick and
+    /// mustn't touch anything that isn't safe to, a flag the program keeps up is the usual. Null, it always closes.
+    /// </summary>
+    public Func<bool>? CloseRequested { get; set; }
+
+    private bool MayClose()
+    {
+        try
+        {
+            return CloseRequested?.Invoke() ?? true;
+        }
+        catch (Exception)
+        {
+            // Whatever went wrong asking, a window that won't close is worse
+            return true;
+        }
+    }
+
+    /// <summary>
     /// The native input context of the window. Games read their keys, mouse and gamepads through the input manager of the engine instead.
     /// </summary>
     public IInputContext Input => _input;
@@ -854,6 +875,10 @@ public class WindowManager : GameComponent, IDisposable
             while (!_window.IsClosing)
             {
                 HandleEvents();
+
+                // Asked to close (its X, alt and F4), whoever said they want a say gets it, and the window stays if they say no
+                if (_window.IsClosing && !MayClose())
+                    _window.IsClosing = false;
 
                 // Woken up early for whatever the thread that draws needs done to the window
                 windowWake.WaitOne(EVENT_POLL);

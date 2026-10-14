@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -45,7 +45,7 @@ public partial class UICompositor
             Escape(snapshot);
 
         // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
-        if (keyboard.WasPressed(Key.Tab) && focus is not null)
+        if (keyboard.WasPressed(Key.Tab) && focus is not null && !focus.KeepsTab)
             FocusNext(snapshot, keyboard.Shift ? -1 : 1);
 
         if (focus is null)

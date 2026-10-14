@@ -153,6 +153,10 @@ public static class UIPropertyHelp
         ["budget"] = "what a bar may come to before it changes colour, 0 for bars that never do",
         ["boxed"] = "sits it in a box with a line halfway up, the way a graph on a card does",
         ["peaks_only"] = "draws only the worst of every bar, as one solid bar",
+        ["read_only"] = "whether the code can only be read, the caret and the selection still go about it",
+        ["highlight"] = "whether the code is coloured as HIDL, off for any other kind of text",
+        ["check_syntax"] = "whether the code is parsed a moment after every change and what the parser doesn't like is underlined",
+        ["code_editor.color"] = "what it is filled with behind the code, nothing for the skin's field colour",
         ["line_numbers"] = "numbers the lines down the left",
 
         // ---- what a program hands it, which Hex can't edit ----

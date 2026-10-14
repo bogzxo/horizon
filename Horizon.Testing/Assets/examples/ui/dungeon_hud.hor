@@ -1,6 +1,7 @@
 // The HUD of the dungeon example (DungeonExample.cs). A group pinned to the corner it lives in, so nothing in it has
 // to know how big the screen is, a line along the bottom for whatever the room has to say, and a call across the
 // middle for the end of it.
+#define layout
 
 compositor.design({ size: vec(1600, 900), fit: "stretch" });
 

@@ -135,6 +135,7 @@ public partial class UIModule
         Register<ColorPicker>("color_picker");
         Register<MenuBar>("menu_bar");
         Register<CodeView>("code");
+        Register<CodeEditor>("code_editor");
         Register<Readout>("readout");
         Register<Meter>("meter");
         Register<Graph>("graph");

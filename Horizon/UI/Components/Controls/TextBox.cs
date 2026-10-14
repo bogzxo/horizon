@@ -371,7 +371,9 @@ public class TextBox : UIComponent
                 break;
 
             default:
-                Insert(character);
+                // The keys only an editor of more than one line knows about (up, down, undo) type nothing here
+                if (!UIKeyboard.IsEditingKey(character))
+                    Insert(character);
                 break;
         }
     }
