@@ -139,6 +139,10 @@ public partial class UICompositor
         int next = index < 0 ? (by > 0 ? 0 : focusable.Count - 1) : ((index + by) % focusable.Count + focusable.Count) % focusable.Count;
 
         Focus = focusable[next];
+
+        // Tabbed into, a box has all of what is in it picked out, so typing replaces it without a ctrl+a first
+        if (focus is TextBox box)
+            box.SelectAll();
     }
 
     /// <summary>

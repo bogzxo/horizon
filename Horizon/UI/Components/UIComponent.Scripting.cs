@@ -76,6 +76,7 @@ public abstract partial class UIComponent
             () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : (IRuntimeValue)new NullValue(),
             value => IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, "intro_easing"));
 
+        DefineHoverScript();
         DefineResizeScript();
 
         Expose(

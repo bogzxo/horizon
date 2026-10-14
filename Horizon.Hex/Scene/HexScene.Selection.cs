@@ -38,6 +38,29 @@ internal sealed partial class HexScene
             RevealTabs(component);
 
         treeDirty = inspectorDirty = true;
+        treeReveal = true;
+    }
+
+    // The tree is to scroll to what was selected, once its rows have been laid out
+    private bool treeReveal;
+
+    /// <summary>
+    /// Helper method to scroll the tree so the row of what is selected is in sight, whichever way it was selected (the
+    /// canvas, the arrange menu, an undo). The rows are made again when the selection changes and have nowhere to be
+    /// until the UI has laid them out at the end of the tick, so it waits for that and does it on the tick after.
+    /// </summary>
+    private void RevealInTree()
+    {
+        if (!treeReveal || treeDirty)
+            return;
+
+        if (document.Selected is { } selected && treeRows.TryGetValue(selected, out var row) && row.Bounds.IsEmpty)
+            return;
+
+        treeReveal = false;
+
+        if (document.Selected is { } shown && treeRows.TryGetValue(shown, out var found))
+            treeScroll.ScrollIntoView(found);
     }
 
     private static void RevealTabs(UIComponent component)

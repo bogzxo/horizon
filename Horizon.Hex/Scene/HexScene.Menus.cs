@@ -53,6 +53,7 @@ internal sealed partial class HexScene
     {
         "stack" => "A row or a column of things, with a gap between them",
         "grid" => "Cells in rows and columns, so many across",
+        "collapsible" => "A stack under a bar with a title, which folds it away",
         "panel" => "A box to put things in, or a backdrop",
         "scroll" => "A panel that scrolls when there is more than fits",
         "label" => "A piece of text, which can wrap",
@@ -99,6 +100,9 @@ internal sealed partial class HexScene
         shortcuts.Add(Key.X, CutSelected, control: true);
         shortcuts.Add(Key.V, Paste, control: true);
         shortcuts.Add(Key.Comma, OpenSettings, control: true);
+
+        // Nothing types an F5, so it plays the entrances from a text box as well
+        shortcuts.Add(Key.F5, PlayIntros, whileTyping: true);
 
         // With control the arrows move it about the tree instead of about the canvas
         shortcuts.Add(Key.Up, () => MoveSelected(-1), control: true);
@@ -159,7 +163,7 @@ internal sealed partial class HexScene
         arrange.Add("Space out up and down", () => Distribute(horizontally: false)).IsEnabled = () => document.Selection.Count >= 3;
 
         Menu view = menu.AddMenu("View");
-        view.Add("Play intros", () => document.PlayIntros());
+        view.Add("Play intros", PlayIntros, "F5");
         view.AddSeparator();
         view.Add("Zoom in", () => ZoomCanvas(ZOOM_STEP * ZOOM_STEP, canvas.Bounds.Center), "Ctrl+=");
         view.Add("Zoom out", () => ZoomCanvas(1.0f / (ZOOM_STEP * ZOOM_STEP), canvas.Bounds.Center), "Ctrl+-");

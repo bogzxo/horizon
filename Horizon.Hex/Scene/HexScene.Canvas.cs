@@ -197,4 +197,25 @@ internal sealed partial class HexScene
             }).IsChecked = () => previewAspect == aspect;
         }
     }
+
+    // What the hover is being shown on in the canvas, what is under the pointer and everything it is inside of
+    private readonly List<UIComponent> heldHovers = [];
+
+    /// <summary>
+    /// Helper method to show the hover of whatever is under the pointer in the canvas. The layout being edited is never
+    /// handed the pointer, it is being edited and not used, so the hover wouldn't come on by itself. A card that lights
+    /// up when one of its buttons is pointed at does here too, everything the thing is inside of is held with it.
+    /// </summary>
+    private void HoldHover(UIComponent? under)
+    {
+        foreach (var held in heldHovers)
+            held.HoverHeld = false;
+        heldHovers.Clear();
+
+        for (UIComponent? at = under; at is not null; at = at.Parent)
+        {
+            at.HoverHeld = true;
+            heldHovers.Add(at);
+        }
+    }
 }

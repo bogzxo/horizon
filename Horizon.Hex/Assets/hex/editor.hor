@@ -28,6 +28,14 @@ let name_box = compositor.textbox({
     max_length: 40
 });
 
+let play_button = compositor.button({
+    parent: toolbar,
+    size: vec(0, 28),
+    tooltip: "plays the entrances of the whole layout from the start, the way loading it in a program does (F5)",
+    label: "play intro animations",
+    lbl_scale: 0.125
+});
+
 let coords = compositor.label({
     parent: toolbar,
     size: vec(170, 28),

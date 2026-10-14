@@ -123,6 +123,7 @@ public partial class UIModule
         Register<Group>("group");
         Register<TabPanel>("tabs");
         Register<StackPanel>("stack");
+        Register<Collapsible>("collapsible");
         Register<GridPanel>("grid");
         Register<ScrollPanel>("scroll");
         Register<NumberBox>("number_box");
