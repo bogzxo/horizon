@@ -260,12 +260,20 @@ public class PhysicsWorld : GameComponent
         {
             // 2. Gravity is an acceleration and goes on as one, whatever the body weighs. A feather and a piano fall
             // alike, Galileo said so and he was nearly burned for less
-            body.Velocity += (Gravity + (body.Force * body.InverseMass)) * dt;
+            body.Velocity += (Gravity * body.GravityScale + (body.Force * body.InverseMass)) * dt;
 
             if (body.LinearDrag > 0.0f)
             {
                 float dragFactor = 1.0f - body.LinearDrag * dt;
                 body.Velocity *= MathF.Max(0.0f, dragFactor);
+            }
+
+            // Whatever it is falling faster than its limit is taken off, along the way gravity points and no other
+            if (body.MaxFallSpeed > 0.0f && Gravity != Vector2.Zero)
+            {
+                Vector2 down = Vector2.Normalize(Gravity);
+                float falling = Vector2.Dot(body.Velocity, down);
+                if (falling > body.MaxFallSpeed) body.Velocity -= down * (falling - body.MaxFallSpeed);
             }
 
             body.Force = Vector2.Zero;
