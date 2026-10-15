@@ -414,13 +414,66 @@ public class TextBox : UIComponent
             return;
         }
 
-        MoveCaret(CaretAt(point), false);
+        // A second press on the same place soon after the first is the word there, and a drag from it goes word by word
+        int at = CaretAt(point);
+        double now = System.Environment.TickCount64 / 1000.0;
+        if (now - lastPress < DOUBLE_CLICK && at == lastPressAt)
+        {
+            var (start, end) = RunAt(at);
+            anchor = start;
+            MoveCaret(end, true);
+            wordDrag = (start, end);
+            lastPress = -1.0;
+            return;
+        }
+
+        lastPress = now;
+        lastPressAt = at;
+        wordDrag = null;
+        MoveCaret(at, false);
     }
 
     protected internal override void OnPointerDrag(Vector2 point)
     {
-        if (!pressedButton)
+        if (pressedButton)
+            return;
+
+        if (wordDrag is not { } word)
+        {
             MoveCaret(CaretAt(point), true);
+            return;
+        }
+
+        // Whole words from the one the double click picked, which stays in, to the one under the pointer
+        var (start, end) = RunAt(CaretAt(point));
+        anchor = start < word.Start ? word.End : word.Start;
+        MoveCaret(start < word.Start ? start : Math.Max(end, word.End), true);
+    }
+
+    protected internal override void OnPointerUp(Vector2 point)
+    {
+        base.OnPointerUp(point);
+        wordDrag = null;
+    }
+
+    // How soon a second press has to come to be a double click, in seconds
+    private const double DOUBLE_CLICK = 0.4;
+    private double lastPress = -1.0;
+    private int lastPressAt;
+    private (int Start, int End)? wordDrag;
+
+    /// <summary>The word at a place, or the run of whatever else that isn't a space.</summary>
+    private (int Start, int End) RunAt(int at)
+    {
+        if (text.Length == 0)
+            return (0, 0);
+
+        int probe = Math.Clamp(at, 0, text.Length - 1);
+        bool word = UITextDocument.IsWordChar(text[probe]);
+        int start = probe, end = probe;
+        while (start > 0 && UITextDocument.IsWordChar(text[start - 1]) == word && !char.IsWhiteSpace(text[start - 1])) start--;
+        while (end < text.Length && UITextDocument.IsWordChar(text[end]) == word && !char.IsWhiteSpace(text[end])) end++;
+        return (start, end);
     }
 
     protected override void Update(float dt)

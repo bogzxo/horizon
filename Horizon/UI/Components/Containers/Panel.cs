@@ -46,6 +46,14 @@ public class Panel : UIComponent
     /// </summary>
     public float Stagger { get; set; }
 
+    /// <summary>
+    /// Whether what is in it is cut off at its edges, painted and pointed at, rather than spilling over whatever is next
+    /// to it. For a panel of a fixed size somebody else fills (the view of an extension in Hex).
+    /// </summary>
+    public bool Clip { get; set; }
+
+    protected override bool ClipsChildren => Clip;
+
     protected bool HasBackdrop => Background.Length > 0 || Color is not null;
 
     protected override bool HitTestVisible => HasBackdrop;
@@ -60,6 +68,19 @@ public class Panel : UIComponent
         }
 
         return content + Padding.Total;
+    }
+
+    protected override void PaintChildren(UIDrawList list)
+    {
+        if (!Clip)
+        {
+            base.PaintChildren(list);
+            return;
+        }
+
+        list.PushClip(Bounds);
+        base.PaintChildren(list);
+        list.PopClip();
     }
 
     protected override void Paint(UIDrawList list)
@@ -86,6 +107,7 @@ public class Panel : UIComponent
         Expose("stagger", () => Stagger, value => Stagger = MathF.Max(0.0f, value));
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("radius", () => Radius, value => Radius = MathF.Max(0.0f, value));
+        Expose("clip", () => Clip, value => Clip = value);
         Expose("outline", () => Outline ?? Vector4.Zero, value => Outline = value.W > 0.0f ? value : null);
     }
 }

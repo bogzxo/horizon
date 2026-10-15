@@ -119,7 +119,7 @@ public class WindowPanel : Panel
         }
 
         list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f), bar.Max.Y)));
-        list.Text(Title, new UIRect(new Vector2(x, bar.Min.Y), bar.Max), Origin.Left, ScaleOf(skin), skin.TextColor, markup: false);
+        list.Text(Resolve(Title), new UIRect(new Vector2(x, bar.Min.Y), bar.Max), Origin.Left, ScaleOf(skin), skin.TextColor, markup: false);
         list.PopClip();
 
         list.BeginPart(-3);

@@ -68,6 +68,17 @@ public partial class WindowManager
         RequestFrames();
     }
 
+    /// <summary>
+    /// Wakes an application that went quiet, from any thread, for work that finished somewhere else (a search, a file
+    /// read, a program run off the simulation's thread) and is waiting to be taken in on the next tick. Without it the
+    /// result waited for the next slow tick of an idle simulation, a twentieth of a second.
+    /// </summary>
+    public void Wake()
+    {
+        simulation?.Wake();
+        RequestFrames();
+    }
+
     /// <summary>Helper method for input of any kind, which wakes everything up. Thread of the window.</summary>
     private void NoteInput()
     {

@@ -131,10 +131,27 @@ public abstract partial class UIComponent
     /// Calls a function a script assigned to one of this component's handlers. Errors in the script are
     /// logged rather than thrown, so a broken handler can't take the game down with it.
     /// </summary>
+    /// <summary>
+    /// Who calls the handlers scripts set on this component and on everything inside it, null for the runtime of the
+    /// module as always. An editor's extension that made the UI has its handlers called its own way (with its time limit,
+    /// switched off when one throws).
+    /// </summary>
+    [Horizon.Core.HideInInspector]
+    public Action<IRuntimeValue, IRuntimeValue[]>? ScriptCaller { get; set; }
+
     protected void InvokeScript(IRuntimeValue? handler, params IRuntimeValue[] arguments)
     {
         if (handler is null or NullValue || Module is not { } owner)
             return;
+
+        for (UIComponent? at = this; at is not null; at = at.Parent)
+        {
+            if (at.ScriptCaller is { } caller)
+            {
+                caller(handler, arguments);
+                return;
+            }
+        }
 
         try
         {

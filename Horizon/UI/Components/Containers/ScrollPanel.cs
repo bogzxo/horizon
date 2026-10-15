@@ -20,6 +20,9 @@ public class ScrollPanel : Panel
     private float contentHeight;
     private bool draggingBar;
 
+    // Where on the thumb it was taken hold of, from its top
+    private float barGrab;
+
     /// <summary>How far down the content is scrolled, 0 being the top.</summary>
     public float Offset
     {
@@ -142,7 +145,13 @@ public class ScrollPanel : Panel
         draggingBar = MaxOffset > 0.0f && point.X >= content.Max.X - BAR_WIDTH * 2.0f;
 
         if (draggingBar)
+        {
+            // Taken by the thumb it keeps where it was taken, anywhere else on the track its middle goes to the pointer
+            float length = MathF.Max(MIN_THUMB, content.Height * content.Height / contentHeight);
+            float top = content.Max.Y - (content.Height - length) * (offset / MaxOffset);
+            barGrab = point.Y <= top && point.Y >= top - length ? top - point.Y : length * 0.5f;
             OnPointerDrag(point);
+        }
     }
 
     protected internal override void OnPointerDrag(Vector2 point)
@@ -150,13 +159,13 @@ public class ScrollPanel : Panel
         if (!draggingBar)
             return;
 
-        // The middle of the bar follows the pointer along the track.
+        // The thumb follows the pointer along the track, held where it was taken hold of
         UIRect content = Bounds.Shrink(Padding);
         float length = MathF.Max(MIN_THUMB, content.Height * content.Height / contentHeight);
         float travel = content.Height - length;
 
         if (travel > 0.0f)
-            Offset = (content.Max.Y - length * 0.5f - point.Y) / travel * MaxOffset;
+            Offset = (content.Max.Y - (point.Y + barGrab)) / travel * MaxOffset;
     }
 
     protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;

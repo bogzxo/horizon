@@ -199,10 +199,9 @@ public class ListBox : UIComponent
             float rowTop = Bounds.Max.Y - (i - top) * rowHeight;
             UIRect row = new(new Vector2(Bounds.Min.X, rowTop - rowHeight), new Vector2(right, rowTop));
 
-            if (i == index)
-                list.Rect(row, skin.AccentColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.55f));
-            else if (IsHovered && enabled && Hovering(row))
-                list.Rect(row, skin.HoverColor);
+            // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView)
+            list.Rect(row, i == index ? skin.AccentColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.55f)
+                : IsHovered && enabled && Hovering(row) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             list.Text(Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, scale, skin.TextColor * tint, markup: false);
         }

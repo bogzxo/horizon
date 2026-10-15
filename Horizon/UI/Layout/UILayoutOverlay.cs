@@ -181,8 +181,10 @@ internal static class UILayoutOverlay
     /// </summary>
     public static void PaintHighlight(UIDrawList list, UIComponent component)
     {
-        // Every component it is inside of may be animating, the mark has to go where the component is drawn.
-        var chain = new List<UIComponent>();
+        // Every component it is inside of may be animating, the mark has to go where the component is drawn. The list is
+        // kept, an editor has something highlighted every tick and a new one every time was garbage every tick
+        var chain = highlightChain ??= [];
+        chain.Clear();
         for (UIComponent? at = component; at is not null; at = at.Parent)
             chain.Add(at);
 
@@ -212,23 +214,49 @@ internal static class UILayoutOverlay
     }
 
     /// <summary>What a component is and how big, written just above it (or inside, at the top of the screen).</summary>
+    // The parents of what is being highlighted, kept from one tick to the next. Painting is the simulation thread's
+    [ThreadStatic]
+    private static List<UIComponent>? highlightChain;
+
+    // What the label of a component said last, and what it was about, it is only written again when that changed
+    private sealed class LabelText
+    {
+        public Vector2 Size;
+        public UIEdges Padding;
+        public float Gap = float.NaN;
+        public string Text = string.Empty;
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<UIComponent, LabelText> labels = [];
+
     private static void PaintLabel(UIDrawList list, UIComponent component)
     {
         UIRect bounds = component.Bounds;
         UIEdges padding = component.Padding;
+        float gap = component is StackPanel stack && stack.Children.Count > 1 ? MathF.Round(GapOf(stack)) : float.NaN;
+        Vector2 size = new(MathF.Round(bounds.Width), MathF.Round(bounds.Height));
 
-        string text = $"{component.GetType().Name}  {bounds.Width:0} x {bounds.Height:0}";
-        if (padding != default)
-            text += $"  pad {padding.Left:0} {padding.Top:0} {padding.Right:0} {padding.Bottom:0}";
-        if (component is StackPanel stack && stack.Children.Count > 1)
-            text += $"  gap {GapOf(stack):0}";
+        // Written out every tick, for every highlight, it was the garbage an editor made sitting there with something selected
+        LabelText label = labels.GetValue(component, static _ => new LabelText());
+        if (label.Text.Length == 0 || label.Size != size || label.Padding != padding || !label.Gap.Equals(gap))
+        {
+            string written = $"{component.GetType().Name}  {size.X:0} x {size.Y:0}";
+            if (padding != default)
+                written += $"  pad {padding.Left:0} {padding.Top:0} {padding.Right:0} {padding.Bottom:0}";
+            if (!float.IsNaN(gap))
+                written += $"  gap {gap:0}";
 
-        Vector2 size = list.Skin.Font.Measure(text, LABEL_SCALE, markup: false);
+            (label.Size, label.Padding, label.Gap, label.Text) = (size, padding, gap, written);
+        }
+
+        string text = label.Text;
+
+        Vector2 measured = list.Skin.Font.Measure(text, LABEL_SCALE, markup: false);
         Vector2 margin = new(6.0f, 4.0f);
 
         // Its bottom left corner sits on the top left corner of the component.
         Vector2 corner = new(bounds.Min.X, bounds.Max.Y + 2.0f);
-        UIRect back = new(corner, corner + size + margin * 2.0f);
+        UIRect back = new(corner, corner + measured + margin * 2.0f);
 
         list.Rect(back, LabelBack);
         list.Text(text, new Vector2(back.Min.X + margin.X, back.Max.Y - margin.Y), LABEL_SCALE, HoverColor, markup: false);

@@ -128,14 +128,15 @@ public class TabStrip : UIComponent
         int over = IsHovered ? TabAt(Pointer) : -1;
         Tooltip = over >= 0 ? Tabs[over].Tooltip : string.Empty;
 
-        // The one that is open is brought into sight, whichever way it is off
+        // The one that is open is brought into sight, whichever way it is off. One wider than the strip is shown from its
+        // start, it was shown its end one tick and its start the next and the title shook like a shitting dog
         if (Selected >= 0 && Selected < Tabs.Count && !IsPressed)
         {
             UIRect open = TabBounds(Selected);
-            if (open.Max.X > Bounds.Max.X)
-                scroll += open.Max.X - Bounds.Max.X;
-            else if (open.Min.X < Bounds.Min.X)
+            if (open.Min.X < Bounds.Min.X || open.Width > Bounds.Width)
                 scroll -= Bounds.Min.X - open.Min.X;
+            else if (open.Max.X > Bounds.Max.X)
+                scroll += open.Max.X - Bounds.Max.X;
         }
 
         ClampScroll();

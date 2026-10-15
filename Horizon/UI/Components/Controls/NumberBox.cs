@@ -32,12 +32,30 @@ public class NumberBox : TextBox
         set
         {
             number = value;
+            empty = false;
 
             // What somebody is in the middle of typing is theirs, "1." mustn't turn back into "1" under their fingers.
             if (!IsFocused)
                 Text = Format(value);
         }
     }
+
+    /// <summary>
+    /// Whether it shows no number at all, its placeholder instead, until one is typed or set. For a number that isn't
+    /// set and has nothing to stand in for it (a form's field that whoever reads it works out).
+    /// </summary>
+    public bool Empty
+    {
+        get => empty;
+        set
+        {
+            empty = value;
+            if (empty && !IsFocused)
+                Text = string.Empty;
+        }
+    }
+
+    private bool empty;
 
     /// <summary>How much a unit of dragging across the box changes the number by.</summary>
     public float DragStep { get; set; } = 1.0f;
@@ -102,6 +120,13 @@ public class NumberBox : TextBox
         if (IsFocused || IsPressed)
             return;
 
+        if (empty)
+        {
+            if (Text.Length > 0)
+                Text = string.Empty;
+            return;
+        }
+
         if (shown is null || !shownFor.Equals(number))
         {
             shown = Format(number);
@@ -114,10 +139,11 @@ public class NumberBox : TextBox
 
     private void Report(float value)
     {
-        if (value == number)
+        if (value == number && !empty)
             return;
 
         number = value;
+        empty = false;
         OnValueChanged?.Invoke(value);
         InvokeScript(changedHandler, new NumberValue(value));
     }

@@ -4,6 +4,7 @@ using Horizon.Content;
 using Horizon.Rendering;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
+using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Components;
@@ -60,6 +61,16 @@ public class Button : UIComponent
     /// can be told from one the pointer just happens to be over.
     /// </summary>
     public bool Selected { get; set; }
+
+    /// <summary>
+    /// An edge of the button that gets a line in the accent colour while it is selected, the bar down the left of the
+    /// view that is open in an activity bar, VS Code's. None for none, which is what a button comes as. In a layout
+    /// <c>indicator: "left"</c>.
+    /// </summary>
+    public UIResize Indicator { get; set; }
+
+    // How thick that line is
+    private const float INDICATOR = 2.0f;
 
     /// <summary>
     /// Whether the button gives a little when something happens to it. A bump when it lights up
@@ -156,6 +167,16 @@ public class Button : UIComponent
         if (enabled && Chosen && skin.TryGetRegion(SELECTION_REGION, out var marker))
             list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
 
+        if (enabled && Chosen && Indicator != UIResize.None)
+        {
+            UIRect at = Bounds;
+            Vector4 accent = skin.AccentColor with { W = 1.0f };
+            if ((Indicator & UIResize.Left) != 0) list.Rect(new UIRect(at.Min, new Vector2(at.Min.X + INDICATOR, at.Max.Y)), accent);
+            if ((Indicator & UIResize.Right) != 0) list.Rect(new UIRect(new Vector2(at.Max.X - INDICATOR, at.Min.Y), at.Max), accent);
+            if ((Indicator & UIResize.Top) != 0) list.Rect(new UIRect(new Vector2(at.Min.X, at.Max.Y - INDICATOR), at.Max), accent);
+            if ((Indicator & UIResize.Bottom) != 0) list.Rect(new UIRect(at.Min, new Vector2(at.Max.X, at.Min.Y + INDICATOR)), accent);
+        }
+
         list.BeginPart(LABEL_PART);
 
         // The label is centred on what the padding leaves over, which is the face of the button when
@@ -232,6 +253,7 @@ public class Button : UIComponent
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);
+        Expose("indicator", () => UIScript.FromEnum(Indicator), value => Indicator = UIScript.ToEnum<UIResize>(value, "indicator"));
         Expose("animated", () => Animated, value => Animated = value);
 
         // Scale used to be called spr_scale, and the handler could only be given as on_press up front.

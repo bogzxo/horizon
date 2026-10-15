@@ -84,7 +84,7 @@ public abstract partial class UIComponent
     /// <summary>Whether an edge is being dragged right now.</summary>
     public bool IsResizing { get; private set; }
 
-    private IRuntimeValue? resizedHandler;
+    private IRuntimeValue? resizedHandler, resizeEndedHandler;
     private Vector2 resizeFrom, resizeSize;
     private UIResize resizeEdges;
 
@@ -185,6 +185,7 @@ public abstract partial class UIComponent
         IsResizing = false;
         ActiveGrip = UIResize.None;
         OnResizeEnded?.Invoke(Size);
+        InvokeScript(resizeEndedHandler, new Vector2Value(Size));
     }
 
     private static float Limit(float value, float least, float most)
@@ -284,6 +285,7 @@ public abstract partial class UIComponent
         Expose("min_size", () => MinSize, value => MinSize = value);
         Expose("max_size", () => MaxSize, value => MaxSize = value);
         Expose("on_resize", () => resizedHandler ?? new NullValue(), value => resizedHandler = value);
+        Expose("on_resize_end", () => resizeEndedHandler ?? new NullValue(), value => resizeEndedHandler = value);
     }
 
     private static string Describe(UIResize edges)

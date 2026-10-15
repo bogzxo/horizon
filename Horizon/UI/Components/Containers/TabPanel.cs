@@ -75,7 +75,31 @@ public class TabPanel : UIComponent
     /// <summary>The colour of the names of the tabs that aren't open, null for the skin's text dimmed.</summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>
+    /// The layout a page is made from when the program adds pages of its own (<see cref="AddPage"/>), next to this one's
+    /// layout. Empty for a panel whose pages are all in its layout.
+    /// </summary>
+    public string Template { get; set; } = string.Empty;
+
     protected override bool HitTestVisible => true;
+
+    /// <summary>
+    /// Makes a page out of <see cref="Template"/> at the end, with a tab called <paramref name="title"/>, and hands back what
+    /// was made. <paramref name="layout"/> is the layout this panel is in, where the template is looked for.
+    /// </summary>
+    public UILayout AddPage(UILayout layout, string title)
+    {
+        if (Template.Length == 0)
+            throw new InvalidOperationException("A tab panel has pages added to it but doesn't say what from, it needs a template.");
+
+        UILayout page = layout.Instantiate(Template, this);
+        string[] named = new string[Math.Max(tabs.Length, ChildSpan.Length)];
+        for (int i = 0; i < named.Length; i++)
+            named[i] = i < tabs.Length ? tabs[i] : string.Empty;
+        named[^1] = title;
+        tabs = named;
+        return page;
+    }
 
     /// <summary>What the tab of a page says.</summary>
     public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : $"Tab {index + 1}";
@@ -243,6 +267,7 @@ public class TabPanel : UIComponent
         Expose("next_hint", () => NextHint, value => NextHint = value);
         Expose("accent", () => AccentColor ?? Vector4.Zero, value => AccentColor = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
+        Expose("template", () => Template, value => Template = value);
         Expose("on_changed", () => changedHandler ?? new NullValue(), value => changedHandler = value);
     }
 }
