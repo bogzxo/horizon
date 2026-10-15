@@ -25,7 +25,12 @@ namespace Horizon.UI;
 public sealed class UILayout
 {
     // Layouts that have been read before, by where they are. A template is read once however many items it makes.
-    private static readonly ConcurrentDictionary<string, (DateTime Written, ProgramStatement Program)> programs = new();
+    private static readonly ConcurrentDictionary<string, (DateTime Written, long CheckedAt, ProgramStatement Program)> programs = new();
+
+    // How long a layout's file is taken to be what it was when it was last looked at, in milliseconds. An editor's
+    // inspector makes a row out of the same template thirty times in a click, and asking the disk twice for every one
+    // was most of what that click cost
+    private const long RECHECK_MS = 1000;
 
     private readonly Dictionary<string, UIComponent> parts = [];
     private readonly List<UIComponent> roots = [];
@@ -69,9 +74,6 @@ public sealed class UILayout
     /// <param name="introDelay">Seconds the entrances of the layout wait on top of their own delays, see <see cref="UIComponent.Intro"/>.</param>
     public static UILayout Load(UIModule module, string path, UIComponent? parent = null, float introDelay = 0.0f)
     {
-        if (!File.Exists(path))
-            throw new FileNotFoundException($"The layout '{path}' doesn't exist.");
-
         return Run(module, path, Compile(path), parent, introDelay);
     }
 
@@ -260,19 +262,35 @@ public sealed class UILayout
         return layout;
     }
 
+    /// <summary>
+    /// Has a layout's file read again the next time it's loaded, for a program that has just written it (an editor saving
+    /// one) and can't wait the second it would otherwise be taken to be what it was.
+    /// </summary>
+    public static void Forget(string path) => programs.TryRemove(System.IO.Path.GetFullPath(path), out _);
+
     private static ProgramStatement Compile(string path)
     {
         string key = System.IO.Path.GetFullPath(path);
-        DateTime written = File.GetLastWriteTimeUtc(path);
+        long now = System.Environment.TickCount64;
+        bool known = programs.TryGetValue(key, out var cached);
+        if (known && now - cached.CheckedAt < RECHECK_MS)
+            return cached.Program;
+
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"The layout '{path}' doesn't exist.");
 
         // Read again if the file was changed since, which is what lets an editor be used next to a running program.
-        if (programs.TryGetValue(key, out var known) && known.Written == written)
-            return known.Program;
+        DateTime written = File.GetLastWriteTimeUtc(path);
+        if (known && cached.Written == written)
+        {
+            programs[key] = cached with { CheckedAt = now };
+            return cached.Program;
+        }
 
         try
         {
             var program = new Parser().ProduceSyntaxTree(Lexer.Tokenize(File.ReadAllText(path)));
-            programs[key] = (written, program);
+            programs[key] = (written, now, program);
             return program;
         }
         catch (Exception e)
