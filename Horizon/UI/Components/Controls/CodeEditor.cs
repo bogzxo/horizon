@@ -70,10 +70,16 @@ public class CodeEditor : UIComponent
 
     private readonly UITextDocument document = new();
 
-    // The colouring of every line, worked out once per change of the text, and the colours written in it
+    // The colouring of every line, and the colours written in it. Worked out for the whole file, 1.7 ms and a megabyte for
+    // two thousand lines, so not for every key. A change is coloured once the text has been left alone RECOLOUR_DELAY,
+    // a new text straight away, and until then a line that isn't what was coloured is drawn plain (see ColoursOf)
+    private const float RECOLOUR_DELAY = 0.1f;
     private List<HidlSpan>[] spans = [[]];
+    private string[] colouredLines = [];
     private readonly List<HidlSwatch> swatches = [];
-    private int coloured = -1;
+    private int coloured = -1, changeSeen = -1;
+    private float sinceChange;
+    private bool recolourNow = true;
 
     // Every other place the word under the caret is, lit faintly, worked out when the caret or the text moves
     private readonly List<UITextPosition> occurrences = [];
@@ -119,7 +125,11 @@ public class CodeEditor : UIComponent
     public string Text
     {
         get => document.Text;
-        set => document.Text = value ?? string.Empty;
+        set
+        {
+            document.Text = value ?? string.Empty;
+            recolourNow = true;
+        }
     }
 
     /// <summary>The scale of the text, or zero to use the skin's.</summary>
@@ -321,6 +331,41 @@ public class CodeEditor : UIComponent
         return x;
     }
 
+    /// <summary>The colours of every line worked out again, and the lines kept to tell later which still fit them.</summary>
+    private void Recolour()
+    {
+        coloured = changeSeen = document.Version;
+        recolourNow = false;
+
+        if (Highlight)
+        {
+            spans = HidlHighlighter.Read(document.Text, document.LineCount, swatches);
+        }
+        else
+        {
+            spans = PlainSpans();
+            swatches.Clear();
+        }
+
+        if (colouredLines.Length != document.LineCount)
+            colouredLines = new string[document.LineCount];
+        for (int i = 0; i < colouredLines.Length; i++)
+            colouredLines[i] = document.LineAt(i);
+    }
+
+    /// <summary>
+    /// The colours of a line, null when it was typed into since they were worked out. A line is looked for where it was and
+    /// where it was before the lines added or taken out above it moved it, so Enter doesn't take the colours off the rest.
+    /// </summary>
+    private List<HidlSpan>? ColoursOf(int line, string text)
+    {
+        if (line < colouredLines.Length && colouredLines[line] == text)
+            return spans[line];
+
+        int was = line - (document.LineCount - colouredLines.Length);
+        return was >= 0 && was < colouredLines.Length && colouredLines[was] == text ? spans[was] : null;
+    }
+
     // Every line all one span, for text that isn't coloured as code
     private List<HidlSpan>[] PlainSpans()
     {
@@ -377,16 +422,18 @@ public class CodeEditor : UIComponent
 
         if (coloured != document.Version)
         {
-            coloured = document.Version;
-            if (Highlight)
+            if (changeSeen != document.Version)
             {
-                spans = HidlHighlighter.Read(document.Text, document.LineCount, swatches);
+                changeSeen = document.Version;
+                sinceChange = 0.0f;
             }
             else
             {
-                spans = PlainSpans();
-                swatches.Clear();
+                sinceChange += dt;
             }
+
+            if (recolourNow || !Highlight || sinceChange >= RECOLOUR_DELAY)
+                Recolour();
         }
 
         if (CheckSyntax && checkedVersion != document.Version && (checkIn -= dt) <= 0.0f)
@@ -571,10 +618,11 @@ public class CodeEditor : UIComponent
                 said = moreErrors[i].Message;
         }
 
-        foreach (var diagnostic in diagnostics)
+        // By index, a foreach over the interface is an enumerator made every tick the pointer is over the code
+        for (int i = 0; i < diagnostics.Count && said.Length == 0; i++)
         {
-            if (said.Length == 0 && Covers(diagnostic, at))
-                said = diagnostic.Message;
+            if (Covers(diagnostics[i], at))
+                said = diagnostics[i].Message;
         }
 
         // Nothing wrong there, what the program has to say about the word, asked once a word
@@ -1243,16 +1291,24 @@ public class CodeEditor : UIComponent
 
         // The code itself, a line at a time, each a part of its own so a line scrolled along is blended with itself
         Span<char> number = stackalloc char[12];
-        for (int line = first; line <= last && line < spans.Length; line++)
+        for (int line = first; line <= last && line < document.LineCount; line++)
         {
             list.BeginPart(line);
 
             float top = LineTop(area, line, lineHeight);
-            ReadOnlySpan<char> text = document.LineAt(line);
+            string written = document.LineAt(line);
+            ReadOnlySpan<char> text = written;
             float x = left;
             int at = 0;
 
-            foreach (HidlSpan span in spans[line])
+            // Typed into and not coloured yet, it's all one colour for a moment
+            if (ColoursOf(line, written) is not { } colours)
+            {
+                Draw(list, skin, scale, text, x, top, colors.Of(HidlToken.Name));
+                continue;
+            }
+
+            foreach (HidlSpan span in colours)
             {
                 if (span.Start + span.Length > text.Length)
                     break;
