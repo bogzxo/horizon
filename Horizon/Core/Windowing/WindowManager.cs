@@ -319,7 +319,7 @@ public partial class WindowManager : GameComponent, IDisposable
             // Vulkan, so the window only has a surface to offer and the device does the rest
             API = GraphicsAPI.DefaultVulkan,
             Title = config.WindowTitle ?? string.Empty,
-            // A frameless window maximised by Windows covers the taskbar, that one is maximised by hand once it is made, see Run
+            // A frameless window on Windows is maximised once Windows has its frame, see SetUpFrame
             WindowState = config.Fullscreen ? WindowState.Fullscreen
                 : config.Maximized && !(config.CustomFrame && OperatingSystem.IsWindows()) ? WindowState.Maximized
                 : WindowState.Normal,
@@ -790,6 +790,10 @@ public partial class WindowManager : GameComponent, IDisposable
         }
 
         _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
+
+        // GLFW takes the styles of a frame back off a window coming out of fullscreen, which Windows needs to snap it
+        if (!fullscreen)
+            AddFrameStyles();
     }
 
     /// <summary>
@@ -883,8 +887,7 @@ public partial class WindowManager : GameComponent, IDisposable
 
         // The window, and then everything that draws happens on a thread of its own, see DrawFrames
         _window.Initialize();
-        if (maximizeWhenMade)
-            SetMaximized(true);
+        SetUpFrame();
 
         renderThread = new Thread(DrawFrames)
         {
@@ -1172,6 +1175,7 @@ public partial class WindowManager : GameComponent, IDisposable
         Graphics?.Dispose();
         Graphics = null;
 
+        ReleaseFrame();
         _window.Reset();
         _window.Dispose();
         windowWake.Dispose();

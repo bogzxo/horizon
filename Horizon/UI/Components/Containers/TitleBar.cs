@@ -180,7 +180,20 @@ public class TitleBar : StackPanel
             }
         }
 
+        // The window is told where its maximise button is, for Windows 11 to bring Snap Layouts up over it
+        if (GameEngine.Instance?.WindowManager is { CustomFrame: true } window)
+            window.MaximizeButton = WindowButtons && Module is { } module ? InWindow(module, ButtonBounds(1)) : default;
+
         list.EndParts();
+    }
+
+    /// <summary>Helper method to say where something of the UI is in the window, in its pixels.</summary>
+    private static System.Drawing.RectangleF InWindow(UIModule module, UIRect area)
+    {
+        var mouse = GameEngine.Instance.Input.Mouse;
+        Vector2 a = module.Compositor.viewportCamera.WorldToScreen(module.ToWorld(area.Min)) / mouse.ViewScale + mouse.ViewOrigin;
+        Vector2 b = module.Compositor.viewportCamera.WorldToScreen(module.ToWorld(area.Max)) / mouse.ViewScale + mouse.ViewOrigin;
+        return System.Drawing.RectangleF.FromLTRB(MathF.Min(a.X, b.X), MathF.Min(a.Y, b.Y), MathF.Max(a.X, b.X), MathF.Max(a.Y, b.Y));
     }
 
     protected internal override void OnPointerDown(Vector2 point)

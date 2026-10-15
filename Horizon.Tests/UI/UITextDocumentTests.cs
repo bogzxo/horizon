@@ -181,6 +181,148 @@ public class UITextDocumentTests
     }
 
     [Fact]
+    public void Find_with_options_minds_the_case_whole_words_and_regexes()
+    {
+        var doc = Doc("Jab jab jabber\nJAB");
+        var found = new List<UITextMatch>();
+
+        doc.FindAll("jab", default, found);
+        Assert.Equal(4, found.Count);
+
+        doc.FindAll("jab", new UIFindOptions(MatchCase: true), found);
+        Assert.Equal([new UITextMatch(0, 4, 3), new UITextMatch(0, 8, 3)], found);
+
+        doc.FindAll("jab", new UIFindOptions(WholeWord: true), found);
+        Assert.Equal(3, found.Count);
+        Assert.DoesNotContain(new UITextMatch(0, 8, 3), found);
+
+        // A regex's matches are as long as they come out, and a bad one finds nothing and says why
+        doc.FindAll(@"jab\w*", new UIFindOptions(Regex: true), found);
+        Assert.Contains(new UITextMatch(0, 8, 6), found);
+        doc.FindAll("(", new UIFindOptions(Regex: true), found);
+        Assert.Empty(found);
+        Assert.NotNull(doc.FindError);
+    }
+
+    [Fact]
+    public void Find_from_a_place_grows_the_match_rather_than_hopping_on()
+    {
+        var doc = Doc("jump jab jabber");
+        var from = new UITextPosition(0, 0);
+        Assert.True(doc.FindFrom("j", default, from));
+        Assert.Equal(new UITextPosition(0, 0), doc.SelectionStart);
+        Assert.True(doc.FindFrom("ja", default, from));
+        Assert.Equal(new UITextPosition(0, 5), doc.SelectionStart);
+        Assert.True(doc.FindFrom("jabb", default, from));
+        Assert.Equal(new UITextPosition(0, 9), doc.SelectionStart);
+    }
+
+    [Fact]
+    public void Replace_next_swaps_the_selected_match_and_goes_on()
+    {
+        var doc = Doc("hit: 1, hit: 2");
+        var options = new UIFindOptions(Regex: true);
+
+        // Nothing selected that matches, it only finds the first
+        Assert.False(doc.ReplaceNext(@"hit: (\d)", "damage: $1", options));
+        Assert.Equal("hit: 1", doc.SelectedText);
+
+        Assert.True(doc.ReplaceNext(@"hit: (\d)", "damage: $1", options));
+        Assert.Equal("damage: 1, hit: 2", doc.Text);
+        Assert.Equal("hit: 2", doc.SelectedText);
+
+        doc.Undo();
+        Assert.Equal("hit: 1, hit: 2", doc.Text);
+        Assert.Equal(2, doc.ReplaceAll(@"hit: (\d)", "damage: $1", options));
+        Assert.Equal("damage: 1, damage: 2", doc.Text);
+    }
+
+    [Fact]
+    public void Typing_goes_in_at_every_caret_and_one_undo_takes_it_all_back()
+    {
+        var doc = Doc("jab: 5,\nkick: 7,\nsweep: 9,", 0, 3);
+        doc.AddCaret(new UITextPosition(1, 4));
+        doc.AddCaret(new UITextPosition(2, 5));
+        Assert.Equal(3, doc.CaretCount);
+
+        Type(doc, "_x");
+        Assert.Equal("jab_x: 5,\nkick_x: 7,\nsweep_x: 9,", doc.Text);
+        Assert.Equal(3, doc.CaretCount);
+
+        doc.Backspace();
+        Assert.Equal("jab_: 5,\nkick_: 7,\nsweep_: 9,", doc.Text);
+
+        doc.Undo();
+        doc.Undo();
+        Assert.Equal("jab: 5,\nkick: 7,\nsweep: 9,", doc.Text);
+        Assert.False(doc.HasExtraCarets);
+    }
+
+    [Fact]
+    public void Carets_on_one_line_each_edit_their_own_place()
+    {
+        var doc = Doc("a b c", 0, 1);
+        doc.AddCaret(new UITextPosition(0, 3));
+        doc.AddCaret(new UITextPosition(0, 5));
+        Type(doc, "!");
+        Assert.Equal("a! b! c!", doc.Text);
+        doc.Backspace();
+        doc.Backspace();
+        Assert.Equal("  ", doc.Text);
+    }
+
+    [Fact]
+    public void Control_d_takes_the_word_then_every_next_place_of_it()
+    {
+        var doc = Doc("let speed = speed + speedy;", 0, 6);
+        Assert.True(doc.AddNextOccurrence());
+        Assert.Equal("speed", doc.SelectedText);
+        Assert.True(doc.AddNextOccurrence());
+        Assert.True(doc.AddNextOccurrence());
+        Assert.Equal(3, doc.CaretCount);
+
+        Type(doc, "pace");
+        Assert.Equal("let pace = pace + pacey;", doc.Text);
+    }
+
+    [Fact]
+    public void Carets_that_run_into_each_other_are_one()
+    {
+        var doc = Doc("first line", 0, 3);
+        doc.AddCaret(new UITextPosition(0, 7));
+        doc.MoveHome(false);
+        Assert.False(doc.HasExtraCarets);
+        Assert.Equal(new UITextPosition(0, 0), doc.Caret);
+    }
+
+    [Fact]
+    public void A_selection_split_into_line_ends_and_a_column_each_type_on_every_line()
+    {
+        var doc = Doc("a\nbb\nccc");
+        doc.Select(new UITextPosition(0, 0), new UITextPosition(2, 1));
+        doc.CaretsAtLineEnds();
+        Assert.Equal(3, doc.CaretCount);
+        Type(doc, ";");
+        Assert.Equal("a;\nbb;\nccc;", doc.Text);
+
+        doc.SelectColumn(new UITextPosition(0, 0), new UITextPosition(2, 1));
+        Type(doc, "#");
+        Assert.Equal("#;\n#b;\n#cc;", doc.Text);
+    }
+
+    [Fact]
+    public void Pasting_as_many_lines_as_there_are_carets_hands_out_a_line_each()
+    {
+        var doc = Doc("x = ;\ny = ;", 0, 4);
+        doc.AddCaret(new UITextPosition(1, 4));
+        doc.Insert("1\n2\n");
+        Assert.Equal("x = 1;\ny = 2;", doc.Text);
+
+        doc.Insert("0");
+        Assert.Equal("x = 10;\ny = 20;", doc.Text);
+    }
+
+    [Fact]
     public void Lines_move_and_duplicate()
     {
         var doc = Doc("one\ntwo\nthree", 1, 0);

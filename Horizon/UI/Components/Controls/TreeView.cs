@@ -82,6 +82,9 @@ public sealed class UITreeItem
 /// </summary>
 public class TreeView : UIComponent
 {
+    // How thick the line along the top is while it has the keyboard
+    private const float FOCUS_LINE = 2.0f;
+
     private const float DEFAULT_WIDTH = 260.0f, DEFAULT_ROWS = 10.0f;
     private const float ROW_PADDING = 8.0f, BAR_WIDTH = 5.0f, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
@@ -141,6 +144,12 @@ public class TreeView : UIComponent
 
     /// <summary>Whether the tree takes the keyboard when it is clicked. An editor whose shortcuts mustn't be withheld says no.</summary>
     public bool TakesKeys { get; set; } = true;
+
+    /// <summary>
+    /// Whether a thin line in the accent runs along its top while it has the keyboard, so which of several things taking
+    /// keys has them can be seen (VS Code's focused editor group).
+    /// </summary>
+    public bool FocusLine { get; set; }
 
     /// <summary>A click on a row (or the keys selecting one).</summary>
     public Action<UITreeItem>? OnPressed { get; set; }
@@ -461,6 +470,9 @@ public class TreeView : UIComponent
 
         list.EndParts();
         list.PopClip();
+
+        if (FocusLine && IsFocused)
+            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - FOCUS_LINE), bounds.Max), skin.AccentColor);
 
         // A thin bar along the right says how much of the tree is in sight, and where
         if (scrolls)

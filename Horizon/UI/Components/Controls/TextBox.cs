@@ -103,6 +103,12 @@ public class TextBox : UIComponent
     /// <summary>Called with the text when enter is pressed, or <see cref="Submit"/> is called.</summary>
     public Action<string>? OnSubmitted { get; set; }
 
+    /// <summary>
+    /// Told the editing keys the box has no use for, up, down and the pages (<see cref="UIKeyboard"/>'s codes), for a
+    /// box that stands in front of a list and moves it with them, a command palette.
+    /// </summary>
+    public Action<char>? OnKey { get; set; }
+
     /* A button in the box, for whatever fills it in some other way than typing. A file dialog, a list to pick
        from, a clear. It is part of the box and not a component of its own, so a box with one is laid out like a
        box without */
@@ -371,9 +377,12 @@ public class TextBox : UIComponent
                 break;
 
             default:
-                // The keys only an editor of more than one line knows about (up, down, undo) type nothing here
+                // The keys only an editor of more than one line knows about (up, down, undo) type nothing here, whoever
+                // put the box in front of a list gets them
                 if (!UIKeyboard.IsEditingKey(character))
                     Insert(character);
+                else
+                    OnKey?.Invoke(character);
                 break;
         }
     }
