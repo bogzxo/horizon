@@ -30,6 +30,21 @@ public class PhysicsBodyComponent2D : GameComponent
     public float LinearDrag { get; set; } = 0.0f;
 
     /// <summary>
+    /// How many times the world's gravity this body falls with, 1 like everything else. Somebody knocked into the
+    /// air in a fighting game floats on half of it so they can be hit again on the way down, a balloon has less
+    /// than none. Gravity stays an acceleration either way, the mass still has no say.
+    /// </summary>
+    public float GravityScale { get; set; } = 1.0f;
+
+    /// <summary>
+    /// The fastest the body falls along the world's gravity, in units a second, 0 for no limit. Anything it is
+    /// going over that is taken off at the end of the step, so a body thrown downwards slows to it as well. A
+    /// body with drag has a top speed of its own and doesn't need one, a body without it falls quicker and
+    /// quicker forever unless it's told.
+    /// </summary>
+    public float MaxFallSpeed { get; set; } = 0.0f;
+
+    /// <summary>
     /// Whether a move that would end inside of the map is taken as far as it goes, up against whatever is in the
     /// way, rather than not taken at all. Off, which is what it is unless somebody says so, a body that would have
     /// hit the floor this step stays where it was, as much as a step of falling short of it, stops dead and then
