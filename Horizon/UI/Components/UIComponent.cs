@@ -135,7 +135,8 @@ public abstract partial class UIComponent
     /// <summary>
     /// The layer the component is on, with everything inside it that doesn't name one of its own. Empty for none.
     /// A layer is a name several parts of a layout share so they can be shown and hidden together, see
-    /// <see cref="UIModule.SetLayerVisible"/>. The screens of a menu that are laid over each other in one file,
+    /// <see cref="UIModule.SetLayerVisible"/>, and a layout says which start out hidden with compositor.hidden_layers.
+    /// The screens of a menu that are laid over each other in one file,
     /// or an overlay that is only up some of the time. A component on a hidden layer is neither drawn nor hit
     /// by the pointer, but keeps its place in the layout and whatever <see cref="Visible"/> says.
     /// </summary>
@@ -311,13 +312,17 @@ public abstract partial class UIComponent
             Size.X > 0.0f ? Size.X : automatic.X,
             Size.Y > 0.0f ? Size.Y : automatic.Y);
 
+        // Sliding in or out it asks for as much of that as is out, see UIComponent.Sliding
+        if (slideWanted is not null)
+            DesiredSize = SlidSize(DesiredSize);
+
         return DesiredSize;
     }
 
     internal void ArrangeTree(UIRect bounds)
     {
         Bounds = bounds;
-        Arrange(bounds.Shrink(Padding));
+        Arrange((slideWanted is null ? bounds : SlidContent(bounds)).Shrink(Padding));
     }
 
     /// <summary>
@@ -392,12 +397,21 @@ public abstract partial class UIComponent
 
         // Every quad is ours by name, see UIDrawList.PushOwner
         list.PushOwner(this);
+
+        // What's in it is laid out whole while it slides, the part that's gone is cut off at its edge
+        bool sliding = slideWanted is not null;
+        if (sliding)
+            list.PushClip(Bounds);
+
         Paint(list);
 
         if (hoverness > 0.0f && Hover == UIHover.Glow)
             PaintHoverGlow(list);
 
         PaintChildren(list);
+
+        if (sliding)
+            list.PopClip();
 
         // The tabs of the edges that can be dragged, over whatever is in it
         if (Resizable != UIResize.None)
@@ -437,6 +451,9 @@ public abstract partial class UIComponent
         // Still settling back down after the hover was taken off is a hover as well
         if (Hover != UIHover.None || hoverness > 0.0f)
             StepHover(dt);
+
+        if (slideWanted is not null)
+            StepSlide(dt);
 
         Update(dt);
 

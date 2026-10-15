@@ -112,6 +112,23 @@ public partial class UIModule
             return new NullValue();
         });
 
+        // `compositor.hidden_layers(["code", "table"])` has the layers named start out hidden (see SetLayerVisible), the
+        // screens of a menu that aren't the first, or the parts of an editor that take turns with each other, which an
+        // editor shows and hides by the layer to work on each. Only for a layout that is the whole module, like design
+        factories["hidden_layers"] = new NativeFunctionValue((args, _) =>
+        {
+            if (args.Length != 1)
+                throw new Exception("compositor.hidden_layers expects one list of the layers that start out hidden: [\"code\", \"table\"].");
+
+            if (captureParent is null)
+            {
+                foreach (string layer in UIScript.ToTexts(args[0], "hidden_layers"))
+                    SetLayerVisible(layer.Trim(), false);
+            }
+
+            return new NullValue();
+        });
+
         Register<Button>("button");
         Register<ToggleButton>("toggle");
         Register<ProgressBar>("progress_bar");
