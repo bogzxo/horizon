@@ -1,5 +1,6 @@
+using System.Drawing;
 using System.Numerics;
-using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -20,9 +21,10 @@ public enum WindowEdges
 
 // A window without the system's frame (WindowManagerConfiguration.CustomFrame), whose title bar and buttons the UI draws
 // itself (TitleBar). The UI asks for what the frame would have done, minimise, maximise, close, and moving and resizing
-// the window by dragging, and the thread of the window does it, the only one GLFW lets. A drag is followed on that thread
-// from where the cursor is on the screen, a thousand times a second, so the window keeps up with the hand whatever the
-// simulation is busy with and the cursor moving with the window doesn't throw the sums out.
+// the window by dragging, and the thread of the window does it, the only one GLFW lets. On Windows the drag is handed to
+// Windows, which snaps and maximises the way it does for any window (see WindowManager.Frame.Windows). Anywhere else it
+// is followed on that thread from where the cursor is on the screen, a thousand times a second, so the window keeps up
+// with the hand whatever the simulation is busy with and the cursor moving with the window doesn't throw the sums out.
 public partial class WindowManager
 {
     // The least a window is dragged down to, so its own title bar and buttons are never squeezed out of it
@@ -36,7 +38,8 @@ public partial class WindowManager
 
     private volatile bool maximized;
 
-    // A window without a frame that was asked to start maximised, which on Windows is done by hand once it is made
+    // A window without a frame that was asked to start maximised, which on Windows is done once Windows has its frame
+    // (and once it is centred, which is where it comes back to)
     private readonly bool maximizeWhenMade;
 
     // What is being dragged, the window about or an edge of it, and where it all was when the drag started
@@ -46,9 +49,6 @@ public partial class WindowManager
     private Vector2 dragCursor;
     private Vector2D<int> dragPosition, dragSize;
     private float grabAcross, grabDown;
-
-    // Where the window was before it was maximised by hand (a frameless window on Windows), to go back to
-    private Rectangle<int>? restoreBounds;
 
     /// <summary>Puts the window down to the taskbar. From any thread.</summary>
     public void Minimize() => PostToWindow(() => _window.WindowState = WindowState.Minimized);
@@ -65,6 +65,23 @@ public partial class WindowManager
     /// <summary>Starts dragging edges of the window with the pointer, for as long as the left button is held. From any thread.</summary>
     public void BeginResize(WindowEdges edges) => PostToWindow(() => StartResize(edges));
 
+    /// <summary>
+    /// Where the maximise button the UI draws is, in the window's pixels, empty for nowhere. On Windows 11 the pointer
+    /// resting on it brings up Snap Layouts, the way it does over the system's own. The title bar keeps it up. From any thread.
+    /// </summary>
+    public RectangleF MaximizeButton
+    {
+        get => maximizeButton?.Value ?? RectangleF.Empty;
+        set
+        {
+            if (value != MaximizeButton)
+                maximizeButton = value.IsEmpty ? null : new StrongBox<RectangleF>(value);
+        }
+    }
+
+    // Swapped whole, so the window's thread never reads half of one
+    private volatile StrongBox<RectangleF>? maximizeButton;
+
     private IMouse? FrameMouse => _input is { Mice.Count: > 0 } input ? input.Mice[0] : null;
 
     // Where the cursor is on the screen, which is where the window is and where in it the cursor is
@@ -72,6 +89,12 @@ public partial class WindowManager
 
     private void StartMove()
     {
+        if (SystemFrame)
+        {
+            SystemDrag(HTCAPTION);
+            return;
+        }
+
         if (FrameMouse is not { } mouse || !mouse.IsButtonPressed(MouseButton.Left))
             return;
 
@@ -89,6 +112,12 @@ public partial class WindowManager
 
     private void StartResize(WindowEdges edges)
     {
+        if (SystemFrame && edges != WindowEdges.None && !IsWindowMaximized())
+        {
+            SystemDrag(HitTestOf(edges));
+            return;
+        }
+
         if (FrameMouse is not { } mouse || !mouse.IsButtonPressed(MouseButton.Left) || edges == WindowEdges.None || IsWindowMaximized())
             return;
 
@@ -150,69 +179,21 @@ public partial class WindowManager
             _window.Size = bounds;
     }
 
-    /* Maximised. A window without a frame maximised by the system covers the taskbar on Windows, so there it is put over
-       the room the taskbar leaves by hand, and remembers where it was */
-
-    private bool IsWindowMaximized() =>
-        restoreBounds is not null || _window.WindowState == WindowState.Maximized;
-
-    private void SetMaximized(bool maximize)
+    /// <summary>
+    /// Helper method to set up the frame of a window once it is made, handed to Windows there, and maximised if it was
+    /// asked to start out that way. Thread of the window.
+    /// </summary>
+    private void SetUpFrame()
     {
-        if (!CustomFrame || !OperatingSystem.IsWindows())
-        {
-            _window.WindowState = maximize ? WindowState.Maximized : WindowState.Normal;
-            return;
-        }
+        if (CustomFrame && OperatingSystem.IsWindows())
+            HandFrameToWindows();
 
-        if (maximize && restoreBounds is null && WorkArea() is { } work)
-        {
-            restoreBounds = new Rectangle<int>(_window.Position, _window.Size);
-            _window.Position = work.Origin;
-            _window.Size = work.Size;
-        }
-        else if (!maximize && restoreBounds is { } was)
-        {
-            restoreBounds = null;
-            _window.Size = was.Size;
-            _window.Position = was.Origin;
-        }
+        if (maximizeWhenMade)
+            SetMaximized(true);
     }
 
-    /// <summary>The room the taskbar leaves on the screen the window is on, null if Windows won't say.</summary>
-    private Rectangle<int>? WorkArea()
-    {
-        if (_window.Native?.Win32 is not { } win32)
-            return null;
+    private bool IsWindowMaximized() => _window.WindowState == WindowState.Maximized;
 
-        nint monitor = MonitorFromWindow(win32.Hwnd, MONITOR_DEFAULTTONEAREST);
-        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-        if (monitor == 0 || !GetMonitorInfo(monitor, ref info))
-            return null;
-
-        return new Rectangle<int>(info.Work.Left, info.Work.Top, info.Work.Right - info.Work.Left, info.Work.Bottom - info.Work.Top);
-    }
-
-    private const uint MONITOR_DEFAULTTONEAREST = 2;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect
-    {
-        public int Left, Top, Right, Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MonitorInfo
-    {
-        public int Size;
-        public NativeRect Monitor;
-        public NativeRect Work;
-        public uint Flags;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern nint MonitorFromWindow(nint window, uint flags);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+    private void SetMaximized(bool maximize) =>
+        _window.WindowState = maximize ? WindowState.Maximized : WindowState.Normal;
 }

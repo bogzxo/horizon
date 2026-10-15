@@ -31,8 +31,8 @@ public sealed class StripTab
 /// <summary>
 /// The row of tabs over an editor, a tab a document, VS Code's. The one that is open is lit with a line of the accent
 /// along its top, every tab has its icon and its title, an x to close it on the one that is open and the one under
-/// the pointer, and a dot instead of the x while it has changes that aren't saved. More than fit scroll along with the
-/// wheel, and the one that is open is always brought into sight.
+/// the pointer, and a dot instead of the x while it has changes that aren't saved. The middle button closes one too.
+/// More than fit scroll along with the wheel, and the one that is open is always brought into sight.
 /// <code>
 /// strip.Tabs.Add(new StripTab { Title = "menu.hor", Icon = "layout", Tag = document });
 /// strip.OnSelected = index => Show(strip.Tabs[index].Tag);
@@ -50,6 +50,10 @@ public class TabStrip : UIComponent
     private float scroll;
     private int pressedTab = -1;
     private bool pressedClose;
+
+    // The tab the middle button went down on, closed if it comes up on the same one, the way a browser's tabs go
+    private int middleTab = -1;
+    private bool middleWas;
 
     /// <summary>The tabs, in their order. Change it as documents open and close.</summary>
     public List<StripTab> Tabs { get; } = [];
@@ -127,6 +131,16 @@ public class TabStrip : UIComponent
     {
         int over = IsHovered ? TabAt(Pointer) : -1;
         Tooltip = over >= 0 ? Tabs[over].Tooltip : string.Empty;
+
+        var mouse = Horizon.Engine.GameEngine.Instance?.Input.Mouse;
+        bool middle = mouse is not null && mouse.IsDown(Silk.NET.Input.MouseButton.Middle);
+        if (middle && !middleWas)
+            middleTab = over;
+        else if (!middle && middleWas && middleTab >= 0 && middleTab == over)
+            OnClose?.Invoke(middleTab);
+        if (!middle)
+            middleTab = -1;
+        middleWas = middle;
 
         // The one that is open is brought into sight, whichever way it is off. One wider than the strip is shown from its
         // start, it was shown its end one tick and its start the next and the title shook like a shitting dog

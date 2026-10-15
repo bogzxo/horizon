@@ -96,4 +96,30 @@ public class HidlHighlighterTests
         Assert.Equal("vec(1, 0.5, 0, 0.8)".Length, swatches[0].Length);
         Assert.Equal(1.0f, swatches[1].Color.W);
     }
+
+    [Fact]
+    public void Every_line_knows_how_deep_it_starts_and_whether_a_comment_runs_into_it()
+    {
+        const string code = "let a = {\n    b: [1,\n        2] /* over\n two */\n};";
+        var depths = new int[5];
+        var clean = new bool[5];
+        HidlHighlighter.Read(code, 5, depths: depths, clean: clean);
+
+        Assert.Equal([0, 1, 2, 1, 1], depths);
+        Assert.Equal([true, true, true, false, true], clean);
+    }
+
+    [Fact]
+    public void A_line_on_its_own_comes_out_as_it_does_in_the_whole()
+    {
+        const string code = "let a = {\n    b: [1, 2]\n};";
+        var depths = new int[3];
+        var clean = new bool[3];
+        var whole = HidlHighlighter.Read(code, 3, depths: depths, clean: clean);
+
+        // The line typed into is coloured alone from the depth it started at, its brackets the colour of their depth
+        var alone = HidlHighlighter.ReadLine("    b: [1, 2]", depths[1]);
+        Assert.Equal(whole[1], alone);
+        Assert.Equal(HidlToken.Bracket2, alone.First(span => span.Start == 7).Kind);
+    }
 }

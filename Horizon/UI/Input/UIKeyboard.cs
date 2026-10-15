@@ -22,7 +22,7 @@ namespace Horizon.UI;
 /// see <see cref="TryTakePaste"/>. A text box takes the first line of it, an editor can take a whole file.
 /// </para>
 /// </summary>
-internal static class UIKeyboard
+public static class UIKeyboard
 {
     /// <summary>Stands for the backspace key in the queue.</summary>
     public const char BACKSPACE = '\b';
@@ -101,8 +101,22 @@ internal static class UIKeyboard
     /// <summary>Control with slash, the lines of the selection are made comments or made code again.</summary>
     public const char TOGGLE_COMMENT = '\uE00E';
 
-    /// <summary>Control with D, the line (or the selection) once more after itself.</summary>
+    /// <summary>Control, shift and D, the line (or the selection) once more after itself.</summary>
     public const char DUPLICATE = '\uE00F';
+
+    /// <summary>Control with D, the word at the caret selected, then the next place it is gets a caret of its own as well.</summary>
+    public const char NEXT_OCCURRENCE = '\uE013';
+
+    /// <summary>Control, alt and up or down, another caret on the line over (or under) the carets.</summary>
+    public const char CARET_ABOVE = '\uE014';
+    public const char CARET_BELOW = '\uE015';
+
+    /// <summary>Control, shift and L, a caret at the end of every line of the selection.</summary>
+    public const char CARETS_AT_LINE_ENDS = '\uE016';
+
+    /// <summary>Control, shift and [ folds what the caret is inside of, and ] opens it again.</summary>
+    public const char FOLD = '\uE017';
+    public const char UNFOLD = '\uE018';
 
     /// <summary>Control with space, what is being typed is offered what it could be.</summary>
     public const char COMPLETE = '\uE012';
@@ -186,10 +200,14 @@ internal static class UIKeyboard
             // With control tab is somebody's shortcut too (the next document), not an indent
             Key.Tab => (control ? NOTHING : shift ? SHIFT_TAB : TAB, false),
             Key.Escape => (ESCAPE, false),
+            // Alt with left and right is somebody's going back and forward, not the caret's
+            Key.Left or Key.Right when alt && !control => (NOTHING, false),
             Key.Left => ((shift, control) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
             Key.Right => ((shift, control) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
             Key.Home => ((shift, control) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
             Key.End => ((shift, control) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
+            Key.Up when alt && control => (CARET_ABOVE, true),
+            Key.Down when alt && control => (CARET_BELOW, true),
             Key.Up when alt => (MOVE_LINES_UP, true),
             Key.Down when alt => (MOVE_LINES_DOWN, true),
             Key.Up => (shift ? SELECT_UP : UP, true),
@@ -200,7 +218,11 @@ internal static class UIKeyboard
             Key.Z when control => (UNDO, true),
             Key.Y when control => (REDO, true),
             Key.Slash when control => (TOGGLE_COMMENT, false),
-            Key.D when control => (DUPLICATE, false),
+            Key.D when control && shift => (DUPLICATE, false),
+            Key.D when control => (NEXT_OCCURRENCE, false),
+            Key.L when control && shift => (CARETS_AT_LINE_ENDS, false),
+            Key.LeftBracket when control && shift => (FOLD, false),
+            Key.RightBracket when control && shift => (UNFOLD, false),
             Key.Space when control => (COMPLETE, false),
             Key.A when control => (SELECT_ALL, false),
             Key.C when control => (COPY, false),

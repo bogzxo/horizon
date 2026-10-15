@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Horizon.UI.Components;
 
@@ -13,6 +14,20 @@ public readonly record struct UITextPosition(int Line, int Column) : IComparable
     public static bool operator >=(UITextPosition a, UITextPosition b) => a.CompareTo(b) >= 0;
 }
 
+/// <summary>How something is looked for, whether the case has to match, only whole words, and whether it's a regex (matched a line at a time).</summary>
+public readonly record struct UIFindOptions(bool MatchCase = false, bool WholeWord = false, bool Regex = false);
+
+/// <summary>A place something was found, which line, where on it and how long, a regex's matches being as long as they come out.</summary>
+public readonly record struct UITextMatch(int Line, int Column, int Length);
+
+/// <summary>A caret and the selection it drags along, the anchor being where the selection started.</summary>
+public readonly record struct UITextSelection(UITextPosition Caret, UITextPosition Anchor)
+{
+    public UITextPosition Start => Caret < Anchor ? Caret : Anchor;
+    public UITextPosition End => Caret < Anchor ? Anchor : Caret;
+    public bool IsEmpty => Caret == Anchor;
+}
+
 /// <summary>
 /// Text of many lines being edited, with a caret, a selection and an undo history, and nothing to do with how any of
 /// it is drawn. What a <see cref="CodeEditor"/> edits, kept apart so the editing can be tested without a window.
@@ -21,6 +36,12 @@ public readonly record struct UITextPosition(int Line, int Column) : IComparable
 /// opening bracket), tab indents the lines of a selection and shift tab takes them back out, brackets and quotes
 /// close themselves and typing the closing one steps over it, home goes to the first thing on the line before the
 /// start of it, and the undo history takes a run of typing as one step.
+/// </para>
+/// <para>
+/// It can have more than one caret (Sublime's, Lite XL's, VS Code's). <see cref="Caret"/> and <see cref="Anchor"/> are the
+/// one put down last, the others are <see cref="ExtraCarets"/>, and typing, deleting, the moves and the edits of lines go
+/// on at every one of them as one step to undo. Whatever puts the caret somewhere on its own (a click, a find, a
+/// selection made by a program) lets go of the others.
 /// </para>
 /// </summary>
 public sealed class UITextDocument
@@ -52,6 +73,23 @@ public sealed class UITextDocument
 
     // The column up and down try to keep to, the one the caret was put at last by anything that wasn't up or down
     private int preferredColumn;
+
+    // The carets past the first, each with its selection, and whether an edit or a move is going round all of them, when
+    // the edits inside it neither note a step of their own nor let go of the others
+    private readonly List<UITextSelection> extras = [];
+    private bool batching;
+
+    /// <summary>The carets past the one put down last, each with its selection. Empty most of the time.</summary>
+    public IReadOnlyList<UITextSelection> ExtraCarets => extras;
+
+    /// <summary>Whether there is more than one caret.</summary>
+    public bool HasExtraCarets => extras.Count > 0;
+
+    /// <summary>How many carets there are, one at least.</summary>
+    public int CaretCount => extras.Count + 1;
+
+    /// <summary>Every caret but the one put down last let go of, escape.</summary>
+    public void CollapseCarets() => extras.Clear();
 
     /// <summary>What one level of indentation is.</summary>
     public string Indent { get; set; } = "    ";
@@ -148,6 +186,9 @@ public sealed class UITextDocument
     /// <summary>Puts the caret somewhere, taking the selection along or dropping it.</summary>
     public void MoveTo(UITextPosition position, bool selecting = false)
     {
+        if (!batching)
+            extras.Clear();
+
         Caret = Clamp(position);
         if (!selecting)
             Anchor = Caret;
@@ -159,6 +200,9 @@ public sealed class UITextDocument
     /// <summary>Selects from one place to another, the caret at the second.</summary>
     public void Select(UITextPosition from, UITextPosition to)
     {
+        if (!batching)
+            extras.Clear();
+
         Anchor = Clamp(from);
         Caret = Clamp(to);
         preferredColumn = Caret.Column;
@@ -170,6 +214,9 @@ public sealed class UITextDocument
     /// <summary>A character to the left or the right, over the end of a line onto the next. Without shift a selection is left at the end the arrow points at.</summary>
     public void MoveHorizontally(int direction, bool selecting)
     {
+        if (AtEveryCaret(() => MoveHorizontally(direction, selecting), null))
+            return;
+
         if (!selecting && HasSelection)
         {
             MoveTo(direction < 0 ? SelectionStart : SelectionEnd);
@@ -182,6 +229,11 @@ public sealed class UITextDocument
     /// <summary>Lines up or down, keeping to the column the caret was last put at. Past the first or last line it goes to that end of it.</summary>
     public void MoveVertically(int by, bool selecting)
     {
+        if (AtEveryCaret(() => MoveVertically(by, selecting), null))
+            return;
+        if (!batching)
+            extras.Clear();
+
         int line = Caret.Line + by;
         int keep = preferredColumn;
 
@@ -199,17 +251,28 @@ public sealed class UITextDocument
     }
 
     /// <summary>A word to the left or the right, across the spaces next to it and then across the word.</summary>
-    public void MoveWord(int direction, bool selecting) => MoveTo(WordFrom(Caret, direction), selecting);
+    public void MoveWord(int direction, bool selecting)
+    {
+        if (!AtEveryCaret(() => MoveWord(direction, selecting), null))
+            MoveTo(WordFrom(Caret, direction), selecting);
+    }
 
     /// <summary>The first thing on the line that isn't a space, or the start of the line if the caret is there already.</summary>
     public void MoveHome(bool selecting)
     {
+        if (AtEveryCaret(() => MoveHome(selecting), null))
+            return;
+
         string line = lines[Caret.Line];
         int first = line.Length - line.TrimStart().Length;
         MoveTo(new UITextPosition(Caret.Line, Caret.Column == first ? 0 : first), selecting);
     }
 
-    public void MoveEnd(bool selecting) => MoveTo(new UITextPosition(Caret.Line, lines[Caret.Line].Length), selecting);
+    public void MoveEnd(bool selecting)
+    {
+        if (!AtEveryCaret(() => MoveEnd(selecting), null))
+            MoveTo(new UITextPosition(Caret.Line, lines[Caret.Line].Length), selecting);
+    }
 
     public void MoveToStart(bool selecting) => MoveTo(default, selecting);
 
@@ -329,6 +392,9 @@ public sealed class UITextDocument
     /// <summary>Types a character where the caret is, over what is selected.</summary>
     public void Type(char character)
     {
+        if (AtEveryCaret(() => Type(character), EditKind.Typing))
+            return;
+
         if (character == '\n')
         {
             NewLine();
@@ -390,6 +456,9 @@ public sealed class UITextDocument
     /// <summary>Puts text where the caret is, over what is selected, lines and all, as one step.</summary>
     public void Insert(string text)
     {
+        if (InsertAtEveryCaret(text))
+            return;
+
         Record(EditKind.Other);
         DeleteSelectionRaw();
         MoveTo(InsertRaw(Caret, text.Replace("\r\n", "\n").Replace('\r', '\n')));
@@ -402,6 +471,9 @@ public sealed class UITextDocument
     /// </summary>
     public void NewLine()
     {
+        if (AtEveryCaret(NewLine, EditKind.Other))
+            return;
+
         Record(EditKind.Other);
         DeleteSelectionRaw();
 
@@ -449,6 +521,9 @@ public sealed class UITextDocument
     /// <summary>What is selected goes, or failing that the character before the caret (the pair round it if it is an empty one, a level of indentation in the indentation).</summary>
     public void Backspace()
     {
+        if (AtEveryCaret(Backspace, EditKind.Deleting))
+            return;
+
         Record(EditKind.Deleting);
 
         if (!DeleteSelectionRaw())
@@ -483,6 +558,9 @@ public sealed class UITextDocument
     /// <summary>What is selected goes, or failing that the character after the caret.</summary>
     public void Delete()
     {
+        if (AtEveryCaret(Delete, EditKind.Deleting))
+            return;
+
         Record(EditKind.Deleting);
         if (!DeleteSelectionRaw())
             DeleteRaw(Caret, Step(Caret, 1));
@@ -494,6 +572,9 @@ public sealed class UITextDocument
     /// <summary>What is selected goes, or failing that the word before (or after) the caret.</summary>
     public void DeleteWord(int direction)
     {
+        if (AtEveryCaret(() => DeleteWord(direction), EditKind.Other))
+            return;
+
         Record(EditKind.Other);
         if (!DeleteSelectionRaw())
         {
@@ -512,6 +593,9 @@ public sealed class UITextDocument
     /// </summary>
     public void IndentLines()
     {
+        if (AtEveryCaret(IndentLines, EditKind.Other))
+            return;
+
         if (HasSelection && SelectionStart.Line != SelectionEnd.Line)
         {
             Record(EditKind.Other);
@@ -535,6 +619,9 @@ public sealed class UITextDocument
     /// <summary>Shift with tab, every line of the selection (or the caret's) a level back out, as far as it can go.</summary>
     public void Outdent()
     {
+        if (AtEveryCaret(Outdent, EditKind.Other))
+            return;
+
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
         int caretTaken = 0, anchorTaken = 0;
@@ -563,6 +650,9 @@ public sealed class UITextDocument
     /// </summary>
     public void ToggleComment()
     {
+        if (AtEveryCaret(ToggleComment, EditKind.Other))
+            return;
+
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
         string mark = LineComment + " ";
@@ -613,6 +703,9 @@ public sealed class UITextDocument
     /// <summary>The selection once more after itself, or the caret's line once more under itself.</summary>
     public void Duplicate()
     {
+        if (AtEveryCaret(Duplicate, EditKind.Other))
+            return;
+
         Record(EditKind.Other);
 
         if (HasSelection)
@@ -634,6 +727,8 @@ public sealed class UITextDocument
     /// <summary>The lines of the selection (or the caret's) swapped with the line above or below them.</summary>
     public void MoveLines(int direction)
     {
+        // Lines are moved for the one caret, the others let go of
+        extras.Clear();
         var (first, last) = SelectedLines();
         if ((direction < 0 && first == 0) || (direction > 0 && last == lines.Count - 1))
             return;
@@ -677,39 +772,68 @@ public sealed class UITextDocument
 
     /* Finding */
 
+    // The pattern of the last regex looked for, made once for as long as the query and the options stay the same
+    private (string Query, UIFindOptions Options) patternFor = (string.Empty, default);
+    private Regex? pattern;
+    private string? patternError;
+
+    // Where the matches on a line are while one line is looked through, kept rather than made every time
+    private readonly List<(int Column, int Length)> lineMatches = [];
+
+    /// <summary>What was wrong with the last regex looked for, null when it was fine (or wasn't a regex).</summary>
+    public string? FindError => patternError;
+
     /// <summary>
     /// Selects the next place a piece of text is found after the caret (or before it, going back), round past the end.
     /// </summary>
     /// <returns>Whether it is in there at all.</returns>
-    public bool Find(string query, bool forward = true, bool matchCase = false)
+    public bool Find(string query, bool forward = true, bool matchCase = false) => Find(query, new UIFindOptions(MatchCase: matchCase), forward);
+
+    /// <summary>
+    /// Selects the next place something is found after the selection (or before it, going back), round past the end, as
+    /// the options say (the case, whole words, a regex, which is matched a line at a time).
+    /// </summary>
+    /// <returns>Whether it is in there at all.</returns>
+    public bool Find(string query, UIFindOptions options, bool forward = true) =>
+        FindFrom(query, options, forward ? SelectionEnd : SelectionStart, forward);
+
+    /// <summary>
+    /// Selects the first place something is found from a place on (or the last before it, going back), round past the
+    /// end. The find bar looks from where it was opened as its query is typed, so the match grows rather than hops on.
+    /// </summary>
+    public bool FindFrom(string query, UIFindOptions options, UITextPosition from, bool forward = true)
     {
-        if (string.IsNullOrEmpty(query))
+        if (string.IsNullOrEmpty(query) || !Prepare(query, options))
             return false;
 
-        StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        UITextPosition from = forward ? SelectionEnd : SelectionStart;
-
+        from = Clamp(from);
         for (int step = 0; step <= lines.Count; step++)
         {
             int line = forward ? (from.Line + step) % lines.Count : ((from.Line - step) % lines.Count + lines.Count) % lines.Count;
-            string text = lines[line];
-            int at;
+            MatchLine(lines[line], query, options);
 
+            int pick = -1;
             if (forward)
             {
-                int start = step == 0 ? from.Column : 0;
-                at = start <= text.Length ? text.IndexOf(query, start, comparison) : -1;
+                for (int i = 0; i < lineMatches.Count && pick < 0; i++)
+                {
+                    if (step > 0 || lineMatches[i].Column >= from.Column || (step == lines.Count && lineMatches[i].Column < from.Column))
+                        pick = i;
+                }
             }
             else
             {
-                int before = step == 0 ? from.Column - 1 : text.Length - 1;
-                at = before >= 0 ? text.LastIndexOf(query, Math.Min(before, text.Length - 1), comparison) : -1;
-                if (at >= 0 && step == 0 && at + query.Length > from.Column) at = before - 1 >= 0 ? text.LastIndexOf(query, before - 1, comparison) : -1;
+                for (int i = lineMatches.Count - 1; i >= 0 && pick < 0; i--)
+                {
+                    if (step > 0 || lineMatches[i].Column + lineMatches[i].Length <= from.Column)
+                        pick = i;
+                }
             }
 
-            if (at >= 0)
+            if (pick >= 0)
             {
-                Select(new UITextPosition(line, at), new UITextPosition(line, at + query.Length));
+                var (column, length) = lineMatches[pick];
+                Select(new UITextPosition(line, column), new UITextPosition(line, column + length));
                 return true;
             }
         }
@@ -724,37 +848,62 @@ public sealed class UITextDocument
         if (string.IsNullOrEmpty(query))
             return;
 
-        StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        var options = new UIFindOptions(MatchCase: matchCase);
+        if (!Prepare(query, options))
+            return;
+
         for (int line = 0; line < lines.Count; line++)
         {
-            for (int at = lines[line].IndexOf(query, comparison); at >= 0; at = lines[line].IndexOf(query, at + query.Length, comparison))
-                into.Add(new UITextPosition(line, at));
+            MatchLine(lines[line], query, options);
+            foreach (var (column, _) in lineMatches)
+                into.Add(new UITextPosition(line, column));
+        }
+    }
+
+    /// <summary>Every place something is found as the options say, where and how long, for showing them all and counting them.</summary>
+    public void FindAll(string query, UIFindOptions options, List<UITextMatch> into)
+    {
+        into.Clear();
+        if (string.IsNullOrEmpty(query) || !Prepare(query, options))
+            return;
+
+        for (int line = 0; line < lines.Count; line++)
+        {
+            MatchLine(lines[line], query, options);
+            foreach (var (column, length) in lineMatches)
+                into.Add(new UITextMatch(line, column, length));
         }
     }
 
     /// <summary>Every place a piece of text is found swapped for another, as one step.</summary>
     /// <returns>How many were.</returns>
-    public int ReplaceAll(string query, string with, bool matchCase = false)
+    public int ReplaceAll(string query, string with, bool matchCase = false) => ReplaceAll(query, with, new UIFindOptions(MatchCase: matchCase));
+
+    /// <summary>
+    /// Every place something is found swapped for another, as one step. With a regex, what it's swapped for can name the
+    /// regex's groups, $1 and ${name}.
+    /// </summary>
+    /// <returns>How many were.</returns>
+    public int ReplaceAll(string query, string with, UIFindOptions options)
     {
-        if (string.IsNullOrEmpty(query))
+        if (string.IsNullOrEmpty(query) || !Prepare(query, options))
             return 0;
 
-        StringComparison comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
         int count = 0;
         Record(EditKind.Other);
 
         for (int line = 0; line < lines.Count; line++)
         {
             string text = lines[line];
-            int at = text.IndexOf(query, comparison);
-            if (at < 0) continue;
+            MatchLine(text, query, options);
+            if (lineMatches.Count == 0) continue;
 
             var built = new StringBuilder();
             int from = 0;
-            for (; at >= 0; at = text.IndexOf(query, from, comparison))
+            foreach (var (column, length) in lineMatches)
             {
-                built.Append(text, from, at - from).Append(with);
-                from = at + query.Length;
+                built.Append(text, from, column - from).Append(Replacement(text, column, length, with, options));
+                from = column + length;
                 count++;
             }
 
@@ -773,10 +922,123 @@ public sealed class UITextDocument
         return count;
     }
 
+    /// <summary>
+    /// The match that's selected swapped for another and the next one selected, one step to undo. Nothing selected that
+    /// matches, the next match is only selected, the way every editor's replace does it.
+    /// </summary>
+    /// <returns>Whether one was swapped.</returns>
+    public bool ReplaceNext(string query, string with, UIFindOptions options)
+    {
+        if (string.IsNullOrEmpty(query) || !Prepare(query, options))
+            return false;
+
+        bool replaced = false;
+        if (HasSelection && SelectionStart.Line == SelectionEnd.Line)
+        {
+            UITextPosition start = SelectionStart, end = SelectionEnd;
+            string text = lines[start.Line];
+            MatchLine(text, query, options);
+            foreach (var (column, length) in lineMatches)
+            {
+                if (column != start.Column || column + length != end.Column)
+                    continue;
+
+                string swapped = Replacement(text, column, length, with, options);
+                Record(EditKind.Other);
+                DeleteRaw(start, end);
+                UITextPosition after = InsertRaw(start, swapped);
+                MoveTo(after);
+                Touched();
+                replaced = true;
+                break;
+            }
+        }
+
+        Find(query, options);
+        return replaced;
+    }
+
+    // What a match is swapped for, a regex's groups put in
+    private string Replacement(string line, int column, int length, string with, UIFindOptions options)
+    {
+        if (!options.Regex || pattern is null)
+            return with;
+
+        Match match = pattern.Match(line, column, length);
+        return match.Success && match.Index == column ? match.Result(with) : with;
+    }
+
+    // The regex made for a query, if it is one. False for a regex that doesn't build, which finds nothing and says why
+    private bool Prepare(string query, UIFindOptions options)
+    {
+        if (!options.Regex)
+        {
+            patternError = null;
+            return true;
+        }
+
+        if (pattern is not null && patternFor == (query, options))
+            return true;
+
+        patternFor = (query, options);
+        try
+        {
+            pattern = new Regex(query, (options.MatchCase ? RegexOptions.None : RegexOptions.IgnoreCase) | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+            patternError = null;
+            return true;
+        }
+        catch (ArgumentException e)
+        {
+            pattern = null;
+            patternError = e.Message;
+            return false;
+        }
+    }
+
+    // Every match on a line into lineMatches, left to right and not overlapping
+    private void MatchLine(string text, string query, UIFindOptions options)
+    {
+        lineMatches.Clear();
+
+        if (options.Regex)
+        {
+            if (pattern is null)
+                return;
+
+            try
+            {
+                for (Match match = pattern.Match(text); match.Success; match = match.NextMatch())
+                {
+                    // A match of nothing (^, a*) would be found forever, it isn't a place anybody wants to go
+                    if (match.Length == 0) continue;
+                    if (options.WholeWord && !IsWholeWord(text, match.Index, match.Length)) continue;
+                    lineMatches.Add((match.Index, match.Length));
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // a pattern that takes that long on one line finds nothing on it
+            }
+
+            return;
+        }
+
+        StringComparison comparison = options.MatchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        for (int at = text.IndexOf(query, comparison); at >= 0; at = text.IndexOf(query, at + query.Length, comparison))
+        {
+            if (!options.WholeWord || IsWholeWord(text, at, query.Length))
+                lineMatches.Add((at, query.Length));
+        }
+    }
+
+    private static bool IsWholeWord(string text, int at, int length) =>
+        (at == 0 || !IsWordChar(text[at - 1])) && (at + length >= text.Length || !IsWordChar(text[at + length]));
+
     /* The history */
 
     public void Undo()
     {
+        extras.Clear();
         if (undo.Count == 0)
             return;
 
@@ -787,6 +1049,7 @@ public sealed class UITextDocument
 
     public void Redo()
     {
+        extras.Clear();
         if (redo.Count == 0)
             return;
 
@@ -815,6 +1078,13 @@ public sealed class UITextDocument
     /// </summary>
     private void Record(EditKind kind)
     {
+        // Going round every caret, the step was noted once before the first of them
+        if (batching)
+        {
+            joined = null;
+            return;
+        }
+
         // Whatever comes next changes the lines
         Snapshot before = kind != EditKind.Other && kind == lastKind && undo.Count > 0 ? default : Current();
         joined = null;
@@ -886,7 +1156,367 @@ public sealed class UITextDocument
     private void Touched()
     {
         joined = null;
+        if (batching)
+            return;
+
         Version++;
         Changed?.Invoke();
+    }
+
+    /* More than one caret */
+
+    // Done at every caret when there's more than one, true when it was and the caller has nothing more to do. An edit
+    // (with a kind) is one step to undo for all of them
+    private bool AtEveryCaret(Action single, EditKind? edit)
+    {
+        if (extras.Count == 0 || batching)
+            return false;
+
+        if (edit is { } kind)
+            EditAtEvery(kind, single);
+        else
+            MoveAtEvery(single);
+        return true;
+    }
+
+    // Every caret, the one put down last first in the list
+    private List<(UITextSelection Selection, bool Primary)> AllCarets()
+    {
+        var all = new List<(UITextSelection, bool)>(extras.Count + 1) { (new UITextSelection(Caret, Anchor), true) };
+        foreach (UITextSelection extra in extras)
+            all.Add((extra, false));
+        return all;
+    }
+
+    private void MoveAtEvery(Action single)
+    {
+        // Up and down keep to the column the caret put down last was going for, the others to their own
+        int keep = preferredColumn, primaryKeeps = keep;
+        var moved = new List<(UITextSelection, bool)>();
+        batching = true;
+        try
+        {
+            foreach (var (selection, primary) in AllCarets())
+            {
+                Caret = selection.Caret;
+                Anchor = selection.Anchor;
+                preferredColumn = primary ? keep : selection.Caret.Column;
+                single();
+                if (primary)
+                    primaryKeeps = preferredColumn;
+                moved.Add((new UITextSelection(Caret, Anchor), primary));
+            }
+        }
+        finally
+        {
+            batching = false;
+        }
+
+        SetCarets(moved);
+        preferredColumn = primaryKeeps;
+        lastKind = EditKind.Other;
+    }
+
+    // An edit at every caret, from the last in the text to the first, so an edit never moves the carets still to come.
+    // Where the ones already done end up is kept as offsets into the text and moved along by however much each edit after
+    // made the text longer or shorter, every edit happening at or before the carets it comes after
+    private void EditAtEvery(EditKind kind, Action single)
+    {
+        Record(kind);
+
+        var all = AllCarets();
+        all.Sort((a, b) => b.Selection.Start.CompareTo(a.Selection.Start));
+
+        var done = new List<(int Caret, int Anchor, bool Primary)>(all.Count);
+        int length = TotalLength();
+        batching = true;
+        try
+        {
+            foreach (var (selection, primary) in all)
+            {
+                Caret = Clamp(selection.Caret);
+                Anchor = Clamp(selection.Anchor);
+                preferredColumn = Caret.Column;
+                single();
+
+                int now = TotalLength(), delta = now - length;
+                length = now;
+                for (int i = 0; i < done.Count; i++)
+                    done[i] = (done[i].Caret + delta, done[i].Anchor + delta, done[i].Primary);
+                done.Add((OffsetOf(Caret), OffsetOf(Anchor), primary));
+            }
+        }
+        finally
+        {
+            batching = false;
+        }
+
+        var placed = new List<(UITextSelection, bool)>(done.Count);
+        foreach (var (caret, anchor, primary) in done)
+            placed.Add((new UITextSelection(PositionOf(caret), PositionOf(anchor)), primary));
+
+        SetCarets(placed);
+        preferredColumn = Caret.Column;
+        lastKind = kind;
+        Touched();
+    }
+
+    // What's pasted at every caret, a line each when there are as many lines as carets (copied from that many), the
+    // whole of it at each otherwise. True when there was more than one caret to do it at
+    private bool InsertAtEveryCaret(string text)
+    {
+        if (extras.Count == 0 || batching)
+            return false;
+
+        string[] pieces = text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+        if (pieces.Length != extras.Count + 1)
+        {
+            EditAtEvery(EditKind.Other, () => Insert(text));
+            return true;
+        }
+
+        // The carets are gone through from the last in the text, so the pieces are handed out from the last too
+        int next = pieces.Length - 1;
+        EditAtEvery(EditKind.Other, () => Insert(pieces[Math.Max(0, next--)]));
+        return true;
+    }
+
+    // The carets put down again, the one marked as put down last the first, and any that run into each other made one
+    private void SetCarets(List<(UITextSelection Selection, bool Primary)> carets)
+    {
+        carets.Sort((a, b) => a.Selection.Start.CompareTo(b.Selection.Start));
+        var merged = new List<(UITextSelection Selection, bool Primary)>(carets.Count);
+        foreach (var (selection, primary) in carets)
+        {
+            if (merged.Count > 0)
+            {
+                var (last, wasPrimary) = merged[^1];
+                bool touching = selection.Start < last.End || selection.Start == last.Start;
+                if (touching)
+                {
+                    UITextPosition end = selection.End > last.End ? selection.End : last.End;
+                    // the two are one selection running the way the first did
+                    var joinedSelection = last.Caret >= last.Anchor ? new UITextSelection(end, last.Start) : new UITextSelection(last.Start, end);
+                    merged[^1] = (last.IsEmpty && selection.IsEmpty ? last : joinedSelection, wasPrimary || primary);
+                    continue;
+                }
+            }
+
+            merged.Add((selection, primary));
+        }
+
+        extras.Clear();
+        bool primarySet = false;
+        foreach (var (selection, primary) in merged)
+        {
+            if (primary && !primarySet)
+            {
+                Caret = Clamp(selection.Caret);
+                Anchor = Clamp(selection.Anchor);
+                primarySet = true;
+            }
+            else
+            {
+                extras.Add(new UITextSelection(Clamp(selection.Caret), Clamp(selection.Anchor)));
+            }
+        }
+    }
+
+    private int TotalLength()
+    {
+        int length = lines.Count - 1;
+        foreach (string line in lines)
+            length += line.Length;
+        return length;
+    }
+
+    private int OffsetOf(UITextPosition at)
+    {
+        at = Clamp(at);
+        int offset = 0;
+        for (int line = 0; line < at.Line; line++)
+            offset += lines[line].Length + 1;
+        return offset + at.Column;
+    }
+
+    private UITextPosition PositionOf(int offset)
+    {
+        for (int line = 0; line < lines.Count; line++)
+        {
+            if (offset <= lines[line].Length)
+                return new UITextPosition(line, Math.Max(0, offset));
+            offset -= lines[line].Length + 1;
+        }
+
+        return new UITextPosition(lines.Count - 1, lines[^1].Length);
+    }
+
+    /// <summary>
+    /// Control with D. Nothing selected, the word at the caret is. Something selected (on one line), the next place it is
+    /// after the last of the carets gets a caret of its own with it selected, round past the end. False when there's no
+    /// other place it is.
+    /// </summary>
+    public bool AddNextOccurrence()
+    {
+        if (!HasSelection)
+        {
+            var (start, end) = WordAt(Caret);
+            if (end <= start)
+                return false;
+
+            extras.Clear();
+            Anchor = new UITextPosition(Caret.Line, start);
+            Caret = new UITextPosition(Caret.Line, end);
+            preferredColumn = Caret.Column;
+            return true;
+        }
+
+        if (SelectionStart.Line != SelectionEnd.Line)
+            return false;
+
+        string query = SelectedText;
+        UITextPosition from = SelectionEnd;
+        foreach (UITextSelection extra in extras)
+            from = extra.End > from ? extra.End : from;
+
+        for (int step = 0; step <= lines.Count; step++)
+        {
+            int line = (from.Line + step) % lines.Count;
+            string text = lines[line];
+            for (int at = text.IndexOf(query, step == 0 ? Math.Min(from.Column, text.Length) : 0, StringComparison.Ordinal); at >= 0; at = text.IndexOf(query, at + 1, StringComparison.Ordinal))
+            {
+                var start = new UITextPosition(line, at);
+                if (IsCaretAt(start))
+                    continue;
+
+                extras.Add(new UITextSelection(Caret, Anchor));
+                Anchor = start;
+                Caret = new UITextPosition(line, at + query.Length);
+                preferredColumn = Caret.Column;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Whether one of the carets' selections starts at a place
+    private bool IsCaretAt(UITextPosition start)
+    {
+        if (SelectionStart == start)
+            return true;
+        foreach (UITextSelection extra in extras)
+        {
+            if (extra.Start == start)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Alt and a click, a caret put down there as well, the one put down last. A click on a caret that's there already
+    /// takes it away, as long as it isn't the only one.
+    /// </summary>
+    public void AddCaret(UITextPosition at)
+    {
+        at = Clamp(at);
+        int there = extras.FindIndex(extra => extra.IsEmpty && extra.Caret == at);
+        if (there >= 0)
+        {
+            extras.RemoveAt(there);
+            return;
+        }
+
+        if (!HasSelection && Caret == at)
+        {
+            if (extras.Count == 0)
+                return;
+
+            UITextSelection last = extras[^1];
+            extras.RemoveAt(extras.Count - 1);
+            Caret = last.Caret;
+            Anchor = last.Anchor;
+            return;
+        }
+
+        extras.Add(new UITextSelection(Caret, Anchor));
+        Caret = Anchor = at;
+        preferredColumn = at.Column;
+    }
+
+    /// <summary>Control, alt and up or down, a caret on the line over the highest of them (or under the lowest), at the same column.</summary>
+    public void AddCaretVertically(int direction)
+    {
+        UITextPosition edge = Caret;
+        foreach (UITextSelection extra in extras)
+        {
+            if (direction < 0 ? extra.Caret.Line < edge.Line : extra.Caret.Line > edge.Line)
+                edge = extra.Caret;
+        }
+
+        int line = edge.Line + direction;
+        if (line < 0 || line >= lines.Count)
+            return;
+
+        extras.Add(new UITextSelection(Caret, Anchor));
+        Caret = Anchor = new UITextPosition(line, Math.Min(preferredColumn, lines[line].Length));
+    }
+
+    /// <summary>Control, shift and L, the selection split into a caret at the end of every line it runs over (Sublime's).</summary>
+    public void CaretsAtLineEnds()
+    {
+        if (!HasSelection)
+            return;
+
+        var (first, last) = SelectedLines();
+        extras.Clear();
+        for (int line = first; line < last; line++)
+        {
+            var end = new UITextPosition(line, lines[line].Length);
+            extras.Add(new UITextSelection(end, end));
+        }
+
+        Caret = Anchor = new UITextPosition(last, lines[last].Length);
+        preferredColumn = Caret.Column;
+    }
+
+    /// <summary>
+    /// Alt, shift and a drag, a column, a caret on every line between two places selecting from the one's column to the
+    /// other's (short lines as far as they go).
+    /// </summary>
+    public void SelectColumn(UITextPosition from, UITextPosition to)
+    {
+        from = Clamp(from);
+        to = Clamp(to);
+        extras.Clear();
+
+        int step = to.Line >= from.Line ? 1 : -1;
+        for (int line = from.Line; line != to.Line; line += step)
+        {
+            int length = lines[line].Length;
+            extras.Add(new UITextSelection(new UITextPosition(line, Math.Min(to.Column, length)), new UITextPosition(line, Math.Min(from.Column, length))));
+        }
+
+        int last = lines[to.Line].Length;
+        Anchor = new UITextPosition(to.Line, Math.Min(from.Column, last));
+        Caret = new UITextPosition(to.Line, Math.Min(to.Column, last));
+        preferredColumn = to.Column;
+    }
+
+    /// <summary>What every caret has selected, the first in the text first, a line each, for copying the lot.</summary>
+    public string SelectedTextOfEvery()
+    {
+        if (extras.Count == 0)
+            return SelectedText;
+
+        var all = AllCarets();
+        all.Sort((a, b) => a.Selection.Start.CompareTo(b.Selection.Start));
+        var built = new StringBuilder();
+        foreach (var (selection, _) in all)
+        {
+            if (built.Length > 0) built.Append('\n');
+            built.Append(TextBetween(selection.Start, selection.End));
+        }
+        return built.ToString();
     }
 }

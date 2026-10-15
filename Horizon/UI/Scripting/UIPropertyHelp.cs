@@ -70,6 +70,7 @@ public static class UIPropertyHelp
         ["background"] = "a piece of the skin's art to draw behind it as a frame, the ... button shows them all",
         ["radius"] = "how round the corners of a panel filled with a colour are, in pixels",
         ["outline"] = "a thin line round it in this colour, the edge of a card, nothing for none",
+        ["include.file"] = "the layout file to build in here, from the folder of this layout, its parts found by name as if they were written here",
         ["template"] = "a layout file every item (or page of tabs) the program adds is made from, for what it only knows about when it runs (a row per save game)",
         ["preview_count"] = "how many items of the template are shown here to stand in for the real ones, the program never sees them",
         ["stagger"] = "how many seconds later each child makes its entrance than the one before, so a list pops up a row at a time",

@@ -116,7 +116,13 @@ public static class HidlHighlighter
     /// </summary>
     /// <param name="lineCount">How many lines the code has, which is how many lists come back.</param>
     /// <param name="swatches">Where the colours written in the code go, null to not look for them.</param>
-    public static List<HidlSpan>[] Read(string code, int lineCount, List<HidlSwatch>? swatches = null)
+    /// <param name="depths">
+    /// How deep in brackets every line starts, filled in when given (as many as there are lines), so one line can be
+    /// coloured again on its own as it's typed (<see cref="ReadLine"/>).
+    /// </param>
+    /// <param name="clean">Whether every line starts outside of a comment or a template that runs over more than one, which a line has to for that.</param>
+    /// <param name="startDepth">How deep in brackets the code starts, for a line coloured on its own.</param>
+    public static List<HidlSpan>[] Read(string code, int lineCount, List<HidlSwatch>? swatches = null, int[]? depths = null, bool[]? clean = null, int startDepth = 0)
     {
         var spans = new List<HidlSpan>[Math.Max(1, lineCount)];
         for (int i = 0; i < spans.Length; i++)
@@ -134,7 +140,10 @@ public static class HidlHighlighter
 
         Token[] tokens = Lexer.Tokenize(code, lenient: true);
 
-        int depth = 0;
+        int depth = startDepth;
+
+        // The next line whose start hasn't been given its depth yet
+        int nextLine = 0;
 
         // Whether the names being read are a function's parameters, from the bracket after func name to its pair
         bool parameters = false;
@@ -146,6 +155,23 @@ public static class HidlHighlighter
                 continue;
 
             int from = token.Index, end = token.Index + token.Length;
+
+            // Every line that starts before this token starts at the depth there is now, and one that starts inside of it
+            // (a comment over several lines) isn't clean
+            if (depths is not null && clean is not null)
+            {
+                for (; nextLine < starts.Count && nextLine < depths.Length && starts[nextLine] <= from; nextLine++)
+                {
+                    depths[nextLine] = depth;
+                    clean[nextLine] = true;
+                }
+
+                for (; nextLine < starts.Count && nextLine < depths.Length && starts[nextLine] < end; nextLine++)
+                {
+                    depths[nextLine] = depth;
+                    clean[nextLine] = false;
+                }
+            }
 
             switch (token.Type)
             {
@@ -179,8 +205,24 @@ public static class HidlHighlighter
             Emit(spans, starts, code, from, end, KindOf(tokens, i, parameters));
         }
 
+        if (depths is not null && clean is not null)
+        {
+            for (; nextLine < depths.Length; nextLine++)
+            {
+                depths[nextLine] = depth;
+                clean[nextLine] = true;
+            }
+        }
+
         return spans;
     }
+
+    /// <summary>
+    /// One line coloured on its own, starting so deep in brackets, for a line being typed while the whole of the code is
+    /// coloured again somewhere else. Only right for a line that starts clean (see <see cref="Read"/>), and a name whose
+    /// meaning hangs on the line before (let at the end of it) may come out a plain name until the whole is coloured.
+    /// </summary>
+    public static List<HidlSpan> ReadLine(string line, int depth) => Read(line, 1, startDepth: depth)[0];
 
     private static HidlToken BracketAt(int depth) => (depth % 3) switch
     {

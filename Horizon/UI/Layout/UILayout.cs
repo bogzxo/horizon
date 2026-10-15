@@ -145,9 +145,22 @@ public sealed class UILayout
 
         var items = new List<UILayout>(count);
         for (int i = 0; i < count; i++)
-            items.Add(Instantiate(container.Template, container, i * container.Stagger));
+            items.Add(Item(container, container, i * container.Stagger));
 
         return items;
+    }
+
+    /// <summary>
+    /// One item made from a container's template, into the container unless told where else (a row of a section
+    /// rather than the list it was declared on). The template is looked for next to the file the container was
+    /// written in, which is the included file's folder for a container of an included layout.
+    /// </summary>
+    public UILayout Item(Panel container, UIComponent? into = null, float introDelay = 0.0f)
+    {
+        if (container.Template.Length == 0)
+            throw new Exception($"A container of the layout{Named(Path)} is meant to be filled in but doesn't say what from: it needs a template.");
+
+        return Load(Module, OwnerOf(container).Resolve(container.Template), into ?? container, introDelay);
     }
 
     /// <inheritdoc cref="Populate(Panel, int)"/>
@@ -202,7 +215,7 @@ public sealed class UILayout
 
         int kept = items.Count;
         while (items.Count < data.Count)
-            items.Add(Instantiate(container.Template, container, (items.Count - kept) * container.Stagger));
+            items.Add(Item(container, container, (items.Count - kept) * container.Stagger));
 
         for (int i = 0; i < items.Count; i++)
             fill(items[i], data[i], i);
@@ -213,6 +226,28 @@ public sealed class UILayout
     /// <inheritdoc cref="Bind{T}(Panel, IReadOnlyList{T}, Action{UILayout, T, int})"/>
     public IReadOnlyList<UILayout> Bind<T>(string container, IReadOnlyList<T> data, Action<UILayout, T, int> fill) =>
         Bind(Get<Panel>(container), data, fill);
+
+    /// <summary>The parts of an included layout taken on as this one's, see <see cref="Components.Include"/>.</summary>
+    internal void Absorb(UILayout included)
+    {
+        this.included.Add(included);
+        foreach (var (name, part) in included.parts)
+            parts.TryAdd(name, part);
+    }
+
+    private readonly List<UILayout> included = [];
+
+    /// <summary>The layout a part was written in, this one or one it included (or one that included).</summary>
+    public UILayout OwnerOf(UIComponent part)
+    {
+        foreach (UILayout inner in included)
+        {
+            if (inner.parts.ContainsValue(part) || inner.included.Count > 0 && inner.OwnerOf(part) != inner)
+                return inner.OwnerOf(part);
+        }
+
+        return this;
+    }
 
     /// <summary>Where a file named by this layout is. Next to it, unless the name says exactly where.</summary>
     public string Resolve(string file) =>
@@ -229,7 +264,9 @@ public sealed class UILayout
         var scope = new Environment(module.Runtime.UserScope);
 
         var outerDesign = module.declaredDesign;
+        var outerBuilding = module.building;
         module.declaredDesign = null;
+        module.building = layout;
         try
         {
             module.Capture(parent, layout.roots, () => module.Runtime.Interpreter.Evaluate(program, scope));
@@ -248,8 +285,10 @@ public sealed class UILayout
         finally
         {
             module.declaredDesign = outerDesign;
+            module.building = outerBuilding;
         }
 
+        // The layout's own names win over an included file's
         foreach (var (name, value) in scope.Variables)
         {
             if (UIComponent.FromScript(value) is { } component)
