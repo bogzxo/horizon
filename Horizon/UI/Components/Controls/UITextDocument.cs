@@ -25,8 +25,10 @@ public readonly record struct UITextPosition(int Line, int Column) : IComparable
 /// </summary>
 public sealed class UITextDocument
 {
-    // What one step of the undo history comes back to
-    private readonly record struct Snapshot(string Text, UITextPosition Caret, UITextPosition Anchor);
+    // What one step of the undo history comes back to. The lines and not the text joined up, a line is a string nobody
+    // changes, so a step shares every line it has with the text and the steps either side of it and costs a reference a
+    // line. The joined text was 120 KB a step in a 2000 line file, three hundred of them kept
+    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor);
 
     // How a step was made, a run of the same kind of edit going in as one step
     private enum EditKind
@@ -793,11 +795,13 @@ public sealed class UITextDocument
         redo.RemoveAt(redo.Count - 1);
     }
 
-    private Snapshot Current() => new(Text, Caret, Anchor);
+    private Snapshot Current() => new([.. lines], Caret, Anchor);
 
     private void Restore(Snapshot snapshot)
     {
-        SetLines(snapshot.Text);
+        joined = null;
+        lines.Clear();
+        lines.AddRange(snapshot.Lines);
         Caret = Clamp(snapshot.Caret);
         Anchor = Clamp(snapshot.Anchor);
         preferredColumn = Caret.Column;
@@ -815,7 +819,7 @@ public sealed class UITextDocument
         Snapshot before = kind != EditKind.Other && kind == lastKind && undo.Count > 0 ? default : Current();
         joined = null;
 
-        if (before.Text is null)
+        if (before.Lines is null)
             return;
 
         undo.Add(before);
