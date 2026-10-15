@@ -151,7 +151,7 @@ public class TitleBar : StackPanel
 
         // The title in the middle of the window, or after what is in the bar when that runs past where the middle would put it
         list.BeginPart(-2);
-        string title = Title.Length > 0 ? Title : GameEngine.Instance?.WindowManager?.Title ?? string.Empty;
+        string title = Title.Length > 0 ? Resolve(Title) : GameEngine.Instance?.WindowManager?.Title ?? string.Empty;
         if (title.Length > 0)
         {
             Vector2 size = skin.Font.Measure(title, scale, markup: false);

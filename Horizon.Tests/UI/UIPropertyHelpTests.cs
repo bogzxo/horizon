@@ -42,6 +42,11 @@ public class UIPropertyHelpTests
         { "breadcrumbs", new Breadcrumbs() },
         { "title_bar", new TitleBar() },
         { "window", new WindowPanel() },
+        { "tree_view", new TreeView() },
+        { "notifications", new Notifications() },
+        { "table", new Table() },
+        { "drawing", new DrawingPanel() },
+        { "form", new FormPanel() },
     };
 
     [Theory]

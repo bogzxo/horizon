@@ -41,6 +41,9 @@ namespace Horizon.UI;
 /// </summary>
 public partial class UICompositor : GameComponent, IDisposable
 {
+    /// <summary>Puts text on the system's clipboard, from any thread, the way a text box's Ctrl+C does.</summary>
+    public static void Copy(string text) => UIKeyboard.Copy(text);
+
     /// <summary>Where the skin every UI has unless it asks for another one is kept.</summary>
     public const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/dead_revolver/";
 
@@ -629,7 +632,8 @@ public partial class UICompositor : GameComponent, IDisposable
                 }
             }
 
-            foreach (var marked in Highlights)
+            // Through the interface an enumerator is an object, every tick, so only when there is something in it
+            if (Highlights.Count > 0) foreach (var marked in Highlights)
             {
                 if (marked.Module == module && marked != Highlighted)
                     UILayoutOverlay.PaintHighlight(back, marked);

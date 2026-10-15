@@ -39,6 +39,11 @@ public sealed class UITextDocument
     private const int MAX_UNDO = 300;
 
     private readonly List<string> lines = [string.Empty];
+
+    // The lines joined up, made once and kept until they change. Everybody wants the whole text (the colours, the parse,
+    // the outline, every step of the undo) and joining 2000 lines for each of them was a hundred kilobytes a time. Every
+    // edit goes through Record before it touches a line, which lets go of it, and Touched once it is done
+    private string? joined;
     private readonly List<Snapshot> undo = [];
     private readonly List<Snapshot> redo = [];
     private EditKind lastKind = EditKind.Other;
@@ -83,7 +88,7 @@ public sealed class UITextDocument
     /// </summary>
     public string Text
     {
-        get => string.Join('\n', lines);
+        get => joined ??= string.Join('\n', lines);
         set
         {
             SetLines(value ?? string.Empty);
@@ -107,6 +112,7 @@ public sealed class UITextDocument
 
     private void SetLines(string text)
     {
+        joined = null;
         lines.Clear();
         foreach (var line in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
             lines.Add(line);
@@ -211,12 +217,32 @@ public sealed class UITextDocument
     public void SelectWordAt(UITextPosition at)
     {
         at = Clamp(at);
+        var (start, end) = RunAt(at);
+        Select(new UITextPosition(at.Line, start), new UITextPosition(at.Line, end));
+    }
+
+    /// <summary>
+    /// Selects whole words from the word a double click picked (<paramref name="from"/> to <paramref name="to"/>) to the
+    /// word at a place, either way, which is what dragging after a double click does. The word first picked stays in.
+    /// </summary>
+    public void SelectWordsTo(UITextPosition from, UITextPosition to, UITextPosition at)
+    {
+        at = Clamp(at);
+        var (start, end) = RunAt(at);
+        var wordStart = new UITextPosition(at.Line, start);
+        var wordEnd = new UITextPosition(at.Line, end);
+        if (at < from)
+            Select(to, wordStart);
+        else
+            Select(from, wordEnd > to ? wordEnd : to);
+    }
+
+    /// <summary>The word at a place, or the run of whatever else that isn't a space, where it starts and ends on its line.</summary>
+    private (int Start, int End) RunAt(UITextPosition at)
+    {
         string line = lines[at.Line];
         if (line.Length == 0)
-        {
-            MoveTo(at);
-            return;
-        }
+            return (0, 0);
 
         int probe = Math.Min(at.Column, line.Length - 1);
         bool word = IsWordChar(line[probe]);
@@ -224,8 +250,7 @@ public sealed class UITextDocument
 
         while (start > 0 && IsWordChar(line[start - 1]) == word && !char.IsWhiteSpace(line[start - 1])) start--;
         while (end < line.Length && IsWordChar(line[end]) == word && !char.IsWhiteSpace(line[end])) end++;
-
-        Select(new UITextPosition(at.Line, start), new UITextPosition(at.Line, end));
+        return (start, end);
     }
 
     /// <summary>The word at a place, where it starts and ends on its line, both the same for none.</summary>
@@ -786,10 +811,14 @@ public sealed class UITextDocument
     /// </summary>
     private void Record(EditKind kind)
     {
-        if (kind != EditKind.Other && kind == lastKind && undo.Count > 0)
+        // Whatever comes next changes the lines
+        Snapshot before = kind != EditKind.Other && kind == lastKind && undo.Count > 0 ? default : Current();
+        joined = null;
+
+        if (before.Text is null)
             return;
 
-        undo.Add(Current());
+        undo.Add(before);
         if (undo.Count > MAX_UNDO)
             undo.RemoveAt(0);
 
@@ -852,6 +881,7 @@ public sealed class UITextDocument
 
     private void Touched()
     {
+        joined = null;
         Version++;
         Changed?.Invoke();
     }

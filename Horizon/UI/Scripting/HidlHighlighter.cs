@@ -206,7 +206,7 @@ public static class HidlHighlighter
             case TokenType.Number:
                 return HidlToken.Number;
 
-            case TokenType.Null:
+            case TokenType.Null or TokenType.Boolean:
                 return HidlToken.Constant;
 
             case TokenType.Let or TokenType.Const or TokenType.Function or TokenType.If or TokenType.Else or TokenType.While

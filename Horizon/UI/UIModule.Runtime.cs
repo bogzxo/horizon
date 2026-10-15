@@ -146,6 +146,11 @@ public partial class UIModule
         Register<Breadcrumbs>("breadcrumbs");
         Register<TitleBar>("title_bar");
         Register<WindowPanel>("window");
+        Register<TreeView>("tree_view");
+        Register<Notifications>("notifications");
+        Register<Table>("table");
+        Register<DrawingPanel>("drawing");
+        Register<FormPanel>("form");
     }
 
     /// <summary>

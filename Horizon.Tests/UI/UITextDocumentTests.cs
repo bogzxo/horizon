@@ -204,4 +204,22 @@ public class UITextDocumentTests
         doc.SelectWordAt(new UITextPosition(0, 7));
         Assert.Equal("text_scale", doc.SelectedText);
     }
+
+    [Fact]
+    public void Dragging_after_a_double_click_takes_whole_words_either_way()
+    {
+        var doc = Doc("let quick brown fox = jumps;");
+        doc.SelectWordAt(new UITextPosition(0, 11));
+        var (from, to) = (doc.Anchor, doc.Caret);
+        Assert.Equal("brown", doc.SelectedText);
+
+        doc.SelectWordsTo(from, to, new UITextPosition(0, 17));
+        Assert.Equal("brown fox", doc.SelectedText);
+
+        doc.SelectWordsTo(from, to, new UITextPosition(0, 5));
+        Assert.Equal("quick brown", doc.SelectedText);
+
+        doc.SelectWordsTo(from, to, new UITextPosition(0, 12));
+        Assert.Equal("brown", doc.SelectedText);
+    }
 }

@@ -156,6 +156,12 @@ public class CodeEditor : UIComponent
     /// <summary>What the parser didn't like the last time it read the code, null for nothing.</summary>
     public UICodeDiagnostic? SyntaxError { get; private set; }
 
+    // What else the parser didn't like after the first, it goes on after a mistake
+    private readonly List<UICodeDiagnostic> moreErrors = [];
+
+    /// <summary>Everything the parser didn't like, the first of it <see cref="SyntaxError"/>.</summary>
+    public IReadOnlyList<UICodeDiagnostic> SyntaxErrors => SyntaxError is { } first ? [first, .. moreErrors] : [];
+
     /// <summary>What the program has to say about the code on top of the parser, underlined the same way.</summary>
     public IReadOnlyList<UICodeDiagnostic> Diagnostics
     {
@@ -409,18 +415,29 @@ public class CodeEditor : UIComponent
     {
         checkedVersion = document.Version;
         UICodeDiagnostic? error = null;
+        moreErrors.Clear();
 
+        static UICodeDiagnostic Said(ParseException e) => new(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(1, e.Length), e.Message);
+
+        // The parser goes on after a mistake, so every one of them is underlined and not only the first
+        var errors = new List<ParseException>();
         try
         {
-            new Parser().ProduceSyntaxTree(Lexer.Tokenize(document.Text));
+            new Parser().ProduceSyntaxTree(Lexer.Tokenize(document.Text), errors);
         }
         catch (ParseException e)
         {
-            error = new UICodeDiagnostic(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(1, e.Length), e.Message);
+            errors.Add(e);
         }
         catch (Exception e)
         {
             error = new UICodeDiagnostic(0, 0, 1, e.Message);
+        }
+
+        for (int i = 0; i < errors.Count; i++)
+        {
+            if (i == 0 && error is null) error = Said(errors[i]);
+            else moreErrors.Add(Said(errors[i]));
         }
 
         SyntaxError = error;
@@ -547,6 +564,12 @@ public class CodeEditor : UIComponent
 
         if (SyntaxError is { } error && Covers(error, at))
             said = error.Message;
+
+        for (int i = 0; i < moreErrors.Count && said.Length == 0; i++)
+        {
+            if (Covers(moreErrors[i], at))
+                said = moreErrors[i].Message;
+        }
 
         foreach (var diagnostic in diagnostics)
         {
@@ -996,6 +1019,28 @@ public class CodeEditor : UIComponent
 
     private bool draggingBar;
 
+    // The word a double click picked, while the press goes on dragging whole words from it, null otherwise
+    private (UITextPosition From, UITextPosition To)? wordDrag;
+
+    // Where on the thumb it was taken hold of, from its top, so it doesn't jump to put its middle under the pointer
+    private float barGrab;
+
+    /// <summary>
+    /// Helper method for the bar, the track it runs in, how long its thumb is, how far down it can go and where its top is
+    /// now. The paint and the drag go by the same numbers, they went by two and the thumb crept away from the pointer.
+    /// </summary>
+    private (UIRect Track, float Length, float Most, float Top) BarGeometry(UISkin skin, float scale)
+    {
+        float lineHeight = skin.Font.LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
+        UIRect track = new(new Vector2(area.Max.X, area.Min.Y), new Vector2(area.Max.X + BAR_WIDTH, area.Max.Y));
+        float total = document.LineCount * lineHeight;
+        float length = MathF.Max(24.0f, track.Height * area.Height / MathF.Max(1.0f, total));
+        float most = MathF.Max(1.0f, total - area.Height * 0.5f);
+        float top = track.Max.Y - (track.Height - length) * Math.Clamp(scrollY / most, 0.0f, 1.0f);
+        return (track, MathF.Min(length, track.Height), most, top);
+    }
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         blink = 0.0f;
@@ -1030,9 +1075,13 @@ public class CodeEditor : UIComponent
         }
 
         CloseCompletion();
+        wordDrag = null;
 
         if (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X)
         {
+            // Taken by the thumb it stays where it was taken, anywhere else on the track the thumb's middle goes there
+            var (_, length, _, top) = BarGeometry(skin, paintedScale);
+            barGrab = point.Y <= top && point.Y >= top - length ? top - point.Y : length * 0.5f;
             draggingBar = true;
             OnPointerDrag(point);
             return;
@@ -1051,6 +1100,7 @@ public class CodeEditor : UIComponent
         if (now - lastPress < DOUBLE_CLICK && at == lastPressAt)
         {
             document.SelectWordAt(at);
+            wordDrag = (document.Anchor, document.Caret);
             lastPress = -1.0;
             return;
         }
@@ -1066,21 +1116,27 @@ public class CodeEditor : UIComponent
         {
             if (paintedSkin is { } skin)
             {
-                float lineHeight = skin.Font.LineHeight * paintedScale;
-                UIRect area = TextArea(skin, paintedScale);
-                float total = document.LineCount * lineHeight;
-                float share = Math.Clamp((area.Max.Y - point.Y) / MathF.Max(1.0f, area.Height), 0.0f, 1.0f);
-                scrollY = share * MathF.Max(0.0f, total - area.Height * 0.5f);
+                var (track, length, most, _) = BarGeometry(skin, paintedScale);
+                float top = point.Y + barGrab;
+                float share = Math.Clamp((track.Max.Y - top) / MathF.Max(1.0f, track.Height - length), 0.0f, 1.0f);
+                scrollY = share * most;
             }
 
             return;
         }
 
-        document.MoveTo(PositionAt(point), selecting: true);
+        if (wordDrag is { } word)
+            document.SelectWordsTo(word.From, word.To, PositionAt(point));
+        else
+            document.MoveTo(PositionAt(point), selecting: true);
         revealCaret = true;
     }
 
-    protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;
+    protected internal override void OnPointerUp(Vector2 point)
+    {
+        draggingBar = false;
+        wordDrag = null;
+    }
 
     protected internal override bool OnScroll(float delta)
     {
@@ -1223,6 +1279,8 @@ public class CodeEditor : UIComponent
         list.BeginPart(PART_CARET);
         if (SyntaxError is { } error)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, error, first, last);
+        for (int i = 0; i < moreErrors.Count; i++)
+            PaintDiagnostic(list, skin, scale, area, left, lineHeight, moreErrors[i], first, last);
         for (int i = 0; i < diagnostics.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], first, last);
 
@@ -1270,10 +1328,7 @@ public class CodeEditor : UIComponent
         float total = document.LineCount * lineHeight;
         if (total > area.Height)
         {
-            UIRect track = new(new Vector2(content.Max.X - BAR_WIDTH, content.Min.Y), content.Max);
-            float length = MathF.Max(24.0f, track.Height * area.Height / total);
-            float most = MathF.Max(1.0f, total - area.Height * 0.5f);
-            float topOfThumb = track.Max.Y - (track.Height - length) * Math.Clamp(scrollY / most, 0.0f, 1.0f);
+            var (track, length, _, topOfThumb) = BarGeometry(skin, paintedScale);
 
             list.Rect(track, skin.HoverColor with { W = skin.HoverColor.W * 0.5f });
             list.Rect(new UIRect(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb)), skin.AccentColor with { W = 0.8f });
@@ -1377,6 +1432,12 @@ public class CodeEditor : UIComponent
         warning = false;
         if (SyntaxError is { } error && error.Line == line)
             return true;
+
+        for (int i = 0; i < moreErrors.Count; i++)
+        {
+            if (moreErrors[i].Line == line)
+                return true;
+        }
 
         for (int i = 0; i < diagnostics.Count; i++)
         {

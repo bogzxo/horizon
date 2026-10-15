@@ -390,7 +390,8 @@ public class HidlTests
     public void ErrorStopsWithTheScriptsMessage()
     {
         var error = Assert.Throws<HidlRuntimeException>(() => Run("error(\"no such move\")"));
-        Assert.Equal("no such move", error.Message);
+        Assert.Equal("no such move", error.Reason);
+        Assert.Equal(1, error.Line);
     }
 
     [Fact]
