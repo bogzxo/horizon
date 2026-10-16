@@ -23,12 +23,12 @@ public partial class CodeEditor
     // The first row of every line, and for a line folded away the row of the line it's folded into
     private int[] lineRow = [0];
 
-    // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the row of the
-    // scroll they were last flowed at, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int ScrolledRows) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0);
+    // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
+    // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
-    private const int MIN_SHAPED_COLUMNS = 12;
+    private const int MIN_SHAPED_COLUMNS = 8;
 
     // The shapes the rows are being made round, where they are on screen, and where the rows are as they're made
     private readonly List<UIWrapArea> shapesNow = [];
@@ -224,12 +224,12 @@ public partial class CodeEditor
         if (wordWrap)
         {
             if (BackdropShape is { } picked && Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f)
-                shapesNow.Add(new UIWrapArea(picked, BackdropBounds(area, picture)));
+                shapesNow.Add(new UIWrapArea(picked, BackdropBounds(area, picture), BackdropMargin));
             foreach (UIWrapArea placed in WrapAreas)
                 shapesNow.Add(placed with { Bounds = new UIRect(placed.Bounds.Min + area.Min, placed.Bounds.Max + area.Min) });
         }
 
-        int shapes = 0, scrolledRows = 0;
+        int shapes = 0, scrolled = 0;
         if (shapesNow.Count > 0)
         {
             var hash = new HashCode();
@@ -237,18 +237,20 @@ public partial class CodeEditor
             {
                 hash.Add(placed.Shape);
                 hash.Add(placed.Bounds);
+                hash.Add(placed.Margin);
             }
 
             shapes = hash.ToHashCode() | 1;
-            scrolledRows = (int)(scrollY / MathF.Max(1.0f, lineHeight));
+            scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolledRows);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
-        // The top of row 0 as the rows are flowed, the scroll to the whole row, and the left of the code
-        shapedTop = area.Max.Y + scrolledRows * lineHeight;
+        // The top of row 0 as the rows are flowed, the scroll to the pixel (to the row it was a staircase, every line
+        // flowed for where it was up to a line ago), and the left of the code
+        shapedTop = area.Max.Y + scrolled;
         shapedLeft = area.Min.X + TEXT_PAD;
         shapedLineHeight = lineHeight;
 
@@ -329,17 +331,16 @@ public partial class CodeEditor
 
         float top = shapedTop - row * shapedLineHeight, bottom = top - shapedLineHeight;
         float from = shapedLeft + indent, to = from + columns * digit;
-        float gap = digit * 0.5f;
 
         foreach (UIWrapArea placed in shapesNow)
         {
-            if (!placed.Shape.Across(placed.Bounds, bottom, top, out float shapeFrom, out float shapeTo) || shapeTo <= from || shapeFrom >= to)
+            if (!placed.Shape.Across(placed.Bounds, bottom, top, out float shapeFrom, out float shapeTo, placed.Margin) || shapeTo <= from || shapeFrom >= to)
                 continue;
 
-            if (shapeFrom - gap - from >= MIN_SHAPED_COLUMNS * digit)
-                to = MathF.Min(to, shapeFrom - gap);
+            if (shapeFrom - from >= MIN_SHAPED_COLUMNS * digit)
+                to = MathF.Min(to, shapeFrom);
             else
-                from = MathF.Max(from, shapeTo + gap);
+                from = MathF.Max(from, shapeTo);
         }
 
         int room = (int)((to - from) / MathF.Max(1.0f, digit));

@@ -115,6 +115,15 @@ public partial class CodeEditor : UIComponent
     private float checkIn;
 
     private float scrollY, scrollX;
+
+    // Where the wheel wants the view to be, which it eases to (null while it is where it's wanted). The wheel used to move
+    // it three lines in one tick, and the frames between two ticks blend the rows that were in sight both times, so the
+    // rows that came into sight sat over the ones still sliding past for a frame, the text flickered as it scrolled.
+    // A few pixels a tick nothing comes in over anything
+    private float? scrollGoal;
+
+    // How quickly the view gets to where the wheel wants it, a share of the way left every second (most of it in a tenth)
+    private const float SCROLL_EASE = 22.0f;
     private float blink;
     private bool revealCaret;
 
@@ -254,6 +263,9 @@ public partial class CodeEditor : UIComponent
     /// <see cref="WordWrap"/> is on, a line that doesn't wrap can't go round anything.
     /// </summary>
     public UIWrapShape? BackdropShape { get; set; }
+
+    /// <summary>How far the wrapped code keeps off the <see cref="BackdropShape"/>, in the UI's pixels, round every edge of it.</summary>
+    public float BackdropMargin { get; set; } = 8.0f;
 
     /// <summary>
     /// Shapes of the program's own that wrapped code runs round, placed in the text area from its bottom left corner
@@ -644,6 +656,18 @@ public partial class CodeEditor : UIComponent
     protected override void Update(float dt)
     {
         blink = (blink + dt) % (BLINK * 2.0f);
+        flowTime += dt;
+
+        // On the way to where the wheel wants it
+        if (scrollGoal is { } goal)
+        {
+            scrollY += (goal - scrollY) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            if (MathF.Abs(goal - scrollY) < 0.5f)
+            {
+                scrollY = goal;
+                scrollGoal = null;
+            }
+        }
 
         if (colouring is { IsCompleted: true } finished)
         {
@@ -771,6 +795,9 @@ public partial class CodeEditor : UIComponent
         EnsureRows(skin, scale);
         float top = RowOf(caret.Line, caret.Column) * lineHeight;
 
+        // The caret has the say, wherever the wheel was taking it
+        scrollGoal = null;
+
         if (centreOnReveal)
         {
             centreOnReveal = false;
@@ -803,6 +830,7 @@ public partial class CodeEditor : UIComponent
         UIRect area = TextArea(skin, scale);
         float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * 0.5f);
         scrollY = Math.Clamp(scrollY, 0.0f, most);
+        if (scrollGoal is { } goal) scrollGoal = Math.Clamp(goal, 0.0f, most);
         scrollX = MathF.Max(0.0f, scrollX);
     }
 
@@ -1486,6 +1514,7 @@ public partial class CodeEditor : UIComponent
                 var (track, length, most, _) = BarGeometry(skin, paintedScale);
                 float top = point.Y + barGrab;
                 float share = Math.Clamp((track.Max.Y - top) / MathF.Max(1.0f, track.Height - length), 0.0f, 1.0f);
+                scrollGoal = null;
                 scrollY = share * most;
             }
 
@@ -1519,7 +1548,8 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is not { } skin)
             return false;
 
-        scrollY -= delta * WHEEL_LINES * skin.Font.LineHeight * paintedScale;
+        // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
+        scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * skin.Font.LineHeight * paintedScale;
         ClampScroll(skin, paintedScale);
         return true;
     }
@@ -1626,12 +1656,17 @@ public partial class CodeEditor : UIComponent
             PaintBracket(list, skin, scale, area, left, lineHeight, two, firstLine, lastLine);
         }
 
-        // The code itself, a row at a time, each a part of its own so a row scrolled along is blended with itself
+        // The code itself, a row at a time, each a part of its own so a row scrolled along is blended with itself. By what
+        // it is (its line and where in it it starts), not by its number, which is somebody else's row once the code is
+        // wrapped again (round the picture as it scrolls by, a word typed further up), and every letter of it blended
+        // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
         Span<char> number = stackalloc char[12];
+        float origin = area.Max.Y + scrollY;
+        BeginFlow(lineHeight);
         for (int index = first; index <= last; index++)
         {
-            list.BeginPart(index);
             CodeRow row = rows[index];
+            list.BeginPart(HashCode.Combine(row.Line, row.Start) & 0x3FFFFFFF);
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
             float x = left + row.Indent;
@@ -1641,7 +1676,7 @@ public partial class CodeEditor : UIComponent
             // can't be (it starts inside a comment over several lines)
             if ((ColoursOf(row.Line, written) ?? FreshColours(row.Line, written)) is not { } colours)
             {
-                x = Draw(list, skin, scale, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(HidlToken.Name));
+                x = DrawFlowing(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(HidlToken.Name), left, origin);
             }
             else
             {
@@ -1657,12 +1692,12 @@ public partial class CodeEditor : UIComponent
                         continue;
 
                     x += Width(skin, scale, written.AsSpan(at, from - at));
-                    x = Draw(list, skin, scale, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind));
+                    x = DrawFlowing(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind), left, origin);
                     at = to;
                 }
 
                 if (at < rowEnd)
-                    x = Draw(list, skin, scale, written.AsSpan(at, rowEnd - at), x, top, colors.Of(HidlToken.Name));
+                    x = DrawFlowing(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(HidlToken.Name), left, origin);
             }
 
             // A folded line says what it folds away after it, the closing line, the way VS Code does
@@ -1730,7 +1765,7 @@ public partial class CodeEditor : UIComponent
 
                 int line = row.Line;
                 list.BeginPart(PART_GUTTER + line);
-                float top = RowTop(area, index, lineHeight);
+                float top = FlowTop(line, RowTop(area, index, lineHeight), origin);
                 if (!(line + 1).TryFormat(number, out int length))
                     continue;
 
@@ -1762,6 +1797,8 @@ public partial class CodeEditor : UIComponent
             }
             list.PopClip();
         }
+
+        EndFlow();
 
         // The lines the top of the view is inside of, held there over the code and its numbers, a click on one going to it
         list.PushClip(new UIRect(content.Min, new Vector2(area.Max.X, content.Max.Y)));
