@@ -1,0 +1,60 @@
+// The Ink skin, dark glass you can see the world through, a ring of sakura pink round whatever is picked, and a gold
+// lattice fret kept for the one box on a screen that matters. The art is Generic Dark Pixel UI by Flatus and Fantasy UI
+// Borders by Kenney, both CC0, see the README next to this. It is the skin Fighter2D comes up in since its menus were
+// made over (2026-10-16), the menus sit over a live map and the old frames hid it.
+//
+// It inherits from the Dead Revolver skin, which is where the icons are from (the gamepads, the keyboard, the hearts)
+// and what the components' art is called, and the font is that skin's own. Its sprites go by the same names.
+//
+// Night is the pack's greys pulled over to the indigo of the Japan map after dark, ink is the pack as it comes.
+//
+// The pack's pieces are thirteen pixels or so, drawn three times over (art_scale). Under icons is how many pixels of
+// the art make a line of text, for the arrows, which are seven.
+// Comments can't go inside of the object, the parser won't have it.
+
+let paper = vec(0.94, 0.93, 0.97, 1.0);
+let sakura = vec(0.94, 0.36, 0.57, 1.0);
+let gold = vec(0.94, 0.77, 0.38, 1.0);
+
+let skin = {
+    inherit: "../dead_revolver/skin.hor",
+    title: "Ink",
+    sprites: "sprites.hor",
+    theme: "night",
+
+    art_scale: 3,
+    text_scale: 0.4,
+    text_color: paper,
+    control_text_color: paper,
+    hover_color: vec(1.0, 1.0, 1.0, 0.08),
+    highlight_color: sakura,
+    accent_color: sakura,
+    disabled_tint: vec(1.0, 1.0, 1.0, 0.4),
+    bar_text_color: paper,
+    text_shadow_color: vec(0.02, 0.02, 0.08, 0.9),
+    track_color: vec(0.0, 0.0, 0.0, 0.0),
+    control_color: vec(0.18, 0.17, 0.3, 1.0),
+    field_color: vec(0.07, 0.07, 0.14, 1.0),
+    border_color: gold,
+
+    button_padding: vec(18, 12),
+    progress_inset: vec(9, 9),
+    toggle_size: 21,
+    spacing: 12,
+
+    regions: {
+        selection: { sprite: "selection_ring", tint: sakura }
+    },
+
+    icons: {
+        up: { sprite: "arrow_up", height: 9 },
+        down: { sprite: "arrow_down", height: 9 },
+        left: { sprite: "arrow_left", height: 9 },
+        right: { sprite: "arrow_right", height: 9 }
+    },
+
+    themes: {
+        night: { panel_color: vec(0.05, 0.05, 0.13, 0.72) },
+        ink: { panel_color: vec(0.04, 0.04, 0.06, 0.72) }
+    }
+};
