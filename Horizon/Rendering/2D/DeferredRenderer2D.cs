@@ -143,7 +143,9 @@ public class DeferredRenderer2D : Renderer2D
     internal float ShownSpriteHeight => shownAfter?.SpriteHeight ?? SpriteHeight;
     internal bool ShownShadows => shownAfter?.Shadows ?? Shadows;
     internal bool ShownSpriteShadows => shownAfter?.SpriteShadows ?? SpriteShadows;
-    internal OcclusionMap2D? ShownOcclusion => shownAfter is null ? Occlusion : shownAfter.Occlusion;
+    // The one of the tick, unless it has gone since (a map swapped for another with the game standing still, the frames
+    // before the next tick still had the old one), which drew with nothing and made its field again by brute force
+    internal OcclusionMap2D? ShownOcclusion => shownAfter?.Occlusion is { IsDisposed: false } captured ? captured : Occlusion;
     internal bool ShownShadowsInsideWalls => shownAfter?.ShadowsInsideWalls ?? ShadowsInsideWalls;
     internal AmbientOcclusion2D.State ShownAmbientOcclusion => shownAfter?.AmbientOcclusion ?? AmbientOcclusion.Capture();
 
@@ -436,7 +438,9 @@ public class DeferredRenderer2D : Renderer2D
         if (wantsField)
         {
             using var shadows = device.BeginGpuScope("sprite shadows");
+            long built = Core.Diagnostics.SlowRender.Start();
             spriteField = spriteShadows.Build(FrameBuffer.TextureOf(AttachmentPoint.Color2), FrameBuffer.TextureOf(AttachmentPoint.Color1), FrameBuffer.Width, FrameBuffer.Height, spritePixelWorld, PathTracing.SpritesBlock);
+            Core.Diagnostics.SlowRender.Stop(built, "sprite shadows");
         }
         else
         {
@@ -448,7 +452,9 @@ public class DeferredRenderer2D : Renderer2D
         {
             using var sorting = device.BeginGpuScope("light tiles");
             CameraBlock.Use(camera);
+            long sorted = Core.Diagnostics.SlowRender.Start();
             tiles.Build(this, camera, ViewportSize);
+            Core.Diagnostics.SlowRender.Stop(sorted, "light tiles");
         }
 
         // Art lit a pixel of the art at a time is lit once per pixel of the art rather than once per pixel of the
@@ -458,7 +464,9 @@ public class DeferredRenderer2D : Renderer2D
         {
             using var lighting = device.BeginGpuScope("light cells");
             CameraBlock.Use(camera);
+            long celled = Core.Diagnostics.SlowRender.Start();
             HasLightCells = LightCells.Build(this, camera, ShownLightingPixelSize);
+            Core.Diagnostics.SlowRender.Stop(celled, "light cells");
         }
 
         if (Lighting != LightingMode.PathTraced) return;
@@ -470,8 +478,10 @@ public class DeferredRenderer2D : Renderer2D
             return;
         }
 
+        long tracing = Core.Diagnostics.SlowRender.Start();
         using (device.BeginGpuScope("path tracing"))
             PathTracing.Run(this, camera, dt);
+        Core.Diagnostics.SlowRender.Stop(tracing, "path tracing");
     }
 
     /// <summary>

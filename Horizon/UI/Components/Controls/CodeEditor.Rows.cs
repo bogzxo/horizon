@@ -23,8 +23,16 @@ public partial class CodeEditor
     // The first row of every line, and for a line folded away the row of the line it's folded into
     private int[] lineRow = [0];
 
-    // What the rows were made for, made again when any of it changes
-    private (int Version, int Folds, bool Wrap, float Width, float Scale) rowsFor = (-1, -1, false, -1.0f, -1.0f);
+    // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the row of the
+    // scroll they were last flowed at, they stay put on screen as the code goes by) count only while there are any
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int ScrolledRows) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0);
+
+    // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
+    private const int MIN_SHAPED_COLUMNS = 12;
+
+    // The shapes the rows are being made round, where they are on screen, and where the rows are as they're made
+    private readonly List<UIWrapArea> shapesNow = [];
+    private float shapedTop, shapedLeft, shapedLineHeight;
 
     // Where every bracket that opens on a line and closes on a later one closes, by the line it opens on, as the last
     // colouring found them. The lines that are folded, by the line they open on, and a count of the changes to them
@@ -209,9 +217,40 @@ public partial class CodeEditor
     {
         UIRect area = TextArea(skin, scale);
         float width = wordWrap ? MathF.Round(area.Width) : 0.0f;
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale);
+        float lineHeight = skin.Font.LineHeight * scale;
+
+        // Where the shapes are this time, and what of it the rows hang on
+        shapesNow.Clear();
+        if (wordWrap)
+        {
+            if (BackdropShape is { } picked && Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f)
+                shapesNow.Add(new UIWrapArea(picked, BackdropBounds(area, picture)));
+            foreach (UIWrapArea placed in WrapAreas)
+                shapesNow.Add(placed with { Bounds = new UIRect(placed.Bounds.Min + area.Min, placed.Bounds.Max + area.Min) });
+        }
+
+        int shapes = 0, scrolledRows = 0;
+        if (shapesNow.Count > 0)
+        {
+            var hash = new HashCode();
+            foreach (UIWrapArea placed in shapesNow)
+            {
+                hash.Add(placed.Shape);
+                hash.Add(placed.Bounds);
+            }
+
+            shapes = hash.ToHashCode() | 1;
+            scrolledRows = (int)(scrollY / MathF.Max(1.0f, lineHeight));
+        }
+
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolledRows);
         if (rowsFor == wanted && rows.Count > 0)
             return;
+
+        // The top of row 0 as the rows are flowed, the scroll to the whole row, and the left of the code
+        shapedTop = area.Max.Y + scrolledRows * lineHeight;
+        shapedLeft = area.Min.X + TEXT_PAD;
+        shapedLineHeight = lineHeight;
 
         rowsFor = wanted;
         rows.Clear();
@@ -242,9 +281,10 @@ public partial class CodeEditor
     // A line's rows, one when it isn't wrapped or fits, cut at the last space before the edge when it is and doesn't
     private void AddRows(int line, string text, int columns, float digit)
     {
-        if (!wordWrap || Columns(text, 0, text.Length) <= columns)
+        float at = 0.0f;
+        if (!wordWrap || Columns(text, 0, text.Length) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
         {
-            rows.Add(new CodeRow(line, 0, text.Length, 0.0f));
+            rows.Add(new CodeRow(line, 0, text.Length, at));
             return;
         }
 
@@ -257,7 +297,7 @@ public partial class CodeEditor
         bool firstRow = true;
         while (start < text.Length)
         {
-            int room = firstRow ? columns : columns - indentColumns;
+            int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
             int end = start, used = 0;
             while (end < text.Length && used + (text[end] == '\t' ? TAB_SPACES : 1) <= room)
             {
@@ -272,10 +312,42 @@ public partial class CodeEditor
                     end = space + 1;
             }
 
-            rows.Add(new CodeRow(line, start, Math.Max(end, start + 1), firstRow ? 0.0f : indentColumns * digit));
+            rows.Add(new CodeRow(line, start, Math.Max(end, start + 1), rowIndent));
             start = Math.Max(end, start + 1);
             firstRow = false;
         }
+    }
+
+    // How many columns the row about to be made has, and how far in it starts, with the shapes on its height taken out of
+    // it. A shape with room before it cuts the row short there, one at the left of it has the row start after it, and one
+    // that leaves too little room either way is written over, the way it was before there were shapes
+    private int RoomOn(int row, float indent, int columns, float digit, out float at)
+    {
+        at = indent;
+        if (shapesNow.Count == 0)
+            return columns;
+
+        float top = shapedTop - row * shapedLineHeight, bottom = top - shapedLineHeight;
+        float from = shapedLeft + indent, to = from + columns * digit;
+        float gap = digit * 0.5f;
+
+        foreach (UIWrapArea placed in shapesNow)
+        {
+            if (!placed.Shape.Across(placed.Bounds, bottom, top, out float shapeFrom, out float shapeTo) || shapeTo <= from || shapeFrom >= to)
+                continue;
+
+            if (shapeFrom - gap - from >= MIN_SHAPED_COLUMNS * digit)
+                to = MathF.Min(to, shapeFrom - gap);
+            else
+                from = MathF.Max(from, shapeTo + gap);
+        }
+
+        int room = (int)((to - from) / MathF.Max(1.0f, digit));
+        if (room < MIN_SHAPED_COLUMNS)
+            return columns;
+
+        at = from - shapedLeft;
+        return Math.Min(room, columns);
     }
 
     // How many columns a piece of a line takes, a tab as so many spaces

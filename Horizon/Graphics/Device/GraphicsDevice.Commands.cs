@@ -578,7 +578,7 @@ public sealed unsafe partial class GraphicsDevice
     {
         if (!texture.IsValid || width == 0 || height == 0) return;
 
-        int bytesPerTexel = format == TexelFormat.R8 ? 1 : 4;
+        int bytesPerTexel = BytesPerTexel(format);
         ulong bytes = (ulong)width * height * (ulong)bytesPerTexel;
 
         EndRendering();
@@ -604,13 +604,20 @@ public sealed unsafe partial class GraphicsDevice
     /// <inheritdoc cref="UploadTexels(Texture, int, int, uint, uint, TexelFormat, void*)"/>
     public void UploadTexels(Texture texture, int x, int y, uint width, uint height, TexelFormat format, ReadOnlySpan<byte> texels)
     {
-        int needed = (int)(width * height * (format == TexelFormat.R8 ? 1 : 4));
+        int needed = (int)(width * height * BytesPerTexel(format));
         if (texels.Length < needed)
             throw new ArgumentException($"{texels.Length} bytes of texels for a {width} by {height} upload that wants {needed}.", nameof(texels));
 
         fixed (byte* pointer = texels)
             UploadTexels(texture, x, y, width, height, format, pointer);
     }
+
+    private static int BytesPerTexel(TexelFormat format) => format switch
+    {
+        TexelFormat.R8 => 1,
+        TexelFormat.R16F => 2,
+        _ => 4
+    };
 
     /// <summary>Fills every mip level of a texture from the top one. The texture has to have been made with mip levels (<see cref="TextureDefinition.Mipmaps"/>).</summary>
     public void GenerateMipmaps(Texture texture)

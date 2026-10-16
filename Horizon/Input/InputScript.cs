@@ -1,4 +1,6 @@
-﻿using System.Globalization;
+using System.Globalization;
+
+using Silk.NET.Input;
 
 namespace Horizon.Input;
 
@@ -20,7 +22,9 @@ namespace Horizon.Input;
 /// 8.0 quit
 /// </code>
 /// Start any game of the engine with <see cref="ENVIRONMENT_VARIABLE"/> set to the path of such a file and it is played from the first update on.
-/// The gamepad it plays on takes the first slot, so it is player one wherever that matters.
+/// The gamepad it plays on takes the first slot, so it is player one wherever that matters. A step can be a key of the
+/// keyboard as well (<c>2.0 tap key:J</c>), which is played on the real keyboard, and a script of nothing but keys makes
+/// no gamepad at all, so whatever reads the keyboard is driven the way a person at it would drive it.
 /// </summary>
 public sealed class InputScript
 {
@@ -34,8 +38,15 @@ public sealed class InputScript
     private const string STEP_QUIT = "quit";
 
     private readonly record struct Step(float From, float Until, GamepadInput Input);
+    private readonly record struct KeyStep(float From, float Until, Key Key);
+
+    private const string KEY_PREFIX = "key:";
 
     private readonly List<Step> _steps = [];
+    private readonly List<KeyStep> _keySteps = [];
+
+    /// <summary>Whether any step is a button of a gamepad, a script of keys alone needs no gamepad of its own.</summary>
+    public bool HasButtons => _steps.Count > 0;
     private float _quitAt = float.PositiveInfinity;
 
     /// <summary>
@@ -56,6 +67,27 @@ public sealed class InputScript
         _steps.Add(new Step(at, at + MathF.Max(0.0f, seconds), input));
         Length = MathF.Max(Length, at + seconds);
         return this;
+    }
+
+    /// <summary>Presses a key of the keyboard and lets go of it right away.</summary>
+    public InputScript TapKey(float at, Key key) => HoldKey(at, key, TAP_TIME);
+
+    /// <summary>Holds a key of the keyboard down for a while.</summary>
+    public InputScript HoldKey(float at, Key key, float seconds)
+    {
+        _keySteps.Add(new KeyStep(at, at + MathF.Max(0.0f, seconds), key));
+        Length = MathF.Max(Length, at + seconds);
+        return this;
+    }
+
+    /// <summary>Every key the script holds at a moment.</summary>
+    internal void KeysAt(float time, HashSet<Key> into)
+    {
+        into.Clear();
+        foreach (KeyStep step in _keySteps)
+        {
+            if (time >= step.From && time < step.Until) into.Add(step.Key);
+        }
     }
 
     /// <summary>
@@ -82,8 +114,24 @@ public sealed class InputScript
 
         foreach (Step step in _steps)
         {
-            if (time >= step.From && time < step.Until)
-                snapshot.Buttons |= GamepadInputs.Bit(step.Input);
+            if (time < step.From || time >= step.Until) continue;
+
+            // The triggers and the sticks aren't buttons to a gamepad, it reads them off their axes and masks their bits
+            // off the buttons, so a script that says "tap RightTrigger" pulls the trigger all the way instead
+            switch (step.Input)
+            {
+                case GamepadInput.LeftTrigger: snapshot.LeftTrigger = 1.0f; break;
+                case GamepadInput.RightTrigger: snapshot.RightTrigger = 1.0f; break;
+                case GamepadInput.LeftStickUp: snapshot.LeftStick.Y = 1.0f; break;
+                case GamepadInput.LeftStickDown: snapshot.LeftStick.Y = -1.0f; break;
+                case GamepadInput.LeftStickRight: snapshot.LeftStick.X = 1.0f; break;
+                case GamepadInput.LeftStickLeft: snapshot.LeftStick.X = -1.0f; break;
+                case GamepadInput.RightStickUp: snapshot.RightStick.Y = 1.0f; break;
+                case GamepadInput.RightStickDown: snapshot.RightStick.Y = -1.0f; break;
+                case GamepadInput.RightStickRight: snapshot.RightStick.X = 1.0f; break;
+                case GamepadInput.RightStickLeft: snapshot.RightStick.X = -1.0f; break;
+                default: snapshot.Buttons |= GamepadInputs.Bit(step.Input); break;
+            }
         }
 
         return snapshot;
@@ -126,6 +174,14 @@ public sealed class InputScript
                 Quit(at);
                 return true;
 
+            case STEP_TAP when words.Length >= 3 && TryKey(words[2], out Key tappedKey):
+                TapKey(at, tappedKey);
+                return true;
+
+            case STEP_HOLD when words.Length >= 4 && TryKey(words[2], out Key heldKey) && TryNumber(words[3], out float keySeconds):
+                HoldKey(at, heldKey, keySeconds);
+                return true;
+
             case STEP_TAP when words.Length >= 3 && GamepadInputs.TryParse(words[2], out GamepadInput tapped):
                 Tap(at, tapped);
                 return true;
@@ -137,6 +193,13 @@ public sealed class InputScript
             default:
                 return false;
         }
+    }
+
+    private static bool TryKey(string word, out Key key)
+    {
+        key = Key.Unknown;
+        return word.StartsWith(KEY_PREFIX, StringComparison.OrdinalIgnoreCase)
+            && Enum.TryParse(word[KEY_PREFIX.Length..], ignoreCase: true, out key) && key != Key.Unknown;
     }
 
     private static bool TryNumber(string text, out float number) =>

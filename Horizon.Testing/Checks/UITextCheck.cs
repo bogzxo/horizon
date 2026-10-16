@@ -49,6 +49,8 @@ internal sealed class UITextCheck : Scene, ISelfCheck
     private Label _heading = null!, _paragraph = null!, _list = null!, _wrapped = null!, _escaped = null!, _escapedPlain = null!;
     private Label _link = null!, _code = null!, _showcase = null!, _symbols = null!, _noSymbol = null!;
     private CodeEditor _editor = null!;
+    private Label _around = null!;
+    private Panel _obstacle = null!;
     private string _clicked = string.Empty;
 
     public UITextCheck()
@@ -111,6 +113,18 @@ internal sealed class UITextCheck : Scene, ISelfCheck
             TextScale = 0.25f
         });
         _code = Add(column, "```\nline one\nline two\n```", markdown: true);
+
+        // A paragraph and a box in the corner of it, which the paragraph runs round when told to
+        var corner = module.AddComponent(new Panel { Anchor = Origin.BottomRight, Position = new Vector2(-40, 40), Size = new Vector2(400, 250) });
+        _obstacle = corner.Add(new Panel { Anchor = Origin.TopRight, Size = new Vector2(150, 110), Color = new Vector4(0.8f, 0.3f, 0.3f, 0.6f) });
+        _around = corner.Add(new Label(string.Concat(Enumerable.Repeat("words that go round a box in their way, ", 6)))
+        {
+            Anchor = Origin.TopLeft,
+            Size = new Vector2(400, 0),
+            TextScale = SCALE,
+            Wrap = true,
+            Align = Origin.TopLeft
+        });
 
         _showcase = module.AddComponent(new Label(SHOWCASE)
         {
@@ -250,6 +264,22 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         test.Check("code: a tab is drawn and pointed at as wide as four spaces", TabColumnsMatch);
 
         test.Run(() => _editor.Unfocus());
+
+        // Round the box in the corner, more lines for it as the lines next to it are shorter, as before without it
+        float flat = 0.0f;
+        test.Run(() => flat = _around.DesiredSize.Y);
+        test.Run(() => _around.WrapAround.Add(_obstacle));
+        test.Wait();
+        test.Wait();
+        test.Check("wrap: a label runs round a component in its way, in more lines than without it", () => _around.DesiredSize.Y > flat + 1.0f);
+        test.Run(() => _around.WrapAround.Clear());
+        test.Wait();
+        test.Wait();
+        test.Check("wrap: and back to as it was when it is let go of", () => Near(_around.DesiredSize.Y, flat));
+
+        // Left going round it, to look at
+        test.Run(() => _around.WrapAround.Add(_obstacle));
+
         test.Hover(() => new Vector2(-5000, -5000));
     }
 

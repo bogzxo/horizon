@@ -65,6 +65,21 @@ public sealed class Keyboard
     public bool Alt => IsDown(Key.AltLeft) || IsDown(Key.AltRight);
 
     /// <summary>
+    /// Puts every key that is held down right now into a list, for a "press the key for jump" menu that has to know which
+    /// ones they are. Nothing while the keys are somebody else's.
+    /// </summary>
+    public void CopyDown(List<Key> into)
+    {
+        into.Clear();
+        if (Withheld) return;
+
+        for (int key = 0; key < KEYS; key++)
+        {
+            if (_down[key]) into.Add((Key)key);
+        }
+    }
+
+    /// <summary>
     /// Whether any key at all went down since the last update, for a "press any key".
     /// </summary>
     public bool AnyPressed => !Withheld && _anyPressed;
@@ -82,10 +97,16 @@ public sealed class Keyboard
     {
         foreach (IKeyboard keyboard in context.Keyboards)
         {
-            keyboard.KeyDown += (_, key, _) => _heard.Enqueue((key, true));
-            keyboard.KeyUp += (_, key, _) => _heard.Enqueue((key, false));
+            keyboard.KeyDown += (_, key, _) => Hear(key, true);
+            keyboard.KeyUp += (_, key, _) => Hear(key, false);
         }
     }
+
+    /// <summary>
+    /// Hears a key go down or come up, taken on at the next <see cref="Update"/>. The window's keyboards come through here,
+    /// and so does a test with no window.
+    /// </summary>
+    internal void Hear(Key key, bool down) => _heard.Enqueue((key, down));
 
     /// <summary>
     /// Moves the keyboard on to what was heard since the last time. Once an update, before anybody reads it.

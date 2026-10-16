@@ -90,6 +90,11 @@ public class SceneManager : Entity
     // The longest step a transition takes in one frame. Setting a scene up can take a while, and the fade shouldn't skip to its end because of it
     private const float MAX_TRANSITION_STEP = 1.0f / 30.0f;
 
+    // HORIZON_LOG_TRANSITIONS=1 logs every frame a transition is drawn over, how long since the one before and how far
+    // covered, so a stutter in one shows up as the frame it was and what the cover did across it
+    private static readonly bool LogTransitions = Environment.GetEnvironmentVariable("HORIZON_LOG_TRANSITIONS") == "1";
+    private long _lastFrameAt;
+
     // Only one tween moves the cover at a time, covering up takes over from uncovering and the other way round
     private const string COVER_CHANNEL = "cover";
 
@@ -334,10 +339,11 @@ public class SceneManager : Entity
             _arriving = false;
             _running = transition;
 
-            // Set up now, while the old scene is covered up, rather than at the moment it is all the way covered. The
-            // wait (loading a scene can take a good while) is when the button was pressed, and the transition itself
-            // plays out smoothly with nothing left to do at its height but swap
-            QueuePreload(scene);
+            // Set up at the height of it, all the way covered (see Change), not now. Set up now the first frame of the
+            // cover was the whole of the setting up, a tenth of a second or more of the button press doing nothing and
+            // then the cover setting off, which is what a stutter looks like. All the way covered the same wait is a
+            // cover standing still for a moment, which is what a loading screen looks like. A scene that is known to
+            // be coming can still be set up long before (Preload)
 
             // Covered all the way is not the moment to swap yet. The old scene is drawn once more like that first,
             // which is the frame a transition gets to remember it by
@@ -369,7 +375,8 @@ public class SceneManager : Entity
     /// while the map is being picked, the next level while this one is being played. From any thread.
     /// <para>
     /// One scene is kept like that at a time, so preloading another, or setting a scene that isn't it, lets go of it
-    /// (unless it is <see cref="Scene.Persistent"/>). Setting a scene with a transition preloads it by itself.
+    /// (unless it is <see cref="Scene.Persistent"/>). A scene set with a transition and not preloaded is set up once the
+    /// old one is all the way covered.
     /// </para>
     /// </summary>
     public void Preload(Scene scene)
@@ -538,6 +545,14 @@ public class SceneManager : Entity
         // Over everything, whatever the scene drew last
         drawing?.Render(_cover, _arriving, dt);
 
+        if (LogTransitions)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (drawing is not null && _lastFrameAt != 0)
+                Log.Info($"[Transition] {drawing.GetType().Name} {(_arriving ? "in" : "out")} at {_cover:0.00}, {System.Diagnostics.Stopwatch.GetElapsedTime(_lastFrameAt, now).TotalMilliseconds:0.0} ms since the frame before.");
+            _lastFrameAt = now;
+        }
+
         // That was the last frame of the old scene, the new one takes over at the start of the next
         if (_lastFrame)
         {
@@ -701,7 +716,9 @@ public class SceneManager : Entity
 
         // The scene, and then everything it added while it was at it, all the way down
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        long own = Horizon.Core.Diagnostics.SlowRender.Start();
         scene.Initialize();
+        Horizon.Core.Diagnostics.SlowRender.Stop(own, scene, "set up by itself");
         scene.InitializeAll();
         scene.Enabled = true;
         _setUpMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;

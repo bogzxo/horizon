@@ -184,6 +184,12 @@ public abstract partial class UIComponent
     /// <summary>Where the component ended up when it was last laid out, in its module's space.</summary>
     public UIRect Bounds { get; private set; }
 
+    /// <summary>
+    /// What text wrapping round the component goes round (<see cref="Label.WrapAround"/>), null for the box of it. An
+    /// <see cref="Image"/> of a file goes by the shape of what is drawn in the file.
+    /// </summary>
+    public virtual UIWrapShape? WrapShape { get; set; }
+
     /// <summary>The size the component asked for when it was last laid out.</summary>
     public Vector2 DesiredSize { get; private set; }
 

@@ -883,10 +883,106 @@ public sealed class TileMap : GameObject
         int perTile = ShadowCellsPerTile;
         var occlusion = new Horizon.Rendering.Lighting.OcclusionMap2D(Width * perTile, Height * perTile, Origin, TileSize / perTile, fieldTexelsPerCell: 1);
 
-        foreach (var (x, y) in ShadowCasterTexels(perTile))
+        foreach (var (x, y) in CasterTexels(perTile))
             occlusion[x, y] = true;
 
         return occlusion;
+    }
+
+    // What ShadowCasterTexels came to, kept by what it was worked out of. The occlusion map and the geometry occlusion
+    // both want it, and working it out reads every texel of the art under every tile that blocks light, which on Japan
+    // was a tenth of a second, twice. Kept across maps of the same file as well (another fight on the same map, the
+    // fight after its preview), by the file, when it was written and the versions of what blocks light
+    private (int X, int Y)[]? casterTexels;
+    private long casterTexelsFor = -1;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string File, long Written, int PerTile, long Layers), (int X, int Y)[]> sharedTexels = new();
+    private const int MAX_SHARED = 16;
+
+    /// <summary>
+    /// What blocks light by the shape of things (<see cref="ShadowCasterTexels"/>) as an array, worked out once for as
+    /// long as what blocks light stays the same, and shared with every other map of the same file. Any thread, one at a
+    /// time for a map.
+    /// </summary>
+    public (int X, int Y)[] CasterTexels(int perTile)
+    {
+        perTile = Math.Max(perTile, 1);
+        long layersSignature = CasterSignature();
+        long signature = HashCode.Combine(perTile, layersSignature);
+        if (casterTexels is { } known && casterTexelsFor == signature) return known;
+
+        var key = (System.IO.Path.GetFullPath(Path), WrittenAt(), perTile, layersSignature);
+        if (!sharedTexels.TryGetValue(key, out var texels))
+        {
+            texels = [.. ShadowCasterTexels(perTile)];
+            if (sharedTexels.Count >= MAX_SHARED) sharedTexels.Clear();
+            sharedTexels[key] = texels;
+        }
+
+        casterTexels = texels;
+        casterTexelsFor = signature;
+        return texels;
+    }
+
+    // When the file of the map was last written, so a map saved in Tiled since isn't given what the old one was
+    private long WrittenAt()
+    {
+        try
+        {
+            return System.IO.File.GetLastWriteTimeUtc(Path).Ticks;
+        }
+        catch (System.IO.IOException)
+        {
+            return 0;
+        }
+    }
+
+    // Everything what blocks light is made of, another number whenever any of it changes
+    private long CasterSignature()
+    {
+        var hash = new HashCode();
+        foreach (TileMapLayer layer in layers)
+        {
+            hash.Add(layer.CastsShadows);
+            hash.Add(layer.BlocksLight);
+            if (layer.CastsShadows) hash.Add(layer.Version);
+        }
+
+        hash.Add(objects.Count);
+        return hash.ToHashCode();
+    }
+
+    /// <summary>
+    /// Works out ahead of time everything the map would otherwise work out on the frame it is first drawn, the
+    /// layers it is drawn from, the pictures they are drawn out of (decoded, sent up when drawn), what blocks light by the
+    /// shape of things and the geometry occlusion
+    /// (<see cref="GeometryOcclusion"/>, with whatever reach and strength it has been given by now). Any thread, before
+    /// the map is added to anything, a map that is being drawn is the render thread's. Loading a map on a worker and
+    /// calling this there is how a game swaps maps without a hitch. Sending any of it to the GPU still happens as it is
+    /// drawn, that is quick.
+    /// </summary>
+    public void Prepare()
+    {
+        foreach (TileMapLayer layer in layers)
+        {
+            if (layer.IsDirty) Build(layer, layer.Gids, layer.Flips, layer.Version);
+        }
+
+        // The pictures the layers are drawn out of, decoded here so the first frame only sends them up
+        var pictures = new HashSet<string>();
+        foreach (TileMapLayer layer in layers)
+        {
+            foreach (TileMapBatch batch in layer.Batches)
+            {
+                if (!textures.ContainsKey(batch.ImagePath) && pictures.Add(batch.ImagePath))
+                    TileMapTexture.DecodeAhead(batch.ImagePath);
+            }
+        }
+
+        if (GeometryOcclusion && GeometryOcclusionStrength > 0.0f && GeometryOcclusionReach > 0.0f)
+            geometry.Prepare(this, GeometryOcclusionReach, Math.Clamp(GeometryOcclusionStrength, 0.0f, 1.0f), GeometrySignature());
+        else
+            CasterTexels(ShadowCellsPerTile);
     }
 
     /// <summary>Helper method to list the middle of every cell under an object of a layer that blocks light.</summary>
@@ -1055,6 +1151,9 @@ public sealed class TileMap : GameObject
 
         // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
         shown.Clear();
+        int built = 0;
+        long building = 0;
+        double builtMs = 0.0;
         int count = after?.Layers.Length ?? layers.Count;
         for (int index = 0; index < count && index < layers.Count; index++)
         {
@@ -1074,7 +1173,11 @@ public sealed class TileMap : GameObject
                 moved = new Vector2(MathF.Round(moved.X), MathF.Round(moved.Y));
 
             if (after is null ? layer.IsDirty : layer.BuiltVersion != state.Version)
+            {
+                if (built == 0) building = System.Diagnostics.Stopwatch.GetTimestamp();
                 Build(layer, state.Gids ?? layer.Gids, state.Flips ?? layer.Flips, state.Version);
+                built++;
+            }
 
             if (layer.Source is ImageLayer image)
                 PlaceImage(layer, image, viewMin - origin - moved, viewMax - origin - moved);
@@ -1095,7 +1198,19 @@ public sealed class TileMap : GameObject
             }, state.IsForeground));
         }
 
-        if (!gpu.Sync(shown, textureOf ??= TextureOf))
+        if (built > 0) builtMs = System.Diagnostics.Stopwatch.GetElapsedTime(building).TotalMilliseconds;
+
+        long syncing = System.Diagnostics.Stopwatch.GetTimestamp();
+        bool synced = gpu.Sync(shown, textureOf ??= TextureOf);
+
+        // Building a layer and sending it up is the hitch of a map's first frame (and of every change to it), so it says
+        // what it cost. A frame that built nothing and had nothing new to send says nothing
+        if (built > 0)
+        {
+            Log.Info($"[TileMap] Built {built} layer{(built == 1 ? "" : "s")} of '{System.IO.Path.GetFileName(Path)}' in {builtMs:0} ms and sent them up in {System.Diagnostics.Stopwatch.GetElapsedTime(syncing).TotalMilliseconds:0} ms.");
+        }
+
+        if (!synced)
             return;
 
         gpu.Draw(foreground, viewMin, viewMax, camera);

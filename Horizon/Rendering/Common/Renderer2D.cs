@@ -188,7 +188,9 @@ public class Renderer2D : GameObject
         frameTime = dt;
 
         // Whatever a renderer works out of the render target before the picture goes anywhere (the lighting)
+        long lighting = Core.Diagnostics.SlowRender.Start();
         BeforeResolve(dt);
+        Core.Diagnostics.SlowRender.Stop(lighting, "the lighting (BeforeResolve)");
 
         if (PostProcessing.Prepare())
         {

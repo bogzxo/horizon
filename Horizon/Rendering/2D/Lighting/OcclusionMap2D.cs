@@ -19,7 +19,8 @@ namespace Horizon.Rendering.Lighting;
 /// <para>
 /// What the shaders read is not the grid but a signed distance field made from it (shaders/lighting/sdf_rows.slang and
 /// sdf_columns.slang), a few texels to a cell, so a ray towards a light takes a handful of steps rather than one per
-/// cell. It is made anew on the GPU whenever the grid changes, which is rarely.
+/// cell. It is made anew on the GPU whenever the grid changes, which is rarely, or worked out ahead on the CPU
+/// (<see cref="Prepare"/>) for a map that is loaded on a worker and has to come up without a hitch.
 /// </para>
 /// </summary>
 public sealed class OcclusionMap2D : IDisposable
@@ -42,6 +43,17 @@ public sealed class OcclusionMap2D : IDisposable
     private int uploadedVersion = -1, fieldVersion = -1;
 
     private static Technique? rowsShader, columnsShader;
+
+    // The distance field worked out on the CPU (Prepare) and which version of the grid it is of, sent up instead of
+    // made on the GPU the first time it is wanted
+    private Half[]? preparedField;
+    private int preparedVersion = -1;
+
+    /// <summary>What <see cref="Prepare"/> came to, until it is sent up. For the tests.</summary>
+    internal Half[]? PreparedField => preparedField;
+
+    // The cores Prepare takes, all but the ones the render thread and the simulation want while a map loads on a worker
+    private static readonly ParallelOptions Spare = new() { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 3) };
 
     private sealed class CapturedCells
     {
@@ -125,6 +137,9 @@ public sealed class OcclusionMap2D : IDisposable
     /// </summary>
     internal unsafe Texture? GetTexture()
     {
+        // Gone, and not to be made again by a frame that still had it (it was the one a renderer had last tick)
+        if (IsDisposed) return null;
+
         if (texture is null)
         {
             if (!GameEngine.Instance.ObjectManager.Textures.TryCreate(
@@ -165,11 +180,10 @@ public sealed class OcclusionMap2D : IDisposable
     /// Render thread. The signed distance field of the grid, in world units, negative inside of a wall. Made anew on
     /// the GPU when the grid has changed since. Null if it couldn't be made.
     /// </summary>
-    internal Texture? GetField()
+    internal unsafe Texture? GetField()
     {
         if (GetTexture() is not { } grid) return null;
         if (field is not null && fieldVersion == uploadedVersion) return field;
-        if (!EnsureShaders()) return null;
 
         var objects = GameEngine.Instance.ObjectManager;
         uint width = (uint)FieldSize.X, height = (uint)FieldSize.Y;
@@ -180,14 +194,32 @@ public sealed class OcclusionMap2D : IDisposable
                 return null;
             field = made.Asset;
             field.Name = "occlusion distance field";
+        }
 
+        var device = GraphicsDevice.Current;
+
+        // Worked out ahead for the grid as it is shown, only sent up then. Let go of after, a grid that changes is
+        // made anew on the GPU
+        if (preparedField is { } ready && preparedVersion == uploadedVersion)
+        {
+            fixed (Half* data = ready)
+                device.UploadTexels(field, 0, 0, width, height, TexelFormat.R16F, data);
+
+            preparedField = null;
+            fieldVersion = uploadedVersion;
+            return field;
+        }
+
+        if (!EnsureShaders()) return null;
+
+        if (rows is null)
+        {
             if (!objects.Textures.TryCreate(new TextureDescription { Width = width, Height = height, Definition = new TextureDefinition(PixelFormat.Rg16F, Smooth: false, Usage: TextureUsage.Storage) }, out var temp))
                 return null;
             rows = temp.Asset;
             rows.Name = "occlusion distance rows";
         }
 
-        var device = GraphicsDevice.Current;
         uint groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
 
         foreach (Technique pass in new[] { rowsShader!, columnsShader! })
@@ -211,6 +243,177 @@ public sealed class OcclusionMap2D : IDisposable
         return field;
     }
 
+    /// <summary>
+    /// Works the distance field out on the CPU, what the shaders would make of the grid as it is now, so the first
+    /// frame that wants it only sends it up. Any thread, before the map is given to a renderer (a stage loaded on a
+    /// worker, say). The shaders go by brute force, every texel of a column for every texel of it, which is fine for
+    /// a grid that changes in a game and on a 2304 square map was two tenths of a second of the GPU doing nothing
+    /// else, the frame a map came up. Here it is the distance transform done properly, the lower envelope of
+    /// parabolas (Felzenszwalb and Huttenlocher), linear in the texels and spread over the cores. A grid that is the
+    /// same as one prepared a moment ago (the fight on the map its preview showed) gets the same field straight away.
+    /// </summary>
+    public void Prepare()
+    {
+        if (preparedField is not null && preparedVersion == version) return;
+
+        int width = (int)FieldSize.X, height = (int)FieldSize.Y;
+        int stamp = version;
+
+        var key = Key();
+        if (shared.TryGetValue(key, out Half[]? known))
+        {
+            preparedField = known;
+            preparedVersion = stamp;
+            return;
+        }
+
+        // Tens of megabytes on a big map, out of the pool and back, garbage that size stops every thread of the game
+        // for a big collection
+        float[] toSolid = SquaredDistances(width, height, solid: true);
+        float[] toOpen = SquaredDistances(width, height, solid: false);
+
+        // The same as the end of sdf_columns.slang. The edge of a wall is half a texel past the last solid texel
+        // either way, negative inside, in world units
+        float texelWorld = MathF.Min(FieldTexelSize.X, FieldTexelSize.Y);
+        var made = new Half[width * height];
+        Parallel.For(0, height, Spare, y =>
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int i = x + y * width;
+                float distance = SolidAt(x, y) ? -(MathF.Sqrt(toOpen[i]) - 0.5f) : MathF.Sqrt(toSolid[i]) - 0.5f;
+                made[i] = (Half)(distance * texelWorld);
+            }
+        });
+
+        System.Buffers.ArrayPool<float>.Shared.Return(toSolid);
+        System.Buffers.ArrayPool<float>.Shared.Return(toOpen);
+
+        if (shared.Count >= MAX_SHARED) shared.Clear();
+        shared[key] = made;
+
+        preparedField = made;
+        preparedVersion = stamp;
+    }
+
+    // Fields prepared before by what they were made of, a few of them, the biggest map's is ten megabytes. Only ever
+    // read once they are in, so the same one going up for two maps is fine
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int Width, int Height, int PerCell, Vector2 Texel, int Hash, long Solid), Half[]> shared = new();
+    private const int MAX_SHARED = 4;
+
+    // What the field is made of, the size and the cells, as a hash and the sum of where the solid cells are as well,
+    // two maps that come to the same key by chance would have to agree on both
+    private (int, int, int, Vector2, int, long) Key()
+    {
+        var hash = new HashCode();
+        hash.AddBytes(cells);
+
+        long solid = 0;
+        for (int i = 0; i < cells.Length; i++)
+        {
+            if (cells[i] != 0) solid += i + 1;
+        }
+
+        return (Width, Height, FieldTexelsPerCell, FieldTexelSize, hash.ToHashCode(), solid);
+    }
+
+    private bool SolidAt(int x, int y)
+    {
+        int cellX = Math.Min(x / FieldTexelsPerCell, Width - 1), cellY = Math.Min(y / FieldTexelsPerCell, Height - 1);
+        return cells[cellX + cellY * Width] != 0;
+    }
+
+    // What sdf_rows.slang leaves for the columns, with nothing in the row being as good as a million texels away
+    private const float NOWHERE = 1e6f;
+
+    // The squared distance (in texels) from every texel of the field to the nearest one that is solid, or that
+    // isn't. Rows first, how far along its row the nearest one is, then down every column the smallest of that
+    // squared plus how far up or down, which is the exact euclidean distance
+    private float[] SquaredDistances(int width, int height, bool solid)
+    {
+        float[] along = System.Buffers.ArrayPool<float>.Shared.Rent(width * height);
+
+        Parallel.For(0, height, Spare, y =>
+        {
+            int row = y * width;
+            float last = -NOWHERE;
+            for (int x = 0; x < width; x++)
+            {
+                if (SolidAt(x, y) == solid) last = x;
+                along[row + x] = x - last;
+            }
+
+            last = width + NOWHERE;
+            for (int x = width - 1; x >= 0; x--)
+            {
+                if (SolidAt(x, y) == solid) last = x;
+                along[row + x] = MathF.Min(MathF.Min(along[row + x], last - x), NOWHERE);
+            }
+        });
+
+        Parallel.For(0, width, Spare, () => new Envelope(height), (x, _, envelope) =>
+        {
+            for (int y = 0; y < height; y++)
+            {
+                float d = along[x + y * width];
+                envelope.Heights[y] = (double)d * d;
+            }
+
+            envelope.Lower(height);
+
+            for (int y = 0; y < height; y++)
+                along[x + y * width] = (float)envelope.Distances[y];
+
+            return envelope;
+        }, static _ => { });
+
+        return along;
+    }
+
+    // The scratch of one column of the lower envelope, one a core
+    private sealed class Envelope(int size)
+    {
+        public readonly double[] Heights = new double[size];
+        public readonly double[] Distances = new double[size];
+        private readonly int[] apexes = new int[size];
+        private readonly double[] bounds = new double[size + 1];
+
+        // For every y the smallest (y - q)^2 + Heights[q] over every q, the parabolas the heights stand for laid one
+        // over the other and only the lowest kept, then read off left to right
+        public void Lower(int n)
+        {
+            int k = 0;
+            apexes[0] = 0;
+            bounds[0] = double.NegativeInfinity;
+            bounds[1] = double.PositiveInfinity;
+
+            for (int q = 1; q < n; q++)
+            {
+                double s;
+                while (true)
+                {
+                    int p = apexes[k];
+                    s = (Heights[q] + (double)q * q - (Heights[p] + (double)p * p)) / (2.0 * (q - p));
+                    if (s > bounds[k]) break;
+                    k--;
+                }
+
+                k++;
+                apexes[k] = q;
+                bounds[k] = s;
+                bounds[k + 1] = double.PositiveInfinity;
+            }
+
+            k = 0;
+            for (int q = 0; q < n; q++)
+            {
+                while (bounds[k + 1] < q) k++;
+                int p = apexes[k];
+                Distances[q] = (double)(q - p) * (q - p) + Heights[p];
+            }
+        }
+    }
+
     private static bool EnsureShaders()
     {
         if (rowsShader is not null && columnsShader is not null) return true;
@@ -224,11 +427,17 @@ public sealed class OcclusionMap2D : IDisposable
         return true;
     }
 
+    /// <summary>Whether it has been disposed, after which it has no textures and makes none.</summary>
+    public bool IsDisposed { get; private set; }
+
     public void Dispose()
     {
+        IsDisposed = true;
         texture?.Dispose();
         field?.Dispose();
         rows?.Dispose();
         texture = field = rows = null;
+
+        preparedField = null;
     }
 }

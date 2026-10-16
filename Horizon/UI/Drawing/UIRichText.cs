@@ -75,6 +75,14 @@ public sealed class UIRichText
         public int Link;
     }
 
+    /// <summary>
+    /// How much room a line of the text has, for text that wraps round something (<see cref="UIWrapShape"/>). Asked as
+    /// every line starts with where it is, its top down from the top of the block and how tall a line of the text is,
+    /// and says where across the block it may start and where it has to stop. Room the line has all of says 0 and the
+    /// width it was built with.
+    /// </summary>
+    public delegate void Room(float top, float height, out float left, out float right);
+
     private struct LineInfo
     {
         public float Top, Height, Baseline, Width;
@@ -115,6 +123,14 @@ public sealed class UIRichText
     private UIFont? builtFont;
     private float builtScale, builtWidth;
     private bool builtMarkdown;
+    private int builtRoom;
+
+    // What gives every line its room, and the room of the line going on, how far it is moved along and how wide it is
+    private Room? room;
+    private float lineShift, lineRoom;
+
+    // The fewest em a line is cut down to by a shape, with less room than that beside one it runs over it instead
+    private const float MIN_ROOM_EM = 5.0f;
 
     // The layout going on, see Build
     private string source = string.Empty;
@@ -167,12 +183,21 @@ public sealed class UIRichText
     /// </summary>
     /// <param name="maxWidth">How wide a line can be before it wraps, 0 or less for as wide as it likes.</param>
     /// <param name="markdown">Whether markdown counts as well as the tags.</param>
-    public void Build(string text, UIFont font, float scale, float maxWidth, bool markdown)
+    public void Build(string text, UIFont font, float scale, float maxWidth, bool markdown) => Build(text, font, scale, maxWidth, markdown, null, 0);
+
+    /// <summary>
+    /// Lays text out with every line in the room it is given (see <see cref="Room"/>), cut short or moved along by
+    /// whatever it wraps round. Laid out again when the key changes, which is the caller's way of saying the room did.
+    /// </summary>
+    /// <param name="roomKey">Anything that changes when the room does, where the shapes are, say.</param>
+    public void Build(string text, UIFont font, float scale, float maxWidth, bool markdown, Room? room, int roomKey)
     {
-        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown)
+        if (room is null) roomKey = 0;
+        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown && roomKey == builtRoom)
             return;
 
-        (builtText, builtFont, builtScale, builtWidth, builtMarkdown) = (text, font, scale, maxWidth, markdown);
+        (builtText, builtFont, builtScale, builtWidth, builtMarkdown, builtRoom) = (text, font, scale, maxWidth, markdown, roomKey);
+        this.room = room;
 
         source = text;
         this.font = font;
@@ -192,6 +217,7 @@ public sealed class UIRichText
         quoteX = -1.0f;
         lineCount = 0;
         wrapped = false;
+        StartRoom();
 
         LayOut();
 
@@ -802,7 +828,7 @@ public sealed class UIRichText
         bool space = word.Count == 1 && word[0].Length == 1 && source[word[0].Start] == ' ';
         bool lineEmpty = pieces.Count == lineStartPiece || OnlyMarkers();
 
-        if (!space && !lineEmpty && penX + width > maxWidth)
+        if (!space && !lineEmpty && penX + width > lineRoom)
         {
             // The word that didn't fit waits for the next line, the one it didn't fit on ends without it
             FinishLine();
@@ -939,9 +965,13 @@ public sealed class UIRichText
             if (piece.Line != lineCount)
                 continue;
 
+            // Along to where the room of the line starts, for one that starts after something it wraps round
             piece.Y = top + baseline + piece.Y;
+            piece.X += lineShift;
             pieces[i] = piece;
         }
+
+        if (width > 0.0f) width += lineShift;
 
         if (quoteX >= 0.0f)
         {
@@ -966,6 +996,27 @@ public sealed class UIRichText
         lineCount++;
         lineStartPiece = pieces.Count;
         wrapped = false;
+        StartRoom();
+    }
+
+    // The room of the line that starts now, all of the width unless something it wraps round is in the way. A shape that
+    // leaves less than a few em beside it is written over, a line of one word a row reads worse than that
+    private void StartRoom()
+    {
+        lineShift = 0.0f;
+        lineRoom = maxWidth;
+        if (room is null || float.IsPositiveInfinity(maxWidth))
+            return;
+
+        float height = font.LineHeight * baseScale;
+        room(cursorY + pendingGap, height, out float left, out float right);
+        left = MathF.Max(0.0f, left);
+        right = MathF.Min(maxWidth, right);
+        if (right - left < MIN_ROOM_EM * height)
+            return;
+
+        lineShift = left;
+        lineRoom = right - left;
     }
 
     // What is still waiting at the end of a line goes on it whatever its width, there is nowhere else for it

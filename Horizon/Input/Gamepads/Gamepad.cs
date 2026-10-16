@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using Silk.NET.Input;
 
 namespace Horizon.Input;
@@ -124,13 +124,23 @@ public sealed class Gamepad
     /// Whether an action is held, which is every input of one of the combinations it is bound to is down, and no bigger
     /// combination that contains it is (with A + B bound to something, holding both isn't A and isn't B).
     /// </summary>
-    public bool IsDown(string action) => bindings.IsActive(action, held);
+    public bool IsDown(string action) => IsActive(action, before: false);
 
     /// <summary>Whether an action started this update, it is held and wasn't before.</summary>
-    public bool WasPressed(string action) => bindings.IsActive(action, held) && !bindings.IsActive(action, heldBefore);
+    public bool WasPressed(string action) => IsActive(action, before: false) && !IsActive(action, before: true);
 
     /// <summary>Whether an action ended this update, it was held and isn't any more.</summary>
-    public bool WasReleased(string action) => !bindings.IsActive(action, held) && bindings.IsActive(action, heldBefore);
+    public bool WasReleased(string action) => !IsActive(action, before: false) && IsActive(action, before: true);
+
+    /// <summary>
+    /// The keyboard behind a gamepad that is the keyboard (<see cref="GamepadInputManager.AddKeyboardGamepad"/>), whose
+    /// actions are bound to its keys as well as to the inputs its keys stand in for. Null for anything else.
+    /// </summary>
+    public Keyboard? Keyboard { get; internal set; }
+
+    // Whether an action is held, now or the update before, on the inputs and on the keys
+    private bool IsActive(string action, bool before) =>
+        bindings.IsActive(action, before ? heldBefore : held) || (Keyboard is { } keyboard && bindings.AreKeysActive(action, keyboard, before));
 
     /// <summary>
     /// A direction out of four actions, for moving with whatever they are bound to (a stick, the d-pad or both).

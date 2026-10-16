@@ -249,6 +249,28 @@ public partial class CodeEditor : UIComponent
     public float BackdropOpacity { get; set; } = 0.3f;
 
     /// <summary>
+    /// The shape of what is drawn in the <see cref="Backdrop"/> (<see cref="UIWrapShape.FromFile"/> of the same picture),
+    /// which wrapped code runs round instead of over, null for code that is written over the picture as ever. Only while
+    /// <see cref="WordWrap"/> is on, a line that doesn't wrap can't go round anything.
+    /// </summary>
+    public UIWrapShape? BackdropShape { get; set; }
+
+    /// <summary>
+    /// Shapes of the program's own that wrapped code runs round, placed in the text area from its bottom left corner
+    /// (the UI's y going up). They stay where they are as the code scrolls, the way the picture does, so the code
+    /// flows round them anew as it goes by. Only while <see cref="WordWrap"/> is on.
+    /// </summary>
+    public List<UIWrapArea> WrapAreas { get; } = [];
+
+    /// <summary>Where the <see cref="Backdrop"/> is drawn in the text area, its bottom right corner moved by the offset.</summary>
+    private UIRect BackdropBounds(UIRect area, Horizon.Graphics.Texture picture)
+    {
+        Vector2 drawn = new Vector2(picture.Width, picture.Height) * BackdropScale;
+        Vector2 corner = new(area.Max.X - BackdropOffset.X, area.Min.Y + BackdropOffset.Y);
+        return new UIRect(corner - new Vector2(drawn.X, 0.0f), corner + new Vector2(0.0f, drawn.Y));
+    }
+
+    /// <summary>
     /// Whether a thin line in the accent runs along its top while it has the keyboard, so which of several things taking
     /// keys has them can be seen (VS Code's focused editor group).
     /// </summary>
@@ -1527,10 +1549,8 @@ public partial class CodeEditor : UIComponent
         if (Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f)
         {
             list.BeginPart(PART_BACKDROP);
-            Vector2 drawn = new Vector2(picture.Width, picture.Height) * BackdropScale;
-            Vector2 corner = new(area.Max.X - BackdropOffset.X, area.Min.Y + BackdropOffset.Y);
             list.PushClip(area);
-            list.Image(picture, new UIRect(corner - new Vector2(drawn.X, 0.0f), corner + new Vector2(0.0f, drawn.Y)), new Vector4(1.0f, 1.0f, 1.0f, BackdropOpacity));
+            list.Image(picture, BackdropBounds(area, picture), new Vector4(1.0f, 1.0f, 1.0f, BackdropOpacity));
             list.PopClip();
         }
 
