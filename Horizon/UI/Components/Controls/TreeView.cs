@@ -94,6 +94,7 @@ public class TreeView : UIComponent
     private List<UITreeItem> items = [];
     private UITreeItem? selected, hovered, lastClicked;
     private float scroll, sinceClick = float.MaxValue;
+    private UIScrollEase ease;
     private bool revealSelected;
 
     // The icons the tree draws itself, looked up once
@@ -335,7 +336,7 @@ public class TreeView : UIComponent
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
-        scroll = Math.Clamp(scroll - delta * LineHeight(skin) * 3.0f, 0.0f, Travel(skin));
+        ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin));
         return true;
     }
 
@@ -371,6 +372,7 @@ public class TreeView : UIComponent
     protected override void Update(float dt)
     {
         sinceClick += dt;
+        scroll = ease.Step(scroll, dt);
 
         // The tooltip is the one of the row under the pointer, a string the item has, nothing made
         hovered = Module is { } module && IsHovered ? RowAt(module.ToLocal(module.Compositor.Pointer.Position)) : null;
@@ -398,11 +400,12 @@ public class TreeView : UIComponent
         if (IndexOf(reveal) is >= 0 and var shown)
         {
             float top = shown * line, bottom = top + line;
-            if (top < scroll) scroll = top;
-            else if (bottom > scroll + bounds.Height) scroll = bottom - bounds.Height;
+            if (top < scroll) { scroll = top; ease.Stop(); }
+            else if (bottom > scroll + bounds.Height) { scroll = bottom - bounds.Height; ease.Stop(); }
         }
         revealSelected = false;
         scroll = Math.Clamp(scroll, 0.0f, travel);
+        ease.Clamp(travel);
 
         bool scrolls = travel > 0.0f;
         float right = scrolls ? bounds.Max.X - BAR_WIDTH * 2.0f : bounds.Max.X;
@@ -429,7 +432,8 @@ public class TreeView : UIComponent
             float rowTop = bounds.Max.Y - i * line + scroll;
             UIRect row = new(new Vector2(bounds.Min.X, rowTop - line), new Vector2(right, rowTop));
 
-            list.BeginPart(i - first);
+            // By the row, not by where on screen it is, or every scroll had the letters of one row blended with another's
+            list.BeginPart(i);
 
             // The highlight is always there, see-through on a row that isn't lit. A row's quads are blended with the same
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong

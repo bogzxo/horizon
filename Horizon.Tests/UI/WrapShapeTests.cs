@@ -7,7 +7,7 @@ namespace Horizon.Tests;
 public class WrapShapeTests
 {
     // A 10 by 4 picture with something drawn in columns 6 to 8 of the top two rows and nothing below
-    private static UIWrapShape Corner(int grow)
+    private static UIWrapShape Corner()
     {
         var pixels = new byte[10 * 4 * 4];
         for (int y = 0; y < 2; y++)
@@ -16,16 +16,16 @@ public class WrapShapeTests
 
         // A pixel too faint to count
         pixels[(3 * 10 + 1) * 4 + 3] = 10;
-        return UIWrapShape.FromPixels(pixels, 10, 4, grow);
+        return UIWrapShape.FromPixels(pixels, 10, 4);
     }
 
     [Fact]
     public void The_shape_is_where_the_picture_has_something_and_not_where_it_is_see_through()
     {
-        var shape = Corner(grow: 0);
+        var shape = Corner();
         var placed = new UIRect(new Vector2(100, 0), new Vector2(200, 40));
 
-        // The top half of the box is the top two rows, columns 6 to 8 are 160 to 190
+        // The top half of the box is the top two rows, columns 6 to 8 are 160 to 190, to the pixel
         Assert.True(shape.Across(placed, 25, 35, out float from, out float to));
         Assert.Equal(160, from, 0.01f);
         Assert.Equal(190, to, 0.01f);
@@ -38,16 +38,25 @@ public class WrapShapeTests
     }
 
     [Fact]
-    public void Grown_it_reaches_the_rows_and_columns_next_to_it()
+    public void The_margin_is_round_all_of_it_level_with_the_shape_and_less_further_off()
     {
-        var shape = Corner(grow: 1);
-        var placed = new UIRect(Vector2.Zero, new Vector2(10, 4));
+        var shape = UIWrapShape.Box();
+        var placed = new UIRect(new Vector2(100, 100), new Vector2(200, 200));
+        const float MARGIN = 10.0f;
 
-        // Row 2 (from 1 to 2 up) is next to row 1, so it's in now, a column wider either way
-        Assert.True(shape.Across(placed, 1.2f, 1.8f, out float from, out float to));
-        Assert.Equal(5, from, 0.01f);
-        Assert.Equal(10, to, 0.01f);
-        Assert.False(shape.Across(placed, 0.2f, 0.8f, out _, out _));
+        // Level with it, the whole margin either side
+        Assert.True(shape.Across(placed, 140, 160, out float from, out float to, MARGIN));
+        Assert.Equal(90, from, 0.01f);
+        Assert.Equal(210, to, 0.01f);
+
+        // Six over the top of it, eight of the margin out to the side (a three, four, five triangle of it)
+        Assert.True(shape.Across(placed, 206, 216, out from, out to, MARGIN));
+        Assert.Equal(92, from, 0.01f);
+        Assert.Equal(208, to, 0.01f);
+
+        // Further off than the margin, out of reach, and without one nothing over the top counts
+        Assert.False(shape.Across(placed, 211, 220, out _, out _, MARGIN));
+        Assert.False(shape.Across(placed, 206, 216, out _, out _));
     }
 
     [Fact]

@@ -219,7 +219,7 @@ public class Label : UIComponent
 
         foreach (UIWrapArea area in shapesNow)
         {
-            if (!area.Shape.Across(area.Bounds, lineBottom, lineTop, out float shapeFrom, out float shapeTo) || shapeTo <= from || shapeFrom >= to)
+            if (!area.Shape.Across(area.Bounds, lineBottom, lineTop, out float shapeFrom, out float shapeTo, area.Margin) || shapeTo <= from || shapeFrom >= to)
                 continue;
 
             // Room before it, the line stops there. None worth having, the line starts after it

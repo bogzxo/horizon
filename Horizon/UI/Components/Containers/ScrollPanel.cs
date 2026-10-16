@@ -19,6 +19,7 @@ public class ScrollPanel : Panel
     private float offset;
     private float contentHeight;
     private bool draggingBar;
+    private UIScrollEase ease;
 
     // Where on the thumb it was taken hold of, from its top
     private float barGrab;
@@ -27,7 +28,12 @@ public class ScrollPanel : Panel
     public float Offset
     {
         get => offset;
-        set => offset = Math.Clamp(value, 0.0f, MaxOffset);
+        set
+        {
+            // Said by somebody, not eased to by the wheel
+            ease.Stop();
+            offset = Math.Clamp(value, 0.0f, MaxOffset);
+        }
     }
 
     /// <summary>How far one notch of the wheel moves the content.</summary>
@@ -62,6 +68,14 @@ public class ScrollPanel : Panel
             Offset -= target.Max.Y - content.Max.Y;
         else if (target.Min.Y < content.Min.Y)
             Offset += MathF.Min(content.Min.Y - target.Min.Y, content.Max.Y - target.Max.Y);
+    }
+
+    protected override void Update(float dt)
+    {
+        base.Update(dt);
+        ease.Clamp(MaxOffset);
+        if (ease.Goal is not null)
+            offset = Math.Clamp(ease.Step(offset, dt), 0.0f, MaxOffset);
     }
 
     protected override bool HitTestVisible => true;
@@ -135,7 +149,7 @@ public class ScrollPanel : Panel
         if (MaxOffset <= 0.0f)
             return false;
 
-        Offset -= delta * WheelStep;
+        ease.Wheel(offset, -delta * WheelStep, MaxOffset);
         return true;
     }
 

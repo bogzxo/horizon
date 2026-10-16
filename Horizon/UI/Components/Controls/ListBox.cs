@@ -195,7 +195,8 @@ public class ListBox : UIComponent
         int last = Math.Min(items.Length, top + Rows);
         for (int i = top; i < last; i++)
         {
-            list.BeginPart(i - top);
+            // By the item, not by where in the box it is, or every scroll had the letters of one item blended with another's
+            list.BeginPart(i);
             float rowTop = Bounds.Max.Y - (i - top) * rowHeight;
             UIRect row = new(new Vector2(Bounds.Min.X, rowTop - rowHeight), new Vector2(right, rowTop));
 

@@ -14,6 +14,11 @@ namespace Horizon.UI;
 /// Fighter2D's box tracer reads a frame, or a plain box (<see cref="Box"/>). A row with a hole in the middle still
 /// blocks all the way across, text doesn't go in between somebody's arm and their side.
 /// <para>
+/// The outline is the picture's to the pixel. How far the text keeps off it is a margin asked for with the shape
+/// (<see cref="Across"/>), in the UI's own units and round, a line passing over the top of her head kept off it as far
+/// as one going past her side, whatever size she is drawn at.
+/// </para>
+/// <para>
 /// The code editor wraps its rows round the shapes it is given when it wraps at all (<c>CodeEditor.WrapAreas</c>,
 /// <c>CodeEditor.BackdropShape</c>). Made once, read from any thread, never changed.
 /// </para>
@@ -39,17 +44,16 @@ public sealed class UIWrapShape
     public static UIWrapShape Box() => new([0.0f], [1.0f]);
 
     /// <summary>
-    /// The shape of what is drawn in a picture, RGBA from its top left. Grown by so many pixels every way, so the text
-    /// keeps off it a little and a stray pixel of hair doesn't cut a line short on its own row only.
+    /// The shape of what is drawn in a picture, RGBA from its top left, every row from the first pixel that is anything
+    /// to the last. The edge is where the artist put it, the text keeps off it by the margin it is asked with.
     /// </summary>
-    public static UIWrapShape FromPixels(ReadOnlySpan<byte> rgba, int width, int height, int grow = 2, byte solid = SOLID)
+    public static UIWrapShape FromPixels(ReadOnlySpan<byte> rgba, int width, int height, byte solid = SOLID)
     {
         if (width < 1 || height < 1 || rgba.Length < width * height * 4)
             return new UIWrapShape([], []);
 
-        // Row by row, the first and the last pixel that is anything
-        var first = new int[height];
-        var last = new int[height];
+        var left = new float[height];
+        var right = new float[height];
         for (int y = 0; y < height; y++)
         {
             int from = -1, to = -1;
@@ -61,32 +65,7 @@ public sealed class UIWrapShape
                 to = x;
             }
 
-            first[y] = from;
-            last[y] = to;
-        }
-
-        // Grown up and down by taking the widest of the rows round each, and along by the same
-        grow = Math.Max(grow, 0);
-        var left = new float[height];
-        var right = new float[height];
-        for (int y = 0; y < height; y++)
-        {
-            int from = int.MaxValue, to = -1;
-            for (int near = Math.Max(0, y - grow); near <= Math.Min(height - 1, y + grow); near++)
-            {
-                if (first[near] < 0) continue;
-                from = Math.Min(from, first[near]);
-                to = Math.Max(to, last[near]);
-            }
-
-            if (to < 0)
-            {
-                (left[y], right[y]) = (1.0f, 0.0f);
-                continue;
-            }
-
-            left[y] = Math.Max(0, from - grow) / (float)width;
-            right[y] = Math.Min(width, to + 1 + grow) / (float)width;
+            (left[y], right[y]) = from < 0 ? (1.0f, 0.0f) : (from / (float)width, (to + 1) / (float)width);
         }
 
         return new UIWrapShape(left, right);
@@ -96,14 +75,25 @@ public sealed class UIWrapShape
     /// The shape of what is drawn in a picture file (anything ImageSharp reads, a .png with its see-through). Null if it
     /// can't be read, which is logged. Off the render thread is fine, nothing of it goes near the GPU.
     /// </summary>
-    public static UIWrapShape? FromFile(string path, int grow = 2, byte solid = SOLID)
+    public static UIWrapShape? FromFile(string path, byte solid = SOLID)
     {
         try
         {
-            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(path);
-            var pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels);
-            return FromPixels(pixels, image.Width, image.Height, grow, solid);
+            // The last picture read is kept, it's read again as often as anybody asks for its shape (a setting changed)
+            string full = System.IO.Path.GetFullPath(path);
+            long written = System.IO.File.GetLastWriteTimeUtc(full).Ticks;
+            lock (lastSync)
+            {
+                if (last is not { } known || known.Path != full || known.Written != written)
+                {
+                    using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(full);
+                    var read = new byte[image.Width * image.Height * 4];
+                    image.CopyPixelDataTo(read);
+                    last = known = (full, written, read, image.Width, image.Height);
+                }
+
+                return FromPixels(known.Pixels, known.Width, known.Height, solid);
+            }
         }
         catch (Exception exception)
         {
@@ -112,27 +102,42 @@ public sealed class UIWrapShape
         }
     }
 
+    // The picture FromFile read last, by where it is and when it was written
+    private static readonly object lastSync = new();
+    private static (string Path, long Written, byte[] Pixels, int Width, int Height)? last;
+
     /// <summary>
-    /// How far across the shape goes between two heights, put in a box (the UI's y going up), the leftmost and the
-    /// rightmost of every row of it that is between them. False when none of it is.
+    /// How far across the shape goes between two heights, put in a box (the UI's y going up), kept off by a margin. Every
+    /// row of it the margin reaches is counted, as far out as the margin reaches at that height, which is all of it
+    /// level with the row and nothing a whole margin above or below, a circle round every edge pixel. False when
+    /// none of it is in reach.
     /// </summary>
-    public bool Across(UIRect placed, float bottom, float top, out float from, out float to)
+    /// <param name="margin">How far the text keeps off the shape, in the same units as the box, 0 for right up to it.</param>
+    public bool Across(UIRect placed, float bottom, float top, out float from, out float to, float margin = 0.0f)
     {
         from = float.MaxValue;
         to = float.MinValue;
-        if (Rows == 0 || placed.Width <= 0.0f || placed.Height <= 0.0f || top <= placed.Min.Y || bottom >= placed.Max.Y)
+        margin = MathF.Max(0.0f, margin);
+        if (Rows == 0 || placed.Width <= 0.0f || placed.Height <= 0.0f || top + margin <= placed.Min.Y || bottom - margin >= placed.Max.Y)
             return false;
 
-        // The rows the heights fall on, row 0 being the top of the box
+        // The rows the heights and the margin above and below them fall on, row 0 being the top of the box
         float rowHeight = placed.Height / Rows;
-        int firstRow = Math.Clamp((int)((placed.Max.Y - top) / rowHeight), 0, Rows - 1);
-        int lastRow = Math.Clamp((int)MathF.Ceiling((placed.Max.Y - bottom) / rowHeight) - 1, 0, Rows - 1);
+        int firstRow = Math.Clamp((int)((placed.Max.Y - top - margin) / rowHeight), 0, Rows - 1);
+        int lastRow = Math.Clamp((int)MathF.Ceiling((placed.Max.Y - bottom + margin) / rowHeight) - 1, 0, Rows - 1);
 
         for (int row = firstRow; row <= lastRow; row++)
         {
             if (left[row] > right[row]) continue;
-            from = MathF.Min(from, placed.Min.X + left[row] * placed.Width);
-            to = MathF.Max(to, placed.Min.X + right[row] * placed.Width);
+
+            // How far the row is above or below the heights asked about, nothing for one between them
+            float rowTop = placed.Max.Y - row * rowHeight, rowBottom = rowTop - rowHeight;
+            float apart = rowBottom >= top ? rowBottom - top : bottom >= rowTop ? bottom - rowTop : 0.0f;
+            if (apart > margin) continue;
+
+            float reach = margin > 0.0f ? MathF.Sqrt(margin * margin - apart * apart) : 0.0f;
+            from = MathF.Min(from, placed.Min.X + left[row] * placed.Width - reach);
+            to = MathF.Max(to, placed.Min.X + right[row] * placed.Width + reach);
         }
 
         return to >= from;
@@ -140,7 +145,7 @@ public sealed class UIWrapShape
 }
 
 /// <summary>
-/// A shape put somewhere, for the text of something to wrap around. Where is up to whoever takes it, the code editor
-/// goes by its text area, from its bottom left corner (the UI's y going up).
+/// A shape put somewhere, for the text of something to wrap around, and how far the text keeps off it. Where is up to
+/// whoever takes it, the code editor goes by its text area, from its bottom left corner (the UI's y going up).
 /// </summary>
-public readonly record struct UIWrapArea(UIWrapShape Shape, UIRect Bounds);
+public readonly record struct UIWrapArea(UIWrapShape Shape, UIRect Bounds, float Margin = 0.0f);
