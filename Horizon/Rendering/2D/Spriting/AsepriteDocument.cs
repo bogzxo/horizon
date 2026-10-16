@@ -205,10 +205,14 @@ public sealed class AsepriteDocument
         if ((uint)frame >= (uint)FrameCount)
             throw new ArgumentOutOfRangeException(nameof(frame), $"'{Path}' has {FrameCount} frames, there is no frame {frame}.");
 
-        lock (rendered)
-        {
-            return rendered[frame] ??= Render(frame);
-        }
+        byte[]? known;
+        lock (rendered) known = rendered[frame];
+        if (known is not null) return known;
+
+        // Put together outside of the lock, so the frames of a character can be read on every core at once (its boxes
+        // are traced off them). Two threads after the same frame both make it and the first one in is kept
+        byte[] made = Render(frame);
+        lock (rendered) return rendered[frame] ??= made;
     }
 
     private AsepriteDocument(string path, byte[] file)
@@ -425,6 +429,7 @@ public sealed class AsepriteDocument
             byte[] celPixels = Decode(source);
             int alpha = source.Opacity * layer.Opacity / 255;
             Composite(pixels, celPixels, source, alpha);
+            System.Buffers.ArrayPool<byte>.Shared.Return(celPixels);
         }
 
         return pixels;
@@ -457,7 +462,9 @@ public sealed class AsepriteDocument
     {
         int bytesPerPixel = depth / 8;
         int wanted = cel.Width * cel.Height * bytesPerPixel;
-        var raw = new byte[wanted];
+        // Out of the pool and back in once it's composited (see Render), a character is thousands of cels and the
+        // garbage of those stopped every thread of the game while one was read on a worker
+        byte[] raw = System.Buffers.ArrayPool<byte>.Shared.Rent(wanted);
 
         if (cel.Kind == CEL_COMPRESSED)
         {
@@ -470,16 +477,21 @@ public sealed class AsepriteDocument
                 if (got <= 0) break;
                 read += got;
             }
+
+            // A pooled array has whatever was in it last, a cel cut short is clear past where it ends
+            if (read < wanted) Array.Clear(raw, read, wanted - read);
         }
         else
         {
-            Array.Copy(file, cel.DataOffset, raw, 0, Math.Min(wanted, cel.DataLength));
+            int copied = Math.Min(wanted, cel.DataLength);
+            Array.Copy(file, cel.DataOffset, raw, 0, copied);
+            if (copied < wanted) Array.Clear(raw, copied, wanted - copied);
         }
 
         if (depth == 32) return raw;
 
         // Grayscale and indexed are turned into RGBA here, so the rest only ever sees one kind of pixel
-        var rgba = new byte[cel.Width * cel.Height * 4];
+        byte[] rgba = System.Buffers.ArrayPool<byte>.Shared.Rent(cel.Width * cel.Height * 4);
         for (int i = 0, o = 0; i < cel.Width * cel.Height; i++, o += 4)
         {
             if (depth == 16)
@@ -498,6 +510,7 @@ public sealed class AsepriteDocument
             }
         }
 
+        System.Buffers.ArrayPool<byte>.Shared.Return(raw);
         return rgba;
     }
 

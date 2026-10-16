@@ -20,6 +20,13 @@ namespace Horizon.UI.Components;
 /// <c>[size:1.5]</c> with <c>[/color]</c> and <c>[/size]</c> to go back, <c>[reset]</c>, and the rest that
 /// <see cref="UIRichText"/> lists. Told it is <see cref="Markdown"/> it reads that as well, headings, lists, quotes,
 /// code and links (<see cref="OnLink"/> says when one is clicked).
+/// <para>
+/// Wrapped text runs round other components (<see cref="WrapAround"/>, <c>wrap_around: portrait</c> in a layout, or a
+/// list of them) and round shapes put on screen (<see cref="WrapAreas"/>), a line cut short where one is in its way or
+/// started after one at its left, the way a magazine runs a column round a picture. An image of a file goes by the
+/// shape of what is drawn in it, anything else by its box. Lines that wrap round something go from the left of their
+/// room whatever the alignment says.
+/// </para>
 /// </summary>
 public class Label : UIComponent
 {
@@ -48,6 +55,25 @@ public class Label : UIComponent
 
     /// <summary>Called with where a link of the markdown goes when it is clicked, <c>[the words](where)</c>.</summary>
     public Action<string>? OnLink { get; set; }
+
+    /// <summary>
+    /// The components wrapped text runs round, where they were laid out last (so a tick behind, like the width it
+    /// wraps to), by their <see cref="UIComponent.WrapShape"/>. Only while <see cref="Wrap"/> is on.
+    /// </summary>
+    public List<UIComponent> WrapAround { get; } = [];
+
+    /// <summary>Shapes wrapped text runs round, in the module's space where they are on screen. Only while <see cref="Wrap"/> is on.</summary>
+    public List<UIWrapArea> WrapAreas { get; } = [];
+
+    // What the text is wrapping round this time, where the label was when it was worked out, and the room of a line
+    private readonly List<UIWrapArea> shapesNow = [];
+    private UIRect shapedBounds;
+    private float shapedWidth;
+    private UIRichText.Room? roomOf;
+    private static readonly UIWrapShape WholeBox = UIWrapShape.Box();
+
+    // How the text was lined up the last time it was drawn, the left of its room for text that wraps round something
+    private Origin paintedAlign = Origin.Center;
 
     // The text laid out with its styles, for text that has any (see UsesRichText), and which text that was decided for
     private readonly UIRichText rich = new();
@@ -99,7 +125,7 @@ public class Label : UIComponent
         if (OnLink is null || !drawnRich || !Bounds.Contains(point) || Module?.Compositor.Skin is null)
             return;
 
-        ReadOnlySpan<char> link = rich.LinkAt(point, Bounds, Align);
+        ReadOnlySpan<char> link = rich.LinkAt(point, Bounds, paintedAlign);
         if (!link.IsEmpty)
             OnLink(link.ToString());
     }
@@ -126,11 +152,14 @@ public class Label : UIComponent
         // What it says, a key in a layout being the text of it in the language that is loaded, see Localisation
         string text = Resolve(Text);
 
-        // Styled text lays itself out, and is as wide as it was told to wrap to when it was
-        drawnRich = UsesRichText(text);
+        // Styled text lays itself out, and is as wide as it was told to wrap to when it was. So does text that wraps
+        // round something, every line has a room of its own then
+        int shapes = width > 0.0f ? PlaceShapes(width) : 0;
+        drawnRich = shapes != 0 || UsesRichText(text);
+        paintedAlign = shapes != 0 ? Origin.TopLeft : Align;
         if (drawnRich)
         {
-            rich.Build(text, skin.Font, scale, width, Markdown);
+            rich.Build(text, skin.Font, scale, width, Markdown, shapes != 0 ? roomOf ??= RoomAt : null, shapes);
             wrapped = false;
             return new Vector2(width > 0.0f ? width : rich.Width, rich.Height);
         }
@@ -150,6 +179,60 @@ public class Label : UIComponent
         return new Vector2(width, skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale).Y);
     }
 
+    // Where everything the text wraps round is, as a number that is something else whenever any of it moves, 0 for nothing
+    private int PlaceShapes(float width)
+    {
+        shapesNow.Clear();
+        foreach (UIWrapArea area in WrapAreas)
+            shapesNow.Add(area);
+        foreach (UIComponent other in WrapAround)
+        {
+            if (other.Visible && !other.Bounds.IsEmpty)
+                shapesNow.Add(new UIWrapArea(other.WrapShape ?? WholeBox, other.Bounds));
+        }
+
+        if (shapesNow.Count == 0)
+            return 0;
+
+        shapedBounds = Bounds;
+        shapedWidth = width;
+
+        var hash = new HashCode();
+        hash.Add(Bounds.Min.X);
+        hash.Add(Bounds.Max.Y);
+        hash.Add(width);
+        foreach (UIWrapArea area in shapesNow)
+        {
+            hash.Add(area.Shape);
+            hash.Add(area.Bounds);
+        }
+
+        return hash.ToHashCode() | 1;
+    }
+
+    // The room of a line of the text, its top down from the top of the label, with what it wraps round taken out
+    private void RoomAt(float top, float height, out float left, out float right)
+    {
+        float lineTop = shapedBounds.Max.Y - top, lineBottom = lineTop - height;
+        float from = shapedBounds.Min.X, to = from + shapedWidth;
+        float gap = height * 0.4f;
+
+        foreach (UIWrapArea area in shapesNow)
+        {
+            if (!area.Shape.Across(area.Bounds, lineBottom, lineTop, out float shapeFrom, out float shapeTo) || shapeTo <= from || shapeFrom >= to)
+                continue;
+
+            // Room before it, the line stops there. None worth having, the line starts after it
+            if (shapeFrom - gap - from >= height * 5.0f)
+                to = MathF.Min(to, shapeFrom - gap);
+            else
+                from = MathF.Max(from, shapeTo + gap);
+        }
+
+        left = from - shapedBounds.Min.X;
+        right = to - shapedBounds.Min.X;
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -158,7 +241,7 @@ public class Label : UIComponent
 
         if (drawnRich)
         {
-            rich.Paint(list, Bounds, Align, color);
+            rich.Paint(list, Bounds, paintedAlign, color);
             return;
         }
 
@@ -177,6 +260,23 @@ public class Label : UIComponent
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("wrap", () => Wrap, value => Wrap = value);
         Expose("markdown", () => Markdown, value => Markdown = value);
+        Expose(
+            "wrap_around",
+            () => new Horizon.HIDL.Runtime.ListValue([.. WrapAround.Select(other => other.Object)]),
+            value =>
+            {
+                // One component or a list of them
+                WrapAround.Clear();
+                if (value is Horizon.HIDL.Runtime.ListValue { Items: { } items })
+                {
+                    foreach (var item in items)
+                        WrapAround.Add(FromScript(item) ?? throw new Exception("wrap_around has to be components."));
+                }
+                else if (value is not Horizon.HIDL.Runtime.NullValue)
+                {
+                    WrapAround.Add(FromScript(value) ?? throw new Exception("wrap_around has to be a component or a list of them."));
+                }
+            });
         Expose(
             "align",
             () => UIScript.FromEnum(Align),

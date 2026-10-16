@@ -51,7 +51,8 @@ public sealed class InputManager : GameComponent
         _script = script;
         _scriptTime = 0.0f;
 
-        if (script is not null) _scriptPad ??= Gamepads.AddVirtualGamepad("Script");
+        // In the first slot nothing is plugged into, so it is player one whatever a bindings file had saved there
+        if (script is { HasButtons: true }) _scriptPad ??= Gamepads.AddVirtualGamepad("Script", takeFreeSlot: true);
         else _scriptPad?.Update(default);
     }
 
@@ -81,16 +82,41 @@ public sealed class InputManager : GameComponent
     /// </summary>
     private void UpdateScript(float dt)
     {
-        if (_script is null || _scriptPad is null) return;
+        if (_script is null) return;
 
         _scriptTime += dt;
-        _scriptPad.Update(_script.At(_scriptTime));
+        _scriptPad?.Update(_script.At(_scriptTime));
+        PlayScriptKeys();
 
         if (_script.WantsQuit(_scriptTime))
         {
             _script = null;
             Parent.GetComponent<WindowManager>()?.Close();
         }
+    }
+
+    // The keys the script held on the last update, and the ones it holds on this one
+    private HashSet<Silk.NET.Input.Key> _scriptKeys = [], _scriptKeysNow = [];
+
+    /// <summary>
+    /// Helper method to play the keys of the script on the real keyboard, the ones that went down and the ones that came
+    /// up since the last update. They are heard the way the window's keys are, at the next update.
+    /// </summary>
+    private void PlayScriptKeys()
+    {
+        _script!.KeysAt(_scriptTime, _scriptKeysNow);
+
+        foreach (var key in _scriptKeysNow)
+        {
+            if (!_scriptKeys.Contains(key)) Keyboard.Hear(key, true);
+        }
+
+        foreach (var key in _scriptKeys)
+        {
+            if (!_scriptKeysNow.Contains(key)) Keyboard.Hear(key, false);
+        }
+
+        (_scriptKeys, _scriptKeysNow) = (_scriptKeysNow, _scriptKeys);
     }
 
     public override void Initialize()

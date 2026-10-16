@@ -75,6 +75,30 @@ public class Image : UIComponent
     public Image()
     { }
 
+    // The shape of the file, worked out the first time it's asked for, and which file that was
+    private UIWrapShape? fileShape;
+    private string? fileShapeOf;
+
+    /// <summary>
+    /// What text wrapping round the image goes round, the shape of what is drawn in its <see cref="File"/> (the
+    /// see-through round it isn't) unless it is given one. The box of it for anything else.
+    /// </summary>
+    public override UIWrapShape? WrapShape
+    {
+        get
+        {
+            if (base.WrapShape is { } given || File.Length == 0) return base.WrapShape;
+            if (fileShapeOf != File)
+            {
+                fileShapeOf = File;
+                fileShape = UIWrapShape.FromFile(File);
+            }
+
+            return fileShape;
+        }
+        set => base.WrapShape = value;
+    }
+
     public Image(string region)
     {
         Region = region;

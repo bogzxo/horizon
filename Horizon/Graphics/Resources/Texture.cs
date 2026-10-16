@@ -128,6 +128,53 @@ public sealed class Texture : GpuResource, IDisposable
         GC.SuppressFinalize(this);
     }
 
+    // Pictures read and decoded ahead on another thread (DecodeAhead), by where they are, with when the file was written
+    private readonly record struct Decoded(long Written, int Width, int Height, byte[] Pixels);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Decoded> decodedAhead = new();
+
+    // Pictures nobody made a texture of after all (a map flicked past) are let go of once there are this many
+    private const int MAX_DECODED_AHEAD = 48;
+
+    /// <summary>
+    /// Reads and decodes a picture file now, on whatever thread this is, so the texture that is made of it later (on the
+    /// render thread, through the asset manager as ever) only has to send the pixels up. The decode was most of what a
+    /// texture cost, tens of milliseconds for a big tile set, the frame a map came up. Nothing happens for a file that
+    /// isn't there or can't be read, it is read the usual way then and says so.
+    /// </summary>
+    public static void DecodeAhead(string path)
+    {
+        try
+        {
+            string full = System.IO.Path.GetFullPath(path);
+            if (!File.Exists(full)) return;
+
+            long written = File.GetLastWriteTimeUtc(full).Ticks;
+            if (decodedAhead.TryGetValue(full, out Decoded known) && known.Written == written) return;
+
+            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(full);
+            var pixels = new byte[image.Width * image.Height * 4];
+            image.CopyPixelDataTo(pixels);
+
+            if (decodedAhead.Count >= MAX_DECODED_AHEAD) decodedAhead.Clear();
+            decodedAhead[full] = new Decoded(written, image.Width, image.Height, pixels);
+        }
+        catch (Exception)
+        {
+            // Read again when the texture is made, which logs why it couldn't be
+        }
+    }
+
+    // What DecodeAhead made of a file, taken, if it is of the file as it is now
+    private static bool TakeDecoded(string path, out Decoded decoded)
+    {
+        string full = System.IO.Path.GetFullPath(path);
+        if (decodedAhead.TryRemove(full, out decoded) && decoded.Written == File.GetLastWriteTimeUtc(full).Ticks)
+            return true;
+
+        decoded = default;
+        return false;
+    }
+
     /// <summary>Makes a texture the way a description says, reading the file if there is one. What the asset manager calls.</summary>
     internal static bool TryCreate(in TextureDescription description, out AssetCreationResult<Texture> result)
     {
@@ -140,6 +187,13 @@ public sealed class Texture : GpuResource, IDisposable
             {
                 result = new AssetCreationResult<Texture> { Asset = Invalid, Message = $"Failed to find image '{path}'!", Status = AssetCreationStatus.Failed };
                 return false;
+            }
+
+            if (TakeDecoded(path, out Decoded ahead))
+            {
+                var ready = new Texture(device, (uint)ahead.Width, (uint)ahead.Height, description.Definition, ahead.Pixels) { Name = path };
+                result = new AssetCreationResult<Texture> { Asset = ready, Status = AssetCreationStatus.Success, Message = string.Empty };
+                return true;
             }
 
             try

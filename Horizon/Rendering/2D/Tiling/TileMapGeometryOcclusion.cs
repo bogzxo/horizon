@@ -16,11 +16,22 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
     private Texture texture = Texture.Invalid;
     private long builtFor = -1;
 
+    // The picture worked out on the CPU, before it is sent up, and what it was worked out for
+    private readonly record struct Picture(int Width, int Height, byte[] Pixels);
+    private Picture? prepared;
+    private long preparedFor = -1;
+
+    // Pictures worked out for a file before, by the file, when it was written and the signature, so another map of
+    // the same file (the fight after the preview of it) sends up what is there instead of working it out again
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string File, long Written, long Signature), Picture> shared = new();
+    private const int MAX_SHARED = 8;
+
     /// <summary>The slot of the picture in the bindless table, once there is one.</summary>
     public uint? Slot => texture.IsValid ? texture.BindlessIndex : null;
 
     /// <summary>
-    /// Makes the picture if what it was made for has changed since. Has to run on the render thread.
+    /// Makes the picture if what it was made for has changed since, worked out by <see cref="Prepare"/> if that hasn't
+    /// been done already. Has to run on the render thread.
     /// </summary>
     /// <param name="signature">Anything that is different whenever the picture would be.</param>
     public void Ensure(TileMap map, float reach, float strength, long signature)
@@ -28,15 +39,60 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         if (texture.IsValid && builtFor == signature) return;
         builtFor = signature;
 
+        // Worked out ahead (Prepare), or now, which is the hitch Prepare is there to save
+        if (preparedFor != signature || prepared is null) Prepare(map, reach, strength, signature);
+        if (prepared is not { } picture) return;
+
+        if (texture.IsValid) texture.Dispose();
+        texture = Texture.FromPixels((uint)picture.Width, (uint)picture.Height, picture.Pixels, new TextureDefinition(PixelFormat.R8, Smooth: true));
+        texture.Name = "tile map geometry occlusion";
+    }
+
+    /// <summary>
+    /// Works the picture out on the CPU and keeps it for <see cref="Ensure"/> to send up. Any thread, before the map
+    /// is drawn.
+    /// </summary>
+    public void Prepare(TileMap map, float reach, float strength, long signature)
+    {
+        if (preparedFor == signature && prepared is not null) return;
+        preparedFor = signature;
+
+        long written;
+        try
+        {
+            written = System.IO.File.GetLastWriteTimeUtc(map.Path).Ticks;
+        }
+        catch (System.IO.IOException)
+        {
+            written = 0;
+        }
+
+        var key = (System.IO.Path.GetFullPath(map.Path), written, signature);
+        if (shared.TryGetValue(key, out var known))
+        {
+            prepared = known;
+            return;
+        }
+
+        prepared = Work(map, reach, strength);
+        if (prepared is { } made)
+        {
+            if (shared.Count >= MAX_SHARED) shared.Clear();
+            shared[key] = made;
+        }
+    }
+
+    private static Picture? Work(TileMap map, float reach, float strength)
+    {
         // A cell an art pixel where that fits, the edge of a pot is where the artist put it then
         int cells = map.ShadowCellsPerTile;
         int width = map.Width * cells, height = map.Height * cells;
-        if (width <= 0 || height <= 0) return;
+        if (width <= 0 || height <= 0) return null;
 
         var solid = new bool[width * height];
         // By the shape of every tile, the air in the corners of a pot's tile is air. Row 0 of the picture is the
         // top of the map, the world has its Y going up
-        foreach (var (x, y) in map.ShadowCasterTexels(cells))
+        foreach (var (x, y) in map.CasterTexels(cells))
         {
             if (x >= 0 && y >= 0 && x < width && y < height)
                 solid[(height - 1 - y) * width + x] = true;
@@ -66,9 +122,7 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
             pixels[i] = (byte)MathF.Round(Math.Clamp(open, 0.0f, 1.0f) * 255.0f);
         }
 
-        if (texture.IsValid) texture.Dispose();
-        texture = Texture.FromPixels((uint)width, (uint)height, pixels, new TextureDefinition(PixelFormat.R8, Smooth: true));
-        texture.Name = "tile map geometry occlusion";
+        return new Picture(width, height, pixels);
     }
 
     /// <summary>Helper method to replace a line of values (a row or a column) by the mean of each one's neighbours, what is past the ends being open.</summary>
@@ -92,5 +146,7 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         if (texture.IsValid) texture.Dispose();
         texture = Texture.Invalid;
         builtFor = -1;
+        prepared = null;
+        preparedFor = -1;
     }
 }

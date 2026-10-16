@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using Horizon.Core;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
@@ -271,10 +271,26 @@ public class GamepadInputManager : Entity
     /// the game hands to <see cref="Gamepad.Update(in GamepadSnapshot)"/>. For replays, for letting an AI play
     /// through the same code a player does, and for tests.
     /// </summary>
-    public Gamepad AddVirtualGamepad(string name = "Virtual Gamepad")
+    /// <param name="takeFreeSlot">
+    /// Whether to take the lowest slot nothing is plugged into (one a bindings file loaded for a gamepad that isn't
+    /// there right now), with that slot's bindings, rather than a new slot at the end. An input script wants that, it
+    /// is meant to be player one, and with a saved file it used to land in slot two behind a controller that wasn't
+    /// even plugged in. A device of that name plugged in later takes a new slot.
+    /// </param>
+    public Gamepad AddVirtualGamepad(string name = "Virtual Gamepad", bool takeFreeSlot = false)
     {
-        var gamepad = new Gamepad(_gamepads.Count, Sanitize(name), DefaultBindings.Clone(), isVirtual: true);
-        _gamepads.Add(gamepad);
+        Gamepad gamepad;
+        if (takeFreeSlot && _gamepads.Find(known => !known.IsConnected) is { } waiting)
+        {
+            gamepad = new Gamepad(waiting.Slot, Sanitize(name), waiting.Bindings.Clone(), isVirtual: true);
+            _gamepads[waiting.Slot] = gamepad;
+        }
+        else
+        {
+            gamepad = new Gamepad(_gamepads.Count, Sanitize(name), DefaultBindings.Clone(), isVirtual: true);
+            _gamepads.Add(gamepad);
+        }
+
         OnGamepadConnected?.Invoke(gamepad);
         return gamepad;
     }
@@ -284,15 +300,22 @@ public class GamepadInputManager : Entity
     /// gamepad of that name in, with the bindings it was saved with, or a new one. Call it after the bindings are
     /// loaded for that reason.
     /// </summary>
-    /// <param name="keys">Which key is which input, <see cref="KeyboardGamepad.DefaultKeys"/> if null.</param>
-    public Gamepad AddKeyboardGamepad(Keyboard keyboard, IReadOnlyList<(Silk.NET.Input.Key Key, GamepadInput Input)>? keys = null, string name = "Keyboard")
+    /// <param name="keys">Which key is which input, <see cref="KeyboardGamepad.DefaultKeys"/> if null. That is what a menu
+    /// reads (its yes, its no, its directions), the same keys as the keyboard icons of the skins so a hint shows what is pressed.</param>
+    /// <param name="bindings">What the actions are on for the keyboard, keys straight (<see cref="GamepadBindings.BindKeys"/>),
+    /// for a keyboard nobody has bound yet. The keyboard of a file saved before there were keys gets these too. Null for
+    /// <see cref="DefaultBindings"/>, the actions then only go by the inputs the keys stand in for.</param>
+    public Gamepad AddKeyboardGamepad(Keyboard keyboard, IReadOnlyList<(Silk.NET.Input.Key Key, GamepadInput Input)>? keys = null, string name = "Keyboard", GamepadBindings? bindings = null)
     {
         name = Sanitize(name);
 
-        // A slot that is waiting for a device of this name is the keyboard of the last run
+        // A slot that is waiting for a device of this name is the keyboard of the last run. One saved with no keys in it
+        // is from before a keyboard had keys of its own, which played a fight through the buttons its keys stood for
         int waiting = _gamepads.FindIndex(known => !known.IsConnected && known.Name == name);
-        var bindings = waiting >= 0 ? _gamepads[waiting].Bindings.Clone() : DefaultBindings.Clone();
-        var gamepad = new Gamepad(waiting >= 0 ? waiting : _gamepads.Count, name, bindings, isVirtual: true) { Kind = GamepadKind.Keyboard };
+        GamepadBindings fresh = bindings ?? DefaultBindings;
+        var saved = waiting >= 0 ? _gamepads[waiting].Bindings : null;
+        var chosen = saved is not null && (bindings is null || saved.HasKeys) ? saved.Clone() : fresh.Clone();
+        var gamepad = new Gamepad(waiting >= 0 ? waiting : _gamepads.Count, name, chosen, isVirtual: true) { Kind = GamepadKind.Keyboard, Keyboard = keyboard };
 
         if (waiting >= 0) _gamepads[waiting] = gamepad;
         else _gamepads.Add(gamepad);

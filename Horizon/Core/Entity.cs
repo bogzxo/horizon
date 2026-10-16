@@ -126,20 +126,26 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
 
         // Set up by now, all of it, unless whoever draws this made it and never said so
+        long setUp = Diagnostics.SlowRender.Start();
         InitializeAll();
+        Diagnostics.SlowRender.Stop(setUp, "setting up what was added to a parent");
 
         bool waiting = Volatile.Read(ref _waiting) > 0;
 
         foreach (Entity child in _childrenCache)
         {
             if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            long started = Diagnostics.SlowRender.Start();
             child.Render(dt);
+            Diagnostics.SlowRender.Stop(started, child);
         }
 
         foreach (IGameComponent component in _componentsCache)
         {
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+            long started = Diagnostics.SlowRender.Start();
             component.Render(dt);
+            Diagnostics.SlowRender.Stop(started, component);
         }
     }
 
@@ -155,14 +161,19 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         {
             // Gone since (it is freed on this thread, before a frame is drawn), or not there to be drawn when it was captured
             if (child._disposed || !child.WasCaptured(frame)) continue;
+            long started = Diagnostics.SlowRender.Start();
             child.Render(dt);
+            Diagnostics.SlowRender.Stop(started, child);
         }
 
         IGameComponent[] components = node.Components;
         for (int i = 0; i < components.Length; i++)
         {
             bool on = i < 64 ? (node.ComponentsOn & (1UL << i)) != 0 : components[i].Enabled;
-            if (on) components[i].Render(dt);
+            if (!on) continue;
+            long started = Diagnostics.SlowRender.Start();
+            components[i].Render(dt);
+            Diagnostics.SlowRender.Stop(started, components[i]);
         }
     }
 
@@ -244,7 +255,9 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
             while (_uninitializedQueue.TryDequeue(out IInstantiable? result))
             {
+                long setUp = Diagnostics.SlowRender.Start();
                 result.Initialize();
+                Diagnostics.SlowRender.Stop(setUp, result, "set up");
 
                 switch (result)
                 {

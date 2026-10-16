@@ -90,6 +90,12 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
     public AssetType? CreateOrGet(string name, in AssetDescriptionType description) =>
         TryCreateOrGet(name, description, out var result) ? result.Asset : null;
 
+    /// <summary>Whether there is an asset of that name already, for whoever would get one ready ahead of asking. Any thread.</summary>
+    public bool Has(string name)
+    {
+        lock (sync) return NamedAssets.ContainsKey(name);
+    }
+
     public bool TryCreateOrGet(in string name, in AssetDescriptionType description, out AssetCreationResult<AssetType> result)
     {
         lock (sync)
@@ -166,6 +172,7 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
         lock (sync)
         {
             CheckThread();
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             AssetFactoryType.TryCreate(description, out result);
 
             if (result.Status != AssetCreationStatus.Success)
@@ -174,9 +181,10 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
                 return false;
             }
 
+            // With how long it took, which is how a hitch gets found. Making a shader or a texture is done with the game standing still
             MessageCallback?.Invoke(
                 LogLevel.Info,
-                $"[{this.name}] Successfully created {assetName} '{name}'!"
+                $"[{this.name}] Successfully created {assetName} '{name}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms!"
             );
 
             OwnedAssets.Add(result.Asset);

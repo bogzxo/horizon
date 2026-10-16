@@ -109,6 +109,15 @@ public sealed class TextureAtlas : IDisposable
     // next time round rather than from under them
     private Texture _retired = Texture.Invalid;
 
+    // What has been packed into the pixels (Pack) and not yet sent up, the regions it came to and whether the atlas
+    // grew for it. Everything that packs or sends up holds the lock, the pixels and the skyline are one thing
+    private readonly object _packing = new();
+    private Dictionary<string, AtlasRegion>? _packed;
+    private bool _grew;
+
+    // The worker packing what was asked for, for an atlas that PacksOnWorker
+    private Task? _worker;
+
     /// <summary>
     /// The texture everything is stitched into. It is replaced by a bigger one when the atlas runs out of room,
     /// so ask for it every time rather than keeping it.
@@ -122,6 +131,14 @@ public sealed class TextureAtlas : IDisposable
     /// back where it was. Not for art that's drawn by its edges (nine slices), those want the whole frame.
     /// </summary>
     public bool Trim { get; init; }
+
+    /// <summary>
+    /// Whether what is asked for is packed on a worker instead of on the render thread as it's drawn, and sent up
+    /// the next time round once it's done. Asking for a few hundred frames at once (a fighter's portrait, all of a
+    /// character) is then no hitch, the price being that they turn up a frame or few late. Whoever has to have them
+    /// on the first frame calls <see cref="Pack"/> as well.
+    /// </summary>
+    public bool PacksOnWorker { get; init; }
 
     /// <summary>How much of the atlas holds something, 0 to 1, padding included as in use.</summary>
     public float Occupancy => _width * (long)_height == 0 ? 0.0f : (float)_used / (_width * (long)_height);
@@ -214,6 +231,7 @@ public sealed class TextureAtlas : IDisposable
 
     /// <summary>
     /// Puts everything that was asked for since the last time into the atlas. Has to be called on the render thread.
+    /// Whatever was packed ahead (<see cref="Pack"/>) only has to be sent up.
     /// </summary>
     /// <returns>Whether anything was added.</returns>
     public bool Update()
@@ -224,7 +242,54 @@ public sealed class TextureAtlas : IDisposable
             _retired = Texture.Invalid;
         }
 
-        if (_pending.IsEmpty && Texture.Handle != 0) return false;
+        if (_pending.IsEmpty && _packed is null && Texture.Handle != 0) return false;
+
+        // Handed to a worker, what it comes to goes up once it's done
+        if (PacksOnWorker && !_pending.IsEmpty && _worker is not { IsCompleted: false }) _worker = Task.Run(Pack);
+        if (PacksOnWorker && _packed is null && Texture.Handle != 0) return false;
+
+        // Being packed on a worker right now (see Pack), what that comes to goes up next time. Waiting for it would
+        // be the hitch packing on a worker is there to save, whoever can't do without it calls Pack first
+        if (!Monitor.TryEnter(_packing)) return false;
+
+        long started = Horizon.Core.Diagnostics.SlowRender.Start();
+        try
+        {
+            bool added = (!PacksOnWorker && PackPending()) | (_packed is not null);
+
+            Upload(_grew);
+            _grew = false;
+
+            // Only now, the regions are of no use to anyone before the texture has them
+            if (_packed is { } regions) _regions = regions;
+            _packed = null;
+
+            Horizon.Core.Diagnostics.SlowRender.Stop(started, "a texture atlas, packing and sending up");
+            return added;
+        }
+        finally
+        {
+            Monitor.Exit(_packing);
+        }
+    }
+
+    /// <summary>
+    /// Packs everything that was asked for so far into the pixels of the atlas without sending any of it up, which
+    /// is the slow part of <see cref="Update"/> (every frame read, cut down to what's in it and copied). Any thread,
+    /// for whoever asked for a few hundred frames and doesn't want the first frame that draws them to wait for it
+    /// (a fighter got ready on a worker). They are drawn from the next Update on, as ever. Waits for a Pack on
+    /// another thread to finish, so calling it before the first frame that has to have the lot makes sure of it.
+    /// </summary>
+    public void Pack()
+    {
+        if (_pending.IsEmpty) return;
+        lock (_packing) PackPending();
+    }
+
+    // With the lock held
+    private bool PackPending()
+    {
+        if (_pending.IsEmpty) return false;
 
         var batch = new List<Pending>();
         while (_pending.TryDequeue(out var pending))
@@ -235,8 +300,8 @@ public sealed class TextureAtlas : IDisposable
         // Tallest first, things of a similar height end up on the same shelf and waste the least
         batch.Sort((a, b) => b.Height.CompareTo(a.Height));
 
-        var regions = new Dictionary<string, AtlasRegion>(_regions);
-        bool grown = false;
+        var regions = _packed ?? new Dictionary<string, AtlasRegion>(_regions);
+        bool grown = _grew;
 
         foreach (var pending in batch)
         {
@@ -266,10 +331,8 @@ public sealed class TextureAtlas : IDisposable
             _dirtyBottom = Math.Max(_dirtyBottom, y + height);
         }
 
-        Upload(grown);
-
-        // Only now, the regions are of no use to anyone before the texture has them
-        _regions = regions;
+        _packed = regions;
+        _grew = grown;
         return batch.Count > 0;
     }
 
