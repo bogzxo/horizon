@@ -49,6 +49,13 @@ public class HotPathTests
         { typeof(GraphicsDevice), "Flush" },
         { typeof(GraphicsDevice), "PrepareDraw" },
 
+        // The sound, mixed on its own thread all the time, and started and stopped all through a fight
+        { typeof(Horizon.Audio.AudioMixer), "Mix" },
+        { typeof(Horizon.Audio.AudioMixer), "MixSound" },
+        { typeof(Horizon.Audio.AudioMixer), "MixStream" },
+        { typeof(Horizon.Audio.AudioMixer), "Play" },
+        { typeof(Horizon.Audio.AudioMixer), "Stop" },
+
         // Buffers, which are rewritten, thrown away and made anew all frame long
         { typeof(GraphicsDevice), "AllocateBuffer" },
         { typeof(GraphicsDevice), "RetireBuffer" },
