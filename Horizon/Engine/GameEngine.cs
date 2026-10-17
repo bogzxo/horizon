@@ -76,6 +76,12 @@ public class GameEngine : Entity
     public InputManager Input { get; }
 
     /// <summary>
+    /// The speakers and what's playing on them, <c>Audio.Mixer.Play(sound)</c>. There whether or not there's a device,
+    /// see <see cref="Horizon.Audio.AudioDevice"/>.
+    /// </summary>
+    public Horizon.Audio.AudioDevice Audio { get; }
+
+    /// <summary>
     /// The scene that is on screen, null before the first one has been set.
     /// </summary>
     public Scene? Scene => SceneManager.CurrentInstance;
@@ -150,6 +156,7 @@ public class GameEngine : Entity
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
         Input = AddComponent<InputManager>();
+        Audio = new Horizon.Audio.AudioDevice(open: Configuration.WindowConfiguration.Mode != RunMode.Application);
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
@@ -362,6 +369,7 @@ public class GameEngine : Entity
 
     protected override void DisposeOther()
     {
+        Audio.Dispose();
         Logger.Dispose();
     }
 
