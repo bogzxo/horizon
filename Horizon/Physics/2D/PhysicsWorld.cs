@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Horizon.Core;
@@ -293,7 +293,7 @@ public class PhysicsWorld : GameComponent
                         nextPositionX.X = body.StopsFlush
                             ? currentPosition.X + (nextPositionX.X - currentPosition.X) * Reach(fixture, otherFixture, currentPosition, nextPositionX, staticGrid.GetBodyPosition(candidate))
                             : currentPosition.X;
-                        body.Velocity = new Vector2(-body.Velocity.X * body.Restitution, body.Velocity.Y);
+                        body.Velocity = new Vector2(Bounce(body.Velocity.X, body.Restitution, dt), body.Velocity.Y);
 
                         fixture.IsTouching = true;
                         otherFixture.IsTouching = true;
@@ -349,7 +349,7 @@ public class PhysicsWorld : GameComponent
                         nextPositionY.Y = body.StopsFlush
                             ? currentPosition.Y + (nextPositionY.Y - currentPosition.Y) * Reach(fixture, otherFixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY, staticGrid.GetBodyPosition(candidate))
                             : currentPosition.Y;
-                        body.Velocity = new Vector2(body.Velocity.X, -body.Velocity.Y * body.Restitution);
+                        body.Velocity = new Vector2(body.Velocity.X, Bounce(body.Velocity.Y, body.Restitution, dt));
 
                         fixture.IsTouching = true;
                         otherFixture.IsTouching = true;
@@ -434,6 +434,16 @@ public class PhysicsWorld : GameComponent
     /// is to a sixty fourth of the step and works for any two shapes that can be tested against each other. A body
     /// that is inside of the thing before it moves gets none of the move, the same as it always did.
     /// </summary>
+    // What a body meets the map at, after. It bounces back by its restitution, except that a bounce too slow to get
+    // anywhere is stopped dead. Left to itself a resting body bounced for ever, gravity gave it a step's worth of
+    // speed and the bounce handed a share of that back, and it settled on a hum of a few units a second that never
+    // went away (and kept it a hair off the floor). Under what two steps of gravity come to it's at rest
+    private float Bounce(float speed, float restitution, float dt)
+    {
+        float bounced = -speed * restitution;
+        return MathF.Abs(bounced) <= Gravity.Length() * dt * 2.0f ? 0.0f : bounced;
+    }
+
     private static float Reach(IPhysicsFixture fixture, IPhysicsFixture other, Vector2 from, Vector2 to, Vector2 otherPosition)
     {
         float free = 0.0f, blocked = 1.0f;

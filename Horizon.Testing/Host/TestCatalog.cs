@@ -158,6 +158,11 @@ internal static class TestCatalog
             ["TileMap"],
             "Checks/TileMapChecks.cs", () => new TileMapChecks()),
 
+        new("check-physics", TestLevel.Checks, "Physics",
+            "Bodies fall, land, bounce and are thrown, a character steps a slab and is stopped by a wall, the fluid finds its level, in a scene the loops tick.",
+            ["PhysicsWorld", "CharacterController2D", "PhysicsFluidParticleSimulator2D"],
+            "Checks/PhysicsCheck.cs", () => new PhysicsCheck()),
+
         new("check-ui", TestLevel.Checks, "UI, the basics",
             "A scripted pointer clicks through buttons, sliders and toggles made in C# and by a script.",
             ["UICompositor", "HIDL"],

@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Rendering.Particles.Simulation;
 
@@ -195,6 +195,14 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         // Where it was is moved along with it, so that none of this is taken for speed. It is what keeps a deep pool
         // from boiling, a crowded spot from firing particles off and what is poured from spraying all over.
         Settle(live, diameter, range, spread, grid);
+
+        // Who is near the map is looked at again, the settling moves a particle at the edge of a pile by up to its
+        // own size, far enough to put one that wasn't near a wall inside of it, and one that isn't marked never gets
+        // pushed out. About one in seventy of a pile poured against a wall went through it that way
+        for (int i = 0; i < live; i++)
+        {
+            if (!_nearMap[i]) _nearMap[i] = IsNearMap(particles[i].Position, mapReach, grid);
+        }
 
         // 4. Then push them out of each other, the map and the bodies. Getting out of one thing can mean ending up in
         // the next, so it is done over and over, every pass gets the whole lot a bit closer to where nothing overlaps.
