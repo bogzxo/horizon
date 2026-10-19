@@ -1,7 +1,6 @@
 using Horizon.Logging;
+using Horizon.Graphics;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 namespace Horizon.Rendering.Spriting;
 
@@ -44,10 +43,9 @@ internal static class SpriteImages
 
         try
         {
-            using var image = Image.Load<Rgba32>(path);
+            var image = ImageFile.Load(path);
 
-            byte[] pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels);
+            var pixels = image.Pixels;
             var read = new SpritePixels(pixels, image.Width, image.Height);
 
             lock (kept)
@@ -69,6 +67,17 @@ internal static class SpriteImages
     public static void Forget()
     {
         lock (kept) kept.Clear();
+    }
+
+    /// <summary>
+    /// Lets go of every picture that was decoded and kept, the whole images and the frames of the Aseprite files,
+    /// for once what they were read for is in an atlas. The next one asked for is read again, which is cheap next
+    /// to keeping every picture a skin was cut from for the run.
+    /// </summary>
+    public static void Trim()
+    {
+        Forget();
+        AsepriteDocument.DropAllRendered();
     }
 
     /// <summary>

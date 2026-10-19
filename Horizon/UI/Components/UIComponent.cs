@@ -135,7 +135,8 @@ public abstract partial class UIComponent
     /// <summary>
     /// The layer the component is on, with everything inside it that doesn't name one of its own. Empty for none.
     /// A layer is a name several parts of a layout share so they can be shown and hidden together, see
-    /// <see cref="UIModule.SetLayerVisible"/>. The screens of a menu that are laid over each other in one file,
+    /// <see cref="UIModule.SetLayerVisible"/>, and a layout says which start out hidden with compositor.hidden_layers.
+    /// The screens of a menu that are laid over each other in one file,
     /// or an overlay that is only up some of the time. A component on a hidden layer is neither drawn nor hit
     /// by the pointer, but keeps its place in the layout and whatever <see cref="Visible"/> says.
     /// </summary>
@@ -182,6 +183,12 @@ public abstract partial class UIComponent
 
     /// <summary>Where the component ended up when it was last laid out, in its module's space.</summary>
     public UIRect Bounds { get; private set; }
+
+    /// <summary>
+    /// What text wrapping round the component goes round (<see cref="Label.WrapAround"/>), null for the box of it. An
+    /// <see cref="Image"/> of a file goes by the shape of what is drawn in the file.
+    /// </summary>
+    public virtual UIWrapShape? WrapShape { get; set; }
 
     /// <summary>The size the component asked for when it was last laid out.</summary>
     public Vector2 DesiredSize { get; private set; }
@@ -311,13 +318,17 @@ public abstract partial class UIComponent
             Size.X > 0.0f ? Size.X : automatic.X,
             Size.Y > 0.0f ? Size.Y : automatic.Y);
 
+        // Sliding in or out it asks for as much of that as is out, see UIComponent.Sliding
+        if (slideWanted is not null)
+            DesiredSize = SlidSize(DesiredSize);
+
         return DesiredSize;
     }
 
     internal void ArrangeTree(UIRect bounds)
     {
         Bounds = bounds;
-        Arrange(bounds.Shrink(Padding));
+        Arrange((slideWanted is null ? bounds : SlidContent(bounds)).Shrink(Padding));
     }
 
     /// <summary>
@@ -372,6 +383,24 @@ public abstract partial class UIComponent
     /// </summary>
     public int ZOffset { get; set; }
 
+    /// <summary>
+    /// What the component sits on, null for nothing, which is what everything sits on unless it says so. Glass (see
+    /// <see cref="UIGlass"/>) is a blur of whatever is drawn behind the component, laid inside its bounds before it
+    /// paints, and a <see cref="Panel"/> on it paints its background see through. In a layout that's <c>glass: 18</c>,
+    /// how far it smears.
+    /// </summary>
+    public UIGlass? Glass { get; set; }
+
+    /// <summary>
+    /// How far the shadow under the component reaches, 0 for none, which is what everything has unless it says so. A
+    /// component that is lifted off what's behind it (a card, a dialog) wants one, see <see cref="UIDrawList.Lifted"/>.
+    /// It's painted before the component and its glass, as round as the glass. In a layout that's <c>lift: 24</c>.
+    /// </summary>
+    public float Lift { get; set; }
+
+    /// <summary>How round the corners of the glass under the component are, as round as the box it paints over it.</summary>
+    protected virtual float GlassRadius(UISkin skin) => skin.CornerRadius;
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
@@ -381,14 +410,47 @@ public abstract partial class UIComponent
         if (ZOffset > 0 && Module is { } owner && owner.Raise(this))
             return;
 
-        bool animated = VisualOffset != Vector2.Zero || VisualScale != Vector2.One || Opacity < 1.0f;
+        // What the tweens did to it, with the hover on top, see UIComponent.Hover
+        Vector2 offset = VisualOffset, scale = VisualScale;
+        if (hoverness > 0.0f)
+            ApplyHover(ref offset, ref scale);
+
+        bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
         if (animated)
-            list.PushVisual(VisualOffset, VisualScale, Bounds.Center, Opacity);
+            list.PushVisual(offset, scale, Bounds.Center, Opacity);
 
         // Every quad is ours by name, see UIDrawList.PushOwner
         list.PushOwner(this);
+
+        // What's in it is laid out whole while it slides, the part that's gone is cut off at its edge
+        bool sliding = slideWanted is not null;
+        if (sliding)
+            list.PushClip(Bounds);
+
+        if (Lift > 0.0f)
+            list.Lifted(Bounds, GlassRadius(list.Skin), Lift);
+
+        if (Glass is { } glass)
+            list.Glass(Bounds, GlassRadius(list.Skin), glass.Blur, glass.Bend);
+
         Paint(list);
+
+        // The lit edge of the glass, over the background and under whatever is in it
+        if (Glass is { Rim: > 0.0f } lined)
+            list.SilverLining(Bounds, GlassRadius(list.Skin), lined.Rim);
+
+        if (hoverness > 0.0f && Hover == UIHover.Glow)
+            PaintHoverGlow(list);
+
         PaintChildren(list);
+
+        if (sliding)
+            list.PopClip();
+
+        // The tabs of the edges that can be dragged, over whatever is in it
+        if (Resizable != UIResize.None)
+            PaintGrips(list);
+
         list.PopOwner();
 
         if (animated)
@@ -419,6 +481,14 @@ public abstract partial class UIComponent
     internal void UpdateTree(float dt)
     {
         tweens?.Tick(dt);
+
+        // Still settling back down after the hover was taken off is a hover as well
+        if (Hover != UIHover.None || hoverness > 0.0f)
+            StepHover(dt);
+
+        if (slideWanted is not null)
+            StepSlide(dt);
+
         Update(dt);
 
         foreach (var child in children)

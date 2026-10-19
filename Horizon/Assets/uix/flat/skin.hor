@@ -2,21 +2,34 @@
 // Every component draws itself as a box in the colours below, with corners as round as corner_radius says,
 // and those are worked out as they are drawn. So it is crisp at any size, where pixel art only is at whole multiples of itself.
 //
-// The font is Cascadia Mono, the TrueType itself, drawn as a distance field at 96 pixels to the em like the pixel
-// fonts were baked, so a text scale of 0.125 is small print here like it is with those.
+// The font is Inter (Assets/fonts/inter, OFL), a font made for reading on a screen, the TrueType itself drawn as a
+// distance field at 96 pixels to the em like the pixel fonts were baked, so a text scale of 0.125 is small print here
+// like it is with those. It was Cascadia Mono, which is right for code and the terminal (Hack is what Hex writes code
+// and Dusk its terminals in) and tiring for a sentence, a menu or a setting.
 //
 // A button whose style ends in _flat (button_flat) is only its label until the pointer finds it, which is what
 // the rows of a list and the tabs above something want to be. Every other style is a button you can see.
 //
 // There are no icons in this skin, [icon:name] in a text is left the way it is written.
 // Under syntax is what code is coloured in with, see the code view (compositor.code).
+//
+// It comes in themes, the colours and nothing else, one file each in the themes folder next to this. The colours
+// below are the dark theme, the one it always was, and every other theme is written over them. A theme says its
+// background, its surface, its text and its accent and the rest is worked out from those (see UIPalette), or it
+// writes out any colour it wants its own way, and under syntax only the colours of code it changes. An editor made
+// in this skin lets whoever uses it pick (Hex does, in its settings).
 // Comments can't go inside of the object, the parser won't have it.
 
 let skin = {
-    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 96 },
-    text_scale: 0.125,
+    title: "Flat",
+    theme: "horizon",
+    font: { dir: "Assets/fonts/inter/", file: "inter.ttf", size: 96 },
+    text_scale: 0.15,
+    text_sizes: { caption: 0.13, heading: 0.19, title: 0.24 },
 
-    corner_radius: 5,
+    corner_radius: 6,
+    popup_radius: 10,
+    row_height: 28,
 
     text_color: vec(0.84, 0.87, 0.93, 1.0),
     control_text_color: vec(0.9, 0.92, 0.97, 1.0),

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Numerics;
 
 using Horizon.Logging;
@@ -35,14 +35,15 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
     /// <summary>What the skin file says a region is. A sprite of the sheet, or a rectangle of an image.</summary>
     private readonly record struct RegionSource(
-        string? Sprite, string? Path, int X, int Y, int Width, int Height, UIEdges? Border, UIEdges? Content, float? Scale, Vector4 Tint);
+        string? Sprite, string? Path, int X, int Y, int Width, int Height, UIEdges? Border, UIEdges? Content, float? Scale, Vector4 Tint,
+        Vector4 TextColor = default);
 
     /// <summary>What the skin file says an icon is.</summary>
     private readonly record struct IconSource(
         string Region, string Label, Vector4? LabelColor, string? Symbol = null, Vector4 SymbolColor = default, float SymbolSize = 0.5f, float Height = 0.0f);
 
     /// <summary>A name worked out down to the pixels it stands for, which can be done before any of it is loaded.</summary>
-    private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key);
+    private sealed record Art(SpriteSource Source, UIEdges Border, UIEdges Content, float Scale, Vector4 Tint, string Key, Vector4 TextColor = default);
 
     /// <summary>An icon worked out the same way. One with frames animates in text, the names of its frames are made once.</summary>
     private sealed record IconArt(
@@ -81,8 +82,21 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// <summary>The sprite sheet definition the art is looked up in, null for a skin that only cuts its regions out of an image.</summary>
     public SpriteSheetDefinition? Sheet { get; }
 
-    /// <summary>Which theme of the sprite sheet the skin uses, for sheets that hold their art in several colours.</summary>
+    /// <summary>Which theme the skin is in, null for a skin without any. See <see cref="Themes"/>.</summary>
     public string? Theme { get; }
+
+    /// <summary>
+    /// The layer of the sprite sheet the art is drawn from, for sheets that hold their art in several colours. The
+    /// theme's own name unless the theme says otherwise (<c>art</c>), null for a skin without themes, and a sheet
+    /// that hasn't got the layer falls back on its own.
+    /// </summary>
+    public string? ArtLayer { get; }
+
+    /// <summary>
+    /// Every colour the skin draws with, which is what its theme set, see <see cref="UIPalette"/>. The colour
+    /// properties of the skin read and write it.
+    /// </summary>
+    public UIPalette Palette { get; } = new();
 
     /// <summary>
     /// How many units on screen a texel of the art takes up. Pixel art is usually drawn at two or three
@@ -90,23 +104,56 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// </summary>
     public float ArtScale { get; private set; } = 1.0f;
 
-    /// <summary>The scale text is drawn at unless a component asks for its own.</summary>
+    /// <summary>The scale text is drawn at unless a component asks for its own, a sentence's, the body.</summary>
     public float TextScale { get; set; } = 0.4f;
 
-    /// <summary>The colour of text that stands on its own. Labels and captions.</summary>
-    public Vector4 TextColor { get; set; } = new(0.08f, 0.09f, 0.13f, 1.0f);
+    /// <summary>
+    /// The sizes of text by what it is for, a skin's text_sizes (caption, heading and title, the body being its
+    /// text_scale), each a part of the body when the skin doesn't say. What a page that has more than one kind of text
+    /// (a settings page, a welcome) draws with, so a skin decides how big a heading is and not every page on its own.
+    /// </summary>
+    public float TextSize(UITextRole role) => role switch
+    {
+        UITextRole.Caption => CaptionScale ?? TextScale * 0.85f,
+        UITextRole.Heading => HeadingScale ?? TextScale * 1.3f,
+        UITextRole.Title => TitleScale ?? TextScale * 1.6f,
+        _ => TextScale
+    };
 
-    /// <summary>The colour of text drawn on top of a control's art, like the label of a button.</summary>
-    public Vector4 ControlTextColor { get; set; } = new(0.08f, 0.09f, 0.13f, 1.0f);
+    /// <summary>
+    /// The least a row of a list, a tree or a menu is high, tall enough to hit with the pointer whatever the text in
+    /// it, 0 for as high as its text. A skin's row_height.
+    /// </summary>
+    public float RowHeight { get; set; }
 
-    /// <summary>What a control is filled with when the skin has no art for it.</summary>
-    public Vector4 ControlColor { get; set; } = new(0.78f, 0.81f, 0.87f, 1.0f);
+    public float? CaptionScale { get; set; }
+    public float? HeadingScale { get; set; }
+    public float? TitleScale { get; set; }
 
-    /// <summary>What something to type into is filled with when the skin has no art for it.</summary>
-    public Vector4 FieldColor { get; set; } = new(0.0f, 0.0f, 0.0f, 0.35f);
+    /* The colours, which are the palette's, see UIPalette for what each one is */
 
-    /// <summary>The thin line around controls that are drawn without art. See-through (which it is unless a skin says otherwise) for none.</summary>
-    public Vector4 BorderColor { get; set; }
+    public Vector4 TextColor { get => Palette.Text; set => Palette.Text = value; }
+    public Vector4 ControlTextColor { get => Palette.ControlText; set => Palette.ControlText = value; }
+    public Vector4 ControlColor { get => Palette.Control; set => Palette.Control = value; }
+    public Vector4 FieldColor { get => Palette.Field; set => Palette.Field = value; }
+    public Vector4 BorderColor { get => Palette.Border; set => Palette.Border = value; }
+    public Vector4 AccentColor { get => Palette.Accent; set => Palette.Accent = value; }
+    public Vector4 PanelColor { get => Palette.Panel; set => Palette.Panel = value; }
+    public Vector4 BarTextColor { get => Palette.BarText; set => Palette.BarText = value; }
+    public Vector4 TextShadowColor { get => Palette.TextShadow; set => Palette.TextShadow = value; }
+    public Vector4 TrackColor { get => Palette.Track; set => Palette.Track = value; }
+    public Vector4 HoverColor { get => Palette.Hover; set => Palette.Hover = value; }
+    public Vector4 HighlightColor { get => Palette.Highlight; set => Palette.Highlight = value; }
+    public Vector4 DisabledTint { get => Palette.DisabledTint; set => Palette.DisabledTint = value; }
+    public Vector4 IconLabelColor { get => Palette.IconLabel; set => Palette.IconLabel = value; }
+    public Vector4 DimTextColor { get => Palette.DimText; set => Palette.DimText = value; }
+    public Vector4 LinkColor { get => Palette.Link; set => Palette.Link = value; }
+    public Vector4 ErrorColor { get => Palette.Error; set => Palette.Error = value; }
+    public Vector4 WarningColor { get => Palette.Warning; set => Palette.Warning = value; }
+    public Vector4 SuccessColor { get => Palette.Success; set => Palette.Success = value; }
+
+    /// <summary>The colours code is shown in, the palette's, see <see cref="Components.CodeView"/>.</summary>
+    public UISyntaxColors Syntax => Palette.Syntax;
 
     /// <summary>
     /// How round the corners are of everything that is drawn without art, in pixels. Zero for square ones.
@@ -114,35 +161,18 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// </summary>
     public float CornerRadius { get; set; }
 
-    /// <summary>The colours code is shown in, see <see cref="Components.CodeView"/>.</summary>
-    public UISyntaxColors Syntax { get; } = new();
+    /// <summary>
+    /// How round the corners of a popup are (a menu, a dialog, a tooltip, a list that drops down), a step rounder than
+    /// the controls in them so the one reads as holding the other. <c>popup_radius</c> in a skin, twice the
+    /// <see cref="CornerRadius"/> unless it says. See <see cref="UIDrawList.Popup"/>.
+    /// </summary>
+    public float PopupRadius
+    {
+        get => popupRadius ?? CornerRadius * 2.0f;
+        set => popupRadius = MathF.Max(0.0f, value);
+    }
 
-    /// <summary>The colour of the filled part of bars and sliders, and of toggles that are on, when the skin has no art for them.</summary>
-    public Vector4 AccentColor { get; set; } = new(0.85f, 0.42f, 0.3f, 1.0f);
-
-    /// <summary>What a panel that asks for a background is filled with when the skin has no art for it.</summary>
-    public Vector4 PanelColor { get; set; } = new(0.1f, 0.12f, 0.17f, 0.92f);
-
-    /// <summary>The colour of the text written on bars. It gets a shadow, as it has to read on both the filled and the empty part.</summary>
-    public Vector4 BarTextColor { get; set; } = new(1.0f, 1.0f, 1.0f, 1.0f);
-
-    /// <summary>The shadow under <see cref="BarTextColor"/>.</summary>
-    public Vector4 TextShadowColor { get; set; } = new(0.0f, 0.0f, 0.0f, 0.7f);
-
-    /// <summary>What the empty part of a bar or slider is filled with.</summary>
-    public Vector4 TrackColor { get; set; } = new(0.0f, 0.0f, 0.0f, 0.35f);
-
-    /// <summary>Laid over a control while the pointer is on it.</summary>
-    public Vector4 HoverColor { get; set; } = new(1.0f, 1.0f, 1.0f, 0.22f);
-
-    /// <summary>The outline drawn around a control while the pointer is on it.</summary>
-    public Vector4 HighlightColor { get; set; } = new(1.0f, 1.0f, 1.0f, 0.9f);
-
-    /// <summary>What a disabled control is tinted with.</summary>
-    public Vector4 DisabledTint { get; set; } = new(1.0f, 1.0f, 1.0f, 0.4f);
-
-    /// <summary>The colour of the label on an icon that doesn't say its own.</summary>
-    public Vector4 IconLabelColor { get; set; } = new(1.0f, 1.0f, 1.0f, 1.0f);
+    private float? popupRadius;
 
     /// <summary>
     /// How tall the icons in a line of text are, as a multiple of the height of the line. Every icon is
@@ -169,19 +199,25 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     public float Spacing { get; set; } = 10.0f;
 
     /// <summary>
-    /// The themes the skin file comes in, the same skin with some things done differently (its art in another
-    /// colour). Empty for a skin that is just the one.
+    /// The themes the skin comes in, a palette and a layer of the art each (see <see cref="UITheme"/>), by name.
+    /// Empty for a skin that is just the one.
     /// </summary>
     public IReadOnlyList<string> Themes { get; private set; } = [];
 
-    public UISkin(UIFont font, SpriteSheetDefinition? sheet = null, string? theme = null)
+    /// <param name="theme">Which theme the skin is in, null for one without themes.</param>
+    /// <param name="art">The layer of the sheet it draws with, the theme unless the theme says otherwise.</param>
+    public UISkin(UIFont font, SpriteSheetDefinition? sheet = null, string? theme = null, string? art = null)
     {
         Font = font;
         Sheet = sheet;
         Theme = theme;
+        ArtLayer = art ?? theme;
 
         // The font can't know what an icon is, but text has to make room for them.
         font.Icons = this;
+
+        // The icons every skin has, $(name), loaded with the first skin on the thread that loads skins
+        UISymbols.EnsureLoaded();
     }
 
     /// <summary>
@@ -233,6 +269,21 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     }
 
     /// <summary>
+    /// The names of every piece of art the skin has, the regions it declares and the sprites of its sheet, in
+    /// the order of the alphabet. What <see cref="TryGetRegion"/> can be asked for, for a menu to pick one from
+    /// (see <see cref="Components.ArtPicker"/>).
+    /// </summary>
+    public IEnumerable<string> ArtNames
+    {
+        get
+        {
+            var names = new SortedSet<string>(sources.Keys, StringComparer.OrdinalIgnoreCase);
+            if (Sheet is { } sheet) names.UnionWith(sheet.Sprites);
+            return names;
+        }
+    }
+
+    /// <summary>
     /// Finds a piece of art by name. A region the skin declares, or failing that any sprite of its sheet
     /// ("name#2" being the third frame of one that has frames). Art that is asked for the first time isn't
     /// there until the next frame is drawn, as it has to be stitched into the atlas first.
@@ -250,7 +301,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             return false;
 
         region = new UIRegion(
-            placed.Position, placed.Size, art.Border, art.Scale, art.Tint, art.Source.Frames, art.Source.FrameTime, art.Content);
+            placed.Position, placed.Size, art.Border, art.Scale, art.Tint, art.Source.Frames, art.Source.FrameTime, art.Content, art.TextColor);
         regions[name] = region;
         return true;
     }
@@ -258,23 +309,41 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     // How big the image files that are drawn whole are, in pixels, read off the files once. Zero for one that can't be read
     private readonly ConcurrentDictionary<string, Vector2> imageSizes = new();
 
+    // The image files drawn whole, by their path, and the names they were asked of the atlas by while they're on their way
+    // in. By the path as it is, it was "file:" + path every time one was drawn, a string a frame for every picture
+    private readonly ConcurrentDictionary<(string Path, int Most), UIRegion> images = new();
+    private readonly ConcurrentDictionary<(string Path, int Most), string> imageKeys = new();
+
     /// <summary>
     /// How big an image file is, in pixels, which is what an image drawn out of it whole measures. Zero if it isn't there or
-    /// isn't a PNG. From any thread, the file is only looked at the first time.
+    /// isn't a PNG or an Aseprite file (whose first frame it is). From any thread, the file is only looked at the first time.
     /// </summary>
     public Vector2 ImageSize(string path) => imageSizes.GetOrAdd(path, static path =>
     {
         try
         {
-            // Width and height are the first thing in a PNG after its signature and the header's length and name
             using var file = File.OpenRead(path);
             Span<byte> header = stackalloc byte[24];
-            if (file.Read(header) < header.Length || header[1] != (byte)'P' || header[2] != (byte)'N' || header[3] != (byte)'G')
+            if (file.Read(header) < header.Length)
                 return Vector2.Zero;
 
-            return new Vector2(
-                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[16..]),
-                System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[20..]));
+            // Width and height are the first thing in a PNG after its signature and the header's length and name
+            if (header[1] == (byte)'P' && header[2] == (byte)'N' && header[3] == (byte)'G')
+            {
+                return new Vector2(
+                    System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[16..]),
+                    System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header[20..]));
+            }
+
+            // and in an Aseprite file they come after its size, its magic number (0xA5E0) and how many frames it has
+            if (System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(header[4..]) == 0xA5E0)
+            {
+                return new Vector2(
+                    System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(header[8..]),
+                    System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(header[10..]));
+            }
+
+            return Vector2.Zero;
         }
         catch (Exception)
         {
@@ -285,27 +354,40 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// <summary>
     /// An image file, the whole of it, as a piece of art of the skin, stitched into the atlas the first time it is
     /// asked for (and there by the next frame), drawn at the scale of the UI like the rest of the skin. For art that
-    /// belongs to a layout rather than the skin, a logo say. PNG only.
+    /// belongs to a layout rather than the skin, a logo say. A PNG, or the first frame of an Aseprite file.
     /// </summary>
-    public bool TryGetImage(string path, out UIRegion region)
+    public bool TryGetImage(string path, out UIRegion region) => TryGetImage(path, 0, out region);
+
+    /// <summary>
+    /// An image file brought down to fit a square of so many pixels a side (left as it is when it's smaller), for showing
+    /// a picture small, a picture that is far too big for the atlas included. See <see cref="TryGetImage(string, out UIRegion)"/>.
+    /// </summary>
+    /// <param name="most">How many pixels a side at the most, 0 for as it is.</param>
+    public bool TryGetImage(string path, int most, out UIRegion region)
     {
-        string name = "file:" + path;
-        if (regions.TryGetValue(name, out region))
+        if (images.TryGetValue((path, most), out region))
             return true;
 
-        Vector2 size = ImageSize(path);
-        if (size.X <= 0.0f || size.Y <= 0.0f)
-            return false;
+        if (!imageKeys.TryGetValue((path, most), out string? key))
+        {
+            Vector2 size = ImageSize(path);
+            if (size.X <= 0.0f || size.Y <= 0.0f)
+                return false;
 
-        int width = (int)size.X, height = (int)size.Y;
-        string key = TextureAtlas.KeyFor(path, 0, 0, width, height);
+            int width = (int)size.X, height = (int)size.Y;
+            key = TextureAtlas.KeyFor(path, 0, 0, width, height);
+            if (most > 0 && (width > most || height > most))
+                key += "|" + most.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        Atlas.Request(key, path, 0, 0, width, height);
+            Atlas.Request(key, path, 0, 0, width, height, most: most);
+            imageKeys[(path, most)] = key;
+        }
+
         if (!Atlas.TryGet(key, out var placed))
             return false;
 
         region = new UIRegion(placed.Position, placed.Size);
-        regions[name] = region;
+        images[(path, most)] = region;
         return true;
     }
 
@@ -434,12 +516,14 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         UIEdges? content = null;
         float scale = ArtScale;
         Vector4 tint = Vector4.One;
+        Vector4 textColor = default;
+        float? ownScale = null;
 
         if (sources.TryGetValue(name, out var declared))
         {
             if (declared.Sprite is { } sprite)
             {
-                if (Sheet is null || !Sheet.TryGetSprite(sprite + frame, Theme, out source))
+                if (Sheet is null || !Sheet.TryGetSprite(sprite + frame, ArtLayer, out source))
                 {
                     Log.Error($"[UISkin] '{name}' is meant to be the sprite '{sprite + frame}', which the sprite sheet doesn't have.");
                     return null;
@@ -456,13 +540,18 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
 
             border = declared.Border;
             content = declared.Content;
-            scale = declared.Scale ?? ArtScale;
+            ownScale = declared.Scale;
             tint = declared.Tint;
+            textColor = declared.TextColor;
         }
-        else if (Sheet is null || !Sheet.TryGetSprite(name + frame, Theme, out source))
+        else if (Sheet is null || !Sheet.TryGetSprite(name + frame, ArtLayer, out source))
         {
             return null;
         }
+
+        // Art that says how big it wants to be is drawn that big, pixel art borrowed from another pack keeps its
+        // pixels the size they were drawn for whatever this skin draws its own at
+        scale = ownScale ?? (source.Scale > 0.0f ? source.Scale : ArtScale);
 
         return new Art(
             source,
@@ -471,7 +560,8 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             scale,
             tint,
             // The same pixels asked for under two names are only stitched in once.
-            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer));
+            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer),
+            textColor.W > 0.0f ? textColor : source.TextColor);
     }
 
     public void Dispose() => Atlas.Dispose();
@@ -508,10 +598,11 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         try
         {
             var properties = ReadProperties(directory, file, 0);
-            string[] themes = ApplyTheme(properties, theme);
+            List<UITheme> themes = ReadThemes(directory, properties);
+            UITheme? worn = ApplyTheme(properties, themes, theme);
 
-            UISkin skin = Read(directory, properties);
-            skin.Themes = themes;
+            UISkin skin = Read(directory, file, properties, worn);
+            skin.Themes = [.. themes.Select(found => found.Name)];
             return skin;
         }
         catch (Exception e)

@@ -1,4 +1,6 @@
 // The panel the layout check loads. Its list is filled from item.hor, an item a row
+#define layout
+
 let box = compositor.stack({
     color: vec(0.1, 0.12, 0.17, 0.92),
     padding: 20,

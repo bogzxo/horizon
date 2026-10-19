@@ -6,6 +6,7 @@ using Horizon.Core.Tweening;
 using Horizon.Rendering.Spriting;
 using Horizon.UI;
 using Horizon.UI.Components;
+using Horizon.UI.Skinning;
 
 using Silk.NET.Input;
 
@@ -14,12 +15,14 @@ using Button = Horizon.UI.Components.Button;
 namespace Horizon.Testing.Examples.Game;
 
 /// <summary>
-/// Tests the new Dead Revolver UI pack as a skin. Everything on screen is cut out of the pack's sheets by the names
-/// in Assets/uix/dead_revolver/sprites.hor and stitched into one atlas, which only ever holds the pieces
-/// this scene shows. The same controls are drawn in every colour the pack comes in, one skin file each,
-/// and the text has icons in it: sprites of the pack, and gamepad buttons made out of a blank one.
+/// The skins and their themes. The same panel of controls in every skin there is under Assets/uix (S steps
+/// through them) and every colour each comes in (T), which is the game's one setting for how its UI looks, see
+/// <see cref="UISkins"/>. A UI made with <c>new UICompositor(camera)</c> follows it, nothing in here names a
+/// skin. Everything on the panel is cut out of the skin's art by the names in its sprites.hor and stitched into
+/// one atlas, which only ever holds the pieces this scene shows, and the text has icons in it, sprites of the
+/// skin and gamepad buttons.
 /// What drifts about behind the panel isn't UI at all: those are <see cref="Sprite"/>s in a
-/// <see cref="SpriteBatch"/>, showing sprites of the same pack out of an atlas of their own.
+/// <see cref="SpriteBatch"/>, showing sprites of the Dead Revolver pack out of an atlas of their own.
 /// </summary>
 public class UISkinExample : Scene, ITestControls
 {
@@ -38,15 +41,17 @@ public class UISkinExample : Scene, ITestControls
     // Listed on screen by the test host.
     public IReadOnlyList<TestControl> Controls { get; } =
     [
-        new("T", "next theme"),
+        new("S", "next skin"),
+        new("T", "next theme of it"),
         new("Mouse", "press, drag and type"),
     ];
 
     private readonly UICompositor compositor;
     private readonly StackPanel panel;
-    private readonly Label themeName, atlasSize;
+    private readonly Label themeName, atlasSize, skinName;
     private readonly ProgressBar progress;
     private int theme;
+    private int seenSkins = -1;
 
     private readonly SpriteSheetDefinition sprites;
     private readonly TextureAtlas spriteAtlas = new(512, 512);
@@ -62,7 +67,8 @@ public class UISkinExample : Scene, ITestControls
         CreateDrifters(AddEntity(new SpriteBatch()));
 
         // Components need nothing from the GPU, so the whole screen can be put together right here.
-        compositor = AddComponent(new UICompositor(camera, Themes[theme]));
+        // No skin named, so it is in whichever one the game is set to and changes along with that
+        compositor = AddComponent(new UICompositor(camera));
 
         panel = compositor.CreateModule().AddComponent(new StackPanel
         {
@@ -73,7 +79,7 @@ public class UISkinExample : Scene, ITestControls
 
         var heading = panel.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 16 });
         heading.Add(new Image("star") { Size = new Vector2(54, 45) });
-        var name = heading.Add(new Label("Dead Revolver") { TextScale = 0.6f });
+        var name = skinName = heading.Add(new Label(UISkins.Current.Title) { TextScale = 0.6f });
         heading.Add(new Image("star") { Size = new Vector2(54, 45) });
 
         themeName = panel.Add(new Label { TextScale = 0.3f });
@@ -185,11 +191,17 @@ public class UISkinExample : Scene, ITestControls
 
     private void ShowTheme()
     {
-        themeName.Text = $"{Themes[theme]} theme, press T for the next";
+        var skin = UISkins.Current;
+        string? worn = UISkins.Theme ?? skin.UsualTheme;
 
-        // The sprites follow: the art of the new theme is added to their atlas as they ask for it.
+        skinName.Text = skin.Title;
+        themeName.Text = worn is null ? "one look, press S for the next skin" : $"{worn} theme, T for the next, S for the next skin";
+
+        // The sprites follow where they can. They are Dead Revolver's whatever the skin is, in the theme of the
+        // same name if that pack has one, and its art is added to their atlas as they ask for it
+        string drifting = worn is not null && sprites.Themes.Contains(worn) ? worn : Themes[theme];
         foreach (var (sprite, name, _, _) in drifters)
-            sprite.ConfigureAtlas(spriteAtlas, sprites, name, Themes[theme]);
+            sprite.ConfigureAtlas(spriteAtlas, sprites, name, drifting);
     }
 
     public override void PostInit()
@@ -204,10 +216,24 @@ public class UISkinExample : Scene, ITestControls
 
         MoveDrifters(dt);
 
+        bool stepped = false;
+        if (Engine.Input.Keyboard.WasPressed(Key.S))
+        {
+            UISkins.Step(1);
+            stepped = true;
+        }
+
         if (Engine.Input.Keyboard.WasPressed(Key.T))
         {
             theme = (theme + 1) % Themes.Length;
-            compositor.SetTheme(Themes[theme]);
+            UISkins.StepTheme(1);
+            stepped = true;
+        }
+
+        // Somebody else changing it (the keys of the host, the selector) shows here as well
+        if (stepped || seenSkins != UISkins.Version)
+        {
+            seenSkins = UISkins.Version;
             ShowTheme();
 
             // The panel takes the hit, and so does everything that drifts behind it.

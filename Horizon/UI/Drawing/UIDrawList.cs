@@ -43,6 +43,13 @@ public sealed partial class UIDrawList
     // The atlases of other people this list drew out of (or wanted to), for the renderer to bring up to date
     private readonly List<TextureAtlas> atlases = [];
 
+    // The panes of glass in it, in the order they were painted, see Glass
+    private readonly List<UIGlassPane> glass = [];
+
+    // The fonts text is written in for now instead of the skin's, see PushFont
+    private readonly Stack<UIFont?> fonts = new();
+    private UIFont? font;
+
     private readonly Stack<UIRect> clips = new();
     private UIRect clip = Unclipped;
 
@@ -69,6 +76,70 @@ public sealed partial class UIDrawList
     private float time;
     private const float TIME_WRAP = 3600.0f;
 
+    /// <summary>How long a popup takes to come in, see <see cref="BeginEntrance"/>, in seconds.</summary>
+    public const float ENTRANCE_TIME = 0.14f;
+
+    /// <summary>Whether popups come in by moving (see <see cref="BeginEntrance"/>) or are there at once, for less motion.</summary>
+    public static bool Motion { get; set; } = true;
+
+    /// <summary>
+    /// Starts the entrance of something that pops up (a menu, a list that drops down, a tooltip) when it's painted for the
+    /// first time: grown from a little smaller than it is and faded in, slid in a few pixels from where it came from,
+    /// eased out over <see cref="ENTRANCE_TIME"/>. Everything painted until <see cref="EndEntrance"/> goes with it, a pane
+    /// of glass included. No garbage, the time it started is the caller's.
+    /// </summary>
+    /// <param name="started">When it started, by the list's own clock, less than 0 for not yet (which starts it now).</param>
+    /// <param name="pivot">What it grows out of, the corner it hangs from.</param>
+    /// <param name="from">How far away it starts, it slides in from there.</param>
+    /// <returns>Whether it's still coming in, and <see cref="EndEntrance"/> is to be called.</returns>
+    internal bool BeginEntrance(ref float started, Vector2 pivot, Vector2 from)
+    {
+        if (started < 0.0f)
+            started = time;
+
+        float t = (time - started) / ENTRANCE_TIME;
+
+        // The clock starts over now and then, a popup open across that is simply there
+        if (!Motion || t >= 1.0f || t < 0.0f)
+            return false;
+
+        float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+        float grown = 0.96f + 0.04f * eased;
+        PushVisual(from * (1.0f - eased), new Vector2(grown), pivot, eased);
+        return true;
+    }
+
+    /// <summary>Ends what <see cref="BeginEntrance"/> began, when it said it was still coming in.</summary>
+    internal void EndEntrance() => PopVisual();
+
+    /// <summary>How long a popup takes to go, quicker than it comes, see <see cref="BeginExit"/>, in seconds.</summary>
+    public const float EXIT_TIME = 0.09f;
+
+    /// <summary>
+    /// The entrance the other way round, for something that was put away and is painted a moment longer going: shrunk a
+    /// little, faded out and slid back the way it came, over <see cref="EXIT_TIME"/>.
+    /// </summary>
+    /// <returns>Whether it's still going, and <see cref="EndExit"/> is to be called, false once it's gone.</returns>
+    internal bool BeginExit(ref float started, Vector2 pivot, Vector2 to)
+    {
+        if (started < 0.0f)
+            started = time;
+
+        float t = (time - started) / EXIT_TIME;
+        if (!Motion || t >= 1.0f || t < 0.0f)
+            return false;
+
+        float eased = t * t;
+        PushVisual(to * eased, new Vector2(1.0f - 0.04f * eased), pivot, 1.0f - eased);
+        return true;
+    }
+
+    /// <summary>Ends what <see cref="BeginExit"/> began, when it said it was still going.</summary>
+    internal void EndExit() => PopVisual();
+
+    /// <summary>How long the update the list is being painted in is, in seconds, for what eases as it's painted.</summary>
+    internal float Delta => deltaTime;
+
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
 
@@ -76,25 +147,36 @@ public sealed partial class UIDrawList
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
     internal ReadOnlySpan<TextureAtlas> Atlases => CollectionsMarshal.AsSpan(atlases);
+    internal ReadOnlySpan<UIGlassPane> GlassPanes => CollectionsMarshal.AsSpan(glass);
 
     /// <param name="frame">Which update this is, counting up by one for as long as the UI is painted without a break.</param>
     /// <param name="dt">How long the update is, in seconds.</param>
-    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f)
+    /// <param name="clock">
+    /// The time the UI has been painted for, the one clock of whoever paints into more than one list, null for this list's
+    /// own. A compositor paints into two lists in turn, and each kept its own clock, moved on only by the paints it got, so
+    /// a popup that started coming in by one list's clock was a moment ahead or behind by the other's. Every other frame
+    /// it was all the way in, a submenu blinked in rather than faded, and the icons that animate went in jerks.
+    /// </param>
+    internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, float? clock = null)
     {
         Skin = skin;
 
         this.frame = frame;
         deltaTime = dt;
-        time = (time + dt) % TIME_WRAP;
+        time = clock is { } given ? given % TIME_WRAP : (time + dt) % TIME_WRAP;
 
         itemCount = 0;
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
         atlases.Clear();
+        glass.Clear();
 
         clips.Clear();
         clip = Unclipped;
+
+        fonts.Clear();
+        font = null;
 
         origin = Vector2.Zero;
         scale = Vector2.One;
@@ -189,7 +271,8 @@ public sealed partial class UIDrawList
         if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete)
             return false;
 
-        if (!CollectionsMarshal.AsSpan(runs).SequenceEqual(CollectionsMarshal.AsSpan(other.runs)))
+        if (!CollectionsMarshal.AsSpan(runs).SequenceEqual(CollectionsMarshal.AsSpan(other.runs)) ||
+            !CollectionsMarshal.AsSpan(glass).SequenceEqual(CollectionsMarshal.AsSpan(other.glass)))
             return false;
 
         // Byte for byte, an item is nothing but numbers
@@ -237,6 +320,166 @@ public sealed partial class UIDrawList
     }
 
     public void PopClip() => clip = clips.Pop();
+
+    /// <summary>
+    /// Puts a pane of frosted glass down, a blur of whatever is drawn before it (the scene and everything painted so
+    /// far) shown inside the rectangle, under whatever is painted after it. See <see cref="UIGlass"/>, a component
+    /// that says <see cref="Components.UIComponent.Glass"/> gets one without asking for it.
+    /// </summary>
+    /// <param name="radius">How round its corners are, the same as the box painted over it.</param>
+    /// <param name="blur">How far what is behind it is smeared, in the UI's pixels.</param>
+    /// <param name="bend">How far what is behind is bent in at its edge, in the UI's pixels, see <see cref="UIGlass.Bend"/>.</param>
+    public void Glass(UIRect rect, float radius, float blur, float bend = 0.0f)
+    {
+        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f || rect.Intersect(clip).IsEmpty)
+            return;
+
+        // Where the quads go, see Quad
+        Vector2 drawn = visualScale * scale;
+        Vector2 min = (rect.Min * visualScale + visualOffset) * scale + origin;
+        Vector2 max = (rect.Max * visualScale + visualOffset) * scale + origin;
+
+        // An unclipped list has a clip as big as there is, which is left that way rather than turned into a number
+        Vector2 clipMin = float.IsFinite(clip.Min.X) && float.IsFinite(clip.Min.Y) ? (clip.Min * visualScale + visualOffset) * scale + origin : new Vector2(float.NegativeInfinity);
+        Vector2 clipMax = float.IsFinite(clip.Max.X) && float.IsFinite(clip.Max.Y) ? (clip.Max * visualScale + visualOffset) * scale + origin : new Vector2(float.PositiveInfinity);
+
+        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), opacity, bend * MathF.Abs(drawn.X)));
+    }
+
+    /// <summary>
+    /// The silver lining of a pane of glass, a thin lit edge round a rounded rectangle, brightest along the top and the
+    /// left and faint along the bottom and the right, the light taken to come from the top left. Paint it over the
+    /// background and under what is in it. See <see cref="UIGlass.Rim"/>.
+    /// </summary>
+    /// <param name="strength">How bright it is at its brightest, as the alpha of white.</param>
+    public void SilverLining(UIRect rect, float radius, float strength)
+    {
+        if (strength <= 0.0f || rect.IsEmpty)
+            return;
+
+        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
+
+        // A pixel of the screen wide whatever the UI is scaled by, a lining is a hairline or it's a border
+        float thickness = 1.0f / MathF.Max(0.01f, MathF.Abs((visualScale * scale).X));
+        float lit = Math.Clamp(strength, 0.0f, 1.0f);
+        uint top = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit));
+        uint side = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit * 0.45f));
+        uint under = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit * 0.18f));
+        var (min, max) = rect;
+
+        if (radius < 0.5f)
+        {
+            Quad(new UIRect(new Vector2(min.X, max.Y - thickness), max), Vector2.Zero, Vector2.Zero, top, SpriteItem.NoTexture);
+            Quad(new UIRect(min, new Vector2(max.X, min.Y + thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
+            Quad(new UIRect(new Vector2(min.X, min.Y + thickness), new Vector2(min.X + thickness, max.Y - thickness)), Vector2.Zero, Vector2.Zero, side, SpriteItem.NoTexture);
+            Quad(new UIRect(new Vector2(max.X - thickness, min.Y + thickness), new Vector2(max.X, max.Y - thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
+            return;
+        }
+
+        thickness = MathF.Min(thickness, radius);
+
+        // The straight runs between the corners, then the corners, each the colour of the edges it joins
+        Quad(new UIRect(new Vector2(min.X + radius, max.Y - thickness), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, top, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, min.Y + thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + thickness, max.Y - radius)), Vector2.Zero, Vector2.Zero, side, SpriteItem.NoTexture);
+        Quad(new UIRect(new Vector2(max.X - thickness, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
+
+        Vector2 size = new(radius);
+        uint flags = SpriteItem.NoTexture | SpriteItem.CornerFlag;
+        float ring = thickness / radius;
+        Quad(new UIRect(new Vector2(min.X, max.Y - radius), new Vector2(min.X + radius, max.Y)), Vector2.One, Vector2.Zero, top, flags, ring);
+        Quad(new UIRect(max - size, max), Vector2.UnitY, Vector2.UnitX, side, flags, ring);
+        Quad(new UIRect(min, min + size), Vector2.UnitX, Vector2.UnitY, side, flags, ring);
+        Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, under, flags, ring);
+    }
+
+    // How far the shadow under a popup reaches and how far down it's moved, in the UI's pixels, and how dark it is on a
+    // dark panel and on a light one (on light it's a hint, on dark it has to be there to be seen at all)
+    private const float POPUP_SOFTNESS = 22.0f, POPUP_DROP = 6.0f, POPUP_SHADOW_DARK = 0.5f, POPUP_SHADOW_LIGHT = 0.2f;
+
+    /// <summary>
+    /// What every popup sits on, the same for all of them. A soft shadow that lifts it off what's behind, the glass
+    /// when there is any (see <see cref="UIGlass"/>), the panel's colour over that, a hairline round it in the border's
+    /// colour, and the silver lining on glass. Rounded by the skin's <see cref="UISkin.PopupRadius"/>. The accent is
+    /// left for what is picked inside of it, it used to be the frame of every popup and so meant nothing.
+    /// </summary>
+    public void Popup(UIRect rect, UIGlass? glass = null)
+    {
+        if (rect.IsEmpty)
+            return;
+
+        float radius = Skin.PopupRadius;
+        Vector4 panel = Skin.PanelColor with { W = 1.0f };
+        Lifted(rect, radius);
+
+        if (glass is { } frosted)
+        {
+            Glass(rect, radius, frosted.Blur, frosted.Bend);
+            panel = frosted.Over(panel);
+        }
+
+        RoundRect(rect, radius, panel);
+
+        // A pixel of the screen wide, a hairline whatever the UI is scaled by
+        float hairline = 1.0f / MathF.Max(0.01f, MathF.Abs((visualScale * scale).X));
+        RoundOutline(rect, radius, hairline, Skin.BorderColor);
+
+        if (glass is { Rim: > 0.0f } lined)
+            SilverLining(rect, radius, lined.Rim);
+    }
+
+    /// <summary>
+    /// The shadow of something lifted off what's behind it (a popup, a dialog's card), as dark as the skin's panels need
+    /// for it to be seen and dropped a little for light from above. See <see cref="Shadow"/>.
+    /// </summary>
+    /// <param name="softness">How far out it fades, the popups' own unless said.</param>
+    public void Lifted(UIRect rect, float radius, float softness = POPUP_SOFTNESS)
+    {
+        Vector4 panel = Skin.PanelColor;
+        float lightness = 0.2126f * panel.X + 0.7152f * panel.Y + 0.0722f * panel.Z;
+        Shadow(rect, radius, softness, new Vector4(0.0f, 0.0f, 0.0f, lightness > 0.5f ? POPUP_SHADOW_LIGHT : POPUP_SHADOW_DARK),
+            new Vector2(0.0f, -POPUP_DROP * softness / POPUP_SOFTNESS));
+    }
+
+    /// <summary>
+    /// A soft shadow under a rounded rectangle, what lifts a popup off whatever it's over. Nine quads, the middle solid,
+    /// the edges and the corners fading out over <paramref name="softness"/> (worked out per pixel, see SOFT_FLAG in
+    /// sprites.slang). Paint it before the box it's the shadow of.
+    /// </summary>
+    /// <param name="radius">How round the corners of the box are.</param>
+    /// <param name="softness">How far out the shadow fades to nothing.</param>
+    /// <param name="offset">How far it's moved, down a little for light from above.</param>
+    public void Shadow(UIRect rect, float radius, float softness, Vector4 color, Vector2 offset = default)
+    {
+        if (rect.IsEmpty || color.W <= 0.0f || softness <= 0.0f)
+            return;
+
+        radius = MathF.Max(0.0f, MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f));
+        float reach = radius + softness;
+        Vector2 min = rect.Min + offset - new Vector2(softness), max = rect.Max + offset + new Vector2(softness);
+
+        // The solid middle, as far in from the outside as the fade reaches, nothing when the box is smaller than that
+        Vector2 inMin = min + new Vector2(reach), inMax = max - new Vector2(reach);
+        if (inMax.X < inMin.X) inMin.X = inMax.X = (min.X + max.X) * 0.5f;
+        if (inMax.Y < inMin.Y) inMin.Y = inMax.Y = (min.Y + max.Y) * 0.5f;
+
+        uint packed = SpriteItem.PackColor(color);
+        uint soft = SpriteItem.NoTexture | SpriteItem.CornerFlag | SpriteItem.SoftFlag;
+
+        Quad(new UIRect(inMin, inMax), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+
+        // The edges fade one way, a disc's distance along one axis only
+        Quad(new UIRect(new Vector2(inMin.X, inMax.Y), new Vector2(inMax.X, max.Y)), Vector2.UnitY, Vector2.Zero, packed, soft, 1.0f);
+        Quad(new UIRect(new Vector2(inMin.X, min.Y), new Vector2(inMax.X, inMin.Y)), Vector2.Zero, Vector2.UnitY, packed, soft, 1.0f);
+        Quad(new UIRect(new Vector2(min.X, inMin.Y), new Vector2(inMin.X, inMax.Y)), Vector2.UnitX, Vector2.Zero, packed, soft, 1.0f);
+        Quad(new UIRect(new Vector2(inMax.X, inMin.Y), new Vector2(max.X, inMax.Y)), Vector2.Zero, Vector2.UnitX, packed, soft, 1.0f);
+
+        // The corners every way, the same as a rounded box's
+        Quad(new UIRect(new Vector2(min.X, inMax.Y), new Vector2(inMin.X, max.Y)), Vector2.One, Vector2.Zero, packed, soft, 1.0f);
+        Quad(new UIRect(inMax, max), Vector2.UnitY, Vector2.UnitX, packed, soft, 1.0f);
+        Quad(new UIRect(min, inMin), Vector2.UnitX, Vector2.UnitY, packed, soft, 1.0f);
+        Quad(new UIRect(new Vector2(inMax.X, min.Y), new Vector2(max.X, inMin.Y)), Vector2.Zero, Vector2.One, packed, soft, 1.0f);
+    }
 
     /// <summary>Fills a rectangle with a colour.</summary>
     public void Rect(UIRect rect, Vector4 color) =>
@@ -381,6 +624,78 @@ public sealed partial class UIDrawList
         }
     }
 
+    /// <summary>
+    /// Draws a region of another skin than the one the list is drawn in, stretched over a rectangle. For showing
+    /// the art of one skin in a UI that wears another, an editor showing what a game's skin has.
+    /// </summary>
+    public void Region(UISkin from, in UIRegion region, UIRect rect, Vector4 tint)
+    {
+        if (ReferenceEquals(from, Skin))
+        {
+            Region(region, rect, tint);
+            return;
+        }
+
+        // Its atlas is kept up with ours from here on, what was just asked of it is stitched in before it is drawn
+        if (!atlases.Contains(from.Atlas)) atlases.Add(from.Atlas);
+        if (from.Atlas.Texture.Handle == 0) return;
+
+        Image(from.Atlas.Texture, rect, region.Position, region.Position + region.TexelSize, tint * RegionTint(region));
+    }
+
+    /// <summary>
+    /// The same for art that stretches, see <see cref="NineSlice(in UIRegion, UIRect, Vector4)"/>. The corners keep
+    /// their size and the edges stretch along their length.
+    /// </summary>
+    public void NineSlice(UISkin from, in UIRegion region, UIRect rect, Vector4 tint)
+    {
+        if (rect.IsEmpty)
+            return;
+
+        if (ReferenceEquals(from, Skin))
+        {
+            NineSlice(region, rect, tint);
+            return;
+        }
+
+        UIEdges border = region.Border;
+        if (border == default)
+        {
+            Region(from, region, rect, tint);
+            return;
+        }
+
+        if (!atlases.Contains(from.Atlas)) atlases.Add(from.Atlas);
+        if (from.Atlas.Texture.Handle == 0) return;
+
+        float left = border.Left * region.Scale, right = border.Right * region.Scale;
+        float top = border.Top * region.Scale, bottom = border.Bottom * region.Scale;
+        float squeezeX = MathF.Min(1.0f, rect.Width / (left + right));
+        float squeezeY = MathF.Min(1.0f, rect.Height / (top + bottom));
+
+        Vector2 texMin = region.Position;
+        Vector2 texMax = region.Position + region.TexelSize;
+
+        ReadOnlySpan<float> xs = [rect.Min.X, rect.Min.X + left * squeezeX, rect.Max.X - right * squeezeX, rect.Max.X];
+        ReadOnlySpan<float> ys = [rect.Max.Y, rect.Max.Y - top * squeezeY, rect.Min.Y + bottom * squeezeY, rect.Min.Y];
+        ReadOnlySpan<float> us = [texMin.X, texMin.X + border.Left, texMax.X - border.Right, texMax.X];
+        ReadOnlySpan<float> vs = [texMin.Y, texMin.Y + border.Top, texMax.Y - border.Bottom, texMax.Y];
+
+        Vector4 colour = tint * RegionTint(region);
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 3; column++)
+            {
+                Image(
+                    from.Atlas.Texture,
+                    new UIRect(new Vector2(xs[column], ys[row + 1]), new Vector2(xs[column + 1], ys[row])),
+                    new Vector2(us[column], vs[row]),
+                    new Vector2(us[column + 1], vs[row + 1]),
+                    colour);
+            }
+        }
+    }
+
     /// <summary>Draws a whole texture that isn't part of the skin, such as a portrait or an icon.</summary>
     public void Image(Texture texture, UIRect rect, Vector4 tint) =>
         Image(texture, rect, Vector2.Zero, new Vector2(texture.Width, texture.Height), tint);
@@ -419,9 +734,44 @@ public sealed partial class UIDrawList
     /// </summary>
     /// <param name="texTopLeft">The top left corner of the part, in pixels from the top left of the texture.</param>
     /// <param name="texBottomRight">Its bottom right corner.</param>
-    public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint)
+    public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint) =>
+        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture));
+
+    /// <summary>
+    /// Draws an icon of <see cref="UISymbols"/> (Codicons) filling a square, the biggest that fits in the rectangle,
+    /// in the middle of it. Nothing if the icons haven't loaded.
+    /// </summary>
+    public void Symbol(char code, UIRect rect, Vector4 color)
     {
-        // Two custom images fit in a run next to the atlas and the font, a third means a new run.
+        if (!UISymbols.TryGetGlyph(code, out var glyph))
+            return;
+
+        // The em of the font is the square every icon is drawn in, its picture is somewhere inside of that
+        float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
+        float scale = side / UISymbols.Em;
+        Vector2 corner = Vector2.Round(rect.Center - new Vector2(side * 0.5f, -side * 0.5f));
+
+        Vector2 topLeft = new(corner.X + glyph.Offset.X * scale, corner.Y - glyph.Offset.Y * scale);
+        Vector2 size = glyph.Size * scale;
+        var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - size.Y), new Vector2(topLeft.X + size.X, topLeft.Y));
+
+        Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color),
+            ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
+    }
+
+    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, nothing if there is none by it.</summary>
+    public void Symbol(ReadOnlySpan<char> name, UIRect rect, Vector4 color)
+    {
+        if (UISymbols.TryGet(name, out char code))
+            Symbol(code, rect, color);
+    }
+
+    /// <summary>
+    /// Helper method for the slot of a texture that isn't the skin's in the run being made. Two of them fit in a run
+    /// next to the atlas and the font, a third means a new run.
+    /// </summary>
+    private uint ImageSlot(Texture texture)
+    {
         uint slot;
         if (texture == runImage0)
             slot = IMAGE_SLOT;
@@ -444,18 +794,34 @@ public sealed partial class UIDrawList
             slot = IMAGE_SLOT;
         }
 
-        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), slot);
+        return slot;
     }
 
     // A region that was made without a tint has none, rather than one that makes it invisible.
     private static Vector4 RegionTint(in UIRegion region) => region.Tint == default ? Vector4.One : region.Tint;
 
     // texTopLeft is the texel the top left corner of the rectangle shows, texBottomRight the bottom right.
-    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring = 0.0f)
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring = 0.0f) =>
+        Quad(rect, texTopLeft, texBottomRight, color, flags, ring, 0.0f, 0.0f);
+
+    /// <summary>
+    /// Helper method to add a quad that leans, its top moved across by <paramref name="slant"/> for every unit it is
+    /// above <paramref name="upright"/> (and its bottom the other way below it), which is an italic letter leaning
+    /// over the line it stands on. It is clipped as the upright rectangle it was before it leant.
+    /// </summary>
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright)
     {
         UIRect visible = rect.Intersect(clip);
         if (visible.IsEmpty)
+        {
+            // Cut away altogether, but it still counts as one of its owner's quads. A quad is told apart from
+            // one tick to the next by who painted it and as which of theirs, and if the ones that are out of
+            // sight weren't counted, every quad after one that slides out under a clip would be taken for the
+            // one before it and blended with that for a tick. Panning a layout about under the edge of an
+            // editor's canvas was a flicker of boxes turning into their neighbours
+            ownerPainted++;
             return;
+        }
 
         // Everything is axis aligned, so clipping is just a matter of trimming the quad and showing
         // the matching part of the texture.
@@ -496,6 +862,14 @@ public sealed partial class UIDrawList
         ref SpriteItem item = ref items[itemCount++];
         item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, flags);
         item.Ring = ring;
+
+        if (slant != 0.0f)
+        {
+            // Where the leaning starts, in the same space as the corners, and the corners slid across about it
+            float pivot = (upright * visualScale.Y + visualOffset.Y) * scale.Y + origin.Y;
+            item.Origin.X += slant * (min.Y - pivot);
+            item.AxisY.X = slant * (max.Y - min.Y);
+        }
         item.Key = new Vector2(owner, ownerPainted++);
     }
 

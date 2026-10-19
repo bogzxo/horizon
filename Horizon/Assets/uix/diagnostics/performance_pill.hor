@@ -1,0 +1,138 @@
+// The performance overlay at its smallest (PerformanceDetail.Compact), the pill. Open it in Hex.
+//
+// A dot that says how the frames are doing, how many there are a second, what one costs the CPU and the GPU, the
+// last few seconds of them as a little graph and the key that gets the rest. The engine finds the parts by their
+// names (UI/Diagnostics/PerformanceFace.cs), see performance_card.hor for what that means for whoever edits this.
+// Every number has a size as wide as the widest it gets, or the pill would breathe in and out with them.
+#define layout
+
+let pill = compositor.stack({
+    padding: vec(13, 0, 7, 0),
+    spacing: 9,
+    direction: "horizontal",
+    size: vec(0, 30),
+    color: vec(0.05, 0.058, 0.082, 0.96),
+    radius: 15,
+    outline: vec(1, 1, 1, 0.09)
+});
+
+let dot = compositor.panel({
+    parent: pill,
+    size: vec(8, 8),
+    radius: 4,
+    color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let starting = compositor.label({
+    parent: pill,
+    text: "starting up",
+    text_scale: 0.125,
+    color: vec(0.8, 0.83, 0.9, 1),
+    visible: false
+});
+
+let numbers = compositor.stack({
+    parent: pill,
+    spacing: 10,
+    direction: "horizontal"
+});
+
+let fps = compositor.readout({
+    parent: numbers,
+    size: vec(64, 30),
+    align: "right",
+    text: "0",
+    unit: "fps",
+    text_scale: 0.1625,
+    unit_scale: 0.125,
+    color: vec(0.96, 0.97, 1, 1),
+    unit_color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let cpu_rule = compositor.divider({
+    parent: numbers,
+    direction: "vertical",
+    size: vec(1, 14),
+    color: vec(1, 1, 1, 0.075)
+});
+
+let cpu_name = compositor.label({
+    parent: numbers,
+    text: "cpu",
+    text_scale: 0.125,
+    color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let cpu_ms = compositor.readout({
+    parent: numbers,
+    size: vec(48, 30),
+    align: "right",
+    text: "0.0",
+    unit: "ms",
+    text_scale: 0.125,
+    color: vec(0.96, 0.97, 1, 1),
+    unit_color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let gpu = compositor.stack({
+    parent: numbers,
+    spacing: 10,
+    direction: "horizontal"
+});
+
+let gpu_rule = compositor.divider({
+    parent: gpu,
+    direction: "vertical",
+    size: vec(1, 14),
+    color: vec(1, 1, 1, 0.075)
+});
+
+let gpu_name = compositor.label({
+    parent: gpu,
+    text: "gpu",
+    text_scale: 0.125,
+    color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let gpu_ms = compositor.readout({
+    parent: gpu,
+    size: vec(48, 30),
+    align: "right",
+    text: "0.0",
+    unit: "ms",
+    text_scale: 0.125,
+    color: vec(0.96, 0.97, 1, 1),
+    unit_color: vec(0.62, 0.66, 0.75, 1)
+});
+
+let spark_rule = compositor.divider({
+    parent: numbers,
+    direction: "vertical",
+    size: vec(1, 14),
+    color: vec(1, 1, 1, 0.075)
+});
+
+let spark = compositor.graph({
+    parent: numbers,
+    size: vec(72, 14),
+    bars: 120,
+    boxed: false,
+    bar_width: 2,
+    peaks_only: true,
+    color: vec(0.38, 0.62, 1, 1)
+});
+
+let cap = compositor.panel({
+    parent: pill,
+    padding: vec(6, 2, 6, 2),
+    color: vec(1, 1, 1, 0.09),
+    radius: 5,
+    outline: vec(1, 1, 1, 0.13)
+});
+
+let cap_key = compositor.label({
+    parent: cap,
+    text: "F3",
+    text_scale: 0.125,
+    color: vec(1, 0.86, 0.3, 1)
+});

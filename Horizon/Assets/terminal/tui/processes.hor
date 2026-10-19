@@ -1,0 +1,91 @@
+// Processes, what runs on the machine, the hungriest first, read again every two seconds. Typing narrows it down by
+// name, K asks to end the one picked and Y ends it, Esc leaves.
+let ui = include("widgets.hor");
+
+let program = { name: "Processes" };
+
+let all = [];
+let shown = ui.list([]);
+let filter = ui.field("");
+let asking = null;
+let said = "";
+
+func refresh(tui) {
+    all = tui.processes().sort(func(process) { return 0 - process.memory; });
+    narrow();
+}
+
+func narrow() {
+    let typed = filter.text;
+    ui.list_set(shown, all.filter(func(process) { return ui.matches(process.name, typed); }));
+}
+
+func on_start(tui) {
+    refresh(tui);
+    tui.timer(2);
+}
+
+func on_tick(tui) {
+    if (asking == null) {
+        refresh(tui);
+    }
+}
+
+func on_key(tui, key) {
+    if (asking != null) {
+        if (key.name == "y") {
+            if (tui.kill(asking.pid)) {
+                said = `ended {asking.name}`;
+            } else {
+                said = `{asking.name} couldn't be ended`;
+            }
+            refresh(tui);
+        }
+        asking = null;
+        return;
+    }
+
+    if (key.name == "escape") {
+        if (filter.text.length > 0) {
+            filter = ui.field("");
+            narrow();
+        } else {
+            tui.exit(0);
+        }
+        return;
+    }
+
+    if (key.ctrl && key.name == "k" || key.name == "delete") {
+        asking = ui.list_chosen(shown);
+        return;
+    }
+
+    if (ui.list_key(shown, key, tui.rows() - 4)) {
+        return;
+    }
+
+    if (ui.field_key(filter, key)) {
+        narrow();
+    }
+}
+
+func draw(tui) {
+    let parts = ui.rows(ui.screen(tui), [1, 0, 1]);
+    tui.write(0, 0, " > ", "cyan");
+    ui.field_draw(tui, filter, ui.rect(3, 0, parts[0].w - 3, 1), "a few letters of a name", asking == null);
+
+    let columns = [
+        { title: "name", width: 0, get: func(process) { return process.name; } },
+        { title: "pid", width: 9, get: func(process) { return process.pid; } },
+        { title: "memory", width: 12, get: func(process) { return `{math.round(process.memory)} MB`; } },
+        { title: "threads", width: 9, get: func(process) { return process.threads; } }
+    ];
+    ui.table_draw(tui, shown, parts[1], columns, true);
+
+    if (asking != null) {
+        let question = ` end {asking.name} ({asking.pid})? y to end it, anything else not `;
+        tui.write(math.max(0, math.floor((parts[1].w - question.length) / 2)), math.floor(parts[1].h / 2), question, "bold inverse red");
+    }
+
+    ui.status(tui, parts[2], "ctrl+k or del end one  esc leave", `{shown.items.count} of {all.count}  {said}`);
+}

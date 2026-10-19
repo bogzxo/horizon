@@ -1,0 +1,5 @@
+// The one the skin always was. Its colours are the skin file's own, so there is nothing to say here but its name.
+
+let theme = {
+    title: "Dark"
+};

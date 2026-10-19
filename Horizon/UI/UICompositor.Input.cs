@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -21,6 +21,38 @@ public partial class UICompositor
     /// </summary>
     internal bool ReadsWindowMouse { get; set; }
 
+    /// <summary>
+    /// Whether a press on the edges of a window that has none of the system's frame drags them, the way the frame would
+    /// (see <c>WindowManagerConfiguration.CustomFrame</c> and <see cref="Components.TitleBar"/>). One UI of the window
+    /// says so, the one its title bar is in.
+    /// </summary>
+    public bool ResizesWindow { get; set; }
+
+    // How near the edge of the window the pointer has hold of it, in the window's pixels
+    private const float WINDOW_EDGE = 6.0f;
+
+    /// <summary>Which edges of the window the pointer is on, none unless this UI drags them and the window has no frame.</summary>
+    public WindowEdges WindowEdgeAt()
+    {
+        // A UI driven by something other than the mouse (a script testing it) has no business with the real window's edges
+        if (!ResizesWindow || PointerSource is not null || GameEngine.Instance?.WindowManager is not { CustomFrame: true, IsMaximized: false } window)
+            return WindowEdges.None;
+
+        Vector2 at = GameEngine.Instance.Input.Mouse.WindowPosition;
+        var size = window.Window.Size;
+        var edges = WindowEdges.None;
+
+        // Off the window altogether is no edge of it
+        if (at.X < 0.0f || at.Y < 0.0f || at.X > size.X || at.Y > size.Y)
+            return WindowEdges.None;
+
+        if (at.X <= WINDOW_EDGE) edges |= WindowEdges.Left;
+        if (at.X >= size.X - WINDOW_EDGE) edges |= WindowEdges.Right;
+        if (at.Y <= WINDOW_EDGE) edges |= WindowEdges.Top;
+        if (at.Y >= size.Y - WINDOW_EDGE) edges |= WindowEdges.Bottom;
+        return edges;
+    }
+
     private UIPointer ReadMouse()
     {
         var mouse = GameEngine.Instance.Input.Mouse;
@@ -41,11 +73,18 @@ public partial class UICompositor
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
         // Escape closes whatever is open, top down. A dialog, then a popup, then the focus, one thing a press
-        if (keyboard.WasPressed(Key.Escape))
+        // A component that takes its keys raw gets them all, escape and tab among them. Only the UI whose component has
+        // the keyboard says so, or whichever comes first while nobody's has. Every UI said it every tick once, and the
+        // ones with nothing focused (the debugger's, the performance overlay's, which a Debug build always has) switched
+        // raw keys off a moment after the terminal switched them on and threw the presses away, Return among them
+        if (focusOwner == this || focusOwner is null)
+            UIKeyboard.RawKeys = focus is { TakesRawKeys: true };
+
+        if (keyboard.WasPressed(Key.Escape) && !UIKeyboard.RawKeys)
             Escape(snapshot);
 
         // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
-        if (keyboard.WasPressed(Key.Tab) && focus is not null)
+        if (keyboard.WasPressed(Key.Tab) && !keyboard.Control && focus is not null && !focus.KeepsTab)
             FocusNext(snapshot, keyboard.Shift ? -1 : 1);
 
         if (focus is null)
@@ -66,6 +105,9 @@ public partial class UICompositor
 
         // A key that edits and is being held is typed again every so often
         UIKeyboard.Repeat();
+
+        while (focus is { TakesRawKeys: true } && UIKeyboard.TryReadKey(out UIKeyPress press))
+            focus.OnKeyDown(press);
 
         while (focus is not null && UIKeyboard.TryRead(out char character))
         {
@@ -139,6 +181,10 @@ public partial class UICompositor
         int next = index < 0 ? (by > 0 ? 0 : focusable.Count - 1) : ((index + by) % focusable.Count + focusable.Count) % focusable.Count;
 
         Focus = focusable[next];
+
+        // Tabbed into, a box has all of what is in it picked out, so typing replaces it without a ctrl+a first
+        if (focus is TextBox box)
+            box.SelectAll();
     }
 
     /// <summary>
@@ -177,7 +223,7 @@ public partial class UICompositor
 
         tooltipModule = module;
         TooltipOf = showing;
-        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer));
+        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer), showing.TooltipMarkdown);
     }
 
     /// <summary>The component whose tooltip is up right now, null while none is.</summary>
@@ -264,6 +310,21 @@ public partial class UICompositor
         }
         secondaryWasDown = pointer.SecondaryDown;
 
+        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held
+        UIResize grip = over is not null && pressed is null ? over.GripAt(over.Module!.ToLocal(pointer.Position)) : UIResize.None;
+        UIComponent? gripOwner = grip != UIResize.None ? over : null;
+        if (!ReferenceEquals(gripped, gripOwner) || (gripOwner is not null && gripOwner.ActiveGrip != grip))
+        {
+            if (gripped is { IsResizing: false })
+                gripped.ActiveGrip = UIResize.None;
+
+            if (gripOwner is not null)
+                gripOwner.ActiveGrip = grip;
+
+            if (gripped is null || !gripped.IsResizing)
+                gripped = gripOwner;
+        }
+
         // While something is held nothing else reacts to the pointer passing over it.
         UIComponent? hover = pressed is null || pressed == over ? over : null;
         if (hover != hovered)
@@ -276,7 +337,12 @@ public partial class UICompositor
             hovered = hover;
         }
 
-        if (pointer.Down && !pointerWasDown)
+        // An edge of a window without the system's frame, dragged by the window itself, nothing in the UI gets the press
+        if (pointer.Down && !pointerWasDown && WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
+        {
+            GameEngine.Instance.WindowManager.BeginResize(windowEdges);
+        }
+        else if (pointer.Down && !pointerWasDown)
         {
             // Pressing anywhere but on what is open closes it.
             foreach (var module in snapshot)
@@ -294,12 +360,21 @@ public partial class UICompositor
             {
                 pressed = over;
                 pressed.IsPressed = true;
-                pressed.OnPointerDown(pressed.Module!.ToLocal(pointer.Position));
+
+                // On an edge that can be dragged the press is the start of that, and none of the component's business
+                Vector2 at = pressed.Module!.ToLocal(pointer.Position);
+                if (pressed.GripAt(at) is var edges && edges != UIResize.None)
+                    pressed.BeginResize(edges, at);
+                else
+                    pressed.OnPointerDown(at);
             }
         }
         else if (pointer.Down && pressed is not null)
         {
-            pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
+            if (pressed.IsResizing)
+                pressed.DragResize(pressed.Module!.ToLocal(pointer.Position));
+            else
+                pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
         }
         else if (!pointer.Down && pressed is not null)
         {
@@ -307,10 +382,20 @@ public partial class UICompositor
             pressed = null;
 
             released.IsPressed = false;
-            released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
 
-            if (released == over)
-                released.OnClick();
+            if (released.IsResizing)
+            {
+                // Letting go of an edge is not a click on whatever the edge belongs to
+                released.EndResize();
+                if (ReferenceEquals(gripped, released)) gripped = null;
+            }
+            else
+            {
+                released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
+
+                if (released == over)
+                    released.OnClick();
+            }
         }
 
         pointerWasDown = pointer.Down;

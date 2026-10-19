@@ -35,8 +35,9 @@ public enum PerformanceDetail
 /// </code>
 /// F3 goes Off, Compact, Full and round again (<see cref="ToggleKey"/>, null for no key, then set <see cref="Detail"/>
 /// yourself, from an options screen say). It sits on a screen UI of its own over everything else, drawn in the plain
-/// flat skin so it reads the same in every game, and is one component that paints itself (<see cref="PerformanceBoard"/>)
-/// out of what was last read off the engine (<see cref="PerformanceSample"/>), four times a second for the numbers
+/// flat skin so it reads the same in every game. What it looks like is two layouts made in Hex like any other UI
+/// (Assets/uix/diagnostics, open them there to move things about), filled in by <see cref="PerformanceFace"/> out
+/// of what was last read off the engine (<see cref="PerformanceSample"/>), four times a second for the numbers
 /// and ten for the graphs. None of that makes any garbage, what it says about the garbage is the game's.
 /// <para>
 /// Reading the card, from the top. The frame rate, white while it is what it is meant to be (the limit on the
@@ -74,13 +75,14 @@ public sealed class PerformanceOverlay : GameObject
 
     private UICompositor ui = null!;
     private UIModule module = null!;
-    private PerformanceBoard board = null!;
+    private PerformanceFace face = null!;
 
     private float refresh, graphRefresh;
 
     // What it showed and which key was on its cap as of the last update, to tell when either changes
     private PerformanceDetail shown = PerformanceDetail.Off;
     private Key? capped;
+    private bool keyed;
 
     /// <summary>How much is shown, see <see cref="PerformanceDetail"/>. From any thread.</summary>
     public PerformanceDetail Detail { get; set; }
@@ -114,7 +116,8 @@ public sealed class PerformanceOverlay : GameObject
         module = ui.CreateModule();
         module.ShowInLayoutDebugger = false;
 
-        board = module.AddComponent(new PerformanceBoard(sample));
+        face = new PerformanceFace(module, sample);
+        face.Pill.Visible = face.Card.Visible = false;
     }
 
     public override void UpdateState(float dt)
@@ -129,20 +132,23 @@ public sealed class PerformanceOverlay : GameObject
         {
             ui.Scale = Scale;
 
-            // Tucked into its corner, a bit off the edges
-            board.Anchor = Corner;
-            board.Position = Corner.ToVector() * (-2.0f * MARGIN);
-            board.Detail = detail;
+            // Whichever of the two it is, tucked into its corner, a bit off the edges
+            Components.UIComponent up = detail == PerformanceDetail.Full ? face.Card : face.Pill;
+            face.Card.Visible = detail == PerformanceDetail.Full;
+            face.Pill.Visible = detail != PerformanceDetail.Full;
+            up.Anchor = Corner;
+            up.Position = Corner.ToVector() * (-2.0f * MARGIN);
 
             // As tall as the screen has room for, a card that doesn't fit down the side goes into two columns
             float scale = ui.UIScale > 0.0f ? ui.UIScale : 1.0f;
-            board.MaxHeight = ui.viewportCamera.Bounds.Height / scale - MARGIN * 2.0f;
+            face.MaxHeight = ui.viewportCamera.Bounds.Height / scale - MARGIN * 2.0f;
 
             // The name of a key is a string, made when the key changes and not every update
-            if (ToggleKey != capped)
+            if (ToggleKey != capped || !keyed)
             {
+                keyed = true;
                 capped = ToggleKey;
-                board.Key = capped?.ToString() ?? string.Empty;
+                face.SetKey(capped?.ToString() ?? string.Empty);
             }
 
             // Another level of detail is read at once, there is nothing sadder than a card of noughts, and it
@@ -151,8 +157,8 @@ public sealed class PerformanceOverlay : GameObject
             if (changed)
             {
                 refresh = graphRefresh = 0.0f;
-                board.Reset();
-                board.SlideIn(Corner.ToVector() * 28.0f, 0.22f);
+                face.Reset();
+                up.SlideIn(Corner.ToVector() * 28.0f, 0.22f);
             }
 
             if ((refresh -= dt) <= 0.0f)
@@ -160,11 +166,13 @@ public sealed class PerformanceOverlay : GameObject
                 refresh = REFRESH;
                 graphRefresh = GRAPH_REFRESH;
                 sample.Read(Engine);
+                face.Show(detail);
             }
             else if ((graphRefresh -= dt) <= 0.0f)
             {
                 graphRefresh = GRAPH_REFRESH;
                 sample.ReadTimelines();
+                face.ShowGraphs(detail);
             }
         }
 

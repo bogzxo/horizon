@@ -51,6 +51,11 @@ public abstract partial class UIComponent
             point = Bounds.Center + (point - VisualOffset - Bounds.Center) / VisualScale;
         }
 
+        // An edge that can be dragged is found before anything inside of the component is, whatever sits against
+        // it (a scroll bar, a button) would have it otherwise. See Resizable
+        if (Resizable != UIResize.None && GripAt(point) != UIResize.None)
+            return this;
+
         if (ClipsChildren && !Bounds.Contains(point))
             return null;
 
@@ -61,7 +66,9 @@ public abstract partial class UIComponent
                 return hit;
         }
 
-        return HitTestVisible && Bounds.Contains(point) ? this : null;
+        // Something with a tooltip can be pointed at to read it, even what is otherwise only drawn (a label). It
+        // takes the press as well then, which a label does nothing with
+        return (HitTestVisible || Tooltip.Length > 0) && Bounds.Contains(point) ? this : null;
     }
 
     /// <summary>The pointer was pressed on this component.</summary>
@@ -135,6 +142,19 @@ public abstract partial class UIComponent
     public string Tooltip { get; set; } = string.Empty;
 
     /// <summary>
+    /// What a text is to be shown as, a key (<c>@main_menu.quit</c>) being the text by it in the texts of the compositor the
+    /// component is in, or else of the game's language (<see cref="Horizon.Content.Localisation.Resolve"/>). Every component that shows
+    /// a text the program or a layout gave it goes through this. Makes no garbage.
+    /// </summary>
+    protected internal string Resolve(string text) => Module?.Compositor is { } compositor ? compositor.Resolve(text) : Horizon.Content.Localisation.Resolve(text);
+
+    /// <summary>
+    /// Whether the tooltip is markdown (headings, **bold**, `code`, lists, see <see cref="Label.Markdown"/>) and the
+    /// tags and $(icons) of a label, rather than plain words. A wider box, for a hint about a piece of code say.
+    /// </summary>
+    public bool TooltipMarkdown { get; set; }
+
+    /// <summary>
     /// Helper method to draw the rim that says "this one" around a component a navigator is on. Called by the
     /// components that have no look of their own for it, after they have painted themselves.
     /// </summary>
@@ -179,6 +199,21 @@ public abstract partial class UIComponent
     protected internal virtual void PaintPopup(UIDrawList list)
     { }
 
+    /// <summary>
+    /// Called when what the component had open was put away, however it was (picked from, a press somewhere else, by
+    /// hand), for one that keeps what it was showing to paint it going (see <see cref="PaintClosing"/>).
+    /// </summary>
+    protected internal virtual void PopupClosed()
+    { }
+
+    /// <summary>
+    /// Draws what the component had open on its way out, after it was put away, where <see cref="PaintPopup"/> drew it
+    /// (see <see cref="UIDrawList.BeginExit"/>). Nothing that's painted here gets the pointer.
+    /// </summary>
+    /// <param name="closedAt">When it started going, for the exit.</param>
+    /// <returns>Whether it's still going, false once there's nothing left to paint.</returns>
+    protected internal virtual bool PaintClosing(UIDrawList list, ref float closedAt) => false;
+
     /// <summary>Whether a point is on what the component has open, in which case the pointer is this component's.</summary>
     protected internal virtual bool PopupContains(Vector2 point) => false;
 
@@ -190,7 +225,11 @@ public abstract partial class UIComponent
     /// <summary>How long the entrance takes, in seconds.</summary>
     public float IntroTime { get; set; } = DEFAULT_INTRO_TIME;
 
-    /// <summary>How long the component stays hidden before its entrance starts, in seconds.</summary>
+    /// <summary>
+    /// How long the component stays hidden before its entrance starts, in seconds. Everything inside of it waits
+    /// that long as well, on top of whatever delay it has of its own, a panel that comes in late brings what is in
+    /// it in late with it.
+    /// </summary>
     public float IntroDelay { get; set; }
 
     /// <summary>Where a component that slides in comes from, relative to where it belongs, (-300, 0) is from the left.</summary>
@@ -207,7 +246,7 @@ public abstract partial class UIComponent
     /// <summary>
     /// Plays the entrance of this component and of everything inside it that has one.
     /// </summary>
-    /// <param name="delay">Seconds to wait on top of each component's own delay.</param>
+    /// <param name="delay">Seconds to wait on top of each component's own delay and the delays of whatever it is inside of.</param>
     public void PlayIntro(float delay = 0.0f)
     {
         float wait = IntroDelay + delay;
@@ -227,12 +266,15 @@ public abstract partial class UIComponent
                 break;
         }
 
-        // One after the other, for a container that says so
+        // What is inside waits as long as this does, its delay is theirs as well. A child that made its entrance
+        // while its parent was still waiting to make its own showed up on its own in the middle of nothing, or
+        // was never seen to come in at all because the parent was still see-through. And one after the other on
+        // top of that, for a container that says so
         float step = this is Panel panel ? panel.Stagger : 0.0f;
         var snapshot = children;
 
         for (int i = 0; i < snapshot.Length; i++)
-            snapshot[i].PlayIntro(delay + i * step);
+            snapshot[i].PlayIntro(wait + i * step);
     }
 
     /* The keyboard */
@@ -242,6 +284,23 @@ public abstract partial class UIComponent
     /// takes the focus away again.
     /// </summary>
     protected internal virtual bool Focusable => false;
+
+    /// <summary>
+    /// Whether tab is typed into this component while it has the focus rather than moving the focus on, which an
+    /// editor of code wants for indenting.
+    /// </summary>
+    protected internal virtual bool KeepsTab => false;
+
+    /// <summary>
+    /// Whether the keys come to it as themselves through <see cref="OnKeyDown"/>, with the modifiers, rather than as the
+    /// characters and editing codes of <see cref="OnTextInput"/>. A terminal, which sends them on to a program. Escape
+    /// and tab are its own then too, the compositor leaves them alone.
+    /// </summary>
+    protected internal virtual bool TakesRawKeys => false;
+
+    /// <summary>A key pressed (or held) while this has the focus and takes its keys raw, see <see cref="TakesRawKeys"/>.</summary>
+    protected internal virtual void OnKeyDown(in UIKeyPress press)
+    { }
 
     /// <summary>
     /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the

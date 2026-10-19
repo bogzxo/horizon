@@ -1,4 +1,5 @@
 // The settings screen of the layout files example (UILayoutsExample.cs). Open it in Hex to push it about with a mouse.
+#define layout
 
 // Made for a 16:9 screen, and kept that shape on any other
 compositor.design({ size: vec(1600, 900), fit: "contain" });

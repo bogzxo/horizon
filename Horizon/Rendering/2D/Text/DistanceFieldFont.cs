@@ -4,8 +4,6 @@ using System.Security.Cryptography;
 using Horizon.Graphics;
 using Horizon.Logging;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 using StbTrueTypeSharp;
 
@@ -40,8 +38,11 @@ public sealed class DistanceFieldFont
     private const int CACHE_VERSION = 1;
     private const uint CACHE_MAGIC = 0x544E4648; // HFNT
 
-    // The characters a TrueType font is built with, the printable ASCII and the Latin-1 ones
-    private static readonly (int From, int To)[] Ranges = [(32, 126), (160, 255)];
+    // The characters a TrueType font is built with unless it is told which, the printable ASCII and the Latin-1 ones
+    private static readonly (int From, int To)[] DefaultRanges = [(32, 126), (160, 255)];
+
+    // Which characters this one is built with, an icon font's are up in the private use area
+    private (int From, int To)[] ranges = DefaultRanges;
 
     public Texture Texture { get; private set; } = Texture.Invalid;
     public Dictionary<char, CharDefinition> Glyphs { get; } = [];
@@ -65,10 +66,15 @@ public sealed class DistanceFieldFont
     /// Loads a font, TrueType or BMFont by its extension. Render thread (it makes the texture).
     /// </summary>
     /// <param name="emSize">How many pixels to the em the metrics come out at.</param>
-    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM)
+    /// <param name="characters">
+    /// Which characters of a TrueType font to build, from and to, both in. Printable ASCII and Latin-1 unless told,
+    /// an icon font (Codicons, see <see cref="Horizon.UI.Drawing.UISymbols"/>) has its pictures in the private use area.
+    /// They have to be in the Basic Multilingual Plane, a glyph is known by its char.
+    /// </param>
+    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM, (int From, int To)[]? characters = null)
     {
         string path = Path.Combine(directory, file);
-        var font = new DistanceFieldFont { EmSize = Math.Max(8, emSize) };
+        var font = new DistanceFieldFont { EmSize = Math.Max(8, emSize), ranges = characters ?? DefaultRanges };
 
         try
         {
@@ -117,7 +123,7 @@ public sealed class DistanceFieldFont
 
             // Every glyph's field, and the shelves they go on
             var pictures = new List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)>();
-            foreach (var (from, to) in Ranges)
+            foreach (var (from, to) in ranges)
             {
                 for (int codepoint = from; codepoint <= to; codepoint++)
                 {
@@ -217,17 +223,10 @@ public sealed class DistanceFieldFont
         if (importer.ImagePath.Length == 0 || !File.Exists(importer.ImagePath))
             throw new FileNotFoundException($"the picture of the font, '{importer.ImagePath}', isn't there");
 
-        using var image = Image.Load<Rgba32>(importer.ImagePath);
+        var image = ImageFile.Load(importer.ImagePath);
         int width = image.Width, height = image.Height;
         var inside = new bool[width * height];
-        image.ProcessPixelRows(accessor =>
-        {
-            for (int y = 0; y < height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++) inside[y * width + x] = row[x].A > 127;
-            }
-        });
+        for (int i = 0; i < inside.Length; i++) inside[i] = image.Pixels[i * 4 + 3] > 127;
 
         // The field at the picture's own size, then halved if it's a big one, distances survive that fine
         int spread = Math.Max(2, importer.LineHeight > 0 ? importer.LineHeight / 12 : SPREAD);
@@ -369,13 +368,17 @@ public sealed class DistanceFieldFont
 
     /* The cache, next to the shaders' */
 
-    private static string? CacheFile(string path, int emSize)
+    private string? CacheFile(string path, int emSize)
     {
         string? shaders = ShaderCompiler.CacheDirectory();
         if (shaders is null) return null;
 
         var hash = SHA256.HashData(File.ReadAllBytes(path));
         string key = Convert.ToHexString(hash)[..24] + "_" + emSize + "_" + CACHE_VERSION;
+
+        // Built with other characters it is another font as far as the cache goes
+        if (ranges != DefaultRanges)
+            key += "_" + string.Join("-", ranges.Select(range => $"{range.From:x}{range.To:x}"));
         return Path.Combine(Path.GetDirectoryName(shaders) ?? shaders, "Fonts", key + ".hfont");
     }
 

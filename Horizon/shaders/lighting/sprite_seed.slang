@@ -7,9 +7,10 @@
 
 struct Params
 {
-    float2 uSize;      // the picture, in texels
-    float2 uCells;     // the seed grid, in cells
-    int uScale;        // picture texels to a cell, each way
+    float2 uSize;        // the picture, in texels
+    float2 uCells;       // the seed grid, in cells
+    int uScale;          // picture texels to a cell, each way
+    int uSpritesBlock;   // whether what blocks is a wall to the tracer's rays as well, see PathTracedLighting2D.SpritesBlock
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
@@ -22,12 +23,13 @@ BIND_IMAGE(0) [[vk::image_format("rg32ui")]] RWTexture2D<uint2> uSeeds;
 static const uint NONE = 0xFFFFFFFFu;
 static const float GLOWS_FROM = 0.2;
 
-// Whether a texel blocks, and whether it blocks or glows
+// Whether a texel blocks, and whether it is a wall to the tracer's rays, which is what glows and, unless told
+// otherwise, what blocks as well
 bool2 at(int2 texel, int2 size)
 {
     texel = clamp(texel, int2(0, 0), size - 1);
     bool blocks = uMaterial.Load(int3(texel, 0)).g > 0.5;
-    bool glows = blocks || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
+    bool glows = (blocks && params.uSpritesBlock != 0) || uMaterial.Load(int3(texel, 0)).b > GLOWS_FROM;
     return bool2(blocks, glows);
 }
 

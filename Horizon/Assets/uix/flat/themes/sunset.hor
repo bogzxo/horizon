@@ -1,0 +1,37 @@
+// The sky over the Japan map as the sun goes. Plum shadows for the panels, text the colour of the last light, an
+// amber accent, and the code in the colours of the same sky, pink and gold and a bit of sage for the strings.
+
+let theme = {
+    title: "Sunset",
+    background: vec(0.13, 0.07, 0.14, 1.0),
+    surface: vec(0.21, 0.1, 0.19, 1.0),
+    control_color: vec(0.33, 0.16, 0.24, 1.0),
+    text_color: vec(0.99, 0.88, 0.76, 1.0),
+    border_color: vec(1.0, 0.6, 0.4, 0.16),
+    hover_color: vec(1.0, 0.75, 0.5, 0.1),
+    accent_color: vec(1.0, 0.56, 0.25, 1.0),
+    highlight_color: vec(1.0, 0.72, 0.35, 1.0),
+    syntax: {
+        name: vec(0.99, 0.88, 0.76, 1.0),
+        keyword: vec(0.98, 0.52, 0.55, 1.0),
+        property: vec(1.0, 0.78, 0.5, 1.0),
+        call: vec(1.0, 0.85, 0.4, 1.0),
+        text: vec(0.72, 0.85, 0.55, 1.0),
+        number: vec(1.0, 0.65, 0.45, 1.0),
+        comment: vec(0.6, 0.45, 0.55, 1.0),
+        punctuation: vec(0.8, 0.68, 0.66, 1.0),
+        line_number: vec(0.5, 0.35, 0.45, 1.0),
+        directive: vec(0.95, 0.5, 0.75, 1.0),
+        declaration: vec(1.0, 0.82, 0.6, 1.0),
+        builtin: vec(1.0, 0.7, 0.4, 1.0),
+        type: vec(0.6, 0.85, 0.75, 1.0),
+        constant: vec(0.9, 0.6, 0.5, 1.0),
+        reference: vec(0.95, 0.6, 0.8, 1.0),
+        escape: vec(1.0, 0.85, 0.5, 1.0),
+        markup: vec(0.7, 0.6, 0.5, 1.0),
+        operator: vec(0.85, 0.72, 0.7, 1.0),
+        bracket1: vec(1.0, 0.8, 0.3, 1.0),
+        bracket2: vec(0.95, 0.5, 0.7, 1.0),
+        bracket3: vec(0.6, 0.75, 1.0, 1.0)
+    }
+};

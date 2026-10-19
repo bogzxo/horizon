@@ -26,11 +26,18 @@ internal sealed class UIRenderer
     private readonly List<UIDrawList.Run> runs = [];
     private readonly List<TextureAtlas> atlases = [];
     private readonly List<SpriteRun> spriteRuns = [];
+    private readonly List<UIGlassPane> glass = [];
     private UISkin? skin;
 
     /// <summary>The quads that were uploaded last, which is what is drawn. For tests that look at what is on screen.</summary>
     internal ReadOnlySpan<SpriteItem> Uploaded => items.AsSpan(0, itemCount);
 
+
+    /// <summary>The panes of glass in what was uploaded last, see <see cref="UIGlass"/>.</summary>
+    internal ReadOnlySpan<UIGlassPane> Glass => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(glass);
+
+    /// <summary>How many quads were uploaded last.</summary>
+    internal int Count => itemCount;
 
     /// <summary>Whether there is nothing to draw at all, a UI whose modules are all off, or one that hasn't been painted yet.</summary>
     public bool IsEmpty => itemCount == 0;
@@ -77,6 +84,10 @@ internal sealed class UIRenderer
         atlases.Clear();
         atlases.AddRange(list.Atlases);
 
+        glass.Clear();
+        foreach (var pane in list.GlassPanes)
+            glass.Add(pane);
+
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
     }
@@ -85,7 +96,7 @@ internal sealed class UIRenderer
     /// Takes a copy of quads and their runs that weren't painted into a <see cref="UIDrawList"/> of their own, a list as
     /// it was captured at the end of a tick, or two of those blended. They are free to be reused afterwards.
     /// </summary>
-    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, ReadOnlySpan<TextureAtlas> listAtlases = default)
+    public void Upload(ReadOnlySpan<SpriteItem> source, ReadOnlySpan<UIDrawList.Run> sourceRuns, UISkin listSkin, ReadOnlySpan<TextureAtlas> listAtlases = default, ReadOnlySpan<UIGlassPane> listGlass = default)
     {
         if (items.Length < source.Length)
             items = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)source.Length)];
@@ -101,6 +112,10 @@ internal sealed class UIRenderer
         foreach (var atlas in listAtlases)
             atlases.Add(atlas);
 
+        glass.Clear();
+        foreach (var pane in listGlass)
+            glass.Add(pane);
+
         skin = listSkin;
     }
 
@@ -111,6 +126,7 @@ internal sealed class UIRenderer
     {
         itemCount = 0;
         runs.Clear();
+        glass.Clear();
         skin = null;
     }
 
@@ -119,20 +135,29 @@ internal sealed class UIRenderer
     /// </summary>
     public void Draw(Camera camera)
     {
+        if (Begin())
+            DrawRange(0, itemCount, camera);
+
+        End();
+    }
+
+    // Whether Begin sent anything that End has to finish
+    private bool begun;
+
+    /// <summary>
+    /// Sends what was last uploaded to the GPU without drawing any of it, it's drawn a stretch at a time with
+    /// <see cref="DrawRange"/> and finished with <see cref="End"/>, which has to be called whatever this says. For a UI
+    /// with glass in it, which has the panes put down between the stretches.
+    /// </summary>
+    /// <returns>Whether there is anything to draw.</returns>
+    public bool Begin()
+    {
         // Art the UI asked other people's atlases for turns up in them here, on the thread that can upload it
         foreach (var atlas in atlases)
             atlas.Update();
 
         if (batch is null || skin is null || itemCount == 0)
-            return;
-
-        // The UI is painted back to front with alpha blending. The rest of the engine doesn't expect
-        // either, so everything touched here is put back afterwards.
-        var before = RenderState.Save();
-
-        RenderState.Blend = true;
-        RenderState.BlendMode = BlendMode.Alpha;
-        RenderState.DepthTest = false;
+            return false;
 
         // Every run shows the atlas and the font, in the slots the draw list gave them.
         ReadOnlySpan<SpriteTexture> shared =
@@ -151,12 +176,35 @@ internal sealed class UIRenderer
                 run.Image1 is { } image1 ? new SpriteTexture(image1) : default));
         }
 
-        batch.Draw(
-            items.AsSpan(0, itemCount),
-            System.Runtime.InteropServices.CollectionsMarshal.AsSpan(spriteRuns),
-            camera,
-            shared);
+        begun = true;
+        return batch.BeginItems(items.AsSpan(0, itemCount), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(spriteRuns), shared);
+    }
+
+    /// <summary>Draws the quads from one up to (and not including) another of what <see cref="Begin"/> sent.</summary>
+    public void DrawRange(int from, int to, Camera camera)
+    {
+        if (!begun || batch is null || to <= from)
+            return;
+
+        // The UI is painted back to front with alpha blending. The rest of the engine doesn't expect
+        // either, so everything touched here is put back afterwards.
+        var before = RenderState.Save();
+
+        RenderState.Blend = true;
+        RenderState.BlendMode = BlendMode.Alpha;
+        RenderState.DepthTest = false;
+
+        batch.DrawItems(from, to - from, camera);
 
         RenderState.Restore(before);
+    }
+
+    /// <summary>Finishes what <see cref="Begin"/> started.</summary>
+    public void End()
+    {
+        if (begun)
+            batch?.EndItems();
+
+        begun = false;
     }
 }

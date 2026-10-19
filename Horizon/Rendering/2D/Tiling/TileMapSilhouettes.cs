@@ -1,4 +1,5 @@
-using SixLabors.ImageSharp.PixelFormats;
+using Horizon.Graphics;
+
 
 namespace Horizon.Rendering.Tiling;
 
@@ -36,9 +37,8 @@ internal sealed class TileMapSilhouettes
 
         try
         {
-            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(path);
-            var pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels);
+            var image = ImageFile.Load(path);
+            var pixels = image.Pixels;
 
             // Half there counts as there, the soft edge of a thing still blocks most of what hits it
             var filled = new bool[image.Width * image.Height];

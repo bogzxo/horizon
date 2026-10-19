@@ -131,13 +131,18 @@ internal static class TestCatalog
 
         new("town", TestLevel.AllTogether, "A night in town",
             "Everything above in one scene, the way a game has it. A map with its lamps and colliders, a blob you walk and jump about it with some weight to him, lit and shadowed, rain that lands on him, the tube over the street and a HUD out of a layout file in front of it.",
-            ["TileMap", "DeferredRenderer2D", "PhysicsWorld", "CharacterController2D", "ParticleRenderer2D", "UILayout", "PostProcessing"],
+            ["TileMap", "DeferredRenderer2D", "PhysicsWorld", "CharacterController2D", "ParticleRenderer2D", "UILayout", "PostProcessing", "BloomEffect"],
             "Examples/Showcase/TownExample.cs", () => new TownExample()),
 
         new("dungeon", TestLevel.AllTogether, "Down in the dark",
             "A dungeon from above, and a game. Three crystals, a gate that wants them and slimes in the way, lit by whatever in it glows, the lava, the mushrooms, the crystals he carries and the sparks he throws, with everything that moves a body in one physics world.",
-            ["LightingMode.PathTraced", "Emissive", "FlashLights", "CharacterController2D", "PhysicsWorld.BodiesPush", "ApplyRadialImpulse", "PhysicsParticleSimulator2D", "TileMap"],
+            ["LightingMode.PathTraced", "Emissive", "FlashLights", "BloomEffect", "CharacterController2D", "PhysicsWorld.BodiesPush", "ApplyRadialImpulse", "PhysicsParticleSimulator2D", "TileMap"],
             "Examples/Showcase/DungeonExample.cs", () => new DungeonExample()) { Aliases = ["crawler"] },
+
+        new("village", TestLevel.AllTogether, "A day in the village",
+            "A town from above with doors you can walk through. Every building's inside is a map of its own, laid over the street and faded up as you step in, lit by the path tracer with a sun that goes round, windows that come on at dusk, an eye that gets used to the dark, and villagers who wander and have something to say. The art is two packs off itch.io (Tiny RPG Town by ansimuz, CC0, and AxulArt's interior, CC BY 4.0).",
+            ["TileMapRooms", "TileMapDoor", "TileMap.Opacity", "LightingMode.PathTraced", "LightType.Directional", "DeferredRenderer2D.WallHeight", "ExposureEffect", "CharacterController2D", "TileMapPathfinder"],
+            "Examples/Showcase/VillageExample.cs", () => new VillageExample()) { Aliases = ["town-doors", "hometown"] },
 
         /* Under the hood */
 
@@ -146,12 +151,22 @@ internal static class TestCatalog
             ["SnapshotClock", "interpolation", "RenderFrame", "VSync"],
             "Examples/Internals/PacingExample.cs", () => new PacingExample()),
 
+        new("terminal", TestLevel.UnderTheHood, "A terminal",
+            "The machine's shell in a TerminalView, the first piece of Dusk. A real terminal, ConPTY and a VT screen, type into it, run vim in it, resize the window and watch the lines reflow.",
+            ["TerminalView", "TerminalScreen", "PseudoTerminal"],
+            "Examples/Internals/TerminalExample.cs", () => new TerminalExample()),
+
         /* Checks */
 
         new("check-tilemap", TestLevel.Checks, "Tile maps",
             "Loads three small maps that between them have one of everything a map can have, and checks that what comes out is what was put in.",
             ["TileMap"],
             "Checks/TileMapChecks.cs", () => new TileMapChecks()),
+
+        new("check-physics", TestLevel.Checks, "Physics",
+            "Bodies fall, land, bounce and are thrown, a character steps a slab and is stopped by a wall, the fluid finds its level, in a scene the loops tick.",
+            ["PhysicsWorld", "CharacterController2D", "PhysicsFluidParticleSimulator2D"],
+            "Checks/PhysicsCheck.cs", () => new PhysicsCheck()),
 
         new("check-ui", TestLevel.Checks, "UI, the basics",
             "A scripted pointer clicks through buttons, sliders and toggles made in C# and by a script.",
@@ -172,6 +187,21 @@ internal static class TestCatalog
             "The navigator driven from code. Walking menus and grids, list boxes, tabbing and pasting, tooltips, dialogs and what is on top of what.",
             ["UINavigator", "UIDialog", "ListBox"],
             "Checks/UINavigationCheck.cs", () => new UINavigationCheck()) { Aliases = ["ui-navigation-selftest"] },
+
+        new("check-ui-skins", TestLevel.Checks, "UI, skins and themes",
+            "Every skin under Assets/uix in every theme it has, one after the other on the same controls. Whether each comes up, has its art and holds a layout made for another, and the setting they are picked with.",
+            ["UISkins", "UISkin", "SpriteSheetDefinition"],
+            "Checks/UISkinsCheck.cs", () => new UISkinsCheck()),
+
+        new("check-ui-parts", TestLevel.Checks, "UI, the newer parts",
+            "Edges dragged to resize, readouts, graphs and meters that make no garbage, the button in a text box and its menu of art, a dialog with controls in it, the picker of skins and the performance overlay out of its layouts.",
+            ["UIResize", "Readout", "Graph", "ArtPicker", "PerformanceFace"],
+            "Checks/UIPartsCheck.cs", () => new UIPartsCheck()),
+
+        new("check-ui-text", TestLevel.Checks, "UI, styled text and markdown",
+            "Bold, italic, colours and sizes out of tags in square brackets, and markdown in a label, headings, lists, quotes, code, rules and links, wrapped and clicked.",
+            ["UIRichText", "Label", "UITextStyle"],
+            "Checks/UITextCheck.cs", () => new UITextCheck()),
     ]);
 
     /// <summary>Finds an example by its id, or by one of the ids the examples before it went by, whatever the case. Null if there's no such thing.</summary>

@@ -82,6 +82,9 @@ public partial class UIModule
     // What the layout that is being built said about the screen it was made for, see compositor.design
     internal (System.Numerics.Vector2 Size, UIFit Fit)? declaredDesign;
 
+    // The layout being built right now, which is what an include is named from and what gets its parts
+    internal UILayout? building;
+
     protected void SetupRuntime()
     {
         Runtime.UserScope.DeclareSystem("compositor", new ObjectValue(factories));
@@ -112,6 +115,23 @@ public partial class UIModule
             return new NullValue();
         });
 
+        // `compositor.hidden_layers(["code", "table"])` has the layers named start out hidden (see SetLayerVisible), the
+        // screens of a menu that aren't the first, or the parts of an editor that take turns with each other, which an
+        // editor shows and hides by the layer to work on each. Only for a layout that is the whole module, like design
+        factories["hidden_layers"] = new NativeFunctionValue((args, _) =>
+        {
+            if (args.Length != 1)
+                throw new Exception("compositor.hidden_layers expects one list of the layers that start out hidden: [\"code\", \"table\"].");
+
+            if (captureParent is null)
+            {
+                foreach (string layer in UIScript.ToTexts(args[0], "hidden_layers"))
+                    SetLayerVisible(layer.Trim(), false);
+            }
+
+            return new NullValue();
+        });
+
         Register<Button>("button");
         Register<ToggleButton>("toggle");
         Register<ProgressBar>("progress_bar");
@@ -121,8 +141,20 @@ public partial class UIModule
         Register<Image>("image");
         Register<Panel>("panel");
         Register<Group>("group");
+
+        // `compositor.include({ parent: body, file: "shell/side_bar.hor" })` builds that file in here, its parts the
+        // including layout's as well, so a UI is written as parts in files of their own, see Include
+        Register<Include>("include", include =>
+        {
+            if (include.File.Length == 0)
+                throw new Exception("compositor.include needs the file to build in it, from the folder of this layout.");
+
+            UILayout inner = include.Reload(this, building);
+            building?.Absorb(inner);
+        });
         Register<TabPanel>("tabs");
         Register<StackPanel>("stack");
+        Register<Collapsible>("collapsible");
         Register<GridPanel>("grid");
         Register<ScrollPanel>("scroll");
         Register<NumberBox>("number_box");
@@ -134,6 +166,25 @@ public partial class UIModule
         Register<ColorPicker>("color_picker");
         Register<MenuBar>("menu_bar");
         Register<CodeView>("code");
+        Register<CodeEditor>("code_editor");
+        Register<Readout>("readout");
+        Register<Meter>("meter");
+        Register<Graph>("graph");
+        Register<SegmentBar>("segments");
+        Register<Symbol>("symbol");
+        Register<StatusBar>("status_bar");
+        Register<TabStrip>("tab_strip");
+        Register<Breadcrumbs>("breadcrumbs");
+        Register<TitleBar>("title_bar");
+        Register<WindowPanel>("window");
+        Register<TreeView>("tree_view");
+        Register<Notifications>("notifications");
+        Register<Sparks>("sparks");
+        Register<Table>("table");
+        Register<DrawingPanel>("drawing");
+        Register<FormPanel>("form");
+        Register<TerminalView>("terminal");
+        Register<TerminalPanel>("terminal_panel");
     }
 
     /// <summary>
@@ -141,7 +192,10 @@ public partial class UIModule
     /// can set any property the component exposes, including parent to put it inside another component,
     /// a component without a parent is added to the module itself.
     /// </summary>
-    public void Register<T>(string name) where T : UIComponent, new()
+    public void Register<T>(string name) where T : UIComponent, new() => Register<T>(name, null);
+
+    /// <param name="made">What to do with one once the script's properties are on it and it is in its parent.</param>
+    public void Register<T>(string name, Action<T>? made) where T : UIComponent, new()
     {
         lock (kinds)
             kinds[name] = (typeof(T), static () => new T());
@@ -170,6 +224,7 @@ public partial class UIModule
                 captured?.Add(component);
             }
 
+            made?.Invoke(component);
             return component.Object;
         });
     }

@@ -1,0 +1,97 @@
+// The sprites of the Retro Windows skin, cut out of Retro Windows GUI by Comp-3 Interactive
+// (comp3interactive.itch.io/retro-windows-gui) by Art/make_ui_packs.py, which is where to change anything in here,
+// this file is written by it. The pack is a folder of small PNGs, a button fifteen pixels across and so on. They
+// are all on the one sheet here, art.aseprite, with a colour scheme on every layer. The pack comes in the one
+// everybody remembers (classic), the others are the same art with its six colours swapped for another six, the
+// way the schemes of the real thing were.
+//
+// The names are the ones the components and the layouts ask for, which are Dead Revolver's, so a layout written
+// for that skin comes up in this one. A pack this small has one button and one field, so a lot of names are the
+// same picture.
+
+let art = {
+    file: "art.aseprite",
+    themes: "layers",
+    fallback: "classic",
+    sprites: {
+        button:                 { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_hover:           { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_pressed:         { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_selected:        { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_flat:            { x: 49, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_flat_hover:      { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_flat_pressed:    { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_flat_selected:   { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_pill:            { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_pill_hover:      { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_pill_pressed:    { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_pill_selected:   { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_slant:           { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_slant_hover:     { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_slant_pressed:   { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_slant_selected:  { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        key:                    { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        key_hover:              { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        key_pressed:            { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        key_selected:           { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_left:               { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_left_hover:         { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_left_pressed:       { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_left_selected:      { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_right:              { x: 1, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_right_hover:        { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_right_pressed:      { x: 33, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        tab_right_selected:     { x: 17, y: 1, w: 15, h: 15, border: 2, content: vec(4, 3, 4, 4) },
+        button_outline:         { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        button_outline_hover:   { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        button_outline_pressed: { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        button_outline_selected:{ x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        dropdown:               { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        dropdown_lit:           { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        panel:                  { x: 82, y: 1, w: 15, h: 15, border: 2 },
+        panel_tall:             { x: 82, y: 1, w: 15, h: 15, border: 2 },
+        panel_card:             { x: 82, y: 1, w: 15, h: 15, border: 2 },
+        panel_window:           { x: 98, y: 1, w: 16, h: 48, border: vec(4, 26, 4, 4), content: vec(5, 27, 5, 5) },
+        frame:                  { x: 115, y: 1, w: 16, h: 16, border: 2 },
+        frame_tech:             { x: 115, y: 1, w: 16, h: 16, border: 2 },
+        header:                 { x: 132, y: 1, w: 4, h: 4, text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        slot:                   { x: 137, y: 1, w: 16, h: 16, border: 2 },
+        slot_empty:             { x: 154, y: 1, w: 16, h: 16, border: 2 },
+        slot_filled:            { x: 65, y: 1, w: 16, h: 16, border: 2, content: vec(4, 3, 4, 3) },
+        slot_round:             { x: 171, y: 1, w: 13, h: 13 },
+        check_off:              { x: 65, y: 1, w: 16, h: 16 },
+        check_hover:            { x: 65, y: 1, w: 16, h: 16 },
+        check_on:               { x: 185, y: 1, w: 16, h: 16 },
+        check_mixed:            { x: 154, y: 1, w: 16, h: 16 },
+        radio_off:              { x: 171, y: 1, w: 13, h: 13 },
+        radio_hover:            { x: 171, y: 1, w: 13, h: 13 },
+        radio_on:               { x: 202, y: 1, w: 13, h: 13 },
+        radio_mixed:            { x: 216, y: 1, w: 13, h: 13 },
+        slider_track:           { x: 230, y: 1, w: 12, h: 4, border: vec(1, 1, 1, 1) },
+        slider_handle:          { x: 243, y: 1, w: 11, h: 21 },
+        slider_handle_lit:      { x: 243, y: 1, w: 11, h: 21 },
+        slider_knob:            { x: 243, y: 1, w: 11, h: 21 },
+        bar_frame:              { x: 65, y: 1, w: 16, h: 16, border: 2 },
+        bar_flat_frame:         { x: 65, y: 1, w: 16, h: 16, border: 2 },
+        bar_fill:               { x: 1, y: 50, w: 4, h: 4 },
+        bar_fill_alt:           { x: 1, y: 50, w: 4, h: 4 },
+        bar_flat_fill:          { x: 1, y: 50, w: 4, h: 4 },
+        underline:              { x: 6, y: 50, w: 1, h: 2 },
+        arrow_down:             { x: 8, y: 50, w: 7, h: 4 },
+        arrow_up:               { x: 16, y: 50, w: 7, h: 4 },
+        arrow_right:            { x: 24, y: 50, w: 4, h: 7 },
+        arrow_left:             { x: 29, y: 50, w: 4, h: 7 },
+        close:                  { x: 34, y: 50, w: 8, h: 7 },
+        icon_question:          { x: 43, y: 50, w: 6, h: 9 },
+        icon_check:             { x: 50, y: 50, w: 8, h: 5 },
+        icon_window:            { x: 59, y: 50, w: 9, h: 7 },
+        icon_minimise:          { x: 69, y: 50, w: 8, h: 1 }
+    }
+};
+
+// Whatever isn't in here (the gamepads, the keyboard, the hearts and stars, the cursors) is Dead Revolver's,
+// at the three times its size it was drawn for whatever this skin draws its own art at.
+let sheet = {
+    images: { art },
+    inherit: { sheet: "../dead_revolver/sprites.hor", scale: 3 }
+}

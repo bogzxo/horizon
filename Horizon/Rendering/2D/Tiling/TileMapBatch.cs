@@ -58,6 +58,35 @@ internal sealed class TileMapTexture
     /// <summary>Has to run on the render thread. An image that isn't there gives a texture that draws nothing.</summary>
     public static TileMapTexture Load(string path)
     {
+        var (normal, specular, occlusion) = MapsOf(path);
+        return new TileMapTexture
+        {
+            Albedo = LoadImage(path),
+            Normal = LoadImage(normal),
+            Specular = LoadImage(specular),
+            Occlusion = LoadImage(occlusion)
+        };
+    }
+
+    /// <summary>
+    /// The image and the maps that go with it read and decoded now, on any thread, so that <see cref="Load"/> on the
+    /// render thread only sends them up (see <see cref="Texture.DecodeAhead"/>). The ones that are textures already are left.
+    /// </summary>
+    public static void DecodeAhead(string path)
+    {
+        var (normal, specular, occlusion) = MapsOf(path);
+        foreach (string file in (ReadOnlySpan<string>)[path, normal, specular, occlusion])
+        {
+            // Without an engine (a test that only reads maps) there are no textures to make of them either
+            if (GameEngine.Instance is not { } engine) return;
+            if (!engine.ObjectManager.Textures.Has(Path.GetFullPath(file)))
+                Texture.DecodeAhead(file);
+        }
+    }
+
+    // The files next to an image that are its normal, specular and ambient occlusion maps
+    private static (string Normal, string Specular, string Occlusion) MapsOf(string path)
+    {
         string directory = Path.GetDirectoryName(path) ?? string.Empty;
         string name = Path.GetFileNameWithoutExtension(path);
         string extension = Path.GetExtension(path);
@@ -65,13 +94,9 @@ internal sealed class TileMapTexture
         if (name.EndsWith(ALBEDO_SUFFIX, StringComparison.OrdinalIgnoreCase))
             name = name[..^ALBEDO_SUFFIX.Length];
 
-        return new TileMapTexture
-        {
-            Albedo = LoadImage(path),
-            Normal = LoadImage(Path.Combine(directory, $"{name}_normal{extension}")),
-            Specular = LoadImage(Path.Combine(directory, $"{name}_specular{extension}")),
-            Occlusion = LoadImage(Path.Combine(directory, $"{name}_ao{extension}"))
-        };
+        return (Path.Combine(directory, $"{name}_normal{extension}"),
+            Path.Combine(directory, $"{name}_specular{extension}"),
+            Path.Combine(directory, $"{name}_ao{extension}"));
     }
 
     private static Texture LoadImage(string path)

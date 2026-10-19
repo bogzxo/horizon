@@ -1,5 +1,6 @@
 // One of everything UIX has, a page at a time (UIControlsExample.cs). The game only adds what each thing does,
 // what there is and where it sits is all in here.
+#define layout
 
 compositor.design({ size: vec(1600, 900), fit: "contain" });
 

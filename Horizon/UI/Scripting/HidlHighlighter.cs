@@ -1,135 +1,361 @@
+using System.Globalization;
+using System.Numerics;
+
+using Horizon.HIDL;
 using Horizon.HIDL.Lexing;
 
 namespace Horizon.UI.Scripting;
 
 /// <summary>
-/// What a piece of HIDL code is, as far as colouring it in goes.
+/// A colour written into the code, <c>color: vec(0.2, 0.4, 0.9, 1)</c>, for an editor to show a swatch of in front of it.
 /// </summary>
-public enum HidlToken
+/// <param name="Line">The line its vec is on, from 0.</param>
+/// <param name="Column">Where its vec starts.</param>
+/// <param name="Length">How many characters it is, the vec to its closing bracket, when that is on the same line.</param>
+public readonly record struct HidlSwatch(int Line, int Column, int Length, Vector4 Color);
+
+/// <summary>What a piece of art named in the code is, which says where an editor finds the picture of it.</summary>
+public enum HidlArtKind
 {
-    // A name that is nothing more than a name, a variable most of the time
-    Name,
+    // One of the Codicons, $(name) in a text or the text given to an icon or a symbol
+    Symbol,
 
-    // let, const, func and the rest of the words the language keeps to itself, and true, false and null
-    Keyword,
+    // An icon of the skin, [icon:name] in a text
+    Icon,
 
-    // The key of an object ("padding" in `padding: 8`) or something reached with a dot
-    Property,
+    // A piece of the skin's art, the text given to a sprite
+    Sprite,
 
-    // Anything that is called, which is whatever has a bracket after it
-    Call,
-
-    Text,
-    Number,
-    Comment,
-
-    // Brackets, commas, operators and whatever else is left
-    Punctuation
+    // A picture on disk, a text that is the path of a .png or an Aseprite file
+    Picture
 }
 
 /// <summary>
-/// A stretch of a line of code that is all one kind of thing.
+/// Art named in the code, <c>"$(play)"</c>, <c>"[icon:pad_a]"</c>, <c>sprite: "button"</c> or <c>"art/hero.aseprite"</c>,
+/// for an editor to draw a small picture of at the end of its line.
 /// </summary>
-/// <param name="Start">Where in the line it starts.</param>
-public readonly record struct HidlSpan(int Start, int Length, HidlToken Kind);
+/// <param name="Line">The line it is named on, from 0.</param>
+/// <param name="Column">Where its name starts.</param>
+/// <param name="Length">How many characters the name is.</param>
+/// <param name="Name">The name, of the symbol, the icon or the sprite, or the path as it is written.</param>
+/// <param name="Set">The set of icons an icon is written in, [icons:playstation] earlier in the text, null for none.</param>
+public readonly record struct HidlArt(int Line, int Column, int Length, HidlArtKind Kind, string Name, string? Set = null);
 
 /// <summary>
-/// Helper class that cuts HIDL code up into the bits a code view colours in differently. It is the language's own
-/// lexer in its lenient mode, so what the editor colours is what the language sees, keywords and all, and code that
-/// is half typed or plain wrong still gets coloured in. Every token knows where it was, so the spans come out per line,
-/// with a comment that runs over several lines coloured on all of them.
+/// Colours HIDL. The language's TextMate grammar (<see cref="HIDLGrammar"/>, the same file VS Code colours a .hor
+/// with) does what a grammar can, the keywords, texts and what a label reads in them, templates, comments, the
+/// preprocessor's lines, numbers, operators and the brackets by their depth, through the same
+/// <see cref="TextMateHighlighter"/> as every other language. Over that goes what only the language's own lexer knows,
+/// the way VS Code lays semantic tokens over a grammar. What a name is from what is round it (made with let, const or
+/// func, a parameter, called, the language's own, the kind after compositor.), the colours written in the code for the
+/// editor's swatches, and the art it names for the pictures at the ends of its lines. The lexer is run lenient, so code
+/// that is half typed or plain wrong still gets coloured in, and it only ever writes over a span the grammar called a
+/// name of some sort, never a text or a comment.
 /// </summary>
-public static class HidlHighlighter
+public sealed class HidlHighlighter : ICodeHighlighter
 {
-    // The words that are values rather than keywords to the lexer, but read as keywords
-    private static readonly HashSet<string> Literals = ["true", "false", "null"];
+    /// <summary>The one HIDL highlighter, the grammar is loaded the first time it is asked for anything.</summary>
+    public static HidlHighlighter Instance { get; } = new();
+
+    // What the language has in it before anybody writes a line, worked out once out of a runtime's global scope
+    private static HashSet<string>? builtins;
+
+    private static HashSet<string> Builtins
+    {
+        get
+        {
+            if (builtins is null)
+            {
+                var names = new HashSet<string>(new HIDLRuntime().GlobalScope.Variables.Keys, StringComparer.Ordinal) { "compositor" };
+                names.Remove("true");
+                names.Remove("false");
+                names.Remove("null");
+                builtins = names;
+            }
+
+            return builtins;
+        }
+    }
+
+    private TextMateHighlighter? grammar;
+
+    public string Name => "HIDL";
+
+    private HidlHighlighter()
+    { }
+
+    /// <summary>The grammar's own reading, with nothing laid over it, for a test that wants to see what the grammar says.</summary>
+    public TextMateHighlighter Grammar => grammar ??= new TextMateHighlighter(
+        CodeLanguages.LoadGrammar(HIDLGrammar.ScopeName) ?? throw new InvalidOperationException("The HIDL grammar didn't load."), Name);
+
+    /// <summary>Whether a name is one the language comes with (print, include, math), or the compositor.</summary>
+    public static bool IsBuiltin(string name) => Builtins.Contains(name);
+
+    public List<SyntaxSpan>[] Read(string code, int lineCount, CodeLineStart[]? starts = null, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
+    {
+        List<SyntaxSpan>[] spans = Grammar.Read(code, lineCount, starts);
+        Overlay(spans, code, swatches, art);
+        return spans;
+    }
+
+    public List<SyntaxSpan> ReadLine(string line, in CodeLineStart start)
+    {
+        List<SyntaxSpan>[] spans = [Grammar.ReadLine(line, start)];
+        Overlay(spans, line, null, null);
+        return spans[0];
+    }
 
     /// <summary>
-    /// Cuts code into spans, one list per line. The code has to have its lines ended with '\n' alone.
+    /// Helper method to lay what the lexer knows over what the grammar said. Every name's kind from what is round it,
+    /// the swatches and the art.
     /// </summary>
-    /// <param name="lineCount">How many lines the code has, which is how many lists come back.</param>
-    public static List<HidlSpan>[] Read(string code, int lineCount)
+    private static void Overlay(List<SyntaxSpan>[] spans, string code, List<HidlSwatch>? swatches, List<HidlArt>? art)
     {
-        var spans = new List<HidlSpan>[Math.Max(1, lineCount)];
-        for (int i = 0; i < spans.Length; i++)
-            spans[i] = [];
+        swatches?.Clear();
+        art?.Clear();
+
+        // Where every line starts, to put any piece of the code on its line
+        var starts = new List<int>(spans.Length + 1) { 0 };
+        for (int i = 0; i < code.Length; i++)
+        {
+            if (code[i] == '\n')
+                starts.Add(i + 1);
+        }
 
         Token[] tokens = Lexer.Tokenize(code, lenient: true);
+
+        // Whether the names being read are a function's parameters, from the bracket after func name to its pair
+        bool parameters = false;
 
         for (int i = 0; i < tokens.Length; i++)
         {
             Token token = tokens[i];
-            if (token.Type == TokenType.EndOfFile || token.Length == 0)
-                continue;
-
-            HidlToken kind = KindOf(tokens, i);
-
-            // Line by line, for the tokens that run over more than one (a block comment)
-            int line = token.Line - 1;
-            int column = token.Col - 1;
-            int from = token.Index;
-            int end = token.Index + token.Length;
-
-            for (int at = from; at <= end && line < spans.Length; at++)
+            switch (token.Type)
             {
-                if (at < end && code[at] != '\n')
-                    continue;
+                case TokenType.OpenParenthesis when Before(tokens, i, 1) == TokenType.Identifier && Before(tokens, i, 2) == TokenType.Function:
+                    parameters = true;
+                    break;
 
-                if (at > from)
-                    spans[line].Add(new HidlSpan(column, at - from, kind));
+                case TokenType.OpenParenthesis when swatches is not null && i > 0 && tokens[i - 1].Type == TokenType.Vector:
+                    ReadSwatch(tokens, i, swatches);
+                    break;
 
-                line++;
-                column = 0;
-                from = at + 1;
+                case TokenType.CloseParenthesis:
+                    parameters = false;
+                    break;
+
+                case TokenType.TextLiteral when art is not null:
+                    ReadArt(tokens, i, code, starts, art);
+                    break;
+
+                case TokenType.Identifier:
+                    Place(spans, starts, token.Index, token.Length, KindOf(tokens, i, parameters));
+                    break;
             }
         }
+    }
 
-        return spans;
+    private static TokenType Before(Token[] tokens, int i, int back) => i - back >= 0 ? tokens[i - back].Type : TokenType.EndOfFile;
+
+    /// <summary>
+    /// Helper method to say what a name is to the colours, which depends on what is next to it.
+    /// </summary>
+    private static SyntaxKind KindOf(Token[] tokens, int i, bool parameters)
+    {
+        Token token = tokens[i];
+        TokenType next = i + 1 < tokens.Length ? tokens[i + 1].Type : TokenType.EndOfFile;
+        TokenType before = Before(tokens, i, 1);
+
+        // Being made, by let, const or func, or a parameter of the function being made
+        if (before is TokenType.Let or TokenType.Const or TokenType.Function || parameters)
+            return SyntaxKind.Declaration;
+
+        // The kind of a component, compositor.button
+        if (before == TokenType.Dot && i >= 2 && tokens[i - 2].Type == TokenType.Identifier && tokens[i - 2].Value == "compositor")
+            return SyntaxKind.Type;
+
+        if (next == TokenType.Colon || before is TokenType.Dot or TokenType.QuestionDot)
+            return next == TokenType.OpenParenthesis ? SyntaxKind.Call : SyntaxKind.Property;
+
+        if (Builtins.Contains(token.Value))
+            return SyntaxKind.Builtin;
+
+        return next == TokenType.OpenParenthesis ? SyntaxKind.Call : SyntaxKind.Name;
     }
 
     /// <summary>
-    /// Helper method to say what a token is to the colours, which for a name depends on what is next to it.
+    /// Helper method to write a name's kind over the span the grammar gave it, when that is a name of some sort (a
+    /// name inside of a text or a comment is left to the grammar). The span is cut round the name where it is wider.
     /// </summary>
-    private static HidlToken KindOf(Token[] tokens, int i)
+    private static void Place(List<SyntaxSpan>[] spans, List<int> starts, int at, int length, SyntaxKind kind)
     {
-        Token token = tokens[i];
+        int line = starts.BinarySearch(at);
+        if (line < 0) line = ~line - 1;
+        if (line < 0 || line >= spans.Length)
+            return;
 
-        switch (token.Type)
+        int column = at - starts[line], end = column + length;
+        List<SyntaxSpan> row = spans[line];
+
+        for (int i = 0; i < row.Count; i++)
         {
-            case TokenType.Comment:
-                return HidlToken.Comment;
+            SyntaxSpan span = row[i];
+            int spanEnd = span.Start + span.Length;
+            if (spanEnd <= column)
+                continue;
+            if (span.Start >= end)
+                return;
 
-            case TokenType.TextLiteral:
-                return HidlToken.Text;
+            if (!SyntaxScopes.IsName(span.Kind))
+                return;
 
-            case TokenType.Number:
-                return HidlToken.Number;
+            if (span.Kind == kind && span.Start <= column && spanEnd >= end)
+                return;
 
-            case TokenType.Let or TokenType.Const or TokenType.Function or TokenType.If or TokenType.Else or TokenType.While
-                or TokenType.Do or TokenType.For or TokenType.In or TokenType.Return or TokenType.Break or TokenType.Continue
-                or TokenType.Delete or TokenType.Null:
-                return HidlToken.Keyword;
+            // The piece of the span before the name, the name, and the piece after it
+            row.RemoveAt(i);
+            int put = i;
+            if (span.Start < column)
+                row.Insert(put++, new SyntaxSpan(span.Start, column - span.Start, span.Kind));
+            row.Insert(put++, new SyntaxSpan(column, Math.Min(end, spanEnd) - column, kind));
+            if (spanEnd > end)
+                row.Insert(put, new SyntaxSpan(end, spanEnd - end, span.Kind));
+            return;
+        }
+    }
 
-            case TokenType.Vector:
-                return HidlToken.Call;
+    /// <summary>
+    /// Helper method to find the art a text names. The icons written into it, the whole of it when it is the path of a
+    /// picture, and the whole of it when it is given to something that takes the name of a symbol or a sprite.
+    /// </summary>
+    private static void ReadArt(Token[] tokens, int index, string code, List<int> starts, List<HidlArt> art)
+    {
+        Token token = tokens[index];
+        int from = token.Index + 1, end = token.Index + token.Length - 1;
+        if (end - from < 1 || code[token.Index] is not ('"' or '\''))
+            return;
 
-            case TokenType.Identifier:
-                if (Literals.Contains(token.Value))
-                    return HidlToken.Keyword;
+        ReadOnlySpan<char> text = code.AsSpan(from, end - from);
+        if (text.ContainsAny('\n', '{'))
+            return;
 
-                // Called, a key, or reached through a dot
-                TokenType next = i + 1 < tokens.Length ? tokens[i + 1].Type : TokenType.EndOfFile;
-                TokenType before = i > 0 ? tokens[i - 1].Type : TokenType.EndOfFile;
+        // A picture is the whole of the text
+        if (text.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || text.EndsWith(".aseprite", StringComparison.OrdinalIgnoreCase)
+            || text.EndsWith(".ase", StringComparison.OrdinalIgnoreCase))
+        {
+            AddArt(starts, art, from, end - from, HidlArtKind.Picture, text.ToString());
+            return;
+        }
 
-                if (next == TokenType.OpenParenthesis)
-                    return HidlToken.Call;
-                if (next == TokenType.Colon || before == TokenType.Dot)
-                    return HidlToken.Property;
+        // and so is the name of something given to an icon (a Codicon to a button) or a sprite (a piece of the skin)
+        if (index >= 2 && tokens[index - 1].Type is TokenType.Colon or TokenType.Equals && !text.ContainsAny(' ', '[', '$'))
+        {
+            string key = tokens[index - 2].Value;
+            if (key is "icon" or "symbol")
+            {
+                AddArt(starts, art, from, end - from, HidlArtKind.Symbol, text.ToString());
+                return;
+            }
 
-                return HidlToken.Name;
+            if (key is "sprite" or "region")
+            {
+                AddArt(starts, art, from, end - from, HidlArtKind.Sprite, text.ToString());
+                return;
+            }
+        }
 
-            default:
-                return HidlToken.Punctuation;
+        // Otherwise the icons written into it, $(name) and [icon:name], an icon in whatever set [icons:name] said last
+        string? set = null;
+        for (int at = 0; at < text.Length - 2; at++)
+        {
+            if (text[at] == '$' && text[at + 1] == '(')
+            {
+                int close = text[at..].IndexOf(')');
+                if (close > 2 && !text.Slice(at, close).Contains(' '))
+                {
+                    AddArt(starts, art, from + at, close + 1, HidlArtKind.Symbol, text.Slice(at + 2, close - 2).ToString());
+                    at += close;
+                }
+            }
+            else if (text[at..].StartsWith("[icon:", StringComparison.Ordinal))
+            {
+                int close = text[at..].IndexOf(']');
+                if (close > 6 && !text.Slice(at, close).Contains(' '))
+                {
+                    AddArt(starts, art, from + at, close + 1, HidlArtKind.Icon, text.Slice(at + 6, close - 6).ToString(), set);
+                    at += close;
+                }
+            }
+            else if (text[at..].StartsWith("[icons:", StringComparison.Ordinal))
+            {
+                int close = text[at..].IndexOf(']');
+                if (close > 7)
+                {
+                    set = text.Slice(at + 7, close - 7).ToString();
+                    at += close;
+                }
+            }
+        }
+    }
+
+    // Helper method to put art down on the line it was found on
+    private static void AddArt(List<int> starts, List<HidlArt> art, int at, int length, HidlArtKind kind, string name, string? set = null)
+    {
+        int line = starts.BinarySearch(at);
+        if (line < 0)
+            line = ~line - 1;
+
+        art.Add(new HidlArt(line, at - starts[line], length, kind, name, set));
+    }
+
+    /// <summary>
+    /// Helper method to read the colour of a vec(r, g, b) or vec(r, g, b, a) that is given to something called a colour
+    /// (or a tint), for a swatch in front of it.
+    /// </summary>
+    private static void ReadSwatch(Token[] tokens, int open, List<HidlSwatch> swatches)
+    {
+        // What it is given to, key: vec( or name = vec(
+        int vector = open - 1;
+        if (vector < 2 || tokens[vector - 2].Type != TokenType.Identifier || tokens[vector - 1].Type is not (TokenType.Colon or TokenType.Equals))
+            return;
+
+        string target = tokens[vector - 2].Value;
+        if (!target.Contains("color", StringComparison.OrdinalIgnoreCase) && !target.Contains("colour", StringComparison.OrdinalIgnoreCase)
+            && !target.Contains("tint", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        Span<float> numbers = stackalloc float[4];
+        int count = 0;
+        bool negative = false;
+
+        for (int i = open + 1; i < tokens.Length && count <= 4; i++)
+        {
+            Token token = tokens[i];
+            switch (token.Type)
+            {
+                case TokenType.Number when count < 4 && float.TryParse(token.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float value):
+                    numbers[count++] = negative ? -value : value;
+                    negative = false;
+                    break;
+
+                case TokenType.BinaryOperation when token.Value == "-":
+                    negative = true;
+                    break;
+
+                case TokenType.Comma:
+                    break;
+
+                case TokenType.CloseParenthesis when count >= 3:
+                    Token vec = tokens[vector];
+                    int line = vec.Line - 1;
+                    int length = token.Line == vec.Line ? token.Index + token.Length - vec.Index : vec.Length;
+                    Vector4 color = new(numbers[0], numbers[1], numbers[2], count == 4 ? numbers[3] : 1.0f);
+                    swatches.Add(new HidlSwatch(line, vec.Col - 1, length, Vector4.Clamp(color, Vector4.Zero, Vector4.One)));
+                    return;
+
+                default:
+                    return;
+            }
         }
     }
 }

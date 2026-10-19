@@ -20,6 +20,22 @@ public abstract partial class UIComponent
     /// <summary>
     /// Declares the properties scripts can read and write on this component, with the Expose methods.
     /// </summary>
+    /// <summary>
+    /// Helper method to take the name of a style out of the name of one of its pieces. A style is what the
+    /// regions of a component are called less what they end in ("toggle" for "toggle_on" and "toggle_off"), and
+    /// whoever picks one by eye out of a skin's art picks a piece, so that is taken as meaning the style it is of.
+    /// </summary>
+    protected static string StyleStem(string name, string ending, string other = "")
+    {
+        if (name.EndsWith(ending, StringComparison.Ordinal))
+            return name[..^ending.Length];
+
+        if (other.Length > 0 && name.EndsWith(other, StringComparison.Ordinal))
+            return name[..^other.Length];
+
+        return name;
+    }
+
     protected virtual void DefineScript()
     {
         Expose("pos", () => Position, value => Position = value);
@@ -27,6 +43,8 @@ public abstract partial class UIComponent
         Expose("scale", () => Scale, value => Scale = value);
         Expose("visible", () => Visible, value => Visible = value);
         Expose("z", () => ZOffset, value => ZOffset = Math.Max(0, (int)value));
+        Expose("lift", () => Lift, value => Lift = MathF.Max(0.0f, value));
+        Expose("glass", () => Glass?.Blur ?? 0.0f, value => Glass = value > 0.0f ? (Glass ?? UIGlass.Frosted) with { Blur = value } : null);
         Expose("layer", () => Layer, value => Layer = value.Trim());
         Expose("enabled", () => Enabled, value => Enabled = value);
         Expose("tooltip", () => Tooltip, value => Tooltip = value);
@@ -59,6 +77,10 @@ public abstract partial class UIComponent
             "intro_easing",
             () => IntroEasing is { } easing ? UIScript.FromEnum(easing) : (IRuntimeValue)new NullValue(),
             value => IntroEasing = value is NullValue ? null : UIScript.ToEnum<Horizon.Core.Tweening.Easing>(value, "intro_easing"));
+
+        DefineHoverScript();
+        DefineSlideScript();
+        DefineResizeScript();
 
         Expose(
             "parent",
@@ -112,10 +134,27 @@ public abstract partial class UIComponent
     /// Calls a function a script assigned to one of this component's handlers. Errors in the script are
     /// logged rather than thrown, so a broken handler can't take the game down with it.
     /// </summary>
+    /// <summary>
+    /// Who calls the handlers scripts set on this component and on everything inside it, null for the runtime of the
+    /// module as always. An editor's extension that made the UI has its handlers called its own way (with its time limit,
+    /// switched off when one throws).
+    /// </summary>
+    [Horizon.Core.HideInInspector]
+    public Action<IRuntimeValue, IRuntimeValue[]>? ScriptCaller { get; set; }
+
     protected void InvokeScript(IRuntimeValue? handler, params IRuntimeValue[] arguments)
     {
         if (handler is null or NullValue || Module is not { } owner)
             return;
+
+        for (UIComponent? at = this; at is not null; at = at.Parent)
+        {
+            if (at.ScriptCaller is { } caller)
+            {
+                caller(handler, arguments);
+                return;
+            }
+        }
 
         try
         {

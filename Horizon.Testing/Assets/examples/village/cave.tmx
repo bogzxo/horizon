@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.11.0" orientation="orthogonal" renderorder="right-down" width="14" height="10" tilewidth="16" tileheight="16" infinite="0" backgroundcolor="#000000" nextlayerid="4" nextobjectid="6">
+ <properties>
+    <property name="name" value="The cave"/>
+    <property name="ambient" type="color" value="#ff141c20"/>
+    <property name="GeometryOcclusion" type="bool" value="true"/>
+    <property name="WallHeight" type="float" value="40"/>
+ </properties>
+ <tileset firstgid="1" source="cave.tsx"/>
+ <layer id="1" name="floor" width="14" height="10">
+  <data encoding="csv">
+21,22,21,22,21,22,21,22,21,22,21,22,21,22,
+34,35,34,35,34,35,34,35,34,35,34,35,34,35,
+21,22,21,22,21,22,21,22,21,22,21,22,21,22,
+34,35,34,71,70,71,70,35,34,35,34,35,34,35,
+21,22,21,58,57,58,57,22,21,22,21,22,21,22,
+34,35,34,71,70,71,70,35,73,74,34,35,34,35,
+21,22,21,22,21,22,21,22,60,61,21,22,21,22,
+34,35,34,35,34,35,34,35,34,35,34,35,34,35,
+21,22,21,22,21,22,21,22,21,22,21,22,21,22,
+34,35,34,35,34,35,34,35,34,35,34,35,34,35
+</data>
+ </layer>
+ <layer id="2" name="rock" width="14" height="10">
+  <properties>
+   <property name="CastsShadows" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+15,16,18,19,18,19,18,19,18,19,18,19,2147483663,2147483663,
+28,29,31,32,31,32,31,32,31,32,31,32,31,32,
+54,0,0,0,0,0,0,0,0,0,0,0,0,2147483702,
+67,0,0,0,0,0,0,0,0,63,64,0,0,2147483715,
+54,0,0,0,0,0,0,0,0,76,77,0,0,2147483702,
+67,0,0,0,0,0,0,0,0,0,0,0,0,2147483715,
+54,0,0,0,0,0,0,0,0,0,0,0,0,2147483702,
+67,0,0,0,0,0,0,0,0,0,0,0,0,2147483715,
+106,107,109,110,109,110,0,0,109,110,109,110,109,110,
+119,120,122,123,122,123,0,0,122,123,122,123,122,123
+</data>
+ </layer>
+ <layer id="3" name="solid" width="14" height="10" visible="0">
+  <properties>
+   <property name="IsCollidable" type="bool" value="true"/>
+  </properties>
+  <data encoding="csv">
+57,57,57,57,57,57,57,57,57,57,57,57,57,57,
+57,57,57,57,57,57,57,57,57,57,57,57,57,57,
+57,0,0,0,0,0,0,0,0,0,0,0,0,57,
+57,0,0,0,0,0,0,0,0,57,57,0,0,57,
+57,0,0,0,0,0,0,0,0,57,57,0,0,57,
+57,0,0,0,0,0,0,0,0,0,0,0,0,57,
+57,0,0,0,0,0,0,0,0,0,0,0,0,57,
+57,0,0,0,0,0,0,0,0,0,0,0,0,57,
+57,57,57,57,57,57,0,0,57,57,57,57,57,57,
+57,57,57,57,57,57,0,0,57,57,57,57,57,57
+</data>
+ </layer>
+ <objectgroup id="3" name="things">
+  <object id="1" name="out" type="door" x="96" y="128" width="32" height="32">
+   <properties>
+    <property name="door" type="file" value="village.tmx"/>
+    <property name="arrive" value="cave"/>
+    <property name="direction" value="down"/>
+   </properties>
+  </object>
+  <object id="2" name="glow" type="light" x="72" y="72">
+   <properties>
+    <property name="light_colour" type="color" value="#ff80ffb0"/>
+    <property name="light_radius" type="float" value="90"/>
+    <property name="light_intensity" type="float" value="0.8"/>
+    <property name="light_flicker" type="float" value="0.1"/>
+    <property name="light_glow" type="float" value="0.7"/>
+    <property name="light_height" type="float" value="12"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="3" name="glow 2" type="light" x="168" y="104">
+   <properties>
+    <property name="light_colour" type="color" value="#ff80d0ff"/>
+    <property name="light_radius" type="float" value="70"/>
+    <property name="light_intensity" type="float" value="0.6"/>
+    <property name="light_flicker" type="float" value="0.15"/>
+    <property name="light_glow" type="float" value="0.7"/>
+    <property name="light_height" type="float" value="12"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="4" name="hermit" type="npc" x="184" y="120">
+   <properties>
+    <property name="look" type="int" value="2"/>
+    <property name="says" value="Shh. The glowing bits are shy."/>
+    <property name="wanders" type="bool" value="false"/>
+    <property name="faces" value="left"/>
+   </properties>
+   <point/>
+  </object>
+  <object id="5" name="room" type="zone" x="0" y="0" width="224" height="160">
+   <properties>
+    <property name="says" value="The cave"/>
+   </properties>
+  </object>
+ </objectgroup>
+</map>

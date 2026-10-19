@@ -1,0 +1,408 @@
+// The widgets of a program with a screen of its own (TerminalTui), drawn in cells with the tui object. A program says
+// let ui = include("widgets.hor"); and then ui.list_draw(tui, files, area, show, true) and the rest. An area is
+// { x, y, w, h } in cells, rows and columns cut one up, a size over 0 being that many and 0 a share of what's left.
+// A widget's state is an object the program keeps (a list's items and which is picked), its draw function draws it
+// and its key function takes a key it has a use for and says true, so a program hands a key round until one wants it.
+
+func rect(x, y, w, h) {
+    return { x: x, y: y, w: w, h: h };
+}
+
+// @doc The whole screen as an area
+func screen(tui) {
+    return rect(0, 0, tui.columns(), tui.rows());
+}
+
+func inset(area, by) {
+    return rect(area.x + by, area.y + by, math.max(0, area.w - by * 2), math.max(0, area.h - by * 2));
+}
+
+// @doc A length cut into pieces, a size over 0 that many, a 0 a share of what is left (the last share gets the odd one)
+func split(total, sizes) {
+    let fixed = 0;
+    let shares = 0;
+    for (let size in sizes) {
+        if (size > 0) {
+            fixed += size;
+        } else {
+            shares += 1;
+        }
+    }
+
+    let left = math.max(0, total - fixed);
+    let each = 0;
+    if (shares > 0) {
+        each = math.floor(left / shares);
+    }
+
+    let out = [];
+    let seen = 0;
+    for (let size in sizes) {
+        if (size > 0) {
+            out.push(size);
+        } else {
+            seen += 1;
+            if (seen == shares) {
+                out.push(left - each * (shares - 1));
+            } else {
+                out.push(each);
+            }
+        }
+    }
+
+    return out;
+}
+
+// @doc An area cut into rows from the top
+func rows(area, sizes) {
+    let out = [];
+    let y = area.y;
+    for (let h in split(area.h, sizes)) {
+        out.push(rect(area.x, y, area.w, h));
+        y += h;
+    }
+
+    return out;
+}
+
+// @doc An area cut into columns from the left
+func columns(area, sizes) {
+    let out = [];
+    let x = area.x;
+    for (let w in split(area.w, sizes)) {
+        out.push(rect(x, area.y, w, area.h));
+        x += w;
+    }
+
+    return out;
+}
+
+// @doc A text no wider than so many cells, cut with an ellipsis
+func clip(said, width) {
+    if (width <= 0) {
+        return "";
+    }
+
+    if (said.length > width) {
+        if (width == 1) {
+            return "…";
+        }
+        return said.substring(0, width - 1) + "…";
+    }
+
+    return said;
+}
+
+// @doc A text exactly so many cells wide
+func pad(said, width) {
+    return clip(said, width).pad_right(math.max(0, width));
+}
+
+// @doc A size in bytes as a person says it
+func size(bytes) {
+    if (bytes < 1024) {
+        return `{bytes} B`;
+    }
+    if (bytes < 1024 * 1024) {
+        return `{math.round(bytes / 1024)} KB`;
+    }
+    if (bytes < 1024 * 1024 * 1024) {
+        return `{math.round(bytes / (1024 * 1024))} MB`;
+    }
+    return `{math.round(bytes / (1024 * 1024 * 1024))} GB`;
+}
+
+// @doc Whether the letters typed are in the text in that order, the way quick open matches
+func matches(said, typed) {
+    let lower = said.lower();
+    let wanted = typed.lower();
+    let at = 0;
+    for (let i in range(wanted.length)) {
+        let letter = wanted.substring(i, i + 1);
+        if (letter != " ") {
+            let found = lower.substring(at).index_of(letter);
+            if (found < 0) {
+                return false;
+            }
+            at = at + found + 1;
+        }
+    }
+
+    return true;
+}
+
+/* A panel, a box with a title round an area */
+
+// @doc A box with a title round an area, the accent when it has the keys, the inside handed back
+func panel(tui, area, title, focused) {
+    let style = "dim";
+    if (focused) {
+        style = "cyan";
+    }
+    tui.box(area.x, area.y, area.w, area.h, title, style, focused);
+    return inset(area, 1);
+}
+
+// @doc A line along the bottom, what the keys do on the left and something on the right
+func status(tui, area, left, right) {
+    tui.fill(area.x, area.y, area.w, 1, " ", "inverse");
+    tui.write(area.x + 1, area.y, clip(left, area.w - right.length - 3), "inverse");
+    tui.write(area.x + area.w - right.length - 1, area.y, right, "inverse bold");
+}
+
+/* A list */
+
+// @doc A list's state, its items and which is picked
+func list(items) {
+    return { items: items, selected: 0, top: 0 };
+}
+
+// @doc Other items in a list, the picked one kept where it can be
+func list_set(state, items) {
+    state.items = items;
+    state.selected = math.clamp(state.selected, 0, math.max(0, items.count - 1));
+}
+
+// @doc The picked item, null for none
+func list_chosen(state) {
+    if (state.items.count == 0) {
+        return null;
+    }
+    return state.items[state.selected];
+}
+
+// @doc The arrows, the pages, home and end, true when the key was one of them
+func list_key(state, key, height) {
+    let n = state.items.count;
+    if (n == 0) {
+        return false;
+    }
+
+    let page = math.max(1, height - 1);
+    if (key.name == "up") {
+        state.selected = math.max(0, state.selected - 1);
+    } else if (key.name == "down") {
+        state.selected = math.min(n - 1, state.selected + 1);
+    } else if (key.name == "pgup") {
+        state.selected = math.max(0, state.selected - page);
+    } else if (key.name == "pgdn") {
+        state.selected = math.min(n - 1, state.selected + page);
+    } else if (key.name == "home" && !key.shift) {
+        state.selected = 0;
+    } else if (key.name == "end" && !key.shift) {
+        state.selected = n - 1;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+// the first row shown moved so the picked one is in sight
+func list_scroll(state, height) {
+    if (state.selected < state.top) {
+        state.top = state.selected;
+    }
+    if (state.selected >= state.top + height) {
+        state.top = state.selected - height + 1;
+    }
+    state.top = math.clamp(state.top, 0, math.max(0, state.items.count - height));
+}
+
+// @doc A list drawn in an area, show turns an item into its text (null for an item that is a text), the picked one lit
+func list_draw(tui, state, area, show, focused) {
+    list_scroll(state, area.h);
+    for (let row in range(area.h)) {
+        let at = state.top + row;
+        if (at >= state.items.count) {
+            tui.fill(area.x, area.y + row, area.w, 1);
+            continue;
+        }
+
+        let item = state.items[at];
+        let shown = item;
+        if (show != null) {
+            shown = show(item);
+        }
+
+        let style = "default";
+        if (at == state.selected) {
+            style = "bold";
+            if (focused) {
+                style = "inverse";
+            }
+        }
+
+        tui.write(area.x, area.y + row, pad(" " + shown, area.w), style);
+    }
+
+    // where in the list the view is, down the right edge, when there is more than fits
+    let n = state.items.count;
+    if (n > area.h && area.h > 2) {
+        let mark = area.y + math.round((area.h - 1) * state.top / math.max(1, n - area.h));
+        tui.write(area.x + area.w - 1, mark, "▐", "cyan");
+    }
+}
+
+/* A table */
+
+// @doc A list as columns, each { title, width, get } (a width of 0 a share of what is left, get the item's text)
+func table_draw(tui, state, area, cols, focused) {
+    let sizes = [];
+    for (let column in cols) {
+        sizes.push(column.width);
+    }
+    let widths = split(area.w, sizes);
+
+    let x = area.x;
+    let i = 0;
+    for (let column in cols) {
+        tui.write(x, area.y, pad(" " + column.title, widths[i]), "bold underline");
+        x += widths[i];
+        i += 1;
+    }
+
+    let body = rect(area.x, area.y + 1, area.w, math.max(0, area.h - 1));
+    list_scroll(state, body.h);
+    for (let row in range(body.h)) {
+        let at = state.top + row;
+        if (at >= state.items.count) {
+            tui.fill(body.x, body.y + row, body.w, 1);
+            continue;
+        }
+
+        let item = state.items[at];
+        let style = "default";
+        if (at == state.selected) {
+            style = "bold";
+            if (focused) {
+                style = "inverse";
+            }
+        }
+
+        let cx = body.x;
+        let j = 0;
+        for (let column in cols) {
+            tui.write(cx, body.y + row, pad(" " + text(column.get(item)), widths[j]), style);
+            cx += widths[j];
+            j += 1;
+        }
+    }
+}
+
+/* A text field */
+
+// @doc A text field's state, its text and where the caret is
+func field(said) {
+    return { text: said, caret: said.length };
+}
+
+// @doc Letters, a paste, backspace, delete, the arrows, home and end, Ctrl+U to clear, true when the key was one of them
+func field_key(state, key) {
+    let before = state.text.substring(0, state.caret);
+    let after = state.text.substring(state.caret);
+    if (key.name == "paste" || key.text.length > 0 && !key.ctrl && !key.alt) {
+        state.text = before + key.text + after;
+        state.caret += key.text.length;
+    } else if (key.name == "backspace") {
+        if (state.caret == 0) {
+            return false;
+        }
+        state.text = before.substring(0, before.length - 1) + after;
+        state.caret -= 1;
+    } else if (key.name == "delete") {
+        state.text = before + after.substring(1);
+    } else if (key.name == "left") {
+        state.caret = math.max(0, state.caret - 1);
+    } else if (key.name == "right") {
+        state.caret = math.min(state.text.length, state.caret + 1);
+    } else if (key.name == "home") {
+        state.caret = 0;
+    } else if (key.name == "end") {
+        state.caret = state.text.length;
+    } else if (key.ctrl && key.name == "u") {
+        state.text = "";
+        state.caret = 0;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+// @doc A text field drawn on a row, scrolled so the caret is in sight, a placeholder while it is empty, the cursor in it when it has the keys
+func field_draw(tui, state, area, placeholder, focused) {
+    let width = math.max(1, area.w);
+    let start = math.max(0, state.caret - width + 1);
+    if (state.text.length == 0) {
+        tui.write(area.x, area.y, pad(placeholder, width), "dim");
+    } else {
+        tui.write(area.x, area.y, pad(state.text.substring(start, start + width), width), "default");
+    }
+
+    if (focused) {
+        tui.cursor(area.x + state.caret - start, area.y);
+    }
+}
+
+/* Tabs, a menu, a progress bar */
+
+// @doc Tabs along a row, the open one lit
+func tabs_draw(tui, names, selected, area) {
+    tui.fill(area.x, area.y, area.w, 1);
+    let x = area.x;
+    let i = 0;
+    for (let name in names) {
+        let style = "dim";
+        if (i == selected) {
+            style = "bold inverse";
+        }
+        x = tui.write(x, area.y, ` {name} `, style);
+        x = tui.write(x, area.y, " ", "default");
+        i += 1;
+    }
+}
+
+// @doc Tab and shift tab step through so many tabs, the one open handed back
+func tabs_key(count, selected, key) {
+    if (key.name != "tab") {
+        return selected;
+    }
+    if (key.shift) {
+        return (selected + count - 1) % count;
+    }
+    return (selected + 1) % count;
+}
+
+// @doc A menu of texts in a box at a place, over whatever is there, the picked one lit
+func menu_draw(tui, items, selected, x, y) {
+    let width = 4;
+    for (let item in items) {
+        width = math.max(width, item.length + 4);
+    }
+    width = math.min(width, tui.columns() - x);
+    let height = math.min(items.count + 2, tui.rows() - y);
+    if (height < 3) {
+        return;
+    }
+
+    tui.fill(x, y, width, height, " ");
+    tui.box(x, y, width, height, "", "cyan");
+    for (let i in range(height - 2)) {
+        let style = "default";
+        if (i == selected) {
+            style = "inverse";
+        }
+        tui.write(x + 1, y + 1 + i, pad(" " + items[i], width - 2), style);
+    }
+}
+
+// @doc A bar so full, a fraction of 0 to 1, with a label over its middle
+func progress_draw(tui, area, fraction, label) {
+    let filled = math.round(area.w * math.clamp(fraction, 0, 1));
+    tui.write(area.x, area.y, "█".repeat(filled), "cyan");
+    tui.write(area.x + filled, area.y, "░".repeat(area.w - filled), "dim");
+    if (label.length > 0) {
+        tui.write(area.x + math.max(0, math.floor((area.w - label.length) / 2)), area.y, clip(label, area.w), "bold");
+    }
+}

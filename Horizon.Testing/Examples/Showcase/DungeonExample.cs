@@ -9,6 +9,7 @@ using Horizon.Physics.Simulation;
 using Horizon.Rendering;
 using Horizon.Rendering.Lighting;
 using Horizon.Rendering.Particles;
+using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Tiling;
 using Horizon.UI;
@@ -87,6 +88,7 @@ public partial class DungeonExample : Scene, ITestControls
         new("B", "what the path tracer found, on its own"),
         new("Q", "how many cascades the light is worked out with, fewer is cheaper"),
         new("T", "the light settling over a few frames, off shows the flicker it takes out"),
+        new("V", "the bloom, the glow round what shines"),
     ];
 
     // What Q goes round, the cascades the light is worked out with. Six is as many as a picture this size takes,
@@ -107,6 +109,7 @@ public partial class DungeonExample : Scene, ITestControls
     private Vector2 _spawn;
 
     private DeferredRenderer2D _world = null!;
+    private BloomEffect _bloom = null!;
     private OcclusionMap2D? _occlusion;
     private PhysicsWorld _physics = null!;
     private PhysicsBodyComponent2D _ground = null!;
@@ -180,6 +183,10 @@ public partial class DungeonExample : Scene, ITestControls
         // paint, so the difference is made up here, where it is light and not a colour on the screen yet
         _world.PathTracing.Bounce = 0.85f;
         _world.PathTracing.Strength = 4.0f;
+
+        // A glow round whatever is driven past white, the lava, the crystals, a spark going off. Over the lit
+        // picture before it is shown, see BloomEffect
+        _bloom = _world.PostProcessing.Add(new BloomEffect { Threshold = 0.75f, Intensity = 0.35f });
 
         _world.AddEntity(_map);
 
@@ -277,6 +284,7 @@ public partial class DungeonExample : Scene, ITestControls
         if (keyboard.WasPressed(Key.F)) _world.Lighting = _world.Lighting == LightingMode.Direct ? LightingMode.PathTraced : LightingMode.Direct;
         if (keyboard.WasPressed(Key.B)) _world.ShowTracedLight = !_world.ShowTracedLight;
         if (keyboard.WasPressed(Key.L)) _lantern.Enabled = !_lantern.Enabled;
+        if (keyboard.WasPressed(Key.V)) _bloom.Enabled = !_bloom.Enabled;
 
         if (keyboard.WasPressed(Key.Q))
         {

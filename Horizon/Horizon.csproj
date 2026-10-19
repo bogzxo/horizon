@@ -40,6 +40,7 @@
 
   <ItemGroup>
     <PackageReference Include="DotTiled" Version="1.0.0" />
+    <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
@@ -52,8 +53,12 @@
     <PackageReference Include="Silk.NET.MoltenVK.Native" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
     <PackageReference Include="StbTrueTypeSharp" Version="1.26.13" />
+    <!-- TextMate grammars for the code editor, VS Code's own, and the Oniguruma they are written against (Onigwrap, native, every platform) -->
+    <PackageReference Include="TextMateSharp" Version="2.0.4" />
+    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
   </ItemGroup>
 
   <ItemGroup>
@@ -69,10 +74,17 @@
     <None Update="shaders\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Assets\global\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="Assets\fonts\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Assets\uix\dead_revolver\*.aseprite;Assets\uix\dead_revolver\*.hor;Assets\uix\flat\*.hor">
+    <None Update="Assets\uix\**\*.aseprite;Assets\uix\**\*.hor;Assets\uix\**\README.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- The terminal's own plugins and keys, which Dusk and Hex's terminal page both load first, see TerminalHost -->
+    <None Update="Assets\terminal\**\*.hor;Assets\terminal\**\*.ps1;Assets\terminal\**\*.bash;Assets\terminal\**\*.cmd">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -80,6 +92,12 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Horizon.Tests" />
     <InternalsVisibleTo Include="Horizon.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Assets\global\loading.aseprite">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

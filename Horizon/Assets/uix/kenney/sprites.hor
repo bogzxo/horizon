@@ -1,0 +1,98 @@
+// The sprites of the Kenney skin, cut out of UI Pack by Kenney (kenney.nl/assets/ui-pack, CC0) by
+// Art/make_ui_packs.py, which is where to change anything in here, this file is written by it. The pack is a folder
+// of PNGs per colour, the same pieces in each, and those colours are the themes here, a layer of art.aseprite each.
+// It is drawn with every pixel twice the size it need be, so it is kept at half of what the pack has and the skin
+// draws it at two, and a button is only its two ends with a sliver between, the nine-slice makes the rest.
+//
+// The names are the ones the components and the layouts ask for, which are Dead Revolver's, so a layout written
+// for that skin comes up in this one. Where a face isn't the colour the skin writes on (the solid buttons are
+// written on in white, everything else in slate) the sprite says so itself with a text_color.
+
+let art = {
+    file: "art.aseprite",
+    themes: "layers",
+    fallback: "blue",
+    sprites: {
+        button:                 { x: 1, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_hover:           { x: 22, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_pressed:         { x: 43, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_selected:        { x: 64, y: 1, w: 20, h: 32, border: vec(5, 5, 5, 7), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        button_flat:            { x: 85, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_flat_hover:      { x: 106, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_flat_pressed:    { x: 127, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_flat_selected:   { x: 148, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_pill:            { x: 1, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_pill_hover:      { x: 22, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_pill_pressed:    { x: 43, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_pill_selected:   { x: 64, y: 1, w: 20, h: 32, border: vec(5, 5, 5, 7), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        button_slant:           { x: 1, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_slant_hover:     { x: 22, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_slant_pressed:   { x: 43, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        button_slant_selected:  { x: 64, y: 1, w: 20, h: 32, border: vec(5, 5, 5, 7), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        tab_left:               { x: 1, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_left_hover:         { x: 22, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_left_pressed:       { x: 43, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_left_selected:      { x: 64, y: 1, w: 20, h: 32, border: vec(5, 5, 5, 7), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        tab_right:              { x: 1, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_right_hover:        { x: 22, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_right_pressed:      { x: 43, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        tab_right_selected:     { x: 64, y: 1, w: 20, h: 32, border: vec(5, 5, 5, 7), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        key:                    { x: 169, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        key_hover:              { x: 169, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        key_pressed:            { x: 190, y: 1, w: 20, h: 32, border: vec(4, 6, 4, 4), content: vec(6, 5, 6, 4), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        key_selected:           { x: 169, y: 1, w: 20, h: 32, border: vec(4, 4, 4, 6), content: vec(6, 3, 6, 6), text_color: vec(0.2, 0.22, 0.3, 1.0) },
+        button_outline:         { x: 211, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_outline_hover:   { x: 211, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_outline_pressed: { x: 211, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        button_outline_selected:{ x: 106, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        dropdown:               { x: 232, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        dropdown_lit:           { x: 106, y: 1, w: 20, h: 32, border: 4, content: vec(6, 4, 6, 4) },
+        panel:                  { x: 1, y: 34, w: 20, h: 32, border: 4 },
+        panel_tall:             { x: 1, y: 34, w: 20, h: 32, border: 4 },
+        panel_window:           { x: 22, y: 34, w: 20, h: 32, border: vec(4, 4, 4, 6) },
+        panel_card:             { x: 22, y: 34, w: 20, h: 32, border: vec(4, 4, 4, 6) },
+        frame:                  { x: 43, y: 34, w: 20, h: 32, border: 4 },
+        frame_tech:             { x: 43, y: 34, w: 20, h: 32, border: 4 },
+        header:                 { x: 64, y: 34, w: 20, h: 32, border: 4, text_color: vec(1.0, 1.0, 1.0, 1.0) },
+        slot:                   { x: 85, y: 34, w: 20, h: 32, border: 4 },
+        slot_empty:             { x: 106, y: 34, w: 20, h: 32, border: 4 },
+        slot_filled:            { x: 127, y: 34, w: 20, h: 32, border: 5 },
+        slot_round:             { x: 148, y: 34, w: 32, h: 32 },
+        check_off:              { x: 181, y: 34, w: 16, h: 16 },
+        check_hover:            { x: 198, y: 34, w: 16, h: 16 },
+        check_on:               { x: 215, y: 34, w: 16, h: 16 },
+        check_mixed:            { x: 232, y: 34, w: 16, h: 16 },
+        radio_off:              { x: 1, y: 67, w: 16, h: 16 },
+        radio_hover:            { x: 18, y: 67, w: 16, h: 16 },
+        radio_on:               { x: 35, y: 67, w: 16, h: 16 },
+        radio_mixed:            { x: 52, y: 67, w: 16, h: 16 },
+        slider_track:           { x: 69, y: 67, w: 16, h: 8, border: vec(5, 1, 5, 1) },
+        slider_handle:          { x: 86, y: 67, w: 12, h: 16 },
+        slider_handle_lit:      { x: 86, y: 67, w: 12, h: 16 },
+        slider_knob:            { x: 18, y: 67, w: 16, h: 16 },
+        bar_frame:              { x: 99, y: 67, w: 20, h: 16, border: 4 },
+        bar_flat_frame:         { x: 99, y: 67, w: 20, h: 16, border: 4 },
+        bar_fill:               { x: 120, y: 67, w: 20, h: 16, border: 3 },
+        bar_fill_alt:           { x: 141, y: 67, w: 20, h: 16, border: 3 },
+        bar_flat_fill:          { x: 120, y: 67, w: 20, h: 16, border: 3 },
+        focus:                  { x: 162, y: 67, w: 20, h: 32, border: 4 },
+        underline:              { x: 183, y: 67, w: 4, h: 2 },
+        arrow_up:               { x: 188, y: 67, w: 16, h: 16 },
+        arrow_down:             { x: 205, y: 67, w: 16, h: 16 },
+        arrow_right:            { x: 222, y: 67, w: 16, h: 16 },
+        arrow_left:             { x: 239, y: 67, w: 16, h: 16 },
+        close:                  { x: 1, y: 100, w: 9, h: 9 },
+        icon_check:             { x: 11, y: 100, w: 10, h: 9 },
+        icon_circle:            { x: 22, y: 100, w: 8, h: 8 },
+        icon_square:            { x: 31, y: 100, w: 8, h: 8 },
+        star_kenney:            { x: 40, y: 100, w: 32, h: 30 },
+        star_kenney_empty:      { x: 73, y: 100, w: 32, h: 30 }
+    }
+};
+
+// Whatever isn't in here (the gamepads, the keyboard, the hearts and stars, the cursors) is Dead Revolver's,
+// at the three times its size it was drawn for whatever this skin draws its own art at.
+let sheet = {
+    images: { art },
+    inherit: { sheet: "../dead_revolver/sprites.hor", scale: 3 }
+}

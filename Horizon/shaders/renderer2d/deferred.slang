@@ -14,6 +14,12 @@ struct Params
     float uGiStrength;
     float uGiAmbientScale;
 
+    // The light in the air when the tracer is on. How much of what the tracer found shows in the air itself as a
+    // haze (see PathTracedLighting2D.Fog), and the slot in the bindless table of the lamps' glow spread through
+    // the air (gi_air.slang), NO_TEXTURE when the lamps glow the plain way
+    float uFog;
+    uint uAirSlot;
+
     // The size of the squares of the world that are lit as a whole, 0 for every pixel by itself
     float uPixelSize;
     float3 uAmbient;
@@ -49,6 +55,9 @@ BIND_TEXTURE(4) Sampler2D uTexGi;
 // The lighting per square, see light_cells.slang. Only read when uHasCells says so.
 BIND_TEXTURE(6) Sampler2D uTexCells;
 BIND_TEXTURE(7) Sampler2D uTexCellsExtra;
+
+// Every unit of this shader is spoken for, so the air comes in through the bindless table, see uAirSlot
+BINDLESS_TEXTURES(uTextures);
 
 // How open to the ambient light a point of the world is, 1 for wide open, down to 1 minus the strength in a corner.
 // Ambient light comes from everywhere, so what is hemmed in by walls and sprites gets less of it, the corner where
@@ -177,7 +186,7 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
         float3 highlights, glow;
         light = directLight(
             position, texCoords, normal, hasNormal, shine,
-            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness,
+            params.uLightCount, params.uShadows != 0, params.uShininess, params.uShadowSoftness, params.uGlowScale,
             LIGHTING_FIELD(params), params.uTileCounts, params.uTileScreen,
             highlights, glow);
         extra = highlights + glow;
@@ -210,7 +219,15 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     {
         // Bounced light and what the lamps throw as things with a size, gathered by the cascades. The ambient makes
         // way for it, the dark corners get their light round the corner now instead of out of nowhere
-        light += (params.uAmbient * params.uGiAmbientScale + uTexGi.Sample(texCoords).rgb * params.uGiStrength) * occlusion;
+        float3 traced = uTexGi.Sample(texCoords).rgb;
+        light += (params.uAmbient * params.uGiAmbientScale + traced * params.uGiStrength) * occlusion;
+
+        // And the air. Some of the light at a point shows in the air at that point whatever is under it, a haze,
+        // and the lamps' glow comes spread through the air by the tracer. Neither is multiplied by the surface,
+        // they hang in front of it
+        extra += traced * params.uFog;
+        if (params.uAirSlot != NO_TEXTURE)
+            extra += uTextures[NonUniformResourceIndex(params.uAirSlot)].Sample(texCoords).rgb;
     }
     else
     {

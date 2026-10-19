@@ -4,6 +4,8 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 
+using Silk.NET.Input;
+
 namespace Horizon.Input;
 
 /// <summary>
@@ -27,6 +29,12 @@ namespace Horizon.Input;
 /// }
 /// </code>
 /// An action name has to be an identifier (letters, digits and underscores) to be a key in there.
+/// <para>
+/// A gamepad that is the keyboard (<see cref="GamepadInputManager.AddKeyboardGamepad"/>) binds its actions to keys,
+/// straight, written <c>key:</c> and the name of the key (<c>jump: "key:W, key:Space"</c>, <c>dash: "key:ShiftLeft + key:D"</c>),
+/// next to the inputs of a gamepad in the same bindings. A combination of keys is held while all of its keys are, and
+/// doesn't take over from a smaller one the way one of a gamepad's does, nobody chords a keyboard for that.
+/// </para>
 /// </summary>
 public sealed class GamepadBindings
 {
@@ -37,6 +45,11 @@ public sealed class GamepadBindings
 
     // The combinations of every action, each as the bits of its inputs.
     private readonly Dictionary<string, List<uint>> actions = [];
+
+    // The combinations of keys of every action that has any, each its keys in the order they were given. Only a keyboard reads these.
+    private readonly Dictionary<string, List<Key[]>> keyActions = [];
+
+    private const string KEY_PREFIX = "key:";
 
     // Every combination of more than one input that anything is bound to, these are the ones that can take over
     // from a smaller one. Worked out again when the bindings change, null until then.
@@ -72,6 +85,103 @@ public sealed class GamepadBindings
 
     /// <summary>The actions that have bindings, including the ones bound to nothing.</summary>
     public IReadOnlyCollection<string> Actions => actions.Keys;
+
+    /// <summary>Whether any action is bound to a key at all, which a keyboard's bindings from before there were keys aren't.</summary>
+    public bool HasKeys
+    {
+        get
+        {
+            foreach (var bound in keyActions.Values)
+            {
+                if (bound.Count > 0) return true;
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Puts an action on some keys, each of which triggers it by itself, replacing the keys it was on. What it is bound
+    /// to on a gamepad stays.
+    /// </summary>
+    public GamepadBindings BindKeys(string action, params ReadOnlySpan<Key> keys)
+    {
+        List<Key[]> bound = ResetKeys(action);
+
+        foreach (Key key in keys)
+        {
+            if (key != Key.Unknown && IndexOf(bound, [key]) < 0)
+                bound.Add([key]);
+        }
+
+        return Changed();
+    }
+
+    /// <summary>Gives an action one more combination of keys, held together (a single key is a combination of one).</summary>
+    public GamepadBindings AddKeyCombination(string action, params ReadOnlySpan<Key> keys)
+    {
+        Validate(action);
+        if (keys.Length == 0) return this;
+
+        if (!actions.ContainsKey(action)) actions[action] = [];
+        if (!keyActions.TryGetValue(action, out var bound)) keyActions[action] = bound = [];
+
+        Key[] combination = keys.ToArray();
+        if (IndexOf(bound, combination) < 0) bound.Add(combination);
+
+        return Changed();
+    }
+
+    /// <summary>
+    /// Moves an action onto one combination of keys and nothing else on the keyboard, the way a "press the key for jump"
+    /// menu does. Any other action on exactly those keys loses them.
+    /// </summary>
+    public GamepadBindings RebindKeys(string action, params ReadOnlySpan<Key> keys)
+    {
+        List<Key[]> bound = ResetKeys(action);
+        Key[] combination = keys.ToArray();
+
+        foreach (var other in keyActions.Values)
+        {
+            int at = IndexOf(other, combination);
+            if (at >= 0) other.RemoveAt(at);
+        }
+
+        if (combination.Length > 0) bound.Add(combination);
+        return Changed();
+    }
+
+    /// <summary>The combinations of keys an action is bound to, none if it isn't on any.</summary>
+    public IReadOnlyList<Key[]> KeyCombinationsOf(string action) =>
+        keyActions.TryGetValue(action, out var bound) ? bound : [];
+
+    /// <summary>
+    /// Whether an action is held on a keyboard, all the keys of one of its combinations are down.
+    /// </summary>
+    /// <param name="before">Whether to ask about the update before this one, for what started and what ended.</param>
+    public bool AreKeysActive(string action, Keyboard keyboard, bool before = false)
+    {
+        if (!keyActions.TryGetValue(action, out var bound)) return false;
+
+        foreach (Key[] combination in bound)
+        {
+            bool all = combination.Length > 0;
+            foreach (Key key in combination)
+            {
+                // Down the update before is down now and not new, or let go of just now
+                bool down = before ? (keyboard.IsDown(key) && !keyboard.WasPressed(key)) || keyboard.WasReleased(key) : keyboard.IsDown(key);
+                if (!down)
+                {
+                    all = false;
+                    break;
+                }
+            }
+
+            if (all) return true;
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Puts an action on some inputs, each of which triggers it by itself, replacing what it was bound to.
@@ -151,6 +261,7 @@ public sealed class GamepadBindings
     public bool Unbind(string action)
     {
         Changed();
+        keyActions.Remove(action);
         return actions.Remove(action);
     }
 
@@ -158,6 +269,7 @@ public sealed class GamepadBindings
     public void Clear()
     {
         actions.Clear();
+        keyActions.Clear();
         Changed();
     }
 
@@ -173,7 +285,7 @@ public sealed class GamepadBindings
         actions.TryGetValue(action, out var bound) && bound.Contains(GamepadInputs.Bit(input));
 
     /// <summary>What an action is bound to as text, e.g. "A, DPadUp" or "A + B", for showing or saving.</summary>
-    public string Describe(string action) => Describe(CombinationsOf(action));
+    public string Describe(string action) => Describe(CombinationsOf(action), KeyCombinationsOf(action));
 
     /// <summary>
     /// Whether an action is triggered by a set of held inputs, one of its combinations is held in full
@@ -216,6 +328,10 @@ public sealed class GamepadBindings
         foreach (var (action, bound) in other.actions)
             actions[action] = [.. bound];
 
+        keyActions.Clear();
+        foreach (var (action, bound) in other.keyActions)
+            keyActions[action] = [.. bound];
+
         Changed();
     }
 
@@ -227,7 +343,7 @@ public sealed class GamepadBindings
     {
         Dictionary<string, IRuntimeValue> saved = [];
         foreach (var (action, bound) in actions)
-            saved[action] = new StringValue(Describe(bound));
+            saved[action] = new StringValue(Describe(bound, KeyCombinationsOf(action)));
 
         return new ObjectValue(new Dictionary<string, IRuntimeValue>
         {
@@ -271,15 +387,30 @@ public sealed class GamepadBindings
             }
 
             List<uint> bound = actions[action] = [];
+            List<Key[]> boundKeys = keyActions[action] = [];
 
             // Combinations are separated by commas, the inputs of one by plus signs.
             foreach (string combination in (names.Value ?? string.Empty).Split(',', tidy))
             {
                 uint mask = 0;
+                List<Key> keys = [];
                 bool known = true;
 
                 foreach (string part in combination.Split('+', tidy))
                 {
+                    if (part.StartsWith(KEY_PREFIX, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (Enum.TryParse(part[KEY_PREFIX.Length..], ignoreCase: true, out Key key) && key != Key.Unknown)
+                        {
+                            keys.Add(key);
+                            continue;
+                        }
+
+                        problems?.Add($"'{action}' is bound to '{part}', which isn't a key.");
+                        known = false;
+                        continue;
+                    }
+
                     if (GamepadInputs.TryParse(part, out var input))
                     {
                         mask |= GamepadInputs.Bit(input);
@@ -290,7 +421,18 @@ public sealed class GamepadBindings
                     known = false;
                 }
 
-                if (known && mask != 0 && !bound.Contains(mask))
+                if (!known) continue;
+
+                // A combination is the buttons of a gamepad or the keys of a keyboard, not a bit of both
+                if (keys.Count > 0 && mask != 0)
+                {
+                    problems?.Add($"'{action}' has '{combination}', which mixes keys with the buttons of a gamepad.");
+                    continue;
+                }
+
+                if (keys.Count > 0 && IndexOf(boundKeys, [.. keys]) < 0)
+                    boundKeys.Add([.. keys]);
+                else if (mask != 0 && !bound.Contains(mask))
                     bound.Add(mask);
             }
         }
@@ -343,15 +485,53 @@ public sealed class GamepadBindings
         return bound;
     }
 
+    /// <summary>Makes sure an action is known, and on no keys.</summary>
+    private List<Key[]> ResetKeys(string action)
+    {
+        Validate(action);
+
+        if (!actions.ContainsKey(action)) actions[action] = [];
+
+        if (keyActions.TryGetValue(action, out var bound))
+            bound.Clear();
+        else
+            keyActions[action] = bound = [];
+
+        return bound;
+    }
+
+    private static int IndexOf(List<Key[]> bound, Key[] combination)
+    {
+        for (int i = 0; i < bound.Count; i++)
+        {
+            if (bound[i].AsSpan().SequenceEqual(combination)) return i;
+        }
+
+        return -1;
+    }
+
     private GamepadBindings Changed()
     {
         combinations = null;
         return this;
     }
 
-    private static string Describe(IReadOnlyList<uint> bound)
+    private static string Describe(IReadOnlyList<uint> bound, IReadOnlyList<Key[]> keys)
     {
         StringBuilder text = new();
+
+        foreach (Key[] combination in keys)
+        {
+            if (text.Length > 0)
+                text.Append(", ");
+
+            for (int i = 0; i < combination.Length; i++)
+            {
+                if (i > 0)
+                    text.Append(" + ");
+                text.Append(KEY_PREFIX).Append(combination[i]);
+            }
+        }
 
         foreach (uint combination in bound)
         {

@@ -86,6 +86,23 @@ public sealed class PathTracedLighting2D : IDisposable
     public float AmbientScale { get; set; } = 0.5f;
 
     /// <summary>
+    /// How much of the light the tracer finds at a point shows in the air at that point, whatever is under it, as
+    /// if there were a haze. 0, the default, for none. A little (0.2 to 0.4) and the light of a lamp hangs in the
+    /// room and spills out of a doorway rather than only showing on what it lands on, which is what the air does.
+    /// It is laid over the picture and not multiplied by the surface, so it shows over a dark floor as well.
+    /// </summary>
+    public float Fog { get; set; }
+
+    /// <summary>
+    /// How far the glow of the lamps (<see cref="Light2D.Glow"/>) is spread through the air, in world units, 0
+    /// for the glow put down as it is by the deferred pass (a halo with the shadows' hard edges in it). With it
+    /// the glow is worked out once a frame at the tracer's size, shadowed (a wall stops it, a doorway lets a shaft
+    /// through), and smeared this far, so it goes a little round corners and fades at the edge of a shadow the
+    /// way light in a haze does. See shaders/lighting/gi_air.slang.
+    /// </summary>
+    public float GlowSpread { get; set; }
+
+    /// <summary>
     /// How long (in seconds) the light takes to settle, which is what every frame is laid over the ones before it
     /// for, 0 for every frame on its own. A tenth of a second is long enough to be rid of the shimmer and short
     /// enough that a light coming on, or a spark going past, is followed as it happens. It is a time and not a
@@ -103,6 +120,18 @@ public sealed class PathTracedLighting2D : IDisposable
     /// frame by frame and shows the spokes between them.
     /// </summary>
     public bool Jitter { get; set; } = true;
+
+    /// <summary>
+    /// Whether the sprites that block light (<see cref="Spriting.Sprite.CastsShadows"/>) are walls to the rays
+    /// as well as to the lamps, which is to say whether they stop the bounced light and throw it back. On, which
+    /// is the default and right for a world seen from the side, a crate stood against a lit wall shades the floor
+    /// behind it from the glow of the wall and glows a little itself. Off, the rays go through them as if they
+    /// were air and only the walls and whatever glows are in their way, which is right for a world seen from
+    /// above, where a person is not a wall to the sky, they stand under the light like everything else. On, a
+    /// person in a lit room had a shadow of bounced light trailing the length of the floor behind them and a halo
+    /// of their own bounce round their feet in the dark. What glows stops the rays either way.
+    /// </summary>
+    public bool SpritesBlock { get; set; } = true;
 
     /// <summary>
     /// Whether the light is kept at the size of the renderer (times <see cref="OutputScale"/>) rather than at the
@@ -137,7 +166,11 @@ public sealed class PathTracedLighting2D : IDisposable
     private static readonly TextureDefinition CascadeTexture = new(PixelFormat.Rgba16F, Smooth: true, Usage: TextureUsage.Sampled | TextureUsage.Storage);
 
     private readonly List<Texture> cascades = [];
-    private Texture? resultA, resultB, radiance;
+    private Texture? resultA, resultB, radiance, air;
+
+    // The air light smeared, see GlowSpread. The blur draws, so it keeps targets of its own
+    private PostProcessing.GaussianBlur? airBlur;
+    private PostProcessing.PostTarget? airBlurred;
 
     // How much the light of every pixel usually wavers, the mean of its brightness and of its square, kept the way
     // the light is and taking turns with it. See Responsiveness
@@ -163,10 +196,13 @@ public sealed class PathTracedLighting2D : IDisposable
     // How long after the last frame one still carries on from it, in seconds
     private const double GAP = 0.25;
 
-    private Technique? radiancePass, cascadePass, resolvePass;
+    private Technique? radiancePass, cascadePass, resolvePass, airPass;
 
     /// <summary>What the tracer found last, for the deferred pass. Null before the first frame.</summary>
     public Texture? Result { get; private set; }
+
+    /// <summary>The lamps' glow spread through the air, for the deferred pass. Null when <see cref="GlowSpread"/> is 0 or before the first frame.</summary>
+    public Texture? Air { get; private set; }
 
     /// <summary>The size of the picture everything is traced at.</summary>
     public Vector2 Size => new(width, height);
@@ -188,6 +224,7 @@ public sealed class PathTracedLighting2D : IDisposable
         radiancePass ??= new Technique(Shader.Load("shaders/lighting", "gi_radiance"));
         cascadePass ??= new Technique(Shader.Load("shaders/lighting", "gi_cascade"));
         resolvePass ??= new Technique(Shader.Load("shaders/lighting", "gi_resolve"));
+        airPass ??= new Technique(Shader.Load("shaders/lighting", "gi_air"));
         if (!radiancePass.IsValid || !cascadePass.IsValid || !resolvePass.IsValid) return;
 
         float scale = Math.Clamp(Scale, 0.1f, 1.0f);
@@ -210,6 +247,26 @@ public sealed class PathTracedLighting2D : IDisposable
 
         // The world is this many units across a pixel of the picture
         float pixelWorld = camera.Bounds.Width / width;
+
+        // The lamps' glow through the air, shadowed at the tracer's size and smeared, see GlowSpread. Before the
+        // cascades, which have nothing to do with it, so the blur's drawing doesn't land between two dispatches
+        float spread = GlowSpread;
+        Air = null;
+        if (spread > 0.0f && airPass!.IsValid && air is not null)
+        {
+            using var hazing = device.BeginGpuScope("air light");
+            airPass.Bind();
+            renderer.BindLighting(airPass);
+            airPass.SetUniform("uSize", Size);
+            device.BindStorageImage(0, air);
+            device.Dispatch((width + 7) / 8, (height + 7) / 8);
+            device.Barrier(BarrierTargets.ShaderImages);
+            airPass.Unbind();
+            device.BindStorageImage(0, null);
+
+            airBlur ??= new PostProcessing.GaussianBlur();
+            Air = airBlur.Blur(air, Size, spread / MathF.Max(pixelWorld, 1e-4f), ref airBlurred).Texture;
+        }
 
         // Whether last frame's light is worth anything, it is not the first time, the camera didn't cut, and the
         // lighting wasn't off for a while in between. When it is not, it is read from nowhere, the bounce of the
@@ -503,6 +560,7 @@ public sealed class PathTracedLighting2D : IDisposable
         momentsA = Picture("path traced wavering a", outputWidth, outputHeight);
         momentsB = Picture("path traced wavering b", outputWidth, outputHeight);
         radiance = Picture("wall radiance", width, height);
+        air = Picture("air light", width, height);
 
         Texture? Picture(string name, uint across, uint down)
         {
@@ -525,9 +583,18 @@ public sealed class PathTracedLighting2D : IDisposable
         momentsA?.Dispose();
         momentsB?.Dispose();
         radiance?.Dispose();
-        resultA = resultB = momentsA = momentsB = radiance = null;
+        air?.Dispose();
+        airBlurred?.Dispose();
+        resultA = resultB = momentsA = momentsB = radiance = air = null;
+        airBlurred = null;
         Result = null;
+        Air = null;
     }
 
-    public void Dispose() => Release();
+    public void Dispose()
+    {
+        Release();
+        airBlur?.Dispose();
+        airBlur = null;
+    }
 }

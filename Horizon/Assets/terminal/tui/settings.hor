@@ -1,0 +1,133 @@
+// Settings, the terminal's settings as a form in the terminal, the same rows Dusk's settings window and Hex's page for
+// settings.hor have. Enter or the arrows left and right flip a flag and step a choice, Enter on anything else edits it
+// on the line at the bottom (Enter keeps it, Esc doesn't), a list is its names with | between them. Taken in at once.
+let ui = include("widgets.hor");
+
+let program = { name: "Settings" };
+
+let fields = [];
+let values = {};
+let rows = ui.list([]);
+let editing = null;
+let edit = ui.field("");
+let said = "";
+
+func load(tui) {
+    let form = tui.settings();
+    if (form == null) {
+        said = "there are no settings here";
+        return;
+    }
+    fields = form.fields;
+    values = form.values;
+    ui.list_set(rows, fields);
+}
+
+func value_of(field) {
+    let value = values[field.key];
+    if (value == null) {
+        return "";
+    }
+    return text(value);
+}
+
+func set(tui, field, value) {
+    if (tui.set_setting(field.key, value)) {
+        said = `{field.title} is {text(value)} now`;
+    } else {
+        said = `{field.title} can't be {text(value)}`;
+    }
+    load(tui);
+}
+
+func step(tui, field, by) {
+    if (field.kind == "flag") {
+        set(tui, field, values[field.key] != true);
+        return true;
+    }
+    if (field.kind == "choice" && field.choices.count > 0) {
+        let at = field.choices.index_of(value_of(field));
+        set(tui, field, field.choices[(at + by + field.choices.count) % field.choices.count]);
+        return true;
+    }
+    return false;
+}
+
+func on_start(tui) {
+    load(tui);
+}
+
+func on_key(tui, key) {
+    if (editing != null) {
+        if (key.name == "escape") {
+            editing = null;
+        } else if (key.name == "enter") {
+            let field = editing;
+            editing = null;
+            if (field.kind == "number" || field.kind == "whole") {
+                set(tui, field, number(edit.text));
+            } else {
+                set(tui, field, edit.text);
+            }
+        } else {
+            ui.field_key(edit, key);
+        }
+        return;
+    }
+
+    if (key.name == "escape" || key.name == "q") {
+        tui.exit(0);
+        return;
+    }
+
+    if (ui.list_key(rows, key, tui.rows() - 3)) {
+        return;
+    }
+
+    let field = ui.list_chosen(rows);
+    if (field == null) {
+        return;
+    }
+
+    if (key.name == "left" || key.name == "right") {
+        let by = 1;
+        if (key.name == "left") {
+            by = -1;
+        }
+        step(tui, field, by);
+        return;
+    }
+
+    if (key.name == "enter" && !step(tui, field, 1)) {
+        editing = field;
+        edit = ui.field(value_of(field));
+    }
+}
+
+func draw(tui) {
+    tui.clear();
+    let parts = ui.rows(ui.screen(tui), [0, 1, 1]);
+    let inside = ui.panel(tui, parts[0], "Settings", editing == null);
+    let width = math.min(32, math.floor(inside.w / 3));
+    ui.list_draw(tui, rows, inside, func(field) {
+        let shown = value_of(field);
+        if (field.kind == "flag") {
+            shown = "no";
+            if (values[field.key] == true) {
+                shown = "yes";
+            }
+        }
+        return ui.pad(field.title, width) + shown;
+    }, editing == null);
+
+    let field = ui.list_chosen(rows);
+    if (editing != null) {
+        tui.write(0, parts[1].y, ` {editing.title} `, "bold inverse");
+        ui.field_draw(tui, edit, ui.rect(editing.title.length + 3, parts[1].y, parts[1].w - editing.title.length - 3, 1), "", true);
+    } else if (field != null) {
+        tui.cursor();
+        tui.write(0, parts[1].y, ui.pad(" " + field.help, parts[1].w), "dim");
+    }
+
+    ui.status(tui, parts[2], "enter edit  left right step  esc leave", said);
+}

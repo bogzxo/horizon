@@ -75,7 +75,7 @@ public sealed class TileMap : GameObject
     /// <summary>The whole map at the end of a tick.</summary>
     private sealed class CapturedMap
     {
-        public float Time;
+        public float Time, Opacity;
         public Vector2 Origin, ParallaxOrigin;
         public bool SnapParallax;
         public CapturedLayer[] Layers = [];
@@ -91,6 +91,13 @@ public sealed class TileMap : GameObject
 
     /// <summary>Where the bottom left corner of the map is in the world.</summary>
     public Vector2 Origin { get; set; }
+
+    /// <summary>
+    /// How much of the whole map there is, from 0 (none of it is drawn at all) to 1, on top of what every layer
+    /// says for itself. For fading a map in over another one, see <see cref="TileMapRooms"/>. Set it from the
+    /// updates, it takes at the next frame.
+    /// </summary>
+    public float Opacity { get; set; } = 1.0f;
 
     /// <summary>The size of the map in tiles. For a map without edges (infinite) that is the box around everything in it.</summary>
     public int Width { get; }
@@ -700,13 +707,16 @@ public sealed class TileMap : GameObject
     /// Everything of the map there is to bump into, as few rectangles as it takes. The tiles of the layers that are
     /// collidable (see <see cref="TileMapLayer.IsCollidable"/>), tiles that have a custom property <c>collidable</c>
     /// set on them in their tile set, the shapes that were drawn onto tiles in Tiled's collision editor, and the
-    /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle.
+    /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle. The tiles of a
+    /// layer that says <see cref="TileMapLayer.IsOneWay"/> come back as platforms (<see cref="TileMapBox.OneWay"/>),
+    /// merged among themselves and never with a wall.
     /// </summary>
     /// <param name="isSolid">Decides for every tile instead, for when being solid depends on something else altogether.</param>
     public List<TileMapBox> BuildColliders(Func<TileMapCell, bool>? isSolid = null)
     {
         var boxes = new List<TileMapBox>();
         var solid = new bool[Width * Height];
+        bool[]? platforms = null;
 
         foreach (TileMapLayer layer in layers)
         {
@@ -725,17 +735,22 @@ public sealed class TileMap : GameObject
                     continue;
 
                 Vector2 corner = cell.Centre - TileSize / 2.0f;
+                bool oneWay = layer.IsOneWay;
 
                 if (cell.Tile.Collision.Count > 0)
                 {
                     // Only the part of the tile that was drawn as solid
                     foreach (var (min, size) in cell.Tile.Collision)
-                        boxes.Add(new TileMapBox(corner + min, size));
+                        boxes.Add(new TileMapBox(corner + min, size, oneWay));
                 }
                 else if (layer.WorldOffset != Vector2.Zero)
                 {
                     // Off the grid, so there is nothing to put it together with
-                    boxes.Add(new TileMapBox(corner, TileSize));
+                    boxes.Add(new TileMapBox(corner, TileSize, oneWay));
+                }
+                else if (oneWay)
+                {
+                    (platforms ??= new bool[Width * Height])[IndexOf(cell.X, cell.Y)] = true;
                 }
                 else
                 {
@@ -744,7 +759,8 @@ public sealed class TileMap : GameObject
             }
         }
 
-        Merge(solid, boxes);
+        Merge(solid, boxes, oneWay: false);
+        if (platforms is not null) Merge(platforms, boxes, oneWay: true);
         return boxes;
     }
 
@@ -752,7 +768,7 @@ public sealed class TileMap : GameObject
     /// Turns the cells that are solid into rectangles. Every run of them along a row is one, and runs that are right
     /// underneath each other and just as long are one as well.
     /// </summary>
-    private void Merge(bool[] solid, List<TileMapBox> boxes)
+    private void Merge(bool[] solid, List<TileMapBox> boxes, bool oneWay)
     {
         // A run that is still growing downwards, by the column it starts at and how long it is
         var open = new Dictionary<(int Start, int Length), int>();
@@ -780,7 +796,7 @@ public sealed class TileMap : GameObject
 
                 // From the bottom of the last row it was in up to the top of the first
                 var min = TiledToWorld(new Vector2((run.Start + Left) * TileSize.X, (row + Top) * TileSize.Y));
-                boxes.Add(new TileMapBox(min, new Vector2(run.Length * TileSize.X, (row - firstRow) * TileSize.Y)));
+                boxes.Add(new TileMapBox(min, new Vector2(run.Length * TileSize.X, (row - firstRow) * TileSize.Y), oneWay));
             }
 
             foreach (var run in runs)
@@ -876,10 +892,106 @@ public sealed class TileMap : GameObject
         int perTile = ShadowCellsPerTile;
         var occlusion = new Horizon.Rendering.Lighting.OcclusionMap2D(Width * perTile, Height * perTile, Origin, TileSize / perTile, fieldTexelsPerCell: 1);
 
-        foreach (var (x, y) in ShadowCasterTexels(perTile))
+        foreach (var (x, y) in CasterTexels(perTile))
             occlusion[x, y] = true;
 
         return occlusion;
+    }
+
+    // What ShadowCasterTexels came to, kept by what it was worked out of. The occlusion map and the geometry occlusion
+    // both want it, and working it out reads every texel of the art under every tile that blocks light, which on Japan
+    // was a tenth of a second, twice. Kept across maps of the same file as well (another fight on the same map, the
+    // fight after its preview), by the file, when it was written and the versions of what blocks light
+    private (int X, int Y)[]? casterTexels;
+    private long casterTexelsFor = -1;
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string File, long Written, int PerTile, long Layers), (int X, int Y)[]> sharedTexels = new();
+    private const int MAX_SHARED = 16;
+
+    /// <summary>
+    /// What blocks light by the shape of things (<see cref="ShadowCasterTexels"/>) as an array, worked out once for as
+    /// long as what blocks light stays the same, and shared with every other map of the same file. Any thread, one at a
+    /// time for a map.
+    /// </summary>
+    public (int X, int Y)[] CasterTexels(int perTile)
+    {
+        perTile = Math.Max(perTile, 1);
+        long layersSignature = CasterSignature();
+        long signature = HashCode.Combine(perTile, layersSignature);
+        if (casterTexels is { } known && casterTexelsFor == signature) return known;
+
+        var key = (System.IO.Path.GetFullPath(Path), WrittenAt(), perTile, layersSignature);
+        if (!sharedTexels.TryGetValue(key, out var texels))
+        {
+            texels = [.. ShadowCasterTexels(perTile)];
+            if (sharedTexels.Count >= MAX_SHARED) sharedTexels.Clear();
+            sharedTexels[key] = texels;
+        }
+
+        casterTexels = texels;
+        casterTexelsFor = signature;
+        return texels;
+    }
+
+    // When the file of the map was last written, so a map saved in Tiled since isn't given what the old one was
+    private long WrittenAt()
+    {
+        try
+        {
+            return System.IO.File.GetLastWriteTimeUtc(Path).Ticks;
+        }
+        catch (System.IO.IOException)
+        {
+            return 0;
+        }
+    }
+
+    // Everything what blocks light is made of, another number whenever any of it changes
+    private long CasterSignature()
+    {
+        var hash = new HashCode();
+        foreach (TileMapLayer layer in layers)
+        {
+            hash.Add(layer.CastsShadows);
+            hash.Add(layer.BlocksLight);
+            if (layer.CastsShadows) hash.Add(layer.Version);
+        }
+
+        hash.Add(objects.Count);
+        return hash.ToHashCode();
+    }
+
+    /// <summary>
+    /// Works out ahead of time everything the map would otherwise work out on the frame it is first drawn, the
+    /// layers it is drawn from, the pictures they are drawn out of (decoded, sent up when drawn), what blocks light by the
+    /// shape of things and the geometry occlusion
+    /// (<see cref="GeometryOcclusion"/>, with whatever reach and strength it has been given by now). Any thread, before
+    /// the map is added to anything, a map that is being drawn is the render thread's. Loading a map on a worker and
+    /// calling this there is how a game swaps maps without a hitch. Sending any of it to the GPU still happens as it is
+    /// drawn, that is quick.
+    /// </summary>
+    public void Prepare()
+    {
+        foreach (TileMapLayer layer in layers)
+        {
+            if (layer.IsDirty) Build(layer, layer.Gids, layer.Flips, layer.Version);
+        }
+
+        // The pictures the layers are drawn out of, decoded here so the first frame only sends them up
+        var pictures = new HashSet<string>();
+        foreach (TileMapLayer layer in layers)
+        {
+            foreach (TileMapBatch batch in layer.Batches)
+            {
+                if (!textures.ContainsKey(batch.ImagePath) && pictures.Add(batch.ImagePath))
+                    TileMapTexture.DecodeAhead(batch.ImagePath);
+            }
+        }
+
+        if (GeometryOcclusion && GeometryOcclusionStrength > 0.0f && GeometryOcclusionReach > 0.0f)
+            geometry.Prepare(this, GeometryOcclusionReach, Math.Clamp(GeometryOcclusionStrength, 0.0f, 1.0f), GeometrySignature());
+        else
+            CasterTexels(ShadowCellsPerTile);
     }
 
     /// <summary>Helper method to list the middle of every cell under an object of a layer that blocks light.</summary>
@@ -946,6 +1058,7 @@ public sealed class TileMap : GameObject
         if (captured.BeginPublish() is { } into)
         {
             into.Time = time;
+            into.Opacity = Opacity;
             into.Origin = Origin;
             into.ParallaxOrigin = ParallaxOrigin;
             into.SnapParallax = SnapParallax;
@@ -1020,6 +1133,12 @@ public sealed class TileMap : GameObject
         bool snapParallax = after?.SnapParallax ?? SnapParallax;
         float shownTime = after is null ? time : blend ? Interpolate.Linear(before!.Time, after.Time, alpha) : after.Time;
 
+        // A map that is faded out altogether (a room nobody is in, see TileMapRooms) is not drawn at all, and one
+        // halfway is blended between the ticks like the rest of what moves
+        float opacity = after is null ? Opacity : blend ? Interpolate.Linear(before!.Opacity, after.Opacity, alpha) : after.Opacity;
+        if (opacity <= 0.0f)
+            return;
+
         var view = camera.Bounds;
         var viewMin = new Vector2(view.X, view.Y);
         var viewMax = new Vector2(view.X + view.Width, view.Y + view.Height);
@@ -1041,6 +1160,9 @@ public sealed class TileMap : GameObject
 
         // Every layer as it is shown this frame, built if it changed, with the settings the GPU draws it by
         shown.Clear();
+        int built = 0;
+        long building = 0;
+        double builtMs = 0.0;
         int count = after?.Layers.Length ?? layers.Count;
         for (int index = 0; index < count && index < layers.Count; index++)
         {
@@ -1060,7 +1182,11 @@ public sealed class TileMap : GameObject
                 moved = new Vector2(MathF.Round(moved.X), MathF.Round(moved.Y));
 
             if (after is null ? layer.IsDirty : layer.BuiltVersion != state.Version)
+            {
+                if (built == 0) building = System.Diagnostics.Stopwatch.GetTimestamp();
                 Build(layer, state.Gids ?? layer.Gids, state.Flips ?? layer.Flips, state.Version);
+                built++;
+            }
 
             if (layer.Source is ImageLayer image)
                 PlaceImage(layer, image, viewMin - origin - moved, viewMax - origin - moved);
@@ -1077,11 +1203,23 @@ public sealed class TileMap : GameObject
                 GeometryScale = Vector2.One / Vector2.Max(worldSize, Vector2.One),
                 OcclusionMaps = Math.Clamp(OcclusionMapStrength, 0.0f, 1.0f),
                 Emissive = state.Emissive,
-                Tint = new Vector4(state.Tint, state.Opacity)
+                Tint = new Vector4(state.Tint, state.Opacity * opacity)
             }, state.IsForeground));
         }
 
-        if (!gpu.Sync(shown, textureOf ??= TextureOf))
+        if (built > 0) builtMs = System.Diagnostics.Stopwatch.GetElapsedTime(building).TotalMilliseconds;
+
+        long syncing = System.Diagnostics.Stopwatch.GetTimestamp();
+        bool synced = gpu.Sync(shown, textureOf ??= TextureOf);
+
+        // Building a layer and sending it up is the hitch of a map's first frame (and of every change to it), so it says
+        // what it cost. A frame that built nothing and had nothing new to send says nothing
+        if (built > 0)
+        {
+            Log.Info($"[TileMap] Built {built} layer{(built == 1 ? "" : "s")} of '{System.IO.Path.GetFileName(Path)}' in {builtMs:0} ms and sent them up in {System.Diagnostics.Stopwatch.GetElapsedTime(syncing).TotalMilliseconds:0} ms.");
+        }
+
+        if (!synced)
             return;
 
         gpu.Draw(foreground, viewMin, viewMax, camera);

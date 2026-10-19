@@ -402,4 +402,22 @@ FodyWeavers.xsd
 
 
 **/*.sync-conflict*
+/docs/notebook.md
+/Horizon/Art
 /CLAUDE.md
+
+# Syncthing's half written copies and its folders, and what a Mac or Windows leaves lying about
+~syncthing~*
+.stfolder/
+.stversions/
+.DS_Store
+Thumbs.db
+
+# Editors and their settings, which are whoever's machine's own
+.idea/
+.claudiaideconfig
+/docs/dusk-hex-plan.md
+/docs/memory-footprint.md
+/docs/terminal-plan.md
+/docs/ui-popups-plan.md
+/docs/ui-themes-plan.md

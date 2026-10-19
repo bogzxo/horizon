@@ -1,0 +1,4 @@
+[submodule "Horizon.HIDL"]
+	path = Horizon.HIDL
+	url = https://github.com/bogzxo/hidl
+	branch = development

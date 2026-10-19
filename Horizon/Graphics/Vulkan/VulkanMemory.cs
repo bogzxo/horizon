@@ -4,15 +4,19 @@ namespace Horizon.Graphics.Vulkan;
 
 /// <summary>
 /// Where buffers and images get their memory. Vulkan hands out memory in big lumps and only a few thousand of them,
-/// so this takes blocks of it (64 MB on the card, 32 MB where the CPU can see it) and carves them up with a free
-/// list. Memory the CPU can write to is mapped once when the block is made and stays mapped. Buffers and images
-/// never share a block, which keeps the granularity rules out of it.
+/// so this takes blocks of it (16 MB on the card, 8 MB where the CPU can see it) and carves them up with a free
+/// list. Memory the CPU can write to is mapped once when the block is made and stays mapped, and is the machine's
+/// memory, which is why those blocks are small, two 32 MB ones sat mostly empty under a tool. The blocks on the
+/// card are small for the same reason one step removed, NVIDIA's driver commits a write combined region of the
+/// machine's memory the size of every block it hands out (ten of 32 MB under a fight, counted against the process),
+/// so the empty tail of a block costs twice. Anything bigger than a block gets one of its own size. Buffers and
+/// images never share a block, which keeps the granularity rules out of it.
 /// Render thread, like everything that makes resources.
 /// </summary>
 internal sealed unsafe class VulkanMemory : IDisposable
 {
-    private const ulong DEVICE_BLOCK = 64 * 1024 * 1024;
-    private const ulong HOST_BLOCK = 32 * 1024 * 1024;
+    private const ulong DEVICE_BLOCK = 16 * 1024 * 1024;
+    private const ulong HOST_BLOCK = 8 * 1024 * 1024;
 
     /// <summary>A piece of a block, handed to a buffer or an image.</summary>
     public readonly struct Allocation
@@ -59,6 +63,34 @@ internal sealed unsafe class VulkanMemory : IDisposable
 
     public int BlockCount => blocks.Count;
 
+    /// <summary>
+    /// How many bytes of the blocks the CPU can see, which is memory of the machine and not of the card, mapped for
+    /// as long as the block is there whether anything is in it or not.
+    /// </summary>
+    public ulong HostBytes
+    {
+        get
+        {
+            ulong total = 0;
+            foreach (Block block in blocks)
+            {
+                if (block.Mapped != null) total += block.Size;
+            }
+            return total;
+        }
+    }
+
+    /// <summary>How many bytes the blocks come to all together, used or not, on the card and off it.</summary>
+    public ulong BlockBytes
+    {
+        get
+        {
+            ulong total = 0;
+            foreach (Block block in blocks) total += block.Size;
+            return total;
+        }
+    }
+
     public VulkanMemory(VulkanContext context)
     {
         this.context = context;
@@ -84,7 +116,7 @@ internal sealed unsafe class VulkanMemory : IDisposable
         }
 
         ulong blockSize = Math.Max(hostVisible ? HOST_BLOCK : DEVICE_BLOCK, size);
-        Block made = MakeBlock(typeIndex, blockSize, forImage, hostVisible);
+        Block? made = MakeBlock(typeIndex, blockSize, forImage, hostVisible);
         if (made is null)
         {
             // The memory of that kind is spoken for, something else will have to do

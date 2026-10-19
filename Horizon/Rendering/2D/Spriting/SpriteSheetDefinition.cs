@@ -24,9 +24,11 @@ namespace Horizon.Rendering.Spriting;
 /// <param name="Step">How far the next frame is from the one before, when the frames are laid out evenly. One sprite's width to the right unless the sheet says.</param>
 /// <param name="FramePositions">Where every frame after the first is, for frames that aren't laid out evenly. Null when they are.</param>
 /// <param name="Layer">The layer of an Aseprite file the sprite is on, for a sheet that keeps a theme on each. Null for the picture as it looks.</param>
+/// <param name="Scale">How many units on screen a pixel of it wants to be, for art that isn't drawn at the size of the rest (pixel art among smooth art). Zero for whatever whoever draws it draws its art at.</param>
+/// <param name="TextColor">The colour of whatever is written on top of it, for art whose face isn't the colour of the rest (a dark button among light ones). See-through for whatever whoever draws it writes in.</param>
 public readonly record struct SpriteSource(
     string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
-    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null, string? Layer = null)
+    (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null, string? Layer = null, float Scale = 0.0f, Vector4 TextColor = default)
 {
     /// <summary>
     /// The pixels of one frame, RGBA from the top left, for whoever wants to look at the art itself (tracing boxes
@@ -86,11 +88,12 @@ public sealed class SpriteSheetDefinition
         public Vector2 Origin;                                  // Where the grid starts
         public Dictionary<string, int> States = [];             // The other states every sprite comes in, and how many blocks along they are
         public bool Layered;                                    // Whether the themes are the layers of an Aseprite file rather than blocks of the image
+        public float Scale;                                     // How big its sprites want to be drawn, zero for however big the skin draws its art
     }
 
     private readonly record struct SpriteDefinition(
         ImageDefinition Image, int Block, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
-        (int X, int Y) Step, (int X, int Y)[]? FramePositions);
+        (int X, int Y) Step, (int X, int Y)[]? FramePositions, Vector4 TextColor = default);
 
     private readonly Dictionary<string, SpriteDefinition> _sprites = [];
     private readonly HashSet<string> _themes = [];
@@ -221,7 +224,9 @@ public sealed class SpriteSheetDefinition
             sprite.FrameTime,
             sprite.Step,
             Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y),
-            layer);
+            layer,
+            image.Scale,
+            sprite.TextColor);
 
         if (frame < 0)
         {
@@ -273,6 +278,36 @@ public sealed class SpriteSheetDefinition
                 throw new Exception($"'{path}': image '{name}' has to be an object.");
 
             definition.ReadImage(directory, name, image.Properties);
+        }
+
+        // Whatever this sheet hasn't got a sprite for comes out of another one, a pack of buttons and panels
+        // doesn't have to bring a keyboard and two gamepads of its own to be a whole skin. Only the sprites, the
+        // themes of the other one are not this one's
+        if (sheet.Properties.TryGetValue("inherit", out var inherit))
+        {
+            // Just the path, or { sheet, scale } for art that was drawn to be shown at a size of its own (pixel art
+            // meant for three times its size under a skin that draws its own art one to one)
+            float scale = 0.0f;
+            if (inherit is ObjectValue how && how.Properties.TryGetValue("sheet", out var named))
+            {
+                if (how.Properties.TryGetValue("scale", out var scaled)) scale = Number(scaled, "inherit.scale");
+                inherit = named;
+            }
+
+            if (inherit is not StringValue other)
+                throw new Exception($"'{path}': inherit has to be the path of another sheet, from this one's folder, or {{ sheet, scale }}.");
+
+            string from = System.IO.Path.Combine(directory, other.Value);
+            if (System.IO.Path.GetFullPath(from) == System.IO.Path.GetFullPath(path))
+                throw new Exception($"'{path}' inherits from itself.");
+
+            var below = Load(System.IO.Path.GetDirectoryName(from) ?? string.Empty, System.IO.Path.GetFileName(from));
+            foreach (var (name, sprite) in below._sprites)
+            {
+                // The images are the other sheet's own, read anew just now, nobody else is looking at them
+                if (scale > 0.0f && sprite.Image.Scale == 0.0f) sprite.Image.Scale = scale;
+                definition._sprites.TryAdd(name, sprite);
+            }
         }
 
         return definition;
@@ -351,6 +386,9 @@ public sealed class SpriteSheetDefinition
 
         if (properties.TryGetValue("size", out var size))
             image.Size = Pair(size, $"{name}.size");
+
+        if (properties.TryGetValue("scale", out var imageScale))
+            image.Scale = Number(imageScale, $"{name}.scale");
 
         // A grid the sprites sit in, so they can be written by their cell rather than in pixels
         if (properties.TryGetValue("cell", out var cell))
@@ -486,7 +524,8 @@ public sealed class SpriteSheetDefinition
             frames,
             Optional("time", 0.1f),
             step,
-            positions);
+            positions,
+            properties.TryGetValue("text_color", out var ink) && ink is Vector4Value inked ? inked.Value : default);
     }
 
     private static float Number(IRuntimeValue value, string what) =>

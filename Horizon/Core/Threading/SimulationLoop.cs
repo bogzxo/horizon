@@ -46,6 +46,9 @@ public sealed class SimulationLoop : IDisposable
     // The most ticks made in a row to catch up after falling behind, what is left after that is let go
     private const int MAX_CATCH_UP = 4;
 
+    // The longest an idle tick is, a machine that slept for a minute doesn't hand the game a minute in one go
+    private const double MAX_STRETCH = 0.25;
+
     // Leeway when deciding whether the logic or the physics is due, so the rounding of adding up ticks never skips a turn
     private const double DUE_SLACK = 1e-9;
 
@@ -63,6 +66,24 @@ public sealed class SimulationLoop : IDisposable
 
     // When each of them last had a turn (stopwatch ticks), which is how often they really come round is known
     private long lastTickAt, lastLogicAt, lastPhysicsAt;
+
+    // Idle, the loop sleeps for longer between ticks until it is woken, and the tick after that is as long as the time
+    // that really went by (NaN for an ordinary tick), so the caret and a fade keep their pace at the slower rate
+    private readonly AutoResetEvent wake = new(false);
+    private double stretch = double.NaN;
+    private long lastStamp;
+
+    /// <summary>
+    /// Asked after every tick whether nothing is happening, for a program that isn't a game (an editor) and has no need of
+    /// a hundred and twenty ticks a second while nobody touches it. Null, it never idles, which is what a game wants.
+    /// </summary>
+    public Func<bool>? IsIdle { get; set; }
+
+    /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
+    public double IdlePeriod { get; set; } = 0.05;
+
+    /// <summary>Wakes the loop out of an idle sleep for a tick at once, something happened (the mouse moved). From any thread.</summary>
+    public void Wake() => wake.Set();
 
     /// <summary>How many ticks a second the loop makes, as many as the faster of the logic and the physics wants.</summary>
     public double TickRate { get; }
@@ -143,6 +164,7 @@ public sealed class SimulationLoop : IDisposable
         if (!running) return;
 
         running = false;
+        wake.Set();
         if (thread is not null && Thread.CurrentThread != thread) thread.Join(2000);
     }
 
@@ -168,7 +190,18 @@ public sealed class SimulationLoop : IDisposable
                 if (!double.IsNaN(next))
                 {
                     Ticks.SetState(LoopStatistics.LoopState.Sleeping);
-                    LoopTiming.WaitUntil(next / frequency);
+
+                    // Nothing happening, it sleeps for a while or until it is woken, and the next tick is from then
+                    if (IsIdle?.Invoke() == true)
+                    {
+                        wake.WaitOne(TimeSpan.FromSeconds(IdlePeriod));
+                        stretch = Math.Clamp((clock() - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
+                        next = double.NaN;
+                    }
+                    else
+                    {
+                        LoopTiming.WaitUntil(next / frequency);
+                    }
                 }
 
                 Step();
@@ -235,10 +268,15 @@ public sealed class SimulationLoop : IDisposable
         // What was waiting for this thread picks up where it left off, before anything of the tick is updated
         Context.RunPending();
 
+        // An ordinary tick is one period, the first after an idle sleep as long as the sleep was
+        double length = double.IsNaN(stretch) ? tickPeriod : stretch;
+        stretch = double.NaN;
+        lastStamp = stamp;
+
         Tick++;
-        Time += tickPeriod;
-        logicOwed += tickPeriod;
-        physicsOwed += tickPeriod;
+        Time += length;
+        logicOwed += length;
+        physicsOwed += length;
 
         if (logicOwed + DUE_SLACK >= logicPeriod)
         {
@@ -281,5 +319,9 @@ public sealed class SimulationLoop : IDisposable
         return since;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+        wake.Dispose();
+    }
 }

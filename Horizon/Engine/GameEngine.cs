@@ -10,8 +10,6 @@ using Horizon.Graphics;
 using Horizon.Input;
 
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
 namespace Horizon.Engine;
 
@@ -41,7 +39,7 @@ public class GameEngine : Entity
     /// <summary>
     /// The camera of the scene that is on screen, or the one of the engine if the scene hasn't got one.
     /// </summary>
-    public Camera ActiveCamera => SceneManager.CurrentInstance?.ActiveCamera ?? DefaultCamera;
+    public Camera ActiveCamera => SceneManager.ActiveScene?.ActiveCamera ?? DefaultCamera;
 
     /// <summary>
     /// The camera that is used while no scene says otherwise. It looks at the middle of the world, a unit a pixel.
@@ -65,9 +63,21 @@ public class GameEngine : Entity
     public SceneManager SceneManager { get; }
 
     /// <summary>
+    /// What the window shows until the first scene has something to draw, see <see cref="Engine.LoadingScreen"/>.
+    /// Set it up before <see cref="Run()"/>.
+    /// </summary>
+    public LoadingScreen LoadingScreen { get; } = new();
+
+    /// <summary>
     /// The keyboard, the mouse and the gamepads.
     /// </summary>
     public InputManager Input { get; }
+
+    /// <summary>
+    /// The speakers and what's playing on them, <c>Audio.Mixer.Play(sound)</c>. There whether or not there's a device,
+    /// see <see cref="Horizon.Audio.AudioDevice"/>.
+    /// </summary>
+    public Horizon.Audio.AudioDevice Audio { get; }
 
     /// <summary>
     /// The scene that is on screen, null before the first one has been set.
@@ -144,6 +154,7 @@ public class GameEngine : Entity
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
         Input = AddComponent<InputManager>();
+        Audio = new Horizon.Audio.AudioDevice(open: Configuration.WindowConfiguration.Mode != RunMode.Application);
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
@@ -154,6 +165,7 @@ public class GameEngine : Entity
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+        WindowManager.DeviceReady = ShowLoadingScreen;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
@@ -204,11 +216,8 @@ public class GameEngine : Entity
                 string? directory = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-                using var image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgba32>(pixels, (int)width, (int)height);
-
                 // The pixels come out bottom row first, a picture starts at the top
-                image.Mutate(context => context.Flip(SixLabors.ImageSharp.Processing.FlipMode.Vertical));
-                image.SaveAsPng(path);
+                ImageFile.SavePng(path, pixels, (int)width, (int)height, bottomUp: true);
                 Log.Info($"[Engine] Screenshot saved to {path}.");
             }
             catch (Exception e)
@@ -217,6 +226,11 @@ public class GameEngine : Entity
             }
         });
     }
+
+    /// <summary>
+    /// Helper method to put the loading screen in the window, the moment there is a device to draw it with.
+    /// </summary>
+    private void ShowLoadingScreen() => LoadingScreen.Present(Graphics, WindowManager.ViewportSize);
 
     /// <summary>
     /// Has a scene take over from the one that is on screen, the way the scene manager is set to do it. From any thread.
@@ -300,6 +314,16 @@ public class GameEngine : Entity
         // The camera every shader draws through, bound for the frame. Whoever draws says which camera, see CameraBlock.Use
         Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
 
+        // Still under everything until the first scene draws. The frame a scene is set up on and the ones before
+        // it has had a tick have nothing of it in them, and would be a blink of black between the two
+        if (LoadingScreen.IsUp)
+        {
+            if (SceneManager.IsStarting)
+                LoadingScreen.Draw(WindowManager.ViewportSize);
+            else
+                LoadingScreen.IsUp = false;
+        }
+
         // Whatever is drawn outside of a scene makes what it makes on the GPU for everybody, the same as when it's
         // set up (see EntityLifecycle.Scope above). An overlay on the engine that makes its layer the first time it's
         // drawn mustn't have it count as a leftover of whichever scene was on then. Scenes draw in their own scope
@@ -340,6 +364,7 @@ public class GameEngine : Entity
 
     protected override void DisposeOther()
     {
+        Audio.Dispose();
         Logger.Dispose();
     }
 

@@ -5,7 +5,9 @@ using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Core.Threading;
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.Input;
+using Horizon.Rendering;
 using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Components;
@@ -41,6 +43,9 @@ namespace Horizon.UI;
 /// </summary>
 public partial class UICompositor : GameComponent, IDisposable
 {
+    /// <summary>Puts text on the system's clipboard, from any thread, the way a text box's Ctrl+C does.</summary>
+    public static void Copy(string text) => UIKeyboard.Copy(text);
+
     /// <summary>Where the skin every UI has unless it asks for another one is kept.</summary>
     public const string DEFAULT_SKIN_DIRECTORY = "Assets/uix/dead_revolver/";
 
@@ -109,8 +114,9 @@ public partial class UICompositor : GameComponent, IDisposable
     // Where the UI is drawn while it has effects that are on, rather than straight over the scene
     private readonly PostLayer layer = new();
 
-    // Counts the updates, every list is told which one it was painted in
+    // Counts the updates, every list is told which one it was painted in, and the time they've been painted for
     private int paintFrame;
+    private float paintClock;
 
     // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
     // through another camera the same list is another picture
@@ -218,6 +224,15 @@ public partial class UICompositor : GameComponent, IDisposable
     private bool pointerWasDown;
     private UIComponent? hovered;
     private UIComponent? pressed;
+
+    /// <summary>The topmost component the pointer is over, null for none. Simulation thread.</summary>
+    public UIComponent? HoveredComponent => hovered;
+
+    // The part of a highlighted component its tabs are painted as, a number no component gives a part of its own
+    private const int GRIPS_PART = -7004;
+
+    // The component whose edge the pointer is on or has hold of, see UIComponent.Resizable
+    private UIComponent? gripped;
     private UIComponent? focus;
 
     // How long (in seconds) the pointer has to rest on a component before its tooltip comes up, and how far it can
@@ -232,6 +247,35 @@ public partial class UICompositor : GameComponent, IDisposable
 
     // Scratch for cutting a tooltip into lines, see UITooltip
     internal List<(int Start, int Length)> TooltipLines { get; } = [];
+
+    // A tooltip that is markdown, laid out once for as long as it is the same text
+    internal UIRichText TooltipRich { get; } = new();
+
+    private System.Collections.Frozen.FrozenDictionary<string, string>? strings;
+
+    /// <summary>
+    /// Texts of this UI's own, what an <c>@key</c> in it is looked up in before the game's language. For a program whose
+    /// UI isn't the game's (an editor that shows a game's layouts in the game's language next to its own UI in its
+    /// own), see <see cref="Horizon.Content.Localisation.ReadFile"/>. Null for the game's language alone.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Strings
+    {
+        get => strings;
+        set => strings = value is null ? null : value as System.Collections.Frozen.FrozenDictionary<string, string> ?? System.Collections.Frozen.FrozenDictionary.ToFrozenDictionary(value);
+    }
+
+    /// <summary>
+    /// What a text of this UI is shown as, a key looked up in its <see cref="Strings"/> and then in the game's language,
+    /// anything else the text itself. Makes no garbage.
+    /// </summary>
+    public string Resolve(string text)
+    {
+        if (strings is not null && text.Length > 1 && text[0] == '@' && text[1] != '@'
+            && strings.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(text.AsSpan(1), out string? own))
+            return own;
+
+        return Horizon.Content.Localisation.Resolve(text);
+    }
 
     /// <summary>
     /// Called with what was pasted (control with V) while nothing in the UI had the focus. For an editor that pastes
@@ -259,6 +303,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public SpriteItem[] Items = new SpriteItem[256];
         public readonly List<UIDrawList.Run> Runs = [];
         public readonly List<TextureAtlas> Atlases = [];
+        public readonly List<UIGlassPane> Glass = [];
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
@@ -314,10 +359,29 @@ public partial class UICompositor : GameComponent, IDisposable
     // The compositor whose component has the keyboard, null while none does. There is one keyboard, so one of these
     private static UICompositor? focusOwner;
 
+    // Whether the skin is whichever one the game is set to (UISkins) and not one this UI asked for, the theme it
+    // would like of that one, and which change of the setting it has caught up with
+    private bool followsSkins;
+    private string? wantedTheme;
+    private int skinsVersion;
+
+    /// <summary>
+    /// A UI in the skin the game is set to, see <see cref="UISkins"/>, which is the Dead Revolver one until
+    /// somebody picks another. It changes its look along with that setting.
+    /// </summary>
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
-    /// <param name="theme">Which theme of the usual skin to draw the UI in ("red", "gold"), null for the one the skin says is its usual one.</param>
+    /// <param name="theme">
+    /// Which theme of the skin to draw the UI in ("red", "gold"), null for the one the game is set to. A skin
+    /// that has no theme of that name is drawn in the one the game is set to as well.
+    /// </param>
     public UICompositor(in Camera2D viewportCamera, string? theme = null)
-        : this(viewportCamera, DEFAULT_SKIN_DIRECTORY, DEFAULT_SKIN_FILE, theme) { }
+    {
+        this.viewportCamera = viewportCamera;
+        followsSkins = true;
+        wantedTheme = theme;
+        skinsVersion = UISkins.Version;
+        (skinDirectory, skinFile, skinTheme) = UISkins.Resolve(theme);
+    }
 
     /// <param name="viewportCamera">The camera the UI is drawn with. What it sees is the screen the modules are laid out against.</param>
     /// <param name="skinDirectory">The directory holding the skin definition and its art.</param>
@@ -393,20 +457,65 @@ public partial class UICompositor : GameComponent, IDisposable
     public void SetSkin(string directory, string file, string? theme = null)
     {
         lock (skinLock)
+        {
+            // A skin of its own from here on, whatever the game is set to
+            followsSkins = false;
             requestedSkin = (directory, file, theme);
+        }
     }
+
+    /// <summary>
+    /// Goes (back) to the skin the game is set to, see <see cref="UISkins"/>, and follows it from here on. Safe
+    /// from any thread, like <see cref="SetSkin"/>.
+    /// </summary>
+    /// <param name="theme">Which theme of it this UI would like, null for the one the game is set to.</param>
+    public void FollowSkins(string? theme = null)
+    {
+        lock (skinLock)
+        {
+            followsSkins = true;
+            wantedTheme = theme;
+            skinsVersion = UISkins.Version;
+            requestedSkin = UISkins.Resolve(theme);
+        }
+    }
+
+    /// <summary>Whether the UI is in the skin the game is set to and not in one of its own.</summary>
+    public bool FollowsSkins => followsSkins;
 
     /// <summary>
     /// Swaps the UI over to another theme of the skin it has, see <see cref="UISkin.Themes"/> for the ones
     /// there are. Safe from any thread, like <see cref="SetSkin"/>.
     /// </summary>
-    public void SetTheme(string? theme) => SetSkin(skinDirectory, skinFile, theme);
+    public void SetTheme(string? theme)
+    {
+        lock (skinLock)
+        {
+            // Following the game's skin it is the theme this UI would like of whichever skin that is
+            if (followsSkins)
+            {
+                wantedTheme = theme;
+                requestedSkin = UISkins.Resolve(theme);
+            }
+            else
+            {
+                requestedSkin = (skinDirectory, skinFile, theme);
+            }
+        }
+    }
 
     private void LoadRequestedSkin()
     {
         (string Directory, string File, string? Theme)? request;
         lock (skinLock)
         {
+            // The game was set to another skin since this UI last looked
+            if (followsSkins && skinsVersion != UISkins.Version)
+            {
+                skinsVersion = UISkins.Version;
+                requestedSkin = UISkins.Resolve(wantedTheme);
+            }
+
             request = requestedSkin;
             requestedSkin = null;
         }
@@ -491,7 +600,9 @@ public partial class UICompositor : GameComponent, IDisposable
         pending = null;
         var (snapshot, screen, skin, dt) = paint;
 
-        back.Begin(skin, paintFrame, dt);
+        // One clock for both lists, see UIDrawList.Begin
+        paintClock = (paintClock + dt) % 3600.0f;
+        back.Begin(skin, paintFrame, dt, paintClock);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
@@ -500,25 +611,51 @@ public partial class UICompositor : GameComponent, IDisposable
             module.Layout(screen, skin);
             module.Paint(back);
 
+            // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
+            // the boxes of the layout debugger and the mark round what is picked were not, they ran on out of the
+            // canvas over the lists next to it and whatever was behind
+            if (module.Clip is { } cut)
+                back.PushClip(cut);
+
             // On top of the module and with its transform, so the layout lines up with what it is the layout of.
             if (module.ShowInLayoutDebugger && LayoutOverlay is { } overlay)
                 UILayoutOverlay.Paint(back, module, overlay, module.ToLocal(lastPointer));
 
             // Whatever an editor has picked out is marked whether the debugger is open or not.
             if (Highlighted is { } highlighted && highlighted.Module == module)
+            {
                 UILayoutOverlay.PaintHighlight(back, highlighted);
 
-            foreach (var marked in Highlights)
+                // With the tabs of the edges an editor lets it be dragged by
+                // As a part of it that is nobody else's, like everything that is drawn about a component
+                if (HighlightGrips != UIResize.None)
+                {
+                    back.PushOwner(highlighted);
+                    back.BeginPart(GRIPS_PART);
+                    highlighted.PaintGrips(back, HighlightGrips, HighlightLitGrips);
+                    back.EndParts();
+                    back.PopOwner();
+                }
+            }
+
+            // Through the interface an enumerator is an object, every tick, so only when there is something in it
+            if (Highlights.Count > 0) foreach (var marked in Highlights)
             {
                 if (marked.Module == module && marked != Highlighted)
                     UILayoutOverlay.PaintHighlight(back, marked);
             }
+
+            if (module.Clip is not null)
+                back.PopClip();
         }
         back.End();
 
         // Nothing happened. What was painted is what is on screen already, and nobody needs to hear about it
         if (paintedFrame > 0 && back.SameAs(front))
             return;
+
+        // Something did, a window that only draws when something changed has frames to draw (see RunMode.Application)
+        GameEngine.Instance?.WindowManager?.NoteChange();
 
         lock (frameLock)
         {
@@ -561,6 +698,10 @@ public partial class UICompositor : GameComponent, IDisposable
             into.Atlases.Clear();
             foreach (var atlas in front.Atlases)
                 into.Atlases.Add(atlas);
+
+            into.Glass.Clear();
+            foreach (var pane in front.GlassPanes)
+                into.Glass.Add(pane);
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
@@ -627,17 +768,36 @@ public partial class UICompositor : GameComponent, IDisposable
                     : b[i];
             }
 
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
+            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases), BlendGlass(before, after, alpha));
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases));
+            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Glass));
         }
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
         pictureCurrent = false;
         refreshedAt = renderedAt;
         return true;
+    }
+
+    // Where the panes of glass of two lists blended are put together
+    private readonly List<UIGlassPane> blendedGlass = [];
+
+    /// <summary>
+    /// Helper method for the panes of glass of a frame between two ticks. Blended one with the other when the two lists
+    /// have as many, so a dialog that slides in has its glass slide with it, and the newer list's as they are otherwise.
+    /// </summary>
+    private ReadOnlySpan<UIGlassPane> BlendGlass(CapturedList before, CapturedList after, float alpha)
+    {
+        if (before.Glass.Count != after.Glass.Count)
+            return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Glass);
+
+        blendedGlass.Clear();
+        for (int i = 0; i < after.Glass.Count; i++)
+            blendedGlass.Add(UIGlassPane.Blend(before.Glass[i], after.Glass[i], alpha));
+
+        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(blendedGlass);
     }
 
     // Where every quad of the older list is, by who painted it as which of its quads, for lists that aren't the same quads
@@ -697,6 +857,16 @@ public partial class UICompositor : GameComponent, IDisposable
     /// A component of this UI that is marked out from the rest, null for none. What an editor has selected.
     /// </summary>
     public UIComponent? Highlighted { get; set; }
+
+    /// <summary>
+    /// The edges of <see cref="Highlighted"/> that get a tab drawn on them, the way a component that is
+    /// <see cref="UIComponent.Resizable"/> has them, for an editor that lets what it marks out be dragged bigger.
+    /// The editor does the dragging (<see cref="UIComponent.EdgesAt"/>, <see cref="UIComponent.BeginResize"/>).
+    /// </summary>
+    public UIResize HighlightGrips { get; set; }
+
+    /// <summary>Which of <see cref="HighlightGrips"/> are lit, the pointer being on them or having hold of them.</summary>
+    public UIResize HighlightLitGrips { get; set; }
 
     /// <summary>
     /// More components marked out the way <see cref="Highlighted"/> is, for an editor with several selected.
@@ -866,16 +1036,176 @@ public partial class UICompositor : GameComponent, IDisposable
         // Onto its own layer, through its effects if it has any that are on, and kept there to be laid over
         // again. Straight over the scene where there is no layer to be had (inside of a renderer that lights
         // its picture, or a UI that asked not to be kept)
+        Renderer2D? output = Renderer2D.Current;
         bool layered = layer.Begin(Retained);
-        renderer.Draw(viewportCamera);
+
+        if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+        {
+            renderer.Draw(viewportCamera);
+            GlassDrawn = default;
+        }
+        else
+            DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
 
         if (layered)
             layer.End(dt);
 
-        // Only a picture that made it onto the layer is there to be shown again
-        pictureCurrent = layered;
+        // Only a picture that made it onto the layer is there to be shown again. One with glass in it shows what was
+        // behind the glass, which a scene that moves under it doesn't keep still for, see GlassKeepsPicture
+        pictureCurrent = layered && (renderer.Glass.IsEmpty || GlassKeepsPicture);
         (pictureView, pictureProjection) = (viewportCamera.View, viewportCamera.Projection);
     }
+
+    /// <summary>
+    /// Whether a UI with glass in it (see <see cref="UIGlass"/>) keeps the picture it drew and lays that over for as
+    /// long as nothing in the UI changes, the way it does without (see <see cref="Retained"/>). Off unless asked for,
+    /// the glass then shows the scene as it was when the UI last changed, which is right for an application whose
+    /// UI is all there is (Hex), and wrong for a menu over a game that goes on moving under it.
+    /// </summary>
+    public bool GlassKeepsPicture { get; set; }
+
+    /// <summary>
+    /// What a dialog, a menu that drops down and anything else that pops up over the rest of this UI sits on, null
+    /// for nothing (a solid panel, as they always were). See <see cref="UIGlass"/>.
+    /// </summary>
+    public UIGlass? PopupGlass { get; set; }
+
+    // What puts the glass down, made the first time there is any
+    private UIGlassPass? glassPass;
+
+    /// <summary>
+    /// How many panes of glass the UI put down the last time it was drawn anew, and how many blurs that took. For a test
+    /// that wants to know the glass is there, read from anywhere.
+    /// </summary>
+    public (int Panes, int Blurs) GlassDrawn { get; private set; }
+
+    /// <summary>
+    /// Helper method to draw a list with glass in it, in goes. A stretch of quads, a pane, the next stretch, and so on,
+    /// every pane blurring what was drawn before it.
+    /// </summary>
+    /// <param name="output">What the frame under the UI is drawn into, a renderer or (null) the window.</param>
+    /// <param name="picture">The layer the UI is drawn onto, null for straight over the frame.</param>
+    private void DrawGlassy(Renderer2D? output, RenderTarget? picture)
+    {
+        glassPass ??= new UIGlassPass();
+        glassPass.Reset();
+
+        ReadOnlySpan<UIGlassPane> panes = renderer.Glass;
+        ReadOnlySpan<SpriteItem> items = renderer.Uploaded;
+
+        bool sent = renderer.Begin();
+        int from = 0, blurredBy = -1, blurs = 0;
+
+        // What is under every pane, for keeping its blur from one frame to the next. Only when what is behind the UI
+        // holds still (GlassKeepsPicture), the UI can't see a scene that moves under it
+        ulong under = GlassKeepsPicture ? Seed(output) : 0;
+        int hashed = 0;
+
+        for (int i = 0; i < panes.Length; i++)
+        {
+            int start = Math.Clamp(panes[i].Start, from, items.Length);
+            if (sent)
+                renderer.DrawRange(from, start, viewportCamera);
+
+            if (under != 0)
+            {
+                under = Mix(under, items[hashed..start]);
+                under = Mix(under, panes[i]);
+                hashed = start;
+            }
+
+            bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, i);
+            glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
+            if (fresh)
+            {
+                blurredBy = i;
+                blurs++;
+            }
+
+            from = start;
+        }
+
+        if (sent)
+            renderer.DrawRange(from, items.Length, viewportCamera);
+
+        renderer.End();
+        GlassDrawn = (panes.Length, blurs);
+    }
+
+    /// <summary>
+    /// Helper method to say whether a pane can show the blur an earlier one made, which it can when it smears as far and
+    /// nothing drawn since that blur (quads or panes) is anywhere near it. Panes side by side (a side bar and the panel
+    /// under the editor) are one copy and one blur then, not one each.
+    /// </summary>
+    private static bool SameBlur(ReadOnlySpan<UIGlassPane> panes, ReadOnlySpan<SpriteItem> items, int blurredBy, int pane)
+    {
+        UIGlassPane at = panes[pane];
+        if (at.Blur != panes[blurredBy].Blur)
+            return false;
+
+        // As far round it as the blur reaches, what is there is smeared into it
+        Vector2 reach = new(at.Blur * 2.0f);
+        Vector2 min = Vector2.Min(at.Min, at.Max) - reach, max = Vector2.Max(at.Min, at.Max) + reach;
+
+        for (int i = blurredBy; i < pane; i++)
+        {
+            if (Overlaps(Vector2.Min(panes[i].Min, panes[i].Max), Vector2.Max(panes[i].Min, panes[i].Max), min, max))
+                return false;
+        }
+
+        int end = Math.Min(at.Start, items.Length);
+        for (int i = Math.Max(0, panes[blurredBy].Start); i < end; i++)
+        {
+            ref readonly SpriteItem item = ref items[i];
+            Vector2 a = item.Origin, b = item.Origin + item.AxisX, c = item.Origin + item.AxisY, d = b + item.AxisY;
+            if (Overlaps(Vector2.Min(Vector2.Min(a, b), Vector2.Min(c, d)), Vector2.Max(Vector2.Max(a, b), Vector2.Max(c, d)), min, max))
+                return false;
+        }
+
+        return true;
+    }
+
+    // Bumped by ForgetGlass, so nothing that was kept matches any more
+    private ulong glassGeneration = 1;
+
+    /// <summary>
+    /// Has every pane of glass blur what is behind it again on the next frame, for an application whose UI keeps its
+    /// glass (<see cref="GlassKeepsPicture"/>) and that knows something behind the UI changed that the UI can't see.
+    /// </summary>
+    public void ForgetGlass() => glassGeneration++;
+
+    // Helper method for what every hash of what is under the glass starts from, how big the picture is and which
+    // generation of it, see ForgetGlass
+    private ulong Seed(Renderer2D? output)
+    {
+        Vector2 size = Renderer2D.OutputSize(output);
+        return Mix(Mix(0x9E3779B97F4A7C15UL, glassGeneration), ((ulong)(uint)size.X << 32) | (uint)size.Y) | 1;
+    }
+
+    private static ulong Mix(ulong hash, ulong value) => (hash ^ value) * 0x100000001B3UL + (hash >> 29);
+
+    // Helper method to fold quads into a hash, as the numbers they are, eight bytes at a time
+    private static ulong Mix(ulong hash, ReadOnlySpan<SpriteItem> items)
+    {
+        ReadOnlySpan<byte> bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(items);
+        ReadOnlySpan<ulong> words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ulong>(bytes);
+        foreach (ulong word in words)
+            hash = Mix(hash, word);
+        for (int i = words.Length * 8; i < bytes.Length; i++)
+            hash = Mix(hash, bytes[i]);
+        return hash | 1;
+    }
+
+    private static ulong Mix(ulong hash, in UIGlassPane pane)
+    {
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Min.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Min.Y));
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Max.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Max.Y));
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Blur) << 32 | BitConverter.SingleToUInt32Bits(pane.Opacity));
+        return hash | 1;
+    }
+
+    private static bool Overlaps(Vector2 aMin, Vector2 aMax, Vector2 bMin, Vector2 bMax) =>
+        aMin.X < bMax.X && aMax.X > bMin.X && aMin.Y < bMax.Y && aMax.Y > bMin.Y;
 
     /// <summary>
     /// Frees what the UI has on the GPU, the layer it is drawn onto for its effects, along with the effects.
@@ -884,6 +1214,8 @@ public partial class UICompositor : GameComponent, IDisposable
     public void Dispose()
     {
         layer.Dispose();
+        glassPass?.Dispose();
+        glassPass = null;
 
         renderer.Clear();
         Skin = null;

@@ -58,6 +58,14 @@ public struct SpriteItem
     // rather than only showing bright, see Sprite.FlashLights
     public const uint LampFlag = 0x400000;
 
+    // Set in Flags for a glyph out of a distance field that is bold. The edge of the ink is taken out into the field by
+    // BOLD_GROWTH of the spread (sprites.slang), the font has no bold face of its own and doesn't need one
+    public const uint BoldFlag = 0x800000;
+
+    // Set in Flags along with CornerFlag for a corner (or an edge) that fades out over the whole of its disc rather than
+    // ending in a pixel's edge, the soft shadow under a popup, see UIDrawList.Shadow
+    public const uint SoftFlag = 0x1000000;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad

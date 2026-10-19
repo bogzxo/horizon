@@ -1,0 +1,21 @@
+// The shells the machine has as commands, a new tab of each ("New tab: PowerShell"), a split of each, and the usual
+// one picked. The profiles themselves are found by the engine (TerminalProfiles.Discover, pwsh, powershell, cmd, Git
+// Bash, the WSL distributions and the HIDL REPL), a plugin can add its own with terminal.profile(id, name, command, icon).
+#define dusk
+
+let plugin = {
+    name: "Profiles",
+    description: "A new tab or a split of every shell the machine has, as a command each.",
+    version: "0.2.0",
+    author: "bogz"
+};
+
+for (let id in terminal.profiles()) {
+    let name = terminal.profile_name(id);
+    terminal.command(`new_tab_{id}`, `New tab: {name}`, func(terminal) { terminal.new_tab(id); }, "");
+    terminal.command(`split_right_{id}`, `Split right: {name}`, func(terminal) { terminal.split("right", id); }, "");
+    terminal.command(`default_{id}`, `Usual shell: {name}`, func(terminal) {
+        terminal.default_profile(id);
+        terminal.say(`new tabs open {name}`);
+    }, "");
+}

@@ -1,0 +1,172 @@
+// Git, the status and the log of the repository the shell is in. Tab between the two. On the status, S stages the
+// change that is picked, U takes it back out of what is staged, Enter opens the file. On the log, Enter shows what the
+// commit changed beside it. R reads it all again, Esc leaves.
+let ui = include("widgets.hor");
+
+let program = { name: "Git" };
+
+let tab = 0;
+let branch = "";
+let problem = "";
+let changes = ui.list([]);
+let commits = ui.list([]);
+let shown = [];
+let said = "";
+
+func git(tui, args) {
+    return tui.run("git", args, tui.folder());
+}
+
+func refresh(tui) {
+    let status = git(tui, ["status", "--porcelain=v1", "-b"]);
+    if (status.code != 0) {
+        problem = status.errors.trim();
+        if (problem.length == 0) {
+            problem = "git isn't there, or this isn't a repository";
+        }
+        return;
+    }
+
+    problem = "";
+    let found = [];
+    for (let line in tui.lines(status.output)) {
+        if (line.starts_with("## ")) {
+            branch = line.substring(3);
+        } else if (line.length > 3) {
+            found.push({ staged: line.substring(0, 1), changed: line.substring(1, 2), path: line.substring(3) });
+        }
+    }
+    ui.list_set(changes, found);
+
+    let log = git(tui, ["log", "--oneline", "--decorate", "-n", "300"]);
+    let lines = [];
+    if (log.code == 0) {
+        lines = tui.lines(log.output).filter(func(line) { return line.length > 0; });
+    }
+    ui.list_set(commits, lines);
+}
+
+func describe(change) {
+    let staged = change.staged;
+    let changed = change.changed;
+    if (staged == "?") {
+        return `new      {change.path}`;
+    }
+    let what = "";
+    if (staged != " ") {
+        what = `staged {staged}`;
+    }
+    if (changed != " ") {
+        if (what.length > 0) {
+            what = what + ", ";
+        }
+        what = what + `changed {changed}`;
+    }
+    return `{ui.pad(what, 22)}{change.path}`;
+}
+
+func on_start(tui) {
+    refresh(tui);
+}
+
+func on_key(tui, key) {
+    if (key.name == "escape" || key.name == "q") {
+        tui.exit(0);
+        return;
+    }
+
+    if (key.name == "tab") {
+        tab = ui.tabs_key(2, tab, key);
+        return;
+    }
+
+    if (key.name == "r") {
+        refresh(tui);
+        said = "read again";
+        return;
+    }
+
+    let height = tui.rows() - 3;
+    if (tab == 0) {
+        if (ui.list_key(changes, key, height)) {
+            return;
+        }
+
+        let change = ui.list_chosen(changes);
+        if (change == null) {
+            return;
+        }
+
+        if (key.name == "s") {
+            let done = git(tui, ["add", "--", change.path]);
+            said = `staged {change.path}`;
+            if (done.code != 0) {
+                said = done.errors.trim();
+            }
+            refresh(tui);
+        } else if (key.name == "u") {
+            let done = git(tui, ["restore", "--staged", "--", change.path]);
+            said = `unstaged {change.path}`;
+            if (done.code != 0) {
+                said = done.errors.trim();
+            }
+            refresh(tui);
+        } else if (key.name == "enter") {
+            tui.open(tui.join(tui.folder(), change.path), 0);
+        }
+        return;
+    }
+
+    if (ui.list_key(commits, key, height)) {
+        shown = [];
+        return;
+    }
+
+    if (key.name == "enter") {
+        let commit = ui.list_chosen(commits);
+        if (commit != null) {
+            let hash = commit.split(" ")[0];
+            shown = tui.lines(git(tui, ["show", "--stat", "--format=%h %an, %ar%n%n%s%n", hash]).output);
+        }
+    }
+}
+
+func draw(tui) {
+    tui.clear();
+    let parts = ui.rows(ui.screen(tui), [1, 0, 1]);
+    ui.tabs_draw(tui, ["Status", "Log"], tab, parts[0]);
+    tui.write(parts[0].w - branch.length - 1, 0, branch, "cyan");
+
+    if (problem.length > 0) {
+        tui.write(1, 2, ui.clip(problem, parts[1].w - 2), "red");
+        ui.status(tui, parts[2], "r again  esc leave", "");
+        return;
+    }
+
+    if (tab == 0) {
+        let inside = ui.panel(tui, parts[1], `{changes.items.count} changes`, true);
+        if (changes.items.count == 0) {
+            tui.write(inside.x + 1, inside.y, "nothing changed, the tree is clean", "green");
+        } else {
+            ui.list_draw(tui, changes, inside, describe, true);
+        }
+        ui.status(tui, parts[2], "s stage  u unstage  enter open  tab log  r again  esc leave", said);
+        return;
+    }
+
+    let halves = ui.columns(parts[1], [0, 0]);
+    let left = ui.panel(tui, halves[0], "Log", true);
+    ui.list_draw(tui, commits, left, null, true);
+    let right = ui.panel(tui, halves[1], "What it changed", false);
+    let row = 0;
+    for (let line in shown) {
+        if (row < right.h) {
+            tui.write(right.x, right.y + row, ui.pad(" " + line, right.w), "default");
+        }
+        row += 1;
+    }
+    if (shown.count == 0) {
+        tui.write(right.x + 1, right.y, "enter on a commit shows it here", "dim");
+    }
+    ui.status(tui, parts[2], "enter show  tab status  r again  esc leave", said);
+}

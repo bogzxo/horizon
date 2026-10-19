@@ -1,0 +1,50 @@
+// One line of the GPU's passes in the performance overlay's card, see performance_card.hor. The engine makes a
+// copy for every pass there is room for, colours the chip and moves it and the name in a bit for a pass that is
+// a part of the one above it.
+#define layout
+
+let pass = compositor.panel({
+    size: vec(404, 16)
+});
+
+let chip = compositor.panel({
+    parent: pass,
+    anchor: "left",
+    pos: vec(1, 0),
+    size: vec(8, 8),
+    radius: 2,
+    color: vec(0.38, 0.62, 1, 1)
+});
+
+let name = compositor.readout({
+    parent: pass,
+    anchor: "left",
+    pos: vec(15, 0),
+    size: vec(247, 16),
+    text: "a pass",
+    text_scale: 0.125,
+    color: vec(0.8, 0.83, 0.9, 1)
+});
+
+let ms = compositor.readout({
+    parent: pass,
+    anchor: "left",
+    pos: vec(270, 0),
+    size: vec(80, 16),
+    align: "right",
+    unit: "ms",
+    text: "0.00",
+    text_scale: 0.125,
+    color: vec(0.96, 0.97, 1, 1)
+});
+
+let share = compositor.readout({
+    parent: pass,
+    anchor: "left",
+    pos: vec(356, 0),
+    size: vec(48, 16),
+    align: "right",
+    text: "0%",
+    text_scale: 0.125,
+    color: vec(0.8, 0.83, 0.9, 1)
+});
