@@ -54,6 +54,12 @@ public sealed class PostLayer : IDisposable
     /// <summary>The effects the layer goes through before it is laid over what is under it, none to begin with.</summary>
     public PostProcessor Effects { get; } = new();
 
+    /// <summary>What is drawn onto between <see cref="Begin"/> and <see cref="End"/>, for whoever binds something else in between and has to come back.</summary>
+    internal RenderTarget? Picture => frameBuffer;
+
+    /// <summary>What the layer is laid over once it ends, a renderer or (null) the window, between <see cref="Begin"/> and <see cref="End"/>.</summary>
+    internal Renderer2D? Under => target;
+
     public PostLayer()
     {
         bindOutput = () =>

@@ -56,6 +56,12 @@ let skin = {
 
     themes: {
         night: { panel_color: vec(0.12, 0.13, 0.26, 0.96) },
-        azure: { panel_color: vec(0.26, 0.58, 0.84, 1.0) }
+        azure: {
+            panel_color: vec(0.14, 0.4, 0.68, 1.0),
+            link_color: vec(1.0, 0.88, 0.55, 1.0),
+            error_color: vec(1.0, 0.75, 0.7, 1.0),
+            warning_color: vec(1.0, 0.9, 0.55, 1.0),
+            success_color: vec(0.75, 0.95, 0.65, 1.0)
+        }
     }
 };

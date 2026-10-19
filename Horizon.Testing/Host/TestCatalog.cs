@@ -151,6 +151,11 @@ internal static class TestCatalog
             ["SnapshotClock", "interpolation", "RenderFrame", "VSync"],
             "Examples/Internals/PacingExample.cs", () => new PacingExample()),
 
+        new("terminal", TestLevel.UnderTheHood, "A terminal",
+            "The machine's shell in a TerminalView, the first piece of Dusk. A real terminal, ConPTY and a VT screen, type into it, run vim in it, resize the window and watch the lines reflow.",
+            ["TerminalView", "TerminalScreen", "PseudoTerminal"],
+            "Examples/Internals/TerminalExample.cs", () => new TerminalExample()),
+
         /* Checks */
 
         new("check-tilemap", TestLevel.Checks, "Tile maps",

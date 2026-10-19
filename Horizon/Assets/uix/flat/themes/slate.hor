@@ -1,0 +1,9 @@
+// Warm grey, no blue in it, and a sea green accent.
+
+let theme = {
+    title: "Slate",
+    background: vec(0.12, 0.13, 0.135, 1.0),
+    surface: vec(0.185, 0.2, 0.205, 1.0),
+    text_color: vec(0.87, 0.88, 0.86, 1.0),
+    accent_color: vec(0.36, 0.78, 0.62, 1.0)
+};

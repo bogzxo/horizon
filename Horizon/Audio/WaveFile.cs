@@ -46,12 +46,12 @@ public static class WaveFile
         if (bytes < 1 || (format == 3 && bits != 32)) throw new FormatException($"its samples are {bits} bits.");
 
         int frames = data.Length / (bytes * channels);
-        var samples = new float[frames * 2];
+        var samples = new short[frames * 2];
         for (int frame = 0; frame < frames; frame++)
         {
             int at = frame * bytes * channels;
-            float left = Sample(data[at..], format, bytes);
-            float right = channels > 1 ? Sample(data[(at + bytes)..], format, bytes) : left;
+            short left = Sample(data[at..], format, bytes);
+            short right = channels > 1 ? Sample(data[(at + bytes)..], format, bytes) : left;
             samples[frame * 2] = left;
             samples[frame * 2 + 1] = right;
         }
@@ -59,16 +59,17 @@ public static class WaveFile
         return new Sound(samples, rate, name);
     }
 
-    private static float Sample(ReadOnlySpan<byte> at, int format, int bytes)
+    // A sample as 16 bits, what a sound keeps. Sixteen bits are taken as they are, the rest go through a level
+    private static short Sample(ReadOnlySpan<byte> at, int format, int bytes)
     {
-        if (format == 3) return BinaryPrimitives.ReadSingleLittleEndian(at);
+        if (format == 3) return Sound.ToSample(BinaryPrimitives.ReadSingleLittleEndian(at));
 
         return bytes switch
         {
-            1 => (at[0] - 128) / 128.0f,
-            2 => BinaryPrimitives.ReadInt16LittleEndian(at) / 32768.0f,
-            3 => ((at[0] | (at[1] << 8) | (at[2] << 16)) << 8 >> 8) / 8388608.0f,
-            _ => BinaryPrimitives.ReadInt32LittleEndian(at) / 2147483648.0f
+            1 => Sound.ToSample((at[0] - 128) / 128.0f),
+            2 => Math.Max(BinaryPrimitives.ReadInt16LittleEndian(at), (short)-short.MaxValue),
+            3 => Sound.ToSample(((at[0] | (at[1] << 8) | (at[2] << 16)) << 8 >> 8) / 8388608.0f),
+            _ => Sound.ToSample(BinaryPrimitives.ReadInt32LittleEndian(at) / 2147483648.0f)
         };
     }
 

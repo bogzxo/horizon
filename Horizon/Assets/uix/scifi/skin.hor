@@ -49,7 +49,7 @@ let skin = {
     text_color: slate,
     control_text_color: slate,
     control_color: vec(0.855, 0.863, 0.906, 1.0),
-    field_color: vec(0.0, 0.0, 0.0, 0.3),
+    field_color: vec(1.0, 1.0, 1.0, 0.55),
     border_color: vec(0.59, 0.59, 0.64, 1.0),
     panel_color: vec(0.855, 0.863, 0.906, 1.0),
     track_color: vec(0.0, 0.0, 0.0, 0.0),

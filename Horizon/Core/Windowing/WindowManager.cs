@@ -306,6 +306,7 @@ public partial class WindowManager : GameComponent, IDisposable
             }
         }
         title = config.WindowTitle ?? string.Empty;
+        windowIcon = config.WindowIcon;
 
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
         physicsUpdatesPerSecond = config.PhysicsUpdatesPerSecond > 0.0 ? config.PhysicsUpdatesPerSecond : 120.0;
@@ -406,7 +407,7 @@ public partial class WindowManager : GameComponent, IDisposable
 
             // SDL's window falls over its own default icon (it indexes past the end of the list it was handed), and a
             // Mac has no icon on a window anyway, the one in the Dock comes from the bundle
-            if (!OperatingSystem.IsMacOS())
+            if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon))
                 _window.SetDefaultIcon();
 
             _input = _window.CreateInput();
@@ -947,6 +948,7 @@ public partial class WindowManager : GameComponent, IDisposable
 
         DoWindowWork();
         TrackFrame();
+        StepSlide();
 
         // Asked once. Left set, a window whose program said not yet (something unsaved) was asked again a thousand times a
         // second, and the program put its question up again every tick, never to be answered
@@ -1149,6 +1151,21 @@ public partial class WindowManager : GameComponent, IDisposable
                 $"[{Name}] {loop.Name} at {loop.Rate:0} a second, {loop.WorkMs:0.00} ms a turn ({loop.PeakWorkMs:0.00} at worst), " +
                 $"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. " +
                 $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far.");
+        }
+
+        // And what the process weighs. The heap the garbage collector has in hand against what it has committed
+        // from the machine, the process as the machine sees it, the memory the device has taken in blocks (the part
+        // of it the CPU can see is the machine's memory as well), and the threads
+        var info = GC.GetGCMemoryInfo();
+        using (var process = System.Diagnostics.Process.GetCurrentProcess())
+        {
+            Log.Info(
+                $"[{Name}] memory, heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB of {info.TotalCommittedBytes / (1024.0 * 1024.0):0.0} committed, " +
+                $"working set {process.WorkingSet64 / (1024.0 * 1024.0):0} MB, private {process.PrivateMemorySize64 / (1024.0 * 1024.0):0} MB, " +
+                $"{process.Threads.Count} threads" +
+                (Graphics is { } gpu
+                    ? $", device {gpu.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in use of {gpu.Statistics.MemoryBlockBytes / (1024.0 * 1024.0):0} in {gpu.Statistics.MemoryBlocks} blocks, {gpu.Statistics.MemoryHostBytes / (1024.0 * 1024.0):0} MB of them mapped"
+                    : string.Empty));
         }
 
         // And what the GPU spent on the last frame it finished, pass by pass, the way the overlay shows it

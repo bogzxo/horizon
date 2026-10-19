@@ -26,8 +26,10 @@ public readonly record struct DialogChoice(string Label, Action? Picked = null);
 public sealed class UIDialog : Panel
 {
     private const float WIDTH = 460.0f;
-    private const float TITLE_SCALE = 1.1f;
-    private const float TEXT_SCALE = 0.7f;
+    // The heading a size up and the line under it what the skin writes, it was seven tenths of that and the hardest
+    // thing in a dialog to read
+    private const float TITLE_SCALE = 1.25f;
+    private const float TEXT_SCALE = 0.95f;
 
     private static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.55f);
 
@@ -42,8 +44,16 @@ public sealed class UIDialog : Panel
     /// <summary>Called once the dialog has closed, however it was closed.</summary>
     public Action? Closed { get; set; }
 
-    /// <summary>Whether the dialog is up.</summary>
-    public bool IsOpen => Parent is not null;
+    /// <summary>Whether the dialog is up, and not on its way out.</summary>
+    public bool IsOpen => Parent is not null && !closing;
+
+    // Fading out after it was closed, there still and taking nothing
+    private bool closing;
+
+    // How long it takes to go, a little quicker than it came
+    private const float CLOSE_TIME = 0.12f;
+
+    protected override bool HitTestVisible => !closing && base.HitTestVisible;
 
     /// <summary>The buttons, one per choice in the order they were given. For tests that want to click one.</summary>
     public IReadOnlyList<Button> Buttons { get; }
@@ -62,9 +72,12 @@ public sealed class UIDialog : Panel
     {
         this.choices = choices;
 
-        // The shade over everything, which also stops the pointer getting through
+        // The shade over everything, which also stops the pointer getting through, eased in with the card rather than
+        // slammed on under it
         Fill = UIFill.Both;
         Color = Shade;
+        Intro = UIIntro.Fade;
+        IntroTime = 0.16f;
 
         card = Add(new StackPanel
         {
@@ -89,6 +102,10 @@ public sealed class UIDialog : Panel
             int index = i;
             made[i] = buttons.Add(new Button(choices[i].Label) { OnPressed = () => Pick(index) });
         }
+
+        // The first is the one to press when there's a choice, the last is what Escape picks
+        if (made.Length > 1)
+            made[0].Primary = true;
 
         Buttons = made;
     }
@@ -131,7 +148,7 @@ public sealed class UIDialog : Panel
     /// <summary>Takes the dialog down without picking anything.</summary>
     public void Close()
     {
-        if (Parent is not { } owner)
+        if (Parent is not { } owner || closing)
             return;
 
         if (Module is { } module)
@@ -144,8 +161,35 @@ public sealed class UIDialog : Panel
             }
         }
 
-        owner.Remove(this);
+        // The keyboard let go of at once, a box of it typed into while it fades was typing into nothing
+        if (Module?.Compositor is { Focus: { } focused } compositor && Contains(focused))
+            compositor.Focus = null;
+
+        closing = true;
         Closed?.Invoke();
+
+        // Faded out and shrunk a touch the way it came, then gone, or gone at once with less motion
+        if (UIDrawList.Motion && Module is not null)
+        {
+            card.TweenScale(0.97f, CLOSE_TIME);
+            this.FadeOut(CLOSE_TIME, easing: Horizon.Core.Tweening.Easing.OutCubic).OnComplete(() => Parent?.Remove(this));
+        }
+        else
+        {
+            owner.Remove(this);
+        }
+    }
+
+    // Whether a component is inside the dialog
+    private bool Contains(UIComponent component)
+    {
+        for (UIComponent? at = component; at is not null; at = at.Parent)
+        {
+            if (at == this)
+                return true;
+        }
+
+        return false;
     }
 
     private void Pick(int index)
@@ -171,6 +215,14 @@ public sealed class UIDialog : Panel
         // A skin without art for a panel gets a plain box instead, in whatever colour the skin has for one right
         // now, the skin can change under a dialog that is up (the one its theme is picked in, say)
         card.Color = list.Skin.TryGetRegion(card.Background, out _) ? null : list.Skin.PanelColor with { W = 1.0f };
+
+        // On what every popup sits on, as round, with the hairline and the shadow that lift it off the shade
+        card.Radius = list.Skin.PopupRadius;
+        card.Outline = list.Skin.BorderColor;
+        card.Lift = 28.0f;
+
+        // The card is what sits on glass, not the shade over everything else
+        card.Glass = Glass ?? Module?.Compositor.PopupGlass;
 
         base.Paint(list);
     }

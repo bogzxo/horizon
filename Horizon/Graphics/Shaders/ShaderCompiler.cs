@@ -268,17 +268,17 @@ public static class ShaderCompiler
             bool onParams = parameter.Bindings.Any(binding => binding.Kind == SlangParameterCategory.DescriptorTableSlot && binding.Space == 0 && binding.Index == DescriptorLayouts.PARAMS_BINDING);
             if (!onParams) continue;
 
-            var element = parameter.Type.ConstantBuffer.ElementType;
+            var element = parameter.Type.ConstantBuffer!.ElementType;
             if (element.Kind != SlangTypeKind.Struct) continue;
 
             var members = new List<UniformBlockLayout.Member>();
-            foreach (var field in element.Struct.Fields)
+            foreach (var field in element.Struct!.Fields)
             {
                 var binding = field.Bindings.FirstOrDefault(b => b.Kind == SlangParameterCategory.Uniform);
                 if (binding is null) continue;
 
-                int count = field.Type.Kind == SlangTypeKind.Array ? (int)field.Type.Array.ElementCount : 0;
-                int stride = count > 0 ? (int)field.Type.Array.UniformStride : 0;
+                int count = field.Type.Kind == SlangTypeKind.Array ? (int)field.Type.Array!.ElementCount : 0;
+                int stride = count > 0 ? (int)field.Type.Array!.UniformStride : 0;
                 int size = count > 0 ? stride : (int)binding.Size;
                 members.Add(new UniformBlockLayout.Member(field.Name, TypeName(field.Type), (int)binding.Offset, size, count, stride));
             }
@@ -291,9 +291,9 @@ public static class ShaderCompiler
 
     private static string TypeName(SlangType type) => type.Kind switch
     {
-        SlangTypeKind.Scalar => type.Scalar.ScalarType.ToString().ToLowerInvariant(),
-        SlangTypeKind.Vector => $"float{type.Vector.ElementCount}",
-        SlangTypeKind.Matrix => $"float{type.Matrix.RowCount}x{type.Matrix.ColumnCount}",
+        SlangTypeKind.Scalar => type.Scalar!.ScalarType.ToString().ToLowerInvariant(),
+        SlangTypeKind.Vector => $"float{type.Vector!.ElementCount}",
+        SlangTypeKind.Matrix => $"float{type.Matrix!.RowCount}x{type.Matrix.ColumnCount}",
         SlangTypeKind.Array => "array",
         _ => type.Kind.ToString().ToLowerInvariant()
     };

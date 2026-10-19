@@ -707,13 +707,16 @@ public sealed class TileMap : GameObject
     /// Everything of the map there is to bump into, as few rectangles as it takes. The tiles of the layers that are
     /// collidable (see <see cref="TileMapLayer.IsCollidable"/>), tiles that have a custom property <c>collidable</c>
     /// set on them in their tile set, the shapes that were drawn onto tiles in Tiled's collision editor, and the
-    /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle.
+    /// rectangles of collidable object layers. Tiles next to each other come back as one rectangle. The tiles of a
+    /// layer that says <see cref="TileMapLayer.IsOneWay"/> come back as platforms (<see cref="TileMapBox.OneWay"/>),
+    /// merged among themselves and never with a wall.
     /// </summary>
     /// <param name="isSolid">Decides for every tile instead, for when being solid depends on something else altogether.</param>
     public List<TileMapBox> BuildColliders(Func<TileMapCell, bool>? isSolid = null)
     {
         var boxes = new List<TileMapBox>();
         var solid = new bool[Width * Height];
+        bool[]? platforms = null;
 
         foreach (TileMapLayer layer in layers)
         {
@@ -732,17 +735,22 @@ public sealed class TileMap : GameObject
                     continue;
 
                 Vector2 corner = cell.Centre - TileSize / 2.0f;
+                bool oneWay = layer.IsOneWay;
 
                 if (cell.Tile.Collision.Count > 0)
                 {
                     // Only the part of the tile that was drawn as solid
                     foreach (var (min, size) in cell.Tile.Collision)
-                        boxes.Add(new TileMapBox(corner + min, size));
+                        boxes.Add(new TileMapBox(corner + min, size, oneWay));
                 }
                 else if (layer.WorldOffset != Vector2.Zero)
                 {
                     // Off the grid, so there is nothing to put it together with
-                    boxes.Add(new TileMapBox(corner, TileSize));
+                    boxes.Add(new TileMapBox(corner, TileSize, oneWay));
+                }
+                else if (oneWay)
+                {
+                    (platforms ??= new bool[Width * Height])[IndexOf(cell.X, cell.Y)] = true;
                 }
                 else
                 {
@@ -751,7 +759,8 @@ public sealed class TileMap : GameObject
             }
         }
 
-        Merge(solid, boxes);
+        Merge(solid, boxes, oneWay: false);
+        if (platforms is not null) Merge(platforms, boxes, oneWay: true);
         return boxes;
     }
 
@@ -759,7 +768,7 @@ public sealed class TileMap : GameObject
     /// Turns the cells that are solid into rectangles. Every run of them along a row is one, and runs that are right
     /// underneath each other and just as long are one as well.
     /// </summary>
-    private void Merge(bool[] solid, List<TileMapBox> boxes)
+    private void Merge(bool[] solid, List<TileMapBox> boxes, bool oneWay)
     {
         // A run that is still growing downwards, by the column it starts at and how long it is
         var open = new Dictionary<(int Start, int Length), int>();
@@ -787,7 +796,7 @@ public sealed class TileMap : GameObject
 
                 // From the bottom of the last row it was in up to the top of the first
                 var min = TiledToWorld(new Vector2((run.Start + Left) * TileSize.X, (row + Top) * TileSize.Y));
-                boxes.Add(new TileMapBox(min, new Vector2(run.Length * TileSize.X, (row - firstRow) * TileSize.Y)));
+                boxes.Add(new TileMapBox(min, new Vector2(run.Length * TileSize.X, (row - firstRow) * TileSize.Y), oneWay));
             }
 
             foreach (var run in runs)

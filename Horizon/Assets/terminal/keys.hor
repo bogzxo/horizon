@@ -1,0 +1,73 @@
+// The keys the terminal's own commands come on, in Dusk and in Hex's terminal page alike. A command by its name and
+// the key it is on, "" for none. Written like Ctrl+Shift+T, with Ctrl, Shift and Alt in any order and the key last (a
+// letter, a digit, F1 to F12, Up, Down, Left, Right, PgUp, PgDn, Home, End, Tab, Enter, Esc, Del, and -, =, /, \, [, ],
+// ,, ., ;, ', `). A program's own keys.hor goes over these, and the user's keys.hor over that (Keyboard shortcuts lists
+// every command with its name).
+//
+// A key with control and shift goes to the program, plain control and a letter still goes to the shell (Ctrl+C, Ctrl+Z,
+// Ctrl+R), which is why most of these hold shift, the way Windows Terminal and Kitty go about it.
+#define dusk
+
+let keys = {
+    new_tab: "Ctrl+Shift+T",
+    new_tab_with: "Ctrl+Shift+N",
+    close_tab: "Ctrl+Shift+W",
+    close_whole_tab: "",
+    next_tab: "Ctrl+Tab",
+    previous_tab: "Ctrl+Shift+Tab",
+    rename_tab: "Ctrl+Shift+R",
+    tab_1: "Ctrl+Alt+1",
+    tab_2: "Ctrl+Alt+2",
+    tab_3: "Ctrl+Alt+3",
+    tab_4: "Ctrl+Alt+4",
+    tab_5: "Ctrl+Alt+5",
+
+    split_right: "Ctrl+Shift+D",
+    split_down: "Ctrl+Shift+E",
+    close_pane: "Ctrl+Shift+Q",
+    zoom_pane: "Ctrl+Shift+Z",
+    move_tab_left: "Ctrl+Shift+PgUp",
+    move_tab_right: "Ctrl+Shift+PgDn",
+    swap_pane_left: "Ctrl+Alt+Shift+Left",
+    swap_pane_right: "Ctrl+Alt+Shift+Right",
+    swap_pane_up: "Ctrl+Alt+Shift+Up",
+    swap_pane_down: "Ctrl+Alt+Shift+Down",
+    rename_pane: "",
+    tui_files: "Ctrl+Shift+O",
+    tui_git: "Ctrl+Shift+G",
+    tui_processes: "",
+    tui_settings: "",
+    tui_repl: "",
+    focus_left: "Ctrl+Shift+Left",
+    focus_right: "Ctrl+Shift+Right",
+    focus_up: "Ctrl+Shift+Up",
+    focus_down: "Ctrl+Shift+Down",
+
+    previous_command: "Ctrl+Up",
+    next_command: "Ctrl+Down",
+    select_output: "Ctrl+Shift+A",
+    copy_output: "",
+    rerun: "",
+    list_commands: "Ctrl+Shift+L",
+    scroll_top: "Ctrl+Shift+Home",
+    scroll_bottom: "Ctrl+Shift+End",
+    find: "Ctrl+Shift+F",
+    find_next: "F3",
+    find_previous: "Shift+F3",
+    history_search: "Ctrl+R",
+    run_in_split: "Ctrl+Shift+Enter",
+    broadcast: "Ctrl+Shift+B",
+
+    palette: "Ctrl+Shift+P",
+    copy: "Ctrl+Shift+C",
+    clear: "",
+    clear_history: "",
+    history_toggle: "",
+    zoom_in: "Ctrl+Shift+=",
+    zoom_out: "Ctrl+Shift+-",
+    zoom_reset: "Ctrl+Shift+0",
+    keys: "Ctrl+Shift+K",
+    plugins: "",
+    open_settings: "Ctrl+Shift+,",
+    open_keys: ""
+};

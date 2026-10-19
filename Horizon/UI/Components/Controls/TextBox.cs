@@ -1,4 +1,4 @@
-using Horizon.Content;
+﻿using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -521,8 +521,8 @@ public class TextBox : UIComponent
         else
         {
             list.Box(Bounds, skin.FieldColor * tint);
-            if (enabled && IsHovered && !focused)
-                list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, 0.4f));
+            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, enabled && IsHovered && !focused ? 0.4f : 0.0f));
 
             // A thin rim that turns into a thick one in the colour of the skin while it is being typed in
             if (focused)
@@ -580,7 +580,7 @@ public class TextBox : UIComponent
         if (!empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
         else if (!focused)
-            list.Text(Resolve(Placeholder), line, Origin.Left, scale, ink * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.45f));
+            list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
 
         if (focused && blink < BLINK_INTERVAL)
@@ -612,4 +612,11 @@ public class TextBox : UIComponent
         Expose("button_width", () => ButtonWidth, value => ButtonWidth = MathF.Max(0.0f, value));
         Expose("on_button", () => buttonHandler ?? new NullValue(), value => buttonHandler = value);
     }
+
+    /// <summary>
+    /// Helper method for what a placeholder is written in, the skin's quiet text when the box writes in the skin's
+    /// text, and the box's own ink seen through when it writes in something else (the art said, or the layout).
+    /// </summary>
+    private static Vector4 PlaceholderInk(UISkin skin, Vector4 ink) =>
+        ink == skin.TextColor || ink == skin.ControlTextColor ? skin.DimTextColor : ink * new Vector4(1.0f, 1.0f, 1.0f, 0.45f);
 }

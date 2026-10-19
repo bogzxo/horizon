@@ -216,10 +216,14 @@ public sealed class AudioMixer
     private void MixSound(ref Voice voice, Span<float> output, int frames)
     {
         Sound sound = voice.Sound!;
-        float[] samples = sound.Samples;
+        short[] samples = sound.Samples;
         int length = sound.Frames;
         double step = voice.Pitch * sound.SampleRate / SampleRate;
         Gains(in voice, out float left, out float right);
+
+        // The samples are 16 bits, made levels by the gain they are multiplied by anyway
+        left *= Sound.SCALE;
+        right *= Sound.SCALE;
 
         for (int frame = 0; frame < frames; frame++)
         {

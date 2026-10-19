@@ -286,8 +286,8 @@ public sealed class OcclusionMap2D : IDisposable
             }
         });
 
-        System.Buffers.ArrayPool<float>.Shared.Return(toSolid);
-        System.Buffers.ArrayPool<float>.Shared.Return(toOpen);
+        // Not pooled. They are a map's worth of floats each, 16 MB for a big one, and the shared pool kept two of
+        // them for the run after one map. Plain arrays go with the garbage of setting the scene up
 
         if (shared.Count >= MAX_SHARED) shared.Clear();
         shared[key] = made;
@@ -331,7 +331,7 @@ public sealed class OcclusionMap2D : IDisposable
     // squared plus how far up or down, which is the exact euclidean distance
     private float[] SquaredDistances(int width, int height, bool solid)
     {
-        float[] along = System.Buffers.ArrayPool<float>.Shared.Rent(width * height);
+        float[] along = GC.AllocateUninitializedArray<float>(width * height);
 
         Parallel.For(0, height, Spare, y =>
         {

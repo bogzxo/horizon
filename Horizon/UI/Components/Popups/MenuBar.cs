@@ -241,8 +241,32 @@ public class MenuBar : UIComponent
         OpenPopup();
     }
 
+    // The list that was showing as it was put away, painted going, see PaintClosing
+    private MenuPanel? closingPanel;
+
+    protected internal override void PopupClosed()
+    {
+        closingPanel = panel ?? closingPanel;
+        panel = null;
+    }
+
+    protected internal override bool PaintClosing(UIDrawList list, ref float closedAt)
+    {
+        if (closingPanel is not { } going || !list.BeginExit(ref closedAt, new Vector2(going.Bounds.Min.X, going.Bounds.Max.Y), new Vector2(0.0f, 6.0f)))
+        {
+            closingPanel = null;
+            return false;
+        }
+
+        // Nothing under the pointer, it's going
+        going.Paint(list, new Vector2(float.NegativeInfinity), Glass ?? Module?.Compositor.PopupGlass);
+        list.EndExit();
+        return true;
+    }
+
     public void Close()
     {
+        closingPanel = panel ?? closingPanel;
         open = -1;
         panel = null;
         ClosePopup();
@@ -266,8 +290,8 @@ public class MenuBar : UIComponent
             bool shown = OpenMenu == menus[i];
 
             // The word of the open menu stays lit, the others light up under the pointer
-            if (shown || (IsHovered && title.Contains(pointer)))
-                list.Box(title, shown ? skin.AccentColor with { W = 0.35f } : skin.HoverColor);
+            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            list.Box(title, shown ? skin.AccentColor with { W = 0.35f } : IsHovered && title.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             list.Text(menus[i].Title, title, Origin.Center, scale, shown ? skin.AccentColor : skin.TextColor, markup: false);
         }
@@ -282,7 +306,7 @@ public class MenuBar : UIComponent
 
         Vector2 pointer = Pointer;
         shown.Track(list.Skin, module.Frame, pointer);
-        shown.Paint(list, pointer);
+        shown.Paint(list, pointer, Glass ?? module.Compositor.PopupGlass);
     }
 
     protected override void Update(float dt)

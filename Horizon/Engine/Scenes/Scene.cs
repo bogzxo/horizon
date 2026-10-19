@@ -40,6 +40,13 @@ public abstract class Scene : GameObject
     public virtual bool Persistent => false;
 
     /// <summary>
+    /// Called when a <see cref="Persistent"/> scene that was left is set again, as it comes back the way it was left
+    /// rather than being set up again. Render thread, with the simulation standing still.
+    /// </summary>
+    public virtual void OnReturned()
+    { }
+
+    /// <summary>
     /// What the scene has on the GPU. Everything that is made while it is set up, drawn, or has something added
     /// to it is noted here as the scene's, by whatever in it makes it. It is all freed when the scene is left,
     /// so nothing in a scene has to free anything for the scene not to leak. Assets that are asked for by name

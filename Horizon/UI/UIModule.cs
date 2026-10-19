@@ -148,7 +148,31 @@ namespace Horizon.UI
         /// The component that has something open on top of everything else in the module (the list of a
         /// dropdown), null when nothing does. See <see cref="UIComponent.OpenPopup"/>.
         /// </summary>
-        public UIComponent? Popup { get; internal set; }
+        public UIComponent? Popup
+        {
+            get => popup;
+            internal set
+            {
+                if (popup == value)
+                    return;
+
+                // What was open is painted going for a moment more, by whoever had it
+                if (popup is { } old)
+                {
+                    old.PopupClosed();
+                    closingPopup = old;
+                    closingAt = -1.0f;
+                }
+
+                popup = value;
+            }
+        }
+
+        private UIComponent? popup;
+
+        // What was put away and is still being painted going, and when it started going
+        private UIComponent? closingPopup;
+        private float closingAt = -1.0f;
 
         private UINavigator? navigation;
 
@@ -167,7 +191,8 @@ namespace Horizon.UI
                 var children = Root.Children;
                 for (int i = children.Count - 1; i >= 0; i--)
                 {
-                    if (children[i] is UIDialog dialog)
+                    // one fading out after it was closed is not up any more
+                    if (children[i] is UIDialog { IsOpen: true } dialog)
                         return dialog;
                 }
 
@@ -179,6 +204,9 @@ namespace Horizon.UI
         private string? tooltip;
         private bool tooltipMarkdown;
         private Vector2 tooltipAt;
+
+        // When the tooltip showing was first painted, by the draw list's clock, for its entrance
+        private float tooltipOpenedAt = -1.0f;
 
         public UIModule(UICompositor compositor)
         {
@@ -195,6 +223,10 @@ namespace Horizon.UI
         /// <param name="markdown">Whether the text is markdown, see <see cref="UIComponent.TooltipMarkdown"/>.</param>
         internal void ShowTooltip(string? text, Vector2 point, bool markdown = false)
         {
+            // Another tooltip (or none) comes in afresh, the same one stays put
+            if (!ReferenceEquals(text, tooltip))
+                tooltipOpenedAt = -1.0f;
+
             tooltip = text;
             tooltipAt = point;
             tooltipMarkdown = markdown;
@@ -305,18 +337,22 @@ namespace Horizon.UI
             if (Clip is not null)
                 list.PopClip();
 
+            // What was open going away, under whatever is open now
+            if (closingPopup is { } going && !(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
+                closingPopup = null;
+
             // Whatever is open goes on top of the lot, and isn't cut off by what its owner is inside of.
-            if (Popup is { } popup)
+            if (Popup is { } open)
             {
-                if (popup.Module == this && popup.Visible)
-                    popup.PaintPopup(list);
+                if (open.Module == this && open.Visible)
+                    open.PaintPopup(list);
                 else
                     Popup = null;
             }
 
             // And a tooltip over everything, popups included
             if (tooltip is { Length: > 0 } text)
-                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null);
+                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
         }
 
         internal UIComponent? HitTest(Vector2 point)

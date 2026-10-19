@@ -568,6 +568,42 @@ public sealed unsafe partial class GraphicsDevice
         TransitionSwapchainImage(index, ImageLayout.ColorAttachmentOptimal, PipelineStageFlags2.ColorAttachmentOutputBit, AccessFlags2.ColorAttachmentWriteBit | AccessFlags2.ColorAttachmentReadBit);
     }
 
+    /// <summary>
+    /// Copies a box of texels from one texture into another on the GPU, nothing coming back to the CPU for it. Both
+    /// have to be the same format and the box has to fit in both. It happens in order with the draws, what was drawn
+    /// with the destination before reads the old texels, and both are left as transfer images for whoever reads
+    /// them next to move on from. A texture atlas that has outgrown its texture copies itself into the bigger one
+    /// this way instead of sending the whole thing up again.
+    /// </summary>
+    public void CopyTexels(Texture source, int sourceX, int sourceY, Texture destination, int destinationX, int destinationY, uint width, uint height)
+    {
+        if (!source.IsValid || !destination.IsValid || width == 0 || height == 0) return;
+        if (sourceX < 0 || sourceY < 0 || destinationX < 0 || destinationY < 0
+            || sourceX + width > source.Width || sourceY + height > source.Height
+            || destinationX + width > destination.Width || destinationY + height > destination.Height)
+            throw new ArgumentOutOfRangeException(nameof(width), $"A {width} by {height} copy from {sourceX},{sourceY} of a {source.Width} by {source.Height} texture to {destinationX},{destinationY} of a {destination.Width} by {destination.Height} one doesn't fit.");
+
+        EndRendering();
+
+        Transition(source, ImageLayout.TransferSrcOptimal, PipelineStageFlags2.TransferBit, AccessFlags2.TransferReadBit);
+        Transition(destination, ImageLayout.TransferDstOptimal, PipelineStageFlags2.TransferBit, AccessFlags2.TransferWriteBit);
+
+        var region = new ImageCopy
+        {
+            SrcSubresource = new ImageSubresourceLayers(source.Aspect, 0, 0, 1),
+            SrcOffset = new Offset3D(sourceX, sourceY, 0),
+            DstSubresource = new ImageSubresourceLayers(destination.Aspect, 0, 0, 1),
+            DstOffset = new Offset3D(destinationX, destinationY, 0),
+            Extent = new Extent3D(width, height, 1)
+        };
+
+        Vk.CmdCopyImage(cmd, source.Image, ImageLayout.TransferSrcOptimal, destination.Image, ImageLayout.TransferDstOptimal, 1, in region);
+    }
+
+    /// <summary>Copies as much of one texture as fits into another, from the top left of both, see <see cref="CopyTexels(Texture, int, int, Texture, int, int, uint, uint)"/>.</summary>
+    public void CopyTexels(Texture source, Texture destination) =>
+        CopyTexels(source, 0, 0, destination, 0, 0, Math.Min(source.Width, destination.Width), Math.Min(source.Height, destination.Height));
+
     /* Uploads */
 
     /// <summary>

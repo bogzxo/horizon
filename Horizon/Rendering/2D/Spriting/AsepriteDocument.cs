@@ -60,7 +60,10 @@ public sealed class AsepriteDocument
     // Where a cel's pixels are in the file (or which frame they're linked to), for putting the frame together later
     private readonly record struct Cel(int Layer, int X, int Y, int Width, int Height, byte Opacity, ushort Kind, int DataOffset, int DataLength, int LinkedFrame);
 
-    private readonly byte[] file;
+    // The file as it was read, which the frames are put together out of. Let go of with the frames (DropRendered)
+    // and read again the first time one is wanted after that, a character's file is 7 MB and a fight has it twice
+    private byte[]? fileBytes;
+    private byte[] file => fileBytes ??= File.ReadAllBytes(Path);
     private readonly int depth;
     private readonly byte transparentIndex;
     private readonly uint[] palette = new uint[256];
@@ -112,6 +115,28 @@ public sealed class AsepriteDocument
     public static void Forget()
     {
         lock (cache) cache.Clear();
+    }
+
+    /// <summary>
+    /// Lets go of the frames that were put together, of every file that was read, keeping the files themselves. The
+    /// pixels of a frame are only wanted until they are in an atlas (or a texture), and a frame asked for again is
+    /// put together again, so an atlas calls this once it has sent up what it packed. A whole screen of a loading
+    /// picture and every frame of every skin were being kept for the run, tens of megabytes nobody looked at twice.
+    /// </summary>
+    public static void DropAllRendered()
+    {
+        lock (cache)
+        {
+            foreach (AsepriteDocument document in cache.Values) document.DropRendered();
+        }
+    }
+
+    /// <summary>Lets go of the frames of this file that were put together, see <see cref="DropAllRendered"/>.</summary>
+    public void DropRendered()
+    {
+        lock (rendered) Array.Clear(rendered);
+        lock (renderedLayers) renderedLayers.Clear();
+        fileBytes = null;
     }
 
     /// <summary>Finds an animation by name.</summary>
@@ -218,7 +243,7 @@ public sealed class AsepriteDocument
     private AsepriteDocument(string path, byte[] file)
     {
         Path = path;
-        this.file = file;
+        fileBytes = file;
 
         if (file.Length < 128 || U16(4) != FILE_MAGIC)
             throw new InvalidDataException($"'{path}' is not an Aseprite file.");

@@ -329,6 +329,8 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         Statistics.Pipelines = Pipelines.Count;
         Statistics.MemoryInUse = (long)Memory.InUse;
         Statistics.MemoryBlocks = Memory.BlockCount;
+        Statistics.MemoryBlockBytes = (long)Memory.BlockBytes;
+        Statistics.MemoryHostBytes = (long)Memory.HostBytes;
         Statistics.EndFrame();
 
         frameIndex = (frameIndex + 1) % FRAMES_IN_FLIGHT;

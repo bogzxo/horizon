@@ -10,9 +10,20 @@ using Horizon.Rendering.Text;
 
 namespace Horizon.UI.Skinning;
 
-// The half of the skin that reads skin files. What a file can say is in Read, one case for every word of it.
+// The half of the skin that reads skin files. What a file can say is in Read, one case for every word of it, and
+// what a theme can say is UITheme. A theme is found (ReadThemes), laid over the skin's own colours (ApplyTheme,
+// base first) and the palette fills in whatever neither wrote (UIPalette.Derive).
 public sealed partial class UISkin
 {
+    // The keys of a skin file that hold an object of their own which a theme (or a skin that inherits) adds to
+    // rather than replaces, a region, an icon or a colour of code at a time
+    private static readonly string[] MergedObjects = ["regions", "icons", "syntax"];
+
+    // The fonts the skins have made, by the skin file and the font, so the themes of a skin share the one distance
+    // field rather than building it again each. A font belongs to one skin (it asks it about icons), so two skins
+    // with the same TrueType still get two
+    private static readonly Dictionary<(string Skin, string Directory, string File, int Size), UIFont> fonts = [];
+
     /// <summary>
     /// Reads what a skin file sets, on top of what the skin it inherits from sets.
     /// </summary>
@@ -24,13 +35,7 @@ public sealed partial class UISkin
         if (depth > MAX_INHERITANCE)
             throw new Exception($"'{path}' inherits from itself.");
 
-        HIDLRuntime runtime = new();
-        var (success, message) = runtime.Evaluate(File.ReadAllText(path));
-        if (!success)
-            throw new Exception($"'{path}': {message}");
-
-        if (runtime.UserScope.Lookup("skin") is not ObjectValue definition)
-            throw new Exception($"'{path}' has to declare an object called 'skin'.");
+        var definition = Evaluate(path, "skin");
 
         if (!definition.Properties.TryGetValue("inherit", out var parent))
             return new Dictionary<string, IRuntimeValue>(definition.Properties);
@@ -41,53 +46,138 @@ public sealed partial class UISkin
     }
 
     /// <summary>
-    /// Puts what one of the skin's themes does differently on top of what the skin sets, and takes the list of
-    /// themes out of the properties.
+    /// Helper method to run a .hor file and take the object it declares under a name.
     /// </summary>
-    /// <returns>The names of the themes the skin has.</returns>
-    private static string[] ApplyTheme(Dictionary<string, IRuntimeValue> properties, string? theme)
+    private static ObjectValue Evaluate(string path, string name)
     {
-        string? wanted = theme ?? (properties.TryGetValue("theme", out var usual) ? UIScript.ToText(usual, "theme") : null);
-        string[] names = [];
+        HIDLRuntime runtime = new();
+        var (success, message) = runtime.Evaluate(File.ReadAllText(path));
+        if (!success)
+            throw new Exception($"'{path}': {message}");
 
-        if (properties.Remove("themes", out var themesValue))
-        {
-            if (themesValue is not ObjectValue themes)
-                throw new Exception("themes has to be an object.");
+        if (runtime.UserScope.Lookup(name) is not ObjectValue declared)
+            throw new Exception($"'{path}' has to declare an object called '{name}'.");
 
-            names = [.. themes.Properties.Keys];
-
-            if (wanted is not null && themes.Properties.TryGetValue(wanted, out var own))
-            {
-                if (own is not ObjectValue different)
-                    throw new Exception($"themes.{wanted} has to be an object.");
-
-                Merge(properties, different.Properties);
-            }
-            else if (theme is not null)
-            {
-                throw new Exception($"The skin has no theme called '{theme}'. It has: {string.Join(", ", names)}.");
-            }
-        }
-
-        if (wanted is not null)
-            properties["theme"] = new StringValue(wanted);
-
-        return names;
+        return declared;
     }
 
     /// <summary>
-    /// Puts properties on top of others. Regions and icons are added to the ones that are there, everything
-    /// else replaces what was there.
+    /// The themes a skin comes in, the ones its file lists under <c>themes</c> in the order they are written and
+    /// then the ones in the <c>themes</c> folder next to the file by the order of their names, the usual one first
+    /// whichever it is. Takes <c>themes</c> out of the properties. A skin that inherits gets the themes of the file
+    /// that said them last and the folder next to its own file, a theme folder isn't inherited.
     /// </summary>
-    private static void Merge(Dictionary<string, IRuntimeValue> properties, Dictionary<string, IRuntimeValue> over)
+    private static List<UITheme> ReadThemes(string directory, Dictionary<string, IRuntimeValue> properties)
+    {
+        var themes = new List<UITheme>();
+
+        if (properties.Remove("themes", out var listed))
+        {
+            if (listed is not ObjectValue inline)
+                throw new Exception("themes has to be an object, a theme under every name.");
+
+            foreach (var (name, value) in inline.Properties)
+                themes.Add(UITheme.Read(name, value, $"themes.{name}"));
+        }
+
+        string folder = Path.Combine(directory, UITheme.FOLDER);
+        if (Directory.Exists(folder))
+        {
+            foreach (string file in Directory.GetFiles(folder, "*.hor").Order(StringComparer.OrdinalIgnoreCase))
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                if (themes.Exists(theme => theme.Name == name))
+                    throw new Exception($"the theme '{name}' is both in the skin file and in {UITheme.FOLDER}/{name}.hor, it can only be one of them.");
+
+                themes.Add(UITheme.Read(name, Evaluate(file, "theme"), $"{UITheme.FOLDER}/{name}.hor"));
+            }
+        }
+
+        foreach (UITheme theme in themes)
+        {
+            if (theme.Base is { } baseName && !themes.Exists(other => other.Name == baseName))
+                throw new Exception($"the theme '{theme.Name}' is based on '{baseName}', which the skin hasn't got.");
+        }
+
+        // The one the skin comes up in goes first, that is what steps through them from the start
+        if (properties.TryGetValue("theme", out var usualValue))
+        {
+            string usual = UIScript.ToText(usualValue, "theme");
+            int at = themes.FindIndex(theme => theme.Name == usual);
+            if (at > 0)
+            {
+                UITheme first = themes[at];
+                themes.RemoveAt(at);
+                themes.Insert(0, first);
+            }
+        }
+
+        return themes;
+    }
+
+    /// <summary>
+    /// Puts what a theme does differently on top of what the skin sets, the theme it is based on first (and that
+    /// one's base before it), and says which theme the skin is in.
+    /// </summary>
+    /// <param name="theme">The theme wanted, null for the one the skin says is its usual one.</param>
+    /// <returns>The theme the skin is in, null for a skin without any.</returns>
+    private static UITheme? ApplyTheme(Dictionary<string, IRuntimeValue> properties, List<UITheme> themes, string? theme)
+    {
+        string? wanted = theme ?? (properties.TryGetValue("theme", out var usual) ? UIScript.ToText(usual, "theme") : null);
+        if (wanted is null)
+            return null;
+
+        UITheme? found = themes.Find(candidate => candidate.Name == wanted);
+        if (found is null)
+        {
+            if (theme is not null || themes.Count > 0)
+                throw new Exception($"The skin has no theme called '{wanted}'. It has: {string.Join(", ", themes.Select(candidate => candidate.Name))}.");
+
+            // A skin with no themes of its own that names the layer of its art it draws with, that name is its one theme
+            found = UITheme.Read(wanted, new ObjectValue([]), "theme");
+        }
+
+        // The chain from the theme back to the skin, laid on the other way round so the theme has the last word
+        var chain = new List<UITheme>();
+        for (UITheme? at = found; at is not null; at = at.Base is { } baseName ? themes.Find(candidate => candidate.Name == baseName) : null)
+        {
+            if (chain.Contains(at))
+                throw new Exception($"the theme '{found.Name}' is based on itself, round through {string.Join(", ", chain.Select(link => link.Name))}.");
+            chain.Add(at);
+        }
+
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            // A theme that says its surface means its panel and its controls to come out of it, whatever the skin
+            // wrote for those, so those go unless the theme writes them too. The same for the other colours things
+            // are worked out from, see UIPalette.DerivedFrom
+            foreach (string key in chain[i].Changes.Keys)
+            {
+                foreach (string derived in UIPalette.DerivedFrom(key))
+                {
+                    if (!chain[i].Changes.ContainsKey(derived)) properties.Remove(derived);
+                }
+            }
+
+            Merge(properties, chain[i].Changes);
+        }
+
+        properties["theme"] = new StringValue(found.Name);
+        return found;
+    }
+
+    /// <summary>
+    /// Puts properties on top of others. Regions, icons and the colours of code are added to the ones that are
+    /// there, everything else replaces what was there.
+    /// </summary>
+    private static void Merge(Dictionary<string, IRuntimeValue> properties, IReadOnlyDictionary<string, IRuntimeValue> over)
     {
         foreach (var (key, value) in over)
         {
             if (key == "inherit")
                 continue;
 
-            if (key is "regions" or "icons"
+            if (Array.IndexOf(MergedObjects, key) >= 0
                 && value is ObjectValue added
                 && properties.TryGetValue(key, out var below)
                 && below is ObjectValue existing)
@@ -113,12 +203,37 @@ public sealed partial class UISkin
     {
         var properties = ReadProperties(directory, file, 0);
         string? title = properties.TryGetValue("title", out var titled) ? UIScript.ToText(titled, "title") : null;
-        string[] themes = ApplyTheme(properties, null);
-        string? usual = properties.TryGetValue("theme", out var theme) ? UIScript.ToText(theme, "theme") : null;
-        return (title, themes, usual);
+        List<UITheme> themes = ReadThemes(directory, properties);
+        UITheme? usual = ApplyTheme(properties, themes, null);
+        return (title, [.. themes.Select(theme => theme.Name)], usual?.Name);
     }
 
-    private static UISkin Read(string directory, Dictionary<string, IRuntimeValue> properties)
+    /// <summary>
+    /// The themes of a skin file with what each says about itself, its title for an options screen, the layer of
+    /// the art it draws with and the theme it is based on, without loading any of it. In the order they are stepped
+    /// through, the usual one first.
+    /// </summary>
+    public static IReadOnlyList<UIThemeInfo> ThemesOf(string directory, string file)
+    {
+        var properties = ReadProperties(directory, file, 0);
+        return [.. ReadThemes(directory, properties).Select(theme => theme.Info)];
+    }
+
+    /// <summary>
+    /// Helper method to make (or find) the font of a skin file, shared by its themes.
+    /// </summary>
+    private static UIFont FontOf(string skinPath, string directory, string file, int size)
+    {
+        var key = (skinPath, directory, file, size);
+        lock (fonts)
+        {
+            if (!fonts.TryGetValue(key, out UIFont? font))
+                fonts[key] = font = new UIFont(directory, file, size);
+            return font;
+        }
+    }
+
+    private static UISkin Read(string directory, string file, Dictionary<string, IRuntimeValue> properties, UITheme? worn)
     {
         string fontDirectory = DEFAULT_FONT_DIRECTORY;
         string fontFile = DEFAULT_FONT_FILE;
@@ -142,16 +257,18 @@ public sealed partial class UISkin
             ? SpriteSheetDefinition.Load(directory, UIScript.ToText(sprites, "sprites"))
             : null;
 
-        string? theme = properties.TryGetValue("theme", out var themeValue) ? UIScript.ToText(themeValue, "theme") : null;
-        if (theme is not null && sheet is not null && !sheet.Themes.Contains(theme))
-            throw new Exception($"The sprite sheet has no theme called '{theme}'. It has: {string.Join(", ", sheet.Themes)}.");
+        // The theme draws with a layer of the art, its own name unless it says, which the sheet has to have
+        string? art = worn?.Art;
+        if (art is not null && sheet is not null && !sheet.Themes.Contains(art))
+            throw new Exception($"The theme '{worn!.Name}' draws with the art '{art}', which the sprite sheet hasn't got. It has: {string.Join(", ", sheet.Themes)}.");
 
         // The image regions are cut out of when they give a rectangle rather than the name of a sprite.
         string? texture = properties.TryGetValue("texture", out var textureFile)
             ? Path.Combine(directory, UIScript.ToText(textureFile, "texture"))
             : null;
 
-        var skin = new UISkin(new UIFont(fontDirectory, fontFile, fontSize), sheet, theme);
+        UIFont skinFont = FontOf(Path.GetFullPath(Path.Combine(directory, file)), fontDirectory, fontFile, fontSize);
+        var skin = new UISkin(skinFont, sheet, worn?.Name, art);
 
         // Art that was drawn big to be shown small (art_scale under one) is smoothed on its way down, pixel art
         // never is. Before any of it is asked for, the atlas makes its texture the way this says
@@ -162,6 +279,8 @@ public sealed partial class UISkin
         if (properties.TryGetValue("art_scale", out var artScale))
             skin.ArtScale = UIScript.ToNumber(artScale, "art_scale");
 
+        ReadPalette(properties, skin.Palette);
+
         foreach (var (key, value) in properties)
         {
             switch (key)
@@ -169,59 +288,41 @@ public sealed partial class UISkin
                 case "texture" or "font" or "sprites" or "theme" or "art_scale" or "title" or "smooth":
                     break;
 
+                // Read above, the lot of them together
+                case var color when UIPalette.IsKey(color):
+                    break;
+
                 case "text_scale":
                     skin.TextScale = UIScript.ToNumber(value, key);
                     break;
-                case "text_color":
-                    skin.TextColor = UIScript.ToColor(value, key);
+                case "row_height":
+                    skin.RowHeight = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
-                case "control_text_color":
-                    skin.ControlTextColor = UIScript.ToColor(value, key);
-                    break;
-                case "control_color":
-                    skin.ControlColor = UIScript.ToColor(value, key);
-                    break;
-                case "field_color":
-                    skin.FieldColor = UIScript.ToColor(value, key);
-                    break;
-                case "border_color":
-                    skin.BorderColor = UIScript.ToColor(value, key);
+                case "text_sizes" when value is ObjectValue sizes:
+                    foreach (var (role, size) in sizes.Properties)
+                    {
+                        float scale = UIScript.ToNumber(size, $"text_sizes.{role}");
+                        switch (role)
+                        {
+                            case "caption": skin.CaptionScale = scale; break;
+                            case "body": skin.TextScale = scale; break;
+                            case "heading": skin.HeadingScale = scale; break;
+                            case "title": skin.TitleScale = scale; break;
+                            default: throw new Exception($"'{role}' isn't a size of text, caption, body, heading or title.");
+                        }
+                    }
                     break;
                 case "corner_radius":
                     skin.CornerRadius = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
+                case "popup_radius":
+                    skin.PopupRadius = UIScript.ToNumber(value, key);
+                    break;
                 case "icon_blink":
                     skin.IconBlink = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
+                // Read with the colours, see ReadPalette
                 case "syntax":
-                    ReadSyntax(skin.Syntax, value);
-                    break;
-                case "accent_color":
-                    skin.AccentColor = UIScript.ToColor(value, key);
-                    break;
-                case "panel_color":
-                    skin.PanelColor = UIScript.ToColor(value, key);
-                    break;
-                case "bar_text_color":
-                    skin.BarTextColor = UIScript.ToColor(value, key);
-                    break;
-                case "text_shadow_color":
-                    skin.TextShadowColor = UIScript.ToColor(value, key);
-                    break;
-                case "track_color":
-                    skin.TrackColor = UIScript.ToColor(value, key);
-                    break;
-                case "hover_color":
-                    skin.HoverColor = UIScript.ToColor(value, key);
-                    break;
-                case "highlight_color":
-                    skin.HighlightColor = UIScript.ToColor(value, key);
-                    break;
-                case "disabled_tint":
-                    skin.DisabledTint = UIScript.ToColor(value, key);
-                    break;
-                case "icon_label_color":
-                    skin.IconLabelColor = UIScript.ToColor(value, key);
                     break;
                 case "icon_scale":
                     skin.IconScale = UIScript.ToNumber(value, key);
@@ -278,10 +379,6 @@ public sealed partial class UISkin
             }
         }
 
-        // A skin that only says what its accent is has things highlighted in it.
-        if (properties.ContainsKey("accent_color") && !properties.ContainsKey("highlight_color"))
-            skin.HighlightColor = skin.AccentColor with { W = 0.9f };
-
         UIRenderer.PrepareFont(skin.Font);
 
         // The art the skin declares is what its components are about to ask for, so it is stitched in
@@ -304,7 +401,48 @@ public sealed partial class UISkin
     }
 
     /// <summary>
-    /// The colours code is shown in, by what they colour. A skin only lists the ones it wants its own way.
+    /// The palette of a skin in a theme, every colour of it, without loading any art or font and so from any thread
+    /// and without a device, for a test or for a game that wants a theme's colours before it is drawn in them.
+    /// Throws, saying what is wrong, for a file or theme that can't be read.
+    /// </summary>
+    /// <param name="theme">Which of the skin's themes, null for its usual one.</param>
+    public static UIPalette PaletteOf(string directory, string file, string? theme = null)
+    {
+        var properties = ReadProperties(directory, file, 0);
+        List<UITheme> themes = ReadThemes(directory, properties);
+        ApplyTheme(properties, themes, theme);
+
+        var palette = new UIPalette();
+        ReadPalette(properties, palette);
+        return palette;
+    }
+
+    /// <summary>
+    /// Helper method to read every colour a skin file (with its theme over it) wrote into a palette, the colours of
+    /// code with them, and have the palette work out the rest.
+    /// </summary>
+    private static void ReadPalette(Dictionary<string, IRuntimeValue> properties, UIPalette palette)
+    {
+        var given = new Dictionary<string, Vector4>();
+        foreach (string key in UIPalette.Keys)
+        {
+            if (!properties.TryGetValue(key, out var value))
+                continue;
+
+            Vector4 color = UIScript.ToColor(value, key);
+            given[key] = color;
+            palette.Set(key, color);
+        }
+
+        bool syntaxGiven = properties.TryGetValue("syntax", out var syntax);
+        if (syntaxGiven)
+            ReadSyntax(palette.Syntax, syntax!);
+
+        palette.Derive(given, syntaxGiven);
+    }
+
+    /// <summary>
+    /// The colours code is shown in, by what they colour. A skin (or a theme) only lists the ones it wants its own way.
     /// </summary>
     private static void ReadSyntax(UISyntaxColors colors, IRuntimeValue value)
     {
@@ -313,33 +451,8 @@ public sealed partial class UISkin
 
         foreach (var (name, color) in syntax.Properties)
         {
-            Vector4 read = UIScript.ToColor(color, $"syntax.{name}");
-
-            switch (name)
-            {
-                case "name": colors.Name = read; break;
-                case "keyword": colors.Keyword = read; break;
-                case "property": colors.Property = read; break;
-                case "call": colors.Call = read; break;
-                case "text": colors.Text = read; break;
-                case "number": colors.Number = read; break;
-                case "comment": colors.Comment = read; break;
-                case "punctuation": colors.Punctuation = read; break;
-                case "line_number": colors.LineNumber = read; break;
-                case "directive": colors.Directive = read; break;
-                case "declaration": colors.Declaration = read; break;
-                case "builtin": colors.Builtin = read; break;
-                case "type": colors.Type = read; break;
-                case "constant": colors.Constant = read; break;
-                case "reference": colors.Reference = read; break;
-                case "escape": colors.Escape = read; break;
-                case "markup": colors.Markup = read; break;
-                case "operator": colors.Operator = read; break;
-                case "bracket1": colors.Bracket1 = read; break;
-                case "bracket2": colors.Bracket2 = read; break;
-                case "bracket3": colors.Bracket3 = read; break;
-                default: throw new Exception($"'{name}' isn't something code is coloured by.");
-            }
+            if (!colors.Set(name, UIScript.ToColor(color, $"syntax.{name}")))
+                throw new Exception($"'{name}' isn't something code is coloured by.");
         }
     }
 

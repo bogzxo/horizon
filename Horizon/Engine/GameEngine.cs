@@ -10,8 +10,6 @@ using Horizon.Graphics;
 using Horizon.Input;
 
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
 namespace Horizon.Engine;
 
@@ -218,11 +216,8 @@ public class GameEngine : Entity
                 string? directory = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-                using var image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Rgba32>(pixels, (int)width, (int)height);
-
                 // The pixels come out bottom row first, a picture starts at the top
-                image.Mutate(context => context.Flip(SixLabors.ImageSharp.Processing.FlipMode.Vertical));
-                image.SaveAsPng(path);
+                ImageFile.SavePng(path, pixels, (int)width, (int)height, bottomUp: true);
                 Log.Info($"[Engine] Screenshot saved to {path}.");
             }
             catch (Exception e)

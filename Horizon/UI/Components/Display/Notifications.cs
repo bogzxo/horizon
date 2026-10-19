@@ -49,6 +49,9 @@ public sealed class UINotification
 /// </summary>
 public class Notifications : UIComponent
 {
+    // How far a card slides in from, in the UI's pixels
+    private const float SLIDE = 36.0f;
+
     private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ACTION_HEIGHT = 24.0f;
 
     private readonly List<UINotification> shown = [];
@@ -63,7 +66,7 @@ public class Notifications : UIComponent
     public float TextScale { get; set; }
 
     /// <summary>The cards that are up, the oldest first.</summary>
-    public IReadOnlyList<UINotification> Shown => shown;
+    public IReadOnlyList<UINotification> Cards => shown;
 
     protected override bool HitTestVisible => shown.Count > 0;
 
@@ -195,10 +198,13 @@ public class Notifications : UIComponent
 
             list.BeginPart(i);
 
-            // A shadow a little below, the card, a rim
-            list.RoundRect(new UIRect(bounds.Min + new Vector2(0.0f, -3.0f), bounds.Max + new Vector2(0.0f, -3.0f)), skin.CornerRadius + 2.0f, new Vector4(0.0f, 0.0f, 0.0f, 0.35f * card.Alpha));
-            list.RoundRect(bounds, skin.CornerRadius, (skin.PanelColor with { W = 1.0f }) * fade);
-            list.RoundOutline(bounds, skin.CornerRadius, 1.0f, skin.BorderColor * fade);
+            // In from the right as it fades in, back out that way as it fades out
+            list.PushVisual(new Vector2((1.0f - card.Alpha) * SLIDE, 0.0f), Vector2.One, bounds.Center, 1.0f);
+
+            // On what every popup sits on, faded with the card
+            list.PushVisual(Vector2.Zero, Vector2.One, bounds.Center, card.Alpha);
+            list.Popup(bounds, Module?.Compositor.PopupGlass);
+            list.PopVisual();
 
             float top = bounds.Max.Y - PADDING;
             float left = bounds.Min.X + PADDING;
@@ -221,6 +227,8 @@ public class Notifications : UIComponent
                 list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
                 list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
             }
+
+            list.PopVisual();
         }
 
         list.EndParts();

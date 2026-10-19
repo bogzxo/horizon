@@ -1,8 +1,8 @@
 using System.Numerics;
+using Horizon.Graphics;
 
 using Horizon.Logging;
 
-using SixLabors.ImageSharp.PixelFormats;
 
 namespace Horizon.UI;
 
@@ -86,9 +86,8 @@ public sealed class UIWrapShape
             {
                 if (last is not { } known || known.Path != full || known.Written != written)
                 {
-                    using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(full);
-                    var read = new byte[image.Width * image.Height * 4];
-                    image.CopyPixelDataTo(read);
+                    var image = ImageFile.Load(full);
+                    var read = image.Pixels;
                     last = known = (full, written, read, image.Width, image.Height);
                 }
 

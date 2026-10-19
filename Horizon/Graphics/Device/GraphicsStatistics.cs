@@ -34,6 +34,12 @@ public sealed class GraphicsStatistics
     /// <summary>How many blocks of memory have been taken from the driver.</summary>
     public int MemoryBlocks { get; internal set; }
 
+    /// <summary>How many bytes those blocks come to all together, used or not.</summary>
+    public long MemoryBlockBytes { get; internal set; }
+
+    /// <summary>How many bytes of them the CPU can see, which is the machine's memory and not the card's.</summary>
+    public long MemoryHostBytes { get; internal set; }
+
     /// <summary>How many resources are alive.</summary>
     public int Buffers { get; internal set; }
     public int Textures { get; internal set; }

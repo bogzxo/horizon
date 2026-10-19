@@ -272,7 +272,7 @@ public class TreeView : UIComponent
         Refresh();
     }
 
-    private float LineHeight(UISkin skin) => RowHeight > 0.0f ? RowHeight : MathF.Round(skin.Font.LineHeight * ScaleOf(skin) + ROW_PADDING);
+    private float LineHeight(UISkin skin) => RowHeight > 0.0f ? RowHeight : MathF.Max(skin.RowHeight, MathF.Round(skin.Font.LineHeight * ScaleOf(skin) + ROW_PADDING));
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 

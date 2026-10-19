@@ -45,6 +45,7 @@ static const uint SHADOW_FLAG = 0x100000u;
 static const uint FIELD_FLAG = 0x200000u;
 static const uint LAMP_FLAG = 0x400000u;
 static const uint BOLD_FLAG = 0x800000u;
+static const uint SOFT_FLAG = 0x1000000u;
 
 // How far out into the field the edge of a bold glyph is, as a share of the field's value at the edge. Must match
 // UIFont.BOLD_GROWTH, which widens every bold letter by as much as the ink grows
@@ -189,7 +190,13 @@ GBuffer fsMain(Varyings input)
     }
 
     // A quarter of a disc. Inside of its edge, and (for the corner of an outline) outside of the hole in it
-    if ((input.flags & CORNER_FLAG) != 0u)
+    if ((input.flags & CORNER_FLAG) != 0u && (input.flags & SOFT_FLAG) != 0u)
+    {
+        // Soft, it fades from the middle of the disc to its edge, eased so the shadow has no line where it starts
+        float t = saturate(1.0 - fromMiddle);
+        tex.a *= t * t * (3.0 - 2.0 * t);
+    }
+    else if ((input.flags & CORNER_FLAG) != 0u)
     {
         float inside = clamp((1.0 - fromMiddle) / cornerPixel + 0.5, 0.0, 1.0);
         float pastHole = input.ring < 1.0 ? clamp((fromMiddle - (1.0 - input.ring)) / cornerPixel + 0.5, 0.0, 1.0) : 1.0;

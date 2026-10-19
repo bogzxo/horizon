@@ -106,7 +106,7 @@ public class Breadcrumbs : UIComponent
         float scale = ScaleOf(skin);
         float arrow = Arrow(skin);
         Vector2 pointer = Pointer;
-        Vector4 dim = skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.65f);
+        Vector4 dim = skin.DimTextColor;
 
         list.PushClip(Bounds);
         for (int i = 0; i < parts.Count; i++)
@@ -116,8 +116,8 @@ public class Breadcrumbs : UIComponent
             if (area.IsEmpty)
                 continue;
 
-            if (OnPressed is not null && IsHovered && area.Contains(pointer))
-                list.Box(area, skin.HoverColor);
+            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            list.Box(area, OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             list.Text(parts[i], area, Origin.Center, scale, i == parts.Count - 1 ? skin.TextColor : dim);
 

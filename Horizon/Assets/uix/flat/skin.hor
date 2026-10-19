@@ -2,8 +2,10 @@
 // Every component draws itself as a box in the colours below, with corners as round as corner_radius says,
 // and those are worked out as they are drawn. So it is crisp at any size, where pixel art only is at whole multiples of itself.
 //
-// The font is Cascadia Mono, the TrueType itself, drawn as a distance field at 96 pixels to the em like the pixel
-// fonts were baked, so a text scale of 0.125 is small print here like it is with those.
+// The font is Inter (Assets/fonts/inter, OFL), a font made for reading on a screen, the TrueType itself drawn as a
+// distance field at 96 pixels to the em like the pixel fonts were baked, so a text scale of 0.125 is small print here
+// like it is with those. It was Cascadia Mono, which is right for code and the terminal (Hack is what Hex writes code
+// and Dusk its terminals in) and tiring for a sentence, a menu or a setting.
 //
 // A button whose style ends in _flat (button_flat) is only its label until the pointer finds it, which is what
 // the rows of a list and the tabs above something want to be. Every other style is a button you can see.
@@ -11,18 +13,23 @@
 // There are no icons in this skin, [icon:name] in a text is left the way it is written.
 // Under syntax is what code is coloured in with, see the code view (compositor.code).
 //
-// It comes in themes, the colours and nothing else. Dark is the one it always was and everything up to themes is
-// that one, the others only list the colours they have differently. An editor made in this skin lets whoever uses
-// it pick (Hex does, in its settings).
+// It comes in themes, the colours and nothing else, one file each in the themes folder next to this. The colours
+// below are the dark theme, the one it always was, and every other theme is written over them. A theme says its
+// background, its surface, its text and its accent and the rest is worked out from those (see UIPalette), or it
+// writes out any colour it wants its own way, and under syntax only the colours of code it changes. An editor made
+// in this skin lets whoever uses it pick (Hex does, in its settings).
 // Comments can't go inside of the object, the parser won't have it.
 
 let skin = {
     title: "Flat",
-    theme: "dark",
-    font: { dir: "Assets/fonts/cascadia_mono/", file: "cascadia_mono.ttf", size: 96 },
-    text_scale: 0.14,
+    theme: "horizon",
+    font: { dir: "Assets/fonts/inter/", file: "inter.ttf", size: 96 },
+    text_scale: 0.15,
+    text_sizes: { caption: 0.13, heading: 0.19, title: 0.24 },
 
-    corner_radius: 5,
+    corner_radius: 6,
+    popup_radius: 10,
+    row_height: 28,
 
     text_color: vec(0.84, 0.87, 0.93, 1.0),
     control_text_color: vec(0.9, 0.92, 0.97, 1.0),
@@ -52,65 +59,5 @@ let skin = {
         comment: vec(0.45, 0.5, 0.58, 1.0),
         punctuation: vec(0.6, 0.65, 0.74, 1.0),
         line_number: vec(0.32, 0.36, 0.44, 1.0)
-    },
-
-    themes: {
-        dark: {},
-        midnight: {
-            text_color: vec(0.8, 0.84, 0.95, 1.0),
-            control_text_color: vec(0.88, 0.91, 1.0, 1.0),
-            control_color: vec(0.13, 0.15, 0.26, 1.0),
-            field_color: vec(0.03, 0.035, 0.07, 1.0),
-            panel_color: vec(0.06, 0.07, 0.13, 1.0),
-            track_color: vec(0.03, 0.035, 0.07, 1.0),
-            accent_color: vec(0.62, 0.5, 1.0, 1.0),
-            highlight_color: vec(0.62, 0.5, 1.0, 1.0)
-        },
-        slate: {
-            text_color: vec(0.87, 0.88, 0.86, 1.0),
-            control_text_color: vec(0.93, 0.94, 0.92, 1.0),
-            control_color: vec(0.27, 0.29, 0.3, 1.0),
-            field_color: vec(0.12, 0.13, 0.135, 1.0),
-            panel_color: vec(0.185, 0.2, 0.205, 1.0),
-            track_color: vec(0.12, 0.13, 0.135, 1.0),
-            accent_color: vec(0.36, 0.78, 0.62, 1.0),
-            highlight_color: vec(0.36, 0.78, 0.62, 1.0)
-        },
-        light: {
-            text_color: vec(0.13, 0.15, 0.2, 1.0),
-            control_text_color: vec(0.1, 0.12, 0.17, 1.0),
-            control_color: vec(0.82, 0.84, 0.88, 1.0),
-            field_color: vec(1.0, 1.0, 1.0, 1.0),
-            border_color: vec(0.0, 0.0, 0.0, 0.16),
-            panel_color: vec(0.93, 0.94, 0.955, 1.0),
-            track_color: vec(0.8, 0.82, 0.86, 1.0),
-            hover_color: vec(0.0, 0.0, 0.0, 0.07),
-            accent_color: vec(0.14, 0.42, 0.9, 1.0),
-            highlight_color: vec(0.14, 0.42, 0.9, 1.0),
-            disabled_tint: vec(1.0, 1.0, 1.0, 0.42),
-            syntax: {
-                name: vec(0.13, 0.15, 0.2, 1.0),
-                keyword: vec(0.55, 0.2, 0.75, 1.0),
-                property: vec(0.05, 0.38, 0.7, 1.0),
-                call: vec(0.6, 0.4, 0.0, 1.0),
-                text: vec(0.15, 0.5, 0.15, 1.0),
-                number: vec(0.75, 0.3, 0.1, 1.0),
-                comment: vec(0.5, 0.53, 0.58, 1.0),
-                punctuation: vec(0.35, 0.38, 0.45, 1.0),
-                line_number: vec(0.62, 0.65, 0.7, 1.0),
-                directive: vec(0.7, 0.15, 0.45, 1.0),
-                declaration: vec(0.0, 0.35, 0.6, 1.0),
-                builtin: vec(0.6, 0.35, 0.0, 1.0),
-                type: vec(0.0, 0.5, 0.45, 1.0),
-                constant: vec(0.0, 0.3, 0.8, 1.0),
-                reference: vec(0.6, 0.1, 0.6, 1.0),
-                escape: vec(0.6, 0.45, 0.0, 1.0),
-                markup: vec(0.3, 0.5, 0.3, 1.0),
-                operator: vec(0.3, 0.33, 0.4, 1.0),
-                bracket1: vec(0.7, 0.55, 0.0, 1.0),
-                bracket2: vec(0.6, 0.2, 0.6, 1.0),
-                bracket3: vec(0.0, 0.4, 0.8, 1.0)
-            }
-        }
     }
 };

@@ -152,7 +152,7 @@ public partial class WindowManager
     /// </summary>
     private void WaitForEvents()
     {
-        bool idle = (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && glfw is not null && drag == Drag.None && !InputLately && !closing;
+        bool idle = (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && glfw is not null && drag == Drag.None && !sliding && !InputLately && !closing;
         if (!idle)
         {
             windowWake.WaitOne(EVENT_POLL);

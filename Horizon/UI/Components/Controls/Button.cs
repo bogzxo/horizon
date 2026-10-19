@@ -63,6 +63,12 @@ public class Button : UIComponent
     public bool Selected { get; set; }
 
     /// <summary>
+    /// Whether it's the one to press, the default of a dialog, filled with the accent where the skin has no art for a
+    /// button and labelled in whichever of the skin's text colours reads on that. Art skins draw it as they draw any.
+    /// </summary>
+    public bool Primary { get; set; }
+
+    /// <summary>
     /// An edge of the button that gets a line in the accent colour while it is selected, the bar down the left of the
     /// view that is open in an activity bar, VS Code's. None for none, which is what a button comes as. In a layout
     /// <c>indicator: "left"</c>.
@@ -107,7 +113,7 @@ public class Button : UIComponent
     private const int BODY_PART = 0, MARKER_PART = 1, LABEL_PART = 2;
 
     /// <summary>What is written on the button, its icon as $(name) in front of its label.</summary>
-    private string Shown()
+    private string Written()
     {
         string label = Resolve(Label);
         if (Icon.Length == 0)
@@ -125,7 +131,7 @@ public class Button : UIComponent
 
     protected override Vector2 Measure(UISkin skin)
     {
-        Vector2 label = skin.Font.Measure(Shown(), LabelScale > 0.0f ? LabelScale : skin.TextScale);
+        Vector2 label = skin.Font.Measure(Written(), LabelScale > 0.0f ? LabelScale : skin.TextScale);
         bool hasArt = skin.TryGetRegion(style, out var region);
 
         // Art that says where its label goes is given that much room around it, otherwise the skin decides.
@@ -149,8 +155,15 @@ public class Button : UIComponent
 
         // A state the skin has no art of its own for is drawn with the plain button's.
         bool stateArt = skin.TryGetRegion(down ? pressedStyle : hovered ? hoverStyle : style, out var region);
+        bool primary = false;
         if (stateArt || skin.TryGetRegion(style, out region))
             list.NineSlice(region, Bounds, tint);
+        else if (Primary)
+        {
+            Vector4 accent = skin.AccentColor with { W = 1.0f };
+            list.Box(Bounds, (down ? accent * 0.85f : hovered ? Vector4.Lerp(accent, Vector4.One, 0.12f) : accent) with { W = tint.W });
+            primary = true;
+        }
         else
             PaintFlat(list, skin, down, hovered, tint);
 
@@ -186,13 +199,18 @@ public class Button : UIComponent
         if (down)
             area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
         list.Text(
-            Shown(),
+            Written(),
             area,
             Origin.Center,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
-            (hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
+            (primary ? OnAccent(skin) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
         list.EndParts();
     }
+
+    // Whichever of the skin's text colours reads on its accent
+    private static Vector4 OnAccent(UISkin skin) =>
+        Horizon.UI.Skinning.UIPalette.Contrast(skin.BarTextColor, skin.AccentColor with { W = 1.0f }) >= Horizon.UI.Skinning.UIPalette.Contrast(skin.TextColor, skin.AccentColor with { W = 1.0f })
+            ? skin.BarTextColor : skin.TextColor;
 
     /// <summary>
     /// Helper method to draw the button for a skin that has no art for it. A box that darkens when it is held down,

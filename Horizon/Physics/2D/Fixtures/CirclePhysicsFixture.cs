@@ -8,6 +8,7 @@ public class CirclePhysicsFixture(float radius, Vector2 position, string tag="")
     public bool IsTouching { get; set; }
     public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
     public Vector3? DebugColour { get; set; }
+    public bool OneWay { get; init; }
 
     public float Radius { get; init; } = radius;
     public Vector2 Position { get; init; } = position;

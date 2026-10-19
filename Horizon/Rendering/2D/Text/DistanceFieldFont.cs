@@ -4,8 +4,6 @@ using System.Security.Cryptography;
 using Horizon.Graphics;
 using Horizon.Logging;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
 
 using StbTrueTypeSharp;
 
@@ -225,17 +223,10 @@ public sealed class DistanceFieldFont
         if (importer.ImagePath.Length == 0 || !File.Exists(importer.ImagePath))
             throw new FileNotFoundException($"the picture of the font, '{importer.ImagePath}', isn't there");
 
-        using var image = Image.Load<Rgba32>(importer.ImagePath);
+        var image = ImageFile.Load(importer.ImagePath);
         int width = image.Width, height = image.Height;
         var inside = new bool[width * height];
-        image.ProcessPixelRows(accessor =>
-        {
-            for (int y = 0; y < height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++) inside[y * width + x] = row[x].A > 127;
-            }
-        });
+        for (int i = 0; i < inside.Length; i++) inside[i] = image.Pixels[i * 4 + 3] > 127;
 
         // The field at the picture's own size, then halved if it's a big one, distances survive that fine
         int spread = Math.Max(2, importer.LineHeight > 0 ? importer.LineHeight / 12 : SPREAD);

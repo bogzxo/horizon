@@ -51,6 +51,11 @@ public sealed class StatusItem
 /// </summary>
 public class StatusBar : UIComponent
 {
+    // How much of the accent the bar is tinted with when it isn't given a colour, and the least contrast an item's own
+    // colour is allowed on it, the web's for text beside the point
+    private const float ACCENT_SHARE = 0.16f;
+    private const float LEAST_CONTRAST = 3.0f;
+
     private const float ITEM_PADDING = 8.0f;
     private const float HEIGHT_PADDING = 6.0f;
 
@@ -145,10 +150,17 @@ public class StatusBar : UIComponent
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
         Vector2 pointer = Pointer;
-        Vector4 text = TextColor ?? skin.TextColor;
+        // The panel tinted with the accent unless told, the accent itself was a blinding bar of gold in the Horizon theme
+        // with the skin's white text on it. The text is whichever of the skin's two reads best on what the bar is
+        Vector4 bar = Color ?? Vector4.Lerp(skin.PanelColor with { W = 1.0f }, skin.AccentColor with { W = 1.0f }, ACCENT_SHARE);
+        Vector4 text = TextColor ?? (UIPalette.Contrast(skin.TextColor, bar) >= UIPalette.Contrast(skin.BarTextColor, bar) ? skin.TextColor : skin.BarTextColor);
 
         list.BeginPart(-1);
-        list.Rect(Bounds, Color ?? skin.AccentColor with { W = 1.0f });
+        list.Rect(Bounds, bar);
+
+        // A hairline in the accent along its top, which is what's left of the accent colour of the whole bar
+        if (Color is null)
+            list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.6f });
 
         for (int i = 0; i < items.Count; i++)
         {
@@ -160,10 +172,12 @@ public class StatusBar : UIComponent
 
             if (item.Background is { } background)
                 list.Rect(area, background);
-            if (item.OnPressed is not null && IsHovered && area.Contains(pointer))
-                list.Rect(area, skin.HoverColor);
+            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            list.Rect(area, item.OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(item.Text, area, Origin.Center, scale, item.Color ?? text);
+            // A colour of its own that can't be read on the bar (red on the accent) is the bar's text instead
+            Vector4 said = item.Color is { } own && UIPalette.Contrast(own, item.Background ?? bar) >= LEAST_CONTRAST ? own : text;
+            list.Text(item.Text, area, Origin.Center, scale, said);
         }
 
         list.EndParts();

@@ -66,6 +66,16 @@ public class ListBox : UIComponent
     /// <summary>The scale of the text, or zero to use the skin's.</summary>
     public float TextScale { get; set; }
 
+    /// <summary>
+    /// How many of the first items are a group of their own over the rest, the commands used last at the top of a
+    /// palette, the files opened last at the top of quick open. Their rows are thinner and written in a colour of their
+    /// own (the text a little towards the accent), with a hairline under the last of them. 0 for none.
+    /// </summary>
+    public int Lead { get; set; }
+
+    // How tall a row of the lead is, as a share of a row, and how much of the accent its text has
+    private const float LEAD_SHARE = 0.78f, LEAD_ACCENT = 0.35f;
+
     /// <summary>Called with the newly chosen item whenever a click or a key changes it.</summary>
     public Action<string>? OnChanged { get; set; }
 
@@ -87,7 +97,10 @@ public class ListBox : UIComponent
     /// <summary>The first row that is in sight, for a list longer than the box.</summary>
     public int Top => top;
 
-    private float RowHeight(UISkin skin) => skin.Font.LineHeight * (TextScale > 0.0f ? TextScale : skin.TextScale) + ROW_PADDING;
+    private float RowHeight(UISkin skin) => MathF.Max(skin.RowHeight, skin.Font.LineHeight * (TextScale > 0.0f ? TextScale : skin.TextScale) + ROW_PADDING);
+
+    // How tall an item's row is, a row of the lead thinner
+    private float HeightOf(int item, float rowHeight) => item < Lead ? MathF.Round(rowHeight * LEAD_SHARE) : rowHeight;
 
     /// <summary>
     /// Chooses an item by its index the way a click does, telling whoever listens. Nothing happens for the one chosen already.
@@ -160,8 +173,20 @@ public class ListBox : UIComponent
         if (skin is null)
             return;
 
-        int row = top + (int)((Bounds.Max.Y - point.Y) / RowHeight(skin));
-        if (row < top || row >= Math.Min(items.Length, top + Rows))
+        // The row under the pointer, the rows of the lead being thinner
+        float rowHeight = RowHeight(skin), down = Bounds.Max.Y - point.Y, at = 0.0f;
+        int row = -1;
+        for (int i = top; i < Math.Min(items.Length, top + Rows); i++)
+        {
+            at += HeightOf(i, rowHeight);
+            if (down < at)
+            {
+                row = i;
+                break;
+            }
+        }
+
+        if (row < 0)
             return;
 
         // A click on the chosen row is a confirmation, on another row a choice
@@ -171,7 +196,17 @@ public class ListBox : UIComponent
             Choose(row);
     }
 
-    protected override Vector2 Measure(UISkin skin) => new(DEFAULT_WIDTH, RowHeight(skin) * Rows);
+    protected override Vector2 Measure(UISkin skin)
+    {
+        rowHeightSeen = RowHeight(skin);
+        return new(DEFAULT_WIDTH, rowHeightSeen * Rows);
+    }
+
+    // how high a row came out the last time it was measured, for a program that fits so many rows to a height
+    private float rowHeightSeen;
+
+    /// <summary>How high a row is, as of the last time the list was measured, 0 before it was.</summary>
+    public float RowHeightSeen => rowHeightSeen;
 
     protected override void Paint(UIDrawList list)
     {
@@ -193,18 +228,26 @@ public class ListBox : UIComponent
         list.PushClip(Bounds);
 
         int last = Math.Min(items.Length, top + Rows);
+        float rowTop = Bounds.Max.Y;
+        Vector4 leadText = Vector4.Lerp(skin.TextColor, skin.AccentColor with { W = skin.TextColor.W }, LEAD_ACCENT);
         for (int i = top; i < last; i++)
         {
             // By the item, not by where in the box it is, or every scroll had the letters of one item blended with another's
             list.BeginPart(i);
-            float rowTop = Bounds.Max.Y - (i - top) * rowHeight;
-            UIRect row = new(new Vector2(Bounds.Min.X, rowTop - rowHeight), new Vector2(right, rowTop));
+            bool lead = i < Lead;
+            float height = HeightOf(i, rowHeight);
+            UIRect row = new(new Vector2(Bounds.Min.X, rowTop - height), new Vector2(right, rowTop));
+            rowTop -= height;
 
             // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView)
             list.Rect(row, i == index ? skin.AccentColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.55f)
                 : IsHovered && enabled && Hovering(row) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, scale, skin.TextColor * tint, markup: false);
+            list.Text(Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, lead ? scale * 0.9f : scale, (lead ? leadText : skin.TextColor) * tint, markup: false);
+
+            // A hairline under the last of the lead, between it and the rest
+            if (lead && i == Lead - 1 && i + 1 < items.Length)
+                list.Rect(new UIRect(new Vector2(row.Min.X + ROW_PADDING, row.Min.Y), new Vector2(row.Max.X - ROW_PADDING, row.Min.Y + 1.0f)), skin.BorderColor * tint);
         }
 
         list.EndParts();
@@ -247,6 +290,7 @@ public class ListBox : UIComponent
         Expose("index", () => Index, value => Index = (int)value);
         Expose("value", () => Value, value => Value = value);
         Expose("rows", () => Rows, value => Rows = Math.Max(1, (int)value));
+        Expose("row_height", () => rowHeightSeen, _ => { });
         Expose("style", () => Style, value => Style = value);
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("on_changed", () => changedHandler ?? new NullValue(), value => changedHandler = value);

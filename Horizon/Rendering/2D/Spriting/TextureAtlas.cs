@@ -77,7 +77,7 @@ public sealed class TextureAtlas : IDisposable
     public bool Smooth { get; set; }
     private const int MAX_HEIGHT = 16384;   // As tall as it is allowed to grow, or what the card takes if that's less
 
-    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer);
+    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer, int Most = 0);
 
     // The top edge of what's been packed, left to right, as a run of flat segments. A new region goes on the
     // lowest segment it fits on (the skyline packer), which fills the holes rows would leave
@@ -95,23 +95,24 @@ public sealed class TextureAtlas : IDisposable
     // Replaced wholesale whenever regions are added, so it can be read from any thread without a lock
     private volatile Dictionary<string, AtlasRegion> _regions = [];
 
-    // The atlas as it is in memory, RGBA from the top left. It is what the texture is (re)made from.
-    private byte[] _pixels;
+    // A piece of art cut out of its picture and given a place, waiting to go up. Only its own pixels, RGBA from the
+    // top left, nothing between the rows
+    private readonly record struct Cut(int X, int Y, int Width, int Height, byte[] Pixels);
+
     private readonly int _width;
     private int _height;
     private readonly bool _shared;
-
-    // The rows that changed since the texture last saw them, so an atlas of a few hundred frames doesn't go up
-    // whole every time one more is asked for
-    private int _dirtyTop = int.MaxValue, _dirtyBottom = -1;
 
     // The texture a grown atlas left behind. Whoever drew with it this frame still points at it, so it goes the
     // next time round rather than from under them
     private Texture _retired = Texture.Invalid;
 
-    // What has been packed into the pixels (Pack) and not yet sent up, the regions it came to and whether the atlas
-    // grew for it. Everything that packs or sends up holds the lock, the pixels and the skyline are one thing
+    // What has been packed (Pack) and not yet sent up, the pieces themselves, the regions they came to and whether
+    // the atlas grew for them. Everything that packs or sends up holds the lock, the cuts and the skyline are one
+    // thing. There is no copy of the atlas on the CPU, the texture is the atlas, a piece lives here from being cut
+    // until it has gone up and then it's garbage, so an atlas with its art up costs nothing but its texture
     private readonly object _packing = new();
+    private readonly List<Cut> _cuts = [];
     private Dictionary<string, AtlasRegion>? _packed;
     private bool _grew;
 
@@ -155,12 +156,12 @@ public sealed class TextureAtlas : IDisposable
     /// Whether the atlas outlives the scene that made it. One that's shared belongs to the engine and is only let
     /// go of by <see cref="Dispose"/>, for art that several scenes show (the fighters of a menu, a select screen and a fight).
     /// </param>
-    public TextureAtlas(int width = 1024, int height = 1024, bool shared = false)
+    /// <param name="height">How tall it starts out. It grows, doubling, as it fills (see <see cref="TryPlace"/>), so this is only what an atlas with little in it costs.</param>
+    public TextureAtlas(int width = 1024, int height = 256, bool shared = false)
     {
         _width = width;
         _height = height;
         _shared = shared;
-        _pixels = new byte[width * height * 4];
         _skyline.Add(new Segment(0, 0, width));
     }
 
@@ -171,11 +172,15 @@ public sealed class TextureAtlas : IDisposable
     /// <param name="x">The left edge of the part, in pixels from the left of the image.</param>
     /// <param name="y">The top edge of the part, in pixels from the top of the image.</param>
     /// <param name="layer">One layer of an Aseprite file on its own, null for the picture as it looks.</param>
-    public void Request(string key, string imagePath, int x, int y, int width, int height, string? layer = null)
+    /// <param name="most">
+    /// How many pixels a side it is put in at the most, brought down to fit (a picture shown small, a thumbnail of a
+    /// picture far too big for the atlas), 0 for as it is.
+    /// </param>
+    public void Request(string key, string imagePath, int x, int y, int width, int height, string? layer = null, int most = 0)
     {
         if (_requested.TryAdd(key, 0))
         {
-            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height, layer));
+            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height, layer, most));
         }
     }
 
@@ -264,6 +269,9 @@ public sealed class TextureAtlas : IDisposable
             if (_packed is { } regions) _regions = regions;
             _packed = null;
 
+            // What was cut out of the pictures is in the atlas now, the pictures themselves can go
+            if (added) SpriteImages.Trim();
+
             Horizon.Core.Diagnostics.SlowRender.Stop(started, "a texture atlas, packing and sending up");
             return added;
         }
@@ -274,8 +282,8 @@ public sealed class TextureAtlas : IDisposable
     }
 
     /// <summary>
-    /// Packs everything that was asked for so far into the pixels of the atlas without sending any of it up, which
-    /// is the slow part of <see cref="Update"/> (every frame read, cut down to what's in it and copied). Any thread,
+    /// Packs everything that was asked for so far, each piece cut out of its picture and given its place, without
+    /// sending any of it up, which is the slow part of <see cref="Update"/> (every frame read and cut down to what's in it). Any thread,
     /// for whoever asked for a few hundred frames and doesn't want the first frame that draws them to wait for it
     /// (a fighter got ready on a worker). They are drawn from the next Update on, as ever. Waits for a Pack on
     /// another thread to finish, so calling it before the first frame that has to have the lot makes sure of it.
@@ -307,6 +315,8 @@ public sealed class TextureAtlas : IDisposable
         {
             // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for
             if (SpriteImages.Read(pending.Path, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
+            if (pending.Most > 0 && (part.Width > pending.Most || part.Height > pending.Most))
+                part = Shrink(part, pending.Most);
 
             // Only the pixels that are anything, if asked. A frame of nothing at all keeps one clear texel so it's drawn as nothing
             int left = 0, top = 0, width = part.Width, height = part.Height;
@@ -318,17 +328,17 @@ public sealed class TextureAtlas : IDisposable
                 continue;
             }
 
-            // Copy the part over row by row
+            // Cut the part out row by row, it goes up on its own to where it was placed and that is the last of it
+            byte[] pixels = new byte[width * height * 4];
             for (int row = 0; row < height; row++)
             {
                 part.Data
                     .AsSpan(((top + row) * part.Width + left) * 4, width * 4)
-                    .CopyTo(_pixels.AsSpan(((y + row) * _width + x) * 4));
+                    .CopyTo(pixels.AsSpan(row * width * 4));
             }
 
+            _cuts.Add(new Cut(x, y, width, height, pixels));
             regions[pending.Key] = new AtlasRegion(new Vector2(x, y), new Vector2(width, height), new Vector2(left, top), new Vector2(part.Width, part.Height));
-            _dirtyTop = Math.Min(_dirtyTop, y);
-            _dirtyBottom = Math.Max(_dirtyBottom, y + height);
         }
 
         _packed = regions;
@@ -337,6 +347,49 @@ public sealed class TextureAtlas : IDisposable
     }
 
     // The smallest box around the pixels that aren't fully transparent
+    // A picture brought down to fit a square of so many pixels, every pixel of the small one the average of the ones it
+    // covers (by their alpha, or the clear ones round a sprite go dark at its edge)
+    private static SpritePixels Shrink(in SpritePixels part, int most)
+    {
+        float scale = MathF.Min((float)most / part.Width, (float)most / part.Height);
+        int width = Math.Max(1, (int)MathF.Round(part.Width * scale)), height = Math.Max(1, (int)MathF.Round(part.Height * scale));
+        var pixels = new byte[width * height * 4];
+
+        for (int y = 0; y < height; y++)
+        {
+            int fromY = y * part.Height / height, toY = Math.Max(fromY + 1, (y + 1) * part.Height / height);
+            for (int x = 0; x < width; x++)
+            {
+                int fromX = x * part.Width / width, toX = Math.Max(fromX + 1, (x + 1) * part.Width / width);
+                float r = 0, g = 0, b = 0, a = 0;
+                for (int sy = fromY; sy < toY; sy++)
+                {
+                    for (int sx = fromX; sx < toX; sx++)
+                    {
+                        int at = (sy * part.Width + sx) * 4;
+                        float alpha = part.Data[at + 3];
+                        r += part.Data[at] * alpha;
+                        g += part.Data[at + 1] * alpha;
+                        b += part.Data[at + 2] * alpha;
+                        a += alpha;
+                    }
+                }
+
+                int to = (y * width + x) * 4;
+                int count = (toX - fromX) * (toY - fromY);
+                if (a > 0.0f)
+                {
+                    pixels[to] = (byte)(r / a);
+                    pixels[to + 1] = (byte)(g / a);
+                    pixels[to + 2] = (byte)(b / a);
+                }
+                pixels[to + 3] = (byte)(a / count);
+            }
+        }
+
+        return new SpritePixels(pixels, width, height);
+    }
+
     private static void OpaqueBounds(in SpritePixels part, out int left, out int top, out int width, out int height)
     {
         int minX = part.Width, minY = part.Height, maxX = -1, maxY = -1;
@@ -384,10 +437,10 @@ public sealed class TextureAtlas : IDisposable
         {
             if (_height * 2 > tallest) return false;
 
-            // Twice as tall, with everything that is in it staying where it is. The skyline doesn't care how tall the sky is
+            // Twice as tall, with everything that is in it staying where it is. The skyline doesn't care how tall the
+            // sky is, and the texture catches up when what was packed goes up (Upload copies the old one into the new)
             Log.Info($"[TextureAtlas] {_width} by {_height} is full at {Occupancy:P0} with {_placed} regions in it, growing to {_height * 2}.");
             _height *= 2;
-            Array.Resize(ref _pixels, _width * _height * 4);
             grown = true;
         }
 
@@ -472,18 +525,21 @@ public sealed class TextureAtlas : IDisposable
         }
     }
 
-    private unsafe void Upload(bool grown)
+    // With the lock held, on the render thread
+    private void Upload(bool grown)
     {
         var engine = GameEngine.Instance;
 
         if (Texture.Handle == 0 || grown)
         {
-            // A texture can't be made bigger, so a bigger one takes its place
+            // A texture can't be made bigger, so a bigger one takes its place and what the old one holds is copied
+            // over on the GPU, nothing of it is kept on this side.
             // The old one hangs on for a frame, a UI that was given it this frame draws with it still
-            if (Texture.Handle != 0)
+            Texture old = Texture;
+            if (old.Handle != 0)
             {
                 if (_retired.Handle != 0) engine.ObjectManager.Textures.Remove(_retired);
-                _retired = Texture;
+                _retired = old;
             }
 
             // A shared atlas is the engine's, not the scene's that happened to fill it first
@@ -510,19 +566,17 @@ public sealed class TextureAtlas : IDisposable
             {
                 scope?.Dispose();
             }
+
+            // Everything that was up stays where it is, the new rows under it are clear. Before the pieces go up,
+            // a piece can land in a hole the skyline left among the old rows
+            if (old.Handle != 0) GraphicsDevice.Current.CopyTexels(old, Texture);
         }
 
-        // The whole thing for a new texture, otherwise only the rows that something landed in
-        int top = grown || Texture.Handle == 0 || _dirtyTop == int.MaxValue ? 0 : _dirtyTop;
-        int bottom = grown || _dirtyBottom < 0 ? _height : Math.Min(_dirtyBottom, _height);
-        if (bottom > top)
-        {
-            fixed (byte* data = &_pixels[top * _width * 4])
-                GraphicsDevice.Current.UploadTexels(Texture, 0, top, (uint)_width, (uint)(bottom - top), TexelFormat.Rgba8, data);
-        }
+        // Each piece to its place, a staging strip of its own size and no more
+        foreach (Cut cut in _cuts)
+            GraphicsDevice.Current.UploadTexels(Texture, cut.X, cut.Y, (uint)cut.Width, (uint)cut.Height, TexelFormat.Rgba8, cut.Pixels);
 
-        _dirtyTop = int.MaxValue;
-        _dirtyBottom = -1;
+        _cuts.Clear();
     }
 
     public void Dispose()

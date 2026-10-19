@@ -12,6 +12,8 @@ namespace Horizon.Tests;
 /// </summary>
 public class InspectableTests
 {
+    // never set, only ever looked at by the inspector, which is the point of them
+#pragma warning disable CS0649
     private class Creature
     {
         public float Health = 10.0f;
@@ -43,6 +45,7 @@ public class InspectableTests
         public Vector2 Push;
         public float Stun;
     }
+#pragma warning restore CS0649
 
     private static InspectedMember Member<T>(string name) => Inspectable.MembersOf(typeof(T)).Single(member => member.Name == name);
 

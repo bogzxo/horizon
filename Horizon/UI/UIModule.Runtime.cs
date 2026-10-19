@@ -179,9 +179,12 @@ public partial class UIModule
         Register<WindowPanel>("window");
         Register<TreeView>("tree_view");
         Register<Notifications>("notifications");
+        Register<Sparks>("sparks");
         Register<Table>("table");
         Register<DrawingPanel>("drawing");
         Register<FormPanel>("form");
+        Register<TerminalView>("terminal");
+        Register<TerminalPanel>("terminal_panel");
     }
 
     /// <summary>

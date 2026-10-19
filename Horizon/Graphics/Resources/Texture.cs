@@ -5,7 +5,6 @@ using Horizon.Graphics.Vulkan;
 
 using Silk.NET.Vulkan;
 
-using SixLabors.ImageSharp.PixelFormats;
 
 using Image = Silk.NET.Vulkan.Image;
 
@@ -132,8 +131,11 @@ public sealed class Texture : GpuResource, IDisposable
     private readonly record struct Decoded(long Written, int Width, int Height, byte[] Pixels);
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Decoded> decodedAhead = new();
 
-    // Pictures nobody made a texture of after all (a map flicked past) are let go of once there are this many
+    // Pictures nobody made a texture of after all (a map flicked past) are let go of once there are this many, or
+    // once they weigh this much, a tile set's four pictures are 20 MB and 48 of those would be most of the machine
     private const int MAX_DECODED_AHEAD = 48;
+    private const long MAX_DECODED_AHEAD_BYTES = 64L * 1024 * 1024;
+    private static long decodedAheadBytes;
 
     /// <summary>
     /// Reads and decodes a picture file now, on whatever thread this is, so the texture that is made of it later (on the
@@ -151,12 +153,17 @@ public sealed class Texture : GpuResource, IDisposable
             long written = File.GetLastWriteTimeUtc(full).Ticks;
             if (decodedAhead.TryGetValue(full, out Decoded known) && known.Written == written) return;
 
-            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(full);
-            var pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels);
+            var image = ImageFile.Load(full);
+            var pixels = image.Pixels;
 
-            if (decodedAhead.Count >= MAX_DECODED_AHEAD) decodedAhead.Clear();
-            decodedAhead[full] = new Decoded(written, image.Width, image.Height, pixels);
+            if (decodedAhead.Count >= MAX_DECODED_AHEAD || Interlocked.Read(ref decodedAheadBytes) + pixels.Length > MAX_DECODED_AHEAD_BYTES)
+            {
+                decodedAhead.Clear();
+                Interlocked.Exchange(ref decodedAheadBytes, 0);
+            }
+
+            if (decodedAhead.TryAdd(full, new Decoded(written, image.Width, image.Height, pixels)))
+                Interlocked.Add(ref decodedAheadBytes, pixels.Length);
         }
         catch (Exception)
         {
@@ -168,8 +175,11 @@ public sealed class Texture : GpuResource, IDisposable
     private static bool TakeDecoded(string path, out Decoded decoded)
     {
         string full = System.IO.Path.GetFullPath(path);
-        if (decodedAhead.TryRemove(full, out decoded) && decoded.Written == File.GetLastWriteTimeUtc(full).Ticks)
-            return true;
+        if (decodedAhead.TryRemove(full, out decoded))
+        {
+            Interlocked.Add(ref decodedAheadBytes, -decoded.Pixels.Length);
+            if (decoded.Written == File.GetLastWriteTimeUtc(full).Ticks) return true;
+        }
 
         decoded = default;
         return false;
@@ -198,9 +208,8 @@ public sealed class Texture : GpuResource, IDisposable
 
             try
             {
-                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(path);
-                var pixels = new byte[image.Width * image.Height * 4];
-                image.CopyPixelDataTo(pixels);
+                var image = ImageFile.Load(path);
+                var pixels = image.Pixels;
 
                 var loaded = new Texture(device, (uint)image.Width, (uint)image.Height, description.Definition, pixels) { Name = path };
                 result = new AssetCreationResult<Texture> { Asset = loaded, Status = AssetCreationStatus.Success, Message = string.Empty };

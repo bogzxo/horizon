@@ -8,6 +8,7 @@ public class RectanglePhysicsFixture(Vector2 position, Vector2 size, string tag=
     public bool IsTouching { get; set; }
     public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
     public Vector3? DebugColour { get; set; }
+    public bool OneWay { get; init; }
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Rectangle;
 
     // Can be moved and resized at any time, for a box that follows something (what of a fighter can be hit right now)

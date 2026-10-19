@@ -146,14 +146,15 @@ public class AudioMixerTests
 
         Assert.Equal(8000, sound.SampleRate);
         Assert.Equal(3, sound.Frames);
-        Assert.Equal(1.0f, sound.Samples[0], 3);
+        Assert.Equal(1.0f, sound.Level(0), 3);
         Assert.Equal(sound.Samples[0], sound.Samples[1]);
-        Assert.Equal(-1.0f, sound.Samples[4], 3);
+        Assert.Equal(-1.0f, sound.Level(4), 3);
     }
 
     // A stream of a constant level that runs out every so many frames, counting the times it went back to the start
     private sealed class CountingStream(int frames) : IAudioStream
     {
+        private readonly int length = frames;
         private int left = frames;
         public int Rewound { get; private set; }
         public int SampleRate => 100;
@@ -168,7 +169,7 @@ public class AudioMixerTests
 
         public void Rewind()
         {
-            left = frames;
+            left = length;
             Rewound++;
         }
 

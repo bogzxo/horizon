@@ -43,7 +43,7 @@ public class DrawingPanel : UIComponent
     public Vector2 Pan { get; set; }
 
     /// <summary>Whether the wheel zooms and the middle and right buttons pan by themselves.</summary>
-    public bool Navigable { get; set; } = true;
+    public bool Pannable { get; set; } = true;
 
     /// <summary>The colour behind it, null for the skin's field colour, see-through with a W of 0.</summary>
     public Vector4? Color { get; set; }
@@ -175,7 +175,7 @@ public class DrawingPanel : UIComponent
 
     protected internal override bool OnScroll(float delta)
     {
-        if (!Navigable || Module is not { } module)
+        if (!Pannable || Module is not { } module)
             return false;
 
         // Round the pointer, what is under it stays under it
@@ -196,7 +196,7 @@ public class DrawingPanel : UIComponent
         // The middle or the right button drags the drawing about
         var mouse = Horizon.Engine.GameEngine.Instance?.Input.Mouse;
         bool panHeld = mouse is not null && (mouse.IsDown(Silk.NET.Input.MouseButton.Middle) || mouse.IsDown(Silk.NET.Input.MouseButton.Right));
-        if (Navigable && panHeld && (panning || (IsHovered && Bounds.Contains(pointer))))
+        if (Pannable && panHeld && (panning || (IsHovered && Bounds.Contains(pointer))))
         {
             if (!panning)
             {
@@ -272,7 +272,7 @@ public class DrawingPanel : UIComponent
 
         Expose("zoom", () => Zoom, value => Zoom = MathF.Max(0.01f, value));
         Expose("pan", () => new Vector2Value(Pan), value => Pan = value is Vector2Value vector ? vector.Value : Pan);
-        Expose("navigable", () => Navigable, value => Navigable = value);
+        Expose("navigable", () => Pannable, value => Pannable = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("on_pointer", () => pointerHandler ?? new NullValue(), value => pointerHandler = value);
         Expose("on_key", () => keyHandler ?? new NullValue(), value => keyHandler = value);

@@ -73,7 +73,14 @@ public partial class UICompositor
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
         // Escape closes whatever is open, top down. A dialog, then a popup, then the focus, one thing a press
-        if (keyboard.WasPressed(Key.Escape))
+        // A component that takes its keys raw gets them all, escape and tab among them. Only the UI whose component has
+        // the keyboard says so, or whichever comes first while nobody's has. Every UI said it every tick once, and the
+        // ones with nothing focused (the debugger's, the performance overlay's, which a Debug build always has) switched
+        // raw keys off a moment after the terminal switched them on and threw the presses away, Return among them
+        if (focusOwner == this || focusOwner is null)
+            UIKeyboard.RawKeys = focus is { TakesRawKeys: true };
+
+        if (keyboard.WasPressed(Key.Escape) && !UIKeyboard.RawKeys)
             Escape(snapshot);
 
         // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
@@ -98,6 +105,9 @@ public partial class UICompositor
 
         // A key that edits and is being held is typed again every so often
         UIKeyboard.Repeat();
+
+        while (focus is { TakesRawKeys: true } && UIKeyboard.TryReadKey(out UIKeyPress press))
+            focus.OnKeyDown(press);
 
         while (focus is not null && UIKeyboard.TryRead(out char character))
         {

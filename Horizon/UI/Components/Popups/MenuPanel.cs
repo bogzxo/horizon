@@ -14,7 +14,7 @@ namespace Horizon.UI.Components;
 /// </summary>
 internal sealed class MenuPanel
 {
-    private const float BORDER = 2.0f;
+    private const float BORDER = 5.0f;
     private const float ITEM_PADDING = 12.0f;
 
     // The room kept in front of every item for its icon or the mark of the ones that are checked, and between an item and its shortcut
@@ -62,7 +62,7 @@ internal sealed class MenuPanel
     private float ScaleOf(UISkin skin) => textScale > 0.0f ? textScale : skin.TextScale;
 
     public static float RowHeight(UISkin skin, float textScale) =>
-        MathF.Round(skin.Font.LineHeight * (textScale > 0.0f ? textScale : skin.TextScale) + skin.ButtonPadding.Total.Y * 0.6f);
+        MathF.Max(skin.RowHeight, MathF.Round(skin.Font.LineHeight * (textScale > 0.0f ? textScale : skin.TextScale) + skin.ButtonPadding.Total.Y * 0.6f));
 
     private float HeightOf(MenuItem item, float row) => item.IsSeparator ? MathF.Round(row * SEPARATOR_SHARE) : row;
 
@@ -139,10 +139,16 @@ internal sealed class MenuPanel
 
         // Somewhere in the list that is open off this one, it stays open
         if (child is not null && child.Contains(pointer))
+        {
+            Moved(pointer);
             return;
+        }
 
         if (!bounds.Contains(pointer))
+        {
+            Moved(pointer);
             return;
+        }
 
         for (int i = 0; i < menu.Items.Count; i++)
         {
@@ -150,22 +156,29 @@ internal sealed class MenuPanel
             if (!area.Contains(pointer) || i == childIndex)
                 continue;
 
-            // Nothing open off this list, the pointer has it at once. Something is, it waits to see the pointer stay
-            if (child is not null)
+            // Nothing open off this list, the pointer has it at once. Something is and the pointer is on its way to it
+            // across another item, the list off this one waits a moment for it to get there. Anywhere else (up or down
+            // this list) it's the other item's at once, the wait for every item made going back up a list feel stuck
+            if (child is not null && Aiming(pointer))
             {
                 long now = Environment.TickCount64;
                 if (waiting != i)
                 {
                     waiting = i;
                     waitingSince = now;
+                    Moved(pointer);
                     return;
                 }
 
                 if (now - waitingSince < SWAP_DELAY)
+                {
+                    Moved(pointer);
                     return;
+                }
             }
 
             waiting = -1;
+            Moved(pointer);
             MenuItem item = menu.Items[i];
             if (item.Submenu is { } submenu && item.Enabled)
             {
@@ -179,6 +192,47 @@ internal sealed class MenuPanel
 
             return;
         }
+
+        Moved(pointer);
+    }
+
+    // Where the pointer was the last time it moved, for which way it's going
+    private Vector2 lastPointer;
+    private bool pointerSeen;
+
+    private void Moved(Vector2 pointer)
+    {
+        if (pointerSeen && Vector2.DistanceSquared(pointer, lastPointer) < 0.25f)
+            return;
+
+        lastPointer = pointer;
+        pointerSeen = true;
+    }
+
+    /// <summary>
+    /// Whether the pointer is on its way to the list open off this one, inside the triangle from where it last was to
+    /// the two corners of that list's near edge. Still, or going anywhere else, it isn't.
+    /// </summary>
+    private bool Aiming(Vector2 pointer)
+    {
+        if (child is not { } open || !pointerSeen || Vector2.DistanceSquared(pointer, lastPointer) < 0.25f)
+            return false;
+
+        bool right = open.bounds.Min.X >= bounds.Center.X;
+        float edge = right ? open.bounds.Min.X : open.bounds.Max.X;
+
+        // A little more room than the list itself, a hand isn't a ruler
+        var top = new Vector2(edge, open.bounds.Max.Y + 8.0f);
+        var bottom = new Vector2(edge, open.bounds.Min.Y - 8.0f);
+        return InTriangle(pointer, lastPointer, top, bottom);
+    }
+
+    private static bool InTriangle(Vector2 point, Vector2 a, Vector2 b, Vector2 c)
+    {
+        static float Side(Vector2 p, Vector2 from, Vector2 to) => (to.X - from.X) * (p.Y - from.Y) - (to.Y - from.Y) * (p.X - from.X);
+        float ab = Side(point, a, b), bc = Side(point, b, c), ca = Side(point, c, a);
+        bool negative = ab < 0.0f || bc < 0.0f || ca < 0.0f, positive = ab > 0.0f || bc > 0.0f || ca > 0.0f;
+        return !(negative && positive);
     }
 
     /// <summary>Opens the list of one of the items that is a menu of its own, by what it says. For a test, or the keyboard.</summary>
@@ -232,16 +286,80 @@ internal sealed class MenuPanel
         return null;
     }
 
-    public void Paint(UIDrawList list, Vector2 pointer)
+    /// <param name="glass">What the list sits on, null for a solid panel, see <see cref="UICompositor.PopupGlass"/>.</param>
+    // When the list was first painted, by the draw list's clock, for its entrance
+    private float openedAt = -1.0f;
+
+    // Where the highlight is drawn, on its way to the item it's for, and whether it's on one at all
+    private UIRect highlight;
+    private bool highlighted;
+
+    // How quickly the highlight gets to its item, a share of the way a second as the rate of an exponential
+    private const float HIGHLIGHT_RATE = 30.0f;
+
+    // A part number no item has, the highlight's own
+    private const int HIGHLIGHT_PART = PARTS_PER_LEVEL - 1;
+
+    /// <summary>Helper method to paint the highlight under the item the pointer is on (or whose submenu is open), eased to it.</summary>
+    private void PaintHighlight(UIDrawList list, UISkin skin, Vector2 pointer)
+    {
+        // The item under the pointer first, the one whose list is open when the pointer is on none of this list's
+        UIRect target = default;
+        bool any = false;
+        for (int pass = 0; pass < 2 && !any; pass++)
+        {
+            for (int i = 0; i < menu.Items.Count && !any; i++)
+            {
+                MenuItem item = menu.Items[i];
+                if (!item.Shown || item.IsSeparator || !item.Enabled)
+                    continue;
+
+                UIRect area = ItemBounds(skin, i);
+                if (pass == 0 ? area.Contains(pointer) : childIndex == i)
+                {
+                    target = area.Shrink(new UIEdges(4.0f, 1.0f));
+                    any = true;
+                }
+            }
+        }
+
+        if (!any)
+        {
+            highlighted = false;
+            return;
+        }
+
+        // Onto the first item it's on at once, from one to the next eased
+        if (!highlighted || !UIDrawList.Motion)
+            highlight = target;
+        else
+        {
+            float share = 1.0f - MathF.Exp(-HIGHLIGHT_RATE * list.Delta);
+            highlight = new UIRect(Vector2.Lerp(highlight.Min, target.Min, share), Vector2.Lerp(highlight.Max, target.Max, share));
+            if (Vector2.DistanceSquared(highlight.Min, target.Min) < 0.25f)
+                highlight = target;
+        }
+
+        highlighted = true;
+        list.BeginPart(partBase + HIGHLIGHT_PART);
+        list.RoundRect(highlight, skin.CornerRadius, skin.HoverColor);
+    }
+
+    public void Paint(UIDrawList list, Vector2 pointer, UIGlass? glass = null)
     {
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
 
-        // Whatever is under the list must not show through it
-        list.Box(bounds, skin.PanelColor with { W = 1.0f });
-        list.Frame(bounds, BORDER, skin.AccentColor);
+        // It grows down out of the word on the bar (or the point of the click), a submenu slides in from its parent
+        bool entering = list.BeginEntrance(ref openedAt, new Vector2(bounds.Min.X, bounds.Max.Y), partBase > 0 ? new Vector2(-6.0f, 0.0f) : new Vector2(0.0f, 6.0f));
+
+        // What every popup sits on, a shadow, the glass when there is any, the panel and a hairline
+        list.Popup(bounds, glass);
 
         Vector4 dim = skin.TextColor * skin.DisabledTint;
+
+        // The highlight glides from the item it was on to the one under the pointer rather than jumping, a part of its own
+        PaintHighlight(list, skin, pointer);
 
         for (int i = 0; i < menu.Items.Count; i++)
         {
@@ -261,8 +379,6 @@ internal sealed class MenuPanel
             }
 
             bool enabled = item.Enabled;
-            if (enabled && (area.Contains(pointer) || childIndex == i))
-                list.Rect(area, skin.HoverColor);
 
             UIRect content = area.Shrink(new UIEdges(ITEM_PADDING, 0.0f));
             Vector4 color = enabled ? skin.TextColor : dim;
@@ -286,6 +402,9 @@ internal sealed class MenuPanel
 
         list.EndParts();
 
-        child?.Paint(list, pointer);
+        if (entering)
+            list.EndEntrance();
+
+        child?.Paint(list, pointer, glass);
     }
 }

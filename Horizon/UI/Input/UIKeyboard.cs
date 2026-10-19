@@ -139,6 +139,13 @@ public static class UIKeyboard
     private const long REPEAT_INTERVAL = 34;
 
     private static readonly ConcurrentQueue<char> typed = new();
+
+    // The keys themselves, for a component that takes them raw (see RawKeys), and the one held for repeating
+    private static readonly ConcurrentQueue<UIKeyPress> rawKeys = new();
+    private static volatile bool rawMode;
+    private static UIKeyPress heldRaw;
+    private static long rawRepeatDue;
+    private static volatile bool altHeld;
     private static bool hooked;
 
     // The texts that were pasted, one for every PASTE in the queue of characters and in the same order
@@ -180,6 +187,10 @@ public static class UIKeyboard
             {
                 if (key == heldKey)
                     Volatile.Write(ref heldCode, 0);
+                if (key == heldRaw.Key)
+                    heldRaw = default;
+                if (key is Key.AltLeft or Key.AltRight)
+                    altHeld = false;
             };
         }
     }
@@ -189,6 +200,30 @@ public static class UIKeyboard
         bool control = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
         bool shift = keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight);
         bool alt = keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight);
+        bool super = keyboard.IsKeyPressed(Key.SuperLeft) || keyboard.IsKeyPressed(Key.SuperRight);
+        if (key is Key.AltLeft or Key.AltRight)
+            altHeld = true;
+
+        // A component that takes the keys themselves gets every one of them, and none of the codes below. Control with V
+        // is still a paste, a terminal pastes with it too
+        if (rawMode)
+        {
+            if (key == Key.V && control)
+            {
+                Paste(keyboard);
+                return;
+            }
+
+            if (key is Key.ControlLeft or Key.ControlRight or Key.ShiftLeft or Key.ShiftRight or Key.AltLeft or Key.AltRight or Key.SuperLeft or Key.SuperRight)
+                return;
+
+            var press = new UIKeyPress(key, control, shift, alt, super);
+            if (rawKeys.Count < MAX_PENDING)
+                rawKeys.Enqueue(press);
+            heldRaw = press;
+            rawRepeatDue = Stopwatch.GetTimestamp() + REPEAT_DELAY * Stopwatch.Frequency / 1000;
+            return;
+        }
 
         // What the key means, and whether holding it does it over and over
         (char code, bool repeats) = key switch
@@ -285,6 +320,18 @@ public static class UIKeyboard
     /// </summary>
     public static void Repeat()
     {
+        // A raw key held is pressed again too, the same way
+        if (rawMode && heldRaw.Key != Key.Unknown)
+        {
+            long at = Stopwatch.GetTimestamp();
+            if (at >= Volatile.Read(ref rawRepeatDue))
+            {
+                Volatile.Write(ref rawRepeatDue, at + REPEAT_INTERVAL * Stopwatch.Frequency / 1000);
+                if (rawKeys.Count < MAX_PENDING)
+                    rawKeys.Enqueue(heldRaw);
+            }
+        }
+
         int code = Volatile.Read(ref heldCode);
         if (code == 0)
             return;
@@ -303,9 +350,24 @@ public static class UIKeyboard
     /// </summary>
     public static void Copy(string text) => Volatile.Write(ref clipboardPending, text);
 
-    /// <summary>Puts what <see cref="Copy"/> was last given on the clipboard. Thread of the window only.</summary>
+    private static int pasteWanted;
+
+    /// <summary>
+    /// Asks for what is on the clipboard to be pasted into whatever has the focus, as Ctrl+V would, from any thread (a
+    /// right click in a terminal). The clipboard is only read on the thread of the window, so it arrives in a moment.
+    /// </summary>
+    public static void RequestPaste()
+    {
+        Volatile.Write(ref pasteWanted, 1);
+        GameEngine.Instance?.WindowManager.Wake();
+    }
+
+    /// <summary>Puts what <see cref="Copy"/> was last given on the clipboard, and pastes when that was asked for. Thread of the window only.</summary>
     public static void FlushClipboard()
     {
+        if (Volatile.Read(ref pasteWanted) == 1 && clipboardOwner is not null && Interlocked.Exchange(ref pasteWanted, 0) == 1)
+            Paste(clipboardOwner);
+
         if (Volatile.Read(ref clipboardPending) is null || clipboardOwner is null)
             return;
 
@@ -325,6 +387,29 @@ public static class UIKeyboard
 
     /// <summary>Takes the next typed character, in the order they were typed.</summary>
     public static bool TryRead(out char character) => typed.TryDequeue(out character);
+
+    /// <summary>The next key pressed while a component that takes them raw had the focus, see <see cref="RawKeys"/>.</summary>
+    public static bool TryReadKey(out UIKeyPress press) => rawKeys.TryDequeue(out press);
+
+    /// <summary>
+    /// Whether the keys go out as themselves (<see cref="TryReadKey"/>) rather than as the codes above, which the
+    /// compositor sets while the focus is a component that takes them so (a terminal, which wants control with every
+    /// letter and the function keys as the program behind it does). Typed characters still come through
+    /// <see cref="TryRead"/>, less the ones typed with alt held, those are the raw key's to send with an escape in front.
+    /// </summary>
+    public static bool RawKeys
+    {
+        get => rawMode;
+        set
+        {
+            if (rawMode == value)
+                return;
+            rawMode = value;
+            heldRaw = default;
+            if (!value)
+                rawKeys.Clear();
+        }
+    }
 
     /// <summary>
     /// How far the mouse wheel turned for this update, in notches (positive is away from the user), or nothing if
@@ -354,10 +439,16 @@ public static class UIKeyboard
 
     private static void Push(char character)
     {
+        if (rawMode && altHeld && character >= ' ')
+            return;
+
         if (typed.Count < MAX_PENDING)
             typed.Enqueue(character);
     }
 }
+
+/// <summary>A key as it was pressed, for a component that takes the keys themselves (see <see cref="UIKeyboard.RawKeys"/>).</summary>
+public readonly record struct UIKeyPress(Key Key, bool Control, bool Shift, bool Alt, bool Super);
 
 /// <summary>
 /// The clipboard of the system, for whoever has something to put on it that isn't the selection of a text box
@@ -368,4 +459,7 @@ public static class UIClipboard
 {
     /// <summary>Puts text on the clipboard. From any thread, it is there within a moment.</summary>
     public static void Copy(string text) => UIKeyboard.Copy(text);
+
+    /// <summary>Pastes what is on the clipboard into whatever has the focus, in a moment, from any thread.</summary>
+    public static void Paste() => UIKeyboard.RequestPaste();
 }

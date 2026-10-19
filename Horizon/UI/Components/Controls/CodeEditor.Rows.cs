@@ -131,7 +131,7 @@ public partial class CodeEditor
     }
 
     // How deep in brackets a line starts, as the last colouring found it
-    private int DepthAt(int line) => line >= 0 && line < lineDepths.Length ? lineDepths[line] : 0;
+    private int DepthAt(int line) => line >= 0 && line < lineStarts.Length ? lineStarts[line].Depth : 0;
 
     /// <summary>
     /// Where the brackets open and close worked out again out of the colouring that was just taken in, and the folds that
@@ -144,9 +144,9 @@ public partial class CodeEditor
         for (int line = 0; line < colouredLines.Length && line < spans.Length; line++)
         {
             string text = colouredLines[line];
-            foreach (HidlSpan span in spans[line])
+            foreach (SyntaxSpan span in spans[line])
             {
-                if (span.Kind is not (HidlToken.Bracket1 or HidlToken.Bracket2 or HidlToken.Bracket3) || span.Start >= text.Length)
+                if (span.Kind is not (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3) || span.Start >= text.Length)
                     continue;
 
                 char character = text[span.Start];
@@ -217,7 +217,7 @@ public partial class CodeEditor
     {
         UIRect area = TextArea(skin, scale);
         float width = wordWrap ? MathF.Round(area.Width) : 0.0f;
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
 
         // Where the shapes are this time, and what of it the rows hang on
         shapesNow.Clear();
@@ -260,7 +260,7 @@ public partial class CodeEditor
         if (lineRow.Length < count)
             lineRow = new int[count];
 
-        float digit = skin.Font.Measure("0", scale, markup: false).X;
+        float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         int columns = wordWrap ? Math.Max(8, (int)((width - TEXT_PAD * 2.0f) / MathF.Max(1.0f, digit))) : int.MaxValue;
 
         for (int line = 0; line < count; line++)
@@ -441,7 +441,7 @@ public partial class CodeEditor
         if (paintedSkin is not { } skin || sticky.Count == 0)
             return false;
 
-        float lineHeight = skin.Font.LineHeight * paintedScale;
+        float lineHeight = FontOf(skin).LineHeight * paintedScale;
         UIRect area = TextArea(skin, paintedScale);
         if (!StickyBounds(area, lineHeight, sticky.Count).Contains(point))
             return false;
@@ -458,7 +458,7 @@ public partial class CodeEditor
             return false;
 
         UIRect area = TextArea(skin, paintedScale);
-        float digit = skin.Font.Measure("0", paintedScale, markup: false).X;
+        float digit = FontOf(skin).Measure("0", paintedScale, markup: false).X;
         if (point.X < area.Min.X - digit * GUTTER_GAP || point.X >= area.Min.X || !foldable.ContainsKey(at.Line))
             return false;
 

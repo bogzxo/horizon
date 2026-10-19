@@ -1,4 +1,5 @@
 using System.Numerics;
+using Horizon.Graphics;
 
 namespace Horizon.Rendering.Voxels;
 
@@ -160,11 +161,10 @@ public sealed class VoxelPalette
     {
         if (!File.Exists(atlasPath)) return;
 
-        using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(atlasPath);
+        var image = ImageFile.Load(atlasPath);
         if (image.Width != image.Height) return;
 
-        var rgba = new byte[image.Width * image.Height * 4];
-        image.CopyPixelDataTo(rgba);
+        var rgba = image.Pixels;
         AverageTiles(rgba, image.Width);
     }
 

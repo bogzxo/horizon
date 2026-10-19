@@ -122,13 +122,30 @@ public class SpriteBatch : GameObject
     /// <param name="shared">The textures in the first slots of every run, the ones of the run itself come after them.</param>
     public void Draw(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, Camera? camera = null, ReadOnlySpan<SpriteTexture> shared = default)
     {
+        if (BeginItems(items, runs, shared))
+            DrawItems(0, items.Length, camera);
+
+        EndItems();
+    }
+
+    /// <summary>
+    /// Sends items up the way <see cref="Draw(ReadOnlySpan{SpriteItem}, ReadOnlySpan{SpriteRun}, Camera?, ReadOnlySpan{SpriteTexture})"/>
+    /// does but draws none of them, they're drawn a stretch at a time with <see cref="DrawItems"/> and finished with
+    /// <see cref="EndItems"/>. For whoever has something else to draw in between (a UI with glass in it, which blurs
+    /// what is under a panel before the panel goes on). The items are sent once whatever is drawn of them, sending
+    /// every stretch on its own used up the regions of the buffer inside one frame and waited on the GPU for a second.
+    /// </summary>
+    /// <returns>Whether there is anything to draw, <see cref="EndItems"/> is called either way.</returns>
+    public bool BeginItems(ReadOnlySpan<SpriteItem> items, ReadOnlySpan<SpriteRun> runs, ReadOnlySpan<SpriteTexture> shared = default)
+    {
+        sentItems = 0;
         if (!Enabled || items.IsEmpty || Shader is null)
-            return;
+            return false;
 
         PrepareItems();
-        camera ??= CustomCamera ?? Engine.ActiveCamera;
 
         Span<SpriteItem> buffer = _itemMesh!.BeginItems(items.Length);
+        itemsBegun = true;
         if (!buffer.IsEmpty)
         {
             Span<uint> table = stackalloc uint[shared.Length + 2];
@@ -154,10 +171,35 @@ public class SpriteBatch : GameObject
 
             if (casters != 0) NoteCasters();
 
-            _itemMesh!.DrawItems(0, items.Length, Transform.ModelMatrix, camera);
+            sentItems = items.Length;
         }
 
-        _itemMesh!.EndItems();
+        return sentItems > 0;
+    }
+
+    // How many items BeginItems sent up, 0 while there are none to draw, and whether the mesh has a frame of them begun
+    private int sentItems;
+    private bool itemsBegun;
+
+    /// <summary>Draws a stretch of what <see cref="BeginItems"/> sent, from an item for so many, in the order they are in.</summary>
+    public void DrawItems(int first, int count, Camera? camera = null)
+    {
+        first = Math.Max(0, first);
+        count = Math.Min(count, sentItems - first);
+        if (count < 1 || _itemMesh is null)
+            return;
+
+        _itemMesh.DrawItems(first, count, Transform.ModelMatrix, camera ?? CustomCamera ?? Engine.ActiveCamera);
+    }
+
+    /// <summary>Finishes what <see cref="BeginItems"/> started.</summary>
+    public void EndItems()
+    {
+        if (itemsBegun)
+            _itemMesh?.EndItems();
+
+        itemsBegun = false;
+        sentItems = 0;
     }
 
     /// <summary>

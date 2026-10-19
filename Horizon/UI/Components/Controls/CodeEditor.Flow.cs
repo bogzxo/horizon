@@ -114,7 +114,7 @@ public partial class CodeEditor
             Vector2 shown = Flow(line, column + at, new Vector2(x - left, origin - top));
             list.Text(word, new Vector2(left + shown.X, origin - shown.Y), scale, color, markup: false);
 
-            x += skin.Font.Measure(word, scale, markup: false).X;
+            x += FontOf(skin).Measure(word, scale, markup: false).X;
             at = end;
         }
 

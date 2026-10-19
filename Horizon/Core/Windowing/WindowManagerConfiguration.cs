@@ -64,6 +64,13 @@ public readonly struct WindowManagerConfiguration
     public readonly bool CustomFrame { get; init; }
 
     /// <summary>
+    /// A picture for the window's corner and the taskbar, a .png (anything ImageSharp reads, which isn't an .ico), from
+    /// the exe's folder unless the path says where. Null for the system's own. A Mac takes its Dock icon from the app
+    /// bundle and ignores this.
+    /// </summary>
+    public readonly string? WindowIcon { get; init; }
+
+    /// <summary>
     /// What the window is run for. A game (the default) draws every frame the screen shows and ticks at its rate
     /// whatever is going on. An application (an editor, a tool) does what <see cref="Behaviour"/> says, which unless it
     /// says otherwise is all of what makes it cost next to nothing while nobody is using it.

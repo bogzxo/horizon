@@ -79,13 +79,55 @@ public sealed class UIFont
     /// <summary>Who to ask about the icons in a text. Without one, tags are just text.</summary>
     internal IUIIconSource? Icons { get; set; }
 
+    // The fonts made by Shared, by where they are from and their size
+    private static readonly Dictionary<(string Path, int EmSize, bool Terminal), UIFont> shared = [];
+
+    /// <summary>
+    /// The characters a terminal's font is built with on top of Latin-1, the box drawing and the blocks every program
+    /// with a screen of its own draws with (htop, lazygit, the HIDL ones), the shapes, the arrows, the dashes and quotes
+    /// and braille for the graphs btop draws. What the font hasn't got is left out.
+    /// </summary>
+    public static readonly (int From, int To)[] TerminalCharacters =
+        [(32, 126), (160, 255), (0x2010, 0x2027), (0x2030, 0x205E), (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2300, 0x23FF), (0x2500, 0x259F), (0x25A0, 0x25FF), (0x2600, 0x26FF), (0x2800, 0x28FF)];
+
+    /// <summary>
+    /// A font that isn't any skin's, made the first time it is asked for and handed out again after, a code editor's
+    /// font for code say. Where a texture can be made, which is the render thread or a tick. Null if it can't be read,
+    /// which has been logged, and is tried again the next time.
+    /// </summary>
+    public static UIFont? Shared(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM, bool terminal = false)
+    {
+        var key = (Path.GetFullPath(Path.Combine(directory, file)), emSize, terminal);
+        lock (shared)
+        {
+            if (shared.TryGetValue(key, out UIFont? known))
+                return known;
+
+            try
+            {
+                var made = new UIFont(directory, file, emSize, terminal ? TerminalCharacters : null);
+
+                // A field that couldn't be built (no device yet, say) is handed back but not kept, so the next ask builds it
+                if (!ReferenceEquals(made.Field.Texture, Horizon.Graphics.Texture.Invalid))
+                    shared[key] = made;
+                return made;
+            }
+            catch (Exception e)
+            {
+                Horizon.Logging.Log.Error($"[UIFont] '{Path.Combine(directory, file)}' couldn't be read: {e.Message}");
+                return null;
+            }
+        }
+    }
+
     /// <summary>
     /// Loads a font, TrueType or BMFont, as a distance field. Render thread.
     /// </summary>
     /// <param name="emSize">How many pixels to the em a TrueType font's metrics come out at, a scale of 1 draws it this big. A bitmap font is the size it was baked at.</param>
-    public UIFont(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM)
+    /// <param name="characters">Which characters it is built with, Latin-1 when nobody says (<see cref="TerminalCharacters"/> for a terminal's).</param>
+    public UIFont(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM, (int From, int To)[]? characters = null)
     {
-        Field = DistanceFieldFont.Load(directory, file, emSize);
+        Field = DistanceFieldFont.Load(directory, file, emSize, characters);
         glyphs = Field.Glyphs;
         kerning = Field.Kerning;
 

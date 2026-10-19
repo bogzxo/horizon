@@ -5,7 +5,9 @@ using Horizon.Core;
 using Horizon.Core.Components;
 using Horizon.Core.Threading;
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.Input;
+using Horizon.Rendering;
 using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Components;
@@ -112,8 +114,9 @@ public partial class UICompositor : GameComponent, IDisposable
     // Where the UI is drawn while it has effects that are on, rather than straight over the scene
     private readonly PostLayer layer = new();
 
-    // Counts the updates, every list is told which one it was painted in
+    // Counts the updates, every list is told which one it was painted in, and the time they've been painted for
     private int paintFrame;
+    private float paintClock;
 
     // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
     // through another camera the same list is another picture
@@ -300,6 +303,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public SpriteItem[] Items = new SpriteItem[256];
         public readonly List<UIDrawList.Run> Runs = [];
         public readonly List<TextureAtlas> Atlases = [];
+        public readonly List<UIGlassPane> Glass = [];
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
@@ -596,7 +600,9 @@ public partial class UICompositor : GameComponent, IDisposable
         pending = null;
         var (snapshot, screen, skin, dt) = paint;
 
-        back.Begin(skin, paintFrame, dt);
+        // One clock for both lists, see UIDrawList.Begin
+        paintClock = (paintClock + dt) % 3600.0f;
+        back.Begin(skin, paintFrame, dt, paintClock);
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
@@ -693,6 +699,10 @@ public partial class UICompositor : GameComponent, IDisposable
             foreach (var atlas in front.Atlases)
                 into.Atlases.Add(atlas);
 
+            into.Glass.Clear();
+            foreach (var pane in front.GlassPanes)
+                into.Glass.Add(pane);
+
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
             into.Incomplete = front.Incomplete;
@@ -758,17 +768,36 @@ public partial class UICompositor : GameComponent, IDisposable
                     : b[i];
             }
 
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases));
+            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases), BlendGlass(before, after, alpha));
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases));
+            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Glass));
         }
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
         pictureCurrent = false;
         refreshedAt = renderedAt;
         return true;
+    }
+
+    // Where the panes of glass of two lists blended are put together
+    private readonly List<UIGlassPane> blendedGlass = [];
+
+    /// <summary>
+    /// Helper method for the panes of glass of a frame between two ticks. Blended one with the other when the two lists
+    /// have as many, so a dialog that slides in has its glass slide with it, and the newer list's as they are otherwise.
+    /// </summary>
+    private ReadOnlySpan<UIGlassPane> BlendGlass(CapturedList before, CapturedList after, float alpha)
+    {
+        if (before.Glass.Count != after.Glass.Count)
+            return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Glass);
+
+        blendedGlass.Clear();
+        for (int i = 0; i < after.Glass.Count; i++)
+            blendedGlass.Add(UIGlassPane.Blend(before.Glass[i], after.Glass[i], alpha));
+
+        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(blendedGlass);
     }
 
     // Where every quad of the older list is, by who painted it as which of its quads, for lists that aren't the same quads
@@ -1007,16 +1036,176 @@ public partial class UICompositor : GameComponent, IDisposable
         // Onto its own layer, through its effects if it has any that are on, and kept there to be laid over
         // again. Straight over the scene where there is no layer to be had (inside of a renderer that lights
         // its picture, or a UI that asked not to be kept)
+        Renderer2D? output = Renderer2D.Current;
         bool layered = layer.Begin(Retained);
-        renderer.Draw(viewportCamera);
+
+        if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+        {
+            renderer.Draw(viewportCamera);
+            GlassDrawn = default;
+        }
+        else
+            DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
 
         if (layered)
             layer.End(dt);
 
-        // Only a picture that made it onto the layer is there to be shown again
-        pictureCurrent = layered;
+        // Only a picture that made it onto the layer is there to be shown again. One with glass in it shows what was
+        // behind the glass, which a scene that moves under it doesn't keep still for, see GlassKeepsPicture
+        pictureCurrent = layered && (renderer.Glass.IsEmpty || GlassKeepsPicture);
         (pictureView, pictureProjection) = (viewportCamera.View, viewportCamera.Projection);
     }
+
+    /// <summary>
+    /// Whether a UI with glass in it (see <see cref="UIGlass"/>) keeps the picture it drew and lays that over for as
+    /// long as nothing in the UI changes, the way it does without (see <see cref="Retained"/>). Off unless asked for,
+    /// the glass then shows the scene as it was when the UI last changed, which is right for an application whose
+    /// UI is all there is (Hex), and wrong for a menu over a game that goes on moving under it.
+    /// </summary>
+    public bool GlassKeepsPicture { get; set; }
+
+    /// <summary>
+    /// What a dialog, a menu that drops down and anything else that pops up over the rest of this UI sits on, null
+    /// for nothing (a solid panel, as they always were). See <see cref="UIGlass"/>.
+    /// </summary>
+    public UIGlass? PopupGlass { get; set; }
+
+    // What puts the glass down, made the first time there is any
+    private UIGlassPass? glassPass;
+
+    /// <summary>
+    /// How many panes of glass the UI put down the last time it was drawn anew, and how many blurs that took. For a test
+    /// that wants to know the glass is there, read from anywhere.
+    /// </summary>
+    public (int Panes, int Blurs) GlassDrawn { get; private set; }
+
+    /// <summary>
+    /// Helper method to draw a list with glass in it, in goes. A stretch of quads, a pane, the next stretch, and so on,
+    /// every pane blurring what was drawn before it.
+    /// </summary>
+    /// <param name="output">What the frame under the UI is drawn into, a renderer or (null) the window.</param>
+    /// <param name="picture">The layer the UI is drawn onto, null for straight over the frame.</param>
+    private void DrawGlassy(Renderer2D? output, RenderTarget? picture)
+    {
+        glassPass ??= new UIGlassPass();
+        glassPass.Reset();
+
+        ReadOnlySpan<UIGlassPane> panes = renderer.Glass;
+        ReadOnlySpan<SpriteItem> items = renderer.Uploaded;
+
+        bool sent = renderer.Begin();
+        int from = 0, blurredBy = -1, blurs = 0;
+
+        // What is under every pane, for keeping its blur from one frame to the next. Only when what is behind the UI
+        // holds still (GlassKeepsPicture), the UI can't see a scene that moves under it
+        ulong under = GlassKeepsPicture ? Seed(output) : 0;
+        int hashed = 0;
+
+        for (int i = 0; i < panes.Length; i++)
+        {
+            int start = Math.Clamp(panes[i].Start, from, items.Length);
+            if (sent)
+                renderer.DrawRange(from, start, viewportCamera);
+
+            if (under != 0)
+            {
+                under = Mix(under, items[hashed..start]);
+                under = Mix(under, panes[i]);
+                hashed = start;
+            }
+
+            bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, i);
+            glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
+            if (fresh)
+            {
+                blurredBy = i;
+                blurs++;
+            }
+
+            from = start;
+        }
+
+        if (sent)
+            renderer.DrawRange(from, items.Length, viewportCamera);
+
+        renderer.End();
+        GlassDrawn = (panes.Length, blurs);
+    }
+
+    /// <summary>
+    /// Helper method to say whether a pane can show the blur an earlier one made, which it can when it smears as far and
+    /// nothing drawn since that blur (quads or panes) is anywhere near it. Panes side by side (a side bar and the panel
+    /// under the editor) are one copy and one blur then, not one each.
+    /// </summary>
+    private static bool SameBlur(ReadOnlySpan<UIGlassPane> panes, ReadOnlySpan<SpriteItem> items, int blurredBy, int pane)
+    {
+        UIGlassPane at = panes[pane];
+        if (at.Blur != panes[blurredBy].Blur)
+            return false;
+
+        // As far round it as the blur reaches, what is there is smeared into it
+        Vector2 reach = new(at.Blur * 2.0f);
+        Vector2 min = Vector2.Min(at.Min, at.Max) - reach, max = Vector2.Max(at.Min, at.Max) + reach;
+
+        for (int i = blurredBy; i < pane; i++)
+        {
+            if (Overlaps(Vector2.Min(panes[i].Min, panes[i].Max), Vector2.Max(panes[i].Min, panes[i].Max), min, max))
+                return false;
+        }
+
+        int end = Math.Min(at.Start, items.Length);
+        for (int i = Math.Max(0, panes[blurredBy].Start); i < end; i++)
+        {
+            ref readonly SpriteItem item = ref items[i];
+            Vector2 a = item.Origin, b = item.Origin + item.AxisX, c = item.Origin + item.AxisY, d = b + item.AxisY;
+            if (Overlaps(Vector2.Min(Vector2.Min(a, b), Vector2.Min(c, d)), Vector2.Max(Vector2.Max(a, b), Vector2.Max(c, d)), min, max))
+                return false;
+        }
+
+        return true;
+    }
+
+    // Bumped by ForgetGlass, so nothing that was kept matches any more
+    private ulong glassGeneration = 1;
+
+    /// <summary>
+    /// Has every pane of glass blur what is behind it again on the next frame, for an application whose UI keeps its
+    /// glass (<see cref="GlassKeepsPicture"/>) and that knows something behind the UI changed that the UI can't see.
+    /// </summary>
+    public void ForgetGlass() => glassGeneration++;
+
+    // Helper method for what every hash of what is under the glass starts from, how big the picture is and which
+    // generation of it, see ForgetGlass
+    private ulong Seed(Renderer2D? output)
+    {
+        Vector2 size = Renderer2D.OutputSize(output);
+        return Mix(Mix(0x9E3779B97F4A7C15UL, glassGeneration), ((ulong)(uint)size.X << 32) | (uint)size.Y) | 1;
+    }
+
+    private static ulong Mix(ulong hash, ulong value) => (hash ^ value) * 0x100000001B3UL + (hash >> 29);
+
+    // Helper method to fold quads into a hash, as the numbers they are, eight bytes at a time
+    private static ulong Mix(ulong hash, ReadOnlySpan<SpriteItem> items)
+    {
+        ReadOnlySpan<byte> bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(items);
+        ReadOnlySpan<ulong> words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ulong>(bytes);
+        foreach (ulong word in words)
+            hash = Mix(hash, word);
+        for (int i = words.Length * 8; i < bytes.Length; i++)
+            hash = Mix(hash, bytes[i]);
+        return hash | 1;
+    }
+
+    private static ulong Mix(ulong hash, in UIGlassPane pane)
+    {
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Min.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Min.Y));
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Max.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Max.Y));
+        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Blur) << 32 | BitConverter.SingleToUInt32Bits(pane.Opacity));
+        return hash | 1;
+    }
+
+    private static bool Overlaps(Vector2 aMin, Vector2 aMax, Vector2 bMin, Vector2 bMax) =>
+        aMin.X < bMax.X && aMax.X > bMin.X && aMin.Y < bMax.Y && aMax.Y > bMin.Y;
 
     /// <summary>
     /// Frees what the UI has on the GPU, the layer it is drawn onto for its effects, along with the effects.
@@ -1025,6 +1214,8 @@ public partial class UICompositor : GameComponent, IDisposable
     public void Dispose()
     {
         layer.Dispose();
+        glassPass?.Dispose();
+        glassPass = null;
 
         renderer.Clear();
         Skin = null;

@@ -71,7 +71,8 @@ public sealed class TileMapTile
 public readonly record struct TileMapCell(TileMapLayer Layer, int X, int Y, TileMapTile Tile, TileFlip Flip, Vector2 Centre);
 
 /// <summary>A rectangle of the world, by its bottom left corner and its size.</summary>
-public readonly record struct TileMapBox(Vector2 Min, Vector2 Size)
+/// <param name="OneWay">Whether it is a platform to be landed on from above and passed through every other way, see <see cref="TileMapLayer.IsOneWay"/>.</param>
+public readonly record struct TileMapBox(Vector2 Min, Vector2 Size, bool OneWay = false)
 {
     public Vector2 Max => Min + Size;
     public Vector2 Centre => Min + Size / 2.0f;
@@ -84,6 +85,7 @@ public readonly record struct TileMapBox(Vector2 Min, Vector2 Size)
 /// A few custom properties of a layer mean something to the map (their names don't mind their case).
 /// <list type="bullet">
 /// <item><c>IsCollidable</c> (bool) makes its tiles solid, see <see cref="TileMap.BuildColliders"/>.</item>
+/// <item><c>OneWay</c> (bool) makes the solid tiles platforms, landed on from above and jumped up through, see <see cref="IsOneWay"/>.</item>
 /// <item><c>CastsShadows</c> (bool) has its tiles block light. Only a layer that says so does, the colliders of a map are usually not what the light should see.</item>
 /// <item><c>BlocksLight</c> (bool) is for an object layer, every object on it (its box, a tile object the size it is drawn at) blocks light, see <see cref="TileMap.ShadowCasters"/>. For the things of a map that aren't tiles, a pillar put down as an object, a crate.</item>
 /// <item><c>Emissive</c> (float, 0 to 1) is how much of it shows no matter the light. A sky is 1.</item>
@@ -113,6 +115,7 @@ public sealed class TileMapLayer
         };
 
         IsCollidable = properties.GetBool("IsCollidable", properties.GetBool("Collidable"));
+        IsOneWay = properties.GetBool("OneWay");
         CastsShadows = properties.GetBool("CastsShadows");
         BlocksLight = properties.GetBool("BlocksLight");
         Emissive = Math.Clamp(properties.GetFloat("Emissive"), 0.0f, 1.0f);
@@ -163,6 +166,13 @@ public sealed class TileMapLayer
     public bool IsForeground { get; set; }
 
     public bool IsCollidable { get; set; }
+
+    /// <summary>
+    /// Whether the solid tiles of the layer are platforms to be jumped up through and landed on rather than walls,
+    /// <c>OneWay</c> in Tiled next to <c>IsCollidable</c>. Only means anything on a collidable tile layer.
+    /// </summary>
+    public bool IsOneWay { get; set; }
+
     public bool CastsShadows { get; set; }
 
     /// <summary>Whether the objects of the layer block light, see <see cref="TileMap.ShadowCasters"/>. Only means anything on an object layer.</summary>

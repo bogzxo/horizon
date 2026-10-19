@@ -2,6 +2,7 @@ using Horizon.Logging;
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using Horizon.Graphics;
 
 using Horizon.Core;
 
@@ -669,6 +670,13 @@ public class SceneManager : Entity
                 if (ReferenceEquals(_preloaded, incoming)) _preloaded = null;
             }
 
+            // A persistent scene that was set up before and left is set again as it was, not set up a second time
+            // (Hex swapping between its editor and its terminal in the one window, each kept whole while the other's up)
+            bool returning = !ready && incoming.Persistent && incoming.IsInitialized;
+            ready |= returning;
+            if (returning)
+                incoming.OnReturned();
+
             if (back)
             {
                 incoming.IsSuspended = false;
@@ -701,9 +709,29 @@ public class SceneManager : Entity
 
         DisposeRetired();
 
+        // Setting a scene up makes a heap of garbage (every picture decoded, every file read, the old scene) and
+        // then a game runs without making any, so the collector never comes round to it and the heap sits at the
+        // size of the load for the rest of the run. A fight was 291 MB of heap with 80 MB of it alive. Taken here,
+        // under the cover, with the simulation standing still, and given back to the machine
+        if (incoming is not null && CollectAfterChange)
+        {
+            long collecting = System.Diagnostics.Stopwatch.GetTimestamp();
+            long before = GC.GetTotalMemory(false);
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            Log.Info($"[SceneManager] Collected {(before - GC.GetTotalMemory(false)) / (1024.0 * 1024.0):0} MB of setting up in {System.Diagnostics.Stopwatch.GetElapsedTime(collecting).TotalMilliseconds:0} ms.");
+        }
+
         // Last, so the time all of the above took is not time the new scene spends half uncovered
         Uncover(incoming is null ? null : transition);
     }
+
+    /// <summary>
+    /// Whether the garbage of setting a scene up is collected the moment it is up, before the cover comes off (see
+    /// <see cref="Change"/>). On, which is what every game wants, a collection of a few tens of milliseconds under
+    /// the cover against a heap three times its live size for the rest of the run. Off for a scene that keeps a
+    /// scene underneath and is swapped for it every few seconds.
+    /// </summary>
+    public bool CollectAfterChange { get; set; } = true;
 
     /// <summary>
     /// Helper method to set a scene up until it is ready to be shown, with everything it makes noted as its own.

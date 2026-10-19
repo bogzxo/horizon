@@ -199,6 +199,21 @@ public abstract partial class UIComponent
     protected internal virtual void PaintPopup(UIDrawList list)
     { }
 
+    /// <summary>
+    /// Called when what the component had open was put away, however it was (picked from, a press somewhere else, by
+    /// hand), for one that keeps what it was showing to paint it going (see <see cref="PaintClosing"/>).
+    /// </summary>
+    protected internal virtual void PopupClosed()
+    { }
+
+    /// <summary>
+    /// Draws what the component had open on its way out, after it was put away, where <see cref="PaintPopup"/> drew it
+    /// (see <see cref="UIDrawList.BeginExit"/>). Nothing that's painted here gets the pointer.
+    /// </summary>
+    /// <param name="closedAt">When it started going, for the exit.</param>
+    /// <returns>Whether it's still going, false once there's nothing left to paint.</returns>
+    protected internal virtual bool PaintClosing(UIDrawList list, ref float closedAt) => false;
+
     /// <summary>Whether a point is on what the component has open, in which case the pointer is this component's.</summary>
     protected internal virtual bool PopupContains(Vector2 point) => false;
 
@@ -275,6 +290,17 @@ public abstract partial class UIComponent
     /// editor of code wants for indenting.
     /// </summary>
     protected internal virtual bool KeepsTab => false;
+
+    /// <summary>
+    /// Whether the keys come to it as themselves through <see cref="OnKeyDown"/>, with the modifiers, rather than as the
+    /// characters and editing codes of <see cref="OnTextInput"/>. A terminal, which sends them on to a program. Escape
+    /// and tab are its own then too, the compositor leaves them alone.
+    /// </summary>
+    protected internal virtual bool TakesRawKeys => false;
+
+    /// <summary>A key pressed (or held) while this has the focus and takes its keys raw, see <see cref="TakesRawKeys"/>.</summary>
+    protected internal virtual void OnKeyDown(in UIKeyPress press)
+    { }
 
     /// <summary>
     /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the

@@ -70,6 +70,19 @@ public class ScrollPanel : Panel
             Offset += MathF.Min(content.Min.Y - target.Min.Y, content.Max.Y - target.Max.Y);
     }
 
+    /// <summary>
+    /// Scrolls a component inside the panel to the top of what's in view, or as near as the end of the content lets it,
+    /// for a section gone to by its name (where <see cref="ScrollIntoView"/> stops as soon as it shows, at the bottom).
+    /// </summary>
+    public void ScrollToTop(UIComponent component)
+    {
+        UIRect content = Bounds.Shrink(Padding);
+        if (content.IsEmpty || component.Bounds.IsEmpty)
+            return;
+
+        Offset = Math.Clamp(Offset + (content.Max.Y - component.Bounds.Max.Y), 0.0f, MaxOffset);
+    }
+
     protected override void Update(float dt)
     {
         base.Update(dt);

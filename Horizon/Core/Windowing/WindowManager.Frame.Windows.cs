@@ -165,6 +165,11 @@ public partial class WindowManager
             case WM_NCLBUTTONUP when wParam == HTMAXBUTTON:
                 ToClient(window, WM_LBUTTONUP, 0, lParam);
                 return 0;
+
+            // A key registered for everywhere (WindowManager.Quake)
+            case WM_HOTKEY:
+                HotKeyHeard((int)wParam);
+                return 0;
         }
 
         return CallWindowProc(glfwProcedure, window, message, wParam, lParam);

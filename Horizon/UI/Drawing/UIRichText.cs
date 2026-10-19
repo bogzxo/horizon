@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Numerics;
 
 using Horizon.Rendering;
@@ -51,6 +51,10 @@ public sealed class UIRichText
         Highlight,
         Text,
         Dim,
+        Link,
+        Error,
+        Warning,
+        Success,
         Field,
         Border
     }
@@ -594,7 +598,7 @@ public sealed class UIRichText
                         continue;
                     }
 
-                    // [a link](where), the words underlined in the accent colour
+                    // [a link](where), the words underlined in the link colour (the accent unless the theme says)
                     if (inline && close + 1 < end && source[close + 1] == '(')
                     {
                         int closeUrl = source.IndexOf(')', close + 1);
@@ -606,7 +610,7 @@ public sealed class UIRichText
                             State outside = state;
                             state.Link = links.Count - 1;
                             state.Underline = true;
-                            state.Shade = Shade.Accent;
+                            state.Shade = Shade.Link;
 
                             LayOutInline(i + 1, close - i - 1, inline: true);
 
@@ -748,6 +752,10 @@ public sealed class UIRichText
             case "highlight": shade = Shade.Highlight; return true;
             case "text": shade = Shade.Text; return true;
             case "dim": shade = Shade.Dim; return true;
+            case "link": shade = Shade.Link; return true;
+            case "error": shade = Shade.Error; return true;
+            case "warning": shade = Shade.Warning; return true;
+            case "success": shade = Shade.Success; return true;
             case "red": colour = new Vector4(0.95f, 0.3f, 0.28f, 1.0f); return true;
             case "green": colour = new Vector4(0.36f, 0.85f, 0.4f, 1.0f); return true;
             case "blue": colour = new Vector4(0.35f, 0.58f, 1.0f, 1.0f); return true;
@@ -1084,7 +1092,11 @@ public sealed class UIRichText
             Shade.Accent => skin.AccentColor,
             Shade.Highlight => skin.HighlightColor,
             Shade.Text => skin.TextColor,
-            Shade.Dim => skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.55f),
+            Shade.Dim => skin.DimTextColor,
+            Shade.Link => skin.LinkColor,
+            Shade.Error => skin.ErrorColor,
+            Shade.Warning => skin.WarningColor,
+            Shade.Success => skin.SuccessColor,
             Shade.Field => skin.FieldColor.W > 0.0f ? skin.FieldColor : new Vector4(0.0f, 0.0f, 0.0f, 0.3f),
             Shade.Border => skin.BorderColor,
             _ => inherited

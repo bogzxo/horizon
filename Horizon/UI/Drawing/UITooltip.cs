@@ -16,7 +16,7 @@ internal static class UITooltip
     // How wide a tooltip is at most before its text wraps, and the room around the text
     private const float MAX_WIDTH = 320.0f;
     private const float MAX_RICH_WIDTH = 520.0f;
-    private const float PADDING = 8.0f;
+    private const float PADDING = 10.0f;
 
     // How far from the pointer the box sits, so the pointer doesn't cover its first word
     private static readonly Vector2 Offset = new(14.0f, -22.0f);
@@ -27,10 +27,13 @@ internal static class UITooltip
     /// <param name="point">Where the pointer is, in the module's units.</param>
     /// <param name="lines">Scratch for cutting the text into lines, reused from one frame to the next.</param>
     /// <param name="rich">Where a tooltip that is markdown is laid out, null for one that is plain words.</param>
-    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich = null)
+    /// <param name="openedAt">When it was first painted, for its entrance, less than 0 for not yet.</param>
+    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich, ref float openedAt)
     {
         var skin = list.Skin;
-        float scale = skin.TextScale * 0.85f;
+
+        // The size of what the skin writes, a tooltip in small print was the hardest thing in the UI to read
+        float scale = skin.TextScale;
         text = module.Compositor.Resolve(text);
 
         Vector2 size;
@@ -55,15 +58,16 @@ internal static class UITooltip
 
         var box = new UIRect(new Vector2(corner.X, corner.Y - size.Y), new Vector2(corner.X + size.X, corner.Y));
 
-        list.Box(box, skin.PanelColor with { W = 1.0f });
-        list.Frame(box, 1.0f, skin.AccentColor);
+        // Faded in out of the corner it hangs from, on what every popup sits on
+        bool entering = list.BeginEntrance(ref openedAt, new Vector2(box.Min.X, box.Max.Y), new Vector2(0.0f, 4.0f));
+        list.Popup(box, module.Compositor.PopupGlass);
 
         if (rich is not null)
-        {
             rich.Paint(list, box.Shrink(new UIEdges(PADDING)), Origin.TopLeft, skin.TextColor);
-            return;
-        }
+        else
+            list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), box.Shrink(new UIEdges(PADDING)), Origin.TopLeft, scale, skin.TextColor, markup: false);
 
-        list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), box.Shrink(new UIEdges(PADDING)), Origin.TopLeft, scale, skin.TextColor, markup: false);
+        if (entering)
+            list.EndEntrance();
     }
 }

@@ -229,8 +229,8 @@ public class TabPanel : UIComponent
             UIRect tab = TabBounds(i);
             bool open = i == Selected;
 
-            if (!open && IsHovered && tab.Contains(pointer))
-                list.Box(tab, skin.HoverColor);
+            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            list.Box(tab, !open && IsHovered && tab.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             list.Text(TitleOf(i), tab, Origin.Center, scale, open ? accent : dim);
 

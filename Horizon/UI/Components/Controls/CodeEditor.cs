@@ -72,28 +72,37 @@ public partial class CodeEditor : UIComponent
     private int completionIndex, completionTop, completionStart;
 
     // The parts of what is drawn that are counted apart, see UIDrawList.BeginPart. Lines count from 0 on their own
-    private const int PART_BACK = -1, PART_OVERLAY = -2, PART_CARET = -3, PART_BAR = -4, PART_SWATCHES = -5, PART_BACKDROP = -6, PART_STICKY = -7, PART_SIGNATURE = -8, PART_GUTTER = 1 << 20;
+    private const int PART_BACK = -1, PART_OVERLAY = -2, PART_CARET = -3, PART_BAR = -4, PART_SWATCHES = -5, PART_BACKDROP = -6, PART_STICKY = -7, PART_SIGNATURE = -8, PART_ART = -9, PART_GUTTER = 1 << 20;
 
     private readonly UITextDocument document = new();
 
     // The colouring of every line, and the colours written in it. Worked out for the whole file, 1.7 ms and a megabyte for
     // two thousand lines, on a thread of the pool once the text has been left alone RECOLOUR_DELAY (a new text straight
-    // away, on the editor's). Until it comes back a line that isn't what was coloured is coloured on its own, from the
-    // depth of brackets the last colouring found at its start (FreshColours), it was drawn plain for a tenth of a second
+    // away, on the editor's). Until it comes back a line that isn't what was coloured is coloured on its own, from where
+    // the last colouring found it starts (FreshColours), it was drawn plain for a tenth of a second. What colours it is
+    // the highlighter, HIDL unless the file is another language (CodeLanguages)
     private const float RECOLOUR_DELAY = 0.05f;
-    private List<HidlSpan>[] spans = [[]];
+    private List<SyntaxSpan>[] spans = [[]];
     private string[] colouredLines = [];
-    private int[] lineDepths = [0];
-    private bool[] lineClean = [true];
+    private CodeLineStart[] lineStarts = [CodeLineStart.First];
+    private ICodeHighlighter highlighter = HidlHighlighter.Instance;
     private readonly List<HidlSwatch> swatches = [];
     private int coloured = -1, changeSeen = -1;
     private float sinceChange;
     private bool recolourNow = true;
 
     // The colouring going on off the editor's thread, and the lines coloured on their own while it does, by their text
-    private sealed record Colouring(int Version, List<HidlSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, int[] Depths, bool[] Clean);
+    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art);
+
+    // The art named in the code, found with the colours, where the last paint put each of it (nothing for what it couldn't
+    // draw), which of it the pointer is on, and where the pictures named in it are on disk by the name, asked once a name
+    private readonly List<HidlArt> art = [];
+    private UIRect[] artBoxes = [];
+    private int hoveredArt = -1;
+    private readonly Dictionary<string, string?> artFiles = new(StringComparer.Ordinal);
+    private Func<string, string?>? artPath;
     private Task<Colouring>? colouring;
-    private readonly Dictionary<string, List<HidlSpan>> fresh = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<SyntaxSpan>> fresh = new(StringComparer.Ordinal);
     private const int MAX_FRESH = 256;
 
     // The parse going on off the editor's thread, what it found and for which version of the text
@@ -173,8 +182,27 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether the code is parsed after every change and what the parser doesn't like is underlined.</summary>
     public bool CheckSyntax { get; set; } = true;
 
-    /// <summary>Whether the code is coloured as HIDL. Off for any other text, which is all one colour then.</summary>
+    /// <summary>Whether the code is coloured as code. Off for plain text, which is all one colour then.</summary>
     public bool Highlight { get; set; } = true;
+
+    /// <summary>
+    /// What colours the code, HIDL through its grammar and its lexer unless told another language
+    /// (<see cref="CodeLanguages.ForFile"/>). Null is plain text, the same as <see cref="Highlight"/> off.
+    /// </summary>
+    public ICodeHighlighter? Highlighter
+    {
+        get => Highlight ? highlighter : null;
+        set
+        {
+            Highlight = value is not null;
+            if (value is not null && !ReferenceEquals(value, highlighter))
+            {
+                highlighter = value;
+                coloured = -1;
+                recolourNow = true;
+            }
+        }
+    }
 
     /// <summary>
     /// What there is to complete at the caret, asked as it is typed (a word started) and with control and space. Null
@@ -182,6 +210,12 @@ public partial class CodeEditor : UIComponent
     /// narrowed down to what matches what is typed between its start and the caret, as the typing goes on.
     /// </summary>
     public Func<CodeEditor, UICompletionRequest?>? CompletionSource { get; set; }
+
+    /// <summary>
+    /// Whether the last asking of <see cref="CompletionSource"/> was for something typed rather than asked for (control
+    /// and space), for a source that answers later to open the list again the same way (<see cref="Complete"/>).
+    /// </summary>
+    public bool CompletionTyped { get; private set; }
 
     /// <summary>Whether the list of what can be completed is open.</summary>
     public bool CompletionOpen => IsPopupOpen;
@@ -239,6 +273,71 @@ public partial class CodeEditor : UIComponent
     /// <summary>The colours written in the code (color: vec(...)), each with a swatch at the end of its line.</summary>
     public IReadOnlyList<HidlSwatch> Swatches => swatches;
 
+    /// <summary>
+    /// What the code at a place was last coloured as, for a test. Null for a line the colours haven't caught up with yet,
+    /// and a plain name for a place on a coloured line that nothing was said about (whitespace).
+    /// </summary>
+    public SyntaxKind? KindAt(int line, int column)
+    {
+        if (line < 0 || line >= spans.Length || line >= colouredLines.Length || colouredLines[line] != document.LineAt(line))
+            return null;
+
+        foreach (SyntaxSpan span in spans[line])
+        {
+            if (span.Start <= column && column < span.Start + span.Length)
+                return span.Kind;
+        }
+
+        return SyntaxKind.Name;
+    }
+
+    /// <summary>
+    /// The art named in the code, Codicons (<c>$(play)</c>, <c>icon: "play"</c>), the skin's icons (<c>[icon:pad_a]</c>) and
+    /// sprites (<c>sprite: "button"</c>), and pictures (a text that is the path of a .png or an Aseprite file), each drawn
+    /// small at the end of its line and big while the pointer is on it.
+    /// </summary>
+    public IReadOnlyList<HidlArt> Art => art;
+
+    /// <summary>Whether the art named in the code is drawn at the end of its line.</summary>
+    public bool ShowArt { get; set; } = true;
+
+    /// <summary>
+    /// Where a picture named in the code is, a path that can be opened, or null for nowhere. Asked once for every name
+    /// (until it is set again), from the editor's thread. Null to take the names as they are, from the working folder,
+    /// which is how a layout names its pictures.
+    /// </summary>
+    public Func<string, string?>? ArtPath
+    {
+        get => artPath;
+        set
+        {
+            artPath = value;
+            artFiles.Clear();
+        }
+    }
+
+    /// <summary>
+    /// The skin the icons and sprites the code names are looked for in first, the skin of the game or the layout being
+    /// written rather than the one the editor wears (an editor's flat skin has no gamepad buttons). Asked every paint, so
+    /// it follows whatever the program changes it to. Null, or null coming back, for the editor's own alone.
+    /// </summary>
+    public Func<UISkin?>? ArtSkin { get; set; }
+
+    /// <summary>Which of <see cref="Art"/> the pointer is on, -1 for none.</summary>
+    public int HoveredArt => hoveredArt;
+
+    /// <summary>Where the last paint drew a piece of <see cref="Art"/>, nothing for one it had no picture of.</summary>
+    public UIRect ArtBounds(int index) => index >= 0 && index < artBoxes.Length ? artBoxes[index] : default;
+
+    /// <summary>
+    /// The font the code is written in, null for the skin's. Everything the editor writes is in it, the numbers down the
+    /// side and the list of what can be completed as well, the rest of the UI keeps the skin's (see UIDrawList.PushFont).
+    /// </summary>
+    public UIFont? Font { get; set; }
+
+    // The font the code is measured and written in
+    private UIFont FontOf(UISkin skin) => Font ?? skin.Font;
+
     /// <summary>Whether guides are drawn down the indentation.</summary>
     public bool IndentGuides { get; set; } = true;
 
@@ -248,10 +347,13 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public Horizon.Graphics.Texture? Backdrop { get; set; }
 
-    /// <summary>How big the picture is drawn against its pixels.</summary>
-    public float BackdropScale { get; set; } = 1.0f;
+    /// <summary>How tall the picture is drawn, as a share of the window's height, so it keeps its size against the window as that's resized.</summary>
+    public float BackdropScale { get; set; } = 0.5f;
 
-    /// <summary>How far the picture is from the bottom right corner, along to the left and up.</summary>
+    /// <summary>
+    /// How far the picture is from the bottom right corner, along to the left and up, as shares of the window's width
+    /// and height.
+    /// </summary>
     public Vector2 BackdropOffset { get; set; }
 
     /// <summary>How much of the picture shows through, the code is written over it.</summary>
@@ -275,10 +377,18 @@ public partial class CodeEditor : UIComponent
     public List<UIWrapArea> WrapAreas { get; } = [];
 
     /// <summary>Where the <see cref="Backdrop"/> is drawn in the text area, its bottom right corner moved by the offset.</summary>
-    private UIRect BackdropBounds(UIRect area, Horizon.Graphics.Texture picture)
+    private UIRect BackdropBounds(UIRect area, Horizon.Graphics.Texture picture) =>
+        PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset);
+
+    /// <summary>
+    /// Where a backdrop goes in an area, its bottom right corner moved in by the offset, the size and the offset both
+    /// shares of the window (its height for the size, the picture keeping its shape) rather than of the picture's pixels.
+    /// </summary>
+    internal static UIRect PlaceBackdrop(UIRect area, UIRect window, Horizon.Graphics.Texture picture, float scale, Vector2 offset)
     {
-        Vector2 drawn = new Vector2(picture.Width, picture.Height) * BackdropScale;
-        Vector2 corner = new(area.Max.X - BackdropOffset.X, area.Min.Y + BackdropOffset.Y);
+        float height = window.Height * scale;
+        Vector2 drawn = new(picture.Height > 0 ? height * picture.Width / picture.Height : 0.0f, height);
+        Vector2 corner = new(area.Max.X - offset.X * window.Width, area.Min.Y + offset.Y * window.Height);
         return new UIRect(corner - new Vector2(drawn.X, 0.0f), corner + new Vector2(0.0f, drawn.Y));
     }
 
@@ -287,6 +397,21 @@ public partial class CodeEditor : UIComponent
     /// keys has them can be seen (VS Code's focused editor group).
     /// </summary>
     public bool FocusLine { get; set; }
+
+    /// <summary>
+    /// The lines with a breakpoint on them, a red dot each in the gutter where the marks go. The program keeps the set
+    /// (a debugger's), the editor only shows it. Null for none.
+    /// </summary>
+    public IReadOnlySet<int>? Breakpoints { get; set; }
+
+    /// <summary>
+    /// A press in the gutter's strip for the marks, given the line pressed, a breakpoint put down or taken up. Set, a dot
+    /// shows faintly under the pointer there. Null and a press in the gutter selects the line, as it always did.
+    /// </summary>
+    public Action<int>? OnGutterPressed { get; set; }
+
+    /// <summary>The line a debugger stopped on, lit right across and an arrow in the gutter, -1 for none.</summary>
+    public int ExecutionLine { get; set; } = -1;
 
     /// <summary>Every place the word under the caret is, which are lit faintly.</summary>
     public IReadOnlyList<UITextPosition> Occurrences => occurrences;
@@ -449,27 +574,27 @@ public partial class CodeEditor : UIComponent
         int count = document.LineCount, digits = 1;
         while ((count /= 10) > 0) digits++;
         // And the room of an icon in front of them, for a line with something wrong on it
-        return skin.Font.Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(skin.Font.LineHeight * scale * 0.9f);
+        return FontOf(skin).Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(FontOf(skin).LineHeight * scale * 0.9f);
     }
 
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
-    private static float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
+    private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
     {
         float width = 0.0f;
         int tab;
         while ((tab = text.IndexOf('\t')) >= 0)
         {
-            width += skin.Font.Measure(text[..tab], scale, markup: false).X + TabWidth(skin, scale);
+            width += FontOf(skin).Measure(text[..tab], scale, markup: false).X + TabWidth(skin, scale);
             text = text[(tab + 1)..];
         }
 
-        return width + skin.Font.Measure(text, scale, markup: false).X;
+        return width + FontOf(skin).Measure(text, scale, markup: false).X;
     }
 
-    private static float TabWidth(UISkin skin, float scale) => skin.Font.Measure(" ", scale, markup: false).X * TAB_SPACES;
+    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TAB_SPACES;
 
     /// <summary>Draws a piece of a line, leaving the room of a tab where there is one.</summary>
-    private static float Draw(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color)
+    private float Draw(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color)
     {
         int tab;
         while ((tab = text.IndexOf('\t')) >= 0)
@@ -477,7 +602,7 @@ public partial class CodeEditor : UIComponent
             if (tab > 0)
             {
                 list.Text(text[..tab], new Vector2(x, top), scale, color, markup: false);
-                x += skin.Font.Measure(text[..tab], scale, markup: false).X;
+                x += FontOf(skin).Measure(text[..tab], scale, markup: false).X;
             }
 
             x += TabWidth(skin, scale);
@@ -487,7 +612,7 @@ public partial class CodeEditor : UIComponent
         if (!text.IsEmpty)
         {
             list.Text(text, new Vector2(x, top), scale, color, markup: false);
-            x += skin.Font.Measure(text, scale, markup: false).X;
+            x += FontOf(skin).Measure(text, scale, markup: false).X;
         }
 
         return x;
@@ -501,21 +626,21 @@ public partial class CodeEditor : UIComponent
         fresh.Clear();
 
         int count = document.LineCount;
-        if (lineDepths.Length != count)
-        {
-            lineDepths = new int[count];
-            lineClean = new bool[count];
-        }
+        if (lineStarts.Length != count)
+            lineStarts = new CodeLineStart[count];
 
         if (Highlight)
         {
-            spans = HidlHighlighter.Read(document.Text, count, swatches, lineDepths, lineClean);
+            spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
         }
         else
         {
             spans = PlainSpans();
             swatches.Clear();
+            art.Clear();
         }
+
+        TookArt();
 
         if (colouredLines.Length != count)
             colouredLines = new string[count];
@@ -534,13 +659,14 @@ public partial class CodeEditor : UIComponent
             lines[i] = document.LineAt(i);
 
         changeSeen = version;
+        ICodeHighlighter reader = highlighter;
         colouring = Task.Run(() =>
         {
             var found = new List<HidlSwatch>();
-            var depths = new int[count];
-            var clean = new bool[count];
-            List<HidlSpan>[] read = HidlHighlighter.Read(text, count, found, depths, clean);
-            return new Colouring(version, read, lines, found, depths, clean);
+            var named = new List<HidlArt>();
+            var starts = new CodeLineStart[count];
+            List<SyntaxSpan>[] read = reader.Read(text, count, starts, found, named);
+            return new Colouring(version, read, lines, found, starts, named);
         });
     }
 
@@ -548,10 +674,12 @@ public partial class CodeEditor : UIComponent
     {
         spans = done.Spans;
         colouredLines = done.Lines;
-        lineDepths = done.Depths;
-        lineClean = done.Clean;
+        lineStarts = done.Starts;
         swatches.Clear();
         swatches.AddRange(done.Swatches);
+        art.Clear();
+        art.AddRange(done.Art);
+        TookArt();
         coloured = done.Version;
         fresh.Clear();
         FindFoldable();
@@ -559,9 +687,9 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>
     /// The colours of a line typed into since the last colouring, worked out for it alone and kept by its text until the
-    /// next one comes back. Null for a line that starts inside a comment over several lines, which only the whole can say.
+    /// next one comes back. Null for a line the last colouring never saw the start of.
     /// </summary>
-    private List<HidlSpan>? FreshColours(int line, string text)
+    private List<SyntaxSpan>? FreshColours(int line, string text)
     {
         if (!Highlight || text.Length == 0)
             return null;
@@ -571,13 +699,13 @@ public partial class CodeEditor : UIComponent
 
         // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
         int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
-        if (was < 0 || was >= lineDepths.Length || !lineClean[was])
+        if (was < 0 || was >= lineStarts.Length)
             return null;
 
         if (fresh.Count >= MAX_FRESH)
             fresh.Clear();
 
-        List<HidlSpan> read = HidlHighlighter.ReadLine(text, lineDepths[was]);
+        List<SyntaxSpan> read = highlighter.ReadLine(text, lineStarts[was]);
         fresh[text] = read;
         return read;
     }
@@ -586,7 +714,7 @@ public partial class CodeEditor : UIComponent
     /// The colours of a line, null when it was typed into since they were worked out. A line is looked for where it was and
     /// where it was before the lines added or taken out above it moved it, so Enter doesn't take the colours off the rest.
     /// </summary>
-    private List<HidlSpan>? ColoursOf(int line, string text)
+    private List<SyntaxSpan>? ColoursOf(int line, string text)
     {
         if (line < colouredLines.Length && colouredLines[line] == text)
             return spans[line];
@@ -596,13 +724,13 @@ public partial class CodeEditor : UIComponent
     }
 
     // Every line all one span, for text that isn't coloured as code
-    private List<HidlSpan>[] PlainSpans()
+    private List<SyntaxSpan>[] PlainSpans()
     {
-        var plain = new List<HidlSpan>[document.LineCount];
+        var plain = new List<SyntaxSpan>[document.LineCount];
         for (int i = 0; i < plain.Length; i++)
         {
             int length = document.LineAt(i).Length;
-            plain[i] = length > 0 ? [new HidlSpan(0, length, HidlToken.Name)] : [];
+            plain[i] = length > 0 ? [new SyntaxSpan(0, length, SyntaxKind.Name)] : [];
         }
 
         return plain;
@@ -621,7 +749,7 @@ public partial class CodeEditor : UIComponent
             return default;
 
         float scale = paintedScale;
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         EnsureRows(skin, scale);
 
@@ -656,6 +784,7 @@ public partial class CodeEditor : UIComponent
     protected override void Update(float dt)
     {
         blink = (blink + dt) % (BLINK * 2.0f);
+        tickTime = dt;
         flowTime += dt;
 
         // On the way to where the wheel wants it
@@ -786,7 +915,7 @@ public partial class CodeEditor : UIComponent
         revealCaret = false;
 
         float scale = ScaleOf(skin);
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         if (area.Height <= 0.0f)
             return;
@@ -826,7 +955,7 @@ public partial class CodeEditor : UIComponent
 
     private void ClampScroll(UISkin skin, float scale)
     {
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * 0.5f);
         scrollY = Math.Clamp(scrollY, 0.0f, most);
@@ -896,13 +1025,26 @@ public partial class CodeEditor : UIComponent
     // The tooltip says what is wrong where the pointer rests, and nothing anywhere else
     private void UpdateTooltip()
     {
+        hoveredArt = -1;
         if (!IsHovered || Module is not { } module || paintedSkin is null)
         {
             if (Tooltip.Length > 0) Tooltip = string.Empty;
             return;
         }
 
-        UITextPosition at = PositionAt(module.ToLocal(module.Compositor.Pointer.Position));
+        // A piece of art at the end of a line is shown big, and says nothing
+        Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+        for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
+        {
+            if (artBoxes[i].Width > 0.0f && artBoxes[i].Shrink(new UIEdges(-2.0f)).Contains(pointer))
+            {
+                hoveredArt = i;
+                if (Tooltip.Length > 0) Tooltip = string.Empty;
+                return;
+            }
+        }
+
+        UITextPosition at = PositionAt(pointer);
         string said = string.Empty;
 
         if (SyntaxError is { } error && Covers(error, at))
@@ -1139,6 +1281,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public void Complete(bool typed = false)
     {
+        CompletionTyped = typed;
         UICompletionRequest? asked = (CompletionSource ?? DefaultCompletions)(this);
         UITextPosition caret = document.Caret;
         completions.Clear();
@@ -1295,7 +1438,7 @@ public partial class CodeEditor : UIComponent
             return default;
 
         float scale = paintedScale;
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         UITextPosition caret = document.Caret;
 
@@ -1307,8 +1450,8 @@ public partial class CodeEditor : UIComponent
         for (int i = completionTop; i < last; i++)
         {
             var item = completions[i];
-            float text = skin.Font.Measure(item.Text, scale, markup: false).X;
-            float detail = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale * 0.85f, markup: false).X + lineHeight : 0.0f;
+            float text = FontOf(skin).Measure(item.Text, scale, markup: false).X;
+            float detail = item.Detail.Length > 0 ? FontOf(skin).Measure(item.Detail, scale * 0.85f, markup: false).X + lineHeight : 0.0f;
             widest = MathF.Max(widest, text + detail);
         }
 
@@ -1327,16 +1470,30 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void PaintPopup(UIDrawList list)
     {
+        list.PushFont(FontOf(list.Skin));
+        PaintCompletions(list);
+        list.PopFont();
+    }
+
+    // When the list of completions was first painted, by the draw list's clock, less than 0 while there's none
+    private float completionsOpenedAt = -1.0f;
+
+    private void PaintCompletions(UIDrawList list)
+    {
         UIRect bounds = CompletionBounds();
         if (bounds.IsEmpty || paintedSkin is not { } skin)
+        {
+            completionsOpenedAt = -1.0f;
             return;
+        }
 
         float scale = paintedScale;
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UISyntaxColors colors = skin.Syntax;
 
-        list.Box(bounds, skin.PanelColor with { W = 1.0f });
-        list.Frame(bounds, 1.0f, skin.AccentColor with { W = 0.6f });
+        // On what every popup sits on, coming in out of the line it's for
+        bool entering = list.BeginEntrance(ref completionsOpenedAt, new Vector2(bounds.Min.X, bounds.Max.Y), new Vector2(0.0f, 4.0f));
+        list.Popup(bounds, Module?.Compositor.PopupGlass);
 
         int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
         for (int i = completionTop; i < last; i++)
@@ -1346,19 +1503,22 @@ public partial class CodeEditor : UIComponent
             var row = new UIRect(new Vector2(bounds.Min.X + 1.0f, top - lineHeight), new Vector2(bounds.Max.X - 1.0f, top));
 
             if (i == completionIndex)
-                list.Rect(row, skin.AccentColor with { W = 0.4f });
+                list.RoundRect(row.Shrink(new UIEdges(3.0f, 1.0f)), skin.CornerRadius, skin.AccentColor with { W = 0.35f });
 
             var item = completions[i];
             list.Text(item.Text, new Vector2(bounds.Min.X + TEXT_PAD, top), scale, colors.Name, markup: false);
 
             if (item.Detail.Length > 0)
             {
-                float detail = skin.Font.Measure(item.Detail, scale * 0.85f, markup: false).X;
+                float detail = FontOf(skin).Measure(item.Detail, scale * 0.85f, markup: false).X;
                 list.Text(item.Detail, new Vector2(bounds.Max.X - TEXT_PAD - detail, top - lineHeight * 0.08f), scale * 0.85f, colors.Comment, markup: false);
             }
         }
 
         list.EndParts();
+
+        if (entering)
+            list.EndEntrance();
     }
 
     protected internal override void OnPaste(string text)
@@ -1380,7 +1540,7 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is not { } skin)
             return 20;
 
-        float lineHeight = skin.Font.LineHeight * paintedScale;
+        float lineHeight = FontOf(skin).LineHeight * paintedScale;
         return Math.Max(1, (int)(TextArea(skin, paintedScale).Height / lineHeight) - 1);
     }
 
@@ -1400,7 +1560,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     private (UIRect Track, float Length, float Most, float Top) BarGeometry(UISkin skin, float scale)
     {
-        float lineHeight = skin.Font.LineHeight * scale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         UIRect track = new(new Vector2(area.Max.X, area.Min.Y), new Vector2(area.Max.X + BAR_WIDTH, area.Max.Y));
         float total = Math.Max(1, rows.Count) * lineHeight;
@@ -1417,7 +1577,7 @@ public partial class CodeEditor : UIComponent
         // A swatch of a colour written in the code, to pick another
         if (OnSwatchPressed is { } swatched && paintedSkin is { } swatchSkin)
         {
-            float lineHeight = swatchSkin.Font.LineHeight * paintedScale;
+            float lineHeight = FontOf(swatchSkin).LineHeight * paintedScale;
             UIRect area = TextArea(swatchSkin, paintedScale);
             float left = area.Min.X + TEXT_PAD - scrollX;
             for (int i = 0; i < swatches.Count; i++)
@@ -1433,7 +1593,7 @@ public partial class CodeEditor : UIComponent
         // A press on the list of what can be completed picks the row it is on
         if (CompletionOpen && CompletionBounds() is var listed && listed.Contains(point) && paintedSkin is { } listSkin)
         {
-            float rowHeight = listSkin.Font.LineHeight * paintedScale;
+            float rowHeight = FontOf(listSkin).LineHeight * paintedScale;
             int row = completionTop + (int)((listed.Max.Y - TEXT_PAD * 0.5f - point.Y) / rowHeight);
             if (row >= 0 && row < completions.Count)
             {
@@ -1469,6 +1629,14 @@ public partial class CodeEditor : UIComponent
 
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
+            // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
+            float strip = Bounds.Shrink(Padding).Min.X + 2.0f + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
+            if (OnGutterPressed is not null && point.X < strip)
+            {
+                OnGutterPressed(at.Line);
+                return;
+            }
+
             SelectLine(at.Line);
             return;
         }
@@ -1549,7 +1717,7 @@ public partial class CodeEditor : UIComponent
             return false;
 
         // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
-        scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * skin.Font.LineHeight * paintedScale;
+        scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
         ClampScroll(skin, paintedScale);
         return true;
     }
@@ -1557,6 +1725,13 @@ public partial class CodeEditor : UIComponent
     /* Painting */
 
     protected override void Paint(UIDrawList list)
+    {
+        list.PushFont(FontOf(list.Skin));
+        PaintCode(list);
+        list.PopFont();
+    }
+
+    private void PaintCode(UIDrawList list)
     {
         UISkin skin = list.Skin;
         UISyntaxColors colors = skin.Syntax;
@@ -1566,8 +1741,8 @@ public partial class CodeEditor : UIComponent
         paintedScale = scale;
         EnsureRows(skin, scale);
 
-        float lineHeight = skin.Font.LineHeight * scale;
-        float digit = skin.Font.Measure("0", scale, markup: false).X;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         UIRect content = Bounds.Shrink(Padding);
         UIRect area = TextArea(skin, scale);
         float left = area.Min.X + TEXT_PAD - scrollX;
@@ -1606,6 +1781,9 @@ public partial class CodeEditor : UIComponent
 
             if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
+
+            if (row.Line == ExecutionLine)
+                list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), skin.WarningColor with { W = 0.2f });
 
             if (document.HasSelection)
                 PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, start, end, selection);
@@ -1676,12 +1854,12 @@ public partial class CodeEditor : UIComponent
             // can't be (it starts inside a comment over several lines)
             if ((ColoursOf(row.Line, written) ?? FreshColours(row.Line, written)) is not { } colours)
             {
-                x = DrawFlowing(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(HidlToken.Name), left, origin);
+                x = DrawFlowing(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin);
             }
             else
             {
                 int at = row.Start;
-                foreach (HidlSpan span in colours)
+                foreach (SyntaxSpan span in colours)
                 {
                     if (span.Start + span.Length > written.Length)
                         break;
@@ -1697,7 +1875,7 @@ public partial class CodeEditor : UIComponent
                 }
 
                 if (at < rowEnd)
-                    x = DrawFlowing(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(HidlToken.Name), left, origin);
+                    x = DrawFlowing(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin);
             }
 
             // A folded line says what it folds away after it, the closing line, the way VS Code does
@@ -1717,6 +1895,9 @@ public partial class CodeEditor : UIComponent
             list.Rect(box, swatch.Color with { W = 1.0f });
         }
 
+        // The art named in the code, after the swatches
+        PaintArt(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
+
         // What the program has to say after the end of a line, the value a let came to
         for (int i = 0; i < inlineHints.Count; i++)
         {
@@ -1725,7 +1906,7 @@ public partial class CodeEditor : UIComponent
                 continue;
 
             int length = document.LineAt(hint.Line).Length;
-            float x = left + ColumnX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2);
+            float x = left + ColumnX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2) + ArtWidthOn(hint.Line);
             list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.8f }, markup: false);
         }
 
@@ -1756,7 +1937,9 @@ public partial class CodeEditor : UIComponent
         if (LineNumbers)
         {
             list.PushClip(new UIRect(content.Min, new Vector2(area.Min.X, content.Max.Y)));
-            bool overGutter = IsHovered && Module is { } module && module.ToLocal(module.Compositor.Pointer.Position).X < area.Min.X;
+            Vector2 pointerAt = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
+            bool overGutter = IsHovered && pointerAt.X < area.Min.X;
+            float pointerY = pointerAt.Y;
             for (int index = first; index <= last; index++)
             {
                 CodeRow row = rows[index];
@@ -1772,15 +1955,30 @@ public partial class CodeEditor : UIComponent
                 float right = area.Min.X - digit * GUTTER_GAP;
                 Vector4 shade = line == document.Caret.Line ? colors.Name : colors.LineNumber;
 
-                // What is wrong has its icon at the far side of the gutter, the number lit the same colour
-                if (IsMarked(line, out bool warning))
+                // What is wrong has its icon at the far side of the gutter, the number lit the same colour. A breakpoint
+                // has that place before it, and the line a debugger stopped on its arrow over that
+                bool breakpoint = Breakpoints?.Contains(line) == true;
+                bool marked = IsMarked(line, out bool warning);
+                if (marked)
+                    shade = warning ? skin.WarningColor : skin.ErrorColor;
+
+                float markSide = MathF.Round(lineHeight * 0.8f);
+                float markMiddle = top - lineHeight * 0.5f;
+                var slot = new UIRect(new Vector2(content.Min.X + 2.0f, markMiddle - markSide * 0.5f), new Vector2(content.Min.X + 2.0f + markSide, markMiddle + markSide * 0.5f));
+                bool pointing = OnGutterPressed is not null && overGutter && pointerY <= top && pointerY > top - lineHeight;
+                if (breakpoint || pointing)
                 {
-                    shade = warning ? WarningColor : ErrorColor;
-                    float side = MathF.Round(lineHeight * 0.8f);
-                    float middle = top - lineHeight * 0.5f;
-                    list.Symbol(warning ? "warning" : "error",
-                        new UIRect(new Vector2(content.Min.X + 2.0f, middle - side * 0.5f), new Vector2(content.Min.X + 2.0f + side, middle + side * 0.5f)), shade);
+                    float dot = MathF.Round(markSide * 0.32f);
+                    var round = new UIRect(slot.Center - new Vector2(dot), slot.Center + new Vector2(dot));
+                    list.RoundRect(round, dot, skin.ErrorColor with { W = breakpoint ? 1.0f : 0.35f });
                 }
+                else if (marked)
+                {
+                    list.Symbol(warning ? "warning" : "error", slot, shade);
+                }
+
+                if (line == ExecutionLine)
+                    list.Symbol("debug-stackframe", slot, skin.WarningColor);
 
                 list.Text(number[..length], new Vector2(right - digit * length, top), scale, shade, markup: false);
 
@@ -1819,6 +2017,10 @@ public partial class CodeEditor : UIComponent
             list.Rect(new UIRect(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb)), skin.AccentColor with { W = 0.8f });
         }
 
+        // The art under the pointer, big, over everything
+        if (hoveredArt >= 0 && hoveredArt < art.Count && hoveredArt < artBoxes.Length && artBoxes[hoveredArt].Width > 0.0f)
+            PaintArtLarge(list, skin, lineHeight, art[hoveredArt], artBoxes[hoveredArt]);
+
         list.EndParts();
     }
 
@@ -1827,7 +2029,7 @@ public partial class CodeEditor : UIComponent
     {
         float top = TopOf(area, line, from, lineHeight);
         float x0 = ColumnX(skin, scale, line, from);
-        float x1 = RowOf(line, to) == RowOf(line, from) ? ColumnX(skin, scale, line, to) : x0 + (to - from) * skin.Font.Measure("0", scale, markup: false).X;
+        float x1 = RowOf(line, to) == RowOf(line, from) ? ColumnX(skin, scale, line, to) : x0 + (to - from) * FontOf(skin).Measure("0", scale, markup: false).X;
         return new UIRect(new Vector2(left + x0, top - lineHeight), new Vector2(left + x1, top));
     }
 
@@ -1913,8 +2115,8 @@ public partial class CodeEditor : UIComponent
 
         list.BeginPart(PART_SIGNATURE);
         float small = scale * 0.92f;
-        float height = skin.Font.LineHeight * small + TEXT_PAD;
-        float width = skin.Font.Measure(said.Text, small, markup: false).X + TEXT_PAD * 2.0f + skin.Font.Measure(" ", small, markup: false).X;
+        float height = FontOf(skin).LineHeight * small + TEXT_PAD;
+        float width = FontOf(skin).Measure(said.Text, small, markup: false).X + TEXT_PAD * 2.0f + FontOf(skin).Measure(" ", small, markup: false).X;
         int row = RowOf(signatureAt.Line, signatureAt.Column);
         float top = RowTop(area, row, lineHeight);
         float x = MathF.Max(area.Min.X, left + ColumnX(skin, scale, signatureAt.Line, signatureAt.Column) - TEXT_PAD);
@@ -1922,17 +2124,16 @@ public partial class CodeEditor : UIComponent
         if (bottom + height > area.Max.Y) bottom = top - lineHeight - height;
 
         var box = new UIRect(new Vector2(x, bottom), new Vector2(x + width, bottom + height));
-        list.Box(box, skin.PanelColor with { W = 1.0f });
-        list.Frame(box, 1.0f, skin.AccentColor with { W = 0.5f });
+        list.Popup(box, Module?.Compositor.PopupGlass);
 
         int start = Math.Clamp(said.Start, 0, said.Text.Length), length = Math.Clamp(said.Length, 0, said.Text.Length - start);
         Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.75f };
         float pen = box.Min.X + TEXT_PAD, textTop = box.Max.Y - TEXT_PAD * 0.5f;
         ReadOnlySpan<char> all = said.Text;
         list.Text(all[..start], new Vector2(pen, textTop), small, text, markup: false);
-        pen += skin.Font.Measure(all[..start], small, markup: false).X;
+        pen += FontOf(skin).Measure(all[..start], small, markup: false).X;
         list.Text(all.Slice(start, length), new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
-        pen += skin.Font.Measure(all.Slice(start, length), small, markup: false).X + skin.Font.BoldAdvance * small * length;
+        pen += FontOf(skin).Measure(all.Slice(start, length), small, markup: false).X + FontOf(skin).BoldAdvance * small * length;
         list.Text(all[(start + length)..], new Vector2(pen, textTop), small, text, markup: false);
     }
 
@@ -1957,6 +2158,21 @@ public partial class CodeEditor : UIComponent
             list.Rect(new UIRect(new Vector2(left + from, top - lineHeight), new Vector2(left + to, top)), color);
     }
 
+    /// <summary>
+    /// How long the caret takes to glide to where it went, in seconds (about two thirds of the way in that long), 0 for
+    /// it to jump there the way it always did. Only the caret that is drawn glides, typing goes where the caret is.
+    /// </summary>
+    public float CaretGlide { get; set; }
+
+    /// <summary>Where the caret was drawn last, the middle of its left edge, for something to happen there (sparks).</summary>
+    public Vector2 CaretPoint { get; private set; }
+
+    // How long the last tick was, for the glide, and where the caret is drawn against the code (from the top of its first
+    // row, so scrolling moves it with the code rather than it gliding after it)
+    private float tickTime;
+    private Vector2 caretDrawn;
+    private bool caretSeen;
+
     private void PaintCaret(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, UITextPosition caret)
     {
         int row = RowOf(caret.Line, caret.Column);
@@ -1965,6 +2181,27 @@ public partial class CodeEditor : UIComponent
 
         float top = RowTop(area, row, lineHeight);
         float x = left + ColumnX(skin, scale, caret.Line, caret.Column);
+        if (caret == document.Caret)
+        {
+            Vector2 origin = new(left, RowTop(area, 0, lineHeight));
+            Vector2 wanted = new Vector2(x, top) - origin;
+
+            // A long way (a page, the end of the file) is jumped, a glide over half the screen only looks slow
+            if (CaretGlide <= 0.0f || !caretSeen || Vector2.Distance(caretDrawn, wanted) > lineHeight * 12.0f)
+                caretDrawn = wanted;
+            else
+            {
+                caretDrawn += (wanted - caretDrawn) * (1.0f - MathF.Exp(-tickTime / CaretGlide));
+                if (Vector2.DistanceSquared(caretDrawn, wanted) < 0.25f)
+                    caretDrawn = wanted;
+            }
+
+            caretSeen = true;
+            x = origin.X + caretDrawn.X;
+            top = origin.Y + caretDrawn.Y;
+            CaretPoint = new Vector2(x, top - lineHeight * 0.5f);
+        }
+
         list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + MathF.Max(1.0f, MathF.Round(scale * 8.0f)), top)), skin.HighlightColor);
     }
 
@@ -1972,13 +2209,13 @@ public partial class CodeEditor : UIComponent
     private void PaintFolded(UIDrawList list, UISkin skin, float scale, float x, float top, float lineHeight, int foldEnd, UISyntaxColors colors)
     {
         string closing = foldEnd < document.LineCount ? document.LineAt(foldEnd).Trim() : string.Empty;
-        float gap = skin.Font.Measure(" ", scale, markup: false).X;
-        float dots = skin.Font.Measure("…", scale, markup: false).X;
+        float gap = FontOf(skin).Measure(" ", scale, markup: false).X;
+        float dots = FontOf(skin).Measure("…", scale, markup: false).X;
         var box = new UIRect(new Vector2(x + gap, top - lineHeight + 2.0f), new Vector2(x + gap * 3.0f + dots, top - 2.0f));
         list.Rect(box, skin.HoverColor);
         list.Text("…", new Vector2(x + gap * 2.0f, top), scale, colors.Comment, markup: false);
         if (closing.Length > 0)
-            Draw(list, skin, scale, closing, box.Max.X + gap, top, colors.Of(HidlToken.Punctuation));
+            Draw(list, skin, scale, closing, box.Max.X + gap, top, colors.Of(SyntaxKind.Punctuation));
     }
 
     // The lines the top of the view is inside of, on a strip of their own over the code and the gutter, numbered
@@ -2008,7 +2245,7 @@ public partial class CodeEditor : UIComponent
 
             if ((ColoursOf(line, written) ?? FreshColours(line, written)) is { } colours)
             {
-                foreach (HidlSpan span in colours)
+                foreach (SyntaxSpan span in colours)
                 {
                     if (span.Start + span.Length > written.Length)
                         break;
@@ -2019,13 +2256,10 @@ public partial class CodeEditor : UIComponent
             }
             else
             {
-                Draw(list, skin, scale, written, x, top, colors.Of(HidlToken.Name));
+                Draw(list, skin, scale, written, x, top, colors.Of(SyntaxKind.Name));
             }
         }
     }
-
-    private static readonly Vector4 ErrorColor = new(1.0f, 0.4f, 0.36f, 1.0f);
-    private static readonly Vector4 WarningColor = new(1.0f, 0.78f, 0.3f, 1.0f);
 
     // How many swatches a line has at its end, for what's written after them
     private int SwatchesOn(int line)
@@ -2055,10 +2289,200 @@ public partial class CodeEditor : UIComponent
         return new UIRect(new Vector2(x, middle - side * 0.5f), new Vector2(x + side, middle + side * 0.5f));
     }
 
+    // After new art came with the colours, room for where it's drawn
+    private void TookArt()
+    {
+        if (artBoxes.Length < art.Count)
+            artBoxes = new UIRect[Math.Max(art.Count, artBoxes.Length * 2)];
+
+        Array.Clear(artBoxes);
+        hoveredArt = -1;
+    }
+
+    // How big a piece of art is drawn at the end of its line, and how far from the next
+    private static float ArtSide(float lineHeight) => MathF.Round(lineHeight * 0.95f);
+
+    // A picture wider than it is tall takes as much more room along the line, up to this many times as wide as tall
+    private const float ART_WIDEST = 2.5f;
+
+    private const float ART_GAP = 4.0f;
+
+    // How many pixels a side a picture is put into the skin's atlas at the most, shown big it's still sharp enough, and a
+    // whole screen's loading picture would never fit in there as it is
+    private const int ART_MOST = 256;
+
+    // The art at the end of the lines in sight, one after the other after the swatches, what there is no picture of left out
+    private void PaintArt(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int firstLine, int lastLine)
+    {
+        Array.Clear(artBoxes);
+        if (!ShowArt || art.Count == 0)
+            return;
+
+        list.BeginPart(PART_ART);
+        float side = ArtSide(lineHeight), swatchSide = MathF.Round(lineHeight * 0.6f);
+        int line = -1;
+        float x = 0.0f, middle = 0.0f;
+
+        for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
+        {
+            HidlArt item = art[i];
+            if (item.Line < firstLine || item.Line > lastLine || item.Line >= document.LineCount || IsHidden(item.Line, out _))
+                continue;
+
+            if (item.Line != line)
+            {
+                line = item.Line;
+                int length = document.LineAt(line).Length;
+                x = left + ColumnX(skin, scale, line, length) + swatchSide * 0.8f + SwatchesOn(line) * (swatchSide + ART_GAP);
+                middle = MathF.Round(TopOf(area, line, length, lineHeight) - lineHeight * 0.5f);
+            }
+
+            Vector2 texels = TexelsOf(skin, item);
+            float wide = texels.Y > 0.0f ? Math.Clamp(texels.X / texels.Y, 1.0f, ART_WIDEST) : 1.0f;
+            var box = new UIRect(new Vector2(x, middle - side * 0.5f), new Vector2(x + MathF.Round(side * wide), middle + side * 0.5f));
+            if (DrawArt(list, skin, item, box, skin.TextColor))
+            {
+                artBoxes[i] = box;
+                x = box.Max.X + ART_GAP;
+            }
+        }
+    }
+
+    // How much room the art at the end of a line took the last time it was drawn, for what's written after it
+    private float ArtWidthOn(int line)
+    {
+        float width = 0.0f;
+        for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
+        {
+            if (art[i].Line == line && artBoxes[i].Width > 0.0f)
+                width += artBoxes[i].Width + ART_GAP;
+        }
+        return width;
+    }
+
+    // Draws a piece of art as big as it fits in a box, upright, false when there is no picture of it (or not yet, the
+    // skin stitches what is asked for into its atlas by the next frame)
+    private bool DrawArt(UIDrawList list, UISkin skin, in HidlArt item, UIRect box, Vector4 ink)
+    {
+        switch (item.Kind)
+        {
+            case HidlArtKind.Symbol:
+                if (!UISymbols.TryGet(item.Name, out char code))
+                    return false;
+                list.Symbol(code, box, ink);
+                return true;
+
+            case HidlArtKind.Icon:
+                if (!FindIcon(skin, item, out UIIcon icon, out UISkin iconSkin))
+                    return false;
+                list.Icon(iconSkin, icon, Fit(box, icon.Region.TexelSize), Vector4.One);
+                return true;
+
+            case HidlArtKind.Sprite:
+                if (!FindSprite(skin, item, out UIRegion region, out UISkin spriteSkin))
+                    return false;
+                list.Region(spriteSkin, region, Fit(box, region.TexelSize), Vector4.One);
+                return true;
+
+            case HidlArtKind.Picture:
+                if (FileOfArt(item.Name) is not { } file || !skin.TryGetImage(file, ART_MOST, out UIRegion picture))
+                    return false;
+                list.Region(picture, Fit(box, picture.TexelSize), Vector4.One);
+                return true;
+        }
+
+        return false;
+    }
+
+    // How many pixels a piece of art is across and down, nothing for a Codicon (which is square) or what isn't there
+    private Vector2 TexelsOf(UISkin skin, in HidlArt item) => item.Kind switch
+    {
+        HidlArtKind.Picture when FileOfArt(item.Name) is { } file => skin.ImageSize(file),
+        HidlArtKind.Sprite when FindSprite(skin, item, out UIRegion region, out _) => region.TexelSize,
+        HidlArtKind.Icon when FindIcon(skin, item, out UIIcon icon, out _) => icon.Region.TexelSize,
+        _ => Vector2.Zero
+    };
+
+    // An icon the code names, out of the skin the code's art is (ArtSkin) or failing that the editor's own, through the
+    // set of icons the text said it is written in ([icons:playstation][icon:pad_a] is the cross)
+    private bool FindIcon(UISkin skin, in HidlArt item, out UIIcon icon, out UISkin owner)
+    {
+        ReadOnlySpan<char> set = item.Set.AsSpan();
+        if (ArtSkin?.Invoke() is { } art && art.TryGetIcon(item.Name, set, out icon))
+        {
+            owner = art;
+            return true;
+        }
+
+        owner = skin;
+        return skin.TryGetIcon(item.Name, set, out icon);
+    }
+
+    // A piece of a skin's art the code names, the same way round
+    private bool FindSprite(UISkin skin, in HidlArt item, out UIRegion region, out UISkin owner)
+    {
+        if (ArtSkin?.Invoke() is { } art && art.TryGetRegion(item.Name, out region))
+        {
+            owner = art;
+            return true;
+        }
+
+        owner = skin;
+        return skin.TryGetRegion(item.Name, out region);
+    }
+
+    // Where a picture named in the code is, asked of ArtPath once a name
+    private string? FileOfArt(string name)
+    {
+        if (artFiles.TryGetValue(name, out string? file))
+            return file;
+
+        file = artPath is { } resolve ? resolve(name) : (File.Exists(name) ? name : null);
+        artFiles[name] = file;
+        return file;
+    }
+
+    // The biggest box of a picture's shape that fits in another, in its middle, in whole pixels
+    private static UIRect Fit(UIRect box, Vector2 size)
+    {
+        if (size.X <= 0.0f || size.Y <= 0.0f)
+            return box;
+
+        float fit = MathF.Min(box.Width / size.X, box.Height / size.Y);
+        Vector2 drawn = Vector2.Round(size * fit);
+        Vector2 corner = Vector2.Round(box.Center - drawn * 0.5f);
+        return new UIRect(corner, corner + drawn);
+    }
+
+    // A piece of art the pointer is on, big over the code next to where it is, a picture at a whole number of times its
+    // pixels when it's small (pixel art stays crisp) and brought down to fit when it isn't
+    private void PaintArtLarge(UIDrawList list, UISkin skin, float lineHeight, in HidlArt item, UIRect at)
+    {
+        float most = MathF.Round(lineHeight * 8.0f);
+        Vector2 size = new(most);
+        Vector2 texels = TexelsOf(skin, item);
+
+        if (texels.X > 0.0f && texels.Y > 0.0f)
+        {
+            float times = most / MathF.Max(texels.X, texels.Y);
+            size = Vector2.Round(texels * (times >= 1.0f ? MathF.Floor(times) : times));
+        }
+
+        // Over the line it's on, or under it when there's no room over it, kept inside the editor from side to side
+        const float PAD = 6.0f;
+        Vector2 outer = size + new Vector2(PAD * 2.0f);
+        float x = Math.Clamp(at.Center.X - outer.X * 0.5f, Bounds.Min.X, MathF.Max(Bounds.Min.X, Bounds.Max.X - outer.X));
+        float y = at.Max.Y + 4.0f + outer.Y <= Bounds.Max.Y ? at.Max.Y + 4.0f : at.Min.Y - 4.0f - outer.Y;
+        var panel = new UIRect(new Vector2(x, y), new Vector2(x + outer.X, y + outer.Y));
+
+        list.Popup(panel, Module?.Compositor.PopupGlass);
+        DrawArt(list, skin, item, panel.Shrink(new UIEdges(PAD)), skin.TextColor);
+    }
+
     // A faint line down every level of indentation, through blank lines as deep as the lines either side of them
     private void PaintGuides(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last)
     {
-        float space = skin.Font.Measure(" ", scale, markup: false).X;
+        float space = FontOf(skin).Measure(" ", scale, markup: false).X;
         float tab = space * TAB_SPACES;
         Vector4 guide = skin.TextColor with { W = 0.08f };
 
@@ -2119,7 +2543,7 @@ public partial class CodeEditor : UIComponent
         UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
         float to = MathF.Max(piece.Min.X + lineHeight * 0.5f, piece.Max.X);
         float thickness = MathF.Max(2.0f, MathF.Round(lineHeight * 0.08f));
-        Vector4 shade = diagnostic.Warning ? WarningColor : ErrorColor;
+        Vector4 shade = diagnostic.Warning ? skin.WarningColor : skin.ErrorColor;
 
         list.Rect(new UIRect(piece.Min, new Vector2(to, piece.Min.Y + thickness)), shade);
     }

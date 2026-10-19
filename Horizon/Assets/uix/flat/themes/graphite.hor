@@ -1,0 +1,39 @@
+// The one for an editor. Neutral greys with no blue cast, the way VS Code's dark modern is, so a long session in
+// Hex doesn't tire the eyes, a soft blue accent, borders you only just see, and the code coloured the way that
+// editor colours it, which is what most hands are used to. Nothing in it shouts.
+
+let theme = {
+    title: "Graphite",
+    background: vec(0.094, 0.094, 0.094, 1.0),
+    surface: vec(0.122, 0.122, 0.122, 1.0),
+    control_color: vec(0.2, 0.2, 0.2, 1.0),
+    text_color: vec(0.8, 0.8, 0.8, 1.0),
+    control_text_color: vec(0.88, 0.88, 0.88, 1.0),
+    border_color: vec(1.0, 1.0, 1.0, 0.08),
+    hover_color: vec(1.0, 1.0, 1.0, 0.06),
+    accent_color: vec(0.0, 0.47, 0.84, 1.0),
+    highlight_color: vec(0.0, 0.55, 0.95, 1.0),
+    syntax: {
+        name: vec(0.8, 0.8, 0.8, 1.0),
+        keyword: vec(0.34, 0.61, 0.84, 1.0),
+        property: vec(0.61, 0.86, 1.0, 1.0),
+        call: vec(0.86, 0.86, 0.67, 1.0),
+        text: vec(0.81, 0.57, 0.47, 1.0),
+        number: vec(0.71, 0.81, 0.66, 1.0),
+        comment: vec(0.42, 0.6, 0.33, 1.0),
+        punctuation: vec(0.83, 0.83, 0.83, 1.0),
+        line_number: vec(0.43, 0.46, 0.5, 1.0),
+        directive: vec(0.77, 0.53, 0.75, 1.0),
+        declaration: vec(0.61, 0.86, 1.0, 1.0),
+        builtin: vec(0.86, 0.86, 0.67, 1.0),
+        type: vec(0.31, 0.79, 0.69, 1.0),
+        constant: vec(0.34, 0.61, 0.84, 1.0),
+        reference: vec(0.81, 0.57, 0.47, 1.0),
+        escape: vec(0.84, 0.73, 0.49, 1.0),
+        markup: vec(0.5, 0.5, 0.5, 1.0),
+        operator: vec(0.83, 0.83, 0.83, 1.0),
+        bracket1: vec(1.0, 0.84, 0.0, 1.0),
+        bracket2: vec(0.85, 0.44, 0.84, 1.0),
+        bracket3: vec(0.09, 0.62, 1.0, 1.0)
+    }
+};

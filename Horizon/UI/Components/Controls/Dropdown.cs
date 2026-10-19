@@ -217,7 +217,12 @@ public class Dropdown : UIComponent
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
 
         list.Text(Resolve(Value), content, Origin.Left, scale, ink * tint, markup: false);
-        list.Text(IsOpen ? "^" : "v", content, Origin.Right, scale, skin.AccentColor * tint, markup: false);
+        // Shut, the list is opened again from the start
+        if (!IsOpen)
+            listOpenedAt = -1.0f;
+
+        float side = MathF.Round(content.Height * 0.55f);
+        list.Symbol(IsOpen ? "chevron-up" : "chevron-down", new UIRect(new Vector2(content.Max.X - side, content.Center.Y - side * 0.5f), new Vector2(content.Max.X, content.Center.Y + side * 0.5f)), skin.AccentColor * tint);
 
         PaintSelection(list);
         list.EndParts();
@@ -228,10 +233,11 @@ public class Dropdown : UIComponent
         UISkin skin = list.Skin;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
 
-        // Whatever is under the list must not show through it.
+        // It unfolds out of the box, down or up whichever way it opens, on what every popup sits on
         UIRect bounds = ListBounds;
-        list.Box(bounds, new Vector4(skin.PanelColor.X, skin.PanelColor.Y, skin.PanelColor.Z, 1.0f));
-        list.Frame(bounds, LIST_BORDER, skin.AccentColor);
+        bool below = bounds.Max.Y <= Bounds.Min.Y + 0.5f;
+        bool entering = list.BeginEntrance(ref listOpenedAt, new Vector2(bounds.Center.X, below ? bounds.Max.Y : bounds.Min.Y), new Vector2(0.0f, below ? 6.0f : -6.0f));
+        list.Popup(bounds, Module?.Compositor.PopupGlass);
 
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
@@ -242,7 +248,7 @@ public class Dropdown : UIComponent
             UIRect area = RowBounds(row);
 
             if (area.Contains(pointer))
-                list.Rect(area, skin.HoverColor);
+                list.RoundRect(area.Shrink(new UIEdges(3.0f, 1.0f)), skin.CornerRadius, skin.HoverColor);
 
             list.Text(
                 Resolve(options[option]),
@@ -262,8 +268,37 @@ public class Dropdown : UIComponent
             float length = track.Height * VisibleRows / options.Length;
             float top = track.Max.Y - (track.Height - length) * firstRow / (options.Length - VisibleRows);
 
-            list.Rect(new UIRect(new Vector2(track.Max.X - 4.0f, top - length), new Vector2(track.Max.X, top)), skin.AccentColor);
+            list.RoundRect(new UIRect(new Vector2(track.Max.X - 6.0f, top - length + 2.0f), new Vector2(track.Max.X - 2.0f, top - 2.0f)), 2.0f, skin.AccentColor);
         }
+
+        if (entering)
+            list.EndEntrance();
+    }
+
+    // When the list that drops down was first painted, by the draw list's clock, less than 0 while it's shut
+    private float listOpenedAt = -1.0f;
+
+    // Whether the list is being painted going, after it was shut
+    private bool listClosing;
+
+    protected internal override void PopupClosed() => listClosing = true;
+
+    protected internal override bool PaintClosing(UIDrawList list, ref float closedAt)
+    {
+        UIRect bounds = ListBounds;
+        bool below = bounds.Max.Y <= Bounds.Min.Y + 0.5f;
+        if (!listClosing || !list.BeginExit(ref closedAt, new Vector2(bounds.Center.X, below ? bounds.Max.Y : bounds.Min.Y), new Vector2(0.0f, below ? 6.0f : -6.0f)))
+        {
+            listClosing = false;
+            return false;
+        }
+
+        // Painted as it was, its entrance long over
+        listOpenedAt = -1000.0f;
+        PaintPopup(list);
+        listOpenedAt = -1.0f;
+        list.EndExit();
+        return true;
     }
 
     protected internal override bool PopupContains(Vector2 point) => IsOpen && ListBounds.Contains(point);

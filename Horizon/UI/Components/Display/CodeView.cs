@@ -7,7 +7,7 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// HIDL code to read, coloured in by what every bit of it is and with its lines numbered down the side.
+/// Code to read, HIDL unless told another language (<see cref="Highlighter"/>), coloured in by what every bit of it is and with its lines numbered down the side.
 /// It shows the code exactly as it is written, square brackets and all (a label would take those for icons).
 /// It is as big as its code, so it goes inside of a scroll panel for anything longer than a few lines.
 /// The colours are the skin's, see <see cref="UISyntaxColors"/>.
@@ -19,7 +19,7 @@ public class CodeView : UIComponent
 
     private string text = string.Empty;
     private string[] lines = [];
-    private List<HidlSpan>[] spans = [];
+    private List<SyntaxSpan>[] spans = [];
 
     /// <summary>The code. It is cut up for colouring once, when it is set.</summary>
     public string Text
@@ -34,9 +34,12 @@ public class CodeView : UIComponent
             text = value;
             string flat = text.Replace("\r\n", "\n");
             lines = flat.Split('\n');
-            spans = HidlHighlighter.Read(flat, lines.Length);
+            spans = (Highlighter ?? CodeLanguages.Hidl).Read(flat, lines.Length);
         }
     }
+
+    /// <summary>What colours the code, null for HIDL. Set it before the text, the text is cut up as it is set.</summary>
+    public ICodeHighlighter? Highlighter { get; set; }
 
     /// <summary>The scale of the text, or zero to use the skin's.</summary>
     public float TextScale { get; set; }
@@ -110,7 +113,7 @@ public class CodeView : UIComponent
             float x = content.Min.X + gutter;
             int at = 0;
 
-            foreach (HidlSpan span in spans[i])
+            foreach (SyntaxSpan span in spans[i])
             {
                 // Past whatever whitespace there is between the last span and this one
                 x += skin.Font.Measure(line[at..span.Start], scale, markup: false).X;

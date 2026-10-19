@@ -58,6 +58,9 @@ public class Panel : UIComponent
 
     protected override bool HitTestVisible => HasBackdrop;
 
+    protected override float GlassRadius(UISkin skin) =>
+        skin.TryGetRegion(Background, out _) ? skin.CornerRadius : Radius;
+
     protected override Vector2 Measure(UISkin skin)
     {
         Vector2 content = Vector2.Zero;
@@ -88,10 +91,11 @@ public class Panel : UIComponent
         if (!HasBackdrop)
             return;
 
+        // On glass the background is see through, as much as the glass says
         if (list.Skin.TryGetRegion(Background, out var region))
-            list.NineSlice(region, Bounds, Color ?? Vector4.One);
+            list.NineSlice(region, Bounds, Glass is { } frosted ? frosted.Over(Color ?? Vector4.One) : Color ?? Vector4.One);
         else
-            list.RoundRect(Bounds, Radius, Color ?? list.Skin.PanelColor);
+            list.RoundRect(Bounds, Radius, Glass is { } glass ? glass.Over(Color ?? list.Skin.PanelColor) : Color ?? list.Skin.PanelColor);
 
         if (Outline is { W: > 0.0f } outline)
             list.RoundOutline(Bounds, Radius, 1.0f, outline);

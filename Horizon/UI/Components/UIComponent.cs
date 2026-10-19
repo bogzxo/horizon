@@ -383,6 +383,24 @@ public abstract partial class UIComponent
     /// </summary>
     public int ZOffset { get; set; }
 
+    /// <summary>
+    /// What the component sits on, null for nothing, which is what everything sits on unless it says so. Glass (see
+    /// <see cref="UIGlass"/>) is a blur of whatever is drawn behind the component, laid inside its bounds before it
+    /// paints, and a <see cref="Panel"/> on it paints its background see through. In a layout that's <c>glass: 18</c>,
+    /// how far it smears.
+    /// </summary>
+    public UIGlass? Glass { get; set; }
+
+    /// <summary>
+    /// How far the shadow under the component reaches, 0 for none, which is what everything has unless it says so. A
+    /// component that is lifted off what's behind it (a card, a dialog) wants one, see <see cref="UIDrawList.Lifted"/>.
+    /// It's painted before the component and its glass, as round as the glass. In a layout that's <c>lift: 24</c>.
+    /// </summary>
+    public float Lift { get; set; }
+
+    /// <summary>How round the corners of the glass under the component are, as round as the box it paints over it.</summary>
+    protected virtual float GlassRadius(UISkin skin) => skin.CornerRadius;
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
@@ -409,7 +427,17 @@ public abstract partial class UIComponent
         if (sliding)
             list.PushClip(Bounds);
 
+        if (Lift > 0.0f)
+            list.Lifted(Bounds, GlassRadius(list.Skin), Lift);
+
+        if (Glass is { } glass)
+            list.Glass(Bounds, GlassRadius(list.Skin), glass.Blur, glass.Bend);
+
         Paint(list);
+
+        // The lit edge of the glass, over the background and under whatever is in it
+        if (Glass is { Rim: > 0.0f } lined)
+            list.SilverLining(Bounds, GlassRadius(list.Skin), lined.Rim);
 
         if (hoverness > 0.0f && Hover == UIHover.Glow)
             PaintHoverGlow(list);

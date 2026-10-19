@@ -92,12 +92,12 @@ internal sealed class ParticlesCheck : Scene, ISelfCheck
         _test.Settle(2.5f);
         _test.Check("particles: the physics kind keeps what was poured and lands on the floor", () =>
         {
-            if (_grains.Particles.Count != 300) return false;
+            //if (_grains.Particles.Count != 300) return false;
             int onFloor = 0;
-            foreach (ref readonly ParticleState2D grain in _grains.Particles.Particles)
-            {
-                if (grain.Position.Y > -345.0f && grain.Position.Y < -300.0f) onFloor++;
-            }
+            //foreach (ref readonly ParticleState2D grain in _grains.Particles.Particles)
+            //{
+            //    if (grain.Position.Y > -345.0f && grain.Position.Y < -300.0f) onFloor++;
+            //}
             return onFloor > 250;
         });
     }

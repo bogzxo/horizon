@@ -61,6 +61,13 @@ public class PhysicsBodyComponent2D : GameComponent
     /// </summary>
     public int CollisionGroup { get; set; }
 
+    /// <summary>
+    /// Whether the body falls through the platforms that are <see cref="Fixtures.IPhysicsFixture.OneWay"/> instead
+    /// of landing on them, which is how a character drops off one. Switch it on for a few steps and off again, left
+    /// on they never stand on one.
+    /// </summary>
+    public bool PassesOneWay { get; set; }
+
     private TransformComponent2D? parentTransform;
 
     public PhysicsBodyComponent2D(Vector2 initialPosition)
@@ -74,9 +81,10 @@ public class PhysicsBodyComponent2D : GameComponent
         parentTransform = Parent.GetComponent<TransformComponent2D>();
     }
 
-    public RectanglePhysicsFixture CreateRectangularFixture(Vector2 position, Vector2 size, bool kinematic=false,string tag="")
+    /// <param name="oneWay">A platform to be landed on from above and passed through every other way, see <see cref="IPhysicsFixture.OneWay"/>.</param>
+    public RectanglePhysicsFixture CreateRectangularFixture(Vector2 position, Vector2 size, bool kinematic=false,string tag="", bool oneWay = false)
     {
-        var rf = new RectanglePhysicsFixture( position, size, tag);
+        var rf = new RectanglePhysicsFixture( position, size, tag) { OneWay = oneWay };
         if (kinematic) this.KinematicFixtures.Add(rf);
         else this.DynamicFixtures.Add(rf);
         return rf;

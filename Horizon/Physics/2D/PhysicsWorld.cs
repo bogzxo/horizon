@@ -288,6 +288,10 @@ public class PhysicsWorld : GameComponent
                 foreach (int candidate in FindStaticCandidates(fixture, currentPosition, nextPositionX))
                 {
                     var otherFixture = staticGrid.GetFixture(candidate);
+
+                    // A platform is nothing to walk into, only something to land on
+                    if (otherFixture.OneWay) continue;
+
                     if (fixture.TestIntersection(otherFixture, nextPositionX, staticGrid.GetBodyPosition(candidate)))
                     {
                         nextPositionX.X = body.StopsFlush
@@ -344,6 +348,8 @@ public class PhysicsWorld : GameComponent
                 foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
                 {
                     var otherFixture = staticGrid.GetFixture(candidate);
+                    if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, new Vector2(nextPositionX.X, currentPosition.Y))) continue;
+
                     if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                     {
                         nextPositionY.Y = body.StopsFlush
@@ -396,6 +402,10 @@ public class PhysicsWorld : GameComponent
                 foreach (int candidate in FindStaticCandidates(fixture, new Vector2(nextPositionX.X, currentPosition.Y), nextPositionY))
                 {
                     var otherFixture = staticGrid.GetFixture(candidate);
+
+                    // The feet of somebody going up through a platform aren't on it, where they ended up is where they're tested
+                    if (otherFixture.OneWay && !LandsOn(body, fixture, candidate, nextPositionY, trigger: true)) continue;
+
                     if (fixture.TestIntersection(otherFixture, nextPositionY, staticGrid.GetBodyPosition(candidate)))
                     {
                         fixture.IsTouching = true;
@@ -442,6 +452,27 @@ public class PhysicsWorld : GameComponent
     {
         float bounced = -speed * restitution;
         return MathF.Abs(bounced) <= Gravity.Length() * dt * 2.0f ? 0.0f : bounced;
+    }
+
+    // How far (in units) the bottom of a fixture may already be below the top of a platform and still count as coming
+    // down onto it. A body resting on one sits a hair inside of it after a flush stop, and the feet of a character
+    // hang under its box on purpose
+    private const float ONE_WAY_TOLERANCE = 1.0f;
+
+    /// <summary>
+    /// Helper method to decide whether a body meets a platform (<see cref="IPhysicsFixture.OneWay"/>) at all. It does
+    /// when it isn't going up, doesn't say it passes them, and the bottom of the fixture is at the top of the
+    /// platform or above it where the body is right now, which is before the move that would take it into the platform.
+    /// </summary>
+    /// <param name="at">Where the body is tested from, its position before the step along Y.</param>
+    /// <param name="trigger">Whether the fixture is a trigger hanging under the body (feet), which goes by its top rather than its bottom.</param>
+    private bool LandsOn(PhysicsBodyComponent2D body, IPhysicsFixture fixture, int platform, Vector2 at, bool trigger = false)
+    {
+        if (body.PassesOneWay || body.Velocity.Y > 0.0f) return false;
+        if (!PhysicsShape.TryCreate(fixture, at, Vector2.Zero, out var shape)) return false;
+
+        float edge = trigger ? shape.Max.Y : shape.Min.Y;
+        return edge >= staticGrid[platform].Max.Y - ONE_WAY_TOLERANCE;
     }
 
     private static float Reach(IPhysicsFixture fixture, IPhysicsFixture other, Vector2 from, Vector2 to, Vector2 otherPosition)
@@ -514,7 +545,11 @@ public class PhysicsWorld : GameComponent
     {
         foreach (int candidate in FindStaticCandidates(fixture, bodyPosition, bodyPosition))
         {
-            if (fixture.TestIntersection(staticGrid.GetFixture(candidate), bodyPosition, staticGrid.GetBodyPosition(candidate)))
+            // A platform is passed through, so a body sticking into one isn't stuck in anything
+            IPhysicsFixture other = staticGrid.GetFixture(candidate);
+            if (other.OneWay) continue;
+
+            if (fixture.TestIntersection(other, bodyPosition, staticGrid.GetBodyPosition(candidate)))
                 return true;
         }
 

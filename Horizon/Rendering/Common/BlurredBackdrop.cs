@@ -92,10 +92,12 @@ public sealed class BlurredBackdrop : GameObject, IDisposable
         base.Render(dt);
     }
 
-    public void Dispose()
+    // its targets go with the entity, Dispose was a method of its own that hid the entity's and never ran with the rest
+    protected override void DisposeOther()
     {
         gaussian.Dispose();
         sharp?.Dispose();
         smeared?.Dispose();
+        base.DisposeOther();
     }
 }

@@ -43,6 +43,8 @@ public abstract partial class UIComponent
         Expose("scale", () => Scale, value => Scale = value);
         Expose("visible", () => Visible, value => Visible = value);
         Expose("z", () => ZOffset, value => ZOffset = Math.Max(0, (int)value));
+        Expose("lift", () => Lift, value => Lift = MathF.Max(0.0f, value));
+        Expose("glass", () => Glass?.Blur ?? 0.0f, value => Glass = value > 0.0f ? (Glass ?? UIGlass.Frosted) with { Blur = value } : null);
         Expose("layer", () => Layer, value => Layer = value.Trim());
         Expose("enabled", () => Enabled, value => Enabled = value);
         Expose("tooltip", () => Tooltip, value => Tooltip = value);

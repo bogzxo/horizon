@@ -33,10 +33,11 @@ public sealed class LoadingScreen
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// The colour of the window while it waits, wherever the picture isn't or is see-through. Nearly black unless
-    /// told otherwise.
+    /// The colour of the window while it waits, wherever the picture isn't or is see-through. The night blue at the
+    /// top and the bottom of the engine's own picture unless told otherwise, so a window of another shape than it
+    /// has the bars either side of it in the same sky.
     /// </summary>
-    public Vector3 Color { get; set; } = new(0.035f, 0.035f, 0.045f);
+    public Vector3 Color { get; set; } = new(0.05f, 0.08f, 0.13f);
 
     /// <summary>
     /// The picture, the path of a PNG or an Aseprite file (its first frame), null for the colour alone. One that
@@ -169,12 +170,15 @@ public sealed class LoadingScreen
             if (Horizon.Rendering.Spriting.AsepriteDocument.IsAseprite(path))
             {
                 var document = Horizon.Rendering.Spriting.AsepriteDocument.Open(path);
-                return Texture.FromPixels((uint)document.Width, (uint)document.Height, document.ReadFrame(0), definition);
+                Texture picture = Texture.FromPixels((uint)document.Width, (uint)document.Height, document.ReadFrame(0), definition);
+
+                // A whole screen of pixels, which the file would otherwise keep for the run
+                document.DropRendered();
+                return picture;
             }
 
-            using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgba32>(path);
-            var pixels = new byte[image.Width * image.Height * 4];
-            image.CopyPixelDataTo(pixels);
+            var image = ImageFile.Load(path);
+            var pixels = image.Pixels;
             return Texture.FromPixels((uint)image.Width, (uint)image.Height, pixels, definition);
         }
         catch (Exception e)

@@ -30,6 +30,8 @@ public static class UIPropertyHelp
         ["scale"] = "multiplies the size it works out for itself, for when it has no size of its own",
         ["visible"] = "whether it is drawn at all, a hidden component takes no room either",
         ["enabled"] = "whether it can be used, a disabled control is drawn greyed out and ignores the pointer and the pad",
+        ["lift"] = "how far the shadow under it reaches, in pixels, 0 for none, a card or a dialog lifted off what's behind it",
+        ["glass"] = "a blur of whatever is behind it laid under it, how far it smears in pixels, 0 for none, its background goes see through over it",
         ["z"] = "above 0 it is drawn after everything else in the layout, the higher the more on top, and nothing it is inside of cuts it off (a badge over a card)",
         ["layer"] = "a name it shares with other parts of the layout so the program can show and hide them together, compositor.hidden_layers says which start out hidden",
         ["tooltip"] = "what comes up when the pointer rests on it, like this",

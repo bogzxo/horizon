@@ -58,8 +58,32 @@ public sealed class ContextMenu : UIComponent
     public static ContextMenu ShowAt(UIModule module, Vector2 world, Menu menu) => Show(module, module.ToLocal(world), menu);
 
     /// <summary>Shuts the menu without picking anything.</summary>
+    // The list that was showing as it was put away, painted going, see PaintClosing
+    private MenuPanel? closingPanel;
+
+    protected internal override void PopupClosed()
+    {
+        closingPanel = panel ?? closingPanel;
+        panel = null;
+    }
+
+    protected internal override bool PaintClosing(UIDrawList list, ref float closedAt)
+    {
+        if (closingPanel is not { } going || !list.BeginExit(ref closedAt, new Vector2(going.Bounds.Min.X, going.Bounds.Max.Y), new Vector2(0.0f, 6.0f)))
+        {
+            closingPanel = null;
+            return false;
+        }
+
+        // Nothing under the pointer, it's going
+        going.Paint(list, new Vector2(float.NegativeInfinity), Glass ?? Module?.Compositor.PopupGlass);
+        list.EndExit();
+        return true;
+    }
+
     public void Close()
     {
+        closingPanel = panel ?? closingPanel;
         panel = null;
         ClosePopup();
     }
@@ -100,7 +124,7 @@ public sealed class ContextMenu : UIComponent
 
         Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
         shown.Track(list.Skin, module.Frame, pointer);
-        shown.Paint(list, pointer);
+        shown.Paint(list, pointer, Glass ?? module.Compositor.PopupGlass);
     }
 
     protected internal override void OnPointerUp(Vector2 point)

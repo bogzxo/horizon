@@ -67,6 +67,32 @@ public class TabStrip : UIComponent
     /// <summary>Called with the tab whose x was clicked, to close it (or ask first).</summary>
     public Action<int>? OnClose { get; set; }
 
+    /// <summary>
+    /// A tab dragged to where another was, with where it was and where it is now, the strip's own list already moved.
+    /// Tabs aren't dragged unless this is set.
+    /// </summary>
+    public Action<int, int>? OnMoved { get; set; }
+
+    /// <summary>Moves a tab, the selected one going along with it, and says so (<see cref="OnMoved"/>).</summary>
+    public void Move(int from, int to)
+    {
+        if (from < 0 || from >= Tabs.Count || to < 0 || to >= Tabs.Count || from == to)
+            return;
+
+        StripTab moving = Tabs[from];
+        Tabs.RemoveAt(from);
+        Tabs.Insert(to, moving);
+        if (Selected == from)
+            Selected = to;
+        else if (Selected > from && Selected <= to)
+            Selected--;
+        else if (Selected < from && Selected >= to)
+            Selected++;
+        OnMoved?.Invoke(from, to);
+    }
+
+    private bool dragged;
+
     /// <summary>The scale of the text, or zero for a little smaller than the skin's.</summary>
     public float TextScale { get; set; }
 
@@ -174,7 +200,7 @@ public class TabStrip : UIComponent
         float scale = ScaleOf(skin);
         float line = Line(skin);
         Vector2 pointer = Pointer;
-        Vector4 dim = skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.6f);
+        Vector4 dim = skin.DimTextColor;
 
         list.PushClip(Bounds);
 
@@ -228,13 +254,29 @@ public class TabStrip : UIComponent
     {
         pressedTab = TabAt(point);
         pressedClose = pressedTab >= 0 && CloseBounds(pressedTab).Contains(point);
+        dragged = false;
+    }
+
+    protected internal override void OnPointerDrag(Vector2 point)
+    {
+        if (OnMoved is null || pressedTab < 0 || pressedClose)
+            return;
+
+        int over = TabAt(point);
+        if (over >= 0 && over != pressedTab)
+        {
+            Move(pressedTab, over);
+            pressedTab = over;
+            dragged = true;
+        }
     }
 
     protected internal override void OnClick()
     {
         int tab = pressedTab;
-        bool close = pressedClose;
+        bool close = pressedClose && !dragged;
         pressedTab = -1;
+        dragged = false;
 
         if (tab < 0 || tab >= Tabs.Count || TabAt(Pointer) != tab)
             return;

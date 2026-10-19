@@ -1,4 +1,4 @@
-using Horizon.Rendering.Spriting;
+﻿using Horizon.Rendering.Spriting;
 using Horizon.UI.Skinning;
 
 namespace Horizon.Tests;
@@ -110,11 +110,109 @@ public class UISkinPackTests
         if (Sheet(skin) is not { } sheet)
             return;
 
-        var (_, themes, _) = UISkin.Describe(Folder(skin), UISkins.FILE);
+        // A theme the skin offers whose art the sheet hasn't got is a skin that fails to load the day somebody picks it
+        foreach (UIThemeInfo theme in UISkin.ThemesOf(Folder(skin), UISkins.FILE))
+            Assert.Contains(theme.Art, sheet.Themes);
+    }
 
-        // A theme the skin offers and the art hasn't got is a skin that fails to load the day somebody picks it
-        foreach (string theme in themes)
-            Assert.Contains(theme, sheet.Themes);
+    [Fact]
+    public void The_flat_skin_has_its_themes_in_files_the_usual_one_first()
+    {
+        var (_, themes, usual) = UISkin.Describe(Folder("flat"), UISkins.FILE);
+        var infos = UISkin.ThemesOf(Folder("flat"), UISkins.FILE);
+
+        Assert.Equal("horizon", usual);
+        Assert.Equal("horizon", themes[0]);
+        Assert.Equal(["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"], themes);
+
+        // Every one has a title of its own and a file in the folder
+        foreach (UIThemeInfo theme in infos)
+        {
+            Assert.NotEqual(theme.Name, theme.Title);
+            Assert.True(File.Exists(Path.Combine(Folder("flat"), "themes", theme.Name + ".hor")), theme.Name);
+        }
+    }
+
+    [Fact]
+    public void Themes_come_from_the_file_and_the_folder_the_usual_one_first_and_a_base_is_known()
+    {
+        string folder = Path.Combine(Path.GetTempPath(), $"horizon_skin_{Guid.NewGuid():N}") + Path.DirectorySeparatorChar;
+        Directory.CreateDirectory(Path.Combine(folder, "themes"));
+
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "skin.hor"),
+                "let skin = { title: \"T\", theme: \"dark\", text_color: vec(0.9, 0.9, 0.9, 1.0), themes: { zinc: {}, dark: {} } }");
+            File.WriteAllText(Path.Combine(folder, "themes", "paper.hor"),
+                "let theme = { title: \"Paper\", base: \"dark\", art: \"zinc\", background: vec(1.0, 1.0, 1.0, 1.0), text_color: vec(0.1, 0.1, 0.1, 1.0) }");
+
+            var (_, themes, usual) = UISkin.Describe(folder, "skin.hor");
+            Assert.Equal("dark", usual);
+            Assert.Equal(["dark", "zinc", "paper"], themes);
+
+            var infos = UISkin.ThemesOf(folder, "skin.hor");
+            Assert.Equal(("paper", "Paper", "zinc", "dark"), (infos[2].Name, infos[2].Title, infos[2].Art, infos[2].Base));
+            Assert.Equal(("zinc", "zinc", "zinc", null), (infos[1].Name, infos[1].Title, infos[1].Art, infos[1].Base));
+
+            // A theme in both places, a base that isn't there, and a theme that isn't there are each said
+            File.WriteAllText(Path.Combine(folder, "themes", "dark.hor"), "let theme = { title: \"Dark\" }");
+            Assert.Contains("both", Assert.ThrowsAny<Exception>(() => UISkin.Describe(folder, "skin.hor")).Message);
+            File.Delete(Path.Combine(folder, "themes", "dark.hor"));
+
+            File.WriteAllText(Path.Combine(folder, "themes", "lost.hor"), "let theme = { base: \"nowhere\" }");
+            Assert.Contains("hasn't got", Assert.ThrowsAny<Exception>(() => UISkin.Describe(folder, "skin.hor")).Message);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_palette_of_four_colours_comes_out_whole_and_what_was_written_is_kept()
+    {
+        var palette = new UIPalette { Text = new(0.1f, 0.1f, 0.1f, 1.0f), Accent = new(0.0f, 0.0f, 1.0f, 1.0f), Track = new(0.5f, 0.5f, 0.5f, 1.0f) };
+        palette.Derive(new Dictionary<string, System.Numerics.Vector4>
+        {
+            ["background"] = System.Numerics.Vector4.One,
+            ["surface"] = new(0.9f, 0.9f, 0.9f, 1.0f),
+            ["text_color"] = palette.Text,
+            ["accent_color"] = palette.Accent,
+            ["track_color"] = palette.Track
+        });
+
+        Assert.Equal(System.Numerics.Vector4.One, palette.Field);
+        Assert.Equal(new System.Numerics.Vector4(0.5f, 0.5f, 0.5f, 1.0f), palette.Track);
+        Assert.Equal(new System.Numerics.Vector4(0.9f, 0.9f, 0.9f, 1.0f), palette.Panel);
+        Assert.True(palette.Control.X < 0.9f && palette.Control.X > 0.7f, "the control steps off the surface towards the text");
+        Assert.Equal(palette.Text, palette.ControlText);
+        Assert.Equal(palette.Text, palette.IconLabel);
+        Assert.Equal(0.12f, palette.Border.W, 3);
+        Assert.Equal(0.08f, palette.Hover.W, 3);
+        Assert.Equal(palette.Accent with { W = 0.9f }, palette.Highlight);
+        Assert.False(palette.IsDark);
+
+        // Nothing written, nothing worked out, the defaults stand
+        var plain = new UIPalette();
+        plain.Derive(new Dictionary<string, System.Numerics.Vector4>());
+        Assert.Equal(new UIPalette().Panel, plain.Panel);
+        Assert.True(plain.IsDark == (UIPalette.Luminance(plain.Text) > UIPalette.Luminance(plain.Panel)));
+    }
+
+    [Fact]
+    public void A_theme_that_says_what_only_a_skin_may_is_refused()
+    {
+        var thrown = Assert.ThrowsAny<Exception>(() => UITheme.Read("wide", new Horizon.HIDL.Runtime.ObjectValue(new Dictionary<string, Horizon.HIDL.Runtime.IRuntimeValue>
+        {
+            ["button_padding"] = new Horizon.HIDL.Runtime.StringValue("20")
+        }), "themes.wide"));
+        Assert.Contains("belongs in the skin", thrown.Message);
+
+        var self = Assert.ThrowsAny<Exception>(() => UITheme.Read("loop", new Horizon.HIDL.Runtime.ObjectValue(new Dictionary<string, Horizon.HIDL.Runtime.IRuntimeValue>
+        {
+            ["base"] = new Horizon.HIDL.Runtime.StringValue("loop")
+        }), "themes.loop"));
+        Assert.Contains("based on itself", self.Message);
     }
 
     [Theory]
