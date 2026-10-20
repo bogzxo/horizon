@@ -2,7 +2,7 @@
  "label": "after japan old map pt",
  "seconds": 12,
  "runs": {
-  "--map japan --content /tmp/claude-0/-home-user/0915fcfe-7f5e-5042-9906-5106f56d79e2/scratchpad/oldcontent": {
+  "--map japan --content /tmp/oldcontent": {
    "exit": 0,
    "gpu_ms": 388.23,
    "passes": {

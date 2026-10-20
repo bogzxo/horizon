@@ -89,6 +89,10 @@ public partial class WindowManager
 
     private void StartMove()
     {
+        // SDL's window was moved by the desktop as the button went down, see WindowManager.HitTest
+        if (hitTesting)
+            return;
+
         if (SystemFrame)
         {
             SystemDrag(HTCAPTION);
@@ -112,6 +116,9 @@ public partial class WindowManager
 
     private void StartResize(WindowEdges edges)
     {
+        if (hitTesting)
+            return;
+
         if (SystemFrame && edges != WindowEdges.None && !IsWindowMaximized())
         {
             SystemDrag(HitTestOf(edges));
@@ -187,6 +194,8 @@ public partial class WindowManager
     {
         if (CustomFrame && OperatingSystem.IsWindows())
             HandFrameToWindows();
+        else if (CustomFrame && UsesSdl)
+            StartHitTesting();
 
         if (maximizeWhenMade)
             SetMaximized(true);

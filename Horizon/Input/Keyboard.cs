@@ -62,6 +62,15 @@ public sealed class Keyboard
 
     public bool Control => IsDown(Key.ControlLeft) || IsDown(Key.ControlRight);
 
+    /// <summary>Whether the platform's own key for shortcuts is command (a Mac's) rather than control (everybody else's).</summary>
+    public static bool PrimaryIsCommand { get; } = OperatingSystem.IsMacOS();
+
+    /// <summary>
+    /// Whether the key shortcuts are held with is down: command on a Mac, control everywhere else. Copy, paste, save and
+    /// the rest of an application's shortcuts are Primary with a key, a game's controls are the keys themselves.
+    /// </summary>
+    public bool Primary => PrimaryIsCommand ? IsDown(Key.SuperLeft) || IsDown(Key.SuperRight) : Control;
+
     public bool Alt => IsDown(Key.AltLeft) || IsDown(Key.AltRight);
 
     /// <summary>

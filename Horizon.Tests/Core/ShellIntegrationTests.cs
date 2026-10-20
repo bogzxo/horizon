@@ -185,14 +185,14 @@ public class ShellIntegrationTests
     [Fact]
     public void A_command_that_never_goes_quiet_is_not_the_prompt()
     {
-        // Claude Code, or anything with a spinner, never stops writing long enough for the late marks to settle, and
+        // A TUI with a spinner never stops writing long enough for the late marks to settle, and
         // the screen was taken for the shell's prompt the whole time, Up and Down going to the history
         var screen = new TerminalScreen(40, 10) { LateMarks = true };
         screen.Feed("\u001b]133;A\u0007\u001b]133;B\u0007$ ");
         screen.SettleMarks();
         Assert.True(screen.AtPrompt);
 
-        screen.Feed("claude\r\n\u001b]133;C\u0007 thinking");
+        screen.Feed("spin\r\n\u001b]133;C\u0007 thinking");
         Assert.False(screen.AtPrompt);
         Assert.False(Horizon.UI.Components.TerminalHost.AtShellPrompt(screen));
     }

@@ -103,4 +103,26 @@ public class TerminalLinksAndProblemsTests
     {
         Assert.Empty(Read("Restore complete (0.4s)\nHello, World!\nPS C:\\repo> dir\n  Directory: C:\\repo\n"));
     }
+
+    private const string A = "\u001b]133;A\a", B = "\u001b]133;B\a", C = "\u001b]133;C\a";
+
+    [Fact]
+    public void An_error_typed_at_a_prompt_with_marks_is_no_error_and_what_the_command_writes_is()
+    {
+        // bash's prompt ends in $, which no pattern keeps out, the marks round it do
+        string typed = $"{A}me@box:/repo$ {B}printf '%s\\n' '/repo/src/Program.cs(12,5): error CS1002: ; expected'\n";
+        Assert.Empty(Read(typed));
+        Assert.Single(Read(typed + $"{C}/repo/src/Program.cs(12,5): error CS1002: ; expected\n"));
+    }
+
+    [Theory]
+    [InlineData("plain output", "plain output")]
+    [InlineData(A + "PS C:\\> " + B + "dir", "")]
+    [InlineData(B + "the end of a prompt from the line before", "")]
+    [InlineData("an error, then the next prompt drawn on the same line" + A + "PS C:\\> " + B, "an error, then the next prompt drawn on the same line")]
+    [InlineData(A + "$ " + B + "make" + C + "output after the mark", C + "output after the mark")]
+    [InlineData("one" + A + "$ " + B + "a" + C + "two" + A + "$ " + B + "b", "one" + C + "two")]
+    [InlineData(A + B + "C:\\hex\\Program.cs(12,5): error CS1002: ; expected", "C:\\hex\\Program.cs(12,5): error CS1002: ; expected")]
+    public void A_line_loses_its_prompts_and_what_was_typed_at_them(string raw, string kept) =>
+        Assert.Equal(kept, TerminalProblemReader.WithoutPrompts(raw));
 }

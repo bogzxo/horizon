@@ -67,11 +67,13 @@ public static class ShaderCompiler
 
         string rid = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
         rid += System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "-arm64" : "-x64";
-        string name = OperatingSystem.IsWindows() ? "slang-glslang.dll" : OperatingSystem.IsMacOS() ? "libslang-glslang.dylib" : "libslang-glslang.so";
+        // On Linux and macOS the package names it with Slang's version (libslang-glslang-2026.19.so), on Windows it doesn't
+        string pattern = OperatingSystem.IsWindows() ? "slang-glslang*.dll" : OperatingSystem.IsMacOS() ? "libslang-glslang*.dylib" : "libslang-glslang*.so";
 
-        foreach (string candidate in new[] { Path.Combine(AppContext.BaseDirectory, name), Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native", name) })
+        foreach (string folder in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native") })
         {
-            if (!File.Exists(candidate)) continue;
+            string? candidate = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, pattern).Order(StringComparer.Ordinal).LastOrDefault() : null;
+            if (candidate is null) continue;
             try
             {
                 System.Runtime.InteropServices.NativeLibrary.Load(candidate);
@@ -320,8 +322,8 @@ public static class ShaderCompiler
 
         // By the game rather than the process, which is "dotnet" for a game that is started through it
         string game = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Horizon";
-        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.Create);
-        if (string.IsNullOrWhiteSpace(local)) local = AppContext.BaseDirectory;
+        // LocalAppData on Windows, ~/Library/Caches on macOS, ~/.cache on Linux
+        string local = Horizon.Core.Platform.PlatformPaths.CacheRoot;
 
         cacheDirectory = string.IsNullOrWhiteSpace(setting) ? Path.Combine(local, "Horizon", game, "Shaders") : setting;
         Log.Info($"[ShaderCompiler] Compiled shaders are kept in '{cacheDirectory}'.");

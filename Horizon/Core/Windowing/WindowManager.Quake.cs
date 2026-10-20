@@ -165,6 +165,27 @@ public partial class WindowManager
         if (IsWindowMaximized())
             SetMaximized(false);
 
+        // A Wayland window can't say where it is, the compositor puts it where it puts it: there the drop down is the
+        // window shown and in front, as big as it would be, and hidden again, no sliding
+        if (!CanPlaceWindow)
+        {
+            if (down)
+            {
+                var screen = ScreenAreaOfWindow();
+                _window.Size = new Vector2D<int>(screen.Size.X, Math.Max(MinimumSize.Y, (int)(screen.Size.Y * Math.Clamp(share, 0.1f, 1.0f))));
+                _window.IsVisible = true;
+                Foreground();
+            }
+            else
+            {
+                _window.IsVisible = false;
+            }
+
+            sliding = false;
+            dropped = down;
+            return;
+        }
+
         var area = ScreenAreaOfWindow();
         int height = Math.Max(MinimumSize.Y, (int)(area.Size.Y * Math.Clamp(share, 0.1f, 1.0f)));
         if (down)
@@ -215,10 +236,12 @@ public partial class WindowManager
         return _window.Monitor?.Bounds ?? new Rectangle<int>(0, 0, _window.Size.X, _window.Size.Y);
     }
 
-    private void Foreground()
+    private unsafe void Foreground()
     {
         if (OperatingSystem.IsWindows() && frameHandle != 0)
             SetForegroundWindow(frameHandle);
+        else if (SdlWindow is var window && window != null)
+            Silk.NET.SDL.SdlProvider.SDL.Value.RaiseWindow(window);
     }
 
     /// <summary>

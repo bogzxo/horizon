@@ -113,10 +113,36 @@ public class GameEngine : Entity
 #if DEBUG
     /// <summary>
     /// The Skyline debugger, the menu bar over the game with the scene tree, the inspector and the rest behind it
-    /// (see <see cref="Debugging.SkylineDebugger"/>). Only in a Debug build, a Release one hasn't got the class at all,
-    /// so whatever talks to it goes inside of an #if DEBUG as well.
+    /// (Horizon.UI's SkylineDebugger). Only in a Debug build, a Release one hasn't got it at all, so whatever talks to it
+    /// goes inside of an #if DEBUG as well. Null for a game without the UI.
     /// </summary>
-    public Debugging.SkylineDebugger Debugger { get; }
+    public IGameDebugger? Debugger { get; }
+
+    /// <summary>
+    /// How the debugger is made, said by Horizon.UI as it loads, the engine can't name it. The engine has the UI load
+    /// for it to be said before it makes one.
+    /// </summary>
+    public static Func<GameObject>? DebuggerMaker { get; set; }
+
+    // The debugger, if the UI is there to make one. Loading the UI's assembly runs its module initializer, which is
+    // where it says how. Debug only, a Release build (and so an AOT one) never gets here
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Debug builds only, never trimmed")]
+    private static GameObject? MakeDebugger()
+    {
+        if (DebuggerMaker is null)
+        {
+            try
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(System.Reflection.Assembly.Load("Horizon.UI").ManifestModule.ModuleHandle);
+            }
+            catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                // a game without the UI has no debugger
+            }
+        }
+
+        return DebuggerMaker?.Invoke();
+    }
 #endif
 
     public GameEngine()
@@ -158,7 +184,8 @@ public class GameEngine : Entity
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
-        Debugger = AddEntity(new Debugging.SkylineDebugger());
+        if (MakeDebugger() is { } debugger)
+            Debugger = (IGameDebugger)AddEntity(debugger);
 #endif
 
         SceneManager = AddEntity<SceneManager>();
@@ -333,7 +360,7 @@ public class GameEngine : Entity
 #if DEBUG
         // Over everything, the debugger draws last whatever was added to the engine after it. While it is up
         // it takes the frame as it is now and shows it in a part of the window
-        Debugger.Draw(dt);
+        Debugger?.Draw(dt);
 #endif
 
         Horizon.Rendering.CameraBlock.EndFrame();

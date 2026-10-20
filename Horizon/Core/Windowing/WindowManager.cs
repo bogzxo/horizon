@@ -275,10 +275,12 @@ public partial class WindowManager : GameComponent, IDisposable
 
     public WindowManager(in WindowManagerConfiguration config)
     {
-        // GLFW has no Vulkan to offer on a Mac (cheers, Apple), SDL has (through a Metal surface) and can be told where MoltenVK is
-        if (OperatingSystem.IsMacOS())
+        // GLFW has no Vulkan to offer on a Mac (cheers, Apple), SDL has (through a Metal surface) and can be told where
+        // MoltenVK is. Linux has SDL too, see WindowManager.Sdl
+        if (UsesSdl)
         {
             LoadMoltenVK();
+            ConfigureSdl(config.AppId);
             Silk.NET.Windowing.Sdl.SdlWindowing.RegisterPlatform();
             Silk.NET.Input.Sdl.SdlInput.RegisterPlatform();
         }
@@ -407,7 +409,7 @@ public partial class WindowManager : GameComponent, IDisposable
 
             // SDL's window falls over its own default icon (it indexes past the end of the list it was handed), and a
             // Mac has no icon on a window anyway, the one in the Dock comes from the bundle
-            if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon))
+            if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon) && !UsesSdl)
                 _window.SetDefaultIcon();
 
             _input = _window.CreateInput();
@@ -626,10 +628,11 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private unsafe Vector2 DrawableSize()
     {
-        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        // A Wayland screen scaled by two is the same as a Retina one
+        if (SdlWindow is var handle && handle != null)
         {
             int width = 0, height = 0;
-            Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowSizeInPixels((Silk.NET.SDL.Window*)handle, &width, &height);
+            Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowSizeInPixels(handle, &width, &height);
             if (width > 0 && height > 0)
                 return new Vector2(width, height);
         }
@@ -754,14 +757,14 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private unsafe bool IsFullscreen()
     {
-        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        if (SdlWindow is var handle && handle != null)
         {
-            if ((Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowFlags((Silk.NET.SDL.Window*)handle) & SDL_FULLSCREEN) != 0)
+            if ((Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowFlags(handle) & SDL_FULLSCREEN) != 0)
                 return true;
 
             // The green button takes a window into a fullscreen of the system's own that SDL was never asked for
             // and doesn't count, the window itself knows
-            return _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, RegisterSelector("styleMask")) & NS_FULLSCREEN) != 0;
+            return OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, RegisterSelector("styleMask")) & NS_FULLSCREEN) != 0;
         }
 
         return _window.WindowState == WindowState.Fullscreen;
@@ -784,9 +787,9 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private unsafe void SetFullscreen(bool fullscreen)
     {
-        if (OperatingSystem.IsMacOS() && _window.Native?.Sdl is { } handle && handle != 0)
+        if (SdlWindow is var handle && handle != null)
         {
-            Silk.NET.SDL.SdlProvider.SDL.Value.SetWindowFullscreen((Silk.NET.SDL.Window*)handle, fullscreen ? SDL_FULLSCREEN_DESKTOP : 0);
+            Silk.NET.SDL.SdlProvider.SDL.Value.SetWindowFullscreen(handle, fullscreen ? SDL_FULLSCREEN_DESKTOP : 0);
             return;
         }
 

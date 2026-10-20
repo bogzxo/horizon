@@ -16,6 +16,104 @@ public static class ProcessEnvironment
 {
     private const string PATH = "Path";
 
+    // Between what the login shell printed before and the environment, past whatever its rc files said
+    private const string MARK = "__HORIZON_ENVIRONMENT__";
+
+    // Variables of the shell that ran env, its own and not the user's
+    private static readonly HashSet<string> ShellOwn = new(StringComparer.Ordinal) { "_", "PWD", "OLDPWD", "SHLVL", "PS1", "PS2", "TERM", "COLUMNS", "LINES" };
+
+    private static Task? imported;
+
+    /// <summary>
+    /// On macOS and Linux, a program started from the Dock, Finder or a desktop's launcher gets the environment of the
+    /// session, not the one a terminal has: no ~/.dotnet/tools, no /opt/homebrew/bin, nothing ~/.zshrc or ~/.profile
+    /// adds to the PATH, so the tools a user has (a language server, dotnet, a debugger) aren't found. What VS Code does
+    /// about it is done here: the user's login shell is run once, interactively, to print its environment, and that is
+    /// laid over this process's. Started from a terminal there's nothing to do, the terminal's is already that. Off the
+    /// caller's thread, a few seconds at the most; <see cref="WaitForLoginShell"/> for what needs it. Nothing on Windows,
+    /// or with HORIZON_SHELL_ENVIRONMENT=off.
+    /// </summary>
+    public static Task ImportLoginShell()
+    {
+        if (imported is not null)
+            return imported;
+
+        bool wanted = !OperatingSystem.IsWindows() && Console.IsInputRedirected
+            && !string.Equals(Environment.GetEnvironmentVariable("HORIZON_SHELL_ENVIRONMENT"), "off", StringComparison.OrdinalIgnoreCase);
+        return imported = wanted ? Task.Run(ReadLoginShell) : Task.CompletedTask;
+    }
+
+    /// <summary>Waits so long at the most for the login shell's environment (see <see cref="ImportLoginShell"/>), true once it is in.</summary>
+    public static bool WaitForLoginShell(int milliseconds = 4000)
+    {
+        try
+        {
+            return ImportLoginShell().Wait(milliseconds);
+        }
+        catch (AggregateException)
+        {
+            return true;
+        }
+    }
+
+    private static void ReadLoginShell()
+    {
+        string shell = Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } set && File.Exists(set) ? set : "/bin/sh";
+        var info = new System.Diagnostics.ProcessStartInfo(shell)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            CreateNoWindow = true
+        };
+
+        // -l for the login files (~/.zprofile, ~/.profile), -i for the interactive ones (~/.zshrc, ~/.bashrc), which is
+        // where most PATHs are made. fish takes the same
+        info.ArgumentList.Add("-l");
+        info.ArgumentList.Add("-i");
+        info.ArgumentList.Add("-c");
+        info.ArgumentList.Add($"printf '%s' '{MARK}'; env -0");
+        info.Environment["HORIZON_RESOLVING_ENVIRONMENT"] = "1";
+
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(info);
+            if (process is null)
+                return;
+
+            process.StandardInput.Close();
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            process.ErrorDataReceived += static (_, _) => { };
+            process.BeginErrorReadLine();
+            if (!process.WaitForExit(5000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch (Exception) { }
+                return;
+            }
+
+            string text = output.Result;
+            int at = text.LastIndexOf(MARK, StringComparison.Ordinal);
+            if (at < 0)
+                return;
+
+            foreach (string pair in text[(at + MARK.Length)..].Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int equals = pair.IndexOf('=');
+                if (equals <= 0)
+                    continue;
+
+                string name = pair[..equals];
+                if (!ShellOwn.Contains(name))
+                    Environment.SetEnvironmentVariable(name, pair[(equals + 1)..]);
+            }
+        }
+        catch (Exception)
+        {
+            // The session's environment it is, then
+        }
+    }
+
     /// <summary>Every variable a program started now should have, by name, the case of a name not mattering.</summary>
     public static Dictionary<string, string> Current()
     {

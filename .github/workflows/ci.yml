@@ -1,0 +1,44 @@
+# Every push and pull request, the engine built and its tests run on Windows, Linux and macOS, Debug as well as
+# Release, since the Skyline debugger and its tests are only in a Debug build. Nothing here needs a GPU.
+
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "master", "development" ]
+  pull_request:
+    branches: [ "master", "development" ]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest, macos-latest ]
+        configuration: [ Debug, Release ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # HIDL is a submodule (bogzxo/hidl at Horizon.HIDL)
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Build
+        run: dotnet build Horizon.sln --configuration ${{ matrix.configuration }}
+
+      - name: Test
+        run: dotnet test Horizon.Tests --no-build --configuration ${{ matrix.configuration }} --verbosity normal

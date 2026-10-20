@@ -1,0 +1,8 @@
+# The scripts the terminal gives a Unix shell as it starts (Horizon/Assets/terminal/shell) are read by bash, zsh and
+# fish on Linux, a Mac, WSL and Git Bash, none of which take a carriage return at the end of a line. A Windows checkout
+# with core.autocrlf would put them there, so they're LF whatever the checkout
+*.bash text eol=lf
+*.zsh text eol=lf
+*.fish text eol=lf
+*.sh text eol=lf
+Horizon/Assets/terminal/shell/zsh/.* text eol=lf

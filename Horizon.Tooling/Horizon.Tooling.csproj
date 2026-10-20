@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    What's for an editor and not for a game, out of the engine: the language server client (JSON-RPC over a process's
+    pipes, the servers a program knows of) and the debug adapter client. The types keep the namespace they had in the
+    engine (Horizon.UI.Scripting), only the assembly is new. The TextMate grammars stay in the UI, they're how its code
+    editor colours what it shows.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Horizon.UI.Scripting</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <Platforms>AnyCPU;x64</Platforms>
+    <IsPublishable>false</IsPublishable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Tests" />
+  </ItemGroup>
+
+</Project>

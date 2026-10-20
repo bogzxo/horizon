@@ -14,7 +14,7 @@ something somebody else could pick up is proof, a sweep of loose ends, and the f
    lived as long as they did. `OcclusionFieldTests` and `PathTracingTests` are the exceptions and the shape to follow.
 2. **CI only runs the tests.** `.github/workflows/publish.yml` builds and runs `dotnet test`, never the checks, never
    Hex's self test, and it's on `actions/checkout@v3` and `cache@v2`, which GitHub is retiring. A headless run on
-   lavapipe is written up in CLAUDE.md and has never been wired into it. The game's workflow builds against a
+   lavapipe has never been wired into it. The game's workflow builds against a
    submodule that's behind this checkout.
 3. **The Mac has been run on once** (notebook, "The first run on an actual Mac") and Linux never outside a headless
    box. Anything a window does by hand (the frameless drag, the fullscreen toggle) is Windows and GLFW's elsewhere.
@@ -32,8 +32,7 @@ something somebody else could pick up is proof, a sweep of loose ends, and the f
    (1522), `TileMap.cs` (1473), `WindowManager.cs` (1189), `UIRichText.cs` (1125), `UICompositor.cs` (1034). Each is
    one thing and reads top to bottom, so no rush, but the next person opens `TileMap.cs` to change the colliders and
    scrolls past the GPU upload and the pathfinder to get there.
-8. **The docs lag the code in places.** CLAUDE.md says 442 checks (458), Hex's 413 (424), the notebook is 1700 lines of
-   diary nobody reads from the top, `project-health-2.md` is a write-up of a branch that is history, `docs/metrics` is
+8. **The docs lag the code in places.** The counts of checks are behind, 442 said for 458 and Hex's 413 for 424, `project-health-2.md` is a write-up of a branch that is history, `docs/metrics` is
    OpenGL against Vulkan when there is no OpenGL. There is no page that says how to make a game with it, the examples
    are that page.
 9. **No release.** Nothing is tagged, nothing is a NuGet package, a game takes the engine as a submodule and builds all
@@ -72,7 +71,7 @@ Each one is a day or less and the UI ones are the template. `Horizon.Testing --c
 
 ### 2. CI that runs it all
 
-The workflow on current actions, Windows and Ubuntu, the Ubuntu job on lavapipe under Xvfb the way CLAUDE.md says,
+The workflow on current actions, Windows and Ubuntu, the Ubuntu job on lavapipe under Xvfb,
 running the tests, `Horizon.Testing --checks` and (checked out next to it) Hex's `--selftest`. A badge on the README.
 A nightly that publishes the examples as a zip, so the Mac run has something to download.
 
@@ -91,8 +90,8 @@ shadows, the pathfinder), `WindowManager.cs` likewise (it has three partials, th
 
 ### 5. The docs
 
-CLAUDE.md's counts right, `project-health-2.md` and the OpenGL metrics into `docs/history/` with a line each saying
-what they were, the notebook kept but a `docs/README.md` that is the ten minute way in (make an engine, a scene, a
+The counts right, `project-health-2.md` and the OpenGL metrics into `docs/history/` with a line each saying
+what they were, and a `docs/README.md` that is the ten minute way in (make an engine, a scene, a
 sprite, a map, a light, a UI, a sound, run the checks) with links into the examples, and a page a subsystem for the
 ones that have none (the UI, the physics, the audio, the way the loops and snapshots work).
 
