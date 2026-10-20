@@ -65,6 +65,9 @@ public class TerminalProfilesTests
         string asRead = Encoding.Latin1.GetString(Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(none)).ToArray());
 
         Assert.Empty(TerminalProfiles.ParseWslList(asRead));
+
+        // An older one sends people to the store with a link on a line of its own, no space in it
+        Assert.Empty(TerminalProfiles.ParseWslList("Windows Subsystem for Linux has no installed distributions.\r\nDistributions can be installed by visiting the Microsoft Store:\r\nhttps://aka.ms/wslstore\r\n"));
     }
 
     [Fact]
