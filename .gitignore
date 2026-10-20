@@ -402,9 +402,7 @@ FodyWeavers.xsd
 
 
 **/*.sync-conflict*
-/docs/notebook.md
 /Horizon/Art
-/CLAUDE.md
 
 # Syncthing's half written copies and its folders, and what a Mac or Windows leaves lying about
 ~syncthing~*

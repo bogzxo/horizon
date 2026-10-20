@@ -62,7 +62,7 @@ OpenGL shaped and would have to move before a second backend is real, in the ord
   `#include` preprocessor would stay, it is ours.
 - `ObjectManager` is where the GL context lives and the factories are GL. The device would own the factories.
 
-The rule in the meantime (it is in CLAUDE.md too): a renderer that needs something the device hasn't got adds it to
+The rule in the meantime: a renderer that needs something the device hasn't got adds it to
 the device, it does not reach for `GL`.
 
 Everything goes through direct state access (OpenGL 4.5) and nothing binds to be filled or described any more.

@@ -118,7 +118,7 @@ public partial class WindowManager
         _window.StateChanged += OnState;
     }
 
-    // Methods rather than lambdas, handed over once, see Garbage in CLAUDE.md
+    // Methods rather than lambdas, handed over once, a frame allocates nothing
     private void OnMouseMove(IMouse mouse, System.Numerics.Vector2 at) => NoteInput();
     private void OnMouseButton(IMouse mouse, Silk.NET.Input.MouseButton button) => NoteInput();
     private void OnScroll(IMouse mouse, ScrollWheel wheel) => NoteInput();

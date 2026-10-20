@@ -82,7 +82,7 @@ public sealed partial class TerminalScreen
     /// <summary>
     /// Whether the shell is at its prompt waiting for a line, as the marks have it (B said and C not yet). A C that came and
     /// waits to be settled (late marks, see LateMarks) counts already. It waits for the output to go quiet, and a program
-    /// that never does (Claude Code, every spinner there is) had the screen taken for the shell's prompt the whole time it
+    /// that never does (a TUI with a spinner, every spinner there is) had the screen taken for the shell's prompt the whole time it
     /// ran, its arrows going to the history and not to its lists.
     /// </summary>
     public bool AtPrompt => inputRow is not null && !outputPending;

@@ -745,7 +745,7 @@ public sealed partial class TerminalHost : IDisposable
             return false;
 
         // The marks can say prompt while a program runs (they settle late, cmd has no mark for a command starting, and
-        // Up and Down went to the history in micro and Claude Code in a Dusk opened from Dawn), the system can't, a shell
+        // Up and Down went to the history in micro and a TUI in a Dusk opened from Dawn), the system can't, a shell
         // with a program of its own going isn't at its prompt
         if (view.Process?.RunsAProgram == true)
             return false;

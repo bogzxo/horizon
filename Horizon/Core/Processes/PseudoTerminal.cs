@@ -30,7 +30,7 @@ public abstract class PseudoTerminal : IDisposable
     public bool IsRunning => !exited;
 
     /// <summary>
-    /// Whether the shell has a program of its own running right now (micro, claude, a build), asked of the system and
+    /// Whether the shell has a program of its own running right now (micro, a TUI, a build), asked of the system and
     /// not of the screen, which only knows what the shell's marks said and when they last settled. False where it can't
     /// be told. Not cheap enough for every frame, it's for a key that means something else at a prompt.
     /// </summary>
