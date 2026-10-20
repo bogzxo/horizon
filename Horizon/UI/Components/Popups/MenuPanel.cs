@@ -116,7 +116,9 @@ internal sealed class MenuPanel
 
         for (int i = 0; i < menu.Items.Count; i++)
         {
-            if (menu.Items[i].Label == label)
+            // The one that is there, a menu can have two by the same name shown at different times (Zoom In of the
+            // canvas and of the code)
+            if (menu.Items[i].Label == label && menu.Items[i].Shown)
                 return ItemBounds(skin, i);
         }
 

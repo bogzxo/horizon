@@ -75,6 +75,17 @@ public sealed class Menu(string title)
         return item;
     }
 
+    /// <summary>
+    /// Adds an item made before there was a menu to put it in at the end of the menu, for a program that keeps its
+    /// commands somewhere of their own and puts the menus together from them.
+    /// </summary>
+    /// <returns>The item.</returns>
+    public MenuItem Add(MenuItem item)
+    {
+        items.Add(item);
+        return item;
+    }
+
     /// <summary>Adds a menu of its own at the end of this one, which opens to the side when the pointer rests on it.</summary>
     /// <returns>The menu, to add to.</returns>
     public Menu AddMenu(string title, string icon = "")
