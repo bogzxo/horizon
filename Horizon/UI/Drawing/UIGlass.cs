@@ -34,6 +34,20 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
     /// <summary>What a component sits on unless it says otherwise, a fair smear and most of its colour kept.</summary>
     public static UIGlass Frosted => new();
 
+    /// <summary>Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at.</summary>
+    public static UIGlass Clear => new(Blur: 16.0f, Clarity: 0.8f, Rim: 0.4f, Bend: 10.0f);
+
+    /// <summary>The glass of popups (dialogs, menus, a palette) out of four sliders, each held to what still looks like glass.</summary>
+    public static UIGlass Lens(float blur, float clarity, float rim, float bend) =>
+        new(Blur: Math.Clamp(blur, 0.0f, 64.0f), Clarity: Math.Clamp(clarity, 0.0f, 1.0f), Rim: Math.Clamp(rim, 0.0f, 1.0f), Bend: Math.Clamp(bend, 0.0f, 24.0f));
+
+    /// <summary>
+    /// The glass of a side panel out of the same sliders, a little more blur and a lot less rim and no bend. There's
+    /// nothing on most of a side but a tree, and a lens on that much glass looks like the window's melting.
+    /// </summary>
+    public static UIGlass Pane(float blur, float clarity, float rim) =>
+        new(Blur: Math.Clamp(blur * 1.2f, 0.0f, 64.0f), Clarity: Math.Clamp(clarity + 0.05f, 0.0f, 1.0f), Rim: Math.Clamp(rim * 0.35f, 0.0f, 1.0f), Bend: 0.0f);
+
     /// <summary>Helper method for a background as it is painted over the glass, the see through part of it taken off its alpha.</summary>
     public Vector4 Over(Vector4 background) => background with { W = background.W * Math.Clamp(1.0f - Clarity, 0.0f, 1.0f) };
 }

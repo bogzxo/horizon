@@ -159,6 +159,12 @@ public sealed class UIRichText
     /// <summary>How many lines it came out as.</summary>
     public int LineCount => lineCount;
 
+    /// <summary>What somebody wrote, without the brackets a label would take for its markup (they go round).</summary>
+    public static string Plain(string text) => text.Replace('[', '(').Replace(']', ')');
+
+    /// <summary>What somebody wrote as it is, unless a label would take some of it for its markup.</summary>
+    public static string Literal(string text) => HasTags(text) ? Plain(text) : text;
+
     /// <summary>
     /// Whether a text has anything in it that this does differently from plain text, a style tag. For a label that only
     /// lays text out this way when it has to.
