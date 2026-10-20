@@ -1,4 +1,4 @@
-using Horizon.Rendering;
+﻿using Horizon.Rendering;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
@@ -325,7 +325,8 @@ public abstract partial class UIComponent
         return DesiredSize;
     }
 
-    internal void ArrangeTree(UIRect bounds)
+    /// <summary>The component and everything in it put in a place, the second half of a layout pass after measuring.</summary>
+    public void ArrangeTree(UIRect bounds)
     {
         Bounds = bounds;
         Arrange((slideWanted is null ? bounds : SlidContent(bounds)).Shrink(Padding));

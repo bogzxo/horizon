@@ -167,13 +167,13 @@ public partial class TerminalView : UIComponent, IDisposable
 
     protected override bool HitTestVisible => true;
 
-    protected internal override bool Focusable => true;
+    protected override bool Focusable => true;
 
-    protected internal override bool KeepsTab => true;
+    protected override bool KeepsTab => true;
 
-    protected internal override bool TakesRawKeys => true;
+    protected override bool TakesRawKeys => true;
 
-    protected internal override void OnActivate() => Focus();
+    protected override void OnActivate() => Focus();
 
     public TerminalView()
     {
@@ -398,7 +398,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /* Keys */
 
-    protected internal override void OnKeyDown(in UIKeyPress press)
+    protected override void OnKeyDown(in UIKeyPress press)
     {
         blink = 0.0f;
         if (CompletionKey(press) || Intercept?.Invoke(press) == true)
@@ -430,7 +430,7 @@ public partial class TerminalView : UIComponent, IDisposable
             Typed(bytes);
     }
 
-    protected internal override void OnTextInput(char character)
+    protected override void OnTextInput(char character)
     {
         // Control codes come through OnKeyDown, this is the typed text
         if (character < ' ' || character == UIKeyboard.DELETE)
@@ -442,7 +442,7 @@ public partial class TerminalView : UIComponent, IDisposable
         Typed(TerminalKeys.Character(character.ToString(), modifiers, screen.KeyboardFlags));
     }
 
-    protected internal override void OnPaste(string text)
+    protected override void OnPaste(string text)
     {
         if (text.Length == 0)
             return;
@@ -468,7 +468,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /* The pointer */
 
-    protected internal override bool OnScroll(float delta)
+    protected override bool OnScroll(float delta)
     {
         if (delta == 0.0f)
             return false;
@@ -502,7 +502,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     private Vector2 lastPointer;
 
-    protected internal override void OnPointerDown(Vector2 point)
+    protected override void OnPointerDown(Vector2 point)
     {
         Focus();
         lastPointer = point;
@@ -552,7 +552,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     private bool reporting;
 
-    protected internal override void OnPointerDrag(Vector2 point)
+    protected override void OnPointerDrag(Vector2 point)
     {
         lastPointer = point;
         if (BadgeDragged(point))
@@ -579,7 +579,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
     }
 
-    protected internal override void OnPointerUp(Vector2 point)
+    protected override void OnPointerUp(Vector2 point)
     {
         if (BadgeReleased(point))
             return;

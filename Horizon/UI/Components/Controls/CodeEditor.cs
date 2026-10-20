@@ -384,7 +384,7 @@ public partial class CodeEditor : UIComponent
     /// Where a backdrop goes in an area, its bottom right corner moved in by the offset, the size and the offset both
     /// shares of the window (its height for the size, the picture keeping its shape) rather than of the picture's pixels.
     /// </summary>
-    internal static UIRect PlaceBackdrop(UIRect area, UIRect window, Horizon.Graphics.Texture picture, float scale, Vector2 offset)
+    public static UIRect PlaceBackdrop(UIRect area, UIRect window, Horizon.Graphics.Texture picture, float scale, Vector2 offset)
     {
         float height = window.Height * scale;
         Vector2 drawn = new(picture.Height > 0 ? height * picture.Width / picture.Height : 0.0f, height);

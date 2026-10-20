@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The terminal, out of the engine so a game doesn't carry it. The VT parser, the screen and its blocks, the views and
+    the panes, the host with its plugins, profiles, sessions and shell integration, and the TUI programs. The types keep
+    the namespace they had in the engine (Horizon.UI.Components), only the assembly is new. The pseudo terminal itself
+    stays in the engine with the other processes.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Horizon.UI.Components</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <Platforms>AnyCPU;x64</Platforms>
+    <IsPublishable>false</IsPublishable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+  </ItemGroup>
+
+  <!-- The terminal's own plugins and keys, which Dusk and Hex's terminal page both load first, see TerminalHost -->
+  <ItemGroup>
+    <None Update="Assets\terminal\**\*.hor;Assets\terminal\**\*.ps1;Assets\terminal\**\*.bash;Assets\terminal\**\*.zsh;Assets\terminal\**\*.fish;Assets\terminal\**\*.cmd;Assets\terminal\shell\zsh\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Tests" />
+    <InternalsVisibleTo Include="Horizon.Testing" />
+  </ItemGroup>
+
+</Project>

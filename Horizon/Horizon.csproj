@@ -83,10 +83,6 @@
     <None Update="Assets\uix\**\*.aseprite;Assets\uix\**\*.hor;Assets\uix\**\README.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- The terminal's own plugins and keys, which Dusk and Hex's terminal page both load first, see TerminalHost -->
-    <None Update="Assets\terminal\**\*.hor;Assets\terminal\**\*.ps1;Assets\terminal\**\*.bash;Assets\terminal\**\*.zsh;Assets\terminal\**\*.fish;Assets\terminal\**\*.cmd;Assets\terminal\shell\zsh\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
   </ItemGroup>
 
   <ItemGroup>

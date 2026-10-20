@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.Terminal\Horizon.Terminal.csproj" />
     <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
   </ItemGroup>
 

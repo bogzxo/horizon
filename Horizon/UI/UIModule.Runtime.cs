@@ -183,8 +183,29 @@ public partial class UIModule
         Register<Table>("table");
         Register<DrawingPanel>("drawing");
         Register<FormPanel>("form");
-        Register<TerminalView>("terminal");
-        Register<TerminalPanel>("terminal_panel");
+
+        // The kinds other assemblies added (the terminal's), after the engine's own
+        Action<UIModule>[] others;
+        lock (kinds)
+            others = [.. added];
+        foreach (Action<UIModule> add in others)
+            add(this);
+    }
+
+    // What another assembly added to every module made after, see AddKind
+    private static readonly List<Action<UIModule>> added = [];
+
+    /// <summary>
+    /// A kind of component of another assembly's (the terminal's) made known to layouts and scripts in every module made
+    /// from now on, as the engine's own kinds are.
+    /// </summary>
+    public static void AddKind<T>(string name) where T : UIComponent, new()
+    {
+        lock (kinds)
+        {
+            kinds[name] = (typeof(T), static () => new T());
+            added.Add(module => module.Register<T>(name));
+        }
     }
 
     /// <summary>

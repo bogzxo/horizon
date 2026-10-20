@@ -105,12 +105,19 @@ public static class SettingsSections
         _ => null
     };
 
-    // a section kept as the file had it, the terminal's with its help over every key again
+    /// <summary>
+    /// What a section's keys are, by the section, written over each of them as the file is saved. The terminal says its
+    /// own (TerminalKinds), the engine doesn't know them.
+    /// </summary>
+    public static readonly Dictionary<string, Func<string, string?>> Help = [];
+
+    // a section kept as the file had it, with its help over every key again when it has some
     private static HIDLObject Commented(string name, Dictionary<string, IRuntimeValue> section)
     {
+        Help.TryGetValue(name, out Func<string, string?>? help);
         var made = new HIDLObject();
         foreach (var (key, value) in section)
-            made.Add(key, value, name == TERMINAL ? Array.Find(TerminalSettings.Described, setting => setting.Key == key)?.Help : null);
+            made.Add(key, value, help?.Invoke(key));
         return made;
     }
 }
