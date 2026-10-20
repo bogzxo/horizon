@@ -213,6 +213,13 @@ public partial class WindowManager : GameComponent, IDisposable
     public IInputContext Input => _input;
 
     /// <summary>
+    /// Whether the window's input context has gamepads in it, see <see cref="Engine.GameEngineConfiguration.Gamepads"/>.
+    /// Without, a GLFW window gets one of Horizon's with only the keyboard and the mouse, and the system is never asked
+    /// about a controller. Set before the window loads, which is when the context is made.
+    /// </summary>
+    public bool ReadsGamepads { get; set; } = true;
+
+    /// <summary>
     /// What the title bar of the window says. From any thread, it changes at the start of the next frame.
     /// </summary>
     public string Title
@@ -412,7 +419,8 @@ public partial class WindowManager : GameComponent, IDisposable
             if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon) && !UsesSdl)
                 _window.SetDefaultIcon();
 
-            _input = _window.CreateInput();
+            // Silk's GLFW context goes through every controller there is as it is made, which a broken driver makes a minute
+            _input = ReadsGamepads || UsesSdl ? _window.CreateInput() : new Horizon.Input.GlfwInputWithoutGamepads(_window);
             ListenForInput();
             SetUpWaiting();
 

@@ -193,6 +193,7 @@ public class GameEngine : Entity
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
         WindowManager.DeviceReady = ShowLoadingScreen;
+        WindowManager.ReadsGamepads = Configuration.Gamepads;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
