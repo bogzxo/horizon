@@ -1,4 +1,5 @@
 using Horizon.UI.Scripting;
+using Horizon.UI.Skinning;
 
 namespace Horizon.Tests.UI;
 
@@ -64,7 +65,7 @@ public class TextMateHighlighterTests
     {
         var spans = Read(".py", "import os\n\ndef greet(name):\n    # say hello\n    print(len(name), 42)\n    return f\"hi {name}\"\n");
 
-        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 0, 0));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 0, 0));
         Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 2, 0));
         Assert.Equal(SyntaxKind.Call, KindAt(spans, 2, 4));
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 2, 10));
@@ -72,7 +73,7 @@ public class TextMateHighlighterTests
         Assert.Equal(SyntaxKind.Builtin, KindAt(spans, 4, 4));
         Assert.Equal(SyntaxKind.Builtin, KindAt(spans, 4, 10));
         Assert.Equal(SyntaxKind.Number, KindAt(spans, 4, 21));
-        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 5, 4));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 5, 4));
         Assert.Equal(SyntaxKind.Text, KindAt(spans, 5, 13));
     }
 
@@ -97,7 +98,33 @@ public class TextMateHighlighterTests
         Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 2, 0));
         Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 2, 16));
         Assert.Equal(SyntaxKind.Comment, KindAt(spans, 4, 0));
-        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 5, 39));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 5, 39));
+    }
+
+    [Fact]
+    public void C_sharp_control_keywords_are_apart_from_the_other_keywords()
+    {
+        var spans = Read(".cs", "if (ready)\n    return 1;\nint x = 2;\n");
+
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 0, 0));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 1, 4));
+        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 2, 0));
+    }
+
+    [Fact]
+    public void A_language_given_colours_of_its_own_is_painted_in_them_and_the_rest_in_the_skins()
+    {
+        var palette = new UIPalette();
+        UISyntaxColors dark = UISyntaxColors.VisualStudioDark(), light = UISyntaxColors.VisualStudioLight();
+        CodeLanguages.SetColors("source.cs", dark, light);
+
+        Assert.Same(palette.LightField ? light : dark, CodeLanguages.ColorsFor(CodeLanguages.ForExtension(".cs"), palette));
+        Assert.Same(palette.Syntax, CodeLanguages.ColorsFor(CodeLanguages.ForExtension(".py"), palette));
+        Assert.Same(palette.Syntax, CodeLanguages.ColorsFor(null, palette));
+
+        // Visual Studio's keywords are blue and its control keywords purple, and a skin that never set control has them as keywords
+        Assert.NotEqual(dark.Keyword, dark.Control);
+        Assert.Equal(palette.Syntax.Keyword, palette.Syntax.Control);
     }
 
     [Fact]

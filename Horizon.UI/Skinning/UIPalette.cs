@@ -77,6 +77,9 @@ public sealed class UIPalette
     /// <summary>The colours code is shown in, see <see cref="Components.CodeView"/>.</summary>
     public UISyntaxColors Syntax { get; } = new();
 
+    /// <summary>Whether code is written on a light field, which picks a language's light colours over its dark ones.</summary>
+    public bool LightField { get; private set; }
+
     /// <summary>
     /// The keys a skin or theme file writes a colour under, in the order they are worked out. <c>background</c> and
     /// <c>surface</c> are the two that aren't colours of the palette themselves, they are what the others are
@@ -201,9 +204,10 @@ public sealed class UIPalette
         // Code is written on the field. A skin that never coloured its code gets it coloured for the field it has,
         // the colours for a dark field are the defaults and the ones for a light field are these
         Vector4 field = Vector4.Lerp(panel, Field with { W = 1.0f }, Field.W);
+        LightField = Luminance(field) > 0.3f;
         if (!syntaxGiven)
         {
-            if (Luminance(field) > 0.3f) UISyntaxColors.Light().CopyTo(Syntax);
+            if (LightField) UISyntaxColors.Light().CopyTo(Syntax);
 
             // The numbers down the side sit on the panel, not the field, and are the text half seen
             Syntax.LineNumber = Text with { W = Text.W * 0.5f };

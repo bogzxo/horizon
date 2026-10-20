@@ -57,7 +57,11 @@ public enum SyntaxKind
     // A bracket, coloured by how deep it is, three colours round and round
     Bracket1,
     Bracket2,
-    Bracket3
+    Bracket3,
+
+    // The keywords that send the code somewhere else, if, else, for, return, break, await. A skin colours them as the
+    // other keywords unless it says otherwise, Visual Studio has them apart
+    Control
 }
 
 /// <summary>

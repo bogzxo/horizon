@@ -38,7 +38,7 @@ public class HidlHighlighterTests
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 5));
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 9));
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 12));
-        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 0, 17));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 0, 17));
         Assert.Equal(SyntaxKind.Name, KindAt(spans, 0, 24));
         Assert.Equal(SyntaxKind.Operator, KindAt(spans, 0, 26));
     }
@@ -249,7 +249,7 @@ public class HidlHighlighterTests
         Assert.Equal(SyntaxKind.Call, KindAt(spans, 5, 5));
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 5, 11));
         Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 5, 16));
-        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 5, 25));
+        Assert.Equal(SyntaxKind.Control, KindAt(spans, 5, 25));
         Assert.Equal(SyntaxKind.Text, KindAt(spans, 5, 32));
         Assert.Equal(SyntaxKind.Name, KindAt(spans, 5, 37));
         Assert.Equal(SyntaxKind.Escape, KindAt(spans, 5, 47));

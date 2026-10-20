@@ -1,4 +1,5 @@
 using Horizon.HIDL;
+using Horizon.UI.Skinning;
 
 using TextMateSharp.Grammars;
 using TextMateSharp.Internal.Grammars.Reader;
@@ -39,6 +40,37 @@ public static class CodeLanguages
         { ".hex-workspace", HIDLGrammar.ScopeName },
         { ".slang", "source.hlsl" }
     };
+
+    // The colours a language has of its own over the skin's, by its grammar's scope, for a dark field and a light one
+    private static readonly Dictionary<string, (UISyntaxColors Dark, UISyntaxColors Light)> ownColors = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gives a language colours of its own (source.cs in Visual Studio's, <see cref="UISyntaxColors.VisualStudioDark"/>),
+    /// the dark ones on a skin whose field is dark and the light ones on a light one. Every other language keeps the skin's.
+    /// </summary>
+    public static void SetColors(string scopeName, UISyntaxColors dark, UISyntaxColors light)
+    {
+        lock (gate)
+            ownColors[scopeName] = (dark, light);
+    }
+
+    /// <summary>The colours code of a language is painted in on a skin's palette, its own when it was given some, the palette's otherwise.</summary>
+    public static UISyntaxColors ColorsFor(ICodeHighlighter? highlighter, UIPalette palette)
+    {
+        string? scope = highlighter switch
+        {
+            TextMateHighlighter textMate => textMate.ScopeName,
+            HidlHighlighter => HIDLGrammar.ScopeName,
+            _ => null
+        };
+
+        lock (gate)
+        {
+            if (scope is null || ownColors.Count == 0 || !ownColors.TryGetValue(scope, out var own))
+                return palette.Syntax;
+            return palette.LightField ? own.Light : own.Dark;
+        }
+    }
 
     /// <summary>HIDL, through its grammar and its lexer. What a code editor colours with unless told otherwise.</summary>
     public static ICodeHighlighter Hidl => HidlHighlighter.Instance;

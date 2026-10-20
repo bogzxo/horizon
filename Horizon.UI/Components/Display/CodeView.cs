@@ -87,7 +87,7 @@ public class CodeView : UIComponent
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
-        UISyntaxColors colors = skin.Syntax;
+        UISyntaxColors colors = CodeLanguages.ColorsFor(Highlighter ?? CodeLanguages.Hidl, skin.Palette);
 
         float scale = ScaleFor(skin);
         float lineHeight = skin.Font.LineHeight * scale;
