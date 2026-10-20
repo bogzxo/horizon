@@ -1,0 +1,93 @@
+using Horizon.UI;
+using Horizon.UI.Components;
+
+using Silk.NET.Input;
+
+namespace Horizon.Tests.UI;
+
+/// <summary>
+/// Keys written the way the menus write them, the shortcuts that go off on them, and the menus put together out of the
+/// commands each part of a program adds of its own.
+/// </summary>
+public class UICommandsTests
+{
+    [Theory]
+    [InlineData("Ctrl+Shift+F", Key.F, true, true, false)]
+    [InlineData("ctrl + alt + b", Key.B, true, false, true)]
+    [InlineData("Shift+F12", Key.F12, false, true, false)]
+    [InlineData("Ctrl+\\", Key.BackSlash, true, false, false)]
+    [InlineData("Ctrl+,", Key.Comma, true, false, false)]
+    [InlineData("Del", Key.Delete, false, false, false)]
+    [InlineData("Cmd+1", Key.Number1, true, false, false)]
+    public void A_key_reads_the_way_the_menus_write_it(string written, Key key, bool control, bool shift, bool alt)
+    {
+        Assert.Equal((key, control, shift, alt), UIKeys.Read(written));
+    }
+
+    [Theory]
+    [InlineData("Ctrl+Nope")]
+    [InlineData("Ctrl+F+G")]
+    [InlineData("12")]
+    [InlineData("")]
+    public void What_isnt_a_key_doesnt_read(string written) => Assert.Null(UIKeys.Read(written));
+
+    [Fact]
+    public void A_key_is_written_back_the_same_however_it_was_written()
+    {
+        Assert.Equal("Ctrl+Shift+Alt+F", UIKeys.Tidy("alt+shift+ctrl+f"));
+        Assert.Equal("Ctrl+=", UIKeys.Tidy("control+Equal"));
+        Assert.Equal("Del", UIKeys.Tidy("delete"));
+    }
+
+    [Fact]
+    public void A_key_without_shift_leaves_shift_to_the_same_key_with_it_when_that_is_something_else()
+    {
+        var shortcuts = new UIShortcuts();
+        shortcuts.Add(Key.S, () => { }, control: true);
+        shortcuts.Add(Key.Z, () => { }, control: true);
+        shortcuts.Add(Key.S, () => { }, control: true, shift: true);
+
+        // Ctrl+S and Ctrl+Shift+S are two things, Ctrl+Z goes off with shift held as well
+        Assert.True(shortcuts.Has(Key.S, control: true, shift: false, alt: false));
+        Assert.True(shortcuts.Has(Key.S, control: true, shift: true, alt: false));
+        Assert.NotNull(shortcuts.Remove(Key.S, control: true, shift: true, alt: false));
+        Assert.True(shortcuts.Has(Key.S, control: true, shift: false, alt: false));
+        Assert.True(shortcuts.Has(Key.Z, control: true, shift: true, alt: false));
+    }
+
+    [Fact]
+    public void The_menus_are_their_groups_in_order_with_a_rule_between_two_that_have_something()
+    {
+        var commands = new UICommands();
+        commands.Declare("File", "new", "save", "exit");
+        commands.Declare("Help", "help");
+
+        // Added out of order, they go where their group is
+        commands.Add("File/exit", "Exit", () => { });
+        commands.Add("File/new", "New", () => { }, "Ctrl+N", use: UIKeyUse.BoundWhileTyping);
+        commands.Add("File/new", "Open...", () => { }, "Ctrl+O");
+
+        var bar = new MenuBar();
+        commands.Build(bar);
+
+        Menu file = Assert.Single(bar.Menus, menu => menu.Title == "File");
+        Assert.Equal(["New", "Open...", "", "Exit"], file.Items.Select(item => item.Label));
+        Assert.True(file.Items[2].IsSeparator);
+        Assert.Empty(Assert.Single(bar.Menus, menu => menu.Title == "Help").Items);
+
+        // Bound, the key goes off, only shown, it's somebody else's
+        Assert.True(commands.Keys.Has(Key.N, control: true, shift: false, alt: false));
+        Assert.False(commands.Keys.Has(Key.O, control: true, shift: false, alt: false));
+    }
+
+    [Fact]
+    public void A_group_nobody_declared_is_said_as_the_part_adds_to_it()
+    {
+        var commands = new UICommands();
+        commands.Declare("Edit", "find");
+
+        Assert.Throws<ArgumentException>(() => commands.Add("Edit/nope", "Find", () => { }));
+        Assert.Throws<ArgumentException>(() => commands.Add("View/find", "Find", () => { }));
+        Assert.Throws<ArgumentException>(() => commands.Add("Edit/find", "Find", () => { }, "Ctrl+Nope", use: UIKeyUse.Bound));
+    }
+}
