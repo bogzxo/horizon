@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
   </ItemGroup>
 
   <ItemGroup>

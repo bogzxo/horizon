@@ -38,12 +38,16 @@ namespace Horizon.Engine.Debugging;
 /// handed to it as if its container were the whole window. F8 pauses, F9 steps. <c>HORIZON_DEBUGGER=on</c> in
 /// the environment has it up from the start.
 /// <para>
-/// None of it is in a Release build, the folder isn't compiled (see Horizon.csproj). The engine adds one of these
+/// None of it is in a Release build, the folder isn't compiled (see Horizon.UI.csproj). The engine adds one of these
 /// to itself in Debug and it is at <see cref="GameEngine.Debugger"/>.
 /// </para>
 /// </summary>
-public sealed partial class SkylineDebugger : GameObject
+public sealed partial class SkylineDebugger : GameObject, IGameDebugger
 {
+    // The engine can't name this class, it's told how to make one as the UI loads
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Loaded() => GameEngine.DebuggerMaker ??= static () => new SkylineDebugger();
+
     /// <summary>How it starts, off (not shown until F10, which is what it is without this) or on.</summary>
     public const string ENVIRONMENT_VARIABLE = "HORIZON_DEBUGGER";
 
@@ -381,7 +385,7 @@ public sealed partial class SkylineDebugger : GameObject
     /// paints over all of the window with that picture in the middle, so whatever the game drew and wherever it
     /// drew it, the container is the only place it is seen. Hidden, none of that happens. Render thread.
     /// </summary>
-    internal void Draw(float dt)
+    public void Draw(float dt)
     {
         if (!IsInitialized || !Enabled)
             return;

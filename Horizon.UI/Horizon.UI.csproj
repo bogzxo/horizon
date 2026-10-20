@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The UI, out of the engine: the compositor and its modules, the components and controls, skinning, layouts and the
+    scripts that build them, the code editor and its highlighters (TextMate's grammars among them). Scene2D is here too,
+    a scene that comes with a UI over it, and so is the Skyline debugger, which is drawn with it. The types keep the
+    namespaces they had in the engine, only the assembly is new. The engine doesn't name anything in here, the terminal
+    (Horizon.Terminal) and the editor's tooling (Horizon.Tooling) are built on top of it.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Horizon.UI</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <Platforms>AnyCPU;x64</Platforms>
+    <IsPublishable>false</IsPublishable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <!--
+    The Skyline debugger (the menu bar, the scene tree, the inspector, the content browser) is for whoever is making
+    the game, not for whoever plays it. A Release build doesn't compile a line of it.
+  -->
+  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+    <Compile Remove="Engine\Debugging\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- TextMate grammars for the code editor, VS Code's own, and the Oniguruma they are written against (Onigwrap, native, every platform) -->
+    <PackageReference Include="TextMateSharp" Version="2.0.4" />
+    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Tests" />
+    <InternalsVisibleTo Include="Horizon.Testing" />
+  </ItemGroup>
+
+</Project>

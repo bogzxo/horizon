@@ -1,12 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The engine, all of it in one library. Logging, the core (entities, threading, windowing), content management,
-    the Vulkan device, input, the engine itself, rendering, the UI and physics. Each keeps its own
-    namespace (Horizon.Core, Horizon.Rendering, Horizon.UI, ...) and folder, but there is nothing between them that
-    can't see the rest, so the UI can be used by the engine's own debugging and the physics draws its outlines with
-    the renderer's primitives. Only the scripting language (Horizon.HIDL) is a project of its own, as it has an
-    editor that wants nothing of the engine.
+    The engine's runtime. Logging, the core (entities, threading, windowing, processes), content management, the
+    Vulkan device, input, audio, the engine itself, rendering and physics. Each keeps its own namespace and folder.
+    The UI is Horizon.UI on top of it, the terminal and the editor's tooling on top of that, and nothing in here names
+    any of them. The scripting language (Horizon.HIDL) is a project of its own, as it has an editor that wants nothing
+    of the engine.
   -->
 
   <PropertyGroup>
@@ -30,14 +29,6 @@
     <DebugType>None</DebugType>
   </PropertyGroup>
 
-  <!--
-    The Skyline debugger (the menu bar, the scene tree, the inspector, the content browser) is for whoever is making
-    the game, not for whoever plays it. A Release build doesn't compile a line of it.
-  -->
-  <ItemGroup Condition="'$(Configuration)' != 'Debug'">
-    <Compile Remove="Engine\Debugging\**\*.cs" />
-  </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="DotTiled" Version="1.0.0" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
@@ -56,9 +47,6 @@
     <PackageReference Include="StbImageSharp" Version="2.30.15" />
     <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
     <PackageReference Include="StbTrueTypeSharp" Version="1.26.13" />
-    <!-- TextMate grammars for the code editor, VS Code's own, and the Oniguruma they are written against (Onigwrap, native, every platform) -->
-    <PackageReference Include="TextMateSharp" Version="2.0.4" />
-    <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
   </ItemGroup>
 
   <ItemGroup>
@@ -86,6 +74,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The UI is built on the engine's insides, the input it holds back from a game, the renderer's output and pictures -->
+    <InternalsVisibleTo Include="Horizon.UI" />
     <InternalsVisibleTo Include="Horizon.Tests" />
     <InternalsVisibleTo Include="Horizon.Testing" />
   </ItemGroup>

@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
     <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
   </ItemGroup>
 
