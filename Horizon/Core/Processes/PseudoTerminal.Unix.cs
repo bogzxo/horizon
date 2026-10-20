@@ -35,6 +35,9 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
         if (slave is null)
             throw new InvalidOperationException("The pty has no name.");
 
+        // The slave held open here until the child has it, with the size set on it. A Mac forgets a size given to the
+        // master before the slave was first opened, and the child saw 0 rows and 0 columns
+        int held = open(slave, O_RDWR | O_NOCTTY);
         SetSize(columns, rows);
 
         // The child, in a session of its own, the slave opened as its 0, 1 and 2
@@ -82,6 +85,10 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
             posix_spawnattr_destroy(attributes);
             Marshal.FreeHGlobal(actions);
             Marshal.FreeHGlobal(attributes);
+
+            // Let go of, or the master would never read the end of the child
+            if (held >= 0)
+                close(held);
         }
 
         stream = new FileStream(new SafeFileHandle((IntPtr)master, ownsHandle: true), FileAccess.ReadWrite, 1, false);
@@ -238,6 +245,8 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
     [DllImport("libc", SetLastError = true)] private static extern int grantpt(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int unlockpt(int fd);
     [DllImport("libc", SetLastError = true)] private static extern IntPtr ptsname(int fd);
+    [DllImport("libc", SetLastError = true)] private static extern int open([MarshalAs(UnmanagedType.LPUTF8Str)] string path, int flags);
+    [DllImport("libc", SetLastError = true)] private static extern int close(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int ioctl(int fd, ulong request, ref WinSize size);
     [DllImport("libc", SetLastError = true, EntryPoint = "ioctl")] private static extern int ioctl_arm64_apple(int fd, ulong request, long r2, long r3, long r4, long r5, long r6, long r7, ref WinSize size);
     [DllImport("libc", SetLastError = true)] private static extern int tcgetpgrp(int fd);
