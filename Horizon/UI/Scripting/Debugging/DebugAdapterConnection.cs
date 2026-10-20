@@ -233,8 +233,14 @@ public sealed class DebugAdapterConnection : IDisposable
     public void Dispose()
     {
         closed = true;
-        try { input.Dispose(); } catch (Exception) { }
         try { output.Dispose(); } catch (Exception) { }
+
+        // On Linux and macOS letting go of a pipe waits for a read of it on another thread to return, the reading
+        // thread's, which is when the debugger goes, so it's let go of off the caller's thread (JsonRpcConnection too)
+        Task.Run(() =>
+        {
+            try { input.Dispose(); } catch (Exception) { }
+        });
         Close(null);
     }
 }

@@ -9,8 +9,8 @@ namespace Horizon.Core.Processes;
 /// A pty on Linux and macOS. The master out of posix_openpt, the child started with posix_spawn in a session of its
 /// own with the slave as its stdin, stdout and stderr (opened by the child itself through the file actions, which is
 /// what makes it the controlling terminal without a fork of our own, a fork in a .NET process is nothing to do by
-/// hand). Written from the manuals, like the Mac window was, and not run on either yet, the first run is the test.
-/// The constants differ between the two and are picked at run time.
+/// hand). The constants differ between the two and are picked at run time. Run on Linux (Ubuntu, glibc), where the
+/// first run found glibc's posix_spawnattr_t is 336 bytes and not the 256 it was given, which corrupted the heap.
 /// </summary>
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
@@ -41,7 +41,15 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
         string[] argv = SplitCommandLine(commandLine);
         string[] envp = EnvironmentOf(environment);
 
-        IntPtr actions = Marshal.AllocHGlobal(256), attributes = Marshal.AllocHGlobal(256);
+        // What these are is the C library's business and their size with it: glibc's file actions are 80 bytes and its
+        // attributes 336, a Mac's a pointer each. Plenty either way, zeroed
+        IntPtr actions = Marshal.AllocHGlobal(SPAWN_STRUCT), attributes = Marshal.AllocHGlobal(SPAWN_STRUCT);
+        unsafe
+        {
+            new Span<byte>((void*)actions, SPAWN_STRUCT).Clear();
+            new Span<byte>((void*)attributes, SPAWN_STRUCT).Clear();
+        }
+
         try
         {
             posix_spawn_file_actions_init(actions);
@@ -88,12 +96,33 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
         reader.Start();
     }
 
+    // Room enough for a posix_spawn_file_actions_t or a posix_spawnattr_t of any C library
+    private const int SPAWN_STRUCT = 1024;
+
     private void SetSize(int columns, int rows)
     {
         var size = new WinSize { Rows = (ushort)rows, Columns = (ushort)columns };
-        ulong TIOCSWINSZ = OperatingSystem.IsMacOS() ? 0x80087467UL : 0x5414UL;
-        ioctl(master, TIOCSWINSZ, ref size);
+        if (OperatingSystem.IsMacOS())
+        {
+            const ulong TIOCSWINSZ = 0x80087467UL;
+
+            // ioctl takes what comes after the request as C's ..., which Apple's arm64 passes on the stack and not in a
+            // register. Six more arguments fill the registers, so the size lands on the stack where ioctl looks
+            if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+                ioctl_arm64_apple(master, TIOCSWINSZ, 0, 0, 0, 0, 0, 0, ref size);
+            else
+                ioctl(master, TIOCSWINSZ, ref size);
+            return;
+        }
+
+        ioctl(master, 0x5414UL, ref size);
     }
+
+    /// <summary>
+    /// Whether something other than the shell has the terminal (a program it started, in the foreground), which is
+    /// whatever process group the terminal says is in front not being the shell's own.
+    /// </summary>
+    public override bool RunsAProgram => IsRunning && tcgetpgrp(master) is var front && front > 0 && front != pid;
 
     protected override void WriteBytes(ReadOnlySpan<byte> bytes)
     {
@@ -116,25 +145,53 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
         try { stream.Dispose(); } catch (Exception) { }
     }
 
-    // The command line cut at spaces, with quotes kept together, the shell's own quoting rules are for the shell
-    private static string[] SplitCommandLine(string commandLine)
+    // The command line cut into words the way sh would: at spaces and tabs, with '...' kept as it is, "..." kept
+    // together (a backslash in it escaping " \ $ and `), and a backslash outside quotes taking the next character as it is
+    internal static string[] SplitCommandLine(string commandLine)
     {
         var parts = new List<string>();
         var current = new System.Text.StringBuilder();
-        bool quoted = false;
-        foreach (char c in commandLine)
+        bool started = false;
+        char quote = '\0';
+        for (int i = 0; i < commandLine.Length; i++)
         {
-            if (c == '"') { quoted = !quoted; continue; }
-            if (c == ' ' && !quoted)
+            char c = commandLine[i];
+            if (quote == '\'')
             {
-                if (current.Length > 0) { parts.Add(current.ToString()); current.Clear(); }
+                if (c == '\'') quote = '\0';
+                else current.Append(c);
                 continue;
             }
 
-            current.Append(c);
+            if (quote == '"')
+            {
+                if (c == '"') quote = '\0';
+                else if (c == '\\' && i + 1 < commandLine.Length && commandLine[i + 1] is '"' or '\\' or '$' or '`') current.Append(commandLine[++i]);
+                else current.Append(c);
+                continue;
+            }
+
+            switch (c)
+            {
+                case '\'' or '"':
+                    quote = c;
+                    started = true;
+                    break;
+                case '\\' when i + 1 < commandLine.Length:
+                    current.Append(commandLine[++i]);
+                    started = true;
+                    break;
+                case ' ' or '\t':
+                    if (started) { parts.Add(current.ToString()); current.Clear(); started = false; }
+                    break;
+                default:
+                    current.Append(c);
+                    started = true;
+                    break;
+            }
         }
 
-        if (current.Length > 0)
+        if (started)
             parts.Add(current.ToString());
         return parts.Count == 0 ? ["/bin/sh"] : [.. parts];
     }
@@ -182,6 +239,8 @@ internal sealed class UnixPseudoTerminal : PseudoTerminal
     [DllImport("libc", SetLastError = true)] private static extern int unlockpt(int fd);
     [DllImport("libc", SetLastError = true)] private static extern IntPtr ptsname(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int ioctl(int fd, ulong request, ref WinSize size);
+    [DllImport("libc", SetLastError = true, EntryPoint = "ioctl")] private static extern int ioctl_arm64_apple(int fd, ulong request, long r2, long r3, long r4, long r5, long r6, long r7, ref WinSize size);
+    [DllImport("libc", SetLastError = true)] private static extern int tcgetpgrp(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int kill(int pid, int signal);
     [DllImport("libc", SetLastError = true)] private static extern int waitpid(int pid, ref int status, int options);
     [DllImport("libc")] private static extern int posix_spawn_file_actions_init(IntPtr actions);

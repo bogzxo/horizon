@@ -258,8 +258,15 @@ public sealed class JsonRpcConnection : IDisposable
     public void Dispose()
     {
         closed = true;
-        try { input.Dispose(); } catch (Exception) { }
         try { output.Dispose(); } catch (Exception) { }
+
+        // On Linux and macOS letting go of a pipe waits for a read of it on another thread (the reading thread's) to
+        // return, which is when the other side goes, so it's let go of off the caller's thread, or closing a language
+        // server hung whoever closed it until the server's process was gone
+        Task.Run(() =>
+        {
+            try { input.Dispose(); } catch (Exception) { }
+        });
         Close(null);
     }
 }

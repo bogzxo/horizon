@@ -54,7 +54,7 @@ public sealed class ShaderPreprocessor : IDisposable
         """;
 
     private readonly Dictionary<string, string> fileSources = new();
-    private readonly HashSet<string> included = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> included = new(Horizon.Core.Platform.PlatformPaths.Comparer);
 
     /// <summary>Scans a file for the directives and brings everything in.</summary>
     /// <exception cref="FileNotFoundException" />

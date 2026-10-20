@@ -5,7 +5,8 @@ namespace Horizon.UI.Components;
 /// settings.hor (in sections, see SettingsSections), keys.hor, plugins/, history.txt and sessions.hor in it, so they're
 /// a double click away from Hex.exe rather than off in AppData. What was in %AppData%\Hex (or %AppData%\Dusk before
 /// that) is copied over the first time. Where the exe's folder can't be written (Program Files) it's still %AppData%\Hex
-/// on Windows and ~/.config/hex elsewhere. A file next to a program's exe wins over the folder's when there is one, the
+/// on Windows. On macOS (~/Library/Application Support/Hex) and Linux (~/.config/hex) the user's folder is the one,
+/// unless a settings folder was made next to the program by hand, for a copy carried about. A file next to a program's exe wins over the folder's when there is one, the
 /// plugins next to it come on top. <c>HEX_HOME</c> (or <c>DUSK_HOME</c>, as it was) moves the whole folder, for a test.
 /// </summary>
 public static class TerminalFiles
@@ -32,22 +33,22 @@ public static class TerminalFiles
             if (found is not null)
                 return found;
 
-            string parent = OperatingSystem.IsWindows()
-                ? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
-                : Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } config
-                    ? config
-                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
-            string user = Path.Combine(parent, OperatingSystem.IsWindows() ? "Hex" : "hex");
+            // %AppData%\Hex, ~/Library/Application Support/Hex, ~/.config/hex
+            string parent = Horizon.Core.Platform.PlatformPaths.ConfigRoot;
+            bool linux = !OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS();
+            string user = Path.Combine(parent, linux ? "hex" : "Hex");
 
             // Dusk's folder from before it was a part of Hex, moved over once, left where it was in case
-            string old = Path.Combine(parent, OperatingSystem.IsWindows() ? "Dusk" : "dusk");
+            string old = Path.Combine(parent, linux ? "dusk" : "Dusk");
             if (!Directory.Exists(user) && Directory.Exists(old))
                 CopyFolder(old, user);
 
             // Next to the exe, where anybody looking for them looks first, with what AppData had copied in the first time
+            // On Linux and macOS a program's folder is the system's (/usr, /Applications, an .app), and its settings are
+            // the user's, so a folder next to it is only used when somebody made one there (a copy carried about)
             string beside = Path.Combine(AppContext.BaseDirectory, BESIDE);
             bool fresh = !Directory.Exists(beside);
-            if (Writable(beside))
+            if ((OperatingSystem.IsWindows() || !fresh) && Writable(beside))
             {
                 if (fresh && Directory.Exists(user))
                     CopyFolder(user, beside);
@@ -141,7 +142,7 @@ public static class TerminalFiles
     public static bool IsTerminalFile(string path, string? text = null)
     {
         string full = Path.GetFullPath(path);
-        if (full.StartsWith(Path.GetFullPath(UserFolder), StringComparison.OrdinalIgnoreCase))
+        if (full.StartsWith(Path.GetFullPath(UserFolder), Horizon.Core.Platform.PlatformPaths.Comparison))
             return true;
 
         text ??= System.IO.File.Exists(path) ? ReadHead(path) : string.Empty;

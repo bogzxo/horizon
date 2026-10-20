@@ -173,7 +173,12 @@ public sealed partial class TerminalScreen
             int ended = 0;
             int after = rest.IndexOf(';');
             if (after >= 0)
-                _ = int.TryParse(rest[(after + 1)..], out ended);
+            {
+                // D;code, and maybe more after it (D;0;aid=1), the code being the first of what's said
+                ReadOnlySpan<char> code = rest[(after + 1)..];
+                int end = code.IndexOf(';');
+                _ = int.TryParse(end >= 0 ? code[..end] : code, out ended);
+            }
 
             LastExit = ended;
             LastTook = (Environment.TickCount64 - commandSince) / 1000.0f;

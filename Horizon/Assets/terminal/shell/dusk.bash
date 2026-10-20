@@ -14,39 +14,56 @@ if [ -z "$__dusk_integrated" ]; then
     __dusk_integrated=1
     __dusk_ran=
 
+    # How the command ended, taken before anything else in PROMPT_COMMAND runs and changes $?
+    __dusk_status() {
+        __dusk_code=$?
+    }
+
     __dusk_prompt() {
-        local code=$?
+        local code=$__dusk_code
         if [ -n "$__dusk_ran" ]; then printf '\e]133;D;%s\a' "$code"; fi
         __dusk_ran=
         printf '\e]7;file://%s%s\a' "${HOSTNAME:-localhost}" "$PWD"
-        printf '\e]133;A\a'
+
+        # The marks round the prompt (A and B) are in it, so a prompt drawn again without PROMPT_COMMAND (Ctrl+L) has
+        # them as well, put back on every time as a theme may make PS1 anew
+        case "$PS1" in *'\e]133;A'*) ;; *) PS1='\[\e]133;A\a\]'"$PS1" ;; esac
+        case "$PS1" in *'\e]133;B'*) ;; *) PS1="$PS1"'\[\e]133;B\a\]' ;; esac
         __dusk_at_prompt=1
     }
 
     __dusk_preexec() {
-        if [ -n "$__dusk_at_prompt" ] && [ "$BASH_COMMAND" != "__dusk_prompt" ]; then
+        if [ -n "$__dusk_at_prompt" ] && [ "$BASH_COMMAND" != "__dusk_prompt" ] && [ "$BASH_COMMAND" != "__dusk_status" ]; then
             __dusk_at_prompt=
             __dusk_ran=1
             printf '\e]133;C\a'
         fi
     }
 
-    PROMPT_COMMAND="__dusk_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-    PS1="$PS1\[\e]133;B\a\]"
+    # The status first and the prompt's mark last, round whatever else the system put in PROMPT_COMMAND (a newer
+    # distribution's systemd hook), or the DEBUG trap took that for a command run at the prompt. An array since bash
+    # 5.1, a line before (a Mac's bash is 3.2)
+    if [ "${BASH_VERSINFO[0]}" -gt 5 ] || { [ "${BASH_VERSINFO[0]}" -eq 5 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+        PROMPT_COMMAND=(__dusk_status "${PROMPT_COMMAND[@]}" __dusk_prompt)
+    else
+        PROMPT_COMMAND="__dusk_status${PROMPT_COMMAND:+;$PROMPT_COMMAND};__dusk_prompt"
+    fi
     trap '__dusk_preexec' DEBUG
 fi
 
 # What commands the shell has (every program on its PATH, its builtins, functions and aliases), written in the
 # background so the prompt isn't kept waiting, for the terminal to colour the first word of a line green or red
 if [ -n "$DUSK_COMMANDS_FILE" ]; then
-    ( mkdir -p "$(dirname "$DUSK_COMMANDS_FILE")" 2>/dev/null; compgen -c | sort -u > "$DUSK_COMMANDS_FILE" 2>/dev/null & )
+    # Into a file of its own and then moved over, so the terminal never reads it half written (empty, every command red)
+    ( mkdir -p "$(dirname "$DUSK_COMMANDS_FILE")" 2>/dev/null; compgen -c | sort -u > "$DUSK_COMMANDS_FILE.$$" 2>/dev/null && mv -f "$DUSK_COMMANDS_FILE.$$" "$DUSK_COMMANDS_FILE" & )
 fi
 
 # The dawn command. dawn file.cs edits the file in place of the terminal, Dawn's editor taking over the pane until
 # Ctrl+Q, dawn -open path hands a file or a folder to the Dawn that's running, dawn -window path opens a new Dawn
 # window on it, and dawn on its own opens the folder the shell is in. The terminal does all of it, the shell only says
 # what was asked for with a private OSC (1717) and goes straight back to its prompt. The path goes as Windows has it,
-# WSL's through wslpath (its folder, wslpath won't do a file that isn't there yet) and Git Bash's through cygpath.
+# WSL's through wslpath (its folder, wslpath won't do a file that isn't there yet) and Git Bash's through cygpath,
+# when the terminal is a Windows one (DUSK_HOST says, a terminal on Linux or a Mac wants the path as it is).
 dawn() {
     local mode=inline target= word folder name
     for word in "$@"; do
@@ -66,7 +83,10 @@ dawn() {
         *) target="$PWD/$target" ;;
     esac
 
-    if command -v wslpath >/dev/null 2>&1; then
+    # A Windows terminal wants the path as Windows has it, one on Linux or a Mac (DUSK_HOST=unix) as it is, even in WSL
+    if [ "$DUSK_HOST" = unix ]; then
+        :
+    elif command -v wslpath >/dev/null 2>&1; then
         if [ -d "$target" ]; then
             target="$(wslpath -w "$target")"
         else

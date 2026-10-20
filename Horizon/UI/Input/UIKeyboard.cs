@@ -204,11 +204,16 @@ public static class UIKeyboard
         if (key is Key.AltLeft or Key.AltRight)
             altHeld = true;
 
+        // What copies, pastes and undoes, command on a Mac and control everywhere else (see Keyboard.Primary). A
+        // terminal still gets control as control, it's the shell's
+        bool mac = Horizon.Input.Keyboard.PrimaryIsCommand;
+        bool primary = mac ? super : control;
+
         // A component that takes the keys themselves gets every one of them, and none of the codes below. Control with V
-        // is still a paste, a terminal pastes with it too
+        // (command on a Mac) is still a paste, a terminal pastes with it too
         if (rawMode)
         {
-            if (key == Key.V && control)
+            if (key == Key.V && primary)
             {
                 Paste(keyboard);
                 return;
@@ -228,44 +233,53 @@ public static class UIKeyboard
         // What the key means, and whether holding it does it over and over
         (char code, bool repeats) = key switch
         {
-            Key.Backspace => (control ? WORD_BACKSPACE : BACKSPACE, true),
-            Key.Delete => (control ? WORD_DELETE : DELETE, true),
-            // With control enter is somebody's shortcut (put the code in), not a new line
-            Key.Enter or Key.KeypadEnter => (control ? NOTHING : ENTER, false),
-            // With control tab is somebody's shortcut too (the next document), not an indent
-            Key.Tab => (control ? NOTHING : shift ? SHIFT_TAB : TAB, false),
+            // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
+            Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
+            Key.Delete when mac && alt => (WORD_DELETE, true),
+            Key.Left when mac && primary => (shift ? SELECT_HOME : HOME, false),
+            Key.Right when mac && primary => (shift ? SELECT_END : END, false),
+            Key.Left when mac && alt => (shift ? SELECT_WORD_LEFT : WORD_LEFT, true),
+            Key.Right when mac && alt => (shift ? SELECT_WORD_RIGHT : WORD_RIGHT, true),
+            Key.Up when mac && primary && !alt => (shift ? SELECT_TEXT_START : TEXT_START, false),
+            Key.Down when mac && primary && !alt => (shift ? SELECT_TEXT_END : TEXT_END, false),
+            Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
+            Key.Delete => (primary ? WORD_DELETE : DELETE, true),
+            // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
+            Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
+            // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
+            Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
             Key.Escape => (ESCAPE, false),
             // Alt with left and right is somebody's going back and forward, not the caret's
-            Key.Left or Key.Right when alt && !control => (NOTHING, false),
-            Key.Left => ((shift, control) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
-            Key.Right => ((shift, control) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
-            Key.Home => ((shift, control) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
-            Key.End => ((shift, control) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
-            Key.Up when alt && control => (CARET_ABOVE, true),
-            Key.Down when alt && control => (CARET_BELOW, true),
+            Key.Left or Key.Right when alt && !primary => (NOTHING, false),
+            Key.Left => ((shift, primary) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
+            Key.Right => ((shift, primary) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
+            Key.Home => ((shift, primary) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
+            Key.End => ((shift, primary) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
+            Key.Up when alt && primary => (CARET_ABOVE, true),
+            Key.Down when alt && primary => (CARET_BELOW, true),
             Key.Up when alt => (MOVE_LINES_UP, true),
             Key.Down when alt => (MOVE_LINES_DOWN, true),
             Key.Up => (shift ? SELECT_UP : UP, true),
             Key.Down => (shift ? SELECT_DOWN : DOWN, true),
             Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
             Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
-            Key.Z when control && shift => (REDO, true),
-            Key.Z when control => (UNDO, true),
-            Key.Y when control => (REDO, true),
-            Key.Slash when control => (TOGGLE_COMMENT, false),
-            Key.D when control && shift => (DUPLICATE, false),
-            Key.D when control => (NEXT_OCCURRENCE, false),
-            Key.L when control && shift => (CARETS_AT_LINE_ENDS, false),
-            Key.LeftBracket when control && shift => (FOLD, false),
-            Key.RightBracket when control && shift => (UNFOLD, false),
-            Key.Space when control => (COMPLETE, false),
-            Key.A when control => (SELECT_ALL, false),
-            Key.C when control => (COPY, false),
-            Key.X when control => (CUT, false),
+            Key.Z when primary && shift => (REDO, true),
+            Key.Z when primary => (UNDO, true),
+            Key.Y when primary => (REDO, true),
+            Key.Slash when primary => (TOGGLE_COMMENT, false),
+            Key.D when primary && shift => (DUPLICATE, false),
+            Key.D when primary => (NEXT_OCCURRENCE, false),
+            Key.L when primary && shift => (CARETS_AT_LINE_ENDS, false),
+            Key.LeftBracket when primary && shift => (FOLD, false),
+            Key.RightBracket when primary && shift => (UNFOLD, false),
+            Key.Space when primary => (COMPLETE, false),
+            Key.A when primary => (SELECT_ALL, false),
+            Key.C when primary => (COPY, false),
+            Key.X when primary => (CUT, false),
             _ => ('\0', false)
         };
 
-        if (key == Key.V && control)
+        if (key == Key.V && primary)
         {
             Paste(keyboard);
             return;

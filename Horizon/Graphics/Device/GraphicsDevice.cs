@@ -162,6 +162,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         this.vsync = vsync;
         swapchain = new Swapchain(Context, Math.Max(1, width), Math.Max(1, height), vsync);
+        (askedWidth, askedHeight) = (Math.Max(1, width), Math.Max(1, height));
 
         var timelineType = new SemaphoreTypeCreateInfo
         {
@@ -245,6 +246,17 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
     private volatile bool surfaceChanged;
 
+    // How many times in a row the swapchain was made anew at the same size and was still no fit. A Wayland compositor
+    // that gave the window another size than the window was told it has says so at every picture, and making it anew
+    // every frame at the size it was told would go on for ever, so after a few it's used as it is until the size changes
+    private int unfitSwapchains;
+    private const int MOST_UNFIT_SWAPCHAINS = 3;
+
+    // The size the swapchain was last asked for, which isn't always the size it came out (a surface that says how big it
+    // is, a Wayland compositor that kept the window at another size than it was told), so a new one is made when what's
+    // asked for changes and not every frame the two differ
+    private uint askedWidth, askedHeight;
+
     /// <summary>
     /// Starts a frame for a window of a size. Takes the next picture of the swapchain (made anew if the window
     /// changed size) and starts the clocks. Nothing is drawn into the window until this has been called.
@@ -263,12 +275,20 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         {
             surfaceChanged = false;
             swapchainStale = true;
+            unfitSwapchains = 0;
         }
 
-        if (swapchainStale || swapchain.Width != width || swapchain.Height != height || swapchain.VSync != vsync)
+        bool resized = askedWidth != width || askedHeight != height || swapchain.VSync != vsync;
+        if (resized)
+            unfitSwapchains = 0;
+
+        if (resized || (swapchainStale && unfitSwapchains < MOST_UNFIT_SWAPCHAINS))
         {
+            if (!resized)
+                unfitSwapchains++;
             Context.WaitIdle();
             swapchain.Recreate(width, height, vsync);
+            (askedWidth, askedHeight) = (width, height);
             swapchainStale = false;
         }
 
@@ -285,6 +305,8 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         }
 
         swapchainStale = suboptimal;
+        if (!suboptimal)
+            unfitSwapchains = 0;
         Frame.HasImage = true;
         Frame.AcquireWaited = false;
         windowPendingClear = null;

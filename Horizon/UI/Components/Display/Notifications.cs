@@ -10,8 +10,29 @@ namespace Horizon.UI.Components;
 /// <summary>One card of <see cref="Notifications"/>, what it says and what can be done about it.</summary>
 public sealed class UINotification
 {
-    /// <summary>What it says, plain text, wrapped to the card.</summary>
-    public string Text { get; set; } = string.Empty;
+    /// <summary>What it says, plain text, wrapped to the card. Can change while it's up (work going on, then done).</summary>
+    public string Text
+    {
+        get => text;
+        set
+        {
+            if (text == value)
+                return;
+            text = value;
+            WrappedFor = -1.0f;
+        }
+    }
+
+    private string text = string.Empty;
+
+    /// <summary>A line under the text, fainter, cut to the card: what work is doing right now. Empty for none.</summary>
+    public string Detail { get; set; } = string.Empty;
+
+    /// <summary>
+    /// A bar along the card for work going on, how far through it is from 0 to 1, <see cref="float.NaN"/> for going on
+    /// with no telling how far (the bar sweeps), null for no bar.
+    /// </summary>
+    public float? Progress { get; set; }
 
     /// <summary>The icon in front of it, a name of <see cref="UISymbols"/>.</summary>
     public string Icon { get; set; } = "info";
@@ -30,6 +51,14 @@ public sealed class UINotification
 
     /// <summary>Takes it away.</summary>
     public void Close() => Closed = true;
+
+    /// <summary>Starts its time over (it changed, and wants reading again), and brings it back if it was fading.</summary>
+    public void Renew()
+    {
+        Age = 0.0f;
+        if (!Closed)
+            Alpha = 1.0f;
+    }
 
     // How long it has been up, how much of it is still there, and its text cut into lines for the width it was cut for
     internal float Age;
@@ -53,6 +82,15 @@ public class Notifications : UIComponent
     private const float SLIDE = 36.0f;
 
     private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ACTION_HEIGHT = 24.0f;
+
+    // The bar of work going on, how thick, how wide the sweep of one that can't say how far, and how long a sweep takes
+    private const float BAR = 4.0f, SWEEP = 0.3f, SWEEP_SECONDS = 1.4f;
+
+    // The detail line, as big as the text is
+    private const float DETAIL = 0.85f;
+
+    // The clock of the sweep
+    private float sweep;
 
     private readonly List<UINotification> shown = [];
 
@@ -97,7 +135,9 @@ public class Notifications : UIComponent
         }
 
         float text = MathF.Max(1, card.Lines.Count) * skin.Font.LineHeight * scale;
-        return PADDING * 2.0f + MathF.Max(ICON, text) + (card.Actions.Count > 0 ? ACTION_HEIGHT + GAP : 0.0f);
+        float detail = card.Detail.Length > 0 ? skin.Font.LineHeight * scale * DETAIL + GAP * 0.5f : 0.0f;
+        float bar = card.Progress is not null ? BAR + GAP : 0.0f;
+        return PADDING * 2.0f + MathF.Max(ICON, text) + detail + bar + (card.Actions.Count > 0 ? ACTION_HEIGHT + GAP : 0.0f);
     }
 
     protected override Vector2 Measure(UISkin skin)
@@ -111,6 +151,7 @@ public class Notifications : UIComponent
 
     protected override void Update(float dt)
     {
+        sweep = (sweep + dt / SWEEP_SECONDS) % 1.0f;
         bool held = IsHovered;
         for (int i = shown.Count - 1; i >= 0; i--)
         {
@@ -220,6 +261,31 @@ public class Notifications : UIComponent
                 list.Text(card.Text.AsSpan(start, length), new Vector2(textLeft, MathF.Round(top - l * line)), scale, skin.TextColor * fade, markup: false);
             }
 
+            // What the work is doing, a fainter line under the text, cut to the card
+            float below = top - MathF.Max(1, card.Lines.Count) * line - GAP * 0.5f;
+            float right = close.Min.X - PADDING;
+            if (card.Detail.Length > 0)
+            {
+                float detailScale = scale * DETAIL;
+                list.Text(Fitted(card.Detail, skin, detailScale, right - textLeft), new Vector2(textLeft, MathF.Round(below)), detailScale,
+                    skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.6f * card.Alpha), markup: false);
+                below -= line * DETAIL + GAP * 0.5f;
+            }
+
+            // The bar, filled as far as the work got, or a stretch of it sweeping along when that can't be said
+            if (card.Progress is { } progress)
+            {
+                var track = new UIRect(new Vector2(textLeft, below - BAR - GAP * 0.5f), new Vector2(bounds.Max.X - PADDING, below - GAP * 0.5f));
+                list.RoundRect(track, BAR * 0.5f, skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.12f * card.Alpha));
+                float from = float.IsNaN(progress) ? MathF.Max(0.0f, sweep * (1.0f + SWEEP) - SWEEP) : 0.0f;
+                float to = float.IsNaN(progress) ? MathF.Min(1.0f, sweep * (1.0f + SWEEP)) : Math.Clamp(progress, 0.0f, 1.0f);
+                if (to > from)
+                {
+                    var fill = new UIRect(new Vector2(track.Min.X + track.Width * from, track.Min.Y), new Vector2(track.Min.X + track.Width * to, track.Max.Y));
+                    list.RoundRect(fill, BAR * 0.5f, skin.AccentColor * fade);
+                }
+            }
+
             for (int action = 0; action < card.Actions.Count; action++)
             {
                 UIRect button = ActionBounds(bounds, card, action, skin);
@@ -232,6 +298,18 @@ public class Notifications : UIComponent
         }
 
         list.EndParts();
+    }
+
+    // A line cut to a width with an ellipsis, the whole of it when it fits
+    private static string Fitted(string line, UISkin skin, float scale, float width)
+    {
+        if (width <= 0.0f || skin.Font.Measure(line, scale, markup: false).X <= width)
+            return line;
+
+        int keep = line.Length;
+        while (keep > 1 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
+            keep = keep * 3 / 4;
+        return string.Concat(line.AsSpan(0, keep), "\u2026");
     }
 
     protected override void DefineScript()

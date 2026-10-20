@@ -104,9 +104,59 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
     /// <summary>Text the program wrote, for a test.</summary>
     public void Feed(string text) => Feed(Encoding.UTF8.GetBytes(text));
 
+    // The marks of a shell with integration (OSC 133): where a prompt starts, where it ends and the typing starts, where
+    // the command's output starts
+    private const string PROMPT_STARTS = "\u001b]133;A", PROMPT_ENDS = "\u001b]133;B", OUTPUT_STARTS = "\u001b]133;C";
+
+    /// <summary>
+    /// A line without the prompts on it and what was typed at them: from where a prompt starts (or the line's start, for
+    /// the end of a prompt that started on a line before) up to where the output starts, or the line's end. What was
+    /// typed is an error echoed back as a command and no error of anybody's. Windows' console draws with the cursor
+    /// rather than new lines, so a line can be an error and the next prompt both, and the error stays. It also sends the
+    /// marks on ahead of what it draws, so a prompt with nothing between its marks is only the marks, and what comes
+    /// after them (a new tab's first output) is kept.
+    /// </summary>
+    internal static string WithoutPrompts(string raw)
+    {
+        int at = 0;
+        while (true)
+        {
+            int starts = raw.IndexOf(PROMPT_STARTS, at, StringComparison.Ordinal), ends = raw.IndexOf(PROMPT_ENDS, at, StringComparison.Ordinal);
+            if (starts < 0 && ends < 0)
+                return raw;
+
+            if (starts >= 0 && ends > starts && IsBlank(raw.AsSpan(starts + PROMPT_STARTS.Length, ends - starts - PROMPT_STARTS.Length)))
+            {
+                int markEnds = raw.IndexOf('\a', ends);
+                raw = raw[..starts] + raw[(markEnds < 0 ? ends + PROMPT_ENDS.Length : markEnds + 1)..];
+                at = starts;
+                continue;
+            }
+
+            int cut = starts >= 0 && (ends < 0 || starts < ends) ? starts : at == 0 ? 0 : ends;
+            int output = raw.IndexOf(OUTPUT_STARTS, Math.Max(cut, ends), StringComparison.Ordinal);
+            raw = output < 0 ? raw[..cut] : raw[..cut] + raw[output..];
+            at = cut;
+        }
+    }
+
+    // Whether what's between two marks draws nothing, the end of the first mark and escape sequences aside
+    private static bool IsBlank(ReadOnlySpan<char> between)
+    {
+        string text = Escapes.Replace(between.ToString(), string.Empty);
+        foreach (char c in text)
+        {
+            if (!char.IsWhiteSpace(c) && c != '\a')
+                return false;
+        }
+
+        return true;
+    }
+
     private void Line(string raw)
     {
-        string line = Escapes.Replace(raw, string.Empty).TrimEnd();
+        // A shell without the marks has its prompt kept out by what it looks like (no > in a file, see Shipped)
+        string line = Escapes.Replace(WithoutPrompts(raw), string.Empty).TrimEnd();
         if (line.Length == 0)
             return;
 

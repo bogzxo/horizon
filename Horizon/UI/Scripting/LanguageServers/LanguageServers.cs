@@ -4,8 +4,9 @@ namespace Horizon.UI.Scripting;
 /// The language servers an editor knows of, by the files they lint, and the ones that are running. A tool registers
 /// what it has a configuration for (<see cref="Register"/>, csharp-ls for .cs, pyright for .py), asks for the one a
 /// file wants (<see cref="For"/>) and gets it started on the first file of its kind, or null when the command isn't on
-/// this machine, which a tool takes quietly, a file nobody can lint is still a file. One server runs per
-/// registration for the run, in the root folder it was first asked for, and <see cref="StopAll"/> ends them.
+/// this machine, which a tool takes quietly, a file nobody can lint is still a file. One server runs per registration
+/// and root folder (a server knows the projects of the folder it was started in and nothing else, so a file of another
+/// folder gets a server of its own there), and <see cref="StopAll"/> ends them.
 /// </summary>
 public static class LanguageServers
 {
@@ -19,7 +20,12 @@ public static class LanguageServers
 
     private static readonly Lock gate = new();
     private static readonly List<Registration> registrations = [];
+    // By registration and root folder, see Key. Null for one that couldn't be started, which isn't tried again
     private static readonly Dictionary<string, LanguageServer?> running = new(StringComparer.Ordinal);
+
+    // What a server is known by, its registration's name and the folder it was started in
+    private static string Key(string name, string root) =>
+        name + "\n" + Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
     // The ones that were started, kept as an array because an editor asks every tick and a list a tick is garbage
     private static LanguageServer[] started = [];
@@ -34,19 +40,35 @@ public static class LanguageServers
         }
     }
 
-    /// <summary>Says that files with these extensions are linted by this command. A name registered before is replaced.</summary>
-    public static void Register(string name, string command, string[] arguments, string languageId, string[] extensions)
+    /// <summary>
+    /// Says that files with these extensions are linted by this command. A name registered before is replaced, and its
+    /// server, if it was running, stopped off the caller's thread: what's handed back is that stop, done once the
+    /// process is gone (for whoever wants to write over its program).
+    /// </summary>
+    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions)
     {
+        Task stopping = Task.CompletedTask;
         lock (gate)
         {
             registrations.RemoveAll(other => other.Name == name);
             registrations.Add(new Registration(name, command, arguments, languageId, extensions));
-            if (running.Remove(name, out LanguageServer? was))
+            // Every one of its folders, asked to shut down and given a couple of seconds for it, off the caller's thread,
+            // which is the UI's
+            var going = new List<LanguageServer>();
+            foreach (string key in running.Keys.Where(key => key.StartsWith(name + "\n", StringComparison.Ordinal)).ToList())
             {
-                was?.Dispose();
+                if (running.Remove(key, out LanguageServer? was) && was is not null)
+                    going.Add(was);
+            }
+
+            if (going.Count > 0)
+            {
+                stopping = Task.WhenAll(going.Select(was => Task.Run(was.Dispose)));
                 started = [.. running.Values.OfType<LanguageServer>()];
             }
         }
+
+        return stopping;
     }
 
     /// <summary>The registration that lints a file, by its extension, null for none.</summary>
@@ -61,21 +83,25 @@ public static class LanguageServers
     }
 
     /// <summary>
-    /// The server for a file, started in a root folder if it isn't running yet. Null when nothing is registered for
-    /// the file, the command isn't on this machine, or the server couldn't be started (which isn't tried again).
+    /// The server for a file in a root folder, started there if it isn't running yet. Null when nothing is registered for
+    /// the file, the command isn't on this machine, or the server couldn't be started there (which isn't tried again).
     /// </summary>
     public static LanguageServer? For(string path, string rootDirectory)
     {
         if (RegistrationFor(path) is not { } entry)
             return null;
 
+        // A program started from the Dock finds what a terminal would once the login shell's PATH is in
+        Horizon.Core.Processes.ProcessEnvironment.WaitForLoginShell();
+
         lock (gate)
         {
-            if (running.TryGetValue(entry.Name, out LanguageServer? known))
+            string key = Key(entry.Name, rootDirectory);
+            if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
             LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory) : null;
-            running[entry.Name] = server;
+            running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
@@ -121,6 +147,31 @@ public static class LanguageServers
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Shuts down the servers started in a folder or anywhere in it, off the caller's thread, done when their processes
+    /// are. A process's folder can't be deleted on Windows while it runs, so before a folder goes, they go.
+    /// </summary>
+    public static Task StopUnder(string folder)
+    {
+        var going = new List<LanguageServer>();
+        lock (gate)
+        {
+            foreach (var (key, server) in running.ToList())
+            {
+                if (server is not null && Horizon.Core.Platform.PlatformPaths.IsUnder(server.RootDirectory, folder))
+                {
+                    running.Remove(key);
+                    going.Add(server);
+                }
+            }
+
+            if (going.Count > 0)
+                started = [.. running.Values.OfType<LanguageServer>()];
+        }
+
+        return Task.WhenAll(going.Select(server => Task.Run(server.Dispose)));
     }
 
     /// <summary>Shuts every running server down.</summary>

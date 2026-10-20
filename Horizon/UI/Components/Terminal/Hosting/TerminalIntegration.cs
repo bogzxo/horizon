@@ -4,7 +4,8 @@ namespace Horizon.UI.Components;
 /// Shell integration, the marks (OSC 133) and the folder (OSC 7) a shell says when it is given a script for it as it
 /// starts, never written into anybody's profile. PowerShell gets Assets/terminal/shell/dusk.ps1 dot sourced after its
 /// profile, bash (Git Bash, a WSL distribution, bash elsewhere) gets dusk.bash as its init file, which reads the login
-/// files first. cmd says its prompt's marks and its folder through the PROMPT variable it is started with (its $e is an
+/// files first. zsh (a Mac's shell) is started with ZDOTDIR at shell/zsh, whose files read the user's own and then
+/// dusk.zsh, and fish runs dusk.fish after its config with --init-command. cmd says its prompt's marks and its folder through the PROMPT variable it is started with (its $e is an
 /// escape), it can't say where a command's output starts or how it ended, so those are worked out round it.
 /// </summary>
 public static class TerminalIntegration
@@ -24,6 +25,10 @@ public static class TerminalIntegration
             return "bash";
         if (profile.Id == "cmd" || command is "cmd" or "cmd.exe" || command.EndsWith("\\cmd.exe", StringComparison.Ordinal))
             return "cmd";
+        if (ProgramOf(command) is "zsh")
+            return "zsh";
+        if (ProgramOf(command) is "fish")
+            return "fish";
         return string.Empty;
     }
 
@@ -50,14 +55,32 @@ public static class TerminalIntegration
                 environment["PATH"] = Scripts + Path.PathSeparator + Horizon.Core.Processes.ProcessEnvironment.Path();
         }
 
-        if (commandsFile is not null && kind is "powershell" or "bash")
+        // zsh reads its dotfiles from ZDOTDIR, which is the integration's, and the user's own one is passed along for it to read
+        if (kind == "zsh" && Directory.Exists(Path.Combine(Scripts, "zsh")))
+        {
+            environment["ZDOTDIR"] = Path.Combine(Scripts, "zsh");
+            environment["DUSK_USER_ZDOTDIR"] = System.Environment.GetEnvironmentVariable("ZDOTDIR") ?? string.Empty;
+        }
+
+        // Which side the terminal is on, for the dawn command of the Unix shells' scripts: a Windows terminal wants a
+        // Windows path (a WSL distribution's shell, Git Bash's), one on Linux or a Mac the path as it is, wslpath or not
+        var toWsl = new List<string>();
+        if (kind is "bash" or "zsh" or "fish")
+        {
+            environment["DUSK_HOST"] = OperatingSystem.IsWindows() ? "windows" : "unix";
+            toWsl.Add("DUSK_HOST");
+        }
+
+        if (commandsFile is not null && kind is "powershell" or "bash" or "zsh" or "fish")
         {
             environment["DUSK_COMMANDS_FILE"] = commandsFile.Replace('\\', '/');
-            if (profile.Id.StartsWith("wsl:", StringComparison.Ordinal))
-            {
-                string passed = System.Environment.GetEnvironmentVariable("WSLENV") ?? string.Empty;
-                environment["WSLENV"] = (passed.Length > 0 ? passed + ":" : string.Empty) + "DUSK_COMMANDS_FILE/p";
-            }
+            toWsl.Add("DUSK_COMMANDS_FILE/p");
+        }
+
+        if (profile.Id.StartsWith("wsl:", StringComparison.Ordinal) && toWsl.Count > 0)
+        {
+            string passed = System.Environment.GetEnvironmentVariable("WSLENV") ?? string.Empty;
+            environment["WSLENV"] = (passed.Length > 0 ? passed + ":" : string.Empty) + string.Join(':', toWsl);
         }
 
         return environment;
@@ -99,9 +122,22 @@ public static class TerminalIntegration
                 return $"{shell} --init-file '{(OperatingSystem.IsWindows() ? MsysPath(script) : script)}' -i";
             }
 
+            case "fish":
+            {
+                string script = Path.Combine(scripts, "dusk.fish");
+                return File.Exists(script) ? $"{command} --init-command \"source '{script.Replace("'", "\\'")}'\"" : command;
+            }
+
             default:
                 return command;
         }
+    }
+
+    // The program a command line starts, its file's name without a folder or .exe, lower case
+    private static string ProgramOf(string command)
+    {
+        string first = command.TrimStart().Split(' ', 2)[0].Trim('"');
+        return Path.GetFileNameWithoutExtension(first.Replace('\\', '/').Split('/')[^1]);
     }
 
     /// <summary>A Windows path as Git Bash writes it, C:\Users to /c/Users.</summary>

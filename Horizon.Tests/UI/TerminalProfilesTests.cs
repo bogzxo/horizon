@@ -15,6 +15,10 @@ public class TerminalProfilesTests
     [Fact]
     public void Windows_finds_pwsh_git_bash_and_the_wsl_distributions_when_they_are_there()
     {
+        // Windows' paths put together the way Windows does, which only Windows' Path does
+        if (!OperatingSystem.IsWindows())
+            return;
+
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             @"C:\Program Files\PowerShell\7\pwsh.exe",

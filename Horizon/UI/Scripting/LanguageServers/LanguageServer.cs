@@ -11,6 +11,14 @@ namespace Horizon.UI.Scripting;
 /// <param name="Incomplete">Whether the server only sent some of it, and wants asking again as more is typed.</param>
 public readonly record struct LanguageServerCompletions(IReadOnlyList<UICompletion> Items, bool Incomplete);
 
+/// <summary>What happened to a file on the disk, as the protocol numbers it (workspace/didChangeWatchedFiles).</summary>
+public enum LanguageServerFileChange
+{
+    Created = 1,
+    Changed = 2,
+    Deleted = 3
+}
+
 /// <summary>
 /// A language server (the protocol VS Code's linting, completion and hovers come through, microsoft.github.io/language-server-protocol)
 /// run as a process and talked to over its stdin and stdout, so far for what it has to say about the files open in it.
@@ -48,7 +56,7 @@ public sealed class LanguageServer : IDisposable
 
     private readonly Process? process;
     private readonly JsonRpcConnection rpc;
-    private readonly Dictionary<string, int> versions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> versions = new(Horizon.Core.Platform.PlatformPaths.Comparer);
     private readonly ConcurrentQueue<(string Path, IReadOnlyList<UICodeDiagnostic> Found)> arrived = new();
     private readonly Lock queue = new();
     private List<Action>? waiting = [];
@@ -133,7 +141,14 @@ public sealed class LanguageServer : IDisposable
                     }
                 }
             },
-            ["workspace"] = new JsonObject { ["workspaceFolders"] = false, ["configuration"] = false }
+            // The files of the workspace that change on the disk are said (FilesChanged), a project added, a branch checked
+            // out. A server asks for the ones it wants watched, and is told of every one, it takes what it wants of them
+            ["workspace"] = new JsonObject
+            {
+                ["workspaceFolders"] = false,
+                ["configuration"] = false,
+                ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true }
+            }
         };
 
         string rootUri = UriOf(RootDirectory);
@@ -272,6 +287,22 @@ public sealed class LanguageServer : IDisposable
                 ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = text })
             });
         });
+    }
+
+    /// <summary>
+    /// Tells the server what changed on the disk in its workspace that isn't open in it (a project added, files a
+    /// checkout or a build wrote), which a server that has the project loaded goes by. Nothing for nothing.
+    /// </summary>
+    public void FilesChanged(IReadOnlyList<(string Path, LanguageServerFileChange Change)> changes)
+    {
+        if (changes.Count == 0)
+            return;
+
+        var list = new JsonArray();
+        foreach (var (path, change) in changes)
+            list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
+
+        Later(() => rpc.Notify("workspace/didChangeWatchedFiles", new JsonObject { ["changes"] = list }));
     }
 
     /// <summary>Tells the server a file was closed, it says nothing more about it.</summary>

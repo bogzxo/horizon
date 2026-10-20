@@ -26,7 +26,7 @@ public sealed partial class TerminalHost
     /// </summary>
     public void Watch()
     {
-        var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var folders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
         if (options.SettingsFile is { } settings && Path.GetDirectoryName(Path.GetFullPath(settings)) is { } settingsFolder)
             folders.Add(settingsFolder);
         foreach (string keys in options.KeysFiles)
@@ -98,7 +98,7 @@ public sealed partial class TerminalHost
     private void TakeSettled()
     {
         bool settings = false, keys = false;
-        var pluginFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pluginFolders = new HashSet<string>(Horizon.Core.Platform.PlatformPaths.Comparer);
         foreach (string path in pending)
         {
             if (options.SettingsFile is { } file && SameFile(path, file))
@@ -185,7 +185,7 @@ public sealed partial class TerminalHost
 
             string root = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             string full = Path.GetFullPath(path);
-            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            if (!full.StartsWith(root, Horizon.Core.Platform.PlatformPaths.Comparison))
                 continue;
 
             string inside = full[root.Length..];
@@ -209,7 +209,7 @@ public sealed partial class TerminalHost
     }
 
     private static bool SameFile(string a, string b) =>
-        string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+        string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar), Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar), Horizon.Core.Platform.PlatformPaths.Comparison);
 
     /// <summary>The watchers let go of.</summary>
     public void Dispose()

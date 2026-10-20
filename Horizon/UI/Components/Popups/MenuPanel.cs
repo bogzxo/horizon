@@ -77,7 +77,7 @@ internal sealed class MenuPanel
 
             height += HeightOf(item, row);
 
-            float end = item.Submenu is not null ? row : item.Shortcut.Length > 0 ? skin.Font.Measure(item.Shortcut, scale, markup: false).X + SHORTCUT_GAP : 0.0f;
+            float end = item.Submenu is not null ? row : item.Shortcut.Length > 0 ? skin.Font.Measure(UIShortcutText.Shown(item.Shortcut), scale, markup: false).X + SHORTCUT_GAP : 0.0f;
             width = MathF.Max(width, CHECK_WIDTH + skin.Font.Measure(item.Label, scale, markup: false).X + end + ITEM_PADDING * 2.0f);
         }
 
@@ -397,7 +397,7 @@ internal sealed class MenuPanel
             if (item.Submenu is not null)
                 list.Symbol(SUBMENU_ARROW, new UIRect(new Vector2(content.Max.X - side, mark.Min.Y), new Vector2(content.Max.X, mark.Max.Y)), dim);
             else if (item.Shortcut.Length > 0)
-                list.Text(item.Shortcut, text, Origin.Right, scale, dim, markup: false);
+                list.Text(UIShortcutText.Shown(item.Shortcut), text, Origin.Right, scale, dim, markup: false);
         }
 
         list.EndParts();

@@ -71,6 +71,13 @@ public readonly struct WindowManagerConfiguration
     public readonly string? WindowIcon { get; init; }
 
     /// <summary>
+    /// What the desktop knows the program's windows by on Linux, its app id on Wayland and its class on X11, which is
+    /// the name of its .desktop file (hex-dawn for hex-dawn.desktop). A Wayland window has no icon of its own, the
+    /// desktop shows the one its .desktop file names, found by this. Null for the program's name.
+    /// </summary>
+    public readonly string? AppId { get; init; }
+
+    /// <summary>
     /// What the window is run for. A game (the default) draws every frame the screen shows and ticks at its rate
     /// whatever is going on. An application (an editor, a tool) does what <see cref="Behaviour"/> says, which unless it
     /// says otherwise is all of what makes it cost next to nothing while nobody is using it.

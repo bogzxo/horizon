@@ -120,7 +120,7 @@ public sealed class TileMapRooms : GameObject
         {
             foreach (TileMapDoor door in rooms[i].Doors)
             {
-                TileMapRoom? behind = rooms.Find(room => string.Equals(room.Path, door.TargetPath, StringComparison.OrdinalIgnoreCase));
+                TileMapRoom? behind = rooms.Find(room => string.Equals(room.Path, door.TargetPath, Horizon.Core.Platform.PlatformPaths.Comparison));
                 if (behind is null)
                 {
                     behind = Load(door.TargetPath, origin);
@@ -320,7 +320,9 @@ public sealed class TileMapRooms : GameObject
     /// </summary>
     public static string Resolve(string mapPath, string file)
     {
-        string directory = System.IO.Path.GetDirectoryName(mapPath) ?? string.Empty;
+        // Forward slashes first: a map named with Windows' backslashes has no folder at all as Linux reads it, a backslash
+        // is a letter of a name there
+        string directory = System.IO.Path.GetDirectoryName(mapPath.Replace('\\', '/')) ?? string.Empty;
         return Tidy(directory.Length > 0 ? directory + "/" + file : file);
     }
 

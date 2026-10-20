@@ -32,7 +32,7 @@ public static class TerminalShortcut
         {
             switch (part.ToLowerInvariant())
             {
-                case "ctrl" or "control": control = true; break;
+                case "ctrl" or "control" or "cmd" or "command": control = true; break;
                 case "shift": shift = true; break;
                 case "alt": alt = true; break;
                 default:
@@ -49,8 +49,16 @@ public static class TerminalShortcut
     }
 
     /// <summary>Whether a press is the key a text names, held exactly so.</summary>
-    public static bool Matches(in UIKeyPress press, (Key Key, bool Control, bool Shift, bool Alt) key) =>
-        press.Key == key.Key && press.Control == key.Control && press.Shift == key.Shift && press.Alt == key.Alt;
+    /// <remarks>
+    /// Ctrl in a shortcut is command on a Mac (Horizon.Input.Keyboard.Primary), where control itself is the shell's
+    /// (control C, control R), so a press with control held is never one of the terminal's shortcuts there.
+    /// </remarks>
+    public static bool Matches(in UIKeyPress press, (Key Key, bool Control, bool Shift, bool Alt) key)
+    {
+        bool mac = Horizon.Input.Keyboard.PrimaryIsCommand;
+        bool primary = mac ? press.Super : press.Control;
+        return press.Key == key.Key && primary == key.Control && (!mac || !press.Control) && press.Shift == key.Shift && press.Alt == key.Alt;
+    }
 
     /// <summary>The way the menus write a key, control first, then shift, then alt.</summary>
     public static string Write(Key key, bool control, bool shift, bool alt) =>

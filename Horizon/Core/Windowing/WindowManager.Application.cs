@@ -152,14 +152,17 @@ public partial class WindowManager
     /// </summary>
     private void WaitForEvents()
     {
-        bool idle = (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && glfw is not null && drag == Drag.None && !sliding && !InputLately && !closing;
+        bool idle = (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding && !InputLately && !closing;
         if (!idle)
         {
             windowWake.WaitOne(EVENT_POLL);
             return;
         }
 
-        glfw!.WaitEventsTimeout(EVENT_WAIT);
+        if (sdlWaiting)
+            WaitForSdl((int)(EVENT_WAIT * 1000.0));
+        else
+            glfw!.WaitEventsTimeout(EVENT_WAIT);
     }
 
     /// <summary>Wakes the window's thread, whichever way it is waiting. From any thread.</summary>
@@ -168,13 +171,22 @@ public partial class WindowManager
         windowWake.Set();
         if (glfw is not null && (Behaviour & ApplicationBehaviour.WaitForEvents) != 0)
             glfw.PostEmptyEvent();
+        else if (sdlWaiting)
+            WakeSdl();
     }
 
     /// <summary>Helper method to get hold of GLFW for waiting on its events, where the window is GLFW's. Thread of the window.</summary>
     private void SetUpWaiting()
     {
-        if ((Behaviour & ApplicationBehaviour.WaitForEvents) == 0 || OperatingSystem.IsMacOS())
+        if ((Behaviour & ApplicationBehaviour.WaitForEvents) == 0)
             return;
+
+        // SDL's window waits on SDL, which a Mac's had nothing to wait on and asked the system every millisecond
+        if (UsesSdl)
+        {
+            sdlWaiting = true;
+            return;
+        }
 
         try
         {

@@ -180,11 +180,38 @@ public class TitleBar : StackPanel
             }
         }
 
-        // The window is told where its maximise button is, for Windows 11 to bring Snap Layouts up over it
-        if (GameEngine.Instance?.WindowManager is { CustomFrame: true } window)
-            window.MaximizeButton = WindowButtons && Module is { } module ? InWindow(module, ButtonBounds(1)) : default;
+        // The window is told where its maximise button is, for Windows 11 to bring Snap Layouts up over it, and where the
+        // bar is and what on it isn't, for the desktop to move the window by it (SDL's, see WindowManager.HitTest)
+        if (GameEngine.Instance?.WindowManager is { CustomFrame: true } window && Module is { } module)
+        {
+            window.MaximizeButton = WindowButtons ? InWindow(module, ButtonBounds(1)) : default;
+            if (Core.WindowManager.UsesSdl)
+                window.SetDragArea(Visible ? InWindow(module, Bounds) : default, Holes(module));
+        }
 
         list.EndParts();
+    }
+
+    // What on the bar a press goes to rather than moving the window, its buttons and whatever is in it (a menu bar, tabs),
+    // into a list kept from one paint to the next
+    private readonly List<System.Drawing.RectangleF> holes = [];
+
+    private ReadOnlySpan<System.Drawing.RectangleF> Holes(UIModule module)
+    {
+        holes.Clear();
+        if (WindowButtons)
+        {
+            for (int i = 0; i < 3; i++)
+                holes.Add(InWindow(module, ButtonBounds(i)));
+        }
+
+        foreach (UIComponent child in Children)
+        {
+            if (child.Visible)
+                holes.Add(InWindow(module, child.Bounds));
+        }
+
+        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(holes);
     }
 
     /// <summary>Helper method to say where something of the UI is in the window, in its pixels.</summary>
