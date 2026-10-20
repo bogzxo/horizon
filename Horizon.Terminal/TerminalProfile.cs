@@ -132,7 +132,8 @@ public static class TerminalProfiles
     /// <summary>
     /// The distributions out of what <c>wsl -l -q</c> printed. It writes UTF-16 with a byte order mark when its
     /// output is a pipe, which read as UTF-8 is every other byte a nul, so a text with nuls in it is read again
-    /// as UTF-16. One name a line, blank lines and the docker ones left out.
+    /// as UTF-16. One name a line, blank lines and the docker ones left out. So is a line with a space in it, no
+    /// distribution has one, it is wsl explaining that there aren't any (and a command named after it would be two words).
     /// </summary>
     public static List<string> ParseWslList(string? output)
     {
@@ -149,7 +150,7 @@ public static class TerminalProfiles
         foreach (string line in output.Split('\n'))
         {
             string name = line.Trim('\r', ' ', '\t', '\uFEFF', '\0');
-            if (name.Length == 0 || name.StartsWith("docker-desktop", StringComparison.OrdinalIgnoreCase))
+            if (name.Length == 0 || name.Any(char.IsWhiteSpace) || name.StartsWith("docker-desktop", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             names.Add(name);
@@ -186,9 +187,13 @@ public static class TerminalProfiles
 
             string output = wsl.StandardOutput.ReadToEnd();
             if (!wsl.WaitForExit(3000))
+            {
                 wsl.Kill();
+                return null;
+            }
 
-            return output;
+            // Without a distribution, or with WSL switched off, it fails and writes why down the same pipe, which isn't a list
+            return wsl.ExitCode == 0 ? output : null;
         }
         catch
         {

@@ -58,6 +58,16 @@ public class TerminalProfilesTests
     }
 
     [Fact]
+    public void A_wsl_without_distributions_gives_no_profiles()
+    {
+        // What it writes on a machine that has wsl.exe and nothing installed, every line of it a sentence and not a name
+        const string none = "Windows Subsystem for Linux has no installed distributions.\r\nUse 'wsl.exe --list --online' to list available distributions\r\nand 'wsl.exe --install <Distro>' to install.\r\n";
+        string asRead = Encoding.Latin1.GetString(Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(none)).ToArray());
+
+        Assert.Empty(TerminalProfiles.ParseWslList(asRead));
+    }
+
+    [Fact]
     public void Unix_lists_the_login_shell_first_and_the_rest_that_exist()
     {
         var files = new HashSet<string> { "/bin/zsh", "/usr/bin/bash", "/opt/homebrew/bin/fish" };
