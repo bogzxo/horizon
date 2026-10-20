@@ -53,6 +53,12 @@ public sealed class UISyntaxColors
     /// <summary>The numbers down the side of a code view.</summary>
     public Vector4 LineNumber { get; set; } = new(0.34f, 0.38f, 0.46f, 1.0f);
 
+    // Null until something sets it, and then the keywords' colour
+    private Vector4? control;
+
+    /// <summary>The keywords that send the code somewhere else, if, for, return. The other keywords' colour unless set.</summary>
+    public Vector4 Control { get => control ?? Keyword; set => control = value; }
+
     /// <summary>
     /// The colours for code on a light field, deep where the defaults are bright, the flat skin's light theme is
     /// these. What a palette without colours of code of its own gets when its field is light.
@@ -82,6 +88,66 @@ public sealed class UISyntaxColors
         Bracket3 = new(0.0f, 0.36f, 0.75f, 1.0f)
     };
 
+    /// <summary>
+    /// Visual Studio's colours for code on its dark theme, the ones it has for C#. Visual Studio doesn't colour brackets
+    /// by how deep they are, so all three are its punctuation.
+    /// </summary>
+    public static UISyntaxColors VisualStudioDark() => new()
+    {
+        Name = Rgb(0xDCDCDC),
+        Keyword = Rgb(0x569CD6),
+        Control = Rgb(0xD8A0DF),
+        Property = Rgb(0xDCDCDC),
+        Call = Rgb(0xDCDCAA),
+        Text = Rgb(0xD69D85),
+        Number = Rgb(0xB5CEA8),
+        Comment = Rgb(0x57A64A),
+        Punctuation = Rgb(0xB4B4B4),
+        LineNumber = Rgb(0x2B91AF),
+        Directive = Rgb(0x9B9B9B),
+        Declaration = Rgb(0x9CDCFE),
+        Builtin = Rgb(0x4EC9B0),
+        Type = Rgb(0x4EC9B0),
+        Constant = Rgb(0x569CD6),
+        Reference = Rgb(0xD69D85),
+        Escape = Rgb(0xFFD68F),
+        Markup = Rgb(0xB4B4B4),
+        Operator = Rgb(0xB4B4B4),
+        Bracket1 = Rgb(0xB4B4B4),
+        Bracket2 = Rgb(0xB4B4B4),
+        Bracket3 = Rgb(0xB4B4B4)
+    };
+
+    /// <summary>Visual Studio's colours for code on its light theme, the ones it has for C#.</summary>
+    public static UISyntaxColors VisualStudioLight() => new()
+    {
+        Name = Rgb(0x000000),
+        Keyword = Rgb(0x0000FF),
+        Control = Rgb(0x8F08C4),
+        Property = Rgb(0x000000),
+        Call = Rgb(0x74531F),
+        Text = Rgb(0xA31515),
+        Number = Rgb(0x000000),
+        Comment = Rgb(0x008000),
+        Punctuation = Rgb(0x000000),
+        LineNumber = Rgb(0x2B91AF),
+        Directive = Rgb(0x808080),
+        Declaration = Rgb(0x1F377F),
+        Builtin = Rgb(0x2B91AF),
+        Type = Rgb(0x2B91AF),
+        Constant = Rgb(0x0000FF),
+        Reference = Rgb(0xA31515),
+        Escape = Rgb(0xB776FB),
+        Markup = Rgb(0x000000),
+        Operator = Rgb(0x000000),
+        Bracket1 = Rgb(0x000000),
+        Bracket2 = Rgb(0x000000),
+        Bracket3 = Rgb(0x000000)
+    };
+
+    // A colour written the way a theme file writes it, 0xRRGGBB
+    private static Vector4 Rgb(uint rgb) => new(((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, 1.0f);
+
     /// <summary>Sets a colour by the key a skin file writes it under, false for a key that isn't one.</summary>
     public bool Set(string key, Vector4 color)
     {
@@ -108,6 +174,7 @@ public sealed class UISyntaxColors
             case "bracket1": Bracket1 = color; break;
             case "bracket2": Bracket2 = color; break;
             case "bracket3": Bracket3 = color; break;
+            case "control": Control = color; break;
             default: return false;
         }
 
@@ -122,11 +189,13 @@ public sealed class UISyntaxColors
         other.Directive = Directive; other.Declaration = Declaration; other.Builtin = Builtin; other.Type = Type;
         other.Constant = Constant; other.Reference = Reference; other.Escape = Escape; other.Markup = Markup;
         other.Operator = Operator; other.Bracket1 = Bracket1; other.Bracket2 = Bracket2; other.Bracket3 = Bracket3;
+        other.control = control;
     }
 
     public Vector4 Of(SyntaxKind kind) => kind switch
     {
         SyntaxKind.Keyword => Keyword,
+        SyntaxKind.Control => Control,
         SyntaxKind.Property => Property,
         SyntaxKind.Call => Call,
         SyntaxKind.Text => Text,

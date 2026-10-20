@@ -1489,7 +1489,7 @@ public partial class CodeEditor : UIComponent
 
         float scale = paintedScale;
         float lineHeight = FontOf(skin).LineHeight * scale;
-        UISyntaxColors colors = skin.Syntax;
+        UISyntaxColors colors = CodeLanguages.ColorsFor(Highlighter, skin.Palette);
 
         // On what every popup sits on, coming in out of the line it's for
         bool entering = list.BeginEntrance(ref completionsOpenedAt, new Vector2(bounds.Min.X, bounds.Max.Y), new Vector2(0.0f, 4.0f));
@@ -1734,7 +1734,7 @@ public partial class CodeEditor : UIComponent
     private void PaintCode(UIDrawList list)
     {
         UISkin skin = list.Skin;
-        UISyntaxColors colors = skin.Syntax;
+        UISyntaxColors colors = CodeLanguages.ColorsFor(Highlighter, skin.Palette);
         paintedSkin = skin;
 
         float scale = ScaleOf(skin);
