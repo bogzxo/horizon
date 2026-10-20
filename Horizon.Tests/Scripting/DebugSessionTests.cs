@@ -126,7 +126,7 @@ public class DebugSessionTests
         if (Environment.GetEnvironmentVariable("HEX_NETCOREDBG") is { Length: > 0 } said && File.Exists(said))
             return said;
 
-        string beside = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "hex", "Hex", "bin", "Debug", "net10.0", "netcoredbg", "netcoredbg.exe"));
+        string beside = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "hex", "Hex", "bin", "Debug", "net11.0", "netcoredbg", "netcoredbg.exe"));
         if (File.Exists(beside))
             return beside;
 
@@ -154,7 +154,7 @@ public class DebugSessionTests
                 <Project Sdk="Microsoft.NET.Sdk">
                   <PropertyGroup>
                     <OutputType>Exe</OutputType>
-                    <TargetFramework>net10.0</TargetFramework>
+                    <TargetFramework>net11.0</TargetFramework>
                   </PropertyGroup>
                 </Project>
                 """);
