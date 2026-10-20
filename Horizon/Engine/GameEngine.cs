@@ -179,7 +179,7 @@ public class GameEngine : Entity
         // In the order they get their turns. The input comes before anything that reads it
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
-        Input = AddComponent<InputManager>();
+        Input = AddComponent<InputManager>(new() { ReadsGamepads = Configuration.Gamepads });
         Audio = new Horizon.Audio.AudioDevice(open: Configuration.WindowConfiguration.Mode != RunMode.Application);
 
 #if DEBUG

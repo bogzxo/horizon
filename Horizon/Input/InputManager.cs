@@ -31,7 +31,13 @@ public sealed class InputManager : GameComponent
     /// <summary>
     /// Every gamepad that is plugged in, and the bindings each one is played with.
     /// </summary>
-    public GamepadInputManager Gamepads { get; } = new();
+    public GamepadInputManager Gamepads { get; private set;  }
+
+    /// <summary>
+    /// Whether the gamepads plugged into the machine are listened for, see <see cref="Engine.GameEngineConfiguration.Gamepads"/>.
+    /// Off, <see cref="Gamepads"/> only ever has the keyboard, virtual and scripted ones in it.
+    /// </summary>
+    public bool ReadsGamepads { get; init; } = true;
 
     // The script that is being played, the gamepad it is played on and how far into it we are
     private InputScript? _script;
@@ -125,9 +131,6 @@ public sealed class InputManager : GameComponent
             ?? throw new InvalidOperationException("The input manager goes on the entity that has the window manager, which is the engine.");
         IInputContext context = window.Input;
 
-        // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
-        window.EventsProcessed += Gamepads.SampleDevices;
-
         Native = context;
 
         Keyboard.Attach(context);
@@ -135,6 +138,12 @@ public sealed class InputManager : GameComponent
 
         // Before the gamepads of the window are let in, so the one of a script is the first there is
         PlayScriptOfEnvironment();
+
+        if (!ReadsGamepads) return;
+
+        Gamepads = new();
+        // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
+        window.EventsProcessed += Gamepads.SampleDevices;
         Gamepads.Attach(context);
     }
 
@@ -146,6 +155,7 @@ public sealed class InputManager : GameComponent
         Keyboard.Update();
         Mouse.Update();
         UpdateScript(dt);
+        if (!ReadsGamepads) return;
         Gamepads.UpdateState(dt);
     }
 }
