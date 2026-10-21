@@ -246,8 +246,8 @@ public class Button : UIComponent
         bool lit = EnabledInHierarchy && (IsHovered || Chosen);
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
-        if (lit && !wasLit && updated && Animated)
-            this.Punch(0.05f, 0.2f);
+        if (lit && !wasLit && updated && Animated && MotionTime(0.2f) > 0.0f)
+            this.Punch(0.05f, MotionTime(0.2f));
 
         wasLit = lit;
         updated = true;
@@ -255,8 +255,8 @@ public class Button : UIComponent
 
     protected internal override void OnClick()
     {
-        if (Animated)
-            this.Punch(-0.08f, 0.2f);
+        if (Animated && MotionTime(0.2f) > 0.0f)
+            this.Punch(-0.08f, MotionTime(0.2f));
 
         OnPressed?.Invoke();
         InvokeScript(pressedHandler);

@@ -35,11 +35,15 @@ public class TerminalHostingTests
     public void A_press_matches_its_key_held_exactly_so()
     {
         var key = TerminalShortcut.Read("Ctrl+Shift+T")!.Value;
-        Assert.True(TerminalShortcut.Matches(new UIKeyPress(Key.T, true, true, false, false), key));
-        Assert.False(TerminalShortcut.Matches(new UIKeyPress(Key.T, true, false, false, false), key));
-        Assert.False(TerminalShortcut.Matches(new UIKeyPress(Key.T, true, true, true, false), key));
-        Assert.False(TerminalShortcut.Matches(new UIKeyPress(Key.R, true, true, false, false), key));
+        Assert.True(TerminalShortcut.Matches(Press(Key.T, true, true, false), key));
+        Assert.False(TerminalShortcut.Matches(Press(Key.T, true, false, false), key));
+        Assert.False(TerminalShortcut.Matches(Press(Key.T, true, true, true), key));
+        Assert.False(TerminalShortcut.Matches(Press(Key.R, true, true, false), key));
     }
+
+    // A press with the key a file calls Ctrl held, which is command on a Mac
+    internal static UIKeyPress Press(Key key, bool primary, bool shift, bool alt) =>
+        Horizon.Input.Keyboard.PrimaryIsCommand ? new(key, false, shift, alt, primary) : new(key, primary, shift, alt, false);
 
     [Fact]
     public void A_command_takes_a_key_and_lets_it_go()

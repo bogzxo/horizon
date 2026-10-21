@@ -122,12 +122,14 @@ public sealed class UIWorkCards
 
         foreach (var (work, (card, shown)) in cards.ToArray())
         {
-            if (work.Version == shown)
+            // The version read before what it covers, a change made on the work's thread in between is seen next tick
+            int version = work.Version;
+            if (version == shown)
                 continue;
 
             card.Detail = work.Message;
             card.Progress = work.State == WorkState.Waiting ? float.NaN : work.Progress ?? float.NaN;
-            cards[work] = (card, work.Version);
+            cards[work] = (card, version);
         }
     }
 

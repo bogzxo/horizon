@@ -23,7 +23,10 @@ namespace Horizon.UI.Components;
 /// </summary>
 public partial class TerminalView : UIComponent, IDisposable
 {
-    private const float BLINK = 0.53f, CURSOR_GLIDE = 28.0f, BELL_FLASH = 0.25f, PADDING = 4.0f;
+    private const float BLINK = 0.53f, BELL_FLASH = 0.25f, PADDING = 4.0f;
+
+    /// <summary>How long the cursor takes to glide most of the way to its next cell unless told otherwise, see <see cref="CursorGlide"/>.</summary>
+    public const float DEFAULT_CURSOR_GLIDE = 0.036f;
     private const int MAX_PENDING_CHUNKS = 4096;
 
     private TerminalScreen screen = new(80, 24);
@@ -107,6 +110,12 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /// <summary>Whether the cursor glides to its next cell rather than jumping, and the rest of the small movements.</summary>
     public bool Animated { get; set; } = true;
+
+    /// <summary>
+    /// How long the cursor takes to glide about two thirds of the way to its next cell, in seconds, 0 for it jumping
+    /// there. It jumps whatever this says while <see cref="Animated"/> is off.
+    /// </summary>
+    public float CursorGlide { get; set; } = DEFAULT_CURSOR_GLIDE;
 
     /// <summary>Called when the program ends, with its exit code.</summary>
     public Action<int>? OnExited { get; set; }
@@ -789,7 +798,10 @@ public partial class TerminalView : UIComponent, IDisposable
         // The marks of the blocks in the gutter, outside the cells, and the matches of a find under the text
         PaintMarks(list, offset, rows, top, palette);
 
+        // The cells in steps, a row's quads are another line's the moment a program scrolls (micro down a long file)
+        // or the scrollback's oldest row goes, and blended between two ticks letters slid between rows
         list.PushClip(paintedArea);
+        list.BeginSteps();
         for (int y = 0; y < rows; y++)
         {
             int index = offset + y;
@@ -799,12 +811,13 @@ public partial class TerminalView : UIComponent, IDisposable
             list.BeginPart(index);
             PaintRow(list, font, scale, screen.RowAt(index), index, top - y * cellHeight, palette);
         }
+        list.EndSteps();
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
         if (screen.CursorVisible && scrolled == 0)
         {
             Vector2 wanted = new(paintedArea.Min.X + screen.CursorX * cellWidth, top - (screen.CursorY + 1) * cellHeight);
-            if (!cursorPlaced || !Animated)
+            if (!cursorPlaced || !Animated || CursorGlide <= 0.0f)
             {
                 cursorAt = wanted;
                 cursorPlaced = true;
@@ -812,7 +825,7 @@ public partial class TerminalView : UIComponent, IDisposable
             else
             {
                 float dt = MathF.Min(0.05f, lastDt);
-                cursorAt += (wanted - cursorAt) * (1.0f - MathF.Exp(-CURSOR_GLIDE * dt));
+                cursorAt += (wanted - cursorAt) * (1.0f - MathF.Exp(-dt / CursorGlide));
                 if (Vector2.DistanceSquared(cursorAt, wanted) < 0.25f)
                     cursorAt = wanted;
                 else
@@ -1077,5 +1090,6 @@ public partial class TerminalView : UIComponent, IDisposable
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("scrollback", () => (float)Scrollback, value => Scrollback = (int)value);
         Expose("animated", () => Animated, value => Animated = value);
+        Expose("cursor_glide", () => CursorGlide, value => CursorGlide = MathF.Max(0.0f, value));
     }
 }

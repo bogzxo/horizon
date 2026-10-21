@@ -161,6 +161,10 @@ public class GameEngine : Entity
         Instance = GameObject.Engine = this;
         Configuration = engineConfiguration;
 
+        // Before anything is compiled or loaded, the shaders' cache is the first to ask where things go
+        if (Configuration.FilesBesideProgram)
+            Horizon.Core.Platform.PlatformPaths.BesideProgram = true;
+
         Enabled = true;
 
         // What an entity makes on the GPU while it is set up belongs to the scene it is in, and to nobody if
@@ -179,7 +183,7 @@ public class GameEngine : Entity
         // In the order they get their turns. The input comes before anything that reads it
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
-        Input = AddComponent<InputManager>();
+        Input = AddComponent<InputManager>(new() { ReadsGamepads = Configuration.Gamepads });
         Audio = new Horizon.Audio.AudioDevice(open: Configuration.WindowConfiguration.Mode != RunMode.Application);
 
 #if DEBUG
@@ -193,6 +197,7 @@ public class GameEngine : Entity
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
         WindowManager.DeviceReady = ShowLoadingScreen;
+        WindowManager.ReadsGamepads = Configuration.Gamepads;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {

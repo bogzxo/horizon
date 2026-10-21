@@ -218,11 +218,22 @@ public sealed partial class TerminalHost : IDisposable
     {
         TerminalShellLine? line = ShellLineFor(view.Profile);
         view.LineColourer = Settings.HighlightLine && line is not null && !Settings.PlainProfiles.Contains(view.Profile!.Id) ? line : null;
-        view.Completer = Settings.Completion && line is { Kind: "cmd" or "bash" } ? new TerminalShellCompletion(line) : null;
+        view.Completer = Settings.Completion && line is { Kind: "cmd" or "bash" or "powershell" } ? CompleterFor(view.Profile!, line) : null;
         view.OutputHighlighter = Settings.HighlightOutput ? OutputRules : null;
         view.CopyOnSelect = Settings.CopyOnSelect;
         view.RightClickPaste = Settings.RightClickPaste;
         view.Bell = Settings.Bell switch { "sound" => TerminalBell.Sound, "none" => TerminalBell.None, _ => TerminalBell.Flash };
+    }
+
+    /// <summary>
+    /// What completes a shell's line. cmd and bash get commands, files and the tools' words, PowerShell only the tools'
+    /// (it does the rest itself), and a WSL shell no tools, its git isn't the one this would ask.
+    /// </summary>
+    private TerminalShellCompletion CompleterFor(TerminalProfile profile, TerminalShellLine line)
+    {
+        bool wsl = profile.Id.StartsWith("wsl:", StringComparison.Ordinal);
+        TerminalToolCompletion? tools = wsl || Settings.CompletionTools.Count == 0 ? null : new TerminalToolCompletion(Settings.CompletionTools);
+        return new TerminalShellCompletion(line, tools, toolsOnly: line.Kind == "powershell");
     }
 
     /// <summary>The lexer and the commands of a profile's shell, null for a profile that is no shell this knows.</summary>
@@ -512,6 +523,7 @@ public sealed partial class TerminalHost : IDisposable
     public void ApplySettings()
     {
         Panel.AnimationTime = Settings.Animations ? Settings.AnimationTime : 0.0f;
+        Panel.CursorGlide = Settings.CursorGlide;
         Panel.Scrollback = Settings.Scrollback;
         Panel.CloseOnExit = Settings.CloseOnExit;
         Panel.TextScale = Settings.TextScale;
@@ -522,6 +534,7 @@ public sealed partial class TerminalHost : IDisposable
             {
                 view.TextScale = Settings.TextScale;
                 view.Animated = Panel.Animated;
+                view.CursorGlide = Settings.CursorGlide;
                 view.Scrollback = Settings.Scrollback;
                 view.AllowClipboard = Settings.ClipboardWrite;
                 ColourLine(view);
@@ -700,9 +713,11 @@ public sealed partial class TerminalHost : IDisposable
         switch (bytes)
         {
             case "\r" or "\n":
+                // The line as the shell has it, the keys alone lost an arrow back into the middle or a Tab completing a
+                // word, and the history had the words out of order. They're kept for a shell whose prompt can't be found
+                string line = view.TypedLine() ?? state.Typed.ToString();
                 view.Screen.GuessPrompt();
                 options.ProblemsCleared?.Invoke(view);
-                string line = state.Typed.ToString();
                 History.Add(line);
                 state.Typed.Clear();
                 state.Cursor.Reset();
@@ -751,13 +766,19 @@ public sealed partial class TerminalHost : IDisposable
             return false;
 
         LineState state = StateOf(view);
-        string typing = state.Typed.ToString();
+        string typing = view.TypedLine() ?? state.Typed.ToString();
         if (History.Step(state.Cursor, press.Key == Key.Up ? -1 : 1, typing) is not { } line)
             return true;
 
-        // As many backspaces as the line has, then the line, through the shell's own line editing
+        // To the end of the line, as many backspaces as it has characters, then the line, through the shell's own line
+        // editing. From wherever the caret was the backspaces left the end of the old line in front of the new one
         var replace = new StringBuilder();
-        replace.Append('\u007f', typing.Length).Append(line);
+        if (typing.Length > 0)
+        {
+            replace.Append(TerminalKeys.Key(Key.End, TerminalKeys.Modifiers.None, view.Screen.ApplicationCursorKeys, view.Screen.KeyboardFlags));
+            replace.Append('\u007f', typing.EnumerateRunes().Count());
+        }
+        replace.Append(line);
         view.Send(replace.ToString());
         state.Typed.Clear().Append(line);
         return true;

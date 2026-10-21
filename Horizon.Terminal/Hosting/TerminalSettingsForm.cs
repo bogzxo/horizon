@@ -43,9 +43,9 @@ public static class TerminalSettingsForm
     public static string Group(string key) => key switch
     {
         "theme" or "scale" or "font" or "text_scale" => "How it looks",
-        "animations" or "animation_time" => "What moves",
+        "animations" or "animation_time" or "cursor_glide" => "What moves",
         "profile" or "wsl" or "close_on_exit" or "start_in" or "shell_integration" => "Shells",
-        "highlight_line" or "plain_profiles" or "completion" or "highlight_output" => "Colours",
+        "highlight_line" or "plain_profiles" or "completion" or "completion_tools" or "highlight_output" => "Colours",
         "copy_on_select" or "right_click_paste" or "bell" or "clipboard_write" or "quake_key" => "Mouse, bell and window",
         "history" or "history_size" or "scrollback" or "restore_sessions" => "What is kept",
         _ => "Plugins"

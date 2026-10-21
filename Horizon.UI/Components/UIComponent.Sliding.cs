@@ -68,7 +68,7 @@ public abstract partial class UIComponent
     /// </summary>
     public void Show(bool shown, bool instantly = false)
     {
-        if (Slide == UISlide.None || SlideTime <= 0.0f || instantly || (!Visible && !shown))
+        if (Slide == UISlide.None || MotionTime(SlideTime) <= 0.0f || instantly || (!Visible && !shown))
         {
             slideWanted = null;
             slideProgress = shown ? 1.0f : 0.0f;
@@ -84,13 +84,25 @@ public abstract partial class UIComponent
         slideWanted = shown && slideProgress >= 1.0f ? null : shown;
     }
 
+    /// <summary>
+    /// How long a movement of the component that is made to take so many seconds takes in this UI, as quick as the
+    /// compositor's <see cref="UICompositor.AnimationSpeed"/> says, 0 when the UI is told not to move at all. For a
+    /// component's own animations as well as the hover and the slide, so they all keep to the one setting.
+    /// </summary>
+    protected internal float MotionTime(float seconds)
+    {
+        float speed = Module?.Compositor.AnimationSpeed ?? 1.0f;
+        return speed > 0.0f ? seconds / speed : 0.0f;
+    }
+
     /// <summary>Shows it if it's put away, puts it away if it's shown, see <see cref="Show"/>.</summary>
     public void ToggleShown() => Show(!Shown);
 
     private void StepSlide(float dt)
     {
         bool wanted = slideWanted!.Value;
-        float step = SlideTime > 0.0f ? dt / SlideTime : 1.0f;
+        float time = MotionTime(SlideTime);
+        float step = time > 0.0f ? dt / time : 1.0f;
         slideProgress = wanted ? MathF.Min(1.0f, slideProgress + step) : MathF.Max(0.0f, slideProgress - step);
 
         if (slideProgress is > 0.0f and < 1.0f)

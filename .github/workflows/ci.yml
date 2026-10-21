@@ -41,5 +41,6 @@ jobs:
       - name: Build
         run: dotnet build Horizon.sln --configuration ${{ matrix.configuration }}
 
+      # A test that hangs is stopped after three minutes and named, rather than holding the runner for six hours
       - name: Test
-        run: dotnet test Horizon.Tests --no-build --configuration ${{ matrix.configuration }} --verbosity normal
+        run: dotnet test Horizon.Tests --no-build --configuration ${{ matrix.configuration }} --verbosity normal --blame-hang-timeout 3m --blame-hang-dump-type none

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text;
 
+using Horizon.Logging;
+
 namespace Horizon.UI.Components;
 
 /// <summary>What kind of thing a profile starts, a process with a terminal or something the application runs itself.</summary>
@@ -67,7 +69,7 @@ public static class TerminalProfiles
     /// <summary>The profiles of this machine, in the order a menu lists them, the usual shell first.</summary>
     public static List<TerminalProfile> Discover() =>
         OperatingSystem.IsWindows()
-            ? DiscoverWindows(File.Exists, Horizon.Core.Processes.ProcessEnvironment.Variable, AskWsl)
+            ? DiscoverWindows(File.Exists, Horizon.Core.Processes.ProcessEnvironment.Variable, () => wslAnswer.Value)
             : DiscoverUnix(File.Exists, Environment.GetEnvironmentVariable);
 
     /// <summary>The Windows profiles, told what exists, what the environment says and what wsl lists.</summary>
@@ -132,7 +134,9 @@ public static class TerminalProfiles
     /// <summary>
     /// The distributions out of what <c>wsl -l -q</c> printed. It writes UTF-16 with a byte order mark when its
     /// output is a pipe, which read as UTF-8 is every other byte a nul, so a text with nuls in it is read again
-    /// as UTF-16. One name a line, blank lines and the docker ones left out.
+    /// as UTF-16. One name a line, blank lines and the docker ones left out. So is anything that isn't letters, digits,
+    /// dots, dashes and underscores, which is all wsl lets a distribution be called. The rest is wsl explaining that there
+    /// aren't any ("has no installed distributions", "https://aka.ms/wslstore"), and a plugin naming commands after it fails.
     /// </summary>
     public static List<string> ParseWslList(string? output)
     {
@@ -149,7 +153,7 @@ public static class TerminalProfiles
         foreach (string line in output.Split('\n'))
         {
             string name = line.Trim('\r', ' ', '\t', '\uFEFF', '\0');
-            if (name.Length == 0 || name.StartsWith("docker-desktop", StringComparison.OrdinalIgnoreCase))
+            if (name.Length == 0 || !name.All(IsDistributionChar) || name.StartsWith("docker-desktop", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             names.Add(name);
@@ -157,6 +161,8 @@ public static class TerminalProfiles
 
         return names;
     }
+
+    private static bool IsDistributionChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_';
 
     private static bool OnPath(Func<string, bool> exists, Func<string, string?> environment, string file)
     {
@@ -169,14 +175,24 @@ public static class TerminalProfiles
         return false;
     }
 
-    /// <summary>Runs wsl -l -q and gives back what it wrote, as the bytes it wrote read one to a char, null when it couldn't be run.</summary>
+    // How long wsl gets to list its distributions. It answers in a few hundred milliseconds when it's well, and on a
+    // machine where it isn't (the service waking up cold, a half installed one, the stub asking for a key) it can sit
+    // there for minutes, on the main thread, before the editor or the terminal has drawn a thing
+    private const int WSL_TIMEOUT_MS = 2000;
+
+    // Asked once a run, the distributions don't change while the program is up, and Dawn and Dusk both discover
+    private static readonly Lazy<string?> wslAnswer = new(AskWsl);
+
+    /// <summary>Runs wsl -l -q and gives back what it wrote, as the bytes it wrote read one to a char, null when it couldn't be run, failed or took too long.</summary>
     private static string? AskWsl()
     {
         try
         {
             using var wsl = Process.Start(new ProcessStartInfo("wsl.exe", "-l -q")
             {
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.Latin1
@@ -184,11 +200,21 @@ public static class TerminalProfiles
             if (wsl is null)
                 return null;
 
-            string output = wsl.StandardOutput.ReadToEnd();
-            if (!wsl.WaitForExit(3000))
-                wsl.Kill();
+            // Nothing to read from, so a wsl that wants a key pressed gets an end instead, and both pipes are emptied on
+            // the side so a full one can't stall it. The wait is the whole of it, not what comes after the reading
+            wsl.StandardInput.Close();
+            Task<string> output = wsl.StandardOutput.ReadToEndAsync();
+            _ = wsl.StandardError.ReadToEndAsync();
 
-            return output;
+            if (!wsl.WaitForExit(WSL_TIMEOUT_MS) || !output.Wait(WSL_TIMEOUT_MS))
+            {
+                Log.Warning($"[Terminal] wsl didn't list its distributions within {WSL_TIMEOUT_MS} ms, the terminal goes on without them.");
+                try { wsl.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+
+            // Without a distribution, or with WSL switched off, it fails and writes why down the same pipe, which isn't a list
+            return wsl.ExitCode == 0 ? output.Result : null;
         }
         catch
         {

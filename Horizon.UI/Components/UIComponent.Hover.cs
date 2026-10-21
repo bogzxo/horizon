@@ -100,7 +100,8 @@ public abstract partial class UIComponent
     private void StepHover(float dt)
     {
         bool lit = Hover != UIHover.None && EnabledInHierarchy && (HoverHeld || ShowsAsChosen || PointerWithin());
-        float step = HoverTime > 0.0f ? dt / HoverTime : 1.0f;
+        float time = MotionTime(HoverTime);
+        float step = time > 0.0f ? dt / time : 1.0f;
 
         hoverness = lit ? MathF.Min(1.0f, hoverness + step) : MathF.Max(0.0f, hoverness - step);
 

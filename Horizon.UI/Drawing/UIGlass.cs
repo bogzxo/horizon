@@ -32,7 +32,9 @@ namespace Horizon.UI.Drawing;
 public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f, float Rim = 0.3f, float Bend = 6.0f)
 {
     /// <summary>What a component sits on unless it says otherwise, a fair smear and most of its colour kept.</summary>
-    public static UIGlass Frosted => new();
+    // Said in full, new() of a record struct is the struct's own empty one and not the primary constructor with its
+    // defaults, and frosted glass came out with no blur and no clarity, a solid panel over nothing
+    public static UIGlass Frosted => new(Blur: 18.0f, Clarity: 0.35f, Rim: 0.3f, Bend: 6.0f);
 
     /// <summary>Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at.</summary>
     public static UIGlass Clear => new(Blur: 16.0f, Clarity: 0.8f, Rim: 0.4f, Bend: 10.0f);

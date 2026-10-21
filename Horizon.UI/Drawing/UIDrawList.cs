@@ -189,7 +189,23 @@ public sealed partial class UIDrawList
         owners.Clear();
         owner = 0.0f;
         ownerPainted = 0;
+        stepped = false;
     }
+
+    // Whether what is painted now is shown in steps, see BeginSteps
+    private bool stepped;
+
+    /// <summary>
+    /// Says that what is painted from here on until <see cref="EndSteps"/> goes from one look to the next in steps, so
+    /// a frame between two ticks shows it as the newer tick has it rather than halfway between the two. For something
+    /// whose quads stand for a different thing every tick, the cells of a terminal, whose rows hold another line of a
+    /// file every tick a program scrolls it. Blended, a letter slid between two rows and a background stretched
+    /// from one line's colour to the next.
+    /// </summary>
+    public void BeginSteps() => stepped = true;
+
+    /// <summary>Goes back to what is painted being blended from one tick to the next, see <see cref="BeginSteps"/>.</summary>
+    public void EndSteps() => stepped = false;
 
     /// <summary>
     /// Everything painted until <see cref="PopOwner"/> is keyed as painted by this object, the component that is
@@ -870,7 +886,7 @@ public sealed partial class UIDrawList
             item.Origin.X += slant * (min.Y - pivot);
             item.AxisY.X = slant * (max.Y - min.Y);
         }
-        item.Key = new Vector2(owner, ownerPainted++);
+        item.Key = new Vector2(stepped ? -owner : owner, ownerPainted++);
     }
 
     private void CloseRun()

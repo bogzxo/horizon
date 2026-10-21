@@ -65,8 +65,8 @@ public class TerminalHostTests
         commands.Register("one", "One", () => ran++, "Ctrl+Shift+1", plugin);
         commands.Register("two", "Two", () => { }, "Ctrl+Shift+2");
 
-        Assert.Equal("one", commands.Match(new UIKeyPress(Key.Number1, true, true, false, false))?.Name);
-        Assert.Null(commands.Match(new UIKeyPress(Key.Number1, true, false, false, false)));
+        Assert.Equal("one", commands.Match(TerminalHostingTests.Press(Key.Number1, true, true, false))?.Name);
+        Assert.Null(commands.Match(TerminalHostingTests.Press(Key.Number1, true, false, false)));
 
         commands.Find("one")!.Run();
         Assert.Equal(1, ran);
@@ -74,7 +74,7 @@ public class TerminalHostTests
         commands.Unregister(plugin);
         Assert.False(commands.Contains("one"));
         Assert.True(commands.Contains("two"));
-        Assert.Null(commands.Match(new UIKeyPress(Key.Number1, true, true, false, false)));
+        Assert.Null(commands.Match(TerminalHostingTests.Press(Key.Number1, true, true, false)));
     }
 
     [Fact]

@@ -128,6 +128,9 @@ public class TerminalPanel : UIComponent, IDisposable
     /// <summary>Whether the terminals' own small movements (the cursor's glide) are on as well. Off along with <see cref="AnimationTime"/> at 0.</summary>
     public bool Animated => AnimationTime > 0.0f;
 
+    /// <summary>How long every terminal's cursor takes to glide to its next cell, 0 for it jumping there, see <see cref="TerminalView.CursorGlide"/>.</summary>
+    public float CursorGlide { get; set; } = TerminalView.DEFAULT_CURSOR_GLIDE;
+
     /// <summary>The least a pane can be dragged or squeezed to, along the split's axis.</summary>
     public float MinPane { get; set; } = 48.0f;
 
@@ -580,6 +583,7 @@ public class TerminalPanel : UIComponent, IDisposable
             Palette = Palette,
             Scrollback = Scrollback,
             Animated = Animated,
+            CursorGlide = CursorGlide,
             Profile = profile,
             Visible = false
         };
