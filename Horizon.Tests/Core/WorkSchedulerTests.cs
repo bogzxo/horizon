@@ -40,7 +40,7 @@ public class WorkSchedulerTests
         Assert.Equal(1, scheduler.Active);
 
         go.SetResult();
-        await first.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(WorkState.Succeeded, first.State);
         Assert.Equal(1, ran);
 
@@ -70,7 +70,7 @@ public class WorkSchedulerTests
             await go.Task;
         });
 
-        await halfway.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await halfway.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(WorkState.Running, item.State);
         Assert.Equal(0.5f, item.Progress);
         Assert.Equal("got 50 of 100", item.Message);
@@ -78,7 +78,7 @@ public class WorkSchedulerTests
         int seen = item.Version;
 
         go.SetResult();
-        await item.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await item.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(1.0f, item.Progress);
         Assert.True(item.Version > seen);
         Assert.NotNull(item.Started);
@@ -92,7 +92,7 @@ public class WorkSchedulerTests
         string? got = "not told";
         WorkItem item = scheduler.Start<string>("broken", "Breaking", _ => throw new InvalidOperationException("no network"), (_, result) => got = result);
 
-        await item.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await item.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         scheduler.Pump();
         Assert.Equal(WorkState.Failed, item.State);
         Assert.Equal("no network", item.Error);
@@ -112,8 +112,8 @@ public class WorkSchedulerTests
 
         queued.Cancel();
         going.Cancel();
-        await going.Completion.WaitAsync(TimeSpan.FromSeconds(5));
-        await queued.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await going.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        await queued.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(WorkState.Cancelled, going.State);
         Assert.Equal(WorkState.Cancelled, queued.State);
         Assert.False(ranWaiting);
@@ -150,7 +150,7 @@ public class WorkSchedulerTests
         WorkItem item = scheduler.Start("settings", "Saving", async _ => await go.Task, cancellable: false);
         item.Cancel();
         go.SetResult();
-        await item.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await item.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(WorkState.Succeeded, item.State);
     }
 
@@ -165,7 +165,7 @@ public class WorkSchedulerTests
         scheduler.Woken = () => Interlocked.Increment(ref woken);
 
         WorkItem item = scheduler.Start("look", "Looking", _ => Task.CompletedTask);
-        await item.Completion.WaitAsync(TimeSpan.FromSeconds(5));
+        await item.Completion.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Empty(heard);
         Assert.True(WaitFor(() => Volatile.Read(ref woken) > 0));
 

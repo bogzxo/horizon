@@ -12,11 +12,55 @@ namespace Horizon.Core.Processes;
 /// </summary>
 public abstract class PseudoTerminal : IDisposable
 {
-    /// <summary>Bytes the process wrote, as they came, on the reading thread. Whoever takes them queues them for their own thread.</summary>
-    public event Action<byte[]>? Output;
+    // The reading thread starts inside Start, before whoever started it has had the chance to listen. What it reads
+    // before then is kept and handed to the first listener, or a quick program's first line (a shell's prompt) was
+    // gone, and an end that came first is said to whoever listens for it later. One lock keeps it all in order
+    private readonly Lock listening = new();
+    private readonly List<byte[]> unheard = [];
+    private Action<byte[]>? output;
+    private Action<int>? exitedListeners;
 
-    /// <summary>The process ended, with its exit code, on the reading thread.</summary>
-    public event Action<int>? Exited;
+    /// <summary>
+    /// Bytes the process wrote, as they came, on the reading thread. Whoever takes them queues them for their own
+    /// thread. What came before the first listener is handed to it as it starts listening, in order.
+    /// </summary>
+    public event Action<byte[]>? Output
+    {
+        add
+        {
+            lock (listening)
+            {
+                output += value;
+                foreach (byte[] early in unheard)
+                    value?.Invoke(early);
+                unheard.Clear();
+            }
+        }
+        remove
+        {
+            lock (listening)
+                output -= value;
+        }
+    }
+
+    /// <summary>The process ended, with its exit code, on the reading thread. Said at once to a listener that comes after the end.</summary>
+    public event Action<int>? Exited
+    {
+        add
+        {
+            lock (listening)
+            {
+                exitedListeners += value;
+                if (exited)
+                    value?.Invoke(ExitCode);
+            }
+        }
+        remove
+        {
+            lock (listening)
+                exitedListeners -= value;
+        }
+    }
 
     /// <summary>The command it was started with, for a title.</summary>
     public string Command { get; }
@@ -129,17 +173,29 @@ public abstract class PseudoTerminal : IDisposable
     protected abstract void ResizeTerminal(int columns, int rows);
 
     /// <summary>Helper for the platform's reading thread, bytes to whoever listens.</summary>
-    protected void Emit(byte[] bytes) => Output?.Invoke(bytes);
+    protected void Emit(byte[] bytes)
+    {
+        lock (listening)
+        {
+            if (output is null)
+                unheard.Add(bytes);
+            else
+                output(bytes);
+        }
+    }
 
     /// <summary>Helper for the platform's side, the process is gone.</summary>
     protected void EndedWith(int code)
     {
-        if (exited)
-            return;
+        lock (listening)
+        {
+            if (exited)
+                return;
 
-        ExitCode = code;
-        exited = true;
-        Exited?.Invoke(code);
+            ExitCode = code;
+            exited = true;
+            exitedListeners?.Invoke(code);
+        }
     }
 
     /// <summary>Helper method to read a stream to its end, handing every piece on, on the thread it is called on.</summary>

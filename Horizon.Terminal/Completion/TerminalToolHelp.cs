@@ -69,8 +69,16 @@ public sealed class TerminalToolHelp
         Interlocked.Increment(ref version);
     }
 
-    /// <summary>The tool's name without a path or an extension, git for C:\Program Files\Git\cmd\git.exe.</summary>
-    public static string ToolName(string tool) => Path.GetFileNameWithoutExtension(tool).ToLowerInvariant();
+    /// <summary>
+    /// The tool's name without a path or an extension, git for C:\Program Files\Git\cmd\git.exe. Cut at either slash,
+    /// Path only knows its own system's and a Windows path typed into a shell on Linux came back whole.
+    /// </summary>
+    public static string ToolName(string tool)
+    {
+        string name = tool[(tool.LastIndexOfAny(['/', '\\']) + 1)..];
+        int dot = name.LastIndexOf('.');
+        return (dot > 0 ? name[..dot] : name).ToLowerInvariant();
+    }
 
     public static bool IsGit(string tool) => ToolName(tool) == "git";
 }
