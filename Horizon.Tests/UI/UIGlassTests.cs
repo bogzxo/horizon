@@ -63,4 +63,16 @@ public class UIGlassTests
         // An unclipped pane stays unclipped, infinity blended with itself would be no number at all
         Assert.True(float.IsNegativeInfinity(half.ClipMin.X) && float.IsPositiveInfinity(half.ClipMax.Y));
     }
+
+    [Fact]
+    public void Frosted_glass_blurs_and_lets_some_of_it_through()
+    {
+        // What a layout's glass: 18 starts from too. It was all zeros once, a record struct's new() is its empty
+        // constructor, and every pane of it was a solid panel over no blur
+        UIGlass frosted = UIGlass.Frosted;
+
+        Assert.True(frosted.Blur > 0.0f);
+        Assert.InRange(frosted.Clarity, 0.01f, 0.99f);
+        Assert.True(frosted.Over(Vector4.One).W < 1.0f);
+    }
 }
