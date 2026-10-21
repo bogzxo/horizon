@@ -80,6 +80,13 @@ public partial class UICompositor : GameComponent, IDisposable
     public float Scale { get; set; } = 1.0f;
 
     /// <summary>
+    /// How quickly the UI's own movements go, every component's hover and slide, 1 as they're made, 2 twice as quick,
+    /// 0 for none at all (a hover is lit at once and a drawer is open or shut). For a setting that lets the player
+    /// have things move as they like, or keep still. A component asks it through <see cref="UIComponent.MotionTime"/>.
+    /// </summary>
+    public float AnimationSpeed { get; set; } = 1.0f;
+
+    /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
     /// fitting the <see cref="DesignSize"/> comes to. A unit of the layout is this many units of the camera.
     /// </summary>
