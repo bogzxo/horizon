@@ -9,7 +9,7 @@ public static class PlatformPaths
 {
     /// <summary>
     /// How two paths compare on this system. Windows' and macOS' file systems don't mind the case of a name (an APFS
-    /// volume made case-sensitive does, which is rare enough to go by the usual), Linux's do: Foo.png and foo.png are
+    /// volume made case-sensitive does, which is rare enough to go by the usual), Linux's do, Foo.png and foo.png are
     /// two files there.
     /// </summary>
     public static StringComparison Comparison { get; } = OperatingSystem.IsLinux() || OperatingSystem.IsFreeBSD() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
@@ -41,20 +41,60 @@ public static class PlatformPaths
     /// <summary>The user's home folder.</summary>
     public static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
+    /// <summary>The folders next to the program a program's own files go in when they're kept there, see <see cref="BesideProgram"/>.</summary>
+    public const string SETTINGS_BESIDE = "settings", DATA_BESIDE = "data", CACHE_BESIDE = "cache";
+
+    /// <summary>
+    /// Whether the program keeps its files next to itself rather than in the user's folders, a copy that carries
+    /// everything it has about with it (Hex does). Its settings go in a settings folder next to the exe, what it keeps
+    /// and its state in a data folder, what can be made again (compiled shaders, the driver's pipeline cache) in a cache
+    /// folder. A program that can't write where it is (Program Files, /usr, an .app) keeps them where it would have
+    /// anyway. Set it before anything asks for a folder, first thing in Main, or see <see cref="Engine.GameEngineConfiguration.FilesBesideProgram"/>.
+    /// The roots (<see cref="ConfigRoot"/> and the rest) stay the system's, the trash is in there.
+    /// </summary>
+    public static bool BesideProgram
+    {
+        get => besideProgram && ProgramWritable;
+        set => besideProgram = value;
+    }
+
+    private static bool besideProgram;
+    private static bool? programWritable;
+
+    // Whether a file can be written next to the program, asked once
+    private static bool ProgramWritable => programWritable ??= CanWrite(Program);
+
     /// <summary>
     /// The folder of a program's settings, %AppData%\Name on Windows, ~/Library/Application Support/Name on macOS,
-    /// $XDG_CONFIG_HOME/name (~/.config/name) on Linux, lower case there as folders are.
+    /// $XDG_CONFIG_HOME/name (~/.config/name) on Linux, lower case there as folders are. The settings folder next to
+    /// the program when it keeps its files there.
     /// </summary>
-    public static string Config(string name) => Made(Path.Combine(ConfigRoot, Named(name)));
+    public static string Config(string name) => Made(BesideProgram ? Path.Combine(Program, SETTINGS_BESIDE) : Path.Combine(ConfigRoot, Named(name)));
 
-    /// <summary>The folder of what a program keeps that isn't settings, %LocalAppData% · ~/Library/Application Support · ~/.local/share.</summary>
-    public static string Data(string name) => Made(Path.Combine(DataRoot, Named(name)));
+    /// <summary>The folder of what a program keeps that isn't settings, %LocalAppData% · ~/Library/Application Support · ~/.local/share, or data next to the program.</summary>
+    public static string Data(string name) => Made(BesideProgram ? Path.Combine(Program, DATA_BESIDE) : Path.Combine(DataRoot, Named(name)));
 
-    /// <summary>The folder of what a program keeps of its state (backups, history), ~/.local/state on Linux, the data folder elsewhere.</summary>
-    public static string State(string name) => Made(Path.Combine(StateRoot, Named(name)));
+    /// <summary>The folder of what a program keeps of its state (backups, history), ~/.local/state on Linux, the data folder elsewhere and next to the program.</summary>
+    public static string State(string name) => Made(BesideProgram ? Path.Combine(Program, DATA_BESIDE) : Path.Combine(StateRoot, Named(name)));
 
-    /// <summary>The folder of what can be thrown away and made again (compiled shaders), %LocalAppData% · ~/Library/Caches · ~/.cache.</summary>
-    public static string Cache(string name) => Made(Path.Combine(CacheRoot, Named(name)));
+    /// <summary>The folder of what can be thrown away and made again (compiled shaders), %LocalAppData% · ~/Library/Caches · ~/.cache, or cache next to the program.</summary>
+    public static string Cache(string name) => Made(BesideProgram ? Path.Combine(Program, CACHE_BESIDE) : Path.Combine(CacheRoot, Named(name)));
+
+    // Whether a folder can be written into, by writing into it, which is the only way to be sure on every system
+    private static bool CanWrite(string folder)
+    {
+        try
+        {
+            string probe = Path.Combine(folder, ".written" + Environment.ProcessId);
+            File.WriteAllText(probe, string.Empty);
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     /// <summary>The folder above the programs' settings folders.</summary>
     public static string ConfigRoot =>
@@ -75,7 +115,7 @@ public static class PlatformPaths
         : Xdg("XDG_CACHE_HOME", ".cache");
 
     /// <summary>
-    /// The folder a program's own files (its Assets) are in: next to the program, or Contents/Resources when it is the
+    /// The folder a program's own files (its Assets) are in, next to the program, or Contents/Resources when it is the
     /// program of a macOS .app (Contents/MacOS), where the bundle keeps them.
     /// </summary>
     public static string Program

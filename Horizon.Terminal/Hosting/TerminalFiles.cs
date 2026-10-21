@@ -6,7 +6,8 @@ namespace Horizon.UI.Components;
 /// a double click away from Hex.exe rather than off in AppData. What was in %AppData%\Hex (or %AppData%\Dusk before
 /// that) is copied over the first time. Where the exe's folder can't be written (Program Files) it's still %AppData%\Hex
 /// on Windows. On macOS (~/Library/Application Support/Hex) and Linux (~/.config/hex) the user's folder is the one,
-/// unless a settings folder was made next to the program by hand, for a copy carried about. A file next to a program's exe wins over the folder's when there is one, the
+/// unless a settings folder was made next to the program by hand, for a copy carried about, or the program keeps its
+/// files beside itself (PlatformPaths.BesideProgram, Hex does), which is the folder next to it on every system. A file next to a program's exe wins over the folder's when there is one, the
 /// plugins next to it come on top. <c>HEX_HOME</c> (or <c>DUSK_HOME</c>, as it was) moves the whole folder, for a test.
 /// </summary>
 public static class TerminalFiles
@@ -44,11 +45,13 @@ public static class TerminalFiles
                 CopyFolder(old, user);
 
             // Next to the exe, where anybody looking for them looks first, with what AppData had copied in the first time
-            // On Linux and macOS a program's folder is the system's (/usr, /Applications, an .app), and its settings are
-            // the user's, so a folder next to it is only used when somebody made one there (a copy carried about)
+            // On Linux and macOS a program's folder is usually the system's (/usr, /Applications, an .app), and its
+            // settings are the user's, so a folder next to it is only used when somebody made one there (a copy carried
+            // about) or the program keeps everything beside itself (PlatformPaths.BesideProgram, which Hex does)
             string beside = Path.Combine(AppContext.BaseDirectory, BESIDE);
             bool fresh = !Directory.Exists(beside);
-            if ((OperatingSystem.IsWindows() || !fresh) && Writable(beside))
+            bool besideWanted = OperatingSystem.IsWindows() || !fresh || Horizon.Core.Platform.PlatformPaths.BesideProgram;
+            if (besideWanted && Writable(beside))
             {
                 if (fresh && Directory.Exists(user))
                     CopyFolder(user, beside);

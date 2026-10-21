@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -300,9 +301,28 @@ public static class ShaderCompiler
         _ => type.Kind.ToString().ToLowerInvariant()
     };
 
-    private static string KeyFor(string source, string language, string entry)
+    // Goes up when what is kept beside a module changes, so a cache written the old way is compiled again
+    private const int CACHE_FORMAT = 2;
+
+    // Days a compiled shader nobody has loaded stays on disk, every edit of a shader leaves the old one behind
+    private const int CACHE_DAYS = 30;
+
+    /// <summary>
+    /// What the SPIR-V depends on besides the source, the compiler's version and what it's told. A Slang that was
+    /// updated or a flag that changed compiles everything again rather than loading what the old one made.
+    /// </summary>
+    internal static string CompilerFingerprint { get; } = string.Join('|',
+        CACHE_FORMAT,
+        typeof(SlangCompiler).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(SlangCompiler).Assembly.GetName().Version?.ToString() ?? "slang",
+        string.Join(' ', SlangArguments));
+
+    internal static string KeyFor(string source, string language, string entry) => KeyFor(source, language, entry, CompilerFingerprint);
+
+    internal static string KeyFor(string source, string language, string entry, string fingerprint)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(fingerprint));
         hash.AppendData(Encoding.UTF8.GetBytes(language));
         hash.AppendData(Encoding.UTF8.GetBytes(entry));
         hash.AppendData(Encoding.UTF8.GetBytes(source));
@@ -320,14 +340,65 @@ public static class ShaderCompiler
         string? setting = Environment.GetEnvironmentVariable(CACHE_VARIABLE);
         if (string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase)) return cacheDirectory = null;
 
-        // By the game rather than the process, which is "dotnet" for a game that is started through it
-        string game = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Horizon";
-        // LocalAppData on Windows, ~/Library/Caches on macOS, ~/.cache on Linux
-        string local = Horizon.Core.Platform.PlatformPaths.CacheRoot;
+        // By the game rather than the process, which is "dotnet" for a game that is started through it. LocalAppData on
+        // Windows, ~/Library/Caches on macOS, ~/.cache on Linux, or the cache folder next to a game that keeps its files there
+        string game = Assembly.GetEntryAssembly()?.GetName().Name ?? "Horizon";
+        cacheDirectory = string.IsNullOrWhiteSpace(setting)
+            ? Path.Combine(Horizon.Core.Platform.PlatformPaths.Cache(Path.Combine("Horizon", game)), "Shaders")
+            : setting;
 
-        cacheDirectory = string.IsNullOrWhiteSpace(setting) ? Path.Combine(local, "Horizon", game, "Shaders") : setting;
         Log.Info($"[ShaderCompiler] Compiled shaders are kept in '{cacheDirectory}'.");
+        string folder = cacheDirectory;
+        Task.Run(() => Prune(folder));
         return cacheDirectory;
+    }
+
+    /// <summary>
+    /// Helper method to throw away what hasn't been loaded for a month, off whatever thread asked first. A shader is
+    /// kept by a hash of its source, so every edit of one leaves the old one behind for good otherwise.
+    /// </summary>
+    private static void Prune(string folder)
+    {
+        try
+        {
+            if (!Directory.Exists(folder)) return;
+
+            DateTime before = DateTime.UtcNow.AddDays(-CACHE_DAYS);
+            foreach (string file in Directory.EnumerateFiles(folder))
+            {
+                string extension = Path.GetExtension(file);
+                if (extension is not (".spv" or ".notes" or ".partial")) continue;
+                if (File.GetLastWriteTimeUtc(file) >= before) continue;
+
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception)
+                {
+                    // Another instance has it open, it goes next time
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // A cache that can't be tidied is a cache that's a bit bigger
+        }
+    }
+
+    /// <summary>Helper method to say a kept file was used, so the pruning leaves it alone. Once a day is plenty.</summary>
+    private static void Touch(string file)
+    {
+        try
+        {
+            DateTime now = DateTime.UtcNow;
+            if (now - File.GetLastWriteTimeUtc(file) > TimeSpan.FromDays(1))
+                File.SetLastWriteTimeUtc(file, now);
+        }
+        catch (Exception)
+        {
+            // Read only, or somebody else is touching it, either way it was loaded
+        }
     }
 
     private static bool TryLoadCached(string key, out (CompiledStage[] Stages, UniformBlockLayout Params) kept)
@@ -363,6 +434,8 @@ public static class ShaderCompiler
 
             if (stages.Count == 0) return false;
             kept = ([.. stages], UniformBlockLayout.FromMembers(members));
+            Touch(spirvPath);
+            Touch(notesPath);
             return true;
         }
         catch (Exception)

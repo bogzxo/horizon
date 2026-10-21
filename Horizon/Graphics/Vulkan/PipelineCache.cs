@@ -36,6 +36,54 @@ internal sealed unsafe class PipelineCache : IDisposable
 
     public int Count => graphics.Count + compute.Count;
 
+    // How long after the last new pipeline the cache is written down, a burst of them at a scene's start is one write
+    private const int SAVE_AFTER_MS = 3000;
+
+    // Writes the cache a while after pipelines were made, so a game that crashes or is killed keeps what it compiled
+    private readonly Timer saver;
+    private bool disposed;
+
+    // The header every driver starts its cache data with (VkPipelineCacheHeaderVersionOne), in bytes
+    private const int HEADER_SIZE = 32;
+
+    /// <summary>
+    /// Helper method to say whether cache data on disk was made by this driver on this card. The driver is meant to
+    /// turn down another's, and some of them crash on it instead, so it's checked here first.
+    /// </summary>
+    private bool Fits(byte[] data)
+    {
+        if (data.Length < HEADER_SIZE) return false;
+
+        uint headerSize = BitConverter.ToUInt32(data, 0), version = BitConverter.ToUInt32(data, 4);
+        uint vendor = BitConverter.ToUInt32(data, 8), device = BitConverter.ToUInt32(data, 12);
+        if (headerSize < HEADER_SIZE || version != (uint)PipelineCacheHeaderVersion.One) return false;
+
+        PhysicalDeviceProperties properties = context.Properties;
+        if (vendor != properties.VendorID || device != properties.DeviceID) return false;
+
+        for (int i = 0; i < 16; i++)
+        {
+            if (data[16 + i] != properties.PipelineCacheUuid[i]) return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Helper method to have the cache written in a little while, or later still if more pipelines come.</summary>
+    private void SaveSoon()
+    {
+        if (!disposed && ShaderCompiler.CacheDirectory() is not null)
+            saver.Change(SAVE_AFTER_MS, Timeout.Infinite);
+    }
+
+    private void SaveQuietly()
+    {
+        lock (gate)
+        {
+            if (!disposed) Save();
+        }
+    }
+
     public PipelineCache(VulkanContext context, DescriptorLayouts layouts)
     {
         this.context = context;
@@ -54,7 +102,15 @@ internal sealed unsafe class PipelineCache : IDisposable
             {
                 kept = [];
             }
+
+            if (kept.Length > 0 && !Fits(kept))
+            {
+                Log.Info("[Vulkan] The pipeline cache on disk is another driver's or another card's, starting it over.");
+                kept = [];
+            }
         }
+
+        saver = new Timer(_ => SaveQuietly(), null, Timeout.Infinite, Timeout.Infinite);
 
         fixed (byte* data = kept)
         {
@@ -84,6 +140,7 @@ internal sealed unsafe class PipelineCache : IDisposable
 
             Pipeline made = MakeGraphics(key, shader, vertices, colorFormats, depthFormat, hasStencil);
             graphics[key] = made;
+            SaveSoon();
             return made;
         }
     }
@@ -96,6 +153,7 @@ internal sealed unsafe class PipelineCache : IDisposable
 
             Pipeline made = MakeCompute(shader);
             compute[shader.Handle] = made;
+            SaveSoon();
             return made;
         }
     }
@@ -385,13 +443,22 @@ internal sealed unsafe class PipelineCache : IDisposable
 
     public void Dispose()
     {
-        Save();
+        // The timer stops before the cache goes, one that fires now finds it disposed under the gate
+        saver.Dispose();
 
-        foreach (var pipeline in graphics.Values) context.Vk.DestroyPipeline(context.Device, pipeline, null);
-        foreach (var pipeline in compute.Values) context.Vk.DestroyPipeline(context.Device, pipeline, null);
-        graphics.Clear();
-        compute.Clear();
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true;
 
-        context.Vk.DestroyPipelineCache(context.Device, cache, null);
+            Save();
+
+            foreach (var pipeline in graphics.Values) context.Vk.DestroyPipeline(context.Device, pipeline, null);
+            foreach (var pipeline in compute.Values) context.Vk.DestroyPipeline(context.Device, pipeline, null);
+            graphics.Clear();
+            compute.Clear();
+
+            context.Vk.DestroyPipelineCache(context.Device, cache, null);
+        }
     }
 }

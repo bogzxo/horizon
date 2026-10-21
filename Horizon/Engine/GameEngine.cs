@@ -161,6 +161,10 @@ public class GameEngine : Entity
         Instance = GameObject.Engine = this;
         Configuration = engineConfiguration;
 
+        // Before anything is compiled or loaded, the shaders' cache is the first to ask where things go
+        if (Configuration.FilesBesideProgram)
+            Horizon.Core.Platform.PlatformPaths.BesideProgram = true;
+
         Enabled = true;
 
         // What an entity makes on the GPU while it is set up belongs to the scene it is in, and to nobody if

@@ -20,6 +20,13 @@ public readonly struct GameEngineConfiguration
     /// </summary>
     public bool Gamepads { get; init; } = true;
 
+    /// <summary>
+    /// Whether the game keeps its settings, its data and its caches (compiled shaders, the driver's pipeline cache) in
+    /// folders next to its exe rather than the user's, see <see cref="Horizon.Core.Platform.PlatformPaths.BesideProgram"/>.
+    /// Put in force as the engine is made, a program that asks for a folder before that sets the property itself first.
+    /// </summary>
+    public bool FilesBesideProgram { get; init; }
+
     public static GameEngineConfiguration Default { get; } =
         new GameEngineConfiguration
         {
