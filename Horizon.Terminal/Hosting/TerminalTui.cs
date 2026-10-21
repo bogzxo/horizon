@@ -29,6 +29,12 @@ public sealed class TerminalTuiServices
 
     /// <summary>The folder it starts in.</summary>
     public string? Folder { get; init; }
+
+    /// <summary>
+    /// How long one call of the program's (a key, a tick, drawing) may take before it's stopped, a program stuck in a
+    /// loop stops there rather than taking the terminal with it. A test on a slow machine gives it longer.
+    /// </summary>
+    public TimeSpan CallLimit { get; init; } = TimeSpan.FromSeconds(2);
 }
 
 /// <summary>
@@ -199,7 +205,7 @@ public sealed class TerminalTui : ITerminalProgram
 
     private bool Call(Action run)
     {
-        using var cancel = new CancellationTokenSource(2000);
+        using var cancel = new CancellationTokenSource(services.CallLimit);
         runtime!.Interpreter.Cancellation = cancel.Token;
         try
         {
@@ -208,7 +214,7 @@ public sealed class TerminalTui : ITerminalProgram
         }
         catch (Exception e)
         {
-            failed = cancel.IsCancellationRequested ? "it went on for more than two seconds and was stopped" : e.Message;
+            failed = cancel.IsCancellationRequested ? $"it went on for more than {services.CallLimit.TotalSeconds:0.#} seconds and was stopped" : e.Message;
             ShowFailure();
             return false;
         }
