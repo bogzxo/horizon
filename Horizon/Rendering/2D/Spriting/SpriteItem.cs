@@ -82,7 +82,7 @@ public struct SpriteItem
 
     // Who painted the quad and which of theirs it is, for telling the same quad apart from a different one that
     // merely looks alike when two snapshots of a UI are blended. The shader has the room and ignores it. Zero
-    // for a quad nobody claimed
+    // for a quad nobody claimed, and who painted it negative for one that changes in steps and is never blended
     public Vector2 Key;
 
     // RGBA, 8 bits each with red in the low byte, see PackColor
@@ -175,6 +175,11 @@ public struct SpriteItem
     /// </summary>
     public static bool CanBlend(in SpriteItem from, in SpriteItem to)
     {
+        // Whoever painted it said it goes from one look to the next in steps (a terminal's cells, whose rows hold other
+        // text every tick a program scrolls), it's shown as the newer snapshot has it
+        if (from.Key.X < 0.0f || to.Key.X < 0.0f)
+            return false;
+
         // Turning keeps the way round the corners go, mirroring reverses it
         float before = from.AxisX.X * from.AxisY.Y - from.AxisX.Y * from.AxisY.X;
         float after = to.AxisX.X * to.AxisY.Y - to.AxisX.Y * to.AxisY.X;

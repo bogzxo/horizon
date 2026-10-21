@@ -789,7 +789,10 @@ public partial class TerminalView : UIComponent, IDisposable
         // The marks of the blocks in the gutter, outside the cells, and the matches of a find under the text
         PaintMarks(list, offset, rows, top, palette);
 
+        // The cells in steps, a row's quads are another line's the moment a program scrolls (micro down a long file)
+        // or the scrollback's oldest row goes, and blended between two ticks letters slid between rows
         list.PushClip(paintedArea);
+        list.BeginSteps();
         for (int y = 0; y < rows; y++)
         {
             int index = offset + y;
@@ -799,6 +802,7 @@ public partial class TerminalView : UIComponent, IDisposable
             list.BeginPart(index);
             PaintRow(list, font, scale, screen.RowAt(index), index, top - y * cellHeight, palette);
         }
+        list.EndSteps();
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
         if (screen.CursorVisible && scrolled == 0)
