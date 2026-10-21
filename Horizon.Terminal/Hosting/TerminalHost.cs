@@ -702,9 +702,11 @@ public sealed partial class TerminalHost : IDisposable
         switch (bytes)
         {
             case "\r" or "\n":
+                // The line as the shell has it, the keys alone lost an arrow back into the middle or a Tab completing a
+                // word, and the history had the words out of order. They're kept for a shell whose prompt can't be found
+                string line = view.TypedLine() ?? state.Typed.ToString();
                 view.Screen.GuessPrompt();
                 options.ProblemsCleared?.Invoke(view);
-                string line = state.Typed.ToString();
                 History.Add(line);
                 state.Typed.Clear();
                 state.Cursor.Reset();
@@ -753,13 +755,19 @@ public sealed partial class TerminalHost : IDisposable
             return false;
 
         LineState state = StateOf(view);
-        string typing = state.Typed.ToString();
+        string typing = view.TypedLine() ?? state.Typed.ToString();
         if (History.Step(state.Cursor, press.Key == Key.Up ? -1 : 1, typing) is not { } line)
             return true;
 
-        // As many backspaces as the line has, then the line, through the shell's own line editing
+        // To the end of the line, as many backspaces as it has characters, then the line, through the shell's own line
+        // editing. From wherever the caret was the backspaces left the end of the old line in front of the new one
         var replace = new StringBuilder();
-        replace.Append('\u007f', typing.Length).Append(line);
+        if (typing.Length > 0)
+        {
+            replace.Append(TerminalKeys.Key(Key.End, TerminalKeys.Modifiers.None, view.Screen.ApplicationCursorKeys, view.Screen.KeyboardFlags));
+            replace.Append('\u007f', typing.EnumerateRunes().Count());
+        }
+        replace.Append(line);
         view.Send(replace.ToString());
         state.Typed.Clear().Append(line);
         return true;

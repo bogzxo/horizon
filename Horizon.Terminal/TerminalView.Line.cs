@@ -131,6 +131,58 @@ public partial class TerminalView
             lineKinds.AsSpan(0, length).Clear();
     }
 
+    /// <summary>
+    /// What is typed at the prompt as the shell shows it, from where its input starts to the end of the line and the rows
+    /// it wrapped onto, PSReadLine's dim prediction after the cursor left out. Null when the shell isn't at a prompt this
+    /// can find. What the shell has is the line, whatever keys made it (an arrow back into the middle, a Tab completing
+    /// a word, a paste), so this is what a history keeps rather than the keys that were pressed.
+    /// </summary>
+    public string? TypedLine()
+    {
+        if (screen.AlternateScreen || InputStart() is not { } start)
+            return null;
+
+        // Every cell from the end of the prompt, a row it didn't fill padded so every row starts a stride further on
+        int stride = screen.Columns;
+        var cells = new List<TerminalCell>(stride);
+        for (int row = start.Row; row < screen.TotalRows; row++)
+        {
+            TerminalRow line = screen.RowAt(row);
+            int end = Math.Min(line.Length, stride);
+            for (int column = row == start.Row ? start.Column : 0; column < stride; column++)
+                cells.Add(column < end ? line.Cells[column] : default);
+
+            if (!line.Wrapped)
+                break;
+        }
+
+        int length = cells.Count;
+        while (length > 0 && cells[length - 1].CodePoint is 0 or ' ' && !cells[length - 1].IsContinuation)
+            length--;
+
+        int cursor = (screen.Scrollback.Count + screen.CursorY - start.Row) * stride + screen.CursorX - start.Column;
+        if (cursor >= 0 && cursor < length && OnlyDimFrom(start, stride, cursor, length))
+            length = cursor;
+
+        var text = new System.Text.StringBuilder(length);
+        for (int i = 0; i < length; i++)
+        {
+            TerminalCell cell = cells[i];
+            if (cell.IsContinuation)
+                continue;
+
+            if (cell.CodePoint is 0 or > 0x10FFFF or (>= 0xD800 and <= 0xDFFF))
+                text.Append(' ');
+            else
+                text.Append(char.ConvertFromUtf32(cell.CodePoint));
+
+            if (cell.Combining is { } marks)
+                text.Append(marks);
+        }
+
+        return text.ToString();
+    }
+
     private bool OnlyDimFrom((int Row, int Column) start, int stride, int from, int to)
     {
         for (int at = from; at < to; at++)
