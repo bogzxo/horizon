@@ -78,6 +78,9 @@ public sealed class TerminalSettings
     /// <summary>Whether cmd and bash get a list of the files and commands that fit what is being typed, taken with tab.</summary>
     public bool Completion = true;
 
+    /// <summary>The tools whose words are completed out of their own --help (and git's branches), the only ones that are ever run for it.</summary>
+    public readonly HashSet<string> CompletionTools = new(TerminalToolCompletion.DefaultTools, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Whether what programs write is coloured by what it looks like (paths, errors, diffs) where they left it plain.</summary>
     public bool HighlightOutput;
 
@@ -120,7 +123,9 @@ public sealed class TerminalSettings
         new("start_in", "choice", "\"workspace\"", "Where a new terminal starts in Hex, the workspace's folder or the folder of the file on screen.", ["workspace", "file"]),
         new("highlight_line", "flag", "true", "Whether what is typed at a prompt is coloured as it is typed, a command green when it is there and red when it isn't, flags, strings and variables, and paths that exist underlined. PSReadLine's own colours are kept."),
         new("plain_profiles", "list", "[]", "The profiles whose typed line is left alone, by id (pwsh, cmd, wsl:Ubuntu)."),
-        new("completion", "flag", "true", "Whether cmd and bash get a list of the files and commands that fit what is being typed, tab takes one, escape puts it away. PowerShell and fish complete better themselves and are left to it."),
+        new("completion", "flag", "true", "Whether cmd and bash get a list of the files and commands that fit what is being typed, tab takes one, escape puts it away. PowerShell does files and commands itself, it gets the tools' words below. fish is left to itself."),
+        new("completion_tools", "list", "[" + string.Join(", ", TerminalToolCompletion.DefaultTools.Select(tool => $"\"{tool}\"")) + "]",
+            "The tools whose subcommands and flags are completed out of what their --help says, and git's branches, remotes and changed files. Only these are ever run for it, a script that doesn't know --help would just run."),
         new("highlight_output", "flag", "false", "Whether what programs write is coloured by what it looks like where they left it plain, paths, errors and warnings, diffs, stack frames, numbers."),
         new("copy_on_select", "flag", "false", "Whether a selection is copied the moment it is made."),
         new("right_click_paste", "flag", "false", "Whether a right click pastes instead of opening the menu."),
@@ -195,6 +200,13 @@ public sealed class TerminalSettings
                 if (name is StringValue { Value: { } named }) PlainProfiles.Add(named);
         }
 
+        if (values.TryGetValue("completion_tools", out var tools) && tools is ListValue toolList)
+        {
+            CompletionTools.Clear();
+            foreach (IRuntimeValue name in toolList.Items)
+                if (name is StringValue { Value.Length: > 0 } named) CompletionTools.Add(named.Value);
+        }
+
         if (values.TryGetValue("disabled_plugins", out var disabled) && disabled is ListValue off)
         {
             DisabledPlugins.Clear();
@@ -235,6 +247,7 @@ public sealed class TerminalSettings
         "highlight_line" => Values.Bool(HighlightLine),
         "plain_profiles" => Natives.List(PlainProfiles.Order(StringComparer.OrdinalIgnoreCase)),
         "completion" => Values.Bool(Completion),
+        "completion_tools" => Natives.List(CompletionTools.Order(StringComparer.OrdinalIgnoreCase)),
         "highlight_output" => Values.Bool(HighlightOutput),
         "copy_on_select" => Values.Bool(CopyOnSelect),
         "right_click_paste" => Values.Bool(RightClickPaste),

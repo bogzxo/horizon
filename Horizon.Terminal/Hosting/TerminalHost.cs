@@ -218,11 +218,22 @@ public sealed partial class TerminalHost : IDisposable
     {
         TerminalShellLine? line = ShellLineFor(view.Profile);
         view.LineColourer = Settings.HighlightLine && line is not null && !Settings.PlainProfiles.Contains(view.Profile!.Id) ? line : null;
-        view.Completer = Settings.Completion && line is { Kind: "cmd" or "bash" } ? new TerminalShellCompletion(line) : null;
+        view.Completer = Settings.Completion && line is { Kind: "cmd" or "bash" or "powershell" } ? CompleterFor(view.Profile!, line) : null;
         view.OutputHighlighter = Settings.HighlightOutput ? OutputRules : null;
         view.CopyOnSelect = Settings.CopyOnSelect;
         view.RightClickPaste = Settings.RightClickPaste;
         view.Bell = Settings.Bell switch { "sound" => TerminalBell.Sound, "none" => TerminalBell.None, _ => TerminalBell.Flash };
+    }
+
+    /// <summary>
+    /// What completes a shell's line. cmd and bash get commands, files and the tools' words, PowerShell only the tools'
+    /// (it does the rest itself), and a WSL shell no tools, its git isn't the one this would ask.
+    /// </summary>
+    private TerminalShellCompletion CompleterFor(TerminalProfile profile, TerminalShellLine line)
+    {
+        bool wsl = profile.Id.StartsWith("wsl:", StringComparison.Ordinal);
+        TerminalToolCompletion? tools = wsl || Settings.CompletionTools.Count == 0 ? null : new TerminalToolCompletion(Settings.CompletionTools);
+        return new TerminalShellCompletion(line, tools, toolsOnly: line.Kind == "powershell");
     }
 
     /// <summary>The lexer and the commands of a profile's shell, null for a profile that is no shell this knows.</summary>

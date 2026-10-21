@@ -24,7 +24,7 @@ public partial class TerminalView
 
     private ITerminalCompleter? completer;
     private IReadOnlyList<TerminalLineCompletion> completions = [];
-    private int completionChosen, completionWordStart, completedVersion = -1;
+    private int completionChosen, completionWordStart, completedVersion = -1, completedBy = -1;
     private string completionWord = string.Empty;
     private bool wantCompletion;
 
@@ -116,7 +116,9 @@ public partial class TerminalView
     /// <summary>The list worked out for the line as it is now, once the shell has written what was typed.</summary>
     private void UpdateCompletion()
     {
-        if (completer is null || !wantCompletion || screen.Version == completedVersion)
+        // Again when the screen changed, or when the completer learned something (a tool's help came in) for the same line
+        int learned = completer?.Version ?? 0;
+        if (completer is null || !wantCompletion || screen.Version == completedVersion && learned == completedBy)
             return;
         if (lineRow < 0 || scrolled != 0)
         {
@@ -126,6 +128,8 @@ public partial class TerminalView
         }
 
         completedVersion = screen.Version;
+        completedBy = learned;
+        string? picked = completionChosen < completions.Count ? completions[completionChosen].Text : null;
 
         // only at the end of the line, a word in the middle of one isn't being typed
         int cursor = (screen.Scrollback.Count + screen.CursorY - lineRow) * lineStride + screen.CursorX - lineColumn;
@@ -138,23 +142,40 @@ public partial class TerminalView
         string text = new(lineText, 0, lineLength);
         completions = completer.Complete(text, WorkingDirectory, out completionWordStart);
         completionWord = text[completionWordStart..];
+
+        // What was picked stays picked when the list only grew, a branch list arriving under the subcommands
         completionChosen = 0;
+        for (int i = 0; picked is not null && i < completions.Count; i++)
+        {
+            if (completions[i].Text == picked)
+            {
+                completionChosen = i;
+                break;
+            }
+        }
     }
+
+    // A note past this is cut, the list isn't the manual
+    private const int MOST_NOTE_CELLS = 40;
 
     private void PaintCompletion(UIDrawList list, float scale, float top, TerminalPalette palette)
     {
         if (completions.Count == 0 || scrolled != 0 || lineRow < 0)
             return;
 
-        int longest = 0;
+        int longest = 0, longestNote = 0;
         for (int i = 0; i < completions.Count; i++)
+        {
             longest = Math.Max(longest, completions[i].Text.Length);
+            longestNote = Math.Max(longestNote, Math.Min(MOST_NOTE_CELLS, completions[i].Note?.Length ?? 0));
+        }
 
-        // Under the word, or over it when there isn't room under it
+        // Under the word, or over it when there isn't room under it, the notes in a column of their own to the right
         int place = lineColumn + completionWordStart;
         int wordRow = lineRow + place / Math.Max(1, lineStride) - screen.Scrollback.Count;
         float x = paintedArea.Min.X + (place % Math.Max(1, lineStride)) * cellWidth - cellWidth;
-        float width = (longest + 2) * cellWidth;
+        float width = (longest + 2 + (longestNote > 0 ? longestNote + 2 : 0)) * cellWidth;
+        width = MathF.Min(width, paintedArea.Width);
         x = Math.Clamp(x, paintedArea.Min.X, Math.Max(paintedArea.Min.X, paintedArea.Max.X - width));
         int count = completions.Count;
         bool under = wordRow + 1 + count <= screen.Rows;
@@ -172,6 +193,13 @@ public partial class TerminalView
             TerminalLineCompletion item = completions[i];
             Vector4 ink = item.Folder ? palette.Ansi[4] : item.Command ? palette.Ansi[2] : palette.Foreground;
             list.Text(item.Text.AsSpan(), new Vector2(box.Min.X + cellWidth, rowTop), scale, ink, false, default, default);
+
+            if (item.Note is { Length: > 0 } note)
+            {
+                ReadOnlySpan<char> shown = note.Length > MOST_NOTE_CELLS ? note.AsSpan(0, MOST_NOTE_CELLS) : note.AsSpan();
+                Vector4 dim = Vector4.Lerp(palette.Foreground, palette.Background, 0.45f);
+                list.Text(shown, new Vector2(box.Min.X + (longest + 3) * cellWidth, rowTop), scale, dim, false, default, default);
+            }
         }
     }
 }

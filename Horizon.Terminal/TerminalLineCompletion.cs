@@ -8,27 +8,43 @@ public interface ITerminalCompleter
     /// word isn't one to finish.
     /// </summary>
     IReadOnlyList<TerminalLineCompletion> Complete(string line, string? folder, out int wordStart);
+
+    /// <summary>Goes up when the completer learned something that would change a list (a tool's help came in), the list is worked out again.</summary>
+    int Version => 0;
 }
 
-/// <summary>One thing a word could be finished as, the whole of it and whether it is a folder (it gets its separator on).</summary>
-public readonly record struct TerminalLineCompletion(string Text, bool Folder, bool Command);
+/// <summary>
+/// One thing a word could be finished as, the whole of it and whether it is a folder (it gets its separator on), and
+/// a bit of help shown dim beside it, a subcommand's or a flag's.
+/// </summary>
+public readonly record struct TerminalLineCompletion(string Text, bool Folder, bool Command, string? Note = null);
 
 /// <summary>
 /// cmd's and bash's completion, the commands the shell has for the first word of a command and the files and folders
-/// of where a path is being typed anywhere. PowerShell and fish do their own and better, they don't get this.
+/// of where a path is being typed anywhere, and for every shell the words after a known tool (git's subcommands, its
+/// branches, dotnet's flags, see <see cref="TerminalToolCompletion"/>). PowerShell does commands and files itself and
+/// better, so it only gets the tools.
 /// </summary>
 public sealed class TerminalShellCompletion : ITerminalCompleter
 {
     public const int MOST = 8;
 
     private readonly TerminalShellLine line;
+    private readonly TerminalToolCompletion? tools;
+    private readonly bool toolsOnly;
     private readonly char separator;
 
-    public TerminalShellCompletion(TerminalShellLine line)
+    /// <param name="tools">What completes the words after a tool, null for none (a WSL shell, whose tools aren't this machine's).</param>
+    /// <param name="toolsOnly">Whether the commands and files are the shell's own business, PowerShell's.</param>
+    public TerminalShellCompletion(TerminalShellLine line, TerminalToolCompletion? tools = null, bool toolsOnly = false)
     {
         this.line = line;
+        this.tools = tools;
+        this.toolsOnly = toolsOnly;
         separator = line.Kind == "cmd" ? '\\' : '/';
     }
+
+    public int Version => tools?.Version ?? 0;
 
     public IReadOnlyList<TerminalLineCompletion> Complete(string typed, string? folder, out int wordStart)
     {
@@ -48,6 +64,19 @@ public sealed class TerminalShellCompletion : ITerminalCompleter
         while (before >= 0 && char.IsWhiteSpace(typed[before]))
             before--;
         bool first = before < 0 || typed[before] is '|' or '&' or ';' or '(';
+
+        // After a tool on the list its own words come first, the files after them
+        if (!first && tools?.Complete(CommandWords(typed, start), word, folder) is { } fromTool)
+        {
+            if (!toolsOnly && !word.StartsWith('-'))
+                AddFiles(word, folder, fromTool);
+            if (fromTool.Count > MOST)
+                fromTool.RemoveRange(MOST, fromTool.Count - MOST);
+            return fromTool;
+        }
+
+        if (toolsOnly)
+            return [];
 
         var found = new List<TerminalLineCompletion>();
         bool pathLike = word.IndexOfAny(['/', '\\']) >= 0 || word.StartsWith('.') || word.StartsWith('~');
@@ -69,6 +98,45 @@ public sealed class TerminalShellCompletion : ITerminalCompleter
         if (found.Count > MOST)
             found.RemoveRange(MOST, found.Count - MOST);
         return found;
+    }
+
+    /// <summary>
+    /// Helper method to split the command the word is in into its words, back to the last operator, quotes kept
+    /// together and taken off. A word in quotes isn't a subcommand anyway.
+    /// </summary>
+    public static List<string> CommandWords(string typed, int end)
+    {
+        int from = end;
+        while (from > 0 && typed[from - 1] is not ('|' or '&' or ';' or '('))
+            from--;
+
+        var words = new List<string>();
+        var word = new System.Text.StringBuilder();
+        char quote = '\0';
+        for (int i = from; i < end; i++)
+        {
+            char c = typed[i];
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0'; else word.Append(c);
+            }
+            else if (c is '"' or '\'')
+            {
+                quote = c;
+            }
+            else if (char.IsWhiteSpace(c))
+            {
+                if (word.Length > 0) { words.Add(word.ToString()); word.Clear(); }
+            }
+            else
+            {
+                word.Append(c);
+            }
+        }
+
+        if (word.Length > 0)
+            words.Add(word.ToString());
+        return words;
     }
 
     private void AddFiles(string word, string? folder, List<TerminalLineCompletion> found)
