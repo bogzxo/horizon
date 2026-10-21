@@ -512,6 +512,7 @@ public sealed partial class TerminalHost : IDisposable
     public void ApplySettings()
     {
         Panel.AnimationTime = Settings.Animations ? Settings.AnimationTime : 0.0f;
+        Panel.CursorGlide = Settings.CursorGlide;
         Panel.Scrollback = Settings.Scrollback;
         Panel.CloseOnExit = Settings.CloseOnExit;
         Panel.TextScale = Settings.TextScale;
@@ -522,6 +523,7 @@ public sealed partial class TerminalHost : IDisposable
             {
                 view.TextScale = Settings.TextScale;
                 view.Animated = Panel.Animated;
+                view.CursorGlide = Settings.CursorGlide;
                 view.Scrollback = Settings.Scrollback;
                 view.AllowClipboard = Settings.ClipboardWrite;
                 ColourLine(view);

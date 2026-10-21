@@ -41,6 +41,9 @@ public sealed class TerminalSettings
     public bool Animations = true;
     public float AnimationTime = 0.16f;
 
+    /// <summary>How long the cursor takes to glide most of the way to its next cell, 0 for it jumping there.</summary>
+    public float CursorGlide = TerminalView.DEFAULT_CURSOR_GLIDE;
+
     /// <summary>The font the terminals write in, a folder of Assets/fonts, empty for the skin's.</summary>
     public string Font = "hack";
 
@@ -105,6 +108,7 @@ public sealed class TerminalSettings
         new("scrollback", "whole", "5000", "How many rows every terminal keeps of what went off the top.", Least: 0, Most: 100000),
         new("animations", "flag", "true", "Whether anything moves, splits sliding open, tabs sliding over, a tab folding away, the cursor's glide."),
         new("animation_time", "number", "0.16", "How long each of those takes, in seconds.", Least: 0.02f, Most: 1.0f),
+        new("cursor_glide", "number", "0.036", "How long the cursor takes to glide to where it goes, in seconds, 0 for it jumping there. It jumps anyway with the animations off.", Least: 0.0f, Most: 0.3f),
         new("font", "text", "\"hack\"", "The font the terminals write in, a folder of Assets/fonts, empty for the skin's."),
         new("wsl", "flag", "true", "Whether the WSL distributions are asked for as profiles."),
         new("close_on_exit", "flag", "true", "Whether a pane closes by itself when its shell ends."),
@@ -167,6 +171,7 @@ public sealed class TerminalSettings
         Scrollback = (int)Math.Clamp(Number(values, "scrollback", Scrollback), 0, 100000);
         Animations = Flag(values, "animations", Animations);
         AnimationTime = Math.Clamp(Number(values, "animation_time", AnimationTime), 0.02f, 1.0f);
+        CursorGlide = Math.Clamp(Number(values, "cursor_glide", CursorGlide), 0.0f, 0.3f);
         Font = Text(values, "font", Font);
         Wsl = Flag(values, "wsl", Wsl);
         CloseOnExit = Flag(values, "close_on_exit", CloseOnExit);
@@ -217,6 +222,7 @@ public sealed class TerminalSettings
         "scrollback" => new NumberValue(Scrollback),
         "animations" => Values.Bool(Animations),
         "animation_time" => new NumberValue(AnimationTime),
+        "cursor_glide" => new NumberValue(CursorGlide),
         "font" => new StringValue(Font),
         "wsl" => Values.Bool(Wsl),
         "close_on_exit" => Values.Bool(CloseOnExit),
