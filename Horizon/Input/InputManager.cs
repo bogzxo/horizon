@@ -29,13 +29,15 @@ public sealed class InputManager : GameComponent
     public Mouse Mouse { get; } = new();
 
     /// <summary>
-    /// Every gamepad that is plugged in, and the bindings each one is played with.
+    /// Every gamepad that is plugged in, and the bindings each one is played with. It is there from the start, whether
+    /// or not <see cref="ReadsGamepads"/> is on, so a game can hand out bindings and virtual pads before the engine is up.
     /// </summary>
-    public GamepadInputManager Gamepads { get; private set;  }
+    public GamepadInputManager Gamepads { get; } = new();
 
     /// <summary>
     /// Whether the gamepads plugged into the machine are listened for, see <see cref="Engine.GameEngineConfiguration.Gamepads"/>.
-    /// Off, <see cref="Gamepads"/> only ever has the keyboard, virtual and scripted ones in it.
+    /// Off, <see cref="Gamepads"/> is never shown the window's devices or sampled, so it only ever has the keyboard,
+    /// virtual and scripted ones in it, and those still update.
     /// </summary>
     public bool ReadsGamepads { get; init; } = true;
 
@@ -139,9 +141,10 @@ public sealed class InputManager : GameComponent
         // Before the gamepads of the window are let in, so the one of a script is the first there is
         PlayScriptOfEnvironment();
 
+        // Off, the window's devices are left alone entirely, asking the context for its gamepads is what wakes the
+        // controller drivers up and a broken one can stall startup. The manager itself is just a list, so it stays
         if (!ReadsGamepads) return;
 
-        Gamepads = new();
         // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
         window.EventsProcessed += Gamepads.SampleDevices;
         Gamepads.Attach(context);
@@ -155,7 +158,8 @@ public sealed class InputManager : GameComponent
         Keyboard.Update();
         Mouse.Update();
         UpdateScript(dt);
-        if (!ReadsGamepads) return;
+
+        // Always, the keyboard, virtual and scripted pads move on here even when no real one is read
         Gamepads.UpdateState(dt);
     }
 }
