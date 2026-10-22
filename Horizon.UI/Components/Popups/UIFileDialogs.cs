@@ -29,6 +29,7 @@ public static class UIFileDialogs
     {
         var browser = new UIFileBrowser(kind, title, directory, name, filter, host.Roots);
         host.Present(browser.Window);
+        browser.TakeKeyboard();
         return browser.Picked;
     }
 }

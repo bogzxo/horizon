@@ -161,15 +161,19 @@ public class ScrollPanel : Panel
         // Pills, for a skin that has round corners at all
         float round = list.Skin.CornerRadius > 0.0f ? BAR_WIDTH * 0.5f : 0.0f;
 
-        // No track to speak of and a thumb in the text's colour seen through, brighter under the pointer and while it's
-        // dragged. The thumb was the accent, a bar of gold down the side of every list that meant nothing, and the track
-        // is painted see-through rather than left out so the quads don't shift as it lights
+        // No track to speak of and a thumb in the text's colour seen through, brighter with the pointer on the bar and
+        // while it's dragged. The thumb was the accent, a bar of gold down the side of every list that meant nothing, and
+        // the track is painted see-through rather than left out so the quads don't shift as it lights. It lit for the
+        // pointer anywhere on the panel that wasn't on a row of it, so a pointer going down a list had it blinking
+        Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
+        bool overBar = pointer.X >= track.Min.X - BAR_WIDTH && pointer.X <= Bounds.Max.X && pointer.Y >= content.Min.Y && pointer.Y <= content.Max.Y
+            && PointerWithin();
         Vector4 text = list.Skin.TextColor;
-        list.RoundRect(track, round, text with { W = draggingBar || IsHovered ? 0.05f : 0.0f });
+        list.RoundRect(track, round, text with { W = draggingBar || overBar ? 0.05f : 0.0f });
         list.RoundRect(
             new UIRect(new Vector2(track.Min.X, top - length), new Vector2(track.Max.X, top)),
             round,
-            text with { W = draggingBar ? 0.5f : IsHovered ? 0.32f : 0.2f });
+            text with { W = draggingBar ? 0.5f : overBar ? 0.32f : 0.2f });
     }
 
     protected internal override bool OnScroll(float delta)

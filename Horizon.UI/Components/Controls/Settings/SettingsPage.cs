@@ -175,7 +175,8 @@ public class SettingsPage : UIComponent
         close = Add(new Button { Icon = "close", Style = "button_flat", Animated = false, Tooltip = "Close the settings", Visible = false, OnPressed = () => onClose?.Invoke() });
         // The sections down the left scroll as well, a few extensions with settings of their own ran them off the bottom
         navScroll = Add(new ScrollPanel { Padding = new UIEdges(0.0f, 6.0f, 2.0f, 6.0f) });
-        nav = navScroll.Add(new StackPanel { Spacing = 2.0f, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
+        // No gaps between the sections' rows, a pointer going down them is always on one, the gap is in their pills
+        nav = navScroll.Add(new StackPanel { Spacing = 0.0f, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
         scroll = Add(new ScrollPanel());
         rows = scroll.Add(new StackPanel { Spacing = ROW_GAP, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
         nothing = Add(new Label { Align = Origin.Center, Visible = false });
@@ -267,6 +268,14 @@ public class SettingsPage : UIComponent
             if (at is SettingRow row)
             {
                 scroll.ScrollIntoView(row);
+                return;
+            }
+
+            // A control in a section's panel (the profiles, the language servers' form) is brought into sight itself,
+            // the keyboard went down a form off the bottom of the window
+            if (at.Parent == rows && focused is not null)
+            {
+                scroll.ScrollIntoView(focused);
                 return;
             }
         }
@@ -387,7 +396,7 @@ public class SettingsPage : UIComponent
                 nav.Add(new Label { Text = $"[color:dim][b]{top}[/b][/color]", TextScale = sentenceSize * 0.9f, Align = Origin.BottomLeft, Size = new Vector2(NAV_WIDTH - 12.0f, nav.Children.Count == 0 ? 22.0f : 34.0f), Padding = new UIEdges(10.0f, 0.0f, 0.0f, 4.0f), Anchor = Origin.Left, Pivot = Origin.Left });
             }
 
-            nav.Add(new SectionLink(this, group) { Text = under, TextScale = sentenceSize, Align = Origin.Left, Size = new Vector2(NAV_WIDTH - 12.0f, 28.0f), Padding = new UIEdges(10.0f, 0.0f, 0.0f, 0.0f), Anchor = Origin.Left, Pivot = Origin.Left });
+            nav.Add(new SectionLink(this, group) { Text = under, TextScale = sentenceSize, Align = Origin.Left, Size = new Vector2(NAV_WIDTH - 12.0f, 30.0f), Padding = new UIEdges(10.0f, 0.0f, 0.0f, 0.0f), Anchor = Origin.Left, Pivot = Origin.Left });
 
             foreach (UISetting setting in settings)
             {
@@ -461,16 +470,30 @@ public class SettingsPage : UIComponent
     /// <summary>A section's name down the left, a click scrolls to it.</summary>
     private sealed class SectionLink(SettingsPage page, string group) : Label
     {
+        // How far the pointer's pill has come on, eased in and out over the hover's time so a pointer going down the list
+        // leaves a little wake rather than pills blinking on and off
+        private float lit;
+
         protected override bool HitTestVisible => true;
 
         protected internal override void OnClick() => page.GoTo(group);
 
+        protected override void Update(float dt)
+        {
+            float time = MotionTime(DEFAULT_HOVER_TIME);
+            float step = time > 0.0f ? dt / time : 1.0f;
+            lit = IsHovered ? MathF.Min(1.0f, lit + step) : MathF.Max(0.0f, lit - step);
+            base.Update(dt);
+        }
+
         protected override void Paint(UIDrawList list)
         {
             // A pill under the section that's at the top of the rows, the way a sidebar has what's open, and a fainter
-            // one under the pointer. Always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            // one under the pointer, a pixel in from the row's top and bottom so two side by side are apart. Always there,
+            // see-through when not lit, or the quads after it shift (ToggleButton has why)
             bool current = page.CurrentGroup == group;
-            list.Box(Bounds, list.Skin.TextColor with { W = current ? 0.1f : IsHovered ? 0.05f : 0.0f });
+            float hover = lit * (2.0f - lit);
+            list.Box(Bounds.Shrink(new UIEdges(0.0f, 1.0f)), list.Skin.TextColor with { W = current ? 0.1f : 0.05f * hover });
             base.Paint(list);
         }
     }

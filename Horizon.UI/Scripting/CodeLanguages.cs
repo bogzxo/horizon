@@ -9,6 +9,9 @@ using TextMateSharp.Themes;
 
 namespace Horizon.UI.Scripting;
 
+/// <summary>A language the code editor colours, what it's called, its id and the files of it, see <see cref="CodeLanguages.Languages"/>.</summary>
+public sealed record CodeLanguage(string Name, string Id, IReadOnlyList<string> Extensions);
+
 /// <summary>
 /// The languages the code editor colours, by the extension of the file. Every language VS Code ships a grammar for
 /// comes out of TextMateSharp.Grammars (its grammars are VS Code's own, C#, Python, JSON, Markdown, HLSL and sixty
@@ -20,6 +23,10 @@ namespace Horizon.UI.Scripting;
 /// A Slang shader (.slang) is coloured with the HLSL grammar, which is the language it grew out of, VS Code has no
 /// grammar of Slang's own. <see cref="Register"/> is how a game or a tool gives an extension of its own to a
 /// grammar, Hex's workspace file is HIDL for one.
+/// </para>
+/// <para>
+/// D (.d and .di) has a grammar of the engine's own, Scripting/Grammars/d.tmLanguage.json, VS Code ships none and
+/// neither does TextMateSharp. A grammar of that folder is one more scope in the registry, by its scopeName.
 /// </para>
 /// </summary>
 public static class CodeLanguages
@@ -38,7 +45,16 @@ public static class CodeLanguages
         { ".hor", HIDLGrammar.ScopeName },
         { ".jab", HIDLGrammar.ScopeName },
         { ".hex-workspace", HIDLGrammar.ScopeName },
-        { ".slang", "source.hlsl" }
+        { ".slang", "source.hlsl" },
+        { ".d", D_SCOPE },
+        { ".di", D_SCOPE }
+    };
+
+    // The grammars of the engine's own by their scope, and the resource each is in (Scripting/Grammars)
+    private const string D_SCOPE = "source.d";
+    private static readonly Dictionary<string, string> ownGrammars = new(StringComparer.Ordinal)
+    {
+        { D_SCOPE, "Horizon.UI.Grammars.d.tmLanguage.json" }
     };
 
     // The colours a language has of its own over the skin's, by its grammar's scope, for a dark field and a light one
@@ -115,6 +131,34 @@ public static class CodeLanguages
     {
         lock (gate)
             return ForScopeLocked(scopeName, null);
+    }
+
+    /// <summary>
+    /// Every language there's a grammar for, by name, D's among them and HIDL left out (Hex is its server), for a list to
+    /// pick one from. The id is the grammar's language id, which is the one the language server protocol knows it by for
+    /// nearly all of them (csharp, python, rust, d).
+    /// </summary>
+    public static IReadOnlyList<CodeLanguage> Languages()
+    {
+        lock (gate)
+        {
+            var found = new Dictionary<string, CodeLanguage>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["d"] = new CodeLanguage("D", "d", [".d", ".di"]),
+                ["slang"] = new CodeLanguage("Slang", "slang", [".slang"])
+            };
+
+            foreach (Language language in OptionsLocked().GetAvailableLanguages())
+            {
+                if (language.Extensions is not { Count: > 0 } extensions || found.ContainsKey(language.Id))
+                    continue;
+
+                string name = language.Aliases is { Count: > 0 } aliases ? aliases[0] : language.Id;
+                found[language.Id] = new CodeLanguage(name, language.Id, [.. extensions.Distinct(StringComparer.OrdinalIgnoreCase)]);
+            }
+
+            return [.. found.Values.OrderBy(language => language.Name, StringComparer.OrdinalIgnoreCase)];
+        }
     }
 
     /// <summary>Every extension a grammar is known for, for a file dialog or a test.</summary>
@@ -212,10 +256,18 @@ public static class CodeLanguages
                 return GrammarReader.ReadGrammarSync(reader);
             }
 
+            if (ownGrammars.TryGetValue(scopeName, out string? resource)
+                && typeof(CodeLanguages).Assembly.GetManifestResourceStream(resource) is { } stream)
+            {
+                using var reader = new StreamReader(stream);
+                return GrammarReader.ReadGrammarSync(reader);
+            }
+
             return bundled.GetGrammar(scopeName);
         }
 
-        public ICollection<string>? GetInjections(string scopeName) => scopeName == HIDLGrammar.ScopeName ? null : bundled.GetInjections(scopeName);
+        public ICollection<string>? GetInjections(string scopeName) =>
+            scopeName == HIDLGrammar.ScopeName || ownGrammars.ContainsKey(scopeName) ? null : bundled.GetInjections(scopeName);
 
         public IRawTheme? GetTheme(string scopeName) => bundled.GetTheme(scopeName);
 

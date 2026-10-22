@@ -113,7 +113,7 @@ public abstract partial class UIComponent
     /// Helper method to say whether the pointer is over this component or anything inside it. The compositor only
     /// marks the topmost thing under it, a button on a card, and the card wants to know as well.
     /// </summary>
-    private bool PointerWithin()
+    protected bool PointerWithin()
     {
         if (IsHovered)
             return true;

@@ -21,6 +21,9 @@ namespace Horizon.UI.Components;
 public static class UIChooser
 {
     private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.13f;
+
+    // How far in from the card's edge the line along the bottom is written, where the rows' text starts
+    private const float HINT_INSET = 12.0f;
     private const int ROWS = 12, MOST = 300;
 
     /// <param name="shortestFirst">Whether what is left is put shortest first, the nearest to what was typed for a file's name.</param>
@@ -101,8 +104,13 @@ public static class UIChooser
         picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
         list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Columns = Columns });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
+        // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
+        // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
         if (message.Length > 0)
-            picking.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - 20.0f, 0.0f), Align = Origin.TopLeft, Anchor = Origin.Left, Padding = new UIEdges(10.0f, 4.0f, 10.0f, 2.0f), Color = module.Compositor.Skin?.DimTextColor });
+        {
+            Panel foot = picking.Add(new Panel { Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
+            foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
+        }
 
         Narrow(string.Empty);
 

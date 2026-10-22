@@ -20,7 +20,8 @@ public enum UIBrowse
 /// the workspace's folders, the drives or what's mounted), what's in the folder on the right with the folders first,
 /// and along the bottom the name (for a save), which files are shown, whether the hidden ones are, and the buttons.
 /// A click picks, a second click (or Enter) opens a folder or takes a file. Saving over a file that's there asks first,
-/// by saying so and wanting Save pressed again.
+/// by saying so and wanting Save pressed again. It has the keyboard while it's up (<see cref="TakeKeyboard"/>), up and
+/// down go along the list from the box that has it, Enter opens what was gone to, Backspace with no name goes up a folder.
 /// </summary>
 public sealed class UIFileBrowser
 {
@@ -29,6 +30,9 @@ public sealed class UIFileBrowser
 
     // What a folder's row says after its name, and the row that goes up
     private const string FOLDER_MARK = "/", UP = "..";
+
+    /// <summary>What the filter that lets every file through is called, the one the browser starts on.</summary>
+    public const string ALL_FILES = "All files";
 
     private readonly UIBrowse kind;
     private readonly (string Name, string[] Patterns)[] filters;
@@ -50,18 +54,27 @@ public sealed class UIFileBrowser
     private bool naming;
     private string? nameBefore;
 
+    // Whether the row picked was gone to with the keys since anything was typed, Enter opens it then, and what had the
+    // keyboard before the browser took it
+    private bool keyed;
+    private UIComponent? focusBefore;
+
     /// <summary>The window, for whoever shows it to put it where it goes.</summary>
     public WindowPanel Window { get; }
 
     /// <summary>What was picked, a full path, null when the window was closed without.</summary>
     public Task<string?> Picked => answer.Task;
 
-    /// <param name="filters">What the files shown can be, "Pictures" and "*.png;*.jpg" say, all of them after these.</param>
+    /// <param name="filters">
+    /// What the files shown can be, "Pictures" and "*.png;*.jpg" say. All of them comes first and is what it starts on, a
+    /// file of a kind nobody thought of is still a file somebody may want, and a name saved under it keeps whatever
+    /// extension was typed. One of these picked gives a name with none its first.
+    /// </param>
     /// <param name="roots">Folders to have among the places, the workspace's.</param>
     public UIFileBrowser(UIBrowse kind, string title, string directory, string fileName, IReadOnlyList<(string Name, string Pattern)> filters, IEnumerable<string>? roots = null)
     {
         this.kind = kind;
-        this.filters = [.. filters.Select(pair => (pair.Name, pair.Pattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))), ("All files", ["*"])];
+        this.filters = [(ALL_FILES, ["*"]), .. filters.Select(pair => (pair.Name, pair.Pattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))];
         folder = Directory.Exists(directory) ? Path.GetFullPath(directory) : PlatformPaths.Home;
 
         Window = new WindowPanel(title)
@@ -77,7 +90,9 @@ public sealed class UIFileBrowser
         var body = new StackPanel { Spacing = GAP, Padding = new UIEdges(12.0f) };
         Window.Add(body);
 
-        path = new TextBox { Size = new Vector2(WIDTH - 24.0f, 30.0f), MaxLength = 4096, OnSubmitted = Typed };
+        path = new TextBox { Size = new Vector2(WIDTH - 24.0f, 30.0f), MaxLength = 4096, OnSubmitted = TypedPath };
+        path.TakeKey = key => Keyed(key, path);
+        path.OnChanged = _ => keyed = false;
         body.Add(path);
 
         var middle = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
@@ -96,6 +111,8 @@ public sealed class UIFileBrowser
             OnSubmitted = _ => Accept(),
             Visible = kind != UIBrowse.Folder
         };
+        name.TakeKey = key => Keyed(key, name);
+        name.OnChanged = _ => keyed = false;
         body.Add(name);
 
         var bottom = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
@@ -276,6 +293,80 @@ public sealed class UIFileBrowser
         if (kind != UIBrowse.Folder)
             name.Text = item;
         Accept();
+    }
+
+    /// <summary>
+    /// The browser takes the keyboard once its window is up, the name along the bottom (or the path along the top for a
+    /// folder, which has no name), and whoever had it gets it back when the window goes. It never took it, and every key
+    /// went on to the code or the terminal behind it.
+    /// </summary>
+    public void TakeKeyboard()
+    {
+        TextBox box = kind == UIBrowse.Folder ? path : name;
+        if (box.Module is not { } module)
+            return;
+
+        focusBefore = module.Compositor.Focus;
+        box.Focus();
+        box.SelectAll();
+    }
+
+    // The list's keys from either box. Up and down along it, Enter on the row gone to, Backspace with no name goes up
+    private bool Keyed(char key, TextBox from)
+    {
+        switch (key)
+        {
+            case UIKeyboard.UP: Step(-1); return true;
+            case UIKeyboard.DOWN: Step(1); return true;
+            case UIKeyboard.PAGE_UP: Step(1 - ROWS); return true;
+            case UIKeyboard.PAGE_DOWN: Step(ROWS - 1); return true;
+
+            case UIKeyboard.ENTER when keyed && entries.Index >= 0:
+                Activated(entries.Value);
+                return true;
+
+            case UIKeyboard.BACKSPACE when from == name && name.Text.Length == 0 && !naming:
+                GoUp();
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    // Along the list by so many rows, from the top or the bottom when nothing's picked
+    private void Step(int by)
+    {
+        int count = entries.Items.Length;
+        if (count == 0)
+            return;
+
+        entries.Choose(entries.Index < 0 ? (by > 0 ? 0 : count - 1) : Math.Clamp(entries.Index + by, 0, count - 1));
+        keyed = true;
+    }
+
+    // Up a folder with the one it came out of picked, the way back in
+    private void GoUp()
+    {
+        if (Directory.GetParent(folder) is not { } parent)
+            return;
+
+        string came = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + FOLDER_MARK;
+        Show(parent.FullName);
+        if (Array.IndexOf(entries.Items, came) is >= 0 and var at)
+        {
+            entries.Choose(at);
+            keyed = true;
+        }
+    }
+
+    // Enter along the top. The folder that's open as it is picks it, when a folder is what's being picked
+    private void TypedPath(string typed)
+    {
+        if (kind == UIBrowse.Folder && PlatformPaths.Same(typed.Trim().Trim('"'), folder))
+            Accept();
+        else
+            Typed(typed);
     }
 
     /// <summary>A path typed along the top: a folder is gone to, a file is taken, ~ is home.</summary>
@@ -487,6 +578,23 @@ public sealed class UIFileBrowser
     /// <summary>Cancel pressed.</summary>
     public void Cancel() => Finish(null);
 
+    /// <summary>A key pressed with the browser having the keyboard, one of <see cref="UIKeyboard"/>'s codes or a letter.</summary>
+    public void Key(char key) => (kind == UIBrowse.Folder ? path : name).OnTextInput(key);
+
+    /// <summary>The row picked in the list, null for none.</summary>
+    public string? Selected => entries.Index >= 0 ? entries.Value : null;
+
+    /// <summary>Which of the filters along the bottom is picked, by what it says.</summary>
+    public string Filter
+    {
+        get => filter.Value;
+        set
+        {
+            filter.Value = value;
+            Show(folder);
+        }
+    }
+
     private void Say(string text) => said.Text = text;
 
     private void Finish(string? picked)
@@ -494,7 +602,14 @@ public sealed class UIFileBrowser
         if (!answer.TrySetResult(picked))
             return;
 
+        // The keyboard back to whoever had it, unless it was taken somewhere else while the window was up
+        bool hadIt = false;
+        for (UIComponent? at = Window.Module?.Compositor.Focus; at is not null; at = at.Parent)
+            hadIt |= at == Window;
+
         Window.OnClosed = null;
         Window.Parent?.Remove(Window);
+        if (hadIt && focusBefore is { Module: not null } before)
+            before.Focus();
     }
 }

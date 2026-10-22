@@ -112,6 +112,13 @@ public class TextBox : UIComponent
     /// </summary>
     public Action<char>? OnKey { get; set; }
 
+    /// <summary>
+    /// Offered every key before the box does anything with it (<see cref="UIKeyboard"/>'s codes and what's typed), true
+    /// when it was taken and the box leaves it be. For a box in front of a list that wants Enter, or a Backspace on
+    /// nothing, as well as the arrows, a file dialog's name.
+    /// </summary>
+    public Func<char, bool>? TakeKey { get; set; }
+
     /* A button in the box, for whatever fills it in some other way than typing. A file dialog, a list to pick
        from, a clear. It is part of the box and not a component of its own, so a box with one is laid out like a
        box without */
@@ -327,6 +334,9 @@ public class TextBox : UIComponent
 
     protected internal override void OnTextInput(char character)
     {
+        if (TakeKey?.Invoke(character) == true)
+            return;
+
         switch (character)
         {
             case UIKeyboard.BACKSPACE:
