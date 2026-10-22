@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 
 using Horizon.UI.Drawing;
+using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Components;
 
@@ -13,11 +14,14 @@ public enum TerminalBell
     None
 }
 
-// The pane's own bits. Its title in a badge in the top right corner while its tab has more than one pane, which is also
-// the handle a pane is dragged by onto another to swap the two, copy on select and paste on a right click for whoever
-// wants them, and the bell.
+// The pane's own bits. Its title in a slim header along its top while its tab has more than one pane, which is also the
+// handle a pane is dragged by onto another to swap the two, copy on select and paste on a right click for whoever wants
+// them, and the bell.
 public partial class TerminalView
 {
+    /// <summary>How round the corners of the pane are, a card on the window rather than a square of it. 0 for square.</summary>
+    public float Radius { get; set; }
+
     /// <summary>What somebody renamed the pane to, null for the title the program or the profile gives it.</summary>
     public string? PaneName { get; set; }
 
@@ -127,31 +131,50 @@ public partial class TerminalView
         OnMenu?.Invoke(this, point);
     }
 
-    private void PaintBadge(UIDrawList list, UIFont font, float scale, TerminalPalette palette)
+    // Whether the pointer was over the pane when it was last painted, the header's title lights up under it
+    private bool badgeLit;
+
+    // How tall the header is, a line of the UI's caption it's written in and a little round it
+    private static float HeaderHeight(UISkin skin) => MathF.Round(skin.Font.LineHeight * skin.TextSize(UITextRole.Caption) + 10.0f);
+
+    // the pointer coming onto the pane or going off it lights the header's title, in a window that only draws on change
+    private void UpdateBadge()
     {
-        if (!ShowPaneTitle)
-        {
-            badge = default;
-            return;
-        }
+        if (ShowPaneTitle && (IsHovered || draggingPane) != badgeLit)
+            RequestFrame();
+    }
 
+    private void PaintBadge(UIDrawList list, TerminalPalette palette)
+    {
+        // A slim header along the top of the pane while its tab is split, its title quiet at the left and a hairline under
+        // it, the cells starting under it. The title was a badge over the corner, on top of the prompt. It's in the UI's
+        // font, not the terminal's, it's the window's caption for the pane and not something a program printed
+        UISkin skin = list.Skin;
+        UIFont font = skin.Font;
         string title = PaneTitle;
-        float small = scale * 0.8f, height = font.LineHeight * small;
-        float width = font.Measure(title, small, markup: false).X + height;
-        var corner = new Vector2(Bounds.Max.X - 4.0f, Bounds.Max.Y - 4.0f);
-        badge = new UIRect(new Vector2(corner.X - width, corner.Y - height), corner);
+        float small = skin.TextSize(UITextRole.Caption), height = HeaderHeight(skin), line = font.LineHeight * small;
+        float pad = MathF.Max(PADDING, Radius * 0.6f);
+        badge = ShowPaneTitle ? new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - height), Bounds.Max) : default;
+        badgeLit = IsHovered || draggingPane;
+        if (!ShowPaneTitle)
+            return;
 
+        list.PushFont(font);
         list.BeginPart(-4);
-        list.Rect(badge, Blend(palette.Background, palette.Foreground with { W = draggingPane ? 0.3f : 0.12f }));
-        list.Text(title.AsSpan(), new Vector2(badge.Min.X + height * 0.5f, badge.Max.Y), small, Vector4.Lerp(palette.Foreground, palette.Background, 0.3f), false, default, default);
+        list.Rect(new UIRect(new Vector2(badge.Min.X + pad, badge.Min.Y), new Vector2(badge.Max.X - pad, badge.Min.Y + 1.0f)), palette.Foreground with { W = 0.08f });
+        Vector4 ink = Vector4.Lerp(palette.Foreground, palette.Background, badgeLit ? 0.15f : 0.45f);
+        list.Text(title.AsSpan(), new Vector2(badge.Min.X + pad, MathF.Round(badge.Center.Y + line * 0.5f)), small, ink, false, default, default);
 
-        // dragged, the badge goes along under the pointer as well
+        // dragged, the title goes along under the pointer in a pill
         if (draggingPane)
         {
-            var moved = new UIRect(lastPointer - new Vector2(width * 0.5f, height * 0.5f), lastPointer + new Vector2(width * 0.5f, height * 0.5f));
-            list.Rect(moved, Blend(palette.Background, palette.Selection));
-            list.Text(title.AsSpan(), new Vector2(moved.Min.X + height * 0.5f, moved.Max.Y), small, palette.Foreground, false, default, default);
+            float width = font.Measure(title, small, markup: false).X + line + 4.0f, tall = line + 4.0f;
+            var moved = new UIRect(lastPointer - new Vector2(width * 0.5f, tall * 0.5f), lastPointer + new Vector2(width * 0.5f, tall * 0.5f));
+            list.RoundRect(moved, tall * 0.5f, Blend(palette.Background, palette.Selection));
+            list.Text(title.AsSpan(), new Vector2(moved.Min.X + tall * 0.5f, moved.Max.Y - 2.0f), small, palette.Foreground, false, default, default);
         }
+
+        list.PopFont();
     }
 }
 

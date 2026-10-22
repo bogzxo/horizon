@@ -28,6 +28,22 @@ public class Panel : UIComponent
     public Vector4? Outline { get; set; }
 
     /// <summary>
+    /// How far in from its bounds its background is drawn, its glass, its shadow and its outline with it, while what's in
+    /// it is laid out as ever. A card with a margin round it that its column doesn't have to know about, the sides and the
+    /// middle of Hex floating apart on the window.
+    /// </summary>
+    public float Inset { get; set; }
+
+    /// <summary>
+    /// A part of its background left unpainted, in the module's units, asked every paint, a window onto whatever is
+    /// drawn under the panel (Hex's canvas, the layouts being designed, in the middle of its editor). Its own rounded
+    /// corners are kept, it's painted round the hole. Null for none.
+    /// </summary>
+    public Func<UIRect?>? Hole { get; set; }
+
+    protected override UIRect SurfaceBounds => Inset > 0.0f ? Bounds.Shrink(new UIEdges(Inset)) : Bounds;
+
+    /// <summary>
     /// For a container whose content isn't known until the program runs (a row per save game, a cell per
     /// character). The layout file each of its items is made from, looked for next to the layout this panel
     /// is in. The program fills it with <see cref="UILayout.Populate(Panel, int)"/>.
@@ -92,13 +108,43 @@ public class Panel : UIComponent
             return;
 
         // On glass the background is see through, as much as the glass says
+        UIRect surface = SurfaceBounds;
         if (list.Skin.TryGetRegion(Background, out var region))
-            list.NineSlice(region, Bounds, Glass is { } frosted ? frosted.Over(Color ?? Vector4.One) : Color ?? Vector4.One);
+            list.NineSlice(region, surface, Glass is { } frosted ? frosted.Over(Color ?? Vector4.One) : Color ?? Vector4.One);
         else
-            list.RoundRect(Bounds, Radius, Glass is { } glass ? glass.Over(Color ?? list.Skin.PanelColor) : Color ?? list.Skin.PanelColor);
+        {
+            Vector4 fill = Glass is { } glass ? glass.Over(Color ?? list.Skin.PanelColor) : Color ?? list.Skin.PanelColor;
+            if (Hole?.Invoke() is { IsEmpty: false } hole)
+                PaintAround(list, surface, hole, fill);
+            else
+                list.RoundRect(surface, Radius, fill);
+        }
 
         if (Outline is { W: > 0.0f } outline)
-            list.RoundOutline(Bounds, Radius, 1.0f, outline);
+            list.RoundOutline(surface, Radius, 1.0f, outline);
+    }
+
+    // The rounded box painted round a hole in four strips, under it, over it and either side of it, each the whole box cut
+    // down to the strip, so its corners stay round and the edges of the hole stay square
+    private void PaintAround(UIDrawList list, UIRect surface, UIRect hole, Vector4 fill)
+    {
+        hole = hole.Intersect(surface);
+        Span<UIRect> strips =
+        [
+            new UIRect(surface.Min, new Vector2(surface.Max.X, hole.Min.Y)),
+            new UIRect(new Vector2(surface.Min.X, hole.Max.Y), surface.Max),
+            new UIRect(new Vector2(surface.Min.X, hole.Min.Y), new Vector2(hole.Min.X, hole.Max.Y)),
+            new UIRect(new Vector2(hole.Max.X, hole.Min.Y), new Vector2(surface.Max.X, hole.Max.Y))
+        ];
+
+        foreach (UIRect strip in strips)
+        {
+            if (strip.Width <= 0.0f || strip.Height <= 0.0f)
+                continue;
+            list.PushClip(strip);
+            list.RoundRect(surface, Radius, fill);
+            list.PopClip();
+        }
     }
 
     protected override void DefineScript()
@@ -111,6 +157,7 @@ public class Panel : UIComponent
         Expose("stagger", () => Stagger, value => Stagger = MathF.Max(0.0f, value));
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("radius", () => Radius, value => Radius = MathF.Max(0.0f, value));
+        Expose("inset", () => Inset, value => Inset = MathF.Max(0.0f, value));
         Expose("clip", () => Clip, value => Clip = value);
         Expose("outline", () => Outline ?? Vector4.Zero, value => Outline = value.W > 0.0f ? value : null);
     }

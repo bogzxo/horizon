@@ -268,7 +268,7 @@ public class Dropdown : UIComponent
             float length = track.Height * VisibleRows / options.Length;
             float top = track.Max.Y - (track.Height - length) * firstRow / (options.Length - VisibleRows);
 
-            list.RoundRect(new UIRect(new Vector2(track.Max.X - 6.0f, top - length + 2.0f), new Vector2(track.Max.X - 2.0f, top - 2.0f)), 2.0f, skin.AccentColor);
+            list.RoundRect(new UIRect(new Vector2(track.Max.X - 6.0f, top - length + 2.0f), new Vector2(track.Max.X - 2.0f, top - 2.0f)), 2.0f, skin.TextColor with { W = 0.25f });
         }
 
         if (entering)

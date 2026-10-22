@@ -302,9 +302,9 @@ public class MenuBar : UIComponent
 
             // The word of the open menu stays lit, the others light up under the pointer
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
-            list.Box(title, shown ? skin.AccentColor with { W = 0.35f } : IsHovered && title.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(title, shown ? skin.TextColor with { W = ListBox.PICKED } : IsHovered && title.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(menus[i].Title, title, Origin.Center, scale, shown ? skin.AccentColor : skin.TextColor, markup: false);
+            list.Text(menus[i].Title, title, Origin.Center, scale, skin.TextColor, markup: false);
         }
 
         list.EndParts();

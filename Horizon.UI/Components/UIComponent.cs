@@ -318,6 +318,9 @@ public abstract partial class UIComponent
             Size.X > 0.0f ? Size.X : automatic.X,
             Size.Y > 0.0f ? Size.Y : automatic.Y);
 
+        // One that folds part of itself away asks for what's left of it, see Folding
+        DesiredSize = Folding(DesiredSize);
+
         // Sliding in or out it asks for as much of that as is out, see UIComponent.Sliding
         if (slideWanted is not null)
             DesiredSize = SlidSize(DesiredSize);
@@ -337,6 +340,13 @@ public abstract partial class UIComponent
     /// have been measured by the time this is called.
     /// </summary>
     protected virtual Vector2 Measure(UISkin skin) => Vector2.Zero;
+
+    /// <summary>
+    /// What it asks its parent for out of what it measured or was sized to, for a component that folds part of itself
+    /// away and keeps its <see cref="Size"/> for when it opens again (a <see cref="TabPanel"/> folded down to its tabs).
+    /// What it was handed, by default.
+    /// </summary>
+    protected virtual Vector2 Folding(Vector2 desired) => desired;
 
     /// <summary>
     /// Gives every child its place inside <paramref name="content"/>, which is this component's bounds
@@ -402,6 +412,9 @@ public abstract partial class UIComponent
     /// <summary>How round the corners of the glass under the component are, as round as the box it paints over it.</summary>
     protected virtual float GlassRadius(UISkin skin) => skin.CornerRadius;
 
+    /// <summary>Where its shadow, its glass and the lining of the glass go, its bounds unless it draws itself further in (a Panel's Inset).</summary>
+    protected virtual UIRect SurfaceBounds => Bounds;
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
@@ -428,17 +441,21 @@ public abstract partial class UIComponent
         if (sliding)
             list.PushClip(Bounds);
 
+        UIRect surface = SurfaceBounds;
         if (Lift > 0.0f)
-            list.Lifted(Bounds, GlassRadius(list.Skin), Lift);
+            list.Lifted(surface, GlassRadius(list.Skin), Lift);
 
         if (Glass is { } glass)
-            list.Glass(Bounds, GlassRadius(list.Skin), glass.Blur, glass.Bend);
+            list.Glass(surface, GlassRadius(list.Skin), glass.Blur, glass.Bend);
 
         Paint(list);
 
-        // The lit edge of the glass, over the background and under whatever is in it
+        // The light on the glass, its sheen and its lit edge, over the background and under whatever is in it
         if (Glass is { Rim: > 0.0f } lined)
-            list.SilverLining(Bounds, GlassRadius(list.Skin), lined.Rim);
+        {
+            list.Sheen(surface, GlassRadius(list.Skin), lined.Rim);
+            list.SilverLining(surface, GlassRadius(list.Skin), lined.Rim);
+        }
 
         if (hoverness > 0.0f && Hover == UIHover.Glow)
             PaintHoverGlow(list);

@@ -133,15 +133,12 @@ internal sealed class SettingRow : StackPanel
         _ => Text(setting, width)
     };
 
+    // A switch and nothing written beside it, the switch says on or off itself the way a phone's does
     private Action<IRuntimeValue?> Toggle(UISetting setting)
     {
-        var toggle = Put(new ToggleButton { Size = new Vector2(120.0f, SettingsPage.RowControlHeight), LabelScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        var toggle = Put(new ToggleButton { Size = new Vector2(56.0f, SettingsPage.RowControlHeight), LabelScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
         toggle.OnPressed = () => page.Changed(setting.Key, Values.Bool(toggle.State));
-        return value =>
-        {
-            toggle.State = value is BooleanValue { Value: true };
-            toggle.Label = toggle.State ? "On" : "Off";
-        };
+        return value => toggle.State = value is BooleanValue { Value: true };
     }
 
     private Action<IRuntimeValue?> Choice(UISetting setting, float width)
@@ -190,9 +187,10 @@ internal sealed class SettingRow : StackPanel
         };
     }
 
-    // How a slider's number is written, a share as a percentage, anything else as it is
+    // How a slider's number is written, a share (nothing to all of it) as a percentage, anything else as it is. Anything up
+    // to 1 was a share, and the caret's glide of a few hundredths of a second read 5%
     private static string Said(UISetting setting, float number) =>
-        setting.Least >= 0.0f && setting.Most <= 1.0f ? $"{number * 100.0f:0}%" : setting.Step >= 1.0f ? $"{number:0}" : $"{number:0.##}";
+        setting.Least == 0.0f && setting.Most == 1.0f ? $"{number * 100.0f:0}%" : setting.Step >= 1.0f ? $"{number:0}" : $"{number:0.###}";
 
     // A button a choice, lit when it is one of them, for a list of what there is (plugins, profiles)
     private Action<IRuntimeValue?> Flags(UISetting setting, float width)

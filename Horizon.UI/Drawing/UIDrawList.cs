@@ -185,6 +185,7 @@ public sealed partial class UIDrawList
         visualOffset = Vector2.Zero;
         visualScale = Vector2.One;
         opacity = 1.0f;
+        fades.Clear();
 
         owners.Clear();
         owner = 0.0f;
@@ -409,6 +410,33 @@ public sealed partial class UIDrawList
         Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, under, flags, ring);
     }
 
+    // How many bands a sheen is laid in, how far down the glass it reaches as a share of its height, and how bright it is
+    // at the top for a rim of 1
+    private const int SHEEN_BANDS = 6;
+    private const float SHEEN_REACH = 0.45f, SHEEN_STRENGTH = 0.065f;
+
+    /// <summary>
+    /// The sheen of a pane of glass, a soft light down from its top edge that fades out before its middle, the light the
+    /// silver lining catches caught by the face of the glass as well. It's what has glass read as glass over something
+    /// dark, where there's nothing behind it to blur. Laid in bands of the rounded box a little further down each, too
+    /// faint each to see a step between them.
+    /// </summary>
+    /// <param name="strength">How bright it is, as the rim of the glass, 0 for none.</param>
+    public void Sheen(UIRect rect, float radius, float strength)
+    {
+        if (strength <= 0.0f || rect.IsEmpty)
+            return;
+
+        var band = new Vector4(1.0f, 1.0f, 1.0f, SHEEN_STRENGTH * Math.Clamp(strength, 0.0f, 1.0f) / SHEEN_BANDS);
+        for (int i = 1; i <= SHEEN_BANDS; i++)
+        {
+            float down = rect.Height * SHEEN_REACH * i / SHEEN_BANDS;
+            PushClip(new UIRect(new Vector2(rect.Min.X, rect.Max.Y - down), rect.Max));
+            RoundRect(rect, radius, band);
+            PopClip();
+        }
+    }
+
     // How far the shadow under a popup reaches and how far down it's moved, in the UI's pixels, and how dark it is on a
     // dark panel and on a light one (on light it's a hint, on dark it has to be there to be seen at all)
     private const float POPUP_SOFTNESS = 22.0f, POPUP_DROP = 6.0f, POPUP_SHADOW_DARK = 0.5f, POPUP_SHADOW_LIGHT = 0.2f;
@@ -425,7 +453,7 @@ public sealed partial class UIDrawList
             return;
 
         float radius = Skin.PopupRadius;
-        Vector4 panel = Skin.PanelColor with { W = 1.0f };
+        Vector4 panel = Skin.Palette.Raised;
         Lifted(rect, radius);
 
         if (glass is { } frosted)
@@ -441,7 +469,10 @@ public sealed partial class UIDrawList
         RoundOutline(rect, radius, hairline, Skin.BorderColor);
 
         if (glass is { Rim: > 0.0f } lined)
+        {
+            Sheen(rect, radius, lined.Rim);
             SilverLining(rect, radius, lined.Rim);
+        }
     }
 
     /// <summary>
@@ -854,10 +885,12 @@ public sealed partial class UIDrawList
         if (itemCount == items.Length)
             Array.Resize(ref items, items.Length * 2);
 
-        if (opacity < 1.0f)
+        // Faded by the animation it's in and the edges it's near, see PushFade
+        float shown = fades.Count > 0 ? opacity * FadeOf(visible) : opacity;
+        if (shown < 1.0f)
         {
             // Alpha is the top byte, see SpriteItem.PackColor.
-            uint alpha = (uint)((color >> 24) * opacity + 0.5f);
+            uint alpha = (uint)((color >> 24) * shown + 0.5f);
             color = (color & 0x00FFFFFF) | alpha << 24;
         }
 

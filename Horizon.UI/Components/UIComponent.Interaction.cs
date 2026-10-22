@@ -303,6 +303,13 @@ public abstract partial class UIComponent
     { }
 
     /// <summary>
+    /// Escape pressed while the focus is in this or anything inside it, with no dialog or popup up for it to close first.
+    /// True to say it was taken (a page of settings closing), false to leave it to the next one out and in the end to the
+    /// focus being let go of, which is what escape does otherwise.
+    /// </summary>
+    protected internal virtual bool OnEscape() => false;
+
+    /// <summary>
     /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the
     /// pointer or not. Does nothing while the component isn't in a module.
     /// </summary>

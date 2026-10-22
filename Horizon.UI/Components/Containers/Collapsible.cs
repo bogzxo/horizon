@@ -182,16 +182,17 @@ public class Collapsible : StackPanel
         }
         else
         {
-            list.Box(header, skin.ControlColor * tint);
-            if (lit)
-                list.Box(header, skin.HoverColor);
+            // No bar of its own, the title and its arrow quietly over the panel the way a sidebar heads a group, and a box
+            // under them only while the pointer's there. A bar in the control's colour over every group was a stack of
+            // buttons that weren't. Always painted, see-through when not lit, so the quads after it don't shift
+            list.Box(header, skin.HoverColor with { W = lit ? skin.HoverColor.W : 0.0f });
         }
 
         list.BeginPart(RIM_PART);
         PaintSelection(list);
 
         list.BeginPart(TITLE_PART);
-        Vector4 color = (TitleColor ?? (art ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor)) * tint;
+        Vector4 color = (TitleColor ?? (art ? region.TextOr(skin.ControlTextColor) : skin.DimTextColor)) * tint;
         float size = MathF.Round(header.Height * ARROW_SHARE);
         float indent = MathF.Round(header.Height * 0.4f);
         Vector2 arrow = new(header.Min.X + indent + size * 0.5f, header.Center.Y);

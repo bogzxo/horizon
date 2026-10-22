@@ -33,6 +33,14 @@ public sealed class UIDialog : Panel
 
     private static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.55f);
 
+    // A palette's shade is a hint of one, it's a quick thing and what's behind it is still what's being worked on, and its
+    // card hangs this far under the top of the module rather than in the middle
+    private static readonly Vector4 PaletteShade = new(0.02f, 0.03f, 0.05f, 0.22f);
+    private const float PALETTE_DROP = 88.0f;
+
+    // Whether it's shown as a palette, see ShowPalette
+    private bool palette;
+
     private readonly StackPanel card;
     private readonly Label title, message;
     private readonly StackPanel buttons;
@@ -88,7 +96,8 @@ public sealed class UIDialog : Panel
             IntroTime = 0.22f
         });
 
-        title = card.Add(new Label(heading) { Anchor = Origin.Left, Align = Origin.Left });
+        // The heading in bold, a size up from what's under it is a heading only when it's heavier as well
+        title = card.Add(new Label($"[b]{heading}[/b]") { Anchor = Origin.Left, Align = Origin.Left });
         message = card.Add(new Label(text) { Anchor = Origin.Left, Align = Origin.TopLeft, Wrap = true, Size = new Vector2(WIDTH, 0.0f) });
 
         // A dialog that is only its controls has no line of text taking up room over them
@@ -128,6 +137,9 @@ public sealed class UIDialog : Panel
             }
         }
 
+        // Whatever was popped up in the module goes, a dialog is the top of it (a code editor's completions drew over a palette)
+        module.Popup = null;
+
         var dialog = new UIDialog(title, message, choices);
         module.AddComponent(dialog);
 
@@ -141,6 +153,31 @@ public sealed class UIDialog : Panel
         dialog.PlayIntro();
         return dialog;
     }
+
+    /// <summary>
+    /// Shows a dialog as a palette, Spotlight's and VS Code's, a card hanging under the top of the module with nothing on it
+    /// but what is put in its <see cref="Body"/> (a box to type in and a list), no heading, no line and no buttons, over a
+    /// shade that hardly darkens what's behind. The choices are still there for whatever presses them, and escape is the
+    /// last of them as ever.
+    /// </summary>
+    public static UIDialog ShowPalette(UIModule module, string title, params DialogChoice[] choices)
+    {
+        UIDialog dialog = Show(module, title, string.Empty, choices);
+        dialog.palette = true;
+        dialog.Color = PaletteShade;
+        dialog.title.Visible = false;
+        dialog.buttons.Visible = false;
+        dialog.card.Padding = new UIEdges(10.0f, 10.0f, 10.0f, 10.0f);
+        dialog.card.Spacing = 0.0f;
+        dialog.card.Anchor = Origin.Top;
+        dialog.card.Pivot = Origin.Top;
+        dialog.card.Position = new Vector2(0.0f, -PALETTE_DROP);
+        dialog.card.IntroTime = 0.16f;
+        return dialog;
+    }
+
+    /// <summary>Whether it's shown as a palette (<see cref="ShowPalette"/>).</summary>
+    public bool IsPalette => palette;
 
     /// <summary>Closes the dialog as if its last choice had been picked, which is what escape does.</summary>
     public void Cancel() => Pick(choices.Length - 1);
@@ -214,7 +251,7 @@ public sealed class UIDialog : Panel
     {
         // A skin without art for a panel gets a plain box instead, in whatever colour the skin has for one right
         // now, the skin can change under a dialog that is up (the one its theme is picked in, say)
-        card.Color = list.Skin.TryGetRegion(card.Background, out _) ? null : list.Skin.PanelColor with { W = 1.0f };
+        card.Color = list.Skin.TryGetRegion(card.Background, out _) ? null : list.Skin.Palette.Raised;
 
         // On what every popup sits on, as round, with the hairline and the shadow that lift it off the shade
         card.Radius = list.Skin.PopupRadius;

@@ -51,9 +51,9 @@ public sealed class StatusItem
 /// </summary>
 public class StatusBar : UIComponent
 {
-    // How much of the accent the bar is tinted with when it isn't given a colour, and the least contrast an item's own
-    // colour is allowed on it, the web's for text beside the point
-    private const float ACCENT_SHARE = 0.16f;
+    // How much the words on it are seen through, a bar that says where things stand is said quietly, and the least
+    // contrast an item's own colour is allowed on it, the web's for text beside the point
+    private const float TEXT_SHARE = 0.78f;
     private const float LEAST_CONTRAST = 3.0f;
 
     private const float ITEM_PADDING = 8.0f;
@@ -64,8 +64,11 @@ public class StatusBar : UIComponent
 
     public IReadOnlyList<StatusItem> Items => items;
 
-    /// <summary>The colour of the strip, null for the skin's accent.</summary>
+    /// <summary>The colour of the strip, null for the skin's panel.</summary>
     public Vector4? Color { get; set; }
+
+    /// <summary>Whether a hairline runs along its top, between it and what it's under. Off for a bar that's part of a frame of one tone.</summary>
+    public bool Hairline { get; set; } = true;
 
     /// <summary>The colour of the words on it, null for the skin's text colour.</summary>
     public Vector4? TextColor { get; set; }
@@ -150,17 +153,19 @@ public class StatusBar : UIComponent
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
         Vector2 pointer = Pointer;
-        // The panel tinted with the accent unless told, the accent itself was a blinding bar of gold in the Horizon theme
-        // with the skin's white text on it. The text is whichever of the skin's two reads best on what the bar is
-        Vector4 bar = Color ?? Vector4.Lerp(skin.PanelColor with { W = 1.0f }, skin.AccentColor with { W = 1.0f }, ACCENT_SHARE);
+        // The panel unless told, the chrome the rest of the window's edge is. It was the accent, a blinding bar of gold in
+        // the Horizon theme, and then the panel tinted with it, which came out olive. The text is whichever of the skin's
+        // two reads best on what the bar is, a little seen through
+        Vector4 bar = Color ?? skin.PanelColor with { W = 1.0f };
         Vector4 text = TextColor ?? (UIPalette.Contrast(skin.TextColor, bar) >= UIPalette.Contrast(skin.BarTextColor, bar) ? skin.TextColor : skin.BarTextColor);
+        if (TextColor is null)
+            text = text with { W = text.W * TEXT_SHARE };
 
         list.BeginPart(-1);
         list.Rect(Bounds, bar);
 
-        // A hairline in the accent along its top, which is what's left of the accent colour of the whole bar
-        if (Color is null)
-            list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.6f });
+        // A hairline along its top in the colour of the skin's edges, between it and what it's under
+        list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.BorderColor with { W = Hairline ? skin.BorderColor.W : 0.0f });
 
         for (int i = 0; i < items.Count; i++)
         {
@@ -170,10 +175,14 @@ public class StatusBar : UIComponent
             if (area.IsEmpty)
                 continue;
 
+            // What's behind an item (the red of errors) and its hover are pills inside the bar, not slabs the bar's height.
+            // A square block of red on a window of round cards was the one hard corner left on it
+            UIRect pill = Pill(area);
+            float round = pill.Height * 0.5f;
             if (item.Background is { } background)
-                list.Rect(area, background);
+                list.RoundRect(pill, round, background);
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
-            list.Rect(area, item.OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.RoundRect(pill, round, item.OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             // A colour of its own that can't be read on the bar (red on the accent) is the bar's text instead
             Vector4 said = item.Color is { } own && UIPalette.Contrast(own, item.Background ?? bar) >= LEAST_CONTRAST ? own : text;
@@ -181,6 +190,13 @@ public class StatusBar : UIComponent
         }
 
         list.EndParts();
+    }
+
+    // An item's area a little in from the bar's top and bottom and its own sides
+    private static UIRect Pill(UIRect area)
+    {
+        float down = MathF.Min(3.0f, MathF.Max(0.0f, (area.Height - 12.0f) * 0.5f));
+        return new UIRect(area.Min + new Vector2(1.0f, down), area.Max - new Vector2(1.0f, down));
     }
 
     protected internal override void OnPointerDown(Vector2 point) => pressed = ItemAt(point);

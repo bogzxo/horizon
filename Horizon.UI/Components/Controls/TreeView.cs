@@ -89,6 +89,9 @@ public class TreeView : UIComponent
     private const float ROW_PADDING = 8.0f, BAR_WIDTH = 5.0f, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
 
+    // How far in from its top and bottom the rows fade while there are more past that edge, see ScrollPanel.Fade
+    private const float FADE = 18.0f;
+
     // The rows that are showing, every item whose parents are all open, in order, with how deep each is
     private readonly List<(UITreeItem Item, int Depth)> rows = [];
     private List<UITreeItem> items = [];
@@ -414,7 +417,7 @@ public class TreeView : UIComponent
         Vector4 text = skin.TextColor;
         Vector4 dim = text with { W = text.W * 0.55f };
         Vector4 guide = text with { W = text.W * 0.12f };
-        Vector4 lit = skin.AccentColor with { W = 0.28f };
+        Vector4 lit = text with { W = ListBox.PICKED };
 
         if (Color is { } behind)
         {
@@ -423,6 +426,8 @@ public class TreeView : UIComponent
         }
 
         list.PushClip(bounds);
+        float fade = MathF.Min(FADE, bounds.Height * 0.25f);
+        list.PushFade(bounds, MathF.Min(fade, scroll), MathF.Min(fade, travel - scroll));
 
         int first = (int)(scroll / line);
         int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
@@ -438,7 +443,7 @@ public class TreeView : UIComponent
             // The highlight is always there, see-through on a row that isn't lit. A row's quads are blended with the same
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
-            list.Rect(row, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(row.Shrink(new UIEdges(4.0f, 1.0f)), item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -473,10 +478,12 @@ public class TreeView : UIComponent
         }
 
         list.EndParts();
+        list.PopFade();
         list.PopClip();
 
+        // The keyboard's in it, in the colour the keyboard is everywhere, the accent's for what's picked
         if (FocusLine && IsFocused)
-            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - FOCUS_LINE), bounds.Max), skin.AccentColor);
+            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - 1.0f), bounds.Max), skin.Palette.Highlight with { W = 0.55f });
 
         // A thin bar along the right says how much of the tree is in sight, and where
         if (scrolls)

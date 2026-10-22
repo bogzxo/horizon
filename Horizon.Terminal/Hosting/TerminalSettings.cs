@@ -103,7 +103,7 @@ public sealed class TerminalSettings
     /// <summary>Every setting, for an editor's completion, hover and form, and api.hor.</summary>
     public static readonly TerminalSettingInfo[] Described =
     [
-        new("theme", "choice", "\"horizon\"", "Which theme of the flat skin Dusk is in, its terminals' sixteen colours worked out of it.",
+        new("theme", "choice", "\"horizon\"", "The colours Dusk is drawn in, its terminals' sixteen colours made from them.",
             ["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"]),
         new("profile", "text", "\"\"", "The id of the shell a new tab opens with (pwsh, powershell, cmd, git_bash, wsl:Ubuntu), empty for the first one found."),
         new("text_scale", "number", "0.16", "How big the terminals' text is, Ctrl+Shift+= and - change it.", Least: 0.06f, Most: 0.6f),

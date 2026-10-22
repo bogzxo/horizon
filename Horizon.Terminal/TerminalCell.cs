@@ -190,8 +190,8 @@ public sealed class TerminalPalette
         {
             Background = ground,
             Foreground = ink,
-            Cursor = Opaque(palette.Accent),
-            Selection = palette.Accent with { W = 0.35f }
+            Cursor = Opaque(palette.Highlight),
+            Selection = palette.Selection
         };
 
         Vector4 black = dark ? Skinning.UIPalette.Towards(ground, ink, 0.1f) : Skinning.UIPalette.Towards(ink, ground, 0.1f);

@@ -783,6 +783,10 @@ public partial class CodeEditor : UIComponent
 
     protected override void Update(float dt)
     {
+        // The list of completions goes with the keyboard, it stayed up over whatever took it (a palette, a window)
+        if (CompletionOpen && !IsFocused)
+            CloseCompletion();
+
         blink = (blink + dt) % (BLINK * 2.0f);
         tickTime = dt;
         flowTime += dt;
@@ -1432,6 +1436,11 @@ public partial class CodeEditor : UIComponent
     }
 
     // Where the list is, under the start of the word being completed, or over it when there is no room under it
+    // How tall a row of the completions is, a line of code with room round it and never less than a row of a list, and the
+    // room round the rows inside the popup. A line of code to a row was a list too cramped to read, its text against the edge
+    private float CompletionRow(UISkin skin) => MathF.Max(FontOf(skin).LineHeight * paintedScale + 8.0f, 22.0f);
+    private const float COMPLETION_PAD = 6.0f;
+
     private UIRect CompletionBounds()
     {
         if (paintedSkin is not { } skin || completions.Count == 0)
@@ -1439,6 +1448,7 @@ public partial class CodeEditor : UIComponent
 
         float scale = paintedScale;
         float lineHeight = FontOf(skin).LineHeight * scale;
+        float rowHeight = CompletionRow(skin);
         UIRect area = TextArea(skin, scale);
         UITextPosition caret = document.Caret;
 
@@ -1455,8 +1465,8 @@ public partial class CodeEditor : UIComponent
             widest = MathF.Max(widest, text + detail);
         }
 
-        float width = widest + TEXT_PAD * 4.0f;
-        float height = Math.Min(COMPLETION_ROWS, completions.Count) * lineHeight + TEXT_PAD;
+        float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f;
+        float height = Math.Min(COMPLETION_ROWS, completions.Count) * rowHeight + COMPLETION_PAD * 2.0f;
 
         // Under the line unless that runs off the bottom of the module
         float top = below;
@@ -1495,23 +1505,26 @@ public partial class CodeEditor : UIComponent
         bool entering = list.BeginEntrance(ref completionsOpenedAt, new Vector2(bounds.Min.X, bounds.Max.Y), new Vector2(0.0f, 4.0f));
         list.Popup(bounds, Module?.Compositor.PopupGlass);
 
+        float rowHeight = CompletionRow(skin);
         int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
         for (int i = completionTop; i < last; i++)
         {
             list.BeginPart(i);
-            float top = bounds.Max.Y - TEXT_PAD * 0.5f - (i - completionTop) * lineHeight;
-            var row = new UIRect(new Vector2(bounds.Min.X + 1.0f, top - lineHeight), new Vector2(bounds.Max.X - 1.0f, top));
+            float rowTop = bounds.Max.Y - COMPLETION_PAD - (i - completionTop) * rowHeight;
+            var row = new UIRect(new Vector2(bounds.Min.X + COMPLETION_PAD, rowTop - rowHeight), new Vector2(bounds.Max.X - COMPLETION_PAD, rowTop));
 
-            if (i == completionIndex)
-                list.RoundRect(row.Shrink(new UIEdges(3.0f, 1.0f)), skin.CornerRadius, skin.AccentColor with { W = 0.35f });
+            // The picked one on a pill the way every list has it, always painted so the quads don't shift
+            list.RoundRect(row, MathF.Min(skin.CornerRadius, 6.0f), skin.TextColor with { W = i == completionIndex ? ListBox.PICKED : 0.0f });
 
+            // The text in the middle of its row
+            float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
-            list.Text(item.Text, new Vector2(bounds.Min.X + TEXT_PAD, top), scale, colors.Name, markup: false);
+            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD, top), scale, colors.Name, markup: false);
 
             if (item.Detail.Length > 0)
             {
                 float detail = FontOf(skin).Measure(item.Detail, scale * 0.85f, markup: false).X;
-                list.Text(item.Detail, new Vector2(bounds.Max.X - TEXT_PAD - detail, top - lineHeight * 0.08f), scale * 0.85f, colors.Comment, markup: false);
+                list.Text(item.Detail, new Vector2(row.Max.X - TEXT_PAD - detail, top - lineHeight * 0.08f), scale * 0.85f, colors.Comment, markup: false);
             }
         }
 
@@ -1593,8 +1606,8 @@ public partial class CodeEditor : UIComponent
         // A press on the list of what can be completed picks the row it is on
         if (CompletionOpen && CompletionBounds() is var listed && listed.Contains(point) && paintedSkin is { } listSkin)
         {
-            float rowHeight = FontOf(listSkin).LineHeight * paintedScale;
-            int row = completionTop + (int)((listed.Max.Y - TEXT_PAD * 0.5f - point.Y) / rowHeight);
+            float rowHeight = CompletionRow(listSkin);
+            int row = completionTop + (int)((listed.Max.Y - COMPLETION_PAD - point.Y) / rowHeight);
             if (row >= 0 && row < completions.Count)
             {
                 completionIndex = row;
@@ -1766,7 +1779,7 @@ public partial class CodeEditor : UIComponent
 
         bool focused = IsFocused;
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
-        Vector4 selection = skin.AccentColor with { W = 0.35f };
+        Vector4 selection = skin.Palette.Selection;
         Vector4 band = skin.HoverColor with { W = skin.HoverColor.W * 0.35f };
 
         list.PushClip(area);
@@ -2004,17 +2017,19 @@ public partial class CodeEditor : UIComponent
         list.PopClip();
 
         // The bar, as long against its track as what is in sight is against all of it, and the line along the top that
-        // says it has the keyboard
+        // says it has the keyboard, a hairline of the accent and not a stripe of it. The thumb is the text seen through,
+        // the way ScrollPanel's is, it was a bar of gold down the side of every file
         list.BeginPart(PART_BAR);
         if (FocusLine && focused)
-            list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 2.0f), Bounds.Max), skin.AccentColor);
+            list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.55f });
         float total = rows.Count * lineHeight;
         if (total > area.Height)
         {
             var (track, length, _, topOfThumb) = BarGeometry(skin, paintedScale);
 
             list.Rect(track, skin.HoverColor with { W = skin.HoverColor.W * 0.5f });
-            list.Rect(new UIRect(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb)), skin.AccentColor with { W = 0.8f });
+            UIRect thumb = new(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb));
+            list.RoundRect(thumb.Shrink(new UIEdges(1.0f, 0.0f)), track.Width * 0.5f, skin.TextColor with { W = 0.22f });
         }
 
         // The art under the pointer, big, over everything
@@ -2228,7 +2243,9 @@ public partial class CodeEditor : UIComponent
         list.BeginPart(PART_STICKY);
         UIRect strip = StickyBounds(area, lineHeight, held.Count);
         strip = new UIRect(new Vector2(content.Min.X, strip.Min.Y), strip.Max);
-        list.Rect(strip, Color ?? (skin.PanelColor with { W = 1.0f }));
+        // Solid whatever the editor's own colour is, a see-through editor (over Hex's picture) had the lines scrolled under
+        // the strip showing through it
+        list.Rect(strip, Color is { W: >= 0.99f } solid ? solid : skin.PanelColor with { W = 1.0f });
         list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.15f });
 
         Span<char> number = stackalloc char[12];

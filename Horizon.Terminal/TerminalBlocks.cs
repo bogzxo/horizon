@@ -312,8 +312,10 @@ public sealed partial class TerminalScreen
                 promptLearned = true;
             }
 
+            // Never under the last prompt, and never past the last row either. A clear or a reflow can leave the cursor on
+            // or over the last prompt's row, and one past it was a row that wasn't there, which took Dawn down whole
             int floor = lastPrompt is not null ? IndexOf(lastPrompt) + 1 : 0;
-            row = Math.Max(Math.Max(floor, 0), row - (promptHeight - 1));
+            row = Math.Clamp(Math.Max(floor, row - (promptHeight - 1)), 0, TotalRows - 1);
             MarkUnsaidOutput(row);
             TerminalRow prompt = RowAt(row);
             // the same goes for a command that wrote nothing, its output was put where this prompt is

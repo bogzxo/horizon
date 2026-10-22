@@ -76,6 +76,22 @@ public class ListBox : UIComponent
     // How tall a row of the lead is, as a share of a row, and how much of the accent its text has
     private const float LEAD_SHARE = 0.78f, LEAD_ACCENT = 0.35f;
 
+    /// <summary>
+    /// How an item is shown in three parts, a quiet word in front of it (the menu a command is in), the item itself, and
+    /// keys along the right drawn as keycaps ("Ctrl+Shift+P", chords split by a space). Null for every item as it is. The
+    /// item itself is still what <see cref="Value"/> and the handlers get.
+    /// </summary>
+    public Func<string, (string Quiet, string Text, string Keys)>? Columns { get; set; }
+
+    /// <summary>Whether it's only its rows, no box of its own under them and no frame round them, for a list on a card (a palette).</summary>
+    public bool Plain { get; set; }
+
+    // How far a row's highlight is in from the sides of the list, and how far apart and how padded the keycaps are
+    private const float ROW_INSET = 4.0f, KEY_GAP = 4.0f, KEY_PAD = 6.0f;
+
+    /// <summary>How much of the text's colour is under a picked row, in a list, a tree, a table or a menu, the one pick there is.</summary>
+    public const float PICKED = 0.17f;
+
     /// <summary>Called with the newly chosen item whenever a click or a key changes it.</summary>
     public Action<string>? OnChanged { get; set; }
 
@@ -219,7 +235,7 @@ public class ListBox : UIComponent
         // A list has no art of its own in any skin, it is a box in the colour of a field unless it is given one
         if (Style.Length > 0 && skin.TryGetRegion(Style, out var art))
             list.NineSlice(art, Bounds, tint);
-        else
+        else if (!Plain)
             list.Box(Bounds, skin.FieldColor * tint);
 
         bool scrolls = items.Length > Rows;
@@ -239,11 +255,22 @@ public class ListBox : UIComponent
             UIRect row = new(new Vector2(Bounds.Min.X, rowTop - height), new Vector2(right, rowTop));
             rowTop -= height;
 
-            // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView)
-            list.Rect(row, i == index ? skin.AccentColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.55f)
-                : IsHovered && enabled && Hovering(row) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView).
+            // The chosen one is a rounded slip of the text's colour, the one material every list, tree and menu picks with.
+            // It was the accent half seen through, which over Horizon's blue came out the colour of a swamp, and then the
+            // accent whole, a bar of gold down every list, and the accent is for what's on and what has the keyboard
+            bool chosen = i == index;
+            UIRect slip = row.Shrink(new UIEdges(ROW_INSET, 1.0f));
+            list.Box(slip, chosen ? skin.TextColor with { W = PICKED } * tint
+                : IsHovered && enabled && Hovering(row) ? skin.HoverColor with { W = skin.HoverColor.W * 0.6f } : skin.HoverColor with { W = 0.0f });
 
-            list.Text(Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, lead ? scale * 0.9f : scale, (lead ? leadText : skin.TextColor) * tint, markup: false);
+            Vector4 ink = lead && !chosen ? leadText : skin.TextColor;
+            float size = lead ? scale * 0.9f : scale;
+            UIRect inside = slip.Shrink(new UIEdges(ROW_PADDING, 0.0f));
+            if (Columns is { } columns)
+                PaintColumns(list, columns(items[i]), inside, size, ink * tint, chosen);
+            else
+                list.Text(Resolve(items[i]), inside, Origin.Left, size, ink * tint, markup: false);
 
             // A hairline under the last of the lead, between it and the rest
             if (lead && i == Lead - 1 && i + 1 < items.Length)
@@ -262,13 +289,53 @@ public class ListBox : UIComponent
             float barTop = Bounds.Max.Y - travel * (top / (float)(items.Length - Rows));
             float x = Bounds.Max.X - BAR_WIDTH * 1.5f;
 
-            list.Rect(new UIRect(new Vector2(x, barTop - Bounds.Height * share), new Vector2(x + BAR_WIDTH, barTop)), skin.TrackColor + skin.HoverColor);
+            list.RoundRect(new UIRect(new Vector2(x, barTop - Bounds.Height * share), new Vector2(x + BAR_WIDTH, barTop)), BAR_WIDTH * 0.5f, skin.TextColor with { W = 0.2f });
         }
 
-        if (skin.BorderColor.W > 0.0f)
+        if (skin.BorderColor.W > 0.0f && !Plain)
             list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
 
         PaintSelection(list);
+    }
+
+    /// <summary>
+    /// A row in its three parts, the quiet word and the item from the left and the keys as keycaps from the right. The item
+    /// is cut short where the keys start rather than written under them.
+    /// </summary>
+    private static void PaintColumns(UIDrawList list, (string Quiet, string Text, string Keys) row, UIRect area, float scale, Vector4 ink, bool chosen)
+    {
+        UISkin skin = list.Skin;
+        Vector4 quiet = ink with { W = ink.W * 0.6f };
+
+        // The keys from the right, each part of a chord a cap of its own
+        float right = area.Max.X;
+        if (row.Keys.Length > 0)
+        {
+            float keyScale = scale * 0.82f;
+            float height = MathF.Min(area.Height - 6.0f, skin.Font.LineHeight * keyScale + 6.0f);
+            string[] caps = row.Keys.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
+            for (int c = caps.Length - 1; c >= 0; c--)
+            {
+                float width = MathF.Max(height, skin.Font.Measure(caps[c], keyScale, markup: false).X + KEY_PAD * 2.0f);
+                var cap = new UIRect(new Vector2(right - width, area.Center.Y - height * 0.5f), new Vector2(right, area.Center.Y + height * 0.5f));
+                list.RoundRect(cap, MathF.Min(skin.CornerRadius, 5.0f), ink with { W = chosen ? 0.16f : 0.08f });
+                list.Text(caps[c], cap, Origin.Center, keyScale, quiet, markup: false);
+                right = cap.Min.X - KEY_GAP;
+            }
+
+            right -= KEY_PAD * 2.0f;
+        }
+
+        list.PushClip(new UIRect(area.Min, new Vector2(MathF.Max(area.Min.X, right), area.Max.Y)));
+        float left = area.Min.X;
+        if (row.Quiet.Length > 0)
+        {
+            list.Text(row.Quiet, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
+            left += skin.Font.Measure(row.Quiet, scale, markup: false).X + KEY_PAD;
+        }
+
+        list.Text(row.Text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+        list.PopClip();
     }
 
     private bool Hovering(UIRect row)

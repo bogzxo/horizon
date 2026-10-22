@@ -389,7 +389,7 @@ public class Table : UIComponent
 
         Vector4 text = skin.TextColor;
         Vector4 rule = text with { W = text.W * 0.1f };
-        Vector4 lit = skin.AccentColor with { W = 0.28f };
+        Vector4 lit = text with { W = ListBox.PICKED };
         Vector4 header = (skin.PanelColor with { W = 1.0f }) * new Vector4(0.85f, 0.85f, 0.85f, 1.0f);
 
         int first = (int)(scrollY / line);

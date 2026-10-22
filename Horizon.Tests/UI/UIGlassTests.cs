@@ -42,9 +42,15 @@ public class UIGlassTests
         var glass = new UIGlass(Blur: 20.0f, Clarity: 0.25f);
         Vector4 over = glass.Over(new Vector4(0.2f, 0.3f, 0.4f, 1.0f));
 
-        Assert.Equal(new Vector3(0.2f, 0.3f, 0.4f), new Vector3(over.X, over.Y, over.Z));
+        // As much of it as the glass doesn't let through, a little milkier the less that is
         Assert.Equal(0.75f, over.W, 0.001f);
+        Assert.True(over.X > 0.2f && over.X < 0.3f && over.Z > 0.4f && over.Z < 0.5f);
         Assert.Equal(0.0f, new UIGlass(Clarity: 1.0f).Over(Vector4.One).W, 0.001f);
+
+        // Clear glass hardly changes it, frosted lifts it further
+        Vector4 clear = new UIGlass(Clarity: 0.9f).Over(new Vector4(0.2f, 0.2f, 0.2f, 1.0f));
+        Vector4 frosted = new UIGlass(Clarity: 0.3f).Over(new Vector4(0.2f, 0.2f, 0.2f, 1.0f));
+        Assert.True(frosted.X > clear.X && clear.X - 0.2f < 0.02f);
     }
 
     [Fact]

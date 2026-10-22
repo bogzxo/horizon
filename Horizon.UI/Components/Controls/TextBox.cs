@@ -43,6 +43,9 @@ public class TextBox : UIComponent
     private const float DEFAULT_WIDTH = 320.0f;
     private const float BLINK_INTERVAL = 0.5f;
 
+    // How wide the soft ring round a box with the keyboard is
+    private const float FOCUS_RING = 3.0f;
+
     private IRuntimeValue? changedHandler;
     private IRuntimeValue? submittedHandler;
     private float blink;
@@ -132,6 +135,15 @@ public class TextBox : UIComponent
 
     /// <summary>Whether the box has a button.</summary>
     public bool HasButton => ButtonLabel.Length > 0;
+
+    /// <summary>
+    /// Whether it's only what is typed, no box, no rim and no ring round it, for a box that sits on a card which is its
+    /// box already (a palette's, Spotlight's). A skin's art for a box is drawn whatever this says.
+    /// </summary>
+    public bool Bare { get; set; }
+
+    /// <summary>A Codicon drawn at its left, before what is typed (search for a box that finds), empty for none.</summary>
+    public string LeadIcon { get; set; } = string.Empty;
 
     /// <summary>Where the button is, as the box was last laid out. Empty for a box without one.</summary>
     public UIRect ButtonBounds
@@ -518,21 +530,31 @@ public class TextBox : UIComponent
             // Art with a thick rim (a plank frame) has what is typed start inside of it, not on it
             rim = art.Border.Left * art.Scale + 3.0f;
         }
-        else
+        else if (!Bare)
         {
             list.Box(Bounds, skin.FieldColor * tint);
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, enabled && IsHovered && !focused ? 0.4f : 0.0f));
 
-            // A thin rim that turns into a thick one in the colour of the skin while it is being typed in
-            if (focused)
-                list.Frame(Bounds, 2.0f, skin.HighlightColor);
-            else
-                list.Frame(Bounds, 1.0f, skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
+            // A hairline rim, and while it's typed in a crisp line in the accent with a soft ring of it round the outside,
+            // the way a field that has the keyboard is drawn on a Mac. It was a thick frame of gold, which shouted. The
+            // ring is always painted, see-through when it isn't wanted, so the quads after it don't shift
+            float ring = FOCUS_RING;
+            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = focused ? 0.28f : 0.0f });
+            list.Frame(Bounds, 1.0f, focused ? skin.HighlightColor with { W = 0.85f } : skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 
         UIRect content = Bounds.Shrink(new UIEdges(MathF.Max(Padding.Left, rim), Padding.Top, MathF.Max(Padding.Right, rim), Padding.Bottom));
         bool empty = Text.Length == 0;
+
+        // The icon in front, as tall as a line of what is typed and a little quieter than it
+        if (LeadIcon.Length > 0)
+        {
+            float side = MathF.Min(content.Height, skin.Font.LineHeight * scale);
+            var icon = new UIRect(new Vector2(content.Min.X, content.Center.Y - side * 0.5f), new Vector2(content.Min.X + side, content.Center.Y + side * 0.5f));
+            list.Symbol(LeadIcon, icon, ink with { W = ink.W * 0.6f } * tint);
+            content = new UIRect(new Vector2(icon.Max.X + side * 0.5f, content.Min.Y), content.Max);
+        }
 
         // The button takes its end of the box, the text has the rest
         if (HasButton)
@@ -574,12 +596,14 @@ public class TextBox : UIComponent
         if (focused && HasSelection)
         {
             float from = line.Min.X + Offset(SelectionStart), to = line.Min.X + Offset(SelectionEnd);
-            list.Rect(new UIRect(new Vector2(from, content.Min.Y), new Vector2(to, content.Max.Y)), skin.HighlightColor with { W = 0.45f });
+            list.Rect(new UIRect(new Vector2(from, content.Min.Y), new Vector2(to, content.Max.Y)), skin.Palette.Selection);
         }
 
+        // The placeholder stays until something is typed, the caret sitting in front of it, an empty box with the
+        // keyboard said nothing about what it was for
         if (!empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
-        else if (!focused)
+        else
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
 

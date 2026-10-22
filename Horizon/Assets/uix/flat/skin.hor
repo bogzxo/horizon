@@ -27,8 +27,8 @@ let skin = {
     text_scale: 0.15,
     text_sizes: { caption: 0.13, heading: 0.19, title: 0.24 },
 
-    corner_radius: 6,
-    popup_radius: 10,
+    corner_radius: 8,
+    popup_radius: 14,
     row_height: 28,
 
     text_color: vec(0.84, 0.87, 0.93, 1.0),

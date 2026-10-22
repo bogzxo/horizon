@@ -286,6 +286,7 @@ public partial class TerminalView : UIComponent, IDisposable
     {
         base.Update(dt);
         program?.Update(dt);
+        UpdateBadge();
 
         bool changed = false;
         while (arrived.TryDequeue(out byte[]? bytes))
@@ -760,8 +761,11 @@ public partial class TerminalView : UIComponent, IDisposable
         paintedScale = scale;
         cellWidth = font.Measure("M", scale, markup: false).X;
         cellHeight = font.LineHeight * scale;
-        // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it
-        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? PADDING + GUTTER : PADDING, PADDING, PADDING, PADDING));
+        // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it. A pane with round corners
+        // keeps its cells clear of them
+        float pad = MathF.Max(PADDING, Radius * 0.6f);
+        float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
+        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad, pad));
         if (cellWidth <= 0.0f || cellHeight <= 0.0f)
             return;
 
@@ -778,7 +782,7 @@ public partial class TerminalView : UIComponent, IDisposable
         TerminalPalette palette = Palette;
         Vector4 background = screen.ReverseVideo ? palette.Foreground : palette.Background;
         list.BeginPart(-1);
-        list.Rect(Bounds, background);
+        list.RoundRect(Bounds, Radius, background);
 
         // The picture behind the text, placed against the area the panel says so a split shares the one picture
         if (Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f && !screen.AlternateScreen)
@@ -790,7 +794,7 @@ public partial class TerminalView : UIComponent, IDisposable
             list.PopClip();
         }
         if (bell > 0.0f)
-            list.Frame(Bounds, 2.0f, palette.Foreground with { W = bell / BELL_FLASH });
+            list.RoundOutline(Bounds, Radius, 2.0f, palette.Foreground with { W = bell / BELL_FLASH });
 
         int offset = RowOffset();
         float top = paintedArea.Max.Y;
@@ -865,7 +869,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         list.PopClip();
-        PaintBadge(list, font, scale, palette);
+        PaintBadge(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
     }

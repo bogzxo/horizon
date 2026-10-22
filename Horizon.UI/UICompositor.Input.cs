@@ -149,6 +149,13 @@ public partial class UICompositor
             }
         }
 
+        // Whatever the focus is in can take it, a window of settings closes with its search box focused
+        for (UIComponent? at = focus; at is not null; at = at.Parent)
+        {
+            if (at.OnEscape())
+                return;
+        }
+
         Focus = null;
     }
 
@@ -298,9 +305,9 @@ public partial class UICompositor
             bool handled = false;
             for (UIComponent? at = over; at is not null && !handled; at = at.Parent)
             {
-                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy)
+                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy && at.Module is { } menuModule)
                 {
-                    handler(at.Module!.ToLocal(pointer.Position));
+                    handler(menuModule.ToLocal(pointer.Position));
                     handled = true;
                 }
             }
@@ -310,8 +317,9 @@ public partial class UICompositor
         }
         secondaryWasDown = pointer.SecondaryDown;
 
-        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held
-        UIResize grip = over is not null && pressed is null ? over.GripAt(over.Module!.ToLocal(pointer.Position)) : UIResize.None;
+        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held. What
+        // was under the pointer can have left its module this very update (a window closed by escape), and has no edges then
+        UIResize grip = over is { Module: { } overModule } && pressed is null ? over.GripAt(overModule.ToLocal(pointer.Position)) : UIResize.None;
         UIComponent? gripOwner = grip != UIResize.None ? over : null;
         if (!ReferenceEquals(gripped, gripOwner) || (gripOwner is not null && gripOwner.ActiveGrip != grip))
         {
@@ -356,13 +364,13 @@ public partial class UICompositor
             if (over is not null)
                 Focus = over.Focusable && over.EnabledInHierarchy ? over : null;
 
-            if (over is not null && over.EnabledInHierarchy)
+            if (over is { Module: { } pressedIn } && over.EnabledInHierarchy)
             {
                 pressed = over;
                 pressed.IsPressed = true;
 
                 // On an edge that can be dragged the press is the start of that, and none of the component's business
-                Vector2 at = pressed.Module!.ToLocal(pointer.Position);
+                Vector2 at = pressedIn.ToLocal(pointer.Position);
                 if (pressed.GripAt(at) is var edges && edges != UIResize.None)
                     pressed.BeginResize(edges, at);
                 else
@@ -371,10 +379,16 @@ public partial class UICompositor
         }
         else if (pointer.Down && pressed is not null)
         {
-            if (pressed.IsResizing)
-                pressed.DragResize(pressed.Module!.ToLocal(pointer.Position));
+            // What was held can leave the UI while it's held (a window closed by a key), and is let go of then
+            if (pressed.Module is not { } heldIn)
+            {
+                pressed.IsPressed = false;
+                pressed = null;
+            }
+            else if (pressed.IsResizing)
+                pressed.DragResize(heldIn.ToLocal(pointer.Position));
             else
-                pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
+                pressed.OnPointerDrag(heldIn.ToLocal(pointer.Position));
         }
         else if (!pointer.Down && pressed is not null)
         {
@@ -389,9 +403,9 @@ public partial class UICompositor
                 released.EndResize();
                 if (ReferenceEquals(gripped, released)) gripped = null;
             }
-            else
+            else if (released.Module is { } releasedIn)
             {
-                released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
+                released.OnPointerUp(releasedIn.ToLocal(pointer.Position));
 
                 if (released == over)
                     released.OnClick();

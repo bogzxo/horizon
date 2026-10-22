@@ -97,6 +97,9 @@ public class ProgressBar : UIComponent
     /// <summary>The part of the bar the fill can occupy.</summary>
     protected UIRect GetTrack(UISkin skin) => Bounds.Shrink(skin.ProgressInset);
 
+    /// <summary>Whether the skin has art for the bar, a flat skin draws it as boxes instead.</summary>
+    protected bool HasArt(UISkin skin) => skin.TryGetRegion(frameStyle, out _) || skin.TryGetRegion(fillStyle, out _);
+
     /// <summary>
     /// Helper method to work out how much of the track so much of the bar covers, from whichever end it fills.
     /// </summary>
