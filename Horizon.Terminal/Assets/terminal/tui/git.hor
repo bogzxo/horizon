@@ -8,6 +8,8 @@ let program = { name: "Git" };
 let tab = 0;
 let branch = "";
 let problem = "";
+// Whether the problem is only that there's no repository here, said quietly with how to make one, not in red
+let outside = false;
 let changes = ui.list([]);
 let commits = ui.list([]);
 let shown = [];
@@ -21,13 +23,17 @@ func refresh(tui) {
     let status = git(tui, ["status", "--porcelain=v1", "-b"]);
     if (status.code != 0) {
         problem = status.errors.trim();
-        if (problem.length == 0) {
+        outside = problem.contains("not a git repository");
+        if (outside) {
+            problem = `{tui.folder()} isn't in a git repository, git init makes one`;
+        } else if (problem.length == 0) {
             problem = "git isn't there, or this isn't a repository";
         }
         return;
     }
 
     problem = "";
+    outside = false;
     let found = [];
     for (let line in tui.lines(status.output)) {
         if (line.starts_with("## ")) {
@@ -138,7 +144,11 @@ func draw(tui) {
     tui.write(parts[0].w - branch.length - 1, 0, branch, "cyan");
 
     if (problem.length > 0) {
-        tui.write(1, 2, ui.clip(problem, parts[1].w - 2), "red");
+        let colour = "red";
+        if (outside) {
+            colour = "dim";
+        }
+        tui.write(1, 2, ui.clip(problem, parts[1].w - 2), colour);
         ui.status(tui, parts[2], "r again  esc leave", "");
         return;
     }

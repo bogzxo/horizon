@@ -28,7 +28,7 @@ public readonly record struct UICodeDiagnostic(int Line, int Column, int Length,
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
 /// <param name="Detail">A few words about it, written fainter next to it.</param>
 /// <param name="Insert">What goes in when it is picked, the text itself unless this says otherwise.</param>
-public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null);
+public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "");
 
 /// <summary>
 /// What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.
@@ -274,6 +274,31 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>What the call at the caret was said to be, null when the caret isn't in one or nobody had anything to say.</summary>
     public UISignature? Signature => signature;
+
+    /// <summary>
+    /// Escape with nothing open over the code keeps the keyboard in it, the way every code editor has it. It let go of the
+    /// keyboard and what was typed next went nowhere. In a window of its own it's the window's to close.
+    /// </summary>
+    protected internal override bool OnEscape()
+    {
+        for (UIComponent? at = Parent; at is not null; at = at.Parent)
+        {
+            if (at is WindowPanel)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The hover and the signature asked for again on the next tick, for a source that answers later than it's asked (a
+    /// language server). It says nothing the first time and calls this once it has the answer.
+    /// </summary>
+    public void AskAgain()
+    {
+        hoverFor = (-1, -1, -1);
+        signatureFor = (-1, default);
+    }
 
     /// <summary>A few words after the end of some lines, faint, by the line. Empty for none.</summary>
     public IReadOnlyList<UICodeHint> InlineHints
@@ -1597,9 +1622,50 @@ public partial class CodeEditor : UIComponent
         }
 
         list.EndParts();
+        PaintCompletionDocs(list, skin, scale, bounds, colors);
 
         if (entering)
             list.EndEntrance();
+    }
+
+    // How wide the box of what the picked completion does is, in lines of the code's height, and how many lines it says
+    private const float DOCS_WIDTH = 22.0f;
+    private const int DOCS_LINES = 10;
+    private readonly List<(int Start, int Length)> docsLines = [];
+
+    // The part the box of what the picked completion does is painted as
+    private const int DOCS_PART = -3;
+
+    /// <summary>
+    /// What the picked completion does, the way VS Code has it beside the list, in a box of its own to the right of it
+    /// (to the left when there's no room), as many lines as fit. Nothing for an item a server said nothing about.
+    /// </summary>
+    private void PaintCompletionDocs(UIDrawList list, UISkin skin, float scale, UIRect bounds, UISyntaxColors colors)
+    {
+        if (completionIndex < 0 || completionIndex >= completions.Count || completions[completionIndex].Documentation is not { Length: > 0 } said)
+            return;
+
+        // In the UI's font, it's prose, and the code's had no dash for what serve-d says it throws
+        UIFont font = skin.Font;
+        float small = scale * 0.9f;
+        float lineHeight = font.LineHeight * small;
+        float width = MathF.Round(FontOf(skin).LineHeight * scale * DOCS_WIDTH);
+        docsLines.Clear();
+        font.Wrap(said, small, width - TEXT_PAD * 2.0f, docsLines, markup: false);
+        if (docsLines.Count > DOCS_LINES)
+            docsLines.RemoveRange(DOCS_LINES, docsLines.Count - DOCS_LINES);
+
+        float height = docsLines.Count * lineHeight + COMPLETION_PAD * 2.0f + TEXT_PAD;
+        float left = Module is { } module && bounds.Max.X + width + 6.0f > module.Frame.Max.X ? bounds.Min.X - width - 6.0f : bounds.Max.X + 6.0f;
+        var box = new UIRect(new Vector2(left, bounds.Max.Y - height), new Vector2(left + width, bounds.Max.Y));
+
+        list.BeginPart(DOCS_PART);
+        list.Popup(box, Module?.Compositor.PopupGlass);
+        var inside = new UIRect(new Vector2(box.Min.X + TEXT_PAD, box.Min.Y + COMPLETION_PAD), new Vector2(box.Max.X - TEXT_PAD, box.Max.Y - COMPLETION_PAD - TEXT_PAD * 0.5f));
+        list.PushFont(font);
+        list.Text(said, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(docsLines), inside, Horizon.Rendering.Origin.TopLeft, small, skin.DimTextColor, markup: false);
+        list.PopFont();
+        list.EndParts();
     }
 
     protected internal override void OnPaste(string text)

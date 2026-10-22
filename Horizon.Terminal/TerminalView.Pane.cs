@@ -25,8 +25,34 @@ public partial class TerminalView
     /// <summary>What somebody renamed the pane to, null for the title the program or the profile gives it.</summary>
     public string? PaneName { get; set; }
 
-    /// <summary>What the pane is called, its name, or what the program said, or the profile's name.</summary>
-    public string PaneTitle => PaneName ?? (Title is { Length: > 0 } said && !(said.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (said.Contains('\\') || said.Contains('/'))) ? said : Profile?.Name ?? "terminal");
+    /// <summary>What the pane is called, its name, or what the program said, or the folder its shell is in.</summary>
+    public string PaneTitle => PaneName ?? (Title is { Length: > 0 } said && !(said.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (said.Contains('\\') || said.Contains('/'))) ? said : FolderTitle);
+
+    /// <summary>
+    /// What it's called when neither somebody nor its program said, the folder its shell is in ("hexbuild"), the profile's
+    /// name before it's in one. Every tab and every pane said "Windows PowerShell", and nobody could tell them apart.
+    /// </summary>
+    public string FolderTitle
+    {
+        get
+        {
+            string? folder = WorkingDirectory;
+            if (folder is null)
+                return Profile?.Name ?? "terminal";
+
+            // Worked out again only when the folder is another, it's asked for every frame
+            if (!ReferenceEquals(folder, folderTitleOf))
+            {
+                folderTitleOf = folder;
+                folderTitle = Path.GetFileName(folder.TrimEnd('/', '\\')) is { Length: > 0 } name ? name : folder;
+            }
+
+            return folderTitle;
+        }
+    }
+
+    private string? folderTitleOf;
+    private string folderTitle = string.Empty;
 
     /// <summary>Whether the badge with the title is drawn, which the panel says while the tab has more than one pane.</summary>
     public bool ShowPaneTitle { get; set; }

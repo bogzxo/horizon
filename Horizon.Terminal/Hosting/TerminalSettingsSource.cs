@@ -67,9 +67,11 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
             // to type into under a slider that did the same for the caret
             bool slides = kind == UIFormKind.Number && setting.Most > setting.Least && setting.Most - setting.Least <= SLIDES_UP_TO;
             float step = slides ? (setting.Most - setting.Least) / SLIDER_STEPS : kind == UIFormKind.Number ? 0.01f : 1.0f;
+            string unit = setting.Key.EndsWith("_glide", StringComparison.Ordinal) || setting.Key.EndsWith("_time", StringComparison.Ordinal) ? "s"
+                : setting.Key == "scale" ? "×" : string.Empty;
             rows.Add(new UISetting(setting.Key, theme ? "Dusk's theme" : Title(setting.Key), kind, setting.Help,
                 theme ? themeGroup ?? "Terminal · Theme" : "Terminal · " + TerminalSettingsForm.Group(setting.Key), choices,
-                setting.Least, setting.Most, step, Slider: slides));
+                setting.Least, setting.Most, step, Slider: slides, Unit: unit));
         }
 
         return rows;

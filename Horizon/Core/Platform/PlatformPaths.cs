@@ -138,6 +138,42 @@ public static class PlatformPaths
     // Windows' and macOS' folders are named as programs are, Linux's in lower case
     private static string Named(string name) => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? name : name.ToLowerInvariant();
 
+    /// <summary>
+    /// The folders Windows has on the PATH now that this program's PATH hasn't, put on the end of it. A program keeps the
+    /// PATH it was started with, so a compiler installed while it was up (dmd, a .NET SDK) wasn't there for it or for the
+    /// shells and servers it starts until it was started again. Nothing anywhere else, a shell's profile says the PATH there.
+    /// </summary>
+    public static void RefreshPath()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        string now = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var known = new HashSet<string>(now.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).Select(folder => folder.Trim().TrimEnd('\\')), StringComparer.OrdinalIgnoreCase);
+        var added = new List<string>();
+        foreach (EnvironmentVariableTarget where in (EnvironmentVariableTarget[])[EnvironmentVariableTarget.Machine, EnvironmentVariableTarget.User])
+        {
+            string said;
+            try
+            {
+                said = Environment.GetEnvironmentVariable("PATH", where) ?? string.Empty;
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            foreach (string folder in Environment.ExpandEnvironmentVariables(said).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (known.Add(folder.Trim().TrimEnd('\\')))
+                    added.Add(folder.Trim());
+            }
+        }
+
+        if (added.Count > 0)
+            Environment.SetEnvironmentVariable("PATH", string.Join(Path.PathSeparator, [now.TrimEnd(Path.PathSeparator), .. added]));
+    }
+
     private static string Xdg(string variable, string otherwise) =>
         Environment.GetEnvironmentVariable(variable) is { Length: > 0 } set && Path.IsPathRooted(set) ? set : Path.Combine(Home, otherwise);
 

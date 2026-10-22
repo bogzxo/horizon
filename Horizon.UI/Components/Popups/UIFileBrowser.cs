@@ -16,7 +16,8 @@ public enum UIBrowse
 /// <summary>
 /// Hex's own window for picking a file or a folder, the same on Windows, macOS and Linux (where there's no dialog of the
 /// system's a program can count on: GTK's, KDE's or a portal's, whichever the desktop has). The folder it's in along
-/// the top, which can be typed into (a path, ~ for home, Enter to go there or pick it), the places down the left (home,
+/// the top as crumbs, a click on one goes there and a click past them types a path (~ for home, Enter to go there or
+/// pick it), the places down the left (home,
 /// the workspace's folders, the drives or what's mounted), what's in the folder on the right with the folders first,
 /// and along the bottom the name (for a save), which files are shown, whether the hidden ones are, and the buttons.
 /// A click picks, a second click (or Enter) opens a folder or takes a file. Saving over a file that's there asks first,
@@ -31,6 +32,9 @@ public sealed class UIFileBrowser
     // How wide the list's size and changed columns are, and how big the buttons in front of the path
     private const float SIZE_WIDTH = 72.0f, CHANGED_WIDTH = 120.0f, NAV = 30.0f;
 
+    // How far in from the path box's sides its crumbs are, their first piece's words where a typed path's start
+    private const float CRUMBS_INSET = 8.0f;
+
     // What a folder's row says after its name, and the row that goes up
     private const string FOLDER_MARK = "/", UP = "..";
 
@@ -42,6 +46,10 @@ public sealed class UIFileBrowser
     private readonly TaskCompletionSource<string?> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private readonly TextBox path, name;
+
+    // The path as pieces over the box it's typed in, and the folder each piece is
+    private readonly Breadcrumbs crumbs;
+    private readonly List<string> crumbPaths = [];
     private readonly ListBox places, entries;
     private readonly Dropdown filter;
     private readonly ToggleButton hidden;
@@ -56,8 +64,10 @@ public sealed class UIFileBrowser
     // What the list says about each of its rows, a file's size and when it was changed, made once as the folder is shown
     private readonly Dictionary<string, string[]> details = [];
 
-    // The folders gone back from and forward from, and their buttons with the one up
+    // The folders gone back from and forward from, and their buttons with the one up. The last dialog's way back is kept
+    // for one that carries on from it
     private readonly Stack<string> backward = [], onward = [];
+    private static string[] previousBackward = [];
     private readonly Button backButton, forwardButton, upButton;
     private string? confirming;
 
@@ -82,9 +92,18 @@ public sealed class UIFileBrowser
     /// extension was typed. One of these picked gives a name with none its first.
     /// </param>
     /// <param name="roots">Folders to have among the places, the workspace's.</param>
-    public UIFileBrowser(UIBrowse kind, string title, string directory, string fileName, IReadOnlyList<(string Name, string Pattern)> filters, IEnumerable<string>? roots = null)
+    /// <param name="resume">
+    /// Whether it carries on from the dialog before, its folders gone back to with Back. For the one that comes up again
+    /// after a question took somebody out of it (a file that isn't text), whose Back history was lost.
+    /// </param>
+    public UIFileBrowser(UIBrowse kind, string title, string directory, string fileName, IReadOnlyList<(string Name, string Pattern)> filters, IEnumerable<string>? roots = null, bool resume = false)
     {
         this.kind = kind;
+        if (resume)
+        {
+            foreach (string before in Enumerable.Reverse(previousBackward))
+                backward.Push(before);
+        }
         this.filters = [(ALL_FILES, ["*"]), .. filters.Select(pair => (pair.Name, pair.Pattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))];
         folder = Directory.Exists(directory) ? Path.GetFullPath(directory) : PlatformPaths.Home;
 
@@ -122,10 +141,24 @@ public sealed class UIFileBrowser
         top.Add(forwardButton);
         top.Add(upButton);
 
-        path = new TextBox { Size = new Vector2(WIDTH - 24.0f - (NAV + GAP) * 3.0f, 30.0f), MaxLength = 4096, OnSubmitted = TypedPath };
+        // The path is its folders as crumbs, a click on one goes there, and a click past them (or Tab) types a path into the
+        // box under them, Explorer's address bar. It was the box alone, a long path a wall of text cut off at the front
+        path = new TextBox { Size = new Vector2(WIDTH - 24.0f - (NAV + GAP) * 3.0f, 30.0f), MaxLength = 4096, OnSubmitted = TypedPath, TextWhileTyped = true };
         path.TakeKey = key => Keyed(key, path);
         path.OnChanged = _ => keyed = false;
-        top.Add(path);
+        var where = new Panel { Size = path.Size };
+        top.Add(where);
+        where.Add(path);
+        crumbs = new Breadcrumbs
+        {
+            Editor = path,
+            Size = new Vector2(path.Size.X - CRUMBS_INSET * 2.0f, path.Size.Y - 6.0f),
+            Anchor = Horizon.Rendering.Origin.Left,
+            Pivot = Horizon.Rendering.Origin.Left,
+            Position = new Vector2(CRUMBS_INSET, 0.0f),
+            OnPressed = index => GoTo(crumbPaths[index])
+        };
+        where.Add(crumbs);
 
         // The places a row taller than the list beside them, which has its headings over its rows, so the two end together
         var middle = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
@@ -297,6 +330,7 @@ public sealed class UIFileBrowser
 
         folder = Path.GetFullPath(at);
         path.Text = folder;
+        SetCrumbs();
         confirming = null;
         Say(string.Empty);
 
@@ -330,6 +364,21 @@ public sealed class UIFileBrowser
         backButton.Enabled = backward.Count > 0;
         forwardButton.Enabled = onward.Count > 0;
         upButton.Enabled = Directory.GetParent(folder) is not null;
+    }
+
+    // The folder shown as its pieces from the top down, the drive (or /) first with a symbol of one
+    private void SetCrumbs()
+    {
+        var pieces = new List<string>();
+        crumbPaths.Clear();
+        for (DirectoryInfo? at = new(folder); at is not null; at = at.Parent)
+        {
+            string top = at.FullName.TrimEnd('/', '\\');
+            pieces.Insert(0, at.Parent is null ? $"$(server) {(top.Length > 0 ? top : "/")}" : at.Name);
+            crumbPaths.Insert(0, at.FullName);
+        }
+
+        crumbs.Set(pieces);
     }
 
     private static bool IsHidden(FileSystemInfo item) => item.Name.StartsWith('.') || (item.Attributes & FileAttributes.Hidden) != 0;
@@ -398,16 +447,39 @@ public sealed class UIFileBrowser
     private string? FolderOf(string item) => item == UP ? Directory.GetParent(folder)?.FullName
         : item.EndsWith(FOLDER_MARK, StringComparison.Ordinal) ? Path.Combine(folder, item[..^FOLDER_MARK.Length]) : null;
 
+    // Whether the name along the bottom is a row's that was picked rather than typed, which a folder's row takes away
+    private bool nameFromRow;
+
     private void Chosen(string item)
     {
         confirming = null;
         Say(string.Empty);
-        if (FolderOf(item) is null && kind != UIBrowse.Folder)
+        if (kind == UIBrowse.Folder)
+            return;
+
+        // A file's row gives the name, a folder's (or ..) takes away the one a file's gave. It stayed, and the box said a
+        // file over a picked .. as if Enter would open it
+        if (FolderOf(item) is null)
+        {
             name.Text = item;
+            nameFromRow = true;
+        }
+        else if (nameFromRow)
+        {
+            name.Text = string.Empty;
+            nameFromRow = false;
+        }
     }
 
     private void Activated(string item)
     {
+        // Up, with the folder come out of picked, the way Backspace goes
+        if (item == UP)
+        {
+            GoUp();
+            return;
+        }
+
         if (FolderOf(item) is { } inside)
         {
             GoTo(inside);
@@ -548,6 +620,7 @@ public sealed class UIFileBrowser
     private void Seek(string typed)
     {
         keyed = false;
+        nameFromRow = false;
         if (kind == UIBrowse.Save || naming)
             return;
 
@@ -568,10 +641,16 @@ public sealed class UIFileBrowser
     // Enter along the top. The folder that's open as it is picks it, when a folder is what's being picked
     private void TypedPath(string typed)
     {
+        string before = folder;
         if (kind == UIBrowse.Folder && PlatformPaths.Same(typed.Trim().Trim('"'), folder))
             Accept();
         else
             Typed(typed);
+
+        // Gone there, the keyboard's back on the name and the crumbs say where it is again. A path that led nowhere
+        // stays in the box to be put right
+        if (folder != before && !answer.Task.IsCompleted && path.IsFocused)
+            name.Focus();
     }
 
     /// <summary>A path typed along the top: a folder is gone to, a file is taken, ~ is home.</summary>
@@ -848,6 +927,12 @@ public sealed class UIFileBrowser
     /// <summary>A file's size and when it was changed as its row says them, nothing for a row it doesn't know.</summary>
     public IReadOnlyList<string> DetailsOf(string item) => details.TryGetValue(item, out string[]? said) ? said : [];
 
+    /// <summary>The crumbs along the top, the drive or / first and the folder shown last.</summary>
+    public IReadOnlyList<string> Crumbs => crumbs.Parts;
+
+    /// <summary>A crumb clicked, by where it is along the top.</summary>
+    public void PressCrumb(int index) => crumbs.OnPressed?.Invoke(index);
+
     /// <summary>Back pressed, and Forward.</summary>
     public void GoBack() => Back();
 
@@ -870,6 +955,8 @@ public sealed class UIFileBrowser
     {
         if (!answer.TrySetResult(picked))
             return;
+
+        previousBackward = [.. backward];
 
         // The keyboard back to whoever had it, unless it was taken somewhere else while the window was up
         bool hadIt = false;

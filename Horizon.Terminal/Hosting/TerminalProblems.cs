@@ -17,7 +17,10 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
     public TerminalProblemMatcher(string name, string pattern, string? place = null)
         : this(name, new Regex(pattern, RegexOptions.Compiled), place is null ? null : new Regex(place, RegexOptions.Compiled)) { }
 
-    /// <summary>The matchers that come with the terminal, .NET and MSBuild, Python, gcc and clang, Rust, Slang and HIDL.</summary>
+    /// <summary>
+    /// The matchers that come with the terminal, .NET and MSBuild, Python, gcc and clang, Rust, Slang, D and HIDL, and the
+    /// exceptions a D or a .NET program stops on.
+    /// </summary>
     public static readonly TerminalProblemMatcher[] Shipped =
     [
         // A file of these has no > in it, which keeps a prompt that echoed one of these lines from being read as a file
@@ -27,6 +30,16 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
         new("gcc", @"^(?<file>(?:[A-Za-z]:)?[^:\s][^:]*?):(?<line>\d+):(?<column>\d+): (?<kind>error|warning|fatal error): (?<message>.*)$"),
         new("rust", @"^(?<kind>error|warning)(?:\[(?<code>E\d+)\])?: (?<message>.*)$", @"^\s*--> (?<file>[^:]+):(?<line>\d+):(?<column>\d+)"),
         new("slang", @"^(?<file>[^\s(][^(]*?)\((?<line>\d+)\): (?<kind>error|warning) (?<code>\d+): (?<message>.*)$"),
+
+        // dmd, ldc2 and gdc, with the column (-vcolumns) or without it, when the line of code it quotes after has a ^
+        // under the place (TerminalProblemReader takes the column from that). A deprecation is a warning
+        new("d", @"^(?<file>[^\s(>][^(>]*?\.di?)\((?<line>\d+)(?:,(?<column>\d+))?\): (?<kind>Error|Warning|Deprecation): (?<message>.*)$"),
+
+        // A D program that stopped on what it threw, core.exception.ArrayIndexError@util.d(15), where it threw it
+        new("d-exception", @"^(?<kind>(?:\w+\.)*\w*(?:Exception|Error))@(?<file>[^\s(][^(]*?\.di?)\((?<line>\d+)\): (?<message>.*)$"),
+
+        // A .NET program that stopped on an exception, what it was and then the first frame of it that has a file
+        new("dotnet-exception", @"^Unhandled exception\. (?<kind>[\w.]+): (?<message>.*)$", @"^\s+at .+ in (?<file>.+):line (?<line>\d+)\s*$"),
         new("hidl", @"^(?<file>[^\s:][^:]*\.hor):(?<line>\d+):(?<column>\d+): (?<message>.*)$")
     ];
 
@@ -55,10 +68,11 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
         string kind = said.Groups["kind"].Success ? said.Groups["kind"].Value : "error";
         string code = said.Groups["code"].Success ? said.Groups["code"].Value + ": " : string.Empty;
         string message = said.Groups["message"].Success ? said.Groups["message"].Value.Trim() : said.Value.Trim();
-        if (Name == "python")
+        // An exception's kind is half of what it says, ZeroDivisionError on its own said nothing of what went wrong
+        if (Name == "python" || Name.EndsWith("exception", StringComparison.Ordinal))
             message = $"{kind}: {message}";
-        return new TerminalProblem(at.Groups["file"].Value.Trim(), Number(at, "line"), Number(at, "column"), code + message,
-            kind.StartsWith("warn", StringComparison.OrdinalIgnoreCase), Name);
+        bool warning = kind.StartsWith("warn", StringComparison.OrdinalIgnoreCase) || kind.StartsWith("deprecat", StringComparison.OrdinalIgnoreCase);
+        return new TerminalProblem(at.Groups["file"].Value.Trim(), Number(at, "line"), Number(at, "column"), code + message, warning, Name);
     }
 
     private static int Number(System.Text.RegularExpressions.Match match, string group) =>
@@ -157,6 +171,25 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
     {
         // A shell without the marks has its prompt kept out by what it looks like (no > in a file, see Shipped)
         string line = Escapes.Replace(WithoutPrompts(raw), string.Empty).TrimEnd();
+
+        // A D problem said without its column has it from the ^ under the code it quotes on the line after
+        if (held is { } waiting)
+        {
+            int caret = line.IndexOf('^');
+            if (caret >= 0 && line.AsSpan(0, caret).IsWhiteSpace())
+            {
+                held = null;
+                found(waiting with { Column = caret + 1 });
+                return;
+            }
+
+            if (--heldFor <= 0)
+            {
+                held = null;
+                found(waiting);
+            }
+        }
+
         if (line.Length == 0)
             return;
 
@@ -166,7 +199,7 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
             {
                 if (matcher.Match(line) is { } problem)
                 {
-                    found(problem);
+                    Found(problem);
                     return;
                 }
 
@@ -199,4 +232,26 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
     }
 
     private readonly Dictionary<TerminalProblemMatcher, string> lastMessage = [], lastPlace = [];
+
+    // A D problem waiting for the ^ under its code, for so many lines more (the code, then the ^)
+    private TerminalProblem? held;
+    private int heldFor;
+
+    private void Found(TerminalProblem problem)
+    {
+        if (held is { } before)
+        {
+            held = null;
+            found(before);
+        }
+
+        if (problem is { Column: 0, Matcher: "d" })
+        {
+            held = problem;
+            heldFor = 2;
+            return;
+        }
+
+        found(problem);
+    }
 }

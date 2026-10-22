@@ -111,11 +111,20 @@ public sealed class DebugSession : IDisposable
     /// <summary>A session over streams an adapter is on the other end of, for a test.</summary>
     public static DebugSession Over(Stream input, Stream output) => new(new DebugAdapterConnection(input, output), null);
 
+    /// <summary>The kind of debugger netcoredbg is, .NET's, the one <see cref="Launch"/> goes by when it isn't told.</summary>
+    public const string CORECLR = "coreclr";
+
     /// <summary>
     /// Launches a program under the debugger, with its breakpoints (file, then lines counted from 0), and comes back once
-    /// it's going or didn't go (<see cref="Failed"/>). netcoredbg takes a .dll and runs it with dotnet.
+    /// it's going or didn't go (<see cref="Failed"/>). netcoredbg (coreclr) takes a .dll and runs it with dotnet, lldb-dap
+    /// (lldb-dap) a program of the machine's own, a D one built with -g.
     /// </summary>
-    public async Task<bool> Launch(string program, IReadOnlyList<string> arguments, string workingDirectory, IReadOnlyDictionary<string, IReadOnlyCollection<int>> breakpointsByFile)
+    /// <param name="kind">What kind of debugger it is, the type of its launch, coreclr or lldb-dap.</param>
+    /// <param name="output">
+    /// A file what the program writes goes to, for a debugger that doesn't say it (lldb-dap on Windows), null for the
+    /// debugger to say it itself.
+    /// </param>
+    public async Task<bool> Launch(string program, IReadOnlyList<string> arguments, string workingDirectory, IReadOnlyDictionary<string, IReadOnlyCollection<int>> breakpointsByFile, string kind = CORECLR, string? output = null)
     {
         try
         {
@@ -123,7 +132,7 @@ public sealed class DebugSession : IDisposable
             {
                 ["clientID"] = "hex",
                 ["clientName"] = "Hex",
-                ["adapterID"] = "coreclr",
+                ["adapterID"] = kind,
                 ["linesStartAt1"] = true,
                 ["columnsStartAt1"] = true,
                 ["pathFormat"] = "path",
@@ -136,18 +145,34 @@ public sealed class DebugSession : IDisposable
 
             // The launch goes off and is answered once the configuration is done, which the adapter asks for with an
             // initialized event once it's ready for the breakpoints
-            Task<JsonNode?> launched = connection.Request("launch", new JsonObject
-            {
-                ["name"] = "Hex",
-                ["type"] = "coreclr",
-                ["request"] = "launch",
-                ["program"] = program,
-                ["args"] = args,
-                ["cwd"] = workingDirectory,
-                ["stopAtEntry"] = false,
-                ["console"] = "internalConsole",
-                ["justMyCode"] = true
-            });
+            JsonObject launch = kind == CORECLR
+                ? new JsonObject
+                {
+                    ["name"] = "Hex",
+                    ["type"] = kind,
+                    ["request"] = "launch",
+                    ["program"] = program,
+                    ["args"] = args,
+                    ["cwd"] = workingDirectory,
+                    ["stopAtEntry"] = false,
+                    ["console"] = "internalConsole",
+                    ["justMyCode"] = true
+                }
+                : new JsonObject
+                {
+                    ["name"] = "Hex",
+                    ["type"] = kind,
+                    ["request"] = "launch",
+                    ["program"] = program,
+                    ["args"] = args,
+                    ["cwd"] = workingDirectory,
+                    ["stopOnEntry"] = false
+                };
+
+            // What it writes into a file, stdin left as it is and stdout and stderr both there
+            if (output is not null)
+                launch["stdio"] = new JsonArray(null, output, output);
+            Task<JsonNode?> launched = connection.Request("launch", launch);
 
             Task first = await Task.WhenAny(initialized.Task, launched, Task.Delay(TimeSpan.FromSeconds(20)));
             if (first == launched)

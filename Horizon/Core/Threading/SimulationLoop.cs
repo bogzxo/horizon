@@ -82,8 +82,21 @@ public sealed class SimulationLoop : IDisposable
     /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
     public double IdlePeriod { get; set; } = 0.05;
 
-    /// <summary>Wakes the loop out of an idle sleep for a tick at once, something happened (the mouse moved). From any thread.</summary>
-    public void Wake() => wake.Set();
+    /// <summary>
+    /// Wakes the loop out of an idle sleep for a tick at once, something happened (the mouse moved). From any thread, and
+    /// after the loop has stopped it does nothing. A file watcher of Dusk's woke it as Hex was closing, after its handle
+    /// had gone, and Hex fell over on the way out.
+    /// </summary>
+    public void Wake()
+    {
+        try
+        {
+            wake.Set();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
 
     /// <summary>How many ticks a second the loop makes, as many as the faster of the logic and the physics wants.</summary>
     public double TickRate { get; }

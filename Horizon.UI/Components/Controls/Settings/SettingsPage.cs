@@ -27,7 +27,8 @@ public sealed record UISetting(
     string[]? Buttons = null,
     bool Slider = false,
     bool ButtonsOnly = false,
-    string Placeholder = "");
+    string Placeholder = "",
+    string Unit = "");
 
 /// <summary>
 /// A page of settings the way VS Code has one, because it works. A search box over all of them, the sections down the

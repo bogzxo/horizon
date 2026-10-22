@@ -54,6 +54,38 @@ public class Dropdown : UIComponent
         }
     }
 
+    /// <summary>
+    /// What an option says on screen when it isn't itself, the value being what it is ("none" written "None"). Null for
+    /// every option as it is. Worked out once for each option, not every time it's painted.
+    /// </summary>
+    public Func<string, string>? OptionText
+    {
+        get => shown;
+        set
+        {
+            shown = value;
+            shownFor = null;
+        }
+    }
+
+    private Func<string, string>? shown;
+    private string[]? shownFor, shownOptions;
+
+    // What an option says, its OptionText worked out again only when the options are others
+    private string Said(int option)
+    {
+        if (shown is null || option < 0 || option >= options.Length)
+            return option >= 0 && option < options.Length ? options[option] : string.Empty;
+
+        if (!ReferenceEquals(shownFor, options))
+        {
+            shownOptions = [.. options.Select(shown)];
+            shownFor = options;
+        }
+
+        return shownOptions![option];
+    }
+
     /// <summary>Which of the options is chosen.</summary>
     public int Index
     {
@@ -234,7 +266,7 @@ public class Dropdown : UIComponent
         list.BeginPart(1);
         UIRect content = Bounds.Shrink(new UIEdges(10.0f, 0.0f));
 
-        list.Text(Resolve(Value), content, Origin.Left, scale, ink * tint, markup: false);
+        list.Text(Resolve(options.Length > 0 ? Said(index) : string.Empty), content, Origin.Left, scale, ink * tint, markup: false);
         // Shut, the list is opened again from the start
         if (!IsOpen)
             listOpenedAt = -1.0f;
@@ -269,7 +301,7 @@ public class Dropdown : UIComponent
                 list.RoundRect(area.Shrink(new UIEdges(3.0f, 1.0f)), skin.CornerRadius, skin.HoverColor);
 
             list.Text(
-                Resolve(options[option]),
+                Resolve(Said(option)),
                 area.Shrink(new UIEdges(10.0f, 0.0f)),
                 Origin.Left,
                 scale,

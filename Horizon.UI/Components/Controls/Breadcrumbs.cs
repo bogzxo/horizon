@@ -9,7 +9,8 @@ namespace Horizon.UI.Components;
 /// <summary>
 /// Where something is as a path of pieces with an arrow between them, the folders of a file, the file, and where in
 /// it the caret is, VS Code's line under the tabs. Each piece lights up under the pointer and says so when clicked.
-/// The last is written brighter, it is where you are. Too long for its room, it loses pieces off the front.
+/// The last is written brighter, it is where you are. Too long for its room, it loses pieces off the front, and says
+/// so with dots where they were.
 /// <code>
 /// crumbs.Set(["Fighter2D", "Assets", "$(file-code) en-gb.hor", "strings", "main_menu"]);
 /// crumbs.OnPressed = index => GoTo(index);
@@ -19,6 +20,9 @@ public class Breadcrumbs : UIComponent
 {
     private const float PIECE_PADDING = 4.0f;
     private const float ARROW_SHARE = 0.7f;
+
+    // What stands for the pieces lost off the front
+    private const string LOST = "...";
 
     private readonly List<string> parts = [];
     private int pressed = -1;
@@ -32,7 +36,17 @@ public class Breadcrumbs : UIComponent
     /// <summary>The scale of the text, or zero for a little smaller than the skin's.</summary>
     public float TextScale { get; set; }
 
-    protected override bool HitTestVisible => true;
+    /// <summary>
+    /// A box the whole path can be typed into, under the crumbs, the way Explorer's address bar and a Finder window's
+    /// path work. A click past the last piece gives it the keyboard with what's in it picked, and the crumbs stand aside
+    /// while it has it. Give the box <see cref="TextBox.TextWhileTyped"/> or its text shows through them.
+    /// </summary>
+    public TextBox? Editor { get; set; }
+
+    // Whether the box under them is being typed in, the crumbs are neither drawn nor clicked then
+    private bool Editing => Editor is { IsFocused: true };
+
+    protected override bool HitTestVisible => !Editing;
 
     /// <summary>Puts the pieces in, nothing changes if they are the ones there already.</summary>
     public void Set(IReadOnlyList<string> pieces)
@@ -56,18 +70,29 @@ public class Breadcrumbs : UIComponent
 
     private float WidthOf(UISkin skin, string part) => skin.Font.Measure(part, ScaleOf(skin)).X + PIECE_PADDING * 2.0f;
 
-    // The first piece that is drawn, the ones before it don't fit
+    // How wide the dots for the pieces lost are, with their arrow
+    private float LostWidth(UISkin skin) => WidthOf(skin, LOST) + Arrow(skin);
+
+    // The first piece that is drawn, the ones before it don't fit. Once one is lost the dots take room too. They went
+    // without a word, and a path looked like it started at whatever fitted
     private int FirstShown(UISkin skin)
     {
-        float room = Bounds.Width, used = 0.0f;
-        for (int i = parts.Count - 1; i >= 0; i--)
+        float room = Bounds.Width, all = 0.0f;
+        for (int i = 0; i < parts.Count; i++)
+            all += WidthOf(skin, parts[i]) + (i > 0 ? Arrow(skin) : 0.0f);
+        if (all <= room)
+            return 0;
+
+        int last = parts.Count - 1;
+        float used = LostWidth(skin);
+        for (int i = last; i >= 0; i--)
         {
-            used += WidthOf(skin, parts[i]) + (i > 0 ? Arrow(skin) : 0.0f);
+            used += WidthOf(skin, parts[i]) + (i < last ? Arrow(skin) : 0.0f);
             if (used > room)
-                return Math.Min(parts.Count - 1, i + 1);
+                return Math.Min(last, i + 1);
         }
 
-        return 0;
+        return last;
     }
 
     /// <summary>Where a piece is, in the module's units. Empty for one that is off the front for want of room.</summary>
@@ -80,7 +105,7 @@ public class Breadcrumbs : UIComponent
         if (index < first)
             return default;
 
-        float x = Bounds.Min.X;
+        float x = Bounds.Min.X + (first > 0 ? LostWidth(skin) : 0.0f);
         for (int i = first; i < index; i++)
             x += WidthOf(skin, parts[i]) + Arrow(skin);
 
@@ -102,6 +127,9 @@ public class Breadcrumbs : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
+        if (Editing)
+            return;
+
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
         float arrow = Arrow(skin);
@@ -109,6 +137,14 @@ public class Breadcrumbs : UIComponent
         Vector4 dim = skin.DimTextColor;
 
         list.PushClip(Bounds);
+
+        // The dots for what's lost off the front, always painted (see-through with nothing lost) so the quads after don't shift
+        int first = FirstShown(skin);
+        var lost = new UIRect(Bounds.Min, new Vector2(Bounds.Min.X + WidthOf(skin, LOST), Bounds.Max.Y));
+        list.Text(LOST, lost, Origin.Center, scale, dim with { W = first > 0 ? dim.W : 0.0f });
+        var lostArrow = new UIRect(new Vector2(lost.Max.X, lost.Center.Y - arrow * 0.5f), new Vector2(lost.Max.X + arrow, lost.Center.Y + arrow * 0.5f));
+        list.Symbol("chevron-right", lostArrow, dim with { W = first > 0 ? dim.W : 0.0f });
+
         for (int i = 0; i < parts.Count; i++)
         {
             list.BeginPart(i);
@@ -140,7 +176,14 @@ public class Breadcrumbs : UIComponent
         pressed = -1;
 
         if (index >= 0 && PartAt(Pointer) == index)
+        {
             OnPressed?.Invoke(index);
+        }
+        else if (index < 0 && Editor is { } editor && Bounds.Contains(Pointer))
+        {
+            editor.Focus();
+            editor.SelectAll();
+        }
     }
 
     protected override void DefineScript()

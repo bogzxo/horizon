@@ -31,6 +31,17 @@ public sealed class UITreeItem
     /// <summary>What it says under the pointer, nothing for nothing.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
+    /// <summary>
+    /// A piece of the text lit behind, from which character for how many, what was found on a line of Find in Files.
+    /// A length of 0 for none.
+    /// </summary>
+    public (int Start, int Length) Mark { get; set; }
+
+    // The text cut short with dots to the room it had last, kept until the text or the room changes
+    internal string? fittedOf;
+    internal float fittedRoom;
+    internal string fitted = string.Empty;
+
     /// <summary>The rows under it, null for none.</summary>
     public List<UITreeItem>? Children { get; set; }
 
@@ -473,8 +484,23 @@ public class TreeView : UIComponent
                 x += icon + ICON_GAP;
             }
 
-            Vector2 size = skin.Font.Measure(item.Text, scale, markup: false);
-            list.Text(item.Text, new Vector2(x, MathF.Round(row.Center.Y + size.Y * 0.5f)), scale, item.Color ?? text, markup: false);
+            // As much of the text as there's room for with its detail after it, cut short with dots rather than off at the
+            // edge of the tree, a long line found by Find in Files ran under the side's edge
+            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, markup: false).X + DETAIL_GAP : 0.0f;
+            string rowText = Fitted(item, skin, scale, right - x - detailWidth - LEFT_PAD);
+            Vector2 size = skin.Font.Measure(rowText, scale, markup: false);
+            float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
+
+            // What was found lit behind it, the colour of a selection, where it still is after any cut
+            if (item.Mark.Length > 0 && item.Mark.Start >= 0 && item.Mark.Start + item.Mark.Length <= rowText.Length)
+            {
+                float from = x + skin.Font.Measure(rowText.AsSpan(0, item.Mark.Start), scale, markup: false).X;
+                float width = skin.Font.Measure(rowText.AsSpan(item.Mark.Start, item.Mark.Length), scale, markup: false).X;
+                var found = new UIRect(new Vector2(from - 1.0f, row.Center.Y - size.Y * 0.5f - 1.0f), new Vector2(from + width + 1.0f, row.Center.Y + size.Y * 0.5f + 1.0f));
+                list.RoundRect(found, 3.0f, skin.Palette.Selection);
+            }
+
+            list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
 
             if (item.Detail.Length > 0)
             {
@@ -499,6 +525,40 @@ public class TreeView : UIComponent
             float barX = bounds.Max.X - BAR_WIDTH * 1.5f;
             list.Rect(new UIRect(new Vector2(barX, barTop - bounds.Height * share), new Vector2(barX + BAR_WIDTH, barTop)), skin.TextColor with { W = 0.25f });
         }
+    }
+
+    // The dots a row cut short ends with
+    private const string CUT = "...";
+
+    /// <summary>
+    /// Helper method for a row's text as much as fits in so much room, cut with dots at the end, worked out once for the
+    /// text and the room and kept on the row.
+    /// </summary>
+    private static string Fitted(UITreeItem item, UISkin skin, float scale, float room)
+    {
+        string text = item.Text;
+        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room)
+            return item.fitted;
+
+        string shown = text;
+        if (room > 0.0f && skin.Font.Measure(text, scale, markup: false).X > room)
+        {
+            float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+            int low = 0, high = text.Length;
+            while (low < high)
+            {
+                int middle = (low + high + 1) / 2;
+                if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
+                    low = middle;
+                else
+                    high = middle - 1;
+            }
+
+            shown = text[..low].TrimEnd() + CUT;
+        }
+
+        (item.fittedOf, item.fittedRoom, item.fitted) = (text, room, shown);
+        return shown;
     }
 
     protected override void DefineScript()

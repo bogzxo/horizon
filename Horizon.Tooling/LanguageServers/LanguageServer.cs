@@ -149,14 +149,48 @@ public sealed partial class LanguageServer : IDisposable
                         ["labelDetailsSupport"] = false,
                         ["documentationFormat"] = new JsonArray("markdown", "plaintext")
                     }
+                },
+
+                // Asking about the code, and asking for it changed (LanguageServer.Navigation and Edits)
+                ["hover"] = new JsonObject { ["dynamicRegistration"] = false, ["contentFormat"] = new JsonArray("markdown", "plaintext") },
+                ["signatureHelp"] = new JsonObject
+                {
+                    ["dynamicRegistration"] = false,
+                    ["signatureInformation"] = new JsonObject
+                    {
+                        ["documentationFormat"] = new JsonArray("markdown", "plaintext"),
+                        ["parameterInformation"] = new JsonObject { ["labelOffsetSupport"] = true },
+                        ["activeParameterSupport"] = true
+                    }
+                },
+                ["definition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
+                ["references"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["documentSymbol"] = new JsonObject { ["dynamicRegistration"] = false, ["hierarchicalDocumentSymbolSupport"] = true },
+                ["rename"] = new JsonObject { ["dynamicRegistration"] = false, ["prepareSupport"] = false },
+                ["formatting"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["codeAction"] = new JsonObject
+                {
+                    ["dynamicRegistration"] = false,
+                    ["isPreferredSupport"] = true,
+                    ["disabledSupport"] = true,
+                    ["codeActionLiteralSupport"] = new JsonObject
+                    {
+                        ["codeActionKind"] = new JsonObject { ["valueSet"] = new JsonArray("", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports") }
+                    }
                 }
             },
+            // csharp-ls says where a name of the framework is declared (a csharp:/ place, its source decompiled) only to a
+            // client that says it can open one (LanguageServer.Navigation's Source)
+            ["experimental"] = new JsonObject { ["csharp"] = new JsonObject { ["metadataUris"] = true } },
+
             // The files of the workspace that change on the disk are said (FilesChanged), a project added, a branch checked
             // out. A server asks for the ones it wants watched, and is told of every one, it takes what it wants of them
             ["workspace"] = new JsonObject
             {
                 ["workspaceFolders"] = false,
                 ["configuration"] = Settings is not null,
+                ["applyEdit"] = true,
+                ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true }
             }
         };
@@ -174,7 +208,8 @@ public sealed partial class LanguageServer : IDisposable
 
         try
         {
-            await rpc.Request("initialize", parameters).ConfigureAwait(false);
+            JsonNode? started = await rpc.Request("initialize", parameters).ConfigureAwait(false);
+            serverCapabilities = started?["capabilities"] as JsonObject;
             rpc.Notify("initialized", new JsonObject());
 
             // What it's told to be, for a server that has settings, said once it's up and asked for again as it wants
@@ -385,6 +420,11 @@ public sealed partial class LanguageServer : IDisposable
         if (item["label"]?.GetValue<string>() is not { Length: > 0 } label)
             return null;
 
+        // A snippet a server sends whether it was asked for snippets or not, which it sorts with a space after its name.
+        // Roslyn's for and forr after shelf. came out as properties, and picked they were text that broke the line
+        if (item["sortText"]?.GetValue<string>() is { Length: > 0 } sort && sort.EndsWith(' '))
+            return null;
+
         // An edit the server worked out wins, as long as it replaces from where the editor will, otherwise what it says
         // to insert, otherwise the label
         string? insert = item["insertText"]?.GetValue<string>();
@@ -397,11 +437,49 @@ public sealed partial class LanguageServer : IDisposable
         if (insert is not null && JsonNumbers.Int(item["insertTextFormat"], int.MinValue) == 2)
             insert = PlainSnippet(insert);
 
-        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? DetailWithout(said, label) : KindOf(JsonNumbers.Int(item["kind"], 0));
+        // A detail of one line, serve-d says every overload of a name on a line of its own and they were drawn over each other
+        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? DetailWithout(said.Split('\n')[0].Trim(), label) : KindOf(JsonNumbers.Int(item["kind"], 0));
         if (detail.Length > 60)
             detail = string.Concat(detail.AsSpan(0, 59), "\u2026");
 
-        return new UICompletion(label, detail, insert == label ? null : insert);
+        // serve-d's label says how many overloads in markdown's italics, "(*2 overloads*)", which read with the stars
+        string shown = label.Replace("(*", "(", StringComparison.Ordinal).Replace("*)", ")", StringComparison.Ordinal);
+        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])));
+    }
+
+    // How much of what an item does goes beside the list
+    private const int MOST_DOCS = 600;
+
+    /// <summary>
+    /// What a server's markdown documentation of something says as plain text for a box beside a list, its prose up to
+    /// the first example, the marks of the markdown taken out (the code, the bold, a link's target) and the blank lines
+    /// between paragraphs kept as one.
+    /// </summary>
+    public static string PlainDocs(string markdown)
+    {
+        if (markdown.Length == 0)
+            return string.Empty;
+
+        // Up to the first example, its heading with it, or the first block of code
+        int cut = markdown.Length;
+        foreach (string example in (string[])["```", "**Example"])
+        {
+            if (markdown.IndexOf(example, StringComparison.Ordinal) is var at and >= 0)
+                cut = Math.Min(cut, at);
+        }
+
+        string prose = markdown[..cut];
+        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\[([^\]]*)\]\([^)]*\)", "$1");
+        prose = prose.Replace("**", string.Empty, StringComparison.Ordinal).Replace("`", string.Empty, StringComparison.Ordinal);
+
+        // A dash the fonts have, serve-d's long one came out as a question mark
+        prose = prose.Replace('—', '-').Replace('–', '-');
+
+        var paragraphs = System.Text.RegularExpressions.Regex.Split(prose.ReplaceLineEndings("\n"), @"\n\s*\n")
+            .Select(paragraph => System.Text.RegularExpressions.Regex.Replace(paragraph, @"\s+", " ").Trim())
+            .Where(paragraph => paragraph.Length > 0);
+        string plain = string.Join("\n", paragraphs);
+        return plain.Length > MOST_DOCS ? string.Concat(plain.AsSpan(0, MOST_DOCS - 3), "...") : plain;
     }
 
     /// <summary>
@@ -521,15 +599,8 @@ public sealed partial class LanguageServer : IDisposable
         if (parameters is not JsonObject published || published["uri"]?.GetValue<string>() is not { } uri)
             return;
 
-        string path;
-        try
-        {
-            path = new Uri(uri).LocalPath;
-        }
-        catch (UriFormatException)
-        {
+        if (PathOf(uri) is not { } path)
             return;
-        }
 
         var found = new List<UICodeDiagnostic>();
         if (published["diagnostics"] is JsonArray diagnostics)
@@ -556,6 +627,7 @@ public sealed partial class LanguageServer : IDisposable
             }
         }
 
+        KeepDiagnostics(path, published["diagnostics"] as JsonArray);
         arrived.Enqueue((path, found));
         Woken?.Invoke();
     }

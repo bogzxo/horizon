@@ -17,10 +17,11 @@ public sealed class TerminalTab
     public SplitNode<TerminalView>? Focused { get; internal set; }
 
     /// <summary>
-    /// What the tab is called when nobody renamed it, the title the program set or the profile's name. A title that is
-    /// the path of a program (what the console calls itself before a shell says anything) counts as nothing said.
+    /// What the tab is called when nobody renamed it, the title the program set or the folder its shell is in (the
+    /// profile's name before it's in one). A title that is the path of a program (what the console calls itself before a
+    /// shell says anything) counts as nothing said.
     /// </summary>
-    public string Title => Renamed ?? (Focused?.Content?.Title is { Length: > 0 } said && !IsProgramPath(said) ? said : Profile?.Name ?? "terminal");
+    public string Title => Renamed ?? (Focused?.Content?.Title is { Length: > 0 } said && !IsProgramPath(said) ? said : Focused?.Content?.FolderTitle ?? Profile?.Name ?? "terminal");
 
     private static bool IsProgramPath(string title) =>
         title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (title.Contains('\\') || title.Contains('/'));

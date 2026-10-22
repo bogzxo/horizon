@@ -97,11 +97,16 @@ public sealed partial class LanguageServer
     }
 
     // The server's requests answered on the spot. Its settings when it asks for them, a section each by its dotted name,
-    // null for anything else
+    // the edits it asks for queued for the editor, null for anything else
     private JsonNode? Answered(string method, JsonNode? parameters)
     {
+        if (method == "workspace/applyEdit")
+            return ApplyAsked(parameters);
+
         if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
             return null;
+
+
 
         var sections = new JsonArray();
         foreach (JsonNode? item in items)
@@ -112,7 +117,6 @@ public sealed partial class LanguageServer
                 foreach (string part in section.Split('.'))
                     at = at is JsonObject inside ? inside[part] : null;
             }
-
             sections.Add(at?.DeepClone());
         }
 

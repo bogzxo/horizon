@@ -58,6 +58,15 @@ public class ScrollPanel : Panel
     public void ScrollToEnd() => offset = float.MaxValue;
 
     /// <summary>
+    /// Whether a panel scrolled to its end stays there as what's in it grows, a log's. Scrolled up it stays where it was
+    /// put. The newest lines of the output went in under the bottom of it, the end was the one before they were laid out.
+    /// </summary>
+    public bool StickToEnd { get; set; }
+
+    // How far down it could go the last time it was laid out, what at the end means while it sticks there
+    private float laidMax;
+
+    /// <summary>
     /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
     /// if it is in view already. For a list that is walked with a gamepad, or an editor showing what was picked.
     /// </summary>
@@ -123,8 +132,11 @@ public class ScrollPanel : Panel
                 contentHeight = MathF.Max(contentHeight, child.DesiredSize.Y);
         }
 
-        // The content can have shrunk under us, or the panel grown.
-        offset = Math.Clamp(offset, 0.0f, MathF.Max(0.0f, contentHeight - content.Height));
+        // The content can have shrunk under us, or the panel grown. At its end it stays there, when it sticks to it
+        float max = MathF.Max(0.0f, contentHeight - content.Height);
+        bool atEnd = StickToEnd && offset >= laidMax - 0.5f;
+        offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
+        laidMax = max;
 
         float width = MathF.Max(0.0f, content.Width - BAR_WIDTH - BarGap);
         foreach (var child in ChildSpan)

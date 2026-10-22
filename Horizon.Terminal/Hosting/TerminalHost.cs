@@ -146,7 +146,9 @@ public sealed partial class TerminalHost : IDisposable
         view.OnOutput = bytes => reader.Feed(bytes);
         view.OnRequest = Requested;
 
-        // A program put on the PATH since the last terminal was opened is known to this one's colouring
+        // A program put on the PATH since the last terminal was opened is known to this one's colouring, and to the shells
+        // started after it, a compiler installed while the program was up was nowhere for them
+        Horizon.Core.Platform.PlatformPaths.RefreshPath();
         TerminalCommandLookup.ScanPath();
     }
 

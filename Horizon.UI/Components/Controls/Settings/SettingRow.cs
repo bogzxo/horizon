@@ -147,9 +147,18 @@ internal sealed class SettingRow : StackPanel
 
     private Action<IRuntimeValue?> Choice(UISetting setting, float width)
     {
-        var dropdown = Put(new Dropdown(setting.Choices ?? []) { Size = new Vector2(MathF.Min(width, 280.0f), SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        // A choice says itself with a capital, "None" and "Horizon", whatever its value is written as. They were lowercase
+        // beside the rest of the page's words
+        var dropdown = Put(new Dropdown(setting.Choices ?? []) { Size = new Vector2(MathF.Min(width, 280.0f), SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, OptionText = Capitalised });
         dropdown.OnChanged = chosen => page.Changed(setting.Key, new StringValue(chosen));
         return value => dropdown.Value = value is StringValue text ? text.Value : string.Empty;
+    }
+
+    /// <summary>A choice as a person reads it, its first letter a capital and its underscores spaces, "solarized_dark" as "Solarized dark".</summary>
+    public static string Capitalised(string choice)
+    {
+        string spaced = choice.Replace('_', ' ');
+        return spaced.Length > 0 && char.IsLower(spaced[0]) ? char.ToUpperInvariant(spaced[0]) + spaced[1..] : spaced;
     }
 
     private Action<IRuntimeValue?> Number(UISetting setting, float width)
@@ -191,10 +200,21 @@ internal sealed class SettingRow : StackPanel
         };
     }
 
-    // How a slider's number is written, a share (nothing to all of it) as a percentage, anything else as it is. Anything up
-    // to 1 was a share, and the caret's glide of a few hundredths of a second read 5%
-    private static string Said(UISetting setting, float number) =>
-        setting.Least == 0.0f && setting.Most == 1.0f ? $"{number * 100.0f:0}%" : setting.Step >= 1.0f ? $"{number:0}" : $"{number:0.###}";
+    // How a slider's number is written, a share (nothing to all of it) as a percentage, seconds as milliseconds under one,
+    // and anything else as it is with its unit after. Anything up to 1 was a share, and the caret's glide of a few
+    // hundredths of a second read 5%, then 0.036 with nothing to say what of
+    private static string Said(UISetting setting, float number)
+    {
+        if (setting.Unit == "s")
+            return number < 1.0f ? Invariant($"{number * 1000.0f:0} ms") : Invariant($"{number:0.#} s");
+        if (setting.Least == 0.0f && setting.Most == 1.0f && setting.Unit.Length == 0)
+            return Invariant($"{number * 100.0f:0}%");
+
+        string written = setting.Step >= 1.0f ? Invariant($"{number:0}") : Invariant($"{number:0.##}");
+        return setting.Unit.Length == 0 ? written : setting.Unit == "×" ? written + "×" : $"{written} {setting.Unit}";
+    }
+
+    private static string Invariant(FormattableString text) => FormattableString.Invariant(text);
 
     // A button a choice, lit when it is one of them, for a list of what there is (plugins, profiles)
     private Action<IRuntimeValue?> Flags(UISetting setting, float width)

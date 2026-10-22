@@ -92,6 +92,58 @@ public sealed class UIFileBrowserTests : IDisposable
     }
 
     [Fact]
+    public void Going_up_by_its_row_picks_the_folder_come_out_of()
+    {
+        UIFileBrowser browser = Open();
+        browser.Activate("sub/");
+        browser.Activate("..");
+
+        Assert.Equal(root, browser.Folder);
+        Assert.Equal("sub/", browser.Selected);
+    }
+
+    [Fact]
+    public void A_folders_row_takes_away_the_name_a_files_row_gave_but_not_one_typed()
+    {
+        UIFileBrowser browser = Open();
+        browser.Choose("app.d");
+        Assert.Equal("app.d", browser.Name);
+        browser.Choose("sub/");
+        Assert.Equal(string.Empty, browser.Name);
+
+        browser.Key('x');
+        browser.Choose("empty/");
+        Assert.Equal("x", browser.Name);
+    }
+
+    [Fact]
+    public void The_path_is_crumbs_of_its_folders_and_a_crumb_goes_there()
+    {
+        UIFileBrowser browser = Open();
+        browser.Activate("sub/");
+
+        Assert.Equal("sub", browser.Crumbs[^1]);
+        Assert.Equal(Path.GetFileName(root), browser.Crumbs[^2]);
+        Assert.StartsWith("$(server)", browser.Crumbs[0]);
+
+        browser.PressCrumb(browser.Crumbs.Count - 2);
+        Assert.Equal(root, browser.Folder);
+        Assert.Equal(Path.GetFileName(root), browser.Crumbs[^1]);
+    }
+
+    [Fact]
+    public void A_dialog_that_carries_on_from_the_one_before_can_go_back_where_that_one_had_been()
+    {
+        UIFileBrowser first = Open();
+        first.Activate("sub/");
+        first.Cancel();
+
+        var again = new UIFileBrowser(UIBrowse.Open, "Open", Path.Combine(root, "sub"), "nothing.txt", [], resume: true);
+        again.GoBack();
+        Assert.Equal(root, again.Folder);
+    }
+
+    [Fact]
     public void A_file_kind_has_its_symbol_and_whether_it_reads_as_text()
     {
         Assert.Equal("code", UIFileKinds.IconOf("app.d"));

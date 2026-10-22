@@ -149,6 +149,12 @@ public class TextBox : UIComponent
     /// </summary>
     public bool Bare { get; set; }
 
+    /// <summary>
+    /// Whether what's in it shows only while it's typed in. Something drawn over it says it the rest of the time, the
+    /// <see cref="Breadcrumbs"/> of a file dialog's path.
+    /// </summary>
+    public bool TextWhileTyped { get; set; }
+
     /// <summary>A Codicon drawn at its left, before what is typed (search for a box that finds), empty for none.</summary>
     public string LeadIcon { get; set; } = string.Empty;
 
@@ -620,11 +626,13 @@ public class TextBox : UIComponent
         // The placeholder stays until something is typed, the caret sitting in front of it, an empty box with the
         // keyboard said nothing about what it was for. Too long for the box and not being typed in, its end is shown with
         // dots in front, where the path along the top of a file dialog started on half a letter
-        if (!empty && !focused && width > content.Width)
+        // A box with something said over it (a path's crumbs) shows its text only while it's typed in
+        bool shown = focused || !TextWhileTyped;
+        if (shown && !empty && !focused && width > content.Width)
             list.Text(Tail(skin, scale, content.Width), content, Origin.Left, scale, ink * tint, markup: false);
-        else if (!empty)
+        else if (shown && !empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
-        else
+        else if (shown)
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
 

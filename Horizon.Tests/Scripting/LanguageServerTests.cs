@@ -390,6 +390,43 @@ public class LanguageServerTests
     public void A_snippet_is_written_without_its_placeholders(string snippet, string plain) =>
         Assert.Equal(plain, LanguageServer.PlainSnippet(snippet));
 
+    [Fact]
+    public void A_files_uri_is_its_path_with_the_drives_colon_escaped_or_not()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Assert.Equal(@"C:\Users\x\source\app.d", LanguageServer.PathOf("file:///C%3A/Users/x/source/app.d"));
+        Assert.Equal(@"C:\Users\x\source\app.d", LanguageServer.PathOf("file:///c:/Users/x/source/app.d"), ignoreCase: true);
+        Assert.Equal(@"C:\Users\x\my file.d", LanguageServer.PathOf("file:///C:/Users/x/my%20file.d"));
+        Assert.Null(LanguageServer.PathOf("untitled:Untitled-1"));
+    }
+
+    [Fact]
+    public void A_servers_documentation_is_its_prose_without_the_marks_of_markdown()
+    {
+        string said = "Equivalent to `write(args, '\\n')`.  Calling `writeln` without\narguments is valid.\n\n\n\n**Params**\n\n`args` the items to write to `stdout`\n\n"
+            + "**Throws** In case of an I/O error, throws an [`StdioException`](command:code-d.navigateLocal?StdioException).\n\n**Example**\n\n```d\nimport std.stdio;\n```\n";
+
+        Assert.Equal("Equivalent to write(args, '\\n'). Calling writeln without arguments is valid.\nParams\nargs the items to write to stdout\n"
+            + "Throws In case of an I/O error, throws an StdioException.", LanguageServer.PlainDocs(said));
+        Assert.Equal(string.Empty, LanguageServer.PlainDocs(string.Empty));
+    }
+
+    [Fact]
+    public void Edits_are_made_to_the_text_as_it_was_before_any_of_them()
+    {
+        string text = "struct Rect\r\n{\r\n    int area() { return w * h; }\r\n}\r\nauto a = r.area;\r\n";
+        string renamed = LanguageServer.Apply(text,
+        [
+            new LanguageServerEdit(4, 11, 4, 15, "size"),
+            new LanguageServerEdit(2, 8, 2, 12, "size"),
+            new LanguageServerEdit(0, 0, 0, 0, "// shapes\r\n")
+        ]);
+
+        Assert.Equal("// shapes\r\nstruct Rect\r\n{\r\n    int size() { return w * h; }\r\n}\r\nauto a = r.size;\r\n", renamed);
+    }
+
     private static string ReadLine(Stream stream)
     {
         var line = new StringBuilder();

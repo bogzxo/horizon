@@ -16,7 +16,11 @@ public static class LanguageServers
     /// <param name="Arguments">What the program is started with, --stdio for the ones that want asking.</param>
     /// <param name="LanguageId">The language id of the protocol, csharp, python.</param>
     /// <param name="Extensions">The files it lints, ".cs" and the like.</param>
-    /// <param name="Settings">What it's told to be, see <see cref="LanguageServer.Settings"/>, null for nothing.</param>
+    /// <param name="Settings">
+    /// What it's told to be, see <see cref="LanguageServer.Settings"/>, null for nothing. A text in it that says {root}
+    /// is the folder the server is started in, for a server that wants its import folders said (serve-d's
+    /// d.projectImportPaths, a lone file's folder it knew nothing of).
+    /// </param>
     public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions, System.Text.Json.Nodes.JsonObject? Settings = null);
 
     private static readonly Lock gate = new();
@@ -101,12 +105,30 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory, entry.Settings) : null;
+            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory, SettingsIn(entry.Settings, rootDirectory)) : null;
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
         }
+    }
+
+    /// <summary>A registration's settings for a server started in a folder, every {root} in them that folder.</summary>
+    internal static System.Text.Json.Nodes.JsonObject? SettingsIn(System.Text.Json.Nodes.JsonObject? settings, string rootDirectory)
+    {
+        if (settings is null || !settings.ToJsonString().Contains("{root}", StringComparison.Ordinal))
+            return settings;
+
+        string root = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        System.Text.Json.Nodes.JsonNode? Filled(System.Text.Json.Nodes.JsonNode? node) => node switch
+        {
+            System.Text.Json.Nodes.JsonObject inside => new System.Text.Json.Nodes.JsonObject(inside.Select(pair => KeyValuePair.Create(pair.Key, Filled(pair.Value)))),
+            System.Text.Json.Nodes.JsonArray list => new System.Text.Json.Nodes.JsonArray([.. list.Select(Filled)]),
+            System.Text.Json.Nodes.JsonValue value when value.TryGetValue(out string? text) => System.Text.Json.Nodes.JsonValue.Create(text.Contains("{root}", StringComparison.Ordinal) ? Path.GetFullPath(text.Replace("{root}", root, StringComparison.Ordinal)) : text),
+            _ => node?.DeepClone()
+        };
+
+        return (System.Text.Json.Nodes.JsonObject?)Filled(settings);
     }
 
     /// <summary>The servers that were started, running or not. The same array until one starts or stops, nothing to iterate it costs.</summary>

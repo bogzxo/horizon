@@ -56,6 +56,8 @@ internal sealed unsafe class GlfwKeyboard : IKeyboard
 
     internal static Keys ToGlfw(Key key) => (Keys)(int)key;
 
+    private bool Held(Keys left, Keys right) => glfw.GetKey(window, left) == (int)InputAction.Press || glfw.GetKey(window, right) == (int)InputAction.Press;
+
     internal void Hear(Keys key, int scancode, InputAction action)
     {
         switch (action)
@@ -74,6 +76,12 @@ internal sealed unsafe class GlfwKeyboard : IKeyboard
     internal void HearChar(uint codepoint)
     {
         if (KeyChar is null) return;
+
+        // Ctrl with a letter is a shortcut, never a letter. A real one comes as a control code GLFW drops already, a key
+        // posted to the window (a script driving it) came through as the letter and Ctrl+A typed an a. Ctrl with Alt is
+        // AltGr on Windows and types for real
+        if (Held(Keys.ControlLeft, Keys.ControlRight) && !Held(Keys.AltLeft, Keys.AltRight))
+            return;
 
         // Past the first plane (an emoji) it's two chars, which Silk's cuts down to one that means nothing
         if (codepoint > char.MaxValue && codepoint <= 0x10FFFF)

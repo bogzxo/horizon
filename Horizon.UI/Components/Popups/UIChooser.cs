@@ -31,9 +31,10 @@ public static class UIChooser
     /// Other lists for what is typed starting with a character of their own, null for the list the dialog started with.
     /// The rest of what is typed narrows them down.
     /// </param>
+    /// <param name="typed">What's in the box as it opens, ":" for the lines of a file, the way VS Code's Ctrl+G opens.</param>
     public static UIDialog Show(UIModule module, string title, string message, List<(string Text, Action Picked)> choices,
         string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<(string Text, Action Picked)>?>? prefixed = null,
-        UIRecentList? recent = null)
+        UIRecentList? recent = null, string typed = "")
     {
         string[] texts = [];
         var byText = new Dictionary<string, Action>();
@@ -133,6 +134,13 @@ public static class UIChooser
             shown.Close();
             PickChosen();
         };
+
+        // Started with something typed, it's narrowed down to that at once
+        if (typed.Length > 0)
+        {
+            box.Text = typed;
+            box.OnChanged(typed);
+        }
 
         // The arrows and the pages go up and down the list while the box has the keyboard
         box.OnKey = key =>
