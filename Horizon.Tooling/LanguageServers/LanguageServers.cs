@@ -174,7 +174,7 @@ public static class LanguageServers
         return Task.WhenAll(going.Select(server => Task.Run(server.Dispose)));
     }
 
-    /// <summary>Shuts every running server down.</summary>
+    /// <summary>Shuts every running server down, all at once, each given a moment to go by itself before it's ended.</summary>
     public static void StopAll()
     {
         List<LanguageServer> stopping;
@@ -185,7 +185,6 @@ public static class LanguageServers
             started = [];
         }
 
-        foreach (LanguageServer server in stopping)
-            server.Dispose();
+        Task.WaitAll([.. stopping.Select(server => Task.Run(server.Dispose))]);
     }
 }

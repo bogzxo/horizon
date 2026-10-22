@@ -33,6 +33,13 @@ public sealed class JsonRpcConnection : IDisposable
     /// <summary>Answers the other side's requests, given the method and its params. Null answers null, which is what most want.</summary>
     public Func<string, JsonNode?, JsonNode?>? OnRequest { get; set; }
 
+    /// <summary>
+    /// Asked first about each of the other side's requests, a task for one that's answered later (a question for
+    /// whoever is at the keyboard), which goes back when it's done while the reader goes on. Null for one that
+    /// <see cref="OnRequest"/> answers on the spot.
+    /// </summary>
+    public Func<string, JsonNode?, Task<JsonNode?>?>? OnRequestLater { get; set; }
+
     /// <summary>Called once when the other side goes away or the stream breaks, with what broke it or null for a plain end.</summary>
     public Action<Exception?>? Closed { get; set; }
 
@@ -191,6 +198,19 @@ public sealed class JsonRpcConnection : IDisposable
         return body;
     }
 
+    // Helper method to answer one of the other side's requests, nothing if the connection has gone meanwhile
+    private void Answer(JsonNode id, JsonNode? result)
+    {
+        try
+        {
+            Send(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["result"] = result });
+        }
+        catch (Exception)
+        {
+            // Gone while it was being asked
+        }
+    }
+
     private void Dispatch(JsonObject message)
     {
         JsonNode? id = message["id"];
@@ -198,7 +218,25 @@ public sealed class JsonRpcConnection : IDisposable
 
         if (method is not null && id is not null)
         {
-            // Their request, answered on the spot
+            // Their request, answered when it's done if it's answered later, the reader going on meanwhile
+            Task<JsonNode?>? later = null;
+            try
+            {
+                later = OnRequestLater?.Invoke(method, message["params"]);
+            }
+            catch (Exception)
+            {
+                // Answered on the spot instead
+            }
+
+            if (later is not null)
+            {
+                JsonNode answering = id.DeepClone();
+                later.ContinueWith(done => Answer(answering, done.IsCompletedSuccessfully ? done.Result : null), TaskScheduler.Default);
+                return;
+            }
+
+            // Answered on the spot
             JsonNode? result = null;
             try
             {

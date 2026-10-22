@@ -31,7 +31,7 @@ public enum LanguageServerFileChange
 /// until it has, so a file can be opened the moment the server is started. Completions, hovers and signatures go
 /// through the same connection when they come, onto the editor's CompletionSource, HoverSource and SignatureSource.
 /// </summary>
-public sealed class LanguageServer : IDisposable
+public sealed partial class LanguageServer : IDisposable
 {
     /// <summary>What it is called in a configuration, csharp-ls, pyright, what a status bar says.</summary>
     public string Name { get; }
@@ -72,6 +72,7 @@ public sealed class LanguageServer : IDisposable
         this.process = process;
         this.rpc = rpc;
         rpc.OnNotification("textDocument/publishDiagnostics", Published);
+        ListenForTalk();
         rpc.Closed = why => Fail(why?.Message ?? "the server closed the connection");
         Initialize();
     }

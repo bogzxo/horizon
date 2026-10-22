@@ -251,6 +251,48 @@ public class LanguageServerTests
     }
 
     [Fact]
+    public void A_question_the_server_asks_waits_for_its_answer_and_the_rest_goes_on_meanwhile()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+        using LanguageServer server = LanguageServer.Over("asker", "d", Path.GetTempPath(), toClientRead, toServer);
+
+        // initialize answered, initialized heard
+        JsonObject initialize = ReadMessage(toServerRead);
+        Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
+        Assert.Equal("initialized", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+
+        // serve-d's question, and a line said while it waits
+        Write(toClient, """{"jsonrpc":"2.0","id":"q1","method":"window/showMessageRequest","params":{"type":1,"message":" DCD is outdated.","actions":[{"title":" Download DCD"}]}}""");
+        Write(toClient, """{"jsonrpc":"2.0","method":"coded/logInstall","params":"Downloading DCD"}""");
+
+        LanguageServerQuestion? question = null;
+        Assert.True(WaitFor(() => server.TryTakeQuestion(out question)));
+        Assert.Equal("DCD is outdated.", question!.Message);
+        Assert.Equal([" Download DCD"], question.Actions);
+        Assert.True(question.Warning);
+        Assert.True(WaitFor(() => server.TryTakeSaid(out string text, out _) && text == "Downloading DCD"));
+
+        // Answered, the action itself goes back under the question's id
+        question.Answer(" Download DCD");
+        JsonObject answer = ReadMessage(toServerRead);
+        Assert.Equal("q1", answer["id"]!.GetValue<string>());
+        Assert.Equal(" Download DCD", answer["result"]!["title"]!.GetValue<string>());
+    }
+
+    // Helper method to read one message the way a server reads it
+    private static JsonObject ReadMessage(Stream from)
+    {
+        string header = ReadLine(from);
+        ReadLine(from);
+        byte[] body = new byte[int.Parse(header[16..])];
+        from.ReadExactly(body);
+        return JsonNode.Parse(body)!.AsObject();
+    }
+
+    [Fact]
     public async Task What_is_asked_of_a_server_that_stopped_is_answered_with_nothing()
     {
         var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
