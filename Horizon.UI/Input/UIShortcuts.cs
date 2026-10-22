@@ -22,7 +22,6 @@ public sealed class UIShortcuts
         public bool? Shift { get; set; } = shift;
         public bool WhileTyping { get; } = whileTyping;
         public Action Pressed { get; } = pressed;
-        public bool WasDown { get; set; }
     }
 
     private readonly List<Shortcut> shortcuts = [];
@@ -90,11 +89,13 @@ public sealed class UIShortcuts
         bool shift = keyboard.IsDown(Key.ShiftLeft) || keyboard.IsDown(Key.ShiftRight);
         bool alt = keyboard.IsDown(Key.AltLeft) || keyboard.IsDown(Key.AltRight);
 
+        // A shortcut goes off as its key goes down with the modifiers it wants held then, and not as the modifiers change
+        // under a key that's held. It went by what was held, and letting go of shift before F turned Ctrl+Shift+F into a
+        // Ctrl+F a moment later, Find in Files and the find bar both
         foreach (Shortcut shortcut in shortcuts)
         {
-            bool down = keyboard.IsDown(shortcut.Key) && control == shortcut.Control && alt == shortcut.Alt && (shortcut.Shift is not { } wanted || wanted == shift);
-            bool pressed = down && !shortcut.WasDown;
-            shortcut.WasDown = down;
+            bool pressed = keyboard.WasPressed(shortcut.Key) && control == shortcut.Control && alt == shortcut.Alt
+                && (shortcut.Shift is not { } wanted || wanted == shift);
 
             if (pressed && (shortcut.WhileTyping || !typing))
                 shortcut.Pressed();

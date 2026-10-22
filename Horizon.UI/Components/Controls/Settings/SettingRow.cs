@@ -56,16 +56,20 @@ internal sealed class SettingRow : StackPanel
         if (setting.Buttons is { Length: > 0 } || setting.Slider || setting.ButtonsOnly)
             line = Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
 
-        show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, Math.Min(inner, 420.0f));
+        // What sets it as wide as the row has left once its buttons have their room, a box with three buttons after it
+        // ran off the end of the row and cut the last of them to its first two letters
+        float[] widths = [.. (setting.Buttons ?? []).Select(label => MathF.Max(90.0f, label.Length * 8.5f + 28.0f))];
+        float buttonsTake = widths.Sum() + 8.0f * widths.Length;
+        show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, Math.Clamp(inner - buttonsTake, 160.0f, 420.0f));
 
-        for (int i = 0; i < (setting.Buttons?.Length ?? 0); i++)
+        for (int i = 0; i < widths.Length; i++)
         {
             int which = i;
             string label = setting.Buttons![i];
             line!.Add(new Button
             {
                 Label = label,
-                Size = new Vector2(MathF.Max(90.0f, label.Length * 8.5f + 28.0f), SettingsPage.RowControlHeight),
+                Size = new Vector2(widths[i], SettingsPage.RowControlHeight),
                 LabelScale = page.RowBodyScale,
                 Animated = false,
                 OnPressed = () => page.ButtonPressed(setting.Key, which)
@@ -230,7 +234,7 @@ internal sealed class SettingRow : StackPanel
 
     private Action<IRuntimeValue?> Text(UISetting setting, float width)
     {
-        var box = Put(new TextBox { Size = new Vector2(width, SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        var box = Put(new TextBox { Size = new Vector2(width, SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, Placeholder = setting.Placeholder });
         box.OnChanged = text =>
         {
             typed = text;

@@ -76,16 +76,47 @@ public sealed partial class LanguageServer
     private void ListenForTalk()
     {
         rpc.OnRequestLater = Asked;
+        rpc.OnRequest = Answered;
         rpc.OnNotification("window/showMessage", parameters =>
         {
             if (parameters is JsonObject shown && shown["message"]?.GetValue<string>() is { Length: > 0 } message)
-                Say(message, (shown["type"]?.GetValue<int>() ?? 3) <= 2);
+                Say(message, JsonNumbers.Int(shown["type"], 3) <= 2);
         });
         rpc.OnNotification("coded/logInstall", parameters =>
         {
             if (parameters is JsonValue line && line.TryGetValue(out string? text) && text.Length > 0)
                 Say(text, false);
         });
+    }
+
+    /// <summary>Tells the server a file open in it was saved, which some only look the whole of a file over for then (serve-d's dub).</summary>
+    public void Saved(string path)
+    {
+        string uri = new Uri(Path.GetFullPath(path)).AbsoluteUri;
+        Later(() => rpc.Notify("textDocument/didSave", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }));
+    }
+
+    // The server's requests answered on the spot. Its settings when it asks for them, a section each by its dotted name,
+    // null for anything else
+    private JsonNode? Answered(string method, JsonNode? parameters)
+    {
+        if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
+            return null;
+
+        var sections = new JsonArray();
+        foreach (JsonNode? item in items)
+        {
+            JsonNode? at = Settings;
+            if (item?["section"]?.GetValue<string>() is { Length: > 0 } section)
+            {
+                foreach (string part in section.Split('.'))
+                    at = at is JsonObject inside ? inside[part] : null;
+            }
+
+            sections.Add(at?.DeepClone());
+        }
+
+        return sections;
     }
 
     private void Say(string text, bool warning)
@@ -106,7 +137,7 @@ public sealed partial class LanguageServer
         answer.Task.ContinueWith(_ => asking.TryRemove(answer, out byte _), TaskScheduler.Default);
 
         string message = asked["message"]?.GetValue<string>() ?? string.Empty;
-        bool warning = (asked["type"]?.GetValue<int>() ?? 3) <= 2;
+        bool warning = JsonNumbers.Int(asked["type"], 3) <= 2;
         questions.Enqueue(new LanguageServerQuestion(Name, message, warning, asked["actions"] as JsonArray, answer));
         Woken?.Invoke();
         return answer.Task;

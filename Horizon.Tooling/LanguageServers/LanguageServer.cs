@@ -48,6 +48,13 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Whether its process is up and the connection open.</summary>
     public bool IsRunning => rpc is { IsClosed: false } && process is { HasExited: false };
 
+    /// <summary>
+    /// What it's told to be, its settings by their sections the way an editor's settings have them
+    /// (<c>{ d: { lintOnFileOpen: "always" } }</c> for serve-d), said once it's up and answered whenever it asks for a
+    /// section. Null for a server left to its own, which isn't told the editor has any.
+    /// </summary>
+    public JsonObject? Settings { get; }
+
     /// <summary>Whether initialize has been answered, after which what was asked goes straight out.</summary>
     public bool IsReady { get; private set; }
 
@@ -64,11 +71,12 @@ public sealed partial class LanguageServer : IDisposable
     // What has been asked of the server and not answered, answered with nothing when it stops
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
-    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc)
+    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null)
     {
         Name = name;
         LanguageId = languageId;
         RootDirectory = rootDirectory;
+        Settings = settings;
         this.process = process;
         this.rpc = rpc;
         rpc.OnNotification("textDocument/publishDiagnostics", Published);
@@ -81,7 +89,8 @@ public sealed partial class LanguageServer : IDisposable
     /// Starts a server's process in a folder and begins initializing it. Null when the process can't be started
     /// (the command isn't there), see <see cref="LanguageServers.IsAvailable"/> for asking first.
     /// </summary>
-    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory)
+    /// <param name="settings">What it's told to be (see <see cref="Settings"/>), null for whatever it is by itself.</param>
+    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null)
     {
         var info = new ProcessStartInfo(command)
         {
@@ -112,12 +121,12 @@ public sealed partial class LanguageServer : IDisposable
         process.ErrorDataReceived += static (_, _) => { };
         process.BeginErrorReadLine();
 
-        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream));
+        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
-    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output) =>
-        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output));
+    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null) =>
+        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings);
 
     private async void Initialize()
     {
@@ -125,7 +134,7 @@ public sealed partial class LanguageServer : IDisposable
         {
             ["textDocument"] = new JsonObject
             {
-                ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = false },
+                ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = true },
                 ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = false, ["versionSupport"] = false },
 
                 // What is inserted is plain text, the editor has no placeholders to tab between
@@ -147,7 +156,7 @@ public sealed partial class LanguageServer : IDisposable
             ["workspace"] = new JsonObject
             {
                 ["workspaceFolders"] = false,
-                ["configuration"] = false,
+                ["configuration"] = Settings is not null,
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true }
             }
         };
@@ -167,6 +176,10 @@ public sealed partial class LanguageServer : IDisposable
         {
             await rpc.Request("initialize", parameters).ConfigureAwait(false);
             rpc.Notify("initialized", new JsonObject());
+
+            // What it's told to be, for a server that has settings, said once it's up and asked for again as it wants
+            if (Settings is not null)
+                rpc.Notify("workspace/didChangeConfiguration", new JsonObject { ["settings"] = Settings.DeepClone() });
         }
         catch (Exception e)
         {
@@ -377,18 +390,42 @@ public sealed partial class LanguageServer : IDisposable
         string? insert = item["insertText"]?.GetValue<string>();
         if (item["textEdit"] is JsonObject edit && edit["newText"]?.GetValue<string>() is { } newText
             && (edit["range"] ?? edit["insert"]) is JsonObject range && range["start"] is JsonObject from
-            && from["line"]?.GetValue<int>() == line && from["character"]?.GetValue<int>() == start)
+            && JsonNumbers.Int(from["line"], int.MinValue) == line && JsonNumbers.Int(from["character"], int.MinValue) == start)
             insert = newText;
 
         // A snippet anyway (some servers send them asked or not), its placeholders become what they stand for
-        if (insert is not null && item["insertTextFormat"]?.GetValue<int>() == 2)
+        if (insert is not null && JsonNumbers.Int(item["insertTextFormat"], int.MinValue) == 2)
             insert = PlainSnippet(insert);
 
-        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? said : KindOf(item["kind"]?.GetValue<int>() ?? 0);
+        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? DetailWithout(said, label) : KindOf(JsonNumbers.Int(item["kind"], 0));
         if (detail.Length > 60)
             detail = string.Concat(detail.AsSpan(0, 59), "\u2026");
 
         return new UICompletion(label, detail, insert == label ? null : insert);
+    }
+
+    /// <summary>
+    /// What a server says about an item without the item's own name in it, its name being right beside it in the list.
+    /// serve-d says "int x" of x, and the list said x twice. All of it when that's all there is.
+    /// </summary>
+    public static string DetailWithout(string detail, string label)
+    {
+        string name = label.Split('(', ' ')[0];
+        if (name.Length == 0)
+            return detail;
+
+        static bool Word(char character) => char.IsLetterOrDigit(character) || character == '_';
+        for (int at = detail.IndexOf(name, StringComparison.Ordinal); at >= 0; at = detail.IndexOf(name, at + 1, StringComparison.Ordinal))
+        {
+            int after = at + name.Length;
+            if ((at > 0 && Word(detail[at - 1])) || (after < detail.Length && Word(detail[after])))
+                continue;
+
+            string left = string.Join(' ', (detail[..at] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            return left.Length > 0 ? left : detail;
+        }
+
+        return detail;
     }
 
     /// <summary>A snippet's text without its placeholders, ${1:name} as name, $1 and $0 as nothing, \$ as $.</summary>
@@ -503,17 +540,19 @@ public sealed partial class LanguageServer : IDisposable
                     || range["start"] is not JsonObject start || range["end"] is not JsonObject end)
                     continue;
 
-                int line = start["line"]?.GetValue<int>() ?? 0, column = start["character"]?.GetValue<int>() ?? 0;
-                int endLine = end["line"]?.GetValue<int>() ?? line, endColumn = end["character"]?.GetValue<int>() ?? column;
+                int line = JsonNumbers.Int(start["line"], 0), column = JsonNumbers.Int(start["character"], 0);
+                int endLine = JsonNumbers.Int(end["line"], line), endColumn = JsonNumbers.Int(end["character"], column);
                 int length = endLine == line ? Math.Max(1, endColumn - column) : Math.Max(1, 200 - column);
 
-                // 1 is an error, 2 a warning, 3 information and 4 a hint, which are shown as warnings, nothing is red that isn't wrong
-                int severity = diagnostic["severity"]?.GetValue<int>() ?? 1;
+                // 1 is an error, 2 a warning, 3 information and 4 a hint, the last two drawn quieter than a warning, nothing
+                // is red that isn't wrong. A code goes after what it says when there is one, an empty one said "()"
+                int severity = JsonNumbers.Int(diagnostic["severity"], 1);
                 string message = diagnostic["message"]?.GetValue<string>() ?? string.Empty;
-                if (diagnostic["code"] is { } code && code.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number)
-                    message = $"{message} ({code})";
+                if (diagnostic["code"] is { } code && code.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number
+                    && code.ToString() is { Length: > 0 } said)
+                    message = $"{message} ({said})";
 
-                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1));
+                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3));
             }
         }
 

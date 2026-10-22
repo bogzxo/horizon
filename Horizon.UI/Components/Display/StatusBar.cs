@@ -62,6 +62,10 @@ public class StatusBar : UIComponent
     private readonly List<StatusItem> items = [];
     private StatusItem? pressed;
 
+    // What each item was last cut to, by what it said and the room it had, made again only when either changes. Cut
+    // every paint it made a string a letter tried, a kilobyte a tick in the designer with a long message
+    private readonly Dictionary<StatusItem, (string Text, float Room, string Fitted)> fitted = [];
+
     public IReadOnlyList<StatusItem> Items => items;
 
     /// <summary>The colour of the strip, null for the skin's panel.</summary>
@@ -86,7 +90,11 @@ public class StatusBar : UIComponent
         return item;
     }
 
-    public void Clear() => items.Clear();
+    public void Clear()
+    {
+        items.Clear();
+        fitted.Clear();
+    }
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
@@ -113,6 +121,17 @@ public class StatusBar : UIComponent
             }
         }
 
+        // The left ones stop short of where the right ones start, a long message was written over them
+        float rightStart = Bounds.Max.X;
+        if (!item.Right)
+        {
+            foreach (StatusItem other in items)
+            {
+                if (other.Right && other.Shown)
+                    rightStart -= WidthOf(skin, other);
+            }
+        }
+
         foreach (StatusItem other in items)
         {
             if (other.Right != item.Right || !other.Shown)
@@ -120,13 +139,41 @@ public class StatusBar : UIComponent
 
             float width = WidthOf(skin, other);
             if (other == item)
-                return new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + width, Bounds.Max.Y));
+            {
+                if (!item.Right)
+                    width = MathF.Min(width, rightStart - LEFT_GAP - x);
+                return width <= ITEM_PADDING * 2.0f ? default : new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + width, Bounds.Max.Y));
+            }
 
             x += width;
         }
 
         return default;
     }
+
+    // The room kept between the last of the left items and the first of the right
+    private const float LEFT_GAP = 12.0f;
+
+    /// <summary>
+    /// Helper method for what an item says cut to its room with three dots, all of it when it fits. A pixel either way
+    /// is a fit, the room is worked out of the same measure and came out a hair short of it, every item on the right lost
+    /// its last letter. Three dots and not the one character of them, the UI's font has none and drew a question mark. A
+    /// text with an icon in it is left whole, cut it would be half a tag.
+    /// </summary>
+    private static string Fitted(UIFont font, string text, float room, float scale)
+    {
+        if (font.Measure(text, scale).X <= room + FIT_SLACK || text.Contains("$(", StringComparison.Ordinal))
+            return text;
+
+        int length = text.Length;
+        while (length > 0 && font.Measure(string.Concat(text.AsSpan(0, length), CUT), scale).X > room + FIT_SLACK)
+            length--;
+        return length == 0 ? string.Empty : string.Concat(text.AsSpan(0, length).TrimEnd(), CUT);
+    }
+
+    // What's put where an item was cut, and how far over its room a text may be and still be a fit
+    private const string CUT = "...";
+    private const float FIT_SLACK = 1.0f;
 
     private StatusItem? ItemAt(Vector2 point)
     {
@@ -186,7 +233,10 @@ public class StatusBar : UIComponent
 
             // A colour of its own that can't be read on the bar (red on the accent) is the bar's text instead
             Vector4 said = item.Color is { } own && UIPalette.Contrast(own, item.Background ?? bar) >= LEAST_CONTRAST ? own : text;
-            list.Text(item.Text, area, Origin.Center, scale, said);
+            float room = area.Width - ITEM_PADDING * 2.0f;
+            if (!fitted.TryGetValue(item, out var was) || !ReferenceEquals(was.Text, item.Text) || was.Room != room)
+                fitted[item] = was = (item.Text, room, Fitted(skin.Font, item.Text, room, scale));
+            list.Text(was.Fitted, area, Origin.Center, scale, said);
         }
 
         list.EndParts();

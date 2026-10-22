@@ -25,6 +25,9 @@ public class Collapsible : StackPanel
     private string style = "collapsible";
     private string hoverStyle = "collapsible_hover";
     private const float ARROW_SHARE = 0.32f;
+
+    // How big the chevron is as a share of the bar, a line of the tree's
+    private const float CHEVRON_SHARE = 0.6f;
     private const int ARROW_STEPS = 5;
     private const int BAR_PART = 0, RIM_PART = 1, TITLE_PART = 2;
 
@@ -197,7 +200,15 @@ public class Collapsible : StackPanel
         float indent = MathF.Round(header.Height * 0.4f);
         Vector2 arrow = new(header.Min.X + indent + size * 0.5f, header.Center.Y);
 
-        PaintArrow(list, arrow, size, color);
+        // Without art of the skin's for it, the chevron a tree opens with, so every group of a side bar opens the one way.
+        // The filled arrow of steps over a tree of chevrons was two kinds of the same thing
+        if (!art && UISymbols.TryGet(openness >= 0.5f ? "chevron-down" : "chevron-right", out char chevron))
+        {
+            float side = MathF.Round(header.Height * CHEVRON_SHARE);
+            list.Symbol(chevron, UIRect.FromCenter(arrow, new Vector2(side)), color);
+        }
+        else
+            PaintArrow(list, arrow, size, color);
 
         UIRect text = new(new Vector2(arrow.X + size * 0.5f + indent * 0.75f, header.Min.Y), new Vector2(header.Max.X - indent, header.Max.Y));
         list.Text(Resolve(Title), text, Origin.Left, TextScaleOf(skin), color, markup: false);

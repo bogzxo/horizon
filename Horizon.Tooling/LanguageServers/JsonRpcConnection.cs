@@ -264,15 +264,25 @@ public sealed class JsonRpcConnection : IDisposable
             Action<JsonNode?>? handler;
             lock (notifications)
                 notifications.TryGetValue(method, out handler);
-            handler?.Invoke(message["params"]);
+
+            // One message that can't be made sense of is that message lost, not the server. A throw in here ended the
+            // reader, and serve-d was gone for the run over one diagnostic
+            try
+            {
+                handler?.Invoke(message["params"]);
+            }
+            catch (Exception)
+            {
+            }
+
             return;
         }
 
         // An answer to one of ours
-        if (id is not null && id.GetValueKind() == JsonValueKind.Number && pending.TryRemove(id.GetValue<int>(), out var waiting))
+        if (id is not null && id.GetValueKind() == JsonValueKind.Number && pending.TryRemove(JsonNumbers.Int(id, -1), out var waiting))
         {
             if (message["error"] is JsonObject error)
-                waiting.TrySetException(new RemoteException(error["code"]?.GetValue<int>() ?? 0, error["message"]?.GetValue<string>() ?? "no reason given"));
+                waiting.TrySetException(new RemoteException(JsonNumbers.Int(error["code"], 0), error["message"]?.GetValue<string>() ?? "no reason given"));
             else
                 waiting.TrySetResult(message["result"]);
         }

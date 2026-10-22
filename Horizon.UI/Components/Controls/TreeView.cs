@@ -418,6 +418,7 @@ public class TreeView : UIComponent
         Vector4 dim = text with { W = text.W * 0.55f };
         Vector4 guide = text with { W = text.W * 0.12f };
         Vector4 lit = text with { W = ListBox.PICKED };
+        bool keyed = IsFocused && TakesKeys;
 
         if (Color is { } behind)
         {
@@ -443,7 +444,12 @@ public class TreeView : UIComponent
             // The highlight is always there, see-through on a row that isn't lit. A row's quads are blended with the same
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
-            list.Box(row.Shrink(new UIEdges(4.0f, 1.0f)), item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
+            list.Box(pill, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+
+            // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
+            // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted
+            list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.Palette.Highlight with { W = item == selected && keyed ? 0.8f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;

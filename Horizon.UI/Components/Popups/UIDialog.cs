@@ -11,7 +11,11 @@ namespace Horizon.UI.Components;
 /// </summary>
 /// <param name="Label">What the button says.</param>
 /// <param name="Picked">What picking it does, after the dialog has closed. Null for a button that only closes it.</param>
-public readonly record struct DialogChoice(string Label, Action? Picked = null);
+/// <param name="Risky">
+/// Whether it can do harm (open a file that isn't text as text, throw something away). A dialog whose first choice is
+/// risky doesn't make it the one Enter presses, the last (the one Escape picks too) is.
+/// </param>
+public readonly record struct DialogChoice(string Label, Action? Picked = null, bool Risky = false);
 
 /// <summary>
 /// A question in a box over everything else in its module, a title, a line or two about it and a button for every
@@ -46,8 +50,11 @@ public sealed class UIDialog : Panel
     private readonly StackPanel buttons;
     private readonly DialogChoice[] choices;
 
-    // What the navigator of the module was on before the dialog took it over, to go back to
-    private UIComponent? scopeBefore, selectedBefore;
+    // What the navigator of the module was on before the dialog took it over, to go back to, and what had the keyboard
+    private UIComponent? scopeBefore, selectedBefore, focusBefore;
+
+    // Tab goes round its buttons and what's in its body, never out to what's behind
+    protected internal override bool HoldsTab => true;
 
     /// <summary>Called once the dialog has closed, however it was closed.</summary>
     public Action? Closed { get; set; }
@@ -109,12 +116,24 @@ public sealed class UIDialog : Panel
         for (int i = 0; i < choices.Length; i++)
         {
             int index = i;
-            made[i] = buttons.Add(new Button(choices[i].Label) { OnPressed = () => Pick(index) });
+            made[i] = new Button(choices[i].Label) { OnPressed = () => Pick(index) };
         }
 
-        // The first is the one to press when there's a choice, the last is what Escape picks
-        if (made.Length > 1)
-            made[0].Primary = true;
+        // The first is the one to press when there's a choice, the last is what Escape picks. A risky first one isn't
+        // pressed by a key, the last is the one to press then
+        int primary = made.Length > 1 ? (choices[0].Risky ? made.Length - 1 : 0) : -1;
+        if (primary >= 0)
+            made[primary].Primary = true;
+
+        // Along the bottom the rest in the order they were given from the right, and the one to press at the right end,
+        // the way every dialog of the engine's has them (Cancel, Don't save, Save). It was first, at the left
+        for (int i = made.Length - 1; i >= 0; i--)
+        {
+            if (i != primary)
+                buttons.Add(made[i]);
+        }
+        if (primary >= 0)
+            buttons.Add(made[primary]);
 
         Buttons = made;
     }
@@ -141,6 +160,14 @@ public sealed class UIDialog : Panel
         module.Popup = null;
 
         var dialog = new UIDialog(title, message, choices);
+
+        // Over every window of the module whatever its z, a question asked from a window raised over the rest (the keys
+        // window asking for a key) came up under it, the screen dimmed with nothing to read
+        int highest = 0;
+        foreach (UIComponent other in module.Root.Children)
+            highest = Math.Max(highest, other.ZOffset);
+        dialog.ZOffset = highest + 1;
+
         module.AddComponent(dialog);
 
         // Walking the UI stays inside the dialog while it is up, and starts on its first button
@@ -148,7 +175,16 @@ public sealed class UIDialog : Panel
         dialog.scopeBefore = navigation.Scope;
         dialog.selectedBefore = navigation.Current;
         navigation.Scope = dialog;
-        navigation.SelectFirst();
+        if (dialog.Buttons.FirstOrDefault(button => button.Primary) is { } primary)
+            navigation.Select(primary);
+        else
+            navigation.SelectFirst();
+
+        // It takes the keyboard, on the button Enter presses, and what was typed before it came up is let go of. The keys
+        // went on to what was behind it (Enter added a line to the code under a question), and the Enter that picked
+        // Close in the palette pressed Save in the question it asked
+        dialog.focusBefore = module.Compositor.Focus;
+        (dialog.Buttons.FirstOrDefault(button => button.Primary) ?? dialog.Buttons.LastOrDefault())?.Focus();
 
         dialog.PlayIntro();
         return dialog;
@@ -198,9 +234,10 @@ public sealed class UIDialog : Panel
             }
         }
 
-        // The keyboard let go of at once, a box of it typed into while it fades was typing into nothing
-        if (Module?.Compositor is { Focus: { } focused } compositor && Contains(focused))
-            compositor.Focus = null;
+        // The keyboard let go of at once, a box of it typed into while it fades was typing into nothing, and back to what
+        // had it before the dialog came up when that's still there
+        if (Module?.Compositor is { } compositor && (compositor.Focus is null || Contains(compositor.Focus)))
+            compositor.Focus = focusBefore is { Module: not null } before && !Contains(before) ? before : null;
 
         closing = true;
         Closed?.Invoke();

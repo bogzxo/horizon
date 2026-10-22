@@ -142,6 +142,15 @@ public class ToggleButton : UIComponent
         InvokeScript(pressedHandler, new BooleanValue(State));
     }
 
+    // Tab gets to it, and Enter or space flips it the way a click does
+    protected internal override bool TabStop => true;
+
+    protected internal override void OnTextInput(char character)
+    {
+        if (character is UIKeyboard.ENTER or ' ' && EnabledInHierarchy)
+            OnClick();
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();

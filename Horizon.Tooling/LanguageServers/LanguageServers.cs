@@ -16,7 +16,8 @@ public static class LanguageServers
     /// <param name="Arguments">What the program is started with, --stdio for the ones that want asking.</param>
     /// <param name="LanguageId">The language id of the protocol, csharp, python.</param>
     /// <param name="Extensions">The files it lints, ".cs" and the like.</param>
-    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions);
+    /// <param name="Settings">What it's told to be, see <see cref="LanguageServer.Settings"/>, null for nothing.</param>
+    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions, System.Text.Json.Nodes.JsonObject? Settings = null);
 
     private static readonly Lock gate = new();
     private static readonly List<Registration> registrations = [];
@@ -45,13 +46,13 @@ public static class LanguageServers
     /// server, if it was running, stopped off the caller's thread: what's handed back is that stop, done once the
     /// process is gone (for whoever wants to write over its program).
     /// </summary>
-    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions)
+    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions, System.Text.Json.Nodes.JsonObject? settings = null)
     {
         Task stopping = Task.CompletedTask;
         lock (gate)
         {
             registrations.RemoveAll(other => other.Name == name);
-            registrations.Add(new Registration(name, command, arguments, languageId, extensions));
+            registrations.Add(new Registration(name, command, arguments, languageId, extensions, settings));
             // Every one of its folders, asked to shut down and given a couple of seconds for it, off the caller's thread,
             // which is the UI's
             var going = new List<LanguageServer>();
@@ -100,7 +101,7 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory) : null;
+            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory, entry.Settings) : null;
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];

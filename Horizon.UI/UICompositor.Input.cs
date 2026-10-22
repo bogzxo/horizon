@@ -163,8 +163,9 @@ public partial class UICompositor
     private readonly List<UIComponent> focusable = [];
 
     /// <summary>
-    /// Moves the keyboard focus to the next component that takes it (a text box), in the order of the layout and
-    /// round past the end, or back with a negative step. What the tab key does. Simulation thread.
+    /// Moves the keyboard focus to the next thing Tab stops on (a text box, a button, a dropdown), in the order of the
+    /// layout and round past the end, or back with a negative step, round the window it's in when that window holds it.
+    /// What the tab key does. Simulation thread.
     /// </summary>
     public void FocusNext(int by = 1) => FocusNext(modules, by);
 
@@ -174,11 +175,26 @@ public partial class UICompositor
     /// </summary>
     private void FocusNext(UIModule[] snapshot, int by)
     {
-        focusable.Clear();
-        foreach (var module in snapshot)
+        // Inside a window that holds the keyboard, round what's in it and no further
+        UIComponent? holding = null;
+        for (UIComponent? at = focus; at is not null && holding is null; at = at.Parent)
         {
-            if (module.Enabled && module.Interactive)
-                module.CollectFocusable(focusable);
+            if (at.HoldsTab)
+                holding = at;
+        }
+
+        focusable.Clear();
+        if (holding is not null)
+        {
+            UIModule.CollectFocusable(holding, focusable);
+        }
+        else
+        {
+            foreach (var module in snapshot)
+            {
+                if (module.Enabled && module.Interactive)
+                    module.CollectFocusable(focusable);
+            }
         }
 
         if (focusable.Count == 0)

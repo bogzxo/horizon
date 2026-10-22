@@ -266,7 +266,7 @@ public sealed class DebugSession : IDisposable
             foreach (JsonNode? scope in list)
             {
                 if (scope is JsonObject named)
-                    scopes.Add(new DebugScope(named["name"]?.GetValue<string>() ?? "?", named["variablesReference"]?.GetValue<int>() ?? 0));
+                    scopes.Add(new DebugScope(named["name"]?.GetValue<string>() ?? "?", JsonNumbers.Int(named["variablesReference"], 0)));
             }
         }
 
@@ -284,7 +284,7 @@ public sealed class DebugSession : IDisposable
                 if (variable is JsonObject one)
                 {
                     variables.Add(new DebugVariable(one["name"]?.GetValue<string>() ?? "?", one["value"]?.GetValue<string>() ?? string.Empty,
-                        one["type"]?.GetValue<string>(), one["variablesReference"]?.GetValue<int>() ?? 0));
+                        one["type"]?.GetValue<string>(), JsonNumbers.Int(one["variablesReference"], 0)));
                 }
             }
         }
@@ -319,7 +319,7 @@ public sealed class DebugSession : IDisposable
                 break;
 
             case "stopped":
-                stoppedThread = body?["threadId"]?.GetValue<int>() ?? stoppedThread;
+                stoppedThread = JsonNumbers.Int(body?["threadId"], stoppedThread);
                 _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>());
                 break;
 
@@ -336,7 +336,7 @@ public sealed class DebugSession : IDisposable
                 break;
 
             case "exited":
-                End(body?["exitCode"]?.GetValue<int>() ?? 0);
+                End(JsonNumbers.Int(body?["exitCode"], 0));
                 break;
 
             case "terminated":
@@ -357,8 +357,8 @@ public sealed class DebugSession : IDisposable
                 {
                     if (frame is not JsonObject one)
                         continue;
-                    frames.Add(new DebugFrame(one["id"]?.GetValue<int>() ?? 0, one["name"]?.GetValue<string>() ?? "?", one["source"]?["path"]?.GetValue<string>(),
-                        Math.Max(0, (one["line"]?.GetValue<int>() ?? 1) - 1), Math.Max(0, (one["column"]?.GetValue<int>() ?? 1) - 1)));
+                    frames.Add(new DebugFrame(JsonNumbers.Int(one["id"], 0), one["name"]?.GetValue<string>() ?? "?", one["source"]?["path"]?.GetValue<string>(),
+                        Math.Max(0, JsonNumbers.Int(one["line"], 1) - 1), Math.Max(0, JsonNumbers.Int(one["column"], 1) - 1)));
                 }
             }
         }

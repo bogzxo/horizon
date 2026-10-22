@@ -13,9 +13,13 @@ public sealed record UIDialogHost(Action<WindowPanel> Present, IReadOnlyList<str
 /// </summary>
 public static class UIFileDialogs
 {
-    /// <summary>A file that is there. The filter is pairs of what it says and what it matches, "Pictures" and "*.png;*.jpg", all files after them.</summary>
-    public static Task<string?> Open(string title, string directory, IReadOnlyList<(string Name, string Pattern)> filter, UIDialogHost host) =>
-        Show(host, UIBrowse.Open, title, directory, string.Empty, filter);
+    /// <summary>
+    /// A file that is there. The filter is pairs of what it says and what it matches, "Pictures" and "*.png;*.jpg", all
+    /// files before them. A file named in the folder is picked as it opens, the one somebody was about to open before a
+    /// question took them out of the dialog.
+    /// </summary>
+    public static Task<string?> Open(string title, string directory, IReadOnlyList<(string Name, string Pattern)> filter, UIDialogHost host, string name = "") =>
+        Show(host, UIBrowse.Open, title, directory, name, filter);
 
     /// <summary>Where to save, <paramref name="name"/> the name the file is given unless another one is typed.</summary>
     public static Task<string?> Save(string title, string directory, string name, IReadOnlyList<(string Name, string Pattern)> filter, UIDialogHost host) =>

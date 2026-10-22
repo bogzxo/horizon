@@ -16,7 +16,13 @@ namespace Horizon.UI.Components;
 /// <param name="Line">Which line, counted from 0.</param>
 /// <param name="Column">Where on it, counted from 0.</param>
 /// <param name="Length">How many characters it is about, at least one is marked.</param>
-public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false);
+/// <param name="Warning">Whether it's only a warning, or less than that, rather than something wrong.</param>
+/// <param name="Hint">
+/// Whether it's only worth a look (a language server's hint or information, a variable never used), drawn quieter than
+/// a warning, a dotted line in the text's colour and no mark in the gutter. One is a warning as well, for whoever only
+/// tells what's wrong apart from what isn't.
+/// </param>
+public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false);
 
 /// <summary>Something a <see cref="CodeEditor"/> offers to write where the caret is, a word it knows.</summary>
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
@@ -24,8 +30,12 @@ public readonly record struct UICodeDiagnostic(int Line, int Column, int Length,
 /// <param name="Insert">What goes in when it is picked, the text itself unless this says otherwise.</param>
 public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null);
 
-/// <summary>What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.</summary>
-public readonly record struct UICompletionRequest(int Start, IReadOnlyList<UICompletion> Items);
+/// <summary>
+/// What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.
+/// With nothing yet because it's still coming (a language server asked and not answered), Waiting is said in a quiet
+/// row of the list after a moment, an answer that comes quickly never shows it.
+/// </summary>
+public readonly record struct UICompletionRequest(int Start, IReadOnlyList<UICompletion> Items, string Waiting = "");
 
 /// <summary>How a function is called, said over a call being typed, the piece from Start for Length (the argument the caret is on) in bold.</summary>
 public readonly record struct UISignature(string Text, int Start, int Length);
@@ -70,6 +80,13 @@ public partial class CodeEditor : UIComponent
     // What is offered at the caret, which of it is picked, which is the first in sight, and where what is picked goes in
     private readonly List<UICompletion> completions = [];
     private int completionIndex, completionTop, completionStart;
+
+    // What the list says while what it offers is still coming, and for how long it's been coming. It shows after a
+    // moment, a server that answers at once had the row flash up and go
+    private string waiting = string.Empty;
+    private float waitedFor;
+    private const float WAIT_SHOWN = 0.3f;
+    private bool WaitingShown => waiting.Length > 0 && waitedFor >= WAIT_SHOWN;
 
     // The parts of what is drawn that are counted apart, see UIDrawList.BeginPart. Lines count from 0 on their own
     private const int PART_BACK = -1, PART_OVERLAY = -2, PART_CARET = -3, PART_BAR = -4, PART_SWATCHES = -5, PART_BACKDROP = -6, PART_STICKY = -7, PART_SIGNATURE = -8, PART_ART = -9, PART_GUTTER = 1 << 20;
@@ -490,6 +507,7 @@ public partial class CodeEditor : UIComponent
             revealCaret = true;
             OnChanged?.Invoke();
         };
+        document.LinesMoved += MoveDiagnostics;
     }
 
     public CodeEditor(string text)
@@ -789,6 +807,8 @@ public partial class CodeEditor : UIComponent
 
         blink = (blink + dt) % (BLINK * 2.0f);
         tickTime = dt;
+        if (waiting.Length > 0)
+            waitedFor += dt;
         flowTime += dt;
 
         // On the way to where the wheel wants it
@@ -1307,6 +1327,21 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        // Nothing yet because it's still coming, the list is open with a row that says so, the clock going on from the
+        // first time it was asked for while the word is typed on
+        if (request.Items.Count == 0 && request.Waiting.Length > 0)
+        {
+            if (waiting.Length == 0)
+                waitedFor = 0.0f;
+            waiting = request.Waiting;
+            completionStart = request.Start;
+            completionIndex = completionTop = 0;
+            OpenPopup();
+            return;
+        }
+
+        waiting = string.Empty;
+
         // What starts with what is typed first, then what has it anywhere in it, each in the order it came
         foreach (var item in request.Items)
         {
@@ -1349,9 +1384,13 @@ public partial class CodeEditor : UIComponent
     /// <summary>Closes the list of what can be completed, if it is open.</summary>
     public void CloseCompletion()
     {
+        waiting = string.Empty;
         if (CompletionOpen)
             ClosePopup();
     }
+
+    /// <summary>What the list of completions says while what it offers is still coming, empty when it isn't waiting.</summary>
+    public string CompletionWaiting => waiting;
 
     /// <summary>Puts what is picked in the list where the word being typed is.</summary>
     public void AcceptCompletion()
@@ -1371,6 +1410,16 @@ public partial class CodeEditor : UIComponent
     // The keys that go to the list while it is open, true for one it took
     private bool CompletionKey(char character)
     {
+        // Only waiting, the list has nothing to go along or pick, the key does what it does without it
+        if (completions.Count == 0)
+        {
+            if (character == UIKeyboard.COMPLETE)
+                return true;
+            if (character is UIKeyboard.UP or UIKeyboard.DOWN or UIKeyboard.PAGE_UP or UIKeyboard.PAGE_DOWN or UIKeyboard.ENTER or UIKeyboard.TAB)
+                CloseCompletion();
+            return false;
+        }
+
         switch (character)
         {
             case UIKeyboard.UP:
@@ -1405,6 +1454,9 @@ public partial class CodeEditor : UIComponent
     /// <summary>Moves which of the open list of what can be completed is picked, by so many rows.</summary>
     public void MoveCompletion(int by)
     {
+        if (completions.Count == 0)
+            return;
+
         completionIndex = Math.Clamp(completionIndex + by, 0, completions.Count - 1);
         if (completionIndex < completionTop) completionTop = completionIndex;
         if (completionIndex >= completionTop + COMPLETION_ROWS) completionTop = completionIndex - COMPLETION_ROWS + 1;
@@ -1443,7 +1495,7 @@ public partial class CodeEditor : UIComponent
 
     private UIRect CompletionBounds()
     {
-        if (paintedSkin is not { } skin || completions.Count == 0)
+        if (paintedSkin is not { } skin || (completions.Count == 0 && !WaitingShown))
             return default;
 
         float scale = paintedScale;
@@ -1455,7 +1507,7 @@ public partial class CodeEditor : UIComponent
         float x = area.Min.X + TEXT_PAD - scrollX + ColumnX(skin, scale, caret.Line, completionStart);
         float below = TopOf(area, caret.Line, caret.Column, lineHeight) - lineHeight;
 
-        float widest = 0.0f;
+        float widest = completions.Count == 0 ? FontOf(skin).Measure(waiting, scale * 0.9f, markup: false).X : 0.0f;
         int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
         for (int i = completionTop; i < last; i++)
         {
@@ -1466,7 +1518,7 @@ public partial class CodeEditor : UIComponent
         }
 
         float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f;
-        float height = Math.Min(COMPLETION_ROWS, completions.Count) * rowHeight + COMPLETION_PAD * 2.0f;
+        float height = Math.Clamp(completions.Count, 1, COMPLETION_ROWS) * rowHeight + COMPLETION_PAD * 2.0f;
 
         // Under the line unless that runs off the bottom of the module
         float top = below;
@@ -1488,6 +1540,9 @@ public partial class CodeEditor : UIComponent
     // When the list of completions was first painted, by the draw list's clock, less than 0 while there's none
     private float completionsOpenedAt = -1.0f;
 
+    // The part the row that says it's waiting is painted as, apart from the rows' own
+    private const int WAITING_PART = -2;
+
     private void PaintCompletions(UIDrawList list)
     {
         UIRect bounds = CompletionBounds();
@@ -1506,6 +1561,19 @@ public partial class CodeEditor : UIComponent
         list.Popup(bounds, Module?.Compositor.PopupGlass);
 
         float rowHeight = CompletionRow(skin);
+
+        // Still coming, a quiet row that says so in place of the rows
+        if (completions.Count == 0)
+        {
+            list.BeginPart(WAITING_PART);
+            var row = new UIRect(new Vector2(bounds.Min.X + COMPLETION_PAD, bounds.Min.Y + COMPLETION_PAD), new Vector2(bounds.Max.X - COMPLETION_PAD, bounds.Max.Y - COMPLETION_PAD));
+            list.Text(waiting, new UIRect(new Vector2(row.Min.X + TEXT_PAD, row.Min.Y), row.Max), Horizon.Rendering.Origin.Left, scale * 0.9f, colors.Comment, markup: false);
+            list.EndParts();
+            if (entering)
+                list.EndEntrance();
+            return;
+        }
+
         int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
         for (int i = completionTop; i < last; i++)
         {
@@ -2560,9 +2628,46 @@ public partial class CodeEditor : UIComponent
         UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
         float to = MathF.Max(piece.Min.X + lineHeight * 0.5f, piece.Max.X);
         float thickness = MathF.Max(2.0f, MathF.Round(lineHeight * 0.08f));
-        Vector4 shade = diagnostic.Warning ? skin.WarningColor : skin.ErrorColor;
 
+        // A hint is a line of dots in the text's colour, seen through, a warning and an error a line of theirs. Always as
+        // many quads for a diagnostic of a kind, the dots a few of them under the whole of it
+        if (diagnostic.Hint)
+        {
+            Vector4 quiet = skin.TextColor with { W = skin.TextColor.W * 0.45f };
+            float dot = thickness, step = thickness * 2.5f;
+            for (float x = piece.Min.X; x + dot <= to; x += step)
+                list.Rect(new UIRect(new Vector2(x, piece.Min.Y), new Vector2(x + dot, piece.Min.Y + dot)), quiet);
+            return;
+        }
+
+        Vector4 shade = diagnostic.Warning ? skin.WarningColor : skin.ErrorColor;
         list.Rect(new UIRect(piece.Min, new Vector2(to, piece.Min.Y + thickness)), shade);
+    }
+
+    /// <summary>
+    /// Lines put in or taken out of the text, what's wrong on the lines after it moved along with them, so it stays on
+    /// the code it's about until whoever said it says it again. It stayed where it was and was about the line above.
+    /// </summary>
+    private void MoveDiagnostics(UITextPosition at, int by)
+    {
+        if (diagnostics.Count == 0 || by == 0)
+            return;
+
+        var moved = new UICodeDiagnostic[diagnostics.Count];
+        for (int i = 0; i < moved.Length; i++)
+        {
+            UICodeDiagnostic found = diagnostics[i];
+            int line = found.Line;
+            if (by > 0 && (line > at.Line || (line == at.Line && found.Column >= at.Column)))
+                line += by;
+            else if (by < 0 && line > at.Line)
+                line += by;
+            else if (by < 0 && line > at.Line + by)
+                line = at.Line + by;
+            moved[i] = found with { Line = line };
+        }
+
+        diagnostics = moved;
     }
 
     // Whether a line has something wrong on it, for its number in the gutter
@@ -2578,16 +2683,19 @@ public partial class CodeEditor : UIComponent
                 return true;
         }
 
+        // The worst on the line, an error over a warning, a hint is no mark at all
+        bool marked = false;
+        warning = true;
         for (int i = 0; i < diagnostics.Count; i++)
         {
-            if (diagnostics[i].Line == line)
-            {
-                warning = diagnostics[i].Warning;
-                return true;
-            }
+            if (diagnostics[i].Line != line || diagnostics[i].Hint)
+                continue;
+
+            marked = true;
+            warning &= diagnostics[i].Warning;
         }
 
-        return false;
+        return marked;
     }
 
     protected override void DefineScript()

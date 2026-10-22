@@ -69,9 +69,15 @@ public static class UIChooser
         {
             // The best matches first, what starts with what was typed, then what has a word starting with it, then what has
             // it whole, then the letters in order. Dusk's "dawn" had Dawn, the editor under a command that only had the letters
-            var left = texts.Where(text => Matches(text, query)).OrderBy(text => Rank(text, query));
+            var ranked = texts.Where(text => Matches(text, query)).Select(text => (Text: text, Rank: Rank(text, query))).ToList();
+
+            // The letters only somewhere in that order are kept for when nothing has more of it than that, "close" listed
+            // Trigger Completion under Close and Close All
+            int best = ranked.Count > 0 ? ranked.Min(pair => pair.Rank) : 0;
+            var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE).OrderBy(pair => pair.Rank);
             if (shortestFirst && showing == '\0')
-                left = left.ThenBy(text => Path.GetFileName(text).Length);
+                ordered = ordered.ThenBy(pair => Path.GetFileName(pair.Text).Length);
+            var left = ordered.Select(pair => pair.Text);
 
             string[] lead = showing == '\0' && recent is not null
                 ? [.. recent.Items.Where(text => byText.ContainsKey(text) && Matches(text, query))]
@@ -176,6 +182,9 @@ public static class UIChooser
 
         return (quiet, text, keys);
     }
+
+    // The rank of a choice that only has the letters typed somewhere in that order, see Rank
+    private const int LOOSE = 4;
 
     /// <summary>
     /// How well a choice matches what was typed, lower better. 0 when what it does starts with it, 1 when a word of it

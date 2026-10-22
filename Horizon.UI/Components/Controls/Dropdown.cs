@@ -124,6 +124,24 @@ public class Dropdown : UIComponent
         return true;
     }
 
+    // Tab gets to it, and up and down go through its options without opening it
+    protected internal override bool TabStop => options.Length > 1;
+
+    protected internal override void OnTextInput(char character)
+    {
+        if (!EnabledInHierarchy || options.Length == 0)
+            return;
+
+        int step = character switch
+        {
+            UIKeyboard.UP or UIKeyboard.LEFT => -1,
+            UIKeyboard.DOWN or UIKeyboard.RIGHT => 1,
+            _ => 0
+        };
+        if (step != 0)
+            Choose(Math.Clamp(index + step, 0, options.Length - 1));
+    }
+
     /// <summary>Helper method to make an option the chosen one and tell whoever listens, if it is another one.</summary>
     private void Choose(int chosen)
     {

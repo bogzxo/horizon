@@ -26,7 +26,8 @@ public sealed record UISetting(
     float Step = 1.0f,
     string[]? Buttons = null,
     bool Slider = false,
-    bool ButtonsOnly = false);
+    bool ButtonsOnly = false,
+    string Placeholder = "");
 
 /// <summary>
 /// A page of settings the way VS Code has one, because it works. A search box over all of them, the sections down the
@@ -436,10 +437,11 @@ public class SettingsPage : UIComponent
                 seen.Add(setting.Group);
         }
 
-        // A panel by the name of its section, it has no rows to search
+        // A panel by the name of its section or by what's written in it, it has no rows to search. Only its section's name
+        // found it, and "add a language" found nothing though the panel said so in its heading
         foreach (var (group, content) in panels)
         {
-            content.Visible = words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase));
+            content.Visible = words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase) || Says(content, word));
             if (content.Visible)
                 seen.Add(group);
         }
@@ -451,6 +453,27 @@ public class SettingsPage : UIComponent
         nothing.Visible = seen.Count == 0 && words.Length > 0;
         nothing.Text = $"[color:dim]No settings match \"{typed.Trim()}\"[/color]";
         nothing.TextScale = sentenceSize;
+    }
+
+    // Whether a panel has a word in anything written in it, a label's text or a button's
+    private static bool Says(UIComponent content, string word)
+    {
+        string? written = content switch
+        {
+            Label label => label.Text,
+            Button button => button.Label,
+            _ => null
+        };
+        if (written?.Contains(word, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        foreach (UIComponent child in content.Children)
+        {
+            if (Says(child, word))
+                return true;
+        }
+
+        return false;
     }
 
     internal void Changed(string key, IRuntimeValue value)

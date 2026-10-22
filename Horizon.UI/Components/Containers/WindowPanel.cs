@@ -55,6 +55,12 @@ public class WindowPanel : Panel
     /// <summary>Called as it is dragged about, with where it is now.</summary>
     public Action<Vector2>? OnMoved { get; set; }
 
+    /// <summary>
+    /// Asked first when Escape comes to it, true when that dealt with it and the window stays (a file dialog naming a new
+    /// folder lets go of the name). Null, or false, and Escape closes it.
+    /// </summary>
+    public Func<bool>? BeforeEscape { get; set; }
+
     // How far the shadow under one reaches, a window floats over what's behind it the way a popup does
     private const float LIFT = 28.0f;
 
@@ -71,6 +77,9 @@ public class WindowPanel : Panel
     }
 
     protected override bool HitTestVisible => true;
+
+    // Tab goes round what's in it, never out to what's behind
+    protected internal override bool HoldsTab => true;
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
@@ -230,13 +239,51 @@ public class WindowPanel : Panel
     public void Close()
     {
         Visible = false;
+        GiveKeyboardBack();
         OnClosed?.Invoke();
+    }
+
+    // Whoever had the keyboard before the window took it, see TakeKeyboard
+    private UIComponent? keyboardBefore;
+
+    /// <summary>
+    /// Has the keyboard come to the window itself, for one with nothing in it that takes it (About, a page of help), so
+    /// the first Escape closes it and no key goes on to what's behind. It took two, the first only let go of the code
+    /// under it. Whoever had the keyboard gets it back as the window closes, while it's still somewhere in the window.
+    /// </summary>
+    public void TakeKeyboard()
+    {
+        if (Module is not { } module)
+            return;
+
+        keyboardBefore = module.Compositor.Focus;
+        Focus();
+    }
+
+    private void GiveKeyboardBack()
+    {
+        UIComponent? before = keyboardBefore;
+        keyboardBefore = null;
+        if (before is not { Module: not null } || Module is not { } module)
+            return;
+
+        for (UIComponent? at = module.Compositor.Focus; at is not null; at = at.Parent)
+        {
+            if (at == this)
+            {
+                before.Focus();
+                return;
+            }
+        }
     }
 
     // Escape with the keyboard in it (its filter box, say) closes one with an x, as the x would. The first press only let
     // go of the box and it took a second
     protected internal override bool OnEscape()
     {
+        if (BeforeEscape?.Invoke() == true)
+            return true;
+
         if (!Closable || !Visible)
             return false;
 

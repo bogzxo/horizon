@@ -25,8 +25,11 @@ public enum UIBrowse
 /// </summary>
 public sealed class UIFileBrowser
 {
-    private const float WIDTH = 860.0f, HEIGHT = 560.0f, PLACES = 200.0f, GAP = 8.0f;
-    private const int ROWS = 15;
+    private const float WIDTH = 860.0f, HEIGHT = 600.0f, PLACES = 200.0f, GAP = 8.0f, HIDDEN = 140.0f, FILTER = 260.0f;
+    private const int ROWS = 14;
+
+    // How wide the list's size and changed columns are, and how big the buttons in front of the path
+    private const float SIZE_WIDTH = 72.0f, CHANGED_WIDTH = 120.0f, NAV = 30.0f;
 
     // What a folder's row says after its name, and the row that goes up
     private const string FOLDER_MARK = "/", UP = "..";
@@ -45,9 +48,17 @@ public sealed class UIFileBrowser
     private readonly Label said;
     private readonly Button accept;
 
-    // The places' paths, by their row, and the folder shown
+    // The places' paths and symbols, by their row, and the folder shown
     private readonly List<string> placePaths = [];
+    private readonly Dictionary<string, string> placeIcons = [];
     private string folder;
+
+    // What the list says about each of its rows, a file's size and when it was changed, made once as the folder is shown
+    private readonly Dictionary<string, string[]> details = [];
+
+    // The folders gone back from and forward from, and their buttons with the one up
+    private readonly Stack<string> backward = [], onward = [];
+    private readonly Button backButton, forwardButton, upButton;
     private string? confirming;
 
     // Whether the name along the bottom is a new folder's, being typed (New folder)
@@ -87,18 +98,51 @@ public sealed class UIFileBrowser
             OnClosed = () => Finish(null)
         };
 
-        var body = new StackPanel { Spacing = GAP, Padding = new UIEdges(12.0f) };
+        // From the top, a folder's dialog has one row less and in the middle it had a band of nothing under the title
+        var body = new StackPanel { Spacing = GAP, Padding = new UIEdges(12.0f), Anchor = Horizon.Rendering.Origin.Top, Pivot = Horizon.Rendering.Origin.Top };
         Window.Add(body);
 
-        path = new TextBox { Size = new Vector2(WIDTH - 24.0f, 30.0f), MaxLength = 4096, OnSubmitted = TypedPath };
+        // Escape while a new folder's being named lets go of the name, not of the whole dialog
+        Window.BeforeEscape = () =>
+        {
+            if (!naming)
+                return false;
+
+            StopNaming();
+            return true;
+        };
+
+        // Back, forward and up a folder in front of the path, the way a Finder window has them
+        var top = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
+        body.Add(top);
+        backButton = new Button { Icon = "arrow-left", Size = new Vector2(NAV, NAV), Tooltip = "Back", OnPressed = Back };
+        forwardButton = new Button { Icon = "arrow-right", Size = new Vector2(NAV, NAV), Tooltip = "Forward", OnPressed = Forward };
+        upButton = new Button { Icon = "arrow-up", Size = new Vector2(NAV, NAV), Tooltip = "Up a folder", OnPressed = GoUp };
+        top.Add(backButton);
+        top.Add(forwardButton);
+        top.Add(upButton);
+
+        path = new TextBox { Size = new Vector2(WIDTH - 24.0f - (NAV + GAP) * 3.0f, 30.0f), MaxLength = 4096, OnSubmitted = TypedPath };
         path.TakeKey = key => Keyed(key, path);
         path.OnChanged = _ => keyed = false;
-        body.Add(path);
+        top.Add(path);
 
+        // The places a row taller than the list beside them, which has its headings over its rows, so the two end together
         var middle = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
         body.Add(middle);
-        places = new ListBox { Size = new Vector2(PLACES, 0.0f), Rows = ROWS, OnChanged = _ => GoToPlace() };
-        entries = new ListBox { Size = new Vector2(WIDTH - 24.0f - PLACES - GAP, 0.0f), Rows = ROWS, OnChanged = Chosen, OnActivated = Activated };
+        places = new ListBox { Size = new Vector2(PLACES, 0.0f), Rows = ROWS, OnChanged = _ => GoToPlace(), Icon = PlaceIcon, TakesKeys = true };
+        entries = new ListBox
+        {
+            Size = new Vector2(WIDTH - 24.0f - PLACES - GAP, 0.0f),
+            Rows = ROWS - 1,
+            OnChanged = Chosen,
+            OnActivated = Activated,
+            Icon = EntryIcon,
+            Columns = item => (string.Empty, Shown(item), string.Empty),
+            Details = item => details.TryGetValue(item, out string[]? said) ? said : [],
+            DetailWidths = [SIZE_WIDTH, CHANGED_WIDTH],
+            Headings = ["Name", "Size", "Modified"]
+        };
         middle.Add(places);
         middle.Add(entries);
 
@@ -107,39 +151,51 @@ public sealed class UIFileBrowser
             Size = new Vector2(WIDTH - 24.0f, 30.0f),
             MaxLength = 1024,
             Text = fileName,
-            Placeholder = kind == UIBrowse.Save ? "The file's name" : "A name, or a path",
-            OnSubmitted = _ => Accept(),
-            Visible = kind != UIBrowse.Folder
+            Placeholder = NamePlaceholder,
+            OnSubmitted = _ => Accept()
         };
         name.TakeKey = key => Keyed(key, name);
-        name.OnChanged = _ => keyed = false;
+        name.OnChanged = Seek;
         body.Add(name);
 
-        var bottom = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP };
-        body.Add(bottom);
+        // Which files are shown and whether the hidden ones are, with what it says beside them on the rest of the row, and
+        // under that New folder on the left and the buttons on the right, the one Enter presses last. They were one row,
+        // wider than the window, and what it said ran into the toggle's words
+        var options = new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP, Anchor = Horizon.Rendering.Origin.Left, Pivot = Horizon.Rendering.Origin.Left };
+        body.Add(options);
         filter = new Dropdown([.. this.filters.Select(pair => pair.Name)])
         {
-            Size = new Vector2(260.0f, 30.0f),
+            Size = new Vector2(FILTER, 30.0f),
             OnChanged = _ => Show(folder),
             Visible = kind != UIBrowse.Folder
         };
-        hidden = new ToggleButton { Label = "Hidden files", OnPressed = () => Show(folder) };
-        said = new Label { Size = new Vector2(250.0f, 30.0f), Align = Horizon.Rendering.Origin.Left, Wrap = true };
+        hidden = new ToggleButton { Label = "Hidden files", Size = new Vector2(HIDDEN, 30.0f), OnPressed = () => Show(folder) };
+        said = new Label { Size = new Vector2(WIDTH - 24.0f - FILTER - HIDDEN - GAP * 2.0f, 30.0f), Align = Horizon.Rendering.Origin.Left, Wrap = true };
         var make = new Button { Label = "New folder", Size = new Vector2(110.0f, 30.0f), OnPressed = NewFolder };
         var cancel = new Button { Label = "Cancel", Size = new Vector2(90.0f, 30.0f), OnPressed = () => Finish(null) };
         accept = new Button
         {
-            Label = kind switch { UIBrowse.Save => "Save", UIBrowse.Folder => "Choose", _ => "Open" },
+            Label = AcceptLabel,
             Primary = true,
             Size = new Vector2(90.0f, 30.0f),
             OnPressed = Accept
         };
-        bottom.Add(filter);
-        bottom.Add(hidden);
-        bottom.Add(said);
-        bottom.Add(make);
-        bottom.Add(cancel);
-        bottom.Add(accept);
+        // A folder's dialog has no filter, the toggle starts the row then rather than floating where the filter would be
+        if (kind != UIBrowse.Folder)
+            options.Add(filter);
+        options.Add(hidden);
+        options.Add(said);
+        if (kind == UIBrowse.Folder)
+            said.Size = said.Size with { X = said.Size.X + FILTER + GAP };
+
+        var actions = new Panel { Size = new Vector2(WIDTH - 24.0f, 30.0f) };
+        body.Add(actions);
+        make.Anchor = Horizon.Rendering.Origin.Left;
+        make.Pivot = Horizon.Rendering.Origin.Left;
+        actions.Add(make);
+        var buttons = actions.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = GAP, Anchor = Horizon.Rendering.Origin.Right, Pivot = Horizon.Rendering.Origin.Right });
+        buttons.Add(cancel);
+        buttons.Add(accept);
 
         MakePlaces(roots ?? []);
         Show(folder);
@@ -149,38 +205,39 @@ public sealed class UIFileBrowser
     private void MakePlaces(IEnumerable<string> roots)
     {
         var names = new List<string>();
-        void Add(string label, string at)
+        void Add(string label, string at, string icon)
         {
             if (!Directory.Exists(at) || placePaths.Any(known => PlatformPaths.Same(known, at)))
                 return;
             names.Add(label);
             placePaths.Add(Path.GetFullPath(at));
+            placeIcons.TryAdd(label, icon);
         }
 
         string home = PlatformPaths.Home;
-        Add("Home", home);
+        Add("Home", home, "home");
         foreach (string root in roots)
-            Add(Path.GetFileName(root.TrimEnd('/', '\\')) is { Length: > 0 } shortName ? shortName : root, root);
-        Add("Desktop", Environment.GetFolderPath(Environment.SpecialFolder.Desktop));
-        Add("Documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
-        Add("Downloads", Path.Combine(home, "Downloads"));
-        Add("Pictures", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+            Add(Path.GetFileName(root.TrimEnd('/', '\\')) is { Length: > 0 } shortName ? shortName : root, root, "root-folder");
+        Add("Desktop", Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "device-desktop");
+        Add("Documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "files");
+        Add("Downloads", Path.Combine(home, "Downloads"), "desktop-download");
+        Add("Pictures", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "file-media");
 
         // Drives on Windows, what's mounted elsewhere (USB sticks, other disks), and the top of it all
         if (OperatingSystem.IsWindows())
         {
             foreach (DriveInfo drive in SafeDrives())
-                Add(drive.Name.TrimEnd('\\'), drive.Name);
+                Add(drive.Name.TrimEnd('\\'), drive.Name, "server");
         }
         else
         {
             foreach (string mounts in (string[])["/Volumes", "/media/" + Environment.UserName, "/run/media/" + Environment.UserName, "/mnt"])
             {
                 foreach (string mounted in Folders(mounts))
-                    Add(Path.GetFileName(mounted), mounted);
+                    Add(Path.GetFileName(mounted), mounted, "server");
             }
 
-            Add("/", "/");
+            Add("/", "/", "server");
         }
 
         places.Items = [.. names];
@@ -214,19 +271,23 @@ public sealed class UIFileBrowser
     private void GoToPlace()
     {
         if (places.Index >= 0 && places.Index < placePaths.Count)
-            Show(placePaths[places.Index]);
+            GoTo(placePaths[places.Index]);
     }
 
     /// <summary>Helper method to list a folder, folders first, then the files the filter lets through, by name.</summary>
     private void Show(string at)
     {
-        string[] folders, files;
+        DirectoryInfo[] folders;
+        FileInfo[] files;
+        bool filtered;
         try
         {
             var shown = new DirectoryInfo(at);
             bool all = hidden.State;
-            folders = [.. shown.EnumerateDirectories().Where(item => all || !IsHidden(item)).Select(item => item.Name).Order(StringComparer.OrdinalIgnoreCase)];
-            files = kind == UIBrowse.Folder ? [] : [.. shown.EnumerateFiles().Where(item => (all || !IsHidden(item)) && Matches(item.Name)).Select(item => item.Name).Order(StringComparer.OrdinalIgnoreCase)];
+            folders = [.. shown.EnumerateDirectories().Where(item => all || !IsHidden(item)).OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)];
+            FileInfo[] seen = kind == UIBrowse.Folder ? [] : [.. shown.EnumerateFiles().Where(item => all || !IsHidden(item))];
+            files = [.. seen.Where(item => Matches(item.Name)).OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)];
+            filtered = files.Length < seen.Length;
         }
         catch (Exception e)
         {
@@ -239,19 +300,83 @@ public sealed class UIFileBrowser
         confirming = null;
         Say(string.Empty);
 
+        // What each row says along the right, once now rather than asking the disk every time it's painted
+        details.Clear();
+        DateTime now = DateTime.Now;
         var items = new List<string>(folders.Length + files.Length + 1);
         if (Directory.GetParent(folder) is not null)
             items.Add(UP);
-        items.AddRange(folders.Select(item => item + FOLDER_MARK));
-        items.AddRange(files);
+        foreach (DirectoryInfo inside in folders)
+        {
+            items.Add(inside.Name + FOLDER_MARK);
+            details[inside.Name + FOLDER_MARK] = [string.Empty, Changed(inside, now)];
+        }
+        foreach (FileInfo file in files)
+        {
+            items.Add(file.Name);
+            details[file.Name] = [Size(file), Changed(file, now)];
+        }
+
         entries.Items = [.. items];
         entries.Index = -1;
 
-        // Where the places are, that one picked
+        // A folder with nothing in it says so, and one with nothing of the kind picked says that, the filter's hiding the rest
+        entries.Note = folders.Length + files.Length > 0 ? string.Empty
+            : filtered ? $"No {filter.Value} in here"
+            : kind == UIBrowse.Folder ? "There are no folders in here" : "This folder is empty";
+
+        // Where the places are, that one picked, and which ways there are to go from here
         places.Index = placePaths.FindIndex(place => PlatformPaths.Same(place, folder));
+        backButton.Enabled = backward.Count > 0;
+        forwardButton.Enabled = onward.Count > 0;
+        upButton.Enabled = Directory.GetParent(folder) is not null;
     }
 
     private static bool IsHidden(FileSystemInfo item) => item.Name.StartsWith('.') || (item.Attributes & FileAttributes.Hidden) != 0;
+
+    // A file's size and when something was changed, nothing for what can't be asked (a file gone since it was listed)
+    private static string Size(FileInfo file)
+    {
+        try
+        {
+            return UIFileKinds.SizeOf(file.Length);
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string Changed(FileSystemInfo item, DateTime now)
+    {
+        try
+        {
+            return UIFileKinds.WhenOf(item.LastWriteTime, now);
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
+    }
+
+    // What the button that takes it says
+    private string AcceptLabel => kind switch { UIBrowse.Save => "Save", UIBrowse.Folder => "Choose", _ => "Open" };
+
+    // What a row of the list says, a folder without the mark it's kept by (its symbol says it's a folder)
+    private static string Shown(string item) => item != UP && item.EndsWith(FOLDER_MARK, StringComparison.Ordinal) ? item[..^FOLDER_MARK.Length] : item;
+
+    // The symbol in front of a row, a folder blue, a file by its kind, the way up a quiet arrow
+    private (string Name, Vector4? Color) EntryIcon(string item)
+    {
+        if (item == UP)
+            return ("arrow-up", null);
+        if (item.EndsWith(FOLDER_MARK, StringComparison.Ordinal))
+            return ("folder", UIFileKinds.FOLDER);
+
+        return (UIFileKinds.IconOf(item), Window.Module?.Compositor.Skin is { } skin ? UIFileKinds.ColourOf(item, skin.Syntax) : null);
+    }
+
+    private (string Name, Vector4? Color) PlaceIcon(string item) => (placeIcons.TryGetValue(item, out string? icon) ? icon : "folder", null);
 
     private bool Matches(string file)
     {
@@ -285,7 +410,7 @@ public sealed class UIFileBrowser
     {
         if (FolderOf(item) is { } inside)
         {
-            Show(inside);
+            GoTo(inside);
             return;
         }
 
@@ -296,19 +421,32 @@ public sealed class UIFileBrowser
     }
 
     /// <summary>
-    /// The browser takes the keyboard once its window is up, the name along the bottom (or the path along the top for a
-    /// folder, which has no name), and whoever had it gets it back when the window goes. It never took it, and every key
+    /// The browser takes the keyboard once its window is up, the name along the bottom (a folder's dialog has it too, for a
+    /// folder in the one shown or a path), and whoever had it gets it back when the window goes. It never took it, and every key
     /// went on to the code or the terminal behind it.
     /// </summary>
     public void TakeKeyboard()
     {
-        TextBox box = kind == UIBrowse.Folder ? path : name;
+        TextBox box = name;
         if (box.Module is not { } module)
             return;
 
         focusBefore = module.Compositor.Focus;
         box.Focus();
-        box.SelectAll();
+
+        // A name to save as has its name picked and not its extension, the way a Mac's save dialog does, what's typed
+        // over it keeps the kind of file it was
+        if (kind == UIBrowse.Save && Path.GetExtension(box.Text) is { Length: > 0 } extension && extension.Length < box.Text.Length)
+            box.Select(0, box.Text.Length - extension.Length);
+        else
+            box.SelectAll();
+
+        // A file to open that was named is the row picked, the way back into a dialog that was left for a moment
+        if (kind == UIBrowse.Open && box.Text.Length > 0 && Array.IndexOf(entries.Items, box.Text) is >= 0 and var at)
+        {
+            entries.Choose(at);
+            keyed = true;
+        }
     }
 
     // The list's keys from either box. Up and down along it, Enter on the row gone to, Backspace with no name goes up
@@ -326,6 +464,11 @@ public sealed class UIFileBrowser
                 return true;
 
             case UIKeyboard.BACKSPACE when from == name && name.Text.Length == 0 && !naming:
+                GoUp();
+                return true;
+
+            // Alt and up, up a folder whatever's typed, the way a Windows Explorer and a Finder go up
+            case UIKeyboard.MOVE_LINES_UP when !naming:
                 GoUp();
                 return true;
 
@@ -351,14 +494,76 @@ public sealed class UIFileBrowser
         if (Directory.GetParent(folder) is not { } parent)
             return;
 
-        string came = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + FOLDER_MARK;
-        Show(parent.FullName);
-        if (Array.IndexOf(entries.Items, came) is >= 0 and var at)
+        string came = folder;
+        GoTo(parent.FullName);
+        PickFolder(came);
+    }
+
+    /// <summary>Helper method to go to another folder, the one left is the way back and there's no way forward any more.</summary>
+    private void GoTo(string at)
+    {
+        string left = folder;
+        Show(at);
+        if (PlatformPaths.Same(left, folder))
+            return;
+
+        backward.Push(left);
+        onward.Clear();
+        backButton.Enabled = true;
+        forwardButton.Enabled = false;
+    }
+
+    // Back to the folder before, and forward again, with the one come out of picked
+    private void Back() => Travel(backward, onward);
+
+    private void Forward() => Travel(onward, backward);
+
+    private void Travel(Stack<string> from, Stack<string> to)
+    {
+        if (from.Count == 0)
+            return;
+
+        string left = folder;
+        to.Push(left);
+        Show(from.Pop());
+        PickFolder(left);
+    }
+
+    // Helper method to pick the row of a folder inside the one shown, the one just come out of
+    private void PickFolder(string inside)
+    {
+        string row = Path.GetFileName(inside.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) + FOLDER_MARK;
+        if (Array.IndexOf(entries.Items, row) is >= 0 and var at)
         {
             entries.Choose(at);
             keyed = true;
         }
     }
+
+    /// <summary>
+    /// What's typed as a name picks the first row it's the start of (a few letters of a file, the way a Finder window goes
+    /// to one as it's typed), without the name being written over, and Enter then takes that row if there's no file of
+    /// the name itself. Not for a save, where what's typed is the new file's name.
+    /// </summary>
+    private void Seek(string typed)
+    {
+        keyed = false;
+        if (kind == UIBrowse.Save || naming)
+            return;
+
+        string start = typed.Trim();
+        if (start.Length == 0 || start.IndexOfAny(['/', '\\']) >= 0)
+        {
+            entries.Index = -1;
+            return;
+        }
+
+        entries.Index = Array.FindIndex(entries.Items, item => item != UP && Shown(item).StartsWith(start, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // The row a typed name is the start of, the one Seek picked, null when the name was typed over since
+    private string? Sought(string typed) => entries.Index >= 0 && entries.Value != UP && typed.Length > 0
+        && Shown(entries.Value).StartsWith(typed, StringComparison.OrdinalIgnoreCase) ? entries.Value : null;
 
     // Enter along the top. The folder that's open as it is picks it, when a folder is what's being picked
     private void TypedPath(string typed)
@@ -380,7 +585,7 @@ public sealed class UIFileBrowser
 
         if (Directory.Exists(at))
         {
-            Show(at);
+            GoTo(at);
             return;
         }
 
@@ -398,7 +603,7 @@ public sealed class UIFileBrowser
             return;
         }
 
-        Show(Path.GetDirectoryName(Path.GetFullPath(at))!);
+        GoTo(Path.GetDirectoryName(Path.GetFullPath(at))!);
         name.Text = Path.GetFileName(at);
         Accept();
     }
@@ -414,8 +619,7 @@ public sealed class UIFileBrowser
 
         if (kind == UIBrowse.Folder)
         {
-            string chosen = entries.Index >= 0 && FolderOf(entries.Value) is { } picked && entries.Value != UP ? picked : folder;
-            Finish(chosen);
+            AcceptFolder();
             return;
         }
 
@@ -429,16 +633,25 @@ public sealed class UIFileBrowser
         string full = Path.GetFullPath(Path.IsPathRooted(typed) ? typed : Path.Combine(folder, typed));
         if (Directory.Exists(full))
         {
-            Show(full);
+            GoTo(full);
             name.Text = string.Empty;
             return;
         }
 
         if (kind == UIBrowse.Open)
         {
+            // A few letters of a row, the row they picked as they were typed
+            if (!File.Exists(full) && Sought(typed) is { } row)
+            {
+                if (FolderOf(row) is not null)
+                    name.Text = string.Empty;
+                Activated(row);
+                return;
+            }
+
             if (!File.Exists(full))
             {
-                Say($"there's no {Path.GetFileName(full)} here");
+                Say($"there's no {typed} here");
                 return;
             }
 
@@ -467,6 +680,42 @@ public sealed class UIFileBrowser
         Finish(full);
     }
 
+    /// <summary>
+    /// Choose in a folder's dialog, or Enter. A folder named (in the one shown, a path, or a few letters of one) is gone
+    /// into, and with no name it's the folder picked in the list, or the one shown. Enter twice goes in and takes it.
+    /// </summary>
+    private void AcceptFolder()
+    {
+        string typed = name.Text.Trim();
+        if (typed.Length == 0)
+        {
+            string chosen = entries.Index >= 0 && FolderOf(entries.Value) is { } picked && entries.Value != UP ? picked : folder;
+            Finish(chosen);
+            return;
+        }
+
+        string full = Path.GetFullPath(Path.IsPathRooted(typed) ? typed : Path.Combine(folder, typed));
+        if (Directory.Exists(full))
+            GoTo(full);
+        else if (Sought(typed) is { } row && FolderOf(row) is { } inside)
+            GoTo(inside);
+        else
+        {
+            Say($"there's no folder {typed} here");
+            return;
+        }
+
+        name.Text = string.Empty;
+    }
+
+    // What the name along the bottom says while nothing's in it
+    private string NamePlaceholder => kind switch
+    {
+        UIBrowse.Save => "The file's name",
+        UIBrowse.Folder => "A folder in here, or a path",
+        _ => "A name, or a path"
+    };
+
     /// <summary>New folder: the name along the bottom is the new folder's until Enter (or the button) makes it.</summary>
     private void NewFolder()
     {
@@ -478,9 +727,11 @@ public sealed class UIFileBrowser
 
         naming = true;
         nameBefore = name.Text;
-        name.Visible = true;
         name.Text = string.Empty;
         name.Placeholder = "The new folder's name, Enter makes it";
+
+        // The button makes it while it's being named, Open said it would open something
+        accept.Label = "Create";
         name.Focus();
         Say("name the folder");
     }
@@ -511,11 +762,18 @@ public sealed class UIFileBrowser
             return;
         }
 
+        StopNaming();
+        GoTo(made);
+    }
+
+    // Helper method to put the name along the bottom back to what it was before New folder
+    private void StopNaming()
+    {
         naming = false;
         name.Text = nameBefore ?? string.Empty;
-        name.Placeholder = kind == UIBrowse.Save ? "The file's name" : "A name, or a path";
-        name.Visible = kind != UIBrowse.Folder;
-        Show(made);
+        name.Placeholder = NamePlaceholder;
+        accept.Label = AcceptLabel;
+        Say(string.Empty);
     }
 
     /* What a test drives it by, the way the UI does */
@@ -579,10 +837,21 @@ public sealed class UIFileBrowser
     public void Cancel() => Finish(null);
 
     /// <summary>A key pressed with the browser having the keyboard, one of <see cref="UIKeyboard"/>'s codes or a letter.</summary>
-    public void Key(char key) => (kind == UIBrowse.Folder ? path : name).OnTextInput(key);
+    public void Key(char key) => name.OnTextInput(key);
 
     /// <summary>The row picked in the list, null for none.</summary>
     public string? Selected => entries.Index >= 0 ? entries.Value : null;
+
+    /// <summary>What the list says under its rows, a folder with nothing in it, empty while there's something.</summary>
+    public string Note => entries.Note;
+
+    /// <summary>A file's size and when it was changed as its row says them, nothing for a row it doesn't know.</summary>
+    public IReadOnlyList<string> DetailsOf(string item) => details.TryGetValue(item, out string[]? said) ? said : [];
+
+    /// <summary>Back pressed, and Forward.</summary>
+    public void GoBack() => Back();
+
+    public void GoForward() => Forward();
 
     /// <summary>Which of the filters along the bottom is picked, by what it says.</summary>
     public string Filter

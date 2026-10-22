@@ -80,9 +80,10 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
         float3 sharp = float3(uSharp.Sample(uv + bend * 0.94).r, uSharp.Sample(uv + bend).g, uSharp.Sample(uv + bend * 1.08).b);
         float3 soft = float3(uSource.Sample(uv + bend * 0.94).r, uSource.Sample(uv + bend).g, uSource.Sample(uv + bend * 1.08).b);
 
-        // Less of the blur at the rim, where the glass is a lens rather than a pane, and a thin line of light right on the
-        // edge. It lifted the whole pane a little towards white as well, which on a dark theme was the wash over everything
-        colour = lerp(sharp, soft, params.uShare * (1.0 - 0.55 * t * t));
+        // A little less of the blur at the rim, where the glass is a lens rather than a pane, and a thin line of light
+        // right on the edge. Half as much blur there let what was behind it be read, words doubled along the rim. It
+        // lifted the whole pane a little towards white as well, which on a dark theme was the wash over everything
+        colour = lerp(sharp, soft, params.uShare * (1.0 - 0.15 * t * t));
         colour += pow(t, 8.0) * 0.06;
     }
 

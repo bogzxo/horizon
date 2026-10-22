@@ -147,6 +147,41 @@ public class LanguageServerTests
     }
 
     [Fact]
+    public async Task A_message_that_cant_be_made_sense_of_is_lost_and_the_connection_goes_on()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+
+        using var connection = new JsonRpcConnection(toClientRead, toServer);
+        int heard = 0;
+        connection.OnNotification("bad", parameters => throw new InvalidOperationException("can't read that"));
+        connection.OnNotification("good", parameters => heard++);
+
+        // A column past an int's room, what serve-d says for the end of a line, read wrong once took the reader down
+        Write(toClient, """{"jsonrpc":"2.0","method":"bad","params":{"character":4294967295}}""");
+        Write(toClient, """{"jsonrpc":"2.0","method":"good","params":{}}""");
+        Assert.True(WaitFor(() => heard == 1));
+        Assert.False(connection.IsClosed);
+
+        Task<JsonNode?> asked = connection.Request("still", null);
+        string header = ReadLine(toServerRead);
+        ReadLine(toServerRead);
+        toServerRead.ReadExactly(new byte[int.Parse(header[16..])]);
+        Write(toClient, """{"jsonrpc":"2.0","id":1,"result":true}""");
+        Assert.True((await asked.WaitAsync(TimeSpan.FromSeconds(5)))!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("int x", "x", "int")]
+    [InlineData("int lengthSquared()", "lengthSquared ()", "int ()")]
+    [InlineData("int[] index", "x", "int[] index")]
+    [InlineData("x", "x", "x")]
+    public void What_a_server_says_of_an_item_goes_without_the_items_own_name(string detail, string label, string shown) =>
+        Assert.Equal(shown, LanguageServer.DetailWithout(detail, label));
+
+    [Fact]
     public void A_server_says_what_is_wrong_with_a_file_as_it_is_opened_and_changed()
     {
         if (!HasPython)
@@ -280,6 +315,42 @@ public class LanguageServerTests
         JsonObject answer = ReadMessage(toServerRead);
         Assert.Equal("q1", answer["id"]!.GetValue<string>());
         Assert.Equal(" Download DCD", answer["result"]!["title"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void A_server_with_settings_is_told_them_as_it_starts_and_asked_for_one_it_gets_that_section()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+        var settings = new JsonObject { ["d"] = new JsonObject { ["lintOnFileOpen"] = "always" } };
+        using LanguageServer server = LanguageServer.Over("told", "d", Path.GetTempPath(), toClientRead, toServer, settings);
+
+        JsonObject initialize = ReadMessage(toServerRead);
+        Assert.True(initialize["params"]!["capabilities"]!["workspace"]!["configuration"]!.GetValue<bool>());
+        Assert.True(initialize["params"]!["capabilities"]!["textDocument"]!["synchronization"]!["didSave"]!.GetValue<bool>());
+        Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
+        Assert.Equal("initialized", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+
+        JsonObject told = ReadMessage(toServerRead);
+        Assert.Equal("workspace/didChangeConfiguration", told["method"]!.GetValue<string>());
+        Assert.Equal("always", told["params"]!["settings"]!["d"]!["lintOnFileOpen"]!.GetValue<string>());
+
+        // Asked for a section, and one it hasn't got
+        Write(toClient, """{"jsonrpc":"2.0","id":"c1","method":"workspace/configuration","params":{"items":[{"section":"d"},{"section":"d.lintOnFileOpen"},{"section":"dfmt"}]}}""");
+        JsonObject answer = ReadMessage(toServerRead);
+        Assert.Equal("c1", answer["id"]!.GetValue<string>());
+        var sections = answer["result"]!.AsArray();
+        Assert.Equal("always", sections[0]!["lintOnFileOpen"]!.GetValue<string>());
+        Assert.Equal("always", sections[1]!.GetValue<string>());
+        Assert.Null(sections[2]);
+
+        // A file saved is said to be
+        server.Saved(Path.Combine(Path.GetTempPath(), "saved.d"));
+        JsonObject saved = ReadMessage(toServerRead);
+        Assert.Equal("textDocument/didSave", saved["method"]!.GetValue<string>());
+        Assert.EndsWith("saved.d", saved["params"]!["textDocument"]!["uri"]!.GetValue<string>());
     }
 
     // Helper method to read one message the way a server reads it

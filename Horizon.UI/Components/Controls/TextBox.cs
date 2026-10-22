@@ -268,6 +268,14 @@ public class TextBox : UIComponent
         blink = 0.0f;
     }
 
+    /// <summary>Selects from one character to another, the caret at the second, a file's name without its extension.</summary>
+    public void Select(int from, int to)
+    {
+        anchor = Math.Clamp(from, 0, text.Length);
+        caret = Math.Clamp(to, 0, text.Length);
+        blink = 0.0f;
+    }
+
     /// <summary>Helper to take what is selected out of the text, which is a change only if anything was.</summary>
     private void RemoveSelection()
     {
@@ -610,8 +618,11 @@ public class TextBox : UIComponent
         }
 
         // The placeholder stays until something is typed, the caret sitting in front of it, an empty box with the
-        // keyboard said nothing about what it was for
-        if (!empty)
+        // keyboard said nothing about what it was for. Too long for the box and not being typed in, its end is shown with
+        // dots in front, where the path along the top of a file dialog started on half a letter
+        if (!empty && !focused && width > content.Width)
+            list.Text(Tail(skin, scale, content.Width), content, Origin.Left, scale, ink * tint, markup: false);
+        else if (!empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
         else
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
@@ -619,7 +630,8 @@ public class TextBox : UIComponent
 
         if (focused && blink < BLINK_INTERVAL)
         {
-            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X);
+            // In front of the placeholder of an empty box, not over its first letter
+            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X) - (empty ? 3.0f : 0.0f);
             list.Rect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)), ink);
         }
 
@@ -645,6 +657,33 @@ public class TextBox : UIComponent
         Expose("button_side", () => ButtonOnRight ? "right" : "left", value => ButtonOnRight = value == "right");
         Expose("button_width", () => ButtonWidth, value => ButtonWidth = MathF.Max(0.0f, value));
         Expose("on_button", () => buttonHandler ?? new NullValue(), value => buttonHandler = value);
+    }
+
+    // The end of the text with dots in front, as much of it as fits, kept until the text or the room changes
+    private const string CUT = "...";
+    private string? tailOf;
+    private float tailRoom;
+    private string tail = string.Empty;
+
+    private string Tail(UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(tailOf, text) && tailRoom == room)
+            return tail;
+
+        // The fewest letters cut off the front for the rest to fit after the dots
+        float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+        int low = 1, high = text.Length;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (dots + skin.Font.Measure(text.AsSpan(middle), scale, markup: false).X <= room)
+                high = middle;
+            else
+                low = middle + 1;
+        }
+
+        (tailOf, tailRoom, tail) = (text, room, CUT + text[low..]);
+        return tail;
     }
 
     /// <summary>

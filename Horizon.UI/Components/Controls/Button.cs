@@ -33,6 +33,12 @@ public class Button : UIComponent
     /// </summary>
     public string Icon { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Where on the button its icon and label sit, in the middle unless told. A grid of them (a toolbox) reads better
+    /// from the left, their icons in a column, than each one centred on its own.
+    /// </summary>
+    public Origin Align { get; set; } = Origin.Center;
+
     // The icon and the label written as one text, made again only when either changes
     private string shownIcon = string.Empty, shownLabel = string.Empty, shown = string.Empty;
 
@@ -203,7 +209,7 @@ public class Button : UIComponent
         list.Text(
             Written(),
             area,
-            Origin.Center,
+            Align,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
             (primary ? OnAccent(skin) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
         list.EndParts();
@@ -268,12 +274,22 @@ public class Button : UIComponent
         InvokeScript(pressedHandler);
     }
 
+    // Tab gets to it, and Enter or space presses it the way a click does
+    protected internal override bool TabStop => OnPressed is not null || pressedHandler is not null;
+
+    protected internal override void OnTextInput(char character)
+    {
+        if (character is UIKeyboard.ENTER or ' ' && EnabledInHierarchy)
+            OnClick();
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();
 
         Expose("label", () => Label, value => Label = value);
         Expose("icon", () => Icon, value => Icon = value);
+        Expose("align", () => UIScript.FromEnum(Align), value => Align = UIScript.ToEnum<Origin>(value, "align"));
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);
