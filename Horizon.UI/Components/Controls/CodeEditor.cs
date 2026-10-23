@@ -81,6 +81,9 @@ public partial class CodeEditor : UIComponent
     private readonly List<UICompletion> completions = [];
     private int completionIndex, completionTop, completionStart;
 
+    // The first row of the completions as it's drawn, gliding to completionTop, the way a list's rows do (see ListBox)
+    private float completionShown;
+
     // What the list says while what it offers is still coming, and for how long it's been coming. It shows after a
     // moment, a server that answers at once had the row flash up and go
     private string waiting = string.Empty;
@@ -872,6 +875,14 @@ public partial class CodeEditor : UIComponent
             waitedFor += dt;
         flowTime += dt;
 
+        // The completions' rows on the way to the ones picked, a fraction of a row at a time
+        if (completionShown != completionTop)
+        {
+            completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            if (MathF.Abs(completionTop - completionShown) < 0.01f)
+                completionShown = completionTop;
+        }
+
         // On the way to where the wheel wants it
         if (scrollGoal is { } goal)
         {
@@ -1009,21 +1020,27 @@ public partial class CodeEditor : UIComponent
         EnsureRows(skin, scale);
         float top = RowOf(caret.Line, caret.Column) * lineHeight;
 
-        // The caret has the say, wherever the wheel was taking it
-        scrollGoal = null;
-
+        // The caret has the say, wherever the wheel was taking it. A line or a few it went off the edge are eased into
+        // sight the way the wheel's are, a page or more away is gone to at once. A line at a time it jumped, and the
+        // lines smeared across each jump
+        float from = scrollGoal ?? scrollY;
         if (centreOnReveal)
         {
             centreOnReveal = false;
+            scrollGoal = null;
             scrollY = top - area.Height * 0.4f;
         }
-        else if (top < scrollY)
+        else if ((top < from ? top : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
         {
-            scrollY = top;
-        }
-        else if (top + lineHeight > scrollY + area.Height)
-        {
-            scrollY = top + lineHeight - area.Height;
+            if (MathF.Abs(wanted - scrollY) > area.Height)
+            {
+                scrollGoal = null;
+                scrollY = wanted;
+            }
+            else
+            {
+                scrollGoal = wanted;
+            }
         }
 
         float x = ColumnX(skin, scale, caret.Line, caret.Column);
@@ -1397,6 +1414,7 @@ public partial class CodeEditor : UIComponent
             waiting = request.Waiting;
             completionStart = request.Start;
             completionIndex = completionTop = 0;
+            completionShown = 0.0f;
             OpenPopup();
             return;
         }
@@ -1428,6 +1446,7 @@ public partial class CodeEditor : UIComponent
         completionStart = request.Start;
         completionIndex = 0;
         completionTop = 0;
+        completionShown = 0.0f;
         OpenPopup();
     }
 
@@ -1635,11 +1654,19 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
-        int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS);
-        for (int i = completionTop; i < last; i++)
+        // From where the glide has got to, the row half out at the top cut off at the list's edge, one more at the bottom
+        int first = Math.Clamp((int)MathF.Floor(completionShown), 0, completions.Count - 1);
+        int last = Math.Min(completions.Count, first + COMPLETION_ROWS + 1);
+        list.PushClip(new UIRect(new Vector2(bounds.Min.X, bounds.Min.Y + COMPLETION_PAD), new Vector2(bounds.Max.X, bounds.Max.Y - COMPLETION_PAD)));
+
+        // Gliding, the rows as the newer tick has them, see ListBox
+        bool gliding = completionShown != completionTop;
+        if (gliding)
+            list.BeginSteps();
+        for (int i = first; i < last; i++)
         {
             list.BeginPart(i);
-            float rowTop = bounds.Max.Y - COMPLETION_PAD - (i - completionTop) * rowHeight;
+            float rowTop = bounds.Max.Y - COMPLETION_PAD - (i - completionShown) * rowHeight;
             var row = new UIRect(new Vector2(bounds.Min.X + COMPLETION_PAD, rowTop - rowHeight), new Vector2(bounds.Max.X - COMPLETION_PAD, rowTop));
 
             // The picked one on a pill the way every list has it, always painted so the quads don't shift
@@ -1658,6 +1685,9 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        if (gliding)
+            list.EndSteps();
+        list.PopClip();
         list.EndParts();
         PaintCompletionDocs(list, skin, scale, bounds, colors);
 
@@ -1778,7 +1808,7 @@ public partial class CodeEditor : UIComponent
         if (CompletionOpen && CompletionBounds() is var listed && listed.Contains(point) && paintedSkin is { } listSkin)
         {
             float rowHeight = CompletionRow(listSkin);
-            int row = completionTop + (int)((listed.Max.Y - COMPLETION_PAD - point.Y) / rowHeight);
+            int row = (int)MathF.Floor(completionShown + (listed.Max.Y - COMPLETION_PAD - point.Y) / rowHeight);
             if (row >= 0 && row < completions.Count)
             {
                 completionIndex = row;
@@ -1900,6 +1930,15 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is not { } skin)
             return false;
 
+        // Over the list of completions the wheel goes down the list and leaves what's picked as it is, the way VS Code's
+        // does. It scrolled the code under the list
+        if (CompletionOpen && Module is { } module && CompletionBounds().Contains(module.ToLocal(module.Compositor.Pointer.Position)))
+        {
+            int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
+            completionTop = Math.Clamp(completionTop - rows * Math.Sign(delta), 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
+            return true;
+        }
+
         // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
         scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
         ClampScroll(skin, paintedScale);
@@ -1910,9 +1949,16 @@ public partial class CodeEditor : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
+        // Easing, the lines as the newer tick has them (see UIScrollEase), a line coming into sight sat over the one
+        // sliding out of it for a frame between two ticks
+        bool easing = scrollGoal is not null;
+        if (easing)
+            list.BeginSteps();
         list.PushFont(FontOf(list.Skin));
         PaintCode(list);
         list.PopFont();
+        if (easing)
+            list.EndSteps();
     }
 
     private void PaintCode(UIDrawList list)

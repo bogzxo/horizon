@@ -43,6 +43,9 @@ public class Dropdown : UIComponent
     // The first option that is shown while the list is open, for a list with more options than MaxRows.
     private int firstRow;
 
+    // The first row as it's drawn, gliding to firstRow, the way a list's do (see ListBox)
+    private float shownRow;
+
     /// <summary>What there is to choose from, in the order it is listed.</summary>
     public string[] Options
     {
@@ -220,6 +223,7 @@ public class Dropdown : UIComponent
 
         // The chosen option is in sight when the list opens.
         firstRow = Math.Clamp(index - VisibleRows / 2, 0, options.Length - VisibleRows);
+        shownRow = firstRow;
         OpenPopup();
     }
 
@@ -291,11 +295,20 @@ public class Dropdown : UIComponent
 
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
-        for (int row = 0; row < VisibleRows; row++)
+        // From where the glide has got to, the row half out at the top cut off at the list's edge and one more at the
+        // bottom, in steps while it glides (see UIScrollEase)
+        int from = (int)MathF.Floor(shownRow);
+        float slide = (shownRow - from) * Bounds.Height;
+        bool gliding = shownRow != firstRow;
+        list.PushClip(bounds.Shrink(new UIEdges(LIST_BORDER)));
+        if (gliding)
+            list.BeginSteps();
+        for (int row = 0; row <= VisibleRows && from + row < options.Length; row++)
         {
-            list.BeginPart(row);
-            int option = firstRow + row;
+            int option = from + row;
+            list.BeginPart(option);
             UIRect area = RowBounds(row);
+            area = new UIRect(area.Min + new Vector2(0.0f, slide), area.Max + new Vector2(0.0f, slide));
 
             if (area.Contains(pointer))
                 list.RoundRect(area.Shrink(new UIEdges(3.0f, 1.0f)), skin.CornerRadius, skin.HoverColor);
@@ -309,6 +322,9 @@ public class Dropdown : UIComponent
                 markup: false);
         }
 
+        if (gliding)
+            list.EndSteps();
+        list.PopClip();
         list.EndParts();
 
         // More options than fit. A mark on the side says where in the list this is.
@@ -316,7 +332,7 @@ public class Dropdown : UIComponent
         {
             UIRect track = bounds.Shrink(new UIEdges(LIST_BORDER));
             float length = track.Height * VisibleRows / options.Length;
-            float top = track.Max.Y - (track.Height - length) * firstRow / (options.Length - VisibleRows);
+            float top = track.Max.Y - (track.Height - length) * shownRow / (options.Length - VisibleRows);
 
             list.RoundRect(new UIRect(new Vector2(track.Max.X - 6.0f, top - length + 2.0f), new Vector2(track.Max.X - 2.0f, top - 2.0f)), 2.0f, skin.TextColor with { W = 0.25f });
         }
@@ -364,6 +380,17 @@ public class Dropdown : UIComponent
         return true;
     }
 
+    protected override void Update(float dt)
+    {
+        base.Update(dt);
+        if (shownRow == firstRow)
+            return;
+
+        shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        if (MathF.Abs(firstRow - shownRow) < 0.01f)
+            shownRow = firstRow;
+    }
+
     protected internal override void OnPointerUp(Vector2 point)
     {
         if (!EnabledInHierarchy)
@@ -376,12 +403,10 @@ public class Dropdown : UIComponent
             return;
         }
 
-        for (int row = 0; row < VisibleRows; row++)
+        // The option under the pointer, where the rows are drawn this moment
+        UIRect inside = ListBounds.Shrink(new UIEdges(LIST_BORDER));
+        if (inside.Contains(point) && (int)MathF.Floor(shownRow + (inside.Max.Y - point.Y) / Bounds.Height) is var chosen && chosen >= 0 && chosen < options.Length)
         {
-            if (!RowBounds(row).Contains(point))
-                continue;
-
-            int chosen = firstRow + row;
             Close();
             Choose(chosen);
             return;

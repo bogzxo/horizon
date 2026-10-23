@@ -30,6 +30,16 @@ public class ListBox : UIComponent
     private string[] items = [];
     private int index, top;
 
+    // The first row as it's drawn, gliding to top a fraction of a row at a time. The list jumped a whole row a press or
+    // a notch of the wheel, and the rows' letters smeared across the jump between ticks
+    private float shown;
+
+    /// <summary>The first row as it's drawn this moment, part way to <see cref="Top"/> while the rows glide.</summary>
+    internal float Shown => shown;
+
+    // How many rows a notch of the wheel goes, the rows glide there as quickly as everything else scrolls (UIScrollEase)
+    private const int WHEEL_ROWS = 3;
+
     /// <summary>What there is to choose from, in the order it is shown.</summary>
     public string[] Items
     {
@@ -39,6 +49,9 @@ public class ListBox : UIComponent
             items = value ?? [];
             index = Math.Clamp(index, 0, Math.Max(0, items.Length - 1));
             top = Math.Clamp(top, 0, Math.Max(0, items.Length - Rows));
+
+            // Other items are other rows, they're where they are at once rather than gliding from the last ones' place
+            shown = top;
         }
     }
 
@@ -230,8 +243,20 @@ public class ListBox : UIComponent
         if (items.Length <= Rows)
             return false;
 
-        top = Math.Clamp(top - (int)MathF.Sign(delta), 0, items.Length - Rows);
+        int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
+        top = Math.Clamp(top - rows * Math.Sign(delta), 0, items.Length - Rows);
         return true;
+    }
+
+    protected override void Update(float dt)
+    {
+        base.Update(dt);
+        if (shown == top)
+            return;
+
+        shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        if (MathF.Abs(top - shown) < 0.01f)
+            shown = top;
     }
 
     protected internal override void OnPointerUp(Vector2 point)
@@ -244,20 +269,13 @@ public class ListBox : UIComponent
         if (skin is null)
             return;
 
-        // The row under the pointer, under the headings
-        float rowHeight = RowHeight(skin), down = Bounds.Max.Y - HeadingHeight(rowHeight) - point.Y, at = 0.0f;
+        // The row under the pointer, under the headings, where the rows are drawn this moment
+        float rowHeight = RowHeight(skin), down = Bounds.Max.Y - HeadingHeight(rowHeight) - point.Y;
         if (down < 0.0f)
             return;
-        int row = -1;
-        for (int i = top; i < Math.Min(items.Length, top + Rows); i++)
-        {
-            at += rowHeight;
-            if (down < at)
-            {
-                row = i;
-                break;
-            }
-        }
+        int row = (int)MathF.Floor(shown + down / rowHeight);
+        if (row < 0 || row >= items.Length)
+            row = -1;
 
         if (row < 0)
             return;
@@ -321,9 +339,19 @@ public class ListBox : UIComponent
             list.Rect(new UIRect(new Vector2(Bounds.Min.X + ROW_INSET, heading.Min.Y), new Vector2(right - ROW_INSET, heading.Min.Y + 1.0f)), skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 
-        int last = Math.Min(items.Length, top + Rows);
-        float rowTop = Bounds.Max.Y - headingHeight;
-        for (int i = top; i < last; i++)
+        // The rows from where the glide has got to, the one half out at the top a fraction of its height over the
+        // headings' line and cut off there, and one more under the rest for the bit coming in at the bottom
+        int from = Math.Clamp((int)MathF.Floor(shown), 0, Math.Max(0, items.Length - 1));
+        int last = Math.Min(items.Length, from + Rows + 1);
+        float rowTop = Bounds.Max.Y - headingHeight + (shown - from) * rowHeight;
+        list.PushClip(new UIRect(Bounds.Min, new Vector2(Bounds.Max.X, Bounds.Max.Y - headingHeight)));
+
+        // Gliding, a frame between two ticks shows the rows where the newer tick has them. Blended, a row coming in at
+        // the bottom had no place the tick before and sat where it was while the one over it slid down onto it
+        bool gliding = shown != top;
+        if (gliding)
+            list.BeginSteps();
+        for (int i = from; i < last; i++)
         {
             // By the item, not by where in the box it is, or every scroll had the letters of one item blended with another's
             list.BeginPart(i);
@@ -361,6 +389,10 @@ public class ListBox : UIComponent
                 list.Rect(new UIRect(new Vector2(row.Min.X + ROW_PADDING, row.Min.Y), new Vector2(row.Max.X - ROW_PADDING, row.Min.Y + 1.0f)), skin.BorderColor * tint);
         }
 
+        if (gliding)
+            list.EndSteps();
+        list.PopClip();
+
         // What it says under the rows while there's room for it, in the middle of that room
         if (Note.Length > 0 && rowTop - Bounds.Min.Y >= rowHeight)
         {
@@ -378,7 +410,7 @@ public class ListBox : UIComponent
             float height = Bounds.Height - headingHeight;
             float share = Rows / (float)items.Length;
             float travel = height * (1.0f - share);
-            float barTop = Bounds.Max.Y - headingHeight - travel * (top / (float)(items.Length - Rows));
+            float barTop = Bounds.Max.Y - headingHeight - travel * (shown / (items.Length - Rows));
             float x = Bounds.Max.X - BAR_WIDTH * 1.5f;
 
             list.RoundRect(new UIRect(new Vector2(x, barTop - height * share), new Vector2(x + BAR_WIDTH, barTop)), BAR_WIDTH * 0.5f, skin.TextColor with { W = 0.2f });

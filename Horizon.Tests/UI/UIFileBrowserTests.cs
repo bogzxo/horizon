@@ -103,6 +103,17 @@ public sealed class UIFileBrowserTests : IDisposable
     }
 
     [Fact]
+    public void A_letter_after_a_click_goes_to_the_first_row_it_starts()
+    {
+        UIFileBrowser browser = Open();
+        browser.Choose("notes.txt");
+        browser.Key('a');
+
+        Assert.Equal("app.d", browser.Selected);
+        Assert.Equal("a", browser.Name);
+    }
+
+    [Fact]
     public void A_folders_row_takes_away_the_name_a_files_row_gave_but_not_one_typed()
     {
         UIFileBrowser browser = Open();
