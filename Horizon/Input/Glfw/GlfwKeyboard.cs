@@ -31,10 +31,17 @@ internal sealed unsafe class GlfwKeyboard : IKeyboard
 
     public IReadOnlyList<Key> SupportedKeys => keys;
 
+    // Windows' clipboard asked for straight there (see WindowsClipboard), GLFW's everywhere else
     public string ClipboardText
     {
-        get => glfw.GetClipboardString(window) ?? string.Empty;
-        set => glfw.SetClipboardString(window, value);
+        get => OperatingSystem.IsWindows() ? Horizon.Core.Platform.WindowsClipboard.Text : glfw.GetClipboardString(window) ?? string.Empty;
+        set
+        {
+            if (OperatingSystem.IsWindows())
+                Horizon.Core.Platform.WindowsClipboard.Text = value;
+            else
+                glfw.SetClipboardString(window, value);
+        }
     }
 
     public event Action<IKeyboard, Key, int>? KeyDown;

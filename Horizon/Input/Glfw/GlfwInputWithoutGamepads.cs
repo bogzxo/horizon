@@ -27,12 +27,17 @@ internal sealed unsafe class GlfwInputWithoutGamepads : IInputContext
     private readonly GlfwCallbacks.CursorPosCallback onMove;
     private readonly GlfwCallbacks.ScrollCallback onScroll;
 
+    // What GLFW says went wrong, written down rather than thrown. Silk's own throws from inside GLFW's call, where no
+    // catch reaches, and a clipboard it couldn't read took a published Hex down with it. Kept for as long as GLFW is
+    private static readonly GlfwCallbacks.ErrorCallback onError = (code, description) => Logging.Log.Warning($"[GLFW] {code}, {description}");
+
     public GlfwInputWithoutGamepads(IView view)
     {
         glfw = GlfwWindowing.GetExistingApi(view) ?? throw new InvalidOperationException("Only a GLFW window has an input context without gamepads.");
         window = GlfwWindowing.GetHandle(view);
         Handle = (nint)window;
 
+        glfw.SetErrorCallback(onError);
         keyboard = new GlfwKeyboard(glfw, window);
         mouse = new GlfwMouse(glfw, window);
         Keyboards = [keyboard];
