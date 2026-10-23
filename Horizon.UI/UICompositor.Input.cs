@@ -216,6 +216,24 @@ public partial class UICompositor
     /// </summary>
     private void UpdateTooltip(UIModule[] snapshot, float dt)
     {
+        // One a component put up stays where it was put until it's taken down or the pointer goes somewhere
+        if (pinned is { } pin)
+        {
+            if (pin.Owner.Module is { } owner && pin.Owner.Visible && Vector2.Distance(lastPointer, pin.Pointer) <= TOOLTIP_DRIFT * 4.0f)
+            {
+                if (tooltipModule is not null && tooltipModule != owner)
+                    tooltipModule.ShowTooltip(null, default);
+                tooltipModule = owner;
+                TooltipOf = pin.Owner;
+                owner.ShowTooltip(pin.Text, pin.At, pin.Markdown);
+                return;
+            }
+
+            pinned = null;
+            restingAt = lastPointer;
+            restingFor = 0.0f;
+        }
+
         UIComponent? over = hovered;
         bool still = Vector2.Distance(lastPointer, restingAt) <= TOOLTIP_DRIFT && !Pointer.Down;
 
@@ -251,6 +269,23 @@ public partial class UICompositor
 
     /// <summary>The component whose tooltip is up right now, null while none is.</summary>
     public UIComponent? TooltipOf { get; private set; }
+
+    /// <summary>
+    /// Puts a tooltip up at a place of a component's module (its units), not where the pointer is, until the component
+    /// takes it down (<see cref="UnpinTooltip"/>), another is pinned, or the pointer moves. What a code editor says of
+    /// the name at the caret when it's asked with the keyboard.
+    /// </summary>
+    public void PinTooltip(UIComponent owner, string text, Vector2 at, bool markdown = false) => pinned = (owner, text, at, markdown, lastPointer);
+
+    /// <summary>Takes down the tooltip a component pinned, nothing when another's is up.</summary>
+    public void UnpinTooltip(UIComponent owner)
+    {
+        if (pinned?.Owner == owner)
+            pinned = null;
+    }
+
+    /// <summary>Whether a component has a tooltip pinned up right now.</summary>
+    public bool Pinned(UIComponent owner) => pinned?.Owner == owner;
 
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component

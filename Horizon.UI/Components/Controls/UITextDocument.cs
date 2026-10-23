@@ -168,6 +168,26 @@ public sealed class UITextDocument
     /// <summary>What is selected, its lines ended with '\n'.</summary>
     public string SelectedText => TextBetween(SelectionStart, SelectionEnd);
 
+    /// <summary>
+    /// How many characters are selected, counted the way <see cref="SelectedText"/> would have them without making it. The
+    /// status bar asked for the text every tick for its length, a whole file of it with everything selected.
+    /// </summary>
+    public int SelectedLength
+    {
+        get
+        {
+            UITextPosition from = SelectionStart, to = SelectionEnd;
+            if (from.Line == to.Line)
+                return to.Column - from.Column;
+
+            int length = lines[from.Line].Length - from.Column + to.Column;
+            for (int line = from.Line + 1; line < to.Line; line++)
+                length += lines[line].Length + 1;
+            // and the break before the last line
+            return length + 1;
+        }
+    }
+
     public string TextBetween(UITextPosition from, UITextPosition to)
     {
         if (from.Line == to.Line)

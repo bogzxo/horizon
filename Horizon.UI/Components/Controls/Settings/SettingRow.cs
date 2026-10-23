@@ -13,7 +13,7 @@ namespace Horizon.UI.Components;
 /// </summary>
 internal sealed class SettingRow : StackPanel
 {
-    private const float PAD = 10.0f, TYPED_AFTER = 0.6f;
+    private const float PAD = 10.0f, TYPED_AFTER = 0.6f, BUTTON_COLUMN = 440.0f;
 
     private readonly SettingsPage page;
     private readonly Button reset;
@@ -60,6 +60,11 @@ internal sealed class SettingRow : StackPanel
         // ran off the end of the row and cut the last of them to its first two letters
         float[] widths = [.. (setting.Buttons ?? []).Select(label => MathF.Max(90.0f, label.Length * 8.5f + 28.0f))];
         float buttonsTake = widths.Sum() + 8.0f * widths.Length;
+
+        // Rows with a few buttons keep them in a column of one width, so the first of them sits at the same x down the
+        // page whether a row has two or three. Sized to the room it left they wandered by a few pixels row to row
+        if (widths.Length > 1)
+            buttonsTake = MathF.Max(buttonsTake, BUTTON_COLUMN);
         show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, Math.Clamp(inner - buttonsTake, 160.0f, 420.0f));
 
         for (int i = 0; i < widths.Length; i++)

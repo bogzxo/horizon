@@ -281,6 +281,13 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     protected internal override bool OnEscape()
     {
+        // The hover asked for at the caret comes down first
+        if (hoverPinnedFor is not null)
+        {
+            TakeHoverDown();
+            return true;
+        }
+
         for (UIComponent? at = Parent; at is not null; at = at.Parent)
         {
             if (at is WindowPanel)
@@ -288,6 +295,30 @@ public partial class CodeEditor : UIComponent
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// What's said of the name at the caret, markdown, in the hover's own box under the caret's line, for the keyboard.
+    /// It stays up until the caret moves, the text changes, the pointer moves or Escape. It was a window of its own in
+    /// the middle of the screen, over the line it was about.
+    /// </summary>
+    public void ShowHoverAtCaret(string markdown)
+    {
+        if (Module is not { } module || markdown.Length == 0)
+            return;
+
+        hoverPinnedFor = (document.Version, document.Caret);
+        float below = paintedSkin is { } skin ? FontOf(skin).LineHeight * paintedScale * 0.5f : 10.0f;
+        module.Compositor.PinTooltip(this, markdown, CaretPoint + new Vector2(-8.0f, below), markdown: true);
+    }
+
+    // The text's version and the caret the hover was put up at, null while none is
+    private (int Version, UITextPosition Caret)? hoverPinnedFor;
+
+    private void TakeHoverDown()
+    {
+        hoverPinnedFor = null;
+        Module?.Compositor.UnpinTooltip(this);
     }
 
     /// <summary>
@@ -829,6 +860,10 @@ public partial class CodeEditor : UIComponent
         // The list of completions goes with the keyboard, it stayed up over whatever took it (a palette, a window)
         if (CompletionOpen && !IsFocused)
             CloseCompletion();
+
+        // The hover at the caret goes once the caret or the text moves on, or something else took it down
+        if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
+            TakeHoverDown();
 
         blink = (blink + dt) % (BLINK * 2.0f);
         tickTime = dt;

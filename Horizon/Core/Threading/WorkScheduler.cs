@@ -51,6 +51,24 @@ public sealed class WorkScheduler
         }
     }
 
+    /// <summary>
+    /// The newest piece of work waiting or going that a test lets through (every one without it), null for none. What the
+    /// status bar shows every tick while something goes, Items made a copy of the lot for it.
+    /// </summary>
+    public WorkItem? NewestActive(Func<WorkItem, bool>? listed = null)
+    {
+        lock (gate)
+        {
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                if (items[i].IsActive && (listed?.Invoke(items[i]) ?? true))
+                    return items[i];
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>How many are waiting or going.</summary>
     public int Active
     {

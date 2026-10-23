@@ -331,6 +331,25 @@ public sealed class DebugSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// What an expression comes to in a frame as a variable, the expression its name, what's inside it its reference, null
+    /// when the debugger couldn't say. The context is DAP's, "watch", "hover" or "repl".
+    /// </summary>
+    public async Task<DebugVariable?> TryEvaluate(string expression, int frameId, string context = "watch")
+    {
+        try
+        {
+            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }) is not JsonObject body)
+                return null;
+
+            return new DebugVariable(expression, body["result"]?.GetValue<string>() ?? string.Empty, body["type"]?.GetValue<string>(), JsonNumbers.Int(body["variablesReference"], 0));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The next thing that happened, on the program's thread, false when nothing has.</summary>
     public bool TryTake(out DebugEvent next) => happened.TryDequeue(out next);
 
@@ -345,7 +364,8 @@ public sealed class DebugSession : IDisposable
 
             case "stopped":
                 stoppedThread = JsonNumbers.Int(body?["threadId"], stoppedThread);
-                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>());
+                // lldb-dap says what an exception was in the description and leaves the text out
+                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>() ?? body?["description"]?.GetValue<string>());
                 break;
 
             case "continued":

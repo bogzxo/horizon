@@ -469,7 +469,21 @@ public class ListBox : UIComponent
             left += skin.Font.Measure(row.Quiet, scale, markup: false).X + KEY_PAD;
         }
 
-        list.Text(row.Text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+        // What's after a tab is the item's detail, dim after it, a line's code after its number in go to line. Written as
+        // keys it came out a keycap a word
+        int tab = row.Text.IndexOf('\t');
+        if (tab < 0)
+        {
+            list.Text(row.Text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+        }
+        else
+        {
+            string text = row.Text[..tab];
+            list.Text(text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+            left += skin.Font.Measure(text, scale, markup: false).X + KEY_PAD * 3.0f;
+            list.Text(row.Text[(tab + 1)..], new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
+        }
+
         list.PopClip();
     }
 

@@ -458,6 +458,19 @@ public sealed partial class TerminalScreen
         return text.ToString().Trim();
     }
 
+    /// <summary>What the last command that was done wrote, its block's output, empty while none is.</summary>
+    public string LastOutput()
+    {
+        List<TerminalBlock> blocks = Blocks();
+        for (int i = blocks.Count - 1; i >= 0; i--)
+        {
+            if (blocks[i].Exit is not null)
+                return OutputOf(blocks[i]);
+        }
+
+        return string.Empty;
+    }
+
     /// <summary>What a block's command wrote, every row of its output, the rows a line wrapped over joined.</summary>
     public string OutputOf(in TerminalBlock block)
     {

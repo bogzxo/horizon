@@ -191,7 +191,20 @@ public class TabPanel : UIComponent
     }
 
     /// <summary>What the tab of a page says.</summary>
-    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : $"Tab {index + 1}";
+    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : Numbered(index);
+
+    // "Tab 3" for a page nobody named, made once for each number, it's measured every tick
+    private static readonly List<string> numbered = [];
+
+    private static string Numbered(int index)
+    {
+        lock (numbered)
+        {
+            while (numbered.Count <= index)
+                numbered.Add($"Tab {numbered.Count + 1}");
+            return numbered[index];
+        }
+    }
 
     /// <summary>Opens a page, wrapping round past either end.</summary>
     public void Select(int index)

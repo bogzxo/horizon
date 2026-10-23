@@ -252,6 +252,10 @@ public partial class UICompositor : GameComponent, IDisposable
     private Vector2 restingAt;
     private UIModule? tooltipModule;
 
+    // A tooltip put up by a component rather than the pointer resting on it (a hover asked for with the keyboard), where,
+    // and where the pointer was as it went up, it comes down once the pointer moves
+    private (UIComponent Owner, string Text, Vector2 At, bool Markdown, Vector2 Pointer)? pinned;
+
     // Scratch for cutting a tooltip into lines, see UITooltip
     internal List<(int Start, int Length)> TooltipLines { get; } = [];
 

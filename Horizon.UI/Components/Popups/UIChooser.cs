@@ -6,7 +6,7 @@ using Horizon.UI;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// One of a list picked in a palette, narrowed down by what is typed (the letters in order, the way quick open goes),
+/// One of a list picked in a palette, narrowed down by what is typed (a piece of it, or the letters starting its words),
 /// enter or a click on the chosen row picks and escape goes. A command palette and every chooser of a program, Hex's quick
 /// open with its prefixes (> for commands, @ for something in the file) among them. It's a card hanging under the top of
 /// the window, Spotlight's, a box to type in with the title written in it until something is, the list under a hairline,
@@ -69,15 +69,20 @@ public static class UIChooser
         void Narrow(string query)
         {
             // The best matches first, what starts with what was typed, then what has a word starting with it, then what has
-            // it whole, then the letters in order. Dusk's "dawn" had Dawn, the editor under a command that only had the letters
+            // it whole, then the first letters of its words, then the letters in a few pieces. Dusk's "dawn" had Dawn, the
+            // editor under a command that only had the letters
             var ranked = texts.Where(text => Matches(text, query)).Select(text => (Text: text, Rank: Rank(text, query))).ToList();
 
-            // The letters only somewhere in that order are kept for when nothing has more of it than that, "close" listed
+            // The letters only in a few pieces are kept for when nothing has more of it than that, "close" listed
             // Trigger Completion under Close and Close All
             int best = ranked.Count > 0 ? ranked.Min(pair => pair.Rank) : 0;
             var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE).OrderBy(pair => pair.Rank);
             if (shortestFirst && showing == '\0')
                 ordered = ordered.ThenBy(pair => Path.GetFileName(pair.Text).Length);
+
+            // the shorter one goes first between two as good, nothing typed keeps the list's own order
+            if (query.Trim().Length > 0)
+                ordered = ordered.ThenBy(pair => Columns(pair.Text).Text.Length);
             var left = ordered.Select(pair => pair.Text);
 
             string[] lead = showing == '\0' && recent is not null
@@ -191,12 +196,16 @@ public static class UIChooser
         return (quiet, text, keys);
     }
 
-    // The rank of a choice that only has the letters typed somewhere in that order, see Rank
-    private const int LOOSE = 4;
+    // The rank of a choice that only has the letters typed in a few pieces each starting a word, see Rank
+    private const int LOOSE = 5;
+
+    // How many pieces the letters can be in before it's just letters scattered about. "stop" ran Selection Move Line Up
+    private const int MOST_RUNS = 3;
 
     /// <summary>
     /// How well a choice matches what was typed, lower better. 0 when what it does starts with it, 1 when a word of it
-    /// does, 2 when it's in there whole, 3 when the menu it's in has it, 4 for the letters only in that order.
+    /// does, 2 when it's in there whole, 3 when the menu it's in has it, 4 when the letters start its words, 5 for the
+    /// letters in a few pieces that start words.
     /// </summary>
     public static int Rank(string text, string typed)
     {
@@ -216,11 +225,38 @@ public static class UIChooser
 
         if (said.Contains(query, StringComparison.OrdinalIgnoreCase))
             return 2;
-        return text.Contains(query, StringComparison.OrdinalIgnoreCase) ? 3 : 4;
+        if (text.Contains(query, StringComparison.OrdinalIgnoreCase))
+            return 3;
+        return Initials(text, query) ? 4 : LOOSE;
     }
 
-    /// <summary>Whether the letters typed are in the text in that order, the way quick open matches.</summary>
+    /// <summary>
+    /// Whether the text has what was typed in it, or the letters typed each start a word of it ("ssl" for Select Show
+    /// Lines), or the letters are in it in a few pieces with every piece after the first starting a word.
+    /// </summary>
     public static bool Matches(string text, string typed)
+    {
+        string query = typed.Trim();
+        if (query.Length == 0 || text.Contains(query, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return Initials(text, query) || FewRuns(text, query);
+    }
+
+    // Whether a word of the text starts at that spot, after a space or a separator or where camel case goes up a letter
+    private static bool WordStart(string text, int at)
+    {
+        if (at == 0)
+            return true;
+
+        char before = text[at - 1];
+        return before is ' ' or '/' or '\\' or '.' or '_' or '-' or ':' or '(' || (char.IsLower(before) && char.IsUpper(text[at]));
+    }
+
+    private static bool Same(char a, char b) => char.ToUpperInvariant(a) == char.ToUpperInvariant(b);
+
+    // Whether every letter typed lands on the start of a word, in order, spaces typed don't count
+    private static bool Initials(string text, string typed)
     {
         int at = 0;
         foreach (char letter in typed)
@@ -228,12 +264,54 @@ public static class UIChooser
             if (char.IsWhiteSpace(letter))
                 continue;
 
-            at = text.IndexOf(letter.ToString(), at, StringComparison.OrdinalIgnoreCase);
-            if (at < 0)
+            while (at < text.Length && !(Same(text[at], letter) && WordStart(text, at)))
+                at++;
+            if (at == text.Length)
                 return false;
             at++;
         }
 
         return true;
+    }
+
+    // Whether the letters typed are in the text in order in no more than MOST_RUNS pieces, the first anywhere and the
+    // rest each starting a word. runs[t] is the fewest pieces it takes with the letter so far landing at t
+    private static bool FewRuns(string text, string typed)
+    {
+        string letters = string.Concat(typed.Where(letter => !char.IsWhiteSpace(letter)));
+        if (letters.Length == 0)
+            return true;
+        if (letters.Length > text.Length)
+            return false;
+
+        const int NONE = int.MaxValue / 2;
+        var runs = new int[text.Length];
+        var next = new int[text.Length];
+        for (int t = 0; t < text.Length; t++)
+            runs[t] = Same(text[t], letters[0]) ? 1 : NONE;
+
+        for (int i = 1; i < letters.Length; i++)
+        {
+            // the fewest pieces for the last letter anywhere before t, for a new piece starting at t
+            int fewest = NONE;
+            for (int t = 0; t < text.Length; t++)
+            {
+                int best = NONE;
+                if (Same(text[t], letters[i]))
+                {
+                    if (t > 0)
+                        best = runs[t - 1];
+                    if (WordStart(text, t))
+                        best = Math.Min(best, fewest + 1);
+                }
+
+                next[t] = best;
+                fewest = Math.Min(fewest, runs[t]);
+            }
+
+            (runs, next) = (next, runs);
+        }
+
+        return runs.Min() <= MOST_RUNS;
     }
 }
