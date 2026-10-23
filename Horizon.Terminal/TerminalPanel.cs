@@ -18,13 +18,10 @@ public sealed class TerminalTab
 
     /// <summary>
     /// What the tab is called when nobody renamed it, the title the program set or the folder its shell is in (the
-    /// profile's name before it's in one). A title that is the path of a program (what the console calls itself before a
-    /// shell says anything) counts as nothing said.
+    /// profile's name before it's in one). A title that says nothing of its own counts as none, see
+    /// <see cref="TerminalView.SaysNothing"/>.
     /// </summary>
-    public string Title => Renamed ?? (Focused?.Content?.Title is { Length: > 0 } said && !IsProgramPath(said) ? said : Focused?.Content?.FolderTitle ?? Profile?.Name ?? "terminal");
-
-    private static bool IsProgramPath(string title) =>
-        title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (title.Contains('\\') || title.Contains('/'));
+    public string Title => Renamed ?? (Focused?.Content is { Title: { Length: > 0 } said } view && !TerminalView.SaysNothing(said, view.Profile) ? said : Focused?.Content?.FolderTitle ?? Profile?.Name ?? "terminal");
 
     /// <summary>What somebody renamed it to, null for the title the program or its profile gives it.</summary>
     public string? Renamed { get; set; }

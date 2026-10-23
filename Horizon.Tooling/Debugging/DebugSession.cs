@@ -96,6 +96,7 @@ public sealed class DebugSession : IDisposable
             Process? process = Process.Start(start);
             if (process is null)
                 return null;
+            Horizon.Core.Platform.ChildProcesses.Adopt(process);
 
             // What it says on stderr is nobody's, but it's read so the pipe never fills and stops it
             process.ErrorDataReceived += (_, _) => { };

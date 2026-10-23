@@ -108,9 +108,15 @@ public class Notifications : UIComponent
 
     protected override bool HitTestVisible => shown.Count > 0;
 
-    /// <summary>Puts a card up and hands it back, to close it or to add to what can be done about it.</summary>
+    /// <summary>
+    /// Puts a card up and hands it back, to close it or to add to what can be done about it. Its text starts with a capital
+    /// the way a sentence does, what a program says along a status bar in lower case came up on a card starting small.
+    /// </summary>
     public UINotification Show(string text, string icon = "info", Vector4? iconColor = null, float seconds = 8.0f, params (string Label, Action Pressed)[] actions)
     {
+        if (text.Length > 0 && char.IsLower(text[0]))
+            text = char.ToUpperInvariant(text[0]) + text[1..];
+
         var card = new UINotification { Text = text, Icon = icon, IconColor = iconColor, Seconds = seconds };
         card.Actions.AddRange(actions);
 

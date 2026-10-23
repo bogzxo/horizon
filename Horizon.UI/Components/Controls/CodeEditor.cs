@@ -647,8 +647,9 @@ public partial class CodeEditor : UIComponent
         // Room for the biggest number there is, every digit of a font is as wide as its zero
         int count = document.LineCount, digits = 1;
         while ((count /= 10) > 0) digits++;
-        // And the room of an icon in front of them, for a line with something wrong on it
-        return FontOf(skin).Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(FontOf(skin).LineHeight * scale * 0.9f);
+        // And the room of an icon in front of them, for a line with something wrong on it, with a little gap after it. It
+        // touched a number of two digits ("x11")
+        return FontOf(skin).Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(FontOf(skin).LineHeight * scale * 1.15f);
     }
 
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
@@ -1652,7 +1653,8 @@ public partial class CodeEditor : UIComponent
             if (item.Detail.Length > 0)
             {
                 float detail = FontOf(skin).Measure(item.Detail, scale * 0.85f, markup: false).X;
-                list.Text(item.Detail, new Vector2(row.Max.X - TEXT_PAD - detail, top - lineHeight * 0.08f), scale * 0.85f, colors.Comment, markup: false);
+                // Dim the way every list's detail is, in the comments' colour it read as code of the file
+                list.Text(item.Detail, new Vector2(row.Max.X - TEXT_PAD - detail, top - lineHeight * 0.08f), scale * 0.85f, skin.DimTextColor, markup: false);
             }
         }
 

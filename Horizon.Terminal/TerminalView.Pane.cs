@@ -26,7 +26,16 @@ public partial class TerminalView
     public string? PaneName { get; set; }
 
     /// <summary>What the pane is called, its name, or what the program said, or the folder its shell is in.</summary>
-    public string PaneTitle => PaneName ?? (Title is { Length: > 0 } said && !(said.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (said.Contains('\\') || said.Contains('/'))) ? said : FolderTitle);
+    public string PaneTitle => PaneName ?? (Title is { Length: > 0 } said && !SaysNothing(said, Profile) ? said : FolderTitle);
+
+    /// <summary>
+    /// Whether a title a program set says nothing of its own, the path of a program (what the console calls itself before
+    /// a shell says anything) or the name of the shell's profile. PowerShell calls itself "Windows PowerShell" for a moment
+    /// as it starts, and every new tab said that for a second before it said its folder.
+    /// </summary>
+    public static bool SaysNothing(string title, TerminalProfile? profile) =>
+        (title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (title.Contains('\\') || title.Contains('/')))
+        || (profile is not null && title.Equals(profile.Name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// What it's called when neither somebody nor its program said, the folder its shell is in ("hexbuild"), the profile's

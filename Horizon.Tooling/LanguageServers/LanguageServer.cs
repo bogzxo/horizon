@@ -108,6 +108,10 @@ public sealed partial class LanguageServer : IDisposable
         try
         {
             process = Process.Start(info);
+
+            // Gone with this program however it goes, serve-d and its dcd-server outlived every Hex that was killed
+            if (process is not null)
+                Horizon.Core.Platform.ChildProcesses.Adopt(process);
         }
         catch (Exception)
         {

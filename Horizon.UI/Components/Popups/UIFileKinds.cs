@@ -25,8 +25,10 @@ public static class UIFileKinds
         ".txt" or ".log" => "book",
         ".json" or ".tmx" or ".tsx" or ".xml" or ".yaml" or ".yml" or ".toml" => "json",
         ".slang" or ".hlsl" or ".glsl" => "symbol-color",
-        ".cs" or ".csproj" or ".sln" or ".props" or ".targets" => "symbol-class",
-        ".py" or ".js" or ".ts" or ".mjs" or ".lua" or ".rs" or ".c" or ".h" or ".cpp" or ".hpp" or ".go" or ".d" or ".di" or ".java" or ".kt" or ".swift" => "code",
+        // Code of every language the one file of code, its colour says which (a C# file had a class's icon, the one the
+        // outline gives a class in it). What a project is made of gets a project's
+        ".csproj" or ".sln" or ".props" or ".targets" => "project",
+        ".cs" or ".py" or ".js" or ".ts" or ".mjs" or ".lua" or ".rs" or ".c" or ".h" or ".cpp" or ".hpp" or ".go" or ".d" or ".di" or ".java" or ".kt" or ".swift" => "file-code",
         ".ps1" or ".bash" or ".sh" or ".cmd" or ".bat" or ".zsh" or ".fish" => "terminal",
         ".zip" or ".7z" or ".gz" or ".tar" or ".rar" or ".xz" => "file-zip",
         ".pdf" => "file-pdf",

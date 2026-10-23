@@ -37,10 +37,13 @@ public sealed class UITreeItem
     /// </summary>
     public (int Start, int Length) Mark { get; set; }
 
-    // The text cut short with dots to the room it had last, kept until the text or the room changes
+    // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
     internal string? fittedOf;
     internal float fittedRoom;
     internal string fitted = string.Empty;
+    internal string? detailOf;
+    internal float detailRoom;
+    internal string detailFitted = string.Empty;
 
     /// <summary>The rows under it, null for none.</summary>
     public List<UITreeItem>? Children { get; set; }
@@ -486,8 +489,13 @@ public class TreeView : UIComponent
 
             // As much of the text as there's room for with its detail after it, cut short with dots rather than off at the
             // edge of the tree, a long line found by Find in Files ran under the side's edge
+            // The text comes first, a detail that won't fit beside all of it gets at most a third of the row, cut short
+            // itself. A variable's value was cut off to leave its whole type there, "box = geomet...  geometry.shapes.Rect"
+            float room = right - x - LEFT_PAD;
             float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, markup: false).X + DETAIL_GAP : 0.0f;
-            string rowText = Fitted(item, skin, scale, right - x - detailWidth - LEFT_PAD);
+            if (detailWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth > room)
+                detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
+            string rowText = Fitted(item, skin, scale, room - detailWidth);
             Vector2 size = skin.Font.Measure(rowText, scale, markup: false);
             float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
 
@@ -502,10 +510,10 @@ public class TreeView : UIComponent
 
             list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
 
-            if (item.Detail.Length > 0)
+            if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - (x + size.X + DETAIL_GAP)) is { Length: > 0 } said)
             {
-                Vector2 detail = skin.Font.Measure(item.Detail, scale, markup: false);
-                list.Text(item.Detail, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, dim, markup: false);
+                Vector2 detail = skin.Font.Measure(said, scale, markup: false);
+                list.Text(said, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, dim, markup: false);
             }
         }
 
@@ -529,6 +537,40 @@ public class TreeView : UIComponent
 
     // The dots a row cut short ends with
     private const string CUT = "...";
+
+    // The most of a row a detail gets when the row's too short for all of both
+    private const float DETAIL_MOST = 0.34f;
+
+    // A row's detail cut to its room with dots, kept like its text is, nothing when not even the dots fit
+    private static string FittedDetail(UITreeItem item, UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
+            return item.detailFitted;
+
+        string shown = item.Detail;
+        if (skin.Font.Measure(shown, scale, markup: false).X > room)
+            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(shown, skin, scale, room);
+
+        (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
+        return shown;
+    }
+
+    // As much of some text as fits with dots after it
+    private static string Cut(string text, UISkin skin, float scale, float room)
+    {
+        float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+        int low = 0, high = text.Length;
+        while (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+
+        return text[..low].TrimEnd() + CUT;
+    }
 
     /// <summary>
     /// Helper method for a row's text as much as fits in so much room, cut with dots at the end, worked out once for the

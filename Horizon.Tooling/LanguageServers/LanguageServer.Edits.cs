@@ -10,7 +10,11 @@ public readonly record struct LanguageServerEdit(int Line, int Character, int En
 /// A fix or a refactoring a server offers at a place, by its title, whether it's the one it would pick, the edits it
 /// makes by file, and a command of the server's to run after them (what some fixes are instead of edits).
 /// </summary>
-public sealed record LanguageServerAction(string Title, bool Preferred, IReadOnlyDictionary<string, IReadOnlyList<LanguageServerEdit>> Edits, JsonNode? Command);
+public sealed record LanguageServerAction(string Title, bool Preferred, IReadOnlyDictionary<string, IReadOnlyList<LanguageServerEdit>> Edits, JsonNode? Command, string Kind = "")
+{
+    /// <summary>Whether it fixes something wrong (a quick fix, or one the server says to prefer) rather than refactors.</summary>
+    public bool Fixes => Preferred || Kind.StartsWith("quickfix", StringComparison.Ordinal);
+}
 
 // Asking a server to change the code, renaming a name everywhere, formatting a file, and the fixes it offers where
 // something's wrong. What comes back is edits by file, which the editor makes (to the file open in it, or on the disk).
@@ -97,7 +101,8 @@ public sealed partial class LanguageServer
             IReadOnlyDictionary<string, IReadOnlyList<LanguageServerEdit>> edits = action["edit"] is JsonObject edit ? WorkspaceEdits(edit) : new Dictionary<string, IReadOnlyList<LanguageServerEdit>>();
             JsonNode? command = bare ? action.DeepClone() : action["command"]?.DeepClone();
             bool preferred = action["isPreferred"] is JsonValue flag && flag.TryGetValue(out bool yes) && yes;
-            actions.Add(new LanguageServerAction(title, preferred, edits, command));
+            // What it is without the full stop csharp-ls ends some with, the rest of the list has none
+            actions.Add(new LanguageServerAction(title.TrimEnd('.'), preferred, edits, command, action["kind"]?.GetValue<string>() ?? string.Empty));
         }
 
         return [.. actions.OrderByDescending(action => action.Preferred)];

@@ -146,7 +146,8 @@ public sealed class UIFileBrowserTests : IDisposable
     [Fact]
     public void A_file_kind_has_its_symbol_and_whether_it_reads_as_text()
     {
-        Assert.Equal("code", UIFileKinds.IconOf("app.d"));
+        Assert.Equal("file-code", UIFileKinds.IconOf("app.d"));
+        Assert.Equal("project", UIFileKinds.IconOf("app.csproj"));
         Assert.Equal("file-media", UIFileKinds.IconOf("cat.PNG"));
         Assert.Equal("file", UIFileKinds.IconOf("README"));
         Assert.True(UIFileKinds.IsText("app.d"));

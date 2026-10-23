@@ -452,7 +452,9 @@ public sealed partial class UIDrawList
         if (rect.IsEmpty)
             return;
 
-        float radius = Skin.PopupRadius;
+        // Round the same as every popup, but no rounder than a third of its height, a line of signature help came out a
+        // pill beside the list of completions it sat over
+        float radius = MathF.Min(Skin.PopupRadius, rect.Height * 0.3f);
         Vector4 panel = Skin.Palette.Raised;
         Lifted(rect, radius);
 
