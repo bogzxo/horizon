@@ -463,6 +463,10 @@ public sealed class UIFileBrowser
         {
             name.Text = item;
             nameFromRow = true;
+
+            // Picked out, so a letter typed next is a new start that goes to the first row it begins, the way a click
+            // and a key go in Explorer and the Finder. It was put after the name and found nothing
+            name.SelectAll();
         }
         else if (nameFromRow)
         {

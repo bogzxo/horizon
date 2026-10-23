@@ -395,6 +395,11 @@ public class Table : UIComponent
         int first = (int)(scrollY / line);
         int last = Math.Min(order.Count - 1, first + (int)(bounds.Height / line) + 1);
 
+        // Easing, the cells as the newer tick has them (see UIScrollEase)
+        bool easing = ease.Goal is not null;
+        if (easing)
+            list.BeginSteps();
+
         // The frozen column last, over what scrolls under it
         int part = 0;
         for (int pass = 0; pass < 2; pass++)
@@ -443,6 +448,9 @@ public class Table : UIComponent
                 }
             }
         }
+
+        if (easing)
+            list.EndSteps();
 
         // The header over the rows, sticky, sorted by an arrow
         UIRect head = new(new Vector2(bounds.Min.X, bounds.Max.Y - line), bounds.Max);

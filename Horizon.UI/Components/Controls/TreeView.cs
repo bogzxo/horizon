@@ -416,9 +416,19 @@ public class TreeView : UIComponent
         revealOnly = null;
         if (IndexOf(reveal) is >= 0 and var shown)
         {
-            float top = shown * line, bottom = top + line;
-            if (top < scroll) { scroll = top; ease.Stop(); }
-            else if (bottom > scroll + bounds.Height) { scroll = bottom - bounds.Height; ease.Stop(); }
+            // Eased there when it's a row or a few the keys went, gone to at once when it's further than the tree is
+            // tall (a file revealed far down). It jumped a row a press, and the rows smeared across the jump
+            float top = shown * line, bottom = top + line, from = ease.Goal ?? scroll;
+            float? wanted = top < from ? top : bottom > from + bounds.Height ? bottom - bounds.Height : null;
+            if (wanted is { } goal && MathF.Abs(goal - scroll) > bounds.Height)
+            {
+                scroll = goal;
+                ease.Stop();
+            }
+            else if (wanted is { } near)
+            {
+                ease.To(near, travel);
+            }
         }
         revealSelected = false;
         scroll = Math.Clamp(scroll, 0.0f, travel);
@@ -446,6 +456,11 @@ public class TreeView : UIComponent
 
         int first = (int)(scroll / line);
         int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
+
+        // Easing, the rows as the newer tick has them (see UIScrollEase)
+        bool easing = ease.Goal is not null;
+        if (easing)
+            list.BeginSteps();
         for (int i = first; i <= last; i++)
         {
             var (item, depth) = rows[i];
@@ -517,6 +532,8 @@ public class TreeView : UIComponent
             }
         }
 
+        if (easing)
+            list.EndSteps();
         list.EndParts();
         list.PopFade();
         list.PopClip();
