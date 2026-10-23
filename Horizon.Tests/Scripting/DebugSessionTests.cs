@@ -130,6 +130,11 @@ public class DebugSessionTests
 
         Write(fromAdapter, new JsonObject { ["seq"] = 0, ["type"] = "event", ["event"] = "exited", ["body"] = new JsonObject { ["exitCode"] = 3 } });
         Assert.True(WaitFor(() => session.State == DebugState.Ended));
+
+        // The adapter's end closed first, the session's reading thread gets to the end of the pipe and lets go of it. On
+        // Linux and macOS letting go of a pipe another thread is reading waits for that read, and the usings let go of
+        // the session's end first, so the run hung there for good
+        fromAdapter.Dispose();
     }
 
     // netcoredbg, wherever it is on this machine, null when it isn't

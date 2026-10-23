@@ -13,7 +13,10 @@ public static class LanguageServers
     /// <summary>A server an editor can run, as a configuration names it.</summary>
     /// <param name="Name">What it is called, a status bar says it.</param>
     /// <param name="Command">The program, on the PATH or a full path.</param>
-    /// <param name="Arguments">What the program is started with, --stdio for the ones that want asking.</param>
+    /// <param name="Arguments">
+    /// What the program is started with, --stdio for the ones that want asking. {solution} in one is the solution of the
+    /// folder it's started in (see <see cref="ArgumentsIn"/>).
+    /// </param>
     /// <param name="LanguageId">The language id of the protocol, csharp, python.</param>
     /// <param name="Extensions">The files it lints, ".cs" and the like.</param>
     /// <param name="Settings">
@@ -105,11 +108,56 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory, SettingsIn(entry.Settings, rootDirectory)) : null;
+            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, ArgumentsIn(entry.Arguments, rootDirectory), entry.LanguageId, rootDirectory, SettingsIn(entry.Settings, rootDirectory)) : null;
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
+        }
+    }
+
+    /// <summary>
+    /// A registration's arguments for a server started in a folder, {solution} the folder's own .sln or .slnx (the one
+    /// named after the folder, or the first), and an argument for a solution there isn't left out with the flag before
+    /// it. csharp-ls looks for solutions all the way down and loads the first it likes, Fighter2D's was the engine's in
+    /// its external folder, and nothing of the game's own code had a hover or a definition.
+    /// </summary>
+    internal static string[] ArgumentsIn(string[] arguments, string rootDirectory)
+    {
+        if (!arguments.Any(argument => argument.Contains("{solution}", StringComparison.Ordinal)))
+            return arguments;
+
+        string? solution = SolutionIn(rootDirectory);
+        var filled = new List<string>(arguments.Length);
+        foreach (string argument in arguments)
+        {
+            if (!argument.Contains("{solution}", StringComparison.Ordinal))
+            {
+                filled.Add(argument);
+                continue;
+            }
+
+            if (solution is not null)
+                filled.Add(argument.Replace("{solution}", solution, StringComparison.Ordinal));
+            else if (filled.Count > 0 && filled[^1].StartsWith('-'))
+                filled.RemoveAt(filled.Count - 1);
+        }
+
+        return [.. filled];
+    }
+
+    /// <summary>The solution of a folder, in it and not under it, the one named after the folder first, null for none.</summary>
+    internal static string? SolutionIn(string folder)
+    {
+        try
+        {
+            string[] found = [.. Directory.EnumerateFiles(folder, "*.sln").Concat(Directory.EnumerateFiles(folder, "*.slnx")).Order(StringComparer.OrdinalIgnoreCase)];
+            string name = Path.GetFileName(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return found.FirstOrDefault(file => Path.GetFileNameWithoutExtension(file).Equals(name, StringComparison.OrdinalIgnoreCase)) ?? found.FirstOrDefault();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

@@ -427,6 +427,30 @@ public class LanguageServerTests
         Assert.Equal("// shapes\r\nstruct Rect\r\n{\r\n    int size() { return w * h; }\r\n}\r\nauto a = r.size;\r\n", renamed);
     }
 
+    [Fact]
+    public void A_server_is_told_its_folders_own_solution_and_not_one_further_down()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "solution-" + Guid.NewGuid().ToString("N"), "Game");
+        Directory.CreateDirectory(Path.Combine(root, "external", "engine"));
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "external", "engine", "Engine.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(root, "Another.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(root, "Game.sln"), string.Empty);
+            Assert.Equal(["--solution", Path.Combine(root, "Game.sln")], LanguageServers.ArgumentsIn(["--solution", "{solution}"], root));
+
+            // None there, the argument goes with its flag, and arguments without one are as they were
+            string bare = Path.Combine(root, "external");
+            Assert.Equal(["--stdio"], LanguageServers.ArgumentsIn(["--stdio", "--solution", "{solution}"], bare));
+            string[] plain = ["--stdio"];
+            Assert.Same(plain, LanguageServers.ArgumentsIn(plain, root));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(root)!, recursive: true);
+        }
+    }
+
     private static string ReadLine(Stream stream)
     {
         var line = new StringBuilder();
