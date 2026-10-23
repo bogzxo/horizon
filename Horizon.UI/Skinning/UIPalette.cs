@@ -89,7 +89,7 @@ public sealed class UIPalette
     [
         "background", "surface", "text_color", "accent_color", "control_text_color", "control_color", "field_color", "border_color",
         "panel_color", "track_color", "hover_color", "highlight_color", "disabled_tint", "bar_text_color", "text_shadow_color",
-        "icon_label_color", "dim_text_color", "link_color", "error_color", "warning_color", "success_color"
+        "icon_label_color", "dim_text_color", "link_color", "error_color", "warning_color", "success_color", "selection_color"
     ];
 
     /// <summary>Whether a key of a skin file is a colour of the palette (or one the palette is derived from).</summary>
@@ -105,7 +105,7 @@ public sealed class UIPalette
         "background" => ["field_color", "track_color"],
         "surface" => ["panel_color", "control_color"],
         "text_color" => ["control_text_color", "border_color", "hover_color", "icon_label_color", "dim_text_color"],
-        "accent_color" => ["highlight_color", "link_color"],
+        "accent_color" => ["highlight_color", "link_color", "selection_color"],
         _ => []
     };
 
@@ -136,6 +136,7 @@ public sealed class UIPalette
             case "error_color": Error = color; break;
             case "warning_color": Warning = color; break;
             case "success_color": Success = color; break;
+            case "selection_color": Selection = color; break;
             default: return false;
         }
 
@@ -181,6 +182,7 @@ public sealed class UIPalette
         if (given.TryGetValue("accent_color", out Vector4 accent))
         {
             if (!Given("highlight_color")) Highlight = accent with { W = 0.9f };
+            if (!Given("selection_color")) Selection = accent with { W = 0.32f };
         }
 
         // The panel as the eye gets it, over black where it is see-through, is what the coloured text has to read on
@@ -241,6 +243,28 @@ public sealed class UIPalette
         return (lighter + 0.05f) / (darker + 0.05f);
     }
 
+    /// <summary>
+    /// What something lifted off the window is filled with (a popup, a dialog, a window of settings), the panel a touch
+    /// towards the text on a dark palette, glass in the dark is lighter than what's under it, and the panel itself on a
+    /// light one. Every floating thing is this, so they're all the one material.
+    /// </summary>
+    public Vector4 Raised => IsDark ? Towards(Panel with { W = 1.0f }, Text with { W = 1.0f }, RAISED_LIFT) : Panel with { W = 1.0f };
+
+    // How far a raised surface is towards the text in the dark
+    private const float RAISED_LIFT = 0.07f;
+
+    /// <summary>
+    /// What selected text is painted under, in code and the terminal. The accent seen through unless the theme says,
+    /// which suits a blue accent and was a swamp under Horizon's gold, so Horizon gives one of its own.
+    /// </summary>
+    public Vector4 Selection { get; set; } = new(0.38f, 0.62f, 1.0f, 0.32f);
+
+    /// <summary>
+    /// The text that reads on the accent, whichever of the text and the bar's text stands out on it more. Dark on Horizon's
+    /// gold, white on a blue.
+    /// </summary>
+    public Vector4 OnAccent => Contrast(BarText, Accent with { W = 1.0f }) >= Contrast(Text, Accent with { W = 1.0f }) ? BarText : Text;
+
     /// <summary>Whether the palette is a dark one, text lighter than its panel.</summary>
     public bool IsDark => Luminance(Text) > Luminance(Panel);
 
@@ -251,7 +275,8 @@ public sealed class UIPalette
         {
             Text = Text, ControlText = ControlText, Control = Control, Field = Field, Border = Border, Panel = Panel, Track = Track,
             Hover = Hover, Accent = Accent, Highlight = Highlight, DisabledTint = DisabledTint, BarText = BarText, TextShadow = TextShadow,
-            IconLabel = IconLabel, DimText = DimText, Link = Link, Error = Error, Warning = Warning, Success = Success
+            IconLabel = IconLabel, DimText = DimText, Link = Link, Error = Error, Warning = Warning, Success = Success,
+            Selection = Selection
         };
         Syntax.CopyTo(copy.Syntax);
         return copy;

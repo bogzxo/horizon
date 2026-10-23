@@ -88,6 +88,39 @@ public class TerminalLinksAndProblemsTests
     }
 
     [Fact]
+    public void D_says_where_with_a_caret_under_the_code_or_with_its_column()
+    {
+        var problems = Read(
+            "source\\app.d(11): Error: cannot implicitly convert expression `\"text\"` of type `string` to `int`\n" +
+            "    int wrong = \"text\";\n" +
+            "                ^\n" +
+            "main.d(4,8): Deprecation: `old` is deprecated\n" +
+            "util.d(9): Error: undefined identifier `x`\n" +
+            "    x++;\n" +
+            "    ^\n" +
+            "Error C:\\D\\dmd2\\windows\\bin64\\dmd.exe failed with exit code 1.\n");
+
+        Assert.Equal(3, problems.Count);
+        Assert.Equal(("source\\app.d", 11, 17, false), (problems[0].File, problems[0].Line, problems[0].Column, problems[0].Warning));
+        Assert.Equal(("main.d", 4, 8, true), (problems[1].File, problems[1].Line, problems[1].Column, problems[1].Warning));
+        Assert.Equal(("util.d", 9, 5), (problems[2].File, problems[2].Line, problems[2].Column));
+    }
+
+    [Fact]
+    public void A_d_or_dotnet_program_stopped_by_an_exception_says_where_it_was_thrown()
+    {
+        var d = Read("core.exception.ArrayIndexError@util.d(15): index [5] is out of bounds for array of length 5\n----------------\n");
+        Assert.Equal(("util.d", 15, "core.exception.ArrayIndexError: index [5] is out of bounds for array of length 5"), (d.Single().File, d.Single().Line, d.Single().Message));
+
+        var dotnet = Read(
+            "Unhandled exception. System.InvalidOperationException: Sequence contains no elements\n" +
+            "   at System.Linq.ThrowHelper.ThrowNoElementsException()\n" +
+            "   at Program.<Main>$(String[] args) in C:\\repo\\src\\Program.cs:line 7\n");
+        Assert.Equal(("C:\\repo\\src\\Program.cs", 7, false), (dotnet.Single().File, dotnet.Single().Line, dotnet.Single().Warning));
+        Assert.StartsWith("System.InvalidOperationException: ", dotnet.Single().Message);
+    }
+
+    [Fact]
     public void A_line_that_comes_in_pieces_is_read_once_it_is_whole()
     {
         var problems = new List<TerminalProblem>();

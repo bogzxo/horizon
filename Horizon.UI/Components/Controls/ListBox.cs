@@ -68,13 +68,58 @@ public class ListBox : UIComponent
 
     /// <summary>
     /// How many of the first items are a group of their own over the rest, the commands used last at the top of a
-    /// palette, the files opened last at the top of quick open. Their rows are thinner and written in a colour of their
-    /// own (the text a little towards the accent), with a hairline under the last of them. 0 for none.
+    /// palette, the files opened last at the top of quick open, with a hairline under the last of them. 0 for none.
+    /// Their rows were thinner and smaller and tinted, and the first one picked as a palette opened looked shrunk.
     /// </summary>
     public int Lead { get; set; }
 
-    // How tall a row of the lead is, as a share of a row, and how much of the accent its text has
-    private const float LEAD_SHARE = 0.78f, LEAD_ACCENT = 0.35f;
+    /// <summary>
+    /// How an item is shown in three parts, a quiet word in front of it (the menu a command is in), the item itself, and
+    /// keys along the right drawn as keycaps ("Ctrl+Shift+P", chords split by a space). Null for every item as it is. The
+    /// item itself is still what <see cref="Value"/> and the handlers get.
+    /// </summary>
+    public Func<string, (string Quiet, string Text, string Keys)>? Columns { get; set; }
+
+    /// <summary>Whether it's only its rows, no box of its own under them and no frame round them, for a list on a card (a palette).</summary>
+    public bool Plain { get; set; }
+
+    /// <summary>
+    /// A symbol in front of an item, one of <see cref="UISymbols"/>' names (a folder, a kind of file), and the colour it's
+    /// drawn in, null for the text's own a little quieter. An empty name keeps its place, so the texts still line up.
+    /// Null for a list without symbols.
+    /// </summary>
+    public Func<string, (string Name, Vector4? Color)>? Icon { get; set; }
+
+    /// <summary>
+    /// Quiet columns along the right of a row (a file's size, when it was changed), what each says for an item, each one
+    /// right aligned in its width of <see cref="DetailWidths"/>, the last at the right edge. The item's own text is cut
+    /// short where they start. Null for none.
+    /// </summary>
+    public Func<string, string[]>? Details { get; set; }
+
+    /// <summary>How wide each of the <see cref="Details"/> columns is, in the order they are.</summary>
+    public float[] DetailWidths { get; set; } = [];
+
+    /// <summary>
+    /// What the columns are called, drawn small and quiet in a row of their own over the rows, the item's column first
+    /// and then one for each of the <see cref="Details"/>. Empty for no such row.
+    /// </summary>
+    public string[] Headings { get; set; } = [];
+
+    /// <summary>
+    /// A quiet line said in the middle of the room under the rows, while there's room under them ("This folder is
+    /// empty"). Empty for nothing.
+    /// </summary>
+    public string Note { get; set; } = string.Empty;
+
+    // How far a row's symbol is from its text, and how far apart the details are
+    private const float ICON_GAP = 8.0f, DETAIL_GAP = 16.0f;
+
+    // How far a row's highlight is in from the sides of the list, and how far apart and how padded the keycaps are
+    private const float ROW_INSET = 4.0f, KEY_GAP = 4.0f, KEY_PAD = 6.0f;
+
+    /// <summary>How much of the text's colour is under a picked row, in a list, a tree, a table or a menu, the one pick there is.</summary>
+    public const float PICKED = 0.17f;
 
     /// <summary>Called with the newly chosen item whenever a click or a key changes it.</summary>
     public Action<string>? OnChanged { get; set; }
@@ -94,13 +139,39 @@ public class ListBox : UIComponent
 
     protected internal override bool Navigable => true;
 
+    /// <summary>
+    /// Whether Tab stops on it (with a ring while it has the keyboard), up and down and the pages go along it, and Enter
+    /// confirms the row. Off unless asked, a list with a box of its own in front (a palette) has that walk it. The file
+    /// dialog's places couldn't be got to without the mouse.
+    /// </summary>
+    public bool TakesKeys { get; set; }
+
+    protected internal override bool TabStop => TakesKeys;
+
+    protected internal override void OnTextInput(char character)
+    {
+        if (!TakesKeys || items.Length == 0 || !EnabledInHierarchy)
+            return;
+
+        int by = character switch
+        {
+            UIKeyboard.UP => -1,
+            UIKeyboard.DOWN => 1,
+            UIKeyboard.PAGE_UP => 1 - Rows,
+            UIKeyboard.PAGE_DOWN => Rows - 1,
+            _ => 0
+        };
+
+        if (by != 0)
+            Choose(index < 0 ? (by > 0 ? 0 : items.Length - 1) : Math.Clamp(index + by, 0, items.Length - 1));
+        else if (character is UIKeyboard.ENTER or ' ')
+            OnActivate();
+    }
+
     /// <summary>The first row that is in sight, for a list longer than the box.</summary>
     public int Top => top;
 
     private float RowHeight(UISkin skin) => MathF.Max(skin.RowHeight, skin.Font.LineHeight * (TextScale > 0.0f ? TextScale : skin.TextScale) + ROW_PADDING);
-
-    // How tall an item's row is, a row of the lead thinner
-    private float HeightOf(int item, float rowHeight) => item < Lead ? MathF.Round(rowHeight * LEAD_SHARE) : rowHeight;
 
     /// <summary>
     /// Chooses an item by its index the way a click does, telling whoever listens. Nothing happens for the one chosen already.
@@ -173,12 +244,14 @@ public class ListBox : UIComponent
         if (skin is null)
             return;
 
-        // The row under the pointer, the rows of the lead being thinner
-        float rowHeight = RowHeight(skin), down = Bounds.Max.Y - point.Y, at = 0.0f;
+        // The row under the pointer, under the headings
+        float rowHeight = RowHeight(skin), down = Bounds.Max.Y - HeadingHeight(rowHeight) - point.Y, at = 0.0f;
+        if (down < 0.0f)
+            return;
         int row = -1;
         for (int i = top; i < Math.Min(items.Length, top + Rows); i++)
         {
-            at += HeightOf(i, rowHeight);
+            at += rowHeight;
             if (down < at)
             {
                 row = i;
@@ -199,8 +272,15 @@ public class ListBox : UIComponent
     protected override Vector2 Measure(UISkin skin)
     {
         rowHeightSeen = RowHeight(skin);
-        return new(DEFAULT_WIDTH, rowHeightSeen * Rows);
+        return new(DEFAULT_WIDTH, rowHeightSeen * Rows + HeadingHeight(rowHeightSeen));
     }
+
+    // How tall the row of headings is over the rows, a row, so a list of so many rows and its headings ends where a list
+    // of one more row beside it does. None without them
+    private float HeadingHeight(float rowHeight) => Headings.Length > 0 ? rowHeight : 0.0f;
+
+    // How big a row's symbol is, a line of its text
+    private static float IconSide(UISkin skin, float scale) => MathF.Round(skin.Font.LineHeight * scale);
 
     // how high a row came out the last time it was measured, for a program that fits so many rows to a height
     private float rowHeightSeen;
@@ -219,56 +299,192 @@ public class ListBox : UIComponent
         // A list has no art of its own in any skin, it is a box in the colour of a field unless it is given one
         if (Style.Length > 0 && skin.TryGetRegion(Style, out var art))
             list.NineSlice(art, Bounds, tint);
-        else
+        else if (!Plain)
             list.Box(Bounds, skin.FieldColor * tint);
 
         bool scrolls = items.Length > Rows;
         float right = scrolls ? Bounds.Max.X - BAR_WIDTH * 2.0f : Bounds.Max.X;
+        float headingHeight = HeadingHeight(rowHeight);
 
         list.PushClip(Bounds);
 
+        // What the columns are, small and quiet over the rows, lined up with what's under them, a hairline under it all
+        if (headingHeight > 0.0f)
+        {
+            list.BeginPart(HEADING_PART);
+            UIRect heading = new(new Vector2(Bounds.Min.X, Bounds.Max.Y - headingHeight), new Vector2(right, Bounds.Max.Y));
+            UIRect inside = heading.Shrink(new UIEdges(ROW_INSET + ROW_PADDING, 0.0f));
+            Vector4 quiet = skin.DimTextColor * tint;
+            float small = scale * HEADING_SCALE;
+            UIRect first = PaintAround(list, null, inside, small, quiet);
+            list.Text(Headings[0], first, Origin.Left, small, quiet, markup: false);
+            list.Rect(new UIRect(new Vector2(Bounds.Min.X + ROW_INSET, heading.Min.Y), new Vector2(right - ROW_INSET, heading.Min.Y + 1.0f)), skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
+        }
+
         int last = Math.Min(items.Length, top + Rows);
-        float rowTop = Bounds.Max.Y;
-        Vector4 leadText = Vector4.Lerp(skin.TextColor, skin.AccentColor with { W = skin.TextColor.W }, LEAD_ACCENT);
+        float rowTop = Bounds.Max.Y - headingHeight;
         for (int i = top; i < last; i++)
         {
             // By the item, not by where in the box it is, or every scroll had the letters of one item blended with another's
             list.BeginPart(i);
             bool lead = i < Lead;
-            float height = HeightOf(i, rowHeight);
+            float height = rowHeight;
             UIRect row = new(new Vector2(Bounds.Min.X, rowTop - height), new Vector2(right, rowTop));
             rowTop -= height;
 
-            // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView)
-            list.Rect(row, i == index ? skin.AccentColor * tint * new Vector4(1.0f, 1.0f, 1.0f, 0.55f)
-                : IsHovered && enabled && Hovering(row) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            // Always a highlight, see-through when the row isn't lit, so a row has the same quads tick after tick (see TreeView).
+            // The chosen one is a rounded slip of the text's colour, the one material every list, tree and menu picks with.
+            // It was the accent half seen through, which over Horizon's blue came out the colour of a swamp, and then the
+            // accent whole, a bar of gold down every list, and the accent is for what's on and what has the keyboard
+            bool chosen = i == index;
+            UIRect slip = row.Shrink(new UIEdges(ROW_INSET, 1.0f));
+            list.Box(slip, chosen ? skin.TextColor with { W = PICKED } * tint
+                : IsHovered && enabled && Hovering(row) ? skin.HoverColor with { W = skin.HoverColor.W * 0.6f } : skin.HoverColor with { W = 0.0f });
 
-            list.Text(Resolve(items[i]), row.Shrink(new UIEdges(ROW_PADDING, 0.0f)), Origin.Left, lead ? scale * 0.9f : scale, (lead ? leadText : skin.TextColor) * tint, markup: false);
+            Vector4 ink = skin.TextColor;
+            float size = scale;
+            UIRect inside = PaintAround(list, items[i], slip.Shrink(new UIEdges(ROW_PADDING, 0.0f)), size, ink * tint);
+            if (Columns is { } columns)
+                PaintColumns(list, columns(items[i]), inside, size, ink * tint, chosen);
+            else if (Details is not null)
+            {
+                // Cut short where the details start, not written under them
+                list.PushClip(inside);
+                list.Text(Resolve(items[i]), inside, Origin.Left, size, ink * tint, markup: false);
+                list.PopClip();
+            }
+            else
+                list.Text(Resolve(items[i]), inside, Origin.Left, size, ink * tint, markup: false);
 
             // A hairline under the last of the lead, between it and the rest
             if (lead && i == Lead - 1 && i + 1 < items.Length)
                 list.Rect(new UIRect(new Vector2(row.Min.X + ROW_PADDING, row.Min.Y), new Vector2(row.Max.X - ROW_PADDING, row.Min.Y + 1.0f)), skin.BorderColor * tint);
         }
 
+        // What it says under the rows while there's room for it, in the middle of that room
+        if (Note.Length > 0 && rowTop - Bounds.Min.Y >= rowHeight)
+        {
+            list.BeginPart(NOTE_PART);
+            list.Text(Note, new UIRect(Bounds.Min, new Vector2(right, rowTop)), Origin.Center, scale, skin.DimTextColor * tint, markup: false);
+        }
+
         list.EndParts();
 
         list.PopClip();
 
-        // A thin bar along the right says how much of the list is in sight, and where
+        // A thin bar along the right says how much of the list is in sight, and where, under the headings
         if (scrolls)
         {
+            float height = Bounds.Height - headingHeight;
             float share = Rows / (float)items.Length;
-            float travel = Bounds.Height * (1.0f - share);
-            float barTop = Bounds.Max.Y - travel * (top / (float)(items.Length - Rows));
+            float travel = height * (1.0f - share);
+            float barTop = Bounds.Max.Y - headingHeight - travel * (top / (float)(items.Length - Rows));
             float x = Bounds.Max.X - BAR_WIDTH * 1.5f;
 
-            list.Rect(new UIRect(new Vector2(x, barTop - Bounds.Height * share), new Vector2(x + BAR_WIDTH, barTop)), skin.TrackColor + skin.HoverColor);
+            list.RoundRect(new UIRect(new Vector2(x, barTop - height * share), new Vector2(x + BAR_WIDTH, barTop)), BAR_WIDTH * 0.5f, skin.TextColor with { W = 0.2f });
         }
 
-        if (skin.BorderColor.W > 0.0f)
+        if (skin.BorderColor.W > 0.0f && !Plain)
             list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
 
         PaintSelection(list);
+    }
+
+    // The parts the headings and the note are painted as, apart from the rows' own (their items' numbers)
+    private const int HEADING_PART = -2, NOTE_PART = -3;
+
+    // How big the headings are written, as a share of the rows' text
+    private const float HEADING_SCALE = 0.85f;
+
+    /// <summary>
+    /// Helper method to paint what goes round an item's text, its symbol in front and its details along the right (or the
+    /// headings of those, for no item), giving back the room left between them for the text.
+    /// </summary>
+    private UIRect PaintAround(UIDrawList list, string? item, UIRect area, float scale, Vector4 ink)
+    {
+        UISkin skin = list.Skin;
+        float left = area.Min.X, right = area.Max.X;
+
+        if (Icon is { } icon)
+        {
+            float side = IconSide(skin, scale);
+            if (item is not null && icon(item) is { Name.Length: > 0 } symbol)
+            {
+                var square = new UIRect(new Vector2(left, area.Center.Y - side * 0.5f), new Vector2(left + side, area.Center.Y + side * 0.5f));
+                list.Symbol(symbol.Name, square, symbol.Color is { } color ? color with { W = color.W * ink.W } : ink with { W = ink.W * 0.7f });
+            }
+
+            left += side + ICON_GAP;
+        }
+
+        if (Details is { } details && DetailWidths.Length > 0)
+        {
+            ReadOnlySpan<string> said = item is null ? Headings.AsSpan(Math.Min(1, Headings.Length)) : details(item);
+            Vector4 quiet = item is null ? ink : ink with { W = ink.W * 0.6f };
+            for (int c = DetailWidths.Length - 1; c >= 0; c--)
+            {
+                var column = new UIRect(new Vector2(right - DetailWidths[c], area.Min.Y), new Vector2(right, area.Max.Y));
+                if (c < said.Length && said[c].Length > 0)
+                    list.Text(said[c], column, Origin.Right, scale, quiet, markup: false);
+                right = column.Min.X - DETAIL_GAP;
+            }
+        }
+
+        return new UIRect(new Vector2(left, area.Min.Y), new Vector2(MathF.Max(left, right), area.Max.Y));
+    }
+
+    /// <summary>
+    /// A row in its three parts, the quiet word and the item from the left and the keys as keycaps from the right. The item
+    /// is cut short where the keys start rather than written under them.
+    /// </summary>
+    private static void PaintColumns(UIDrawList list, (string Quiet, string Text, string Keys) row, UIRect area, float scale, Vector4 ink, bool chosen)
+    {
+        UISkin skin = list.Skin;
+        Vector4 quiet = ink with { W = ink.W * 0.6f };
+
+        // The keys from the right, each part of a chord a cap of its own
+        float right = area.Max.X;
+        if (row.Keys.Length > 0)
+        {
+            float keyScale = scale * 0.82f;
+            float height = MathF.Min(area.Height - 6.0f, skin.Font.LineHeight * keyScale + 6.0f);
+            string[] caps = row.Keys.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
+            for (int c = caps.Length - 1; c >= 0; c--)
+            {
+                float width = MathF.Max(height, skin.Font.Measure(caps[c], keyScale, markup: false).X + KEY_PAD * 2.0f);
+                var cap = new UIRect(new Vector2(right - width, area.Center.Y - height * 0.5f), new Vector2(right, area.Center.Y + height * 0.5f));
+                list.RoundRect(cap, MathF.Min(skin.CornerRadius, 5.0f), ink with { W = chosen ? 0.16f : 0.08f });
+                list.Text(caps[c], cap, Origin.Center, keyScale, quiet, markup: false);
+                right = cap.Min.X - KEY_GAP;
+            }
+
+            right -= KEY_PAD * 2.0f;
+        }
+
+        list.PushClip(new UIRect(area.Min, new Vector2(MathF.Max(area.Min.X, right), area.Max.Y)));
+        float left = area.Min.X;
+        if (row.Quiet.Length > 0)
+        {
+            list.Text(row.Quiet, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
+            left += skin.Font.Measure(row.Quiet, scale, markup: false).X + KEY_PAD;
+        }
+
+        // What's after a tab is the item's detail, dim after it, a line's code after its number in go to line. Written as
+        // keys it came out a keycap a word
+        int tab = row.Text.IndexOf('\t');
+        if (tab < 0)
+        {
+            list.Text(row.Text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+        }
+        else
+        {
+            string text = row.Text[..tab];
+            list.Text(text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
+            left += skin.Font.Measure(text, scale, markup: false).X + KEY_PAD * 3.0f;
+            list.Text(row.Text[(tab + 1)..], new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
+        }
+
+        list.PopClip();
     }
 
     private bool Hovering(UIRect row)

@@ -112,6 +112,13 @@ public sealed class UITextDocument
     /// <summary>Called after every change of the text, not of the caret.</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// Called as lines are put in or taken out, with where (the place lines were put in at, or the end of what was taken
+    /// out) and how many, more for put in and less for taken out. For what's kept by its line to move along with them, a
+    /// code editor's diagnostics until they're said again.
+    /// </summary>
+    public event Action<UITextPosition, int>? LinesMoved;
+
     public int LineCount => lines.Count;
 
     public string LineAt(int line) => lines[line];
@@ -160,6 +167,26 @@ public sealed class UITextDocument
 
     /// <summary>What is selected, its lines ended with '\n'.</summary>
     public string SelectedText => TextBetween(SelectionStart, SelectionEnd);
+
+    /// <summary>
+    /// How many characters are selected, counted the way <see cref="SelectedText"/> would have them without making it. The
+    /// status bar asked for the text every tick for its length, a whole file of it with everything selected.
+    /// </summary>
+    public int SelectedLength
+    {
+        get
+        {
+            UITextPosition from = SelectionStart, to = SelectionEnd;
+            if (from.Line == to.Line)
+                return to.Column - from.Column;
+
+            int length = lines[from.Line].Length - from.Column + to.Column;
+            for (int line = from.Line + 1; line < to.Line; line++)
+                length += lines[line].Length + 1;
+            // and the break before the last line
+            return length + 1;
+        }
+    }
 
     public string TextBetween(UITextPosition from, UITextPosition to)
     {
@@ -1123,6 +1150,7 @@ public sealed class UITextDocument
         int last = at.Line + pieces.Length - 1;
         int column = lines[last].Length;
         lines[last] += after;
+        LinesMoved?.Invoke(at, pieces.Length - 1);
         return new UITextPosition(last, column);
     }
 
@@ -1140,6 +1168,7 @@ public sealed class UITextDocument
 
         lines[from.Line] = lines[from.Line][..from.Column] + lines[to.Line][to.Column..];
         lines.RemoveRange(from.Line + 1, to.Line - from.Line);
+        LinesMoved?.Invoke(to, from.Line - to.Line);
     }
 
     private bool DeleteSelectionRaw()

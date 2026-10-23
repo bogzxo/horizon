@@ -149,6 +149,13 @@ public partial class UICompositor
             }
         }
 
+        // Whatever the focus is in can take it, a window of settings closes with its search box focused
+        for (UIComponent? at = focus; at is not null; at = at.Parent)
+        {
+            if (at.OnEscape())
+                return;
+        }
+
         Focus = null;
     }
 
@@ -156,8 +163,9 @@ public partial class UICompositor
     private readonly List<UIComponent> focusable = [];
 
     /// <summary>
-    /// Moves the keyboard focus to the next component that takes it (a text box), in the order of the layout and
-    /// round past the end, or back with a negative step. What the tab key does. Simulation thread.
+    /// Moves the keyboard focus to the next thing Tab stops on (a text box, a button, a dropdown), in the order of the
+    /// layout and round past the end, or back with a negative step, round the window it's in when that window holds it.
+    /// What the tab key does. Simulation thread.
     /// </summary>
     public void FocusNext(int by = 1) => FocusNext(modules, by);
 
@@ -167,11 +175,26 @@ public partial class UICompositor
     /// </summary>
     private void FocusNext(UIModule[] snapshot, int by)
     {
-        focusable.Clear();
-        foreach (var module in snapshot)
+        // Inside a window that holds the keyboard, round what's in it and no further
+        UIComponent? holding = null;
+        for (UIComponent? at = focus; at is not null && holding is null; at = at.Parent)
         {
-            if (module.Enabled && module.Interactive)
-                module.CollectFocusable(focusable);
+            if (at.HoldsTab)
+                holding = at;
+        }
+
+        focusable.Clear();
+        if (holding is not null)
+        {
+            UIModule.CollectFocusable(holding, focusable);
+        }
+        else
+        {
+            foreach (var module in snapshot)
+            {
+                if (module.Enabled && module.Interactive)
+                    module.CollectFocusable(focusable);
+            }
         }
 
         if (focusable.Count == 0)
@@ -193,6 +216,24 @@ public partial class UICompositor
     /// </summary>
     private void UpdateTooltip(UIModule[] snapshot, float dt)
     {
+        // One a component put up stays where it was put until it's taken down or the pointer goes somewhere
+        if (pinned is { } pin)
+        {
+            if (pin.Owner.Module is { } owner && pin.Owner.Visible && Vector2.Distance(lastPointer, pin.Pointer) <= TOOLTIP_DRIFT * 4.0f)
+            {
+                if (tooltipModule is not null && tooltipModule != owner)
+                    tooltipModule.ShowTooltip(null, default);
+                tooltipModule = owner;
+                TooltipOf = pin.Owner;
+                owner.ShowTooltip(pin.Text, pin.At, pin.Markdown);
+                return;
+            }
+
+            pinned = null;
+            restingAt = lastPointer;
+            restingFor = 0.0f;
+        }
+
         UIComponent? over = hovered;
         bool still = Vector2.Distance(lastPointer, restingAt) <= TOOLTIP_DRIFT && !Pointer.Down;
 
@@ -228,6 +269,23 @@ public partial class UICompositor
 
     /// <summary>The component whose tooltip is up right now, null while none is.</summary>
     public UIComponent? TooltipOf { get; private set; }
+
+    /// <summary>
+    /// Puts a tooltip up at a place of a component's module (its units), not where the pointer is, until the component
+    /// takes it down (<see cref="UnpinTooltip"/>), another is pinned, or the pointer moves. What a code editor says of
+    /// the name at the caret when it's asked with the keyboard.
+    /// </summary>
+    public void PinTooltip(UIComponent owner, string text, Vector2 at, bool markdown = false) => pinned = (owner, text, at, markdown, lastPointer);
+
+    /// <summary>Takes down the tooltip a component pinned, nothing when another's is up.</summary>
+    public void UnpinTooltip(UIComponent owner)
+    {
+        if (pinned?.Owner == owner)
+            pinned = null;
+    }
+
+    /// <summary>Whether a component has a tooltip pinned up right now.</summary>
+    public bool Pinned(UIComponent owner) => pinned?.Owner == owner;
 
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component
@@ -298,9 +356,9 @@ public partial class UICompositor
             bool handled = false;
             for (UIComponent? at = over; at is not null && !handled; at = at.Parent)
             {
-                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy)
+                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy && at.Module is { } menuModule)
                 {
-                    handler(at.Module!.ToLocal(pointer.Position));
+                    handler(menuModule.ToLocal(pointer.Position));
                     handled = true;
                 }
             }
@@ -310,8 +368,9 @@ public partial class UICompositor
         }
         secondaryWasDown = pointer.SecondaryDown;
 
-        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held
-        UIResize grip = over is not null && pressed is null ? over.GripAt(over.Module!.ToLocal(pointer.Position)) : UIResize.None;
+        // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held. What
+        // was under the pointer can have left its module this very update (a window closed by escape), and has no edges then
+        UIResize grip = over is { Module: { } overModule } && pressed is null ? over.GripAt(overModule.ToLocal(pointer.Position)) : UIResize.None;
         UIComponent? gripOwner = grip != UIResize.None ? over : null;
         if (!ReferenceEquals(gripped, gripOwner) || (gripOwner is not null && gripOwner.ActiveGrip != grip))
         {
@@ -356,13 +415,13 @@ public partial class UICompositor
             if (over is not null)
                 Focus = over.Focusable && over.EnabledInHierarchy ? over : null;
 
-            if (over is not null && over.EnabledInHierarchy)
+            if (over is { Module: { } pressedIn } && over.EnabledInHierarchy)
             {
                 pressed = over;
                 pressed.IsPressed = true;
 
                 // On an edge that can be dragged the press is the start of that, and none of the component's business
-                Vector2 at = pressed.Module!.ToLocal(pointer.Position);
+                Vector2 at = pressedIn.ToLocal(pointer.Position);
                 if (pressed.GripAt(at) is var edges && edges != UIResize.None)
                     pressed.BeginResize(edges, at);
                 else
@@ -371,10 +430,16 @@ public partial class UICompositor
         }
         else if (pointer.Down && pressed is not null)
         {
-            if (pressed.IsResizing)
-                pressed.DragResize(pressed.Module!.ToLocal(pointer.Position));
+            // What was held can leave the UI while it's held (a window closed by a key), and is let go of then
+            if (pressed.Module is not { } heldIn)
+            {
+                pressed.IsPressed = false;
+                pressed = null;
+            }
+            else if (pressed.IsResizing)
+                pressed.DragResize(heldIn.ToLocal(pointer.Position));
             else
-                pressed.OnPointerDrag(pressed.Module!.ToLocal(pointer.Position));
+                pressed.OnPointerDrag(heldIn.ToLocal(pointer.Position));
         }
         else if (!pointer.Down && pressed is not null)
         {
@@ -389,9 +454,9 @@ public partial class UICompositor
                 released.EndResize();
                 if (ReferenceEquals(gripped, released)) gripped = null;
             }
-            else
+            else if (released.Module is { } releasedIn)
             {
-                released.OnPointerUp(released.Module!.ToLocal(pointer.Position));
+                released.OnPointerUp(releasedIn.ToLocal(pointer.Position));
 
                 if (released == over)
                     released.OnClick();

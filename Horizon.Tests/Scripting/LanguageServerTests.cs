@@ -147,6 +147,41 @@ public class LanguageServerTests
     }
 
     [Fact]
+    public async Task A_message_that_cant_be_made_sense_of_is_lost_and_the_connection_goes_on()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+
+        using var connection = new JsonRpcConnection(toClientRead, toServer);
+        int heard = 0;
+        connection.OnNotification("bad", parameters => throw new InvalidOperationException("can't read that"));
+        connection.OnNotification("good", parameters => heard++);
+
+        // A column past an int's room, what serve-d says for the end of a line, read wrong once took the reader down
+        Write(toClient, """{"jsonrpc":"2.0","method":"bad","params":{"character":4294967295}}""");
+        Write(toClient, """{"jsonrpc":"2.0","method":"good","params":{}}""");
+        Assert.True(WaitFor(() => heard == 1));
+        Assert.False(connection.IsClosed);
+
+        Task<JsonNode?> asked = connection.Request("still", null);
+        string header = ReadLine(toServerRead);
+        ReadLine(toServerRead);
+        toServerRead.ReadExactly(new byte[int.Parse(header[16..])]);
+        Write(toClient, """{"jsonrpc":"2.0","id":1,"result":true}""");
+        Assert.True((await asked.WaitAsync(TimeSpan.FromSeconds(5)))!.GetValue<bool>());
+    }
+
+    [Theory]
+    [InlineData("int x", "x", "int")]
+    [InlineData("int lengthSquared()", "lengthSquared ()", "int ()")]
+    [InlineData("int[] index", "x", "int[] index")]
+    [InlineData("x", "x", "x")]
+    public void What_a_server_says_of_an_item_goes_without_the_items_own_name(string detail, string label, string shown) =>
+        Assert.Equal(shown, LanguageServer.DetailWithout(detail, label));
+
+    [Fact]
     public void A_server_says_what_is_wrong_with_a_file_as_it_is_opened_and_changed()
     {
         if (!HasPython)
@@ -251,6 +286,84 @@ public class LanguageServerTests
     }
 
     [Fact]
+    public void A_question_the_server_asks_waits_for_its_answer_and_the_rest_goes_on_meanwhile()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+        using LanguageServer server = LanguageServer.Over("asker", "d", Path.GetTempPath(), toClientRead, toServer);
+
+        // initialize answered, initialized heard
+        JsonObject initialize = ReadMessage(toServerRead);
+        Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
+        Assert.Equal("initialized", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+
+        // serve-d's question, and a line said while it waits
+        Write(toClient, """{"jsonrpc":"2.0","id":"q1","method":"window/showMessageRequest","params":{"type":1,"message":" DCD is outdated.","actions":[{"title":" Download DCD"}]}}""");
+        Write(toClient, """{"jsonrpc":"2.0","method":"coded/logInstall","params":"Downloading DCD"}""");
+
+        LanguageServerQuestion? question = null;
+        Assert.True(WaitFor(() => server.TryTakeQuestion(out question)));
+        Assert.Equal("DCD is outdated.", question!.Message);
+        Assert.Equal([" Download DCD"], question.Actions);
+        Assert.True(question.Warning);
+        Assert.True(WaitFor(() => server.TryTakeSaid(out string text, out _) && text == "Downloading DCD"));
+
+        // Answered, the action itself goes back under the question's id
+        question.Answer(" Download DCD");
+        JsonObject answer = ReadMessage(toServerRead);
+        Assert.Equal("q1", answer["id"]!.GetValue<string>());
+        Assert.Equal(" Download DCD", answer["result"]!["title"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void A_server_with_settings_is_told_them_as_it_starts_and_asked_for_one_it_gets_that_section()
+    {
+        var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+        var settings = new JsonObject { ["d"] = new JsonObject { ["lintOnFileOpen"] = "always" } };
+        using LanguageServer server = LanguageServer.Over("told", "d", Path.GetTempPath(), toClientRead, toServer, settings);
+
+        JsonObject initialize = ReadMessage(toServerRead);
+        Assert.True(initialize["params"]!["capabilities"]!["workspace"]!["configuration"]!.GetValue<bool>());
+        Assert.True(initialize["params"]!["capabilities"]!["textDocument"]!["synchronization"]!["didSave"]!.GetValue<bool>());
+        Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
+        Assert.Equal("initialized", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+
+        JsonObject told = ReadMessage(toServerRead);
+        Assert.Equal("workspace/didChangeConfiguration", told["method"]!.GetValue<string>());
+        Assert.Equal("always", told["params"]!["settings"]!["d"]!["lintOnFileOpen"]!.GetValue<string>());
+
+        // Asked for a section, and one it hasn't got
+        Write(toClient, """{"jsonrpc":"2.0","id":"c1","method":"workspace/configuration","params":{"items":[{"section":"d"},{"section":"d.lintOnFileOpen"},{"section":"dfmt"}]}}""");
+        JsonObject answer = ReadMessage(toServerRead);
+        Assert.Equal("c1", answer["id"]!.GetValue<string>());
+        var sections = answer["result"]!.AsArray();
+        Assert.Equal("always", sections[0]!["lintOnFileOpen"]!.GetValue<string>());
+        Assert.Equal("always", sections[1]!.GetValue<string>());
+        Assert.Null(sections[2]);
+
+        // A file saved is said to be
+        server.Saved(Path.Combine(Path.GetTempPath(), "saved.d"));
+        JsonObject saved = ReadMessage(toServerRead);
+        Assert.Equal("textDocument/didSave", saved["method"]!.GetValue<string>());
+        Assert.EndsWith("saved.d", saved["params"]!["textDocument"]!["uri"]!.GetValue<string>());
+    }
+
+    // Helper method to read one message the way a server reads it
+    private static JsonObject ReadMessage(Stream from)
+    {
+        string header = ReadLine(from);
+        ReadLine(from);
+        byte[] body = new byte[int.Parse(header[16..])];
+        from.ReadExactly(body);
+        return JsonNode.Parse(body)!.AsObject();
+    }
+
+    [Fact]
     public async Task What_is_asked_of_a_server_that_stopped_is_answered_with_nothing()
     {
         var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
@@ -276,6 +389,67 @@ public class LanguageServerTests
     [InlineData("cost \\$5 $", "cost $5 $")]
     public void A_snippet_is_written_without_its_placeholders(string snippet, string plain) =>
         Assert.Equal(plain, LanguageServer.PlainSnippet(snippet));
+
+    [Fact]
+    public void A_files_uri_is_its_path_with_the_drives_colon_escaped_or_not()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        Assert.Equal(@"C:\Users\x\source\app.d", LanguageServer.PathOf("file:///C%3A/Users/x/source/app.d"));
+        Assert.Equal(@"C:\Users\x\source\app.d", LanguageServer.PathOf("file:///c:/Users/x/source/app.d"), ignoreCase: true);
+        Assert.Equal(@"C:\Users\x\my file.d", LanguageServer.PathOf("file:///C:/Users/x/my%20file.d"));
+        Assert.Null(LanguageServer.PathOf("untitled:Untitled-1"));
+    }
+
+    [Fact]
+    public void A_servers_documentation_is_its_prose_without_the_marks_of_markdown()
+    {
+        string said = "Equivalent to `write(args, '\\n')`.  Calling `writeln` without\narguments is valid.\n\n\n\n**Params**\n\n`args` the items to write to `stdout`\n\n"
+            + "**Throws** In case of an I/O error, throws an [`StdioException`](command:code-d.navigateLocal?StdioException).\n\n**Example**\n\n```d\nimport std.stdio;\n```\n";
+
+        Assert.Equal("Equivalent to write(args, '\\n'). Calling writeln without arguments is valid.\nParams\nargs the items to write to stdout\n"
+            + "Throws In case of an I/O error, throws an StdioException.", LanguageServer.PlainDocs(said));
+        Assert.Equal(string.Empty, LanguageServer.PlainDocs(string.Empty));
+    }
+
+    [Fact]
+    public void Edits_are_made_to_the_text_as_it_was_before_any_of_them()
+    {
+        string text = "struct Rect\r\n{\r\n    int area() { return w * h; }\r\n}\r\nauto a = r.area;\r\n";
+        string renamed = LanguageServer.Apply(text,
+        [
+            new LanguageServerEdit(4, 11, 4, 15, "size"),
+            new LanguageServerEdit(2, 8, 2, 12, "size"),
+            new LanguageServerEdit(0, 0, 0, 0, "// shapes\r\n")
+        ]);
+
+        Assert.Equal("// shapes\r\nstruct Rect\r\n{\r\n    int size() { return w * h; }\r\n}\r\nauto a = r.size;\r\n", renamed);
+    }
+
+    [Fact]
+    public void A_server_is_told_its_folders_own_solution_and_not_one_further_down()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "solution-" + Guid.NewGuid().ToString("N"), "Game");
+        Directory.CreateDirectory(Path.Combine(root, "external", "engine"));
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "external", "engine", "Engine.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(root, "Another.sln"), string.Empty);
+            File.WriteAllText(Path.Combine(root, "Game.sln"), string.Empty);
+            Assert.Equal(["--solution", Path.Combine(root, "Game.sln")], LanguageServers.ArgumentsIn(["--solution", "{solution}"], root));
+
+            // None there, the argument goes with its flag, and arguments without one are as they were
+            string bare = Path.Combine(root, "external");
+            Assert.Equal(["--stdio"], LanguageServers.ArgumentsIn(["--stdio", "--solution", "{solution}"], bare));
+            string[] plain = ["--stdio"];
+            Assert.Same(plain, LanguageServers.ArgumentsIn(plain, root));
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(root)!, recursive: true);
+        }
+    }
 
     private static string ReadLine(Stream stream)
     {

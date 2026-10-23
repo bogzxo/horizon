@@ -2,6 +2,7 @@ using Horizon.Content;
 using Horizon.Rendering;
 using System.Numerics;
 
+using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
@@ -27,9 +28,6 @@ namespace Horizon.UI.Components;
 /// </summary>
 public class TabPanel : UIComponent
 {
-    // The line under the open tab, and the room between the strip and the pages
-    private const float UNDERLINE = 3.0f;
-
     private string[] tabs = [];
     private int selected;
     private IRuntimeValue? changedHandler;
@@ -53,6 +51,97 @@ public class TabPanel : UIComponent
 
     /// <summary>Called with the index of the page whenever another one is opened, from code or by a click.</summary>
     public Action<int>? OnChanged { get; set; }
+
+    /// <summary>
+    /// Called with whether it's wanted folded down to its strip of tabs, by the chevron at the right end of the strip (down
+    /// while it's open, up while it's folded) and by a tab clicked while it's folded. The chevron is only there while
+    /// somebody listens, and the panel doesn't fold itself, whoever listens says so with <see cref="Folded"/> (Hex's
+    /// panel under the editor folds itself with nothing wrong as well).
+    /// </summary>
+    public Action<bool>? OnFold { get; set; }
+
+    // How long folding it down or opening it up takes, a drawer's time, see UIComponent.Sliding
+    private const float FOLD_TIME = DEFAULT_SLIDE_TIME + 0.04f;
+
+    // How far folded it is, 0 open and 1 down to its strip, at a steady rate and eased where it's used, where it's going,
+    // and how tall it was before any of it was folded away
+    private float foldProgress;
+    private bool folded;
+    private float openHeight;
+
+    /// <summary>
+    /// Whether it's folded down to its strip of tabs, which way the chevron points. It eases there, a little shorter every
+    /// tick with whatever's round it making room, its page keeping the height it has open and cut off at the panel's
+    /// bottom, so a terminal on it isn't squashed a row at a time. Its <see cref="UIComponent.Size"/> stays what it is
+    /// open. Set it with <see cref="Fold"/> to have it get there at once.
+    /// </summary>
+    public bool Folded
+    {
+        get => folded;
+        set => Fold(value);
+    }
+
+    /// <summary>How far folded it is, eased, 0 open and 1 down to its strip. For a program sizing things round it by hand.</summary>
+    public float FoldAmount => Ease.Apply(Easing.OutCubic, foldProgress);
+
+    /// <summary>Whether it's on its way up or down.</summary>
+    public bool IsFolding => foldProgress != (folded ? 1.0f : 0.0f);
+
+    /// <summary>
+    /// Folds it down to its strip or opens it up again, eased the way <see cref="Folded"/> says, or at once when it's
+    /// told to be instant (a program putting itself back the way it was left) or the UI isn't to move.
+    /// </summary>
+    public void Fold(bool fold, bool instantly = false)
+    {
+        folded = fold;
+        if (instantly || MotionTime(FOLD_TIME) <= 0.0f)
+            foldProgress = fold ? 1.0f : 0.0f;
+    }
+
+    /// <summary>How tall it is folded, its strip and the room round it.</summary>
+    public float FoldedHeight => Module?.Compositor.Skin is { } skin ? HeaderOf(skin) + Spacing * 0.5f + Padding.Total.Y : 0.0f;
+
+    protected override void Update(float dt)
+    {
+        if (IsFolding)
+        {
+            float time = MotionTime(FOLD_TIME);
+            float step = time > 0.0f ? dt / time : 1.0f;
+            foldProgress = folded ? MathF.Min(1.0f, foldProgress + step) : MathF.Max(0.0f, foldProgress - step);
+        }
+
+        base.Update(dt);
+    }
+
+    /// <summary>
+    /// How tall it asks to be, as far folded as it is, when it's <paramref name="open"/> tall open. From its whole height
+    /// down to its strip, on whole pixels. For a program fitting things round it by hand before the layout has.
+    /// </summary>
+    public float FoldedFrom(float open)
+    {
+        float amount = FoldAmount;
+        return amount <= 0.0f ? open : MathF.Round(open + (MathF.Min(FoldedHeight, open) - open) * amount);
+    }
+
+    protected override Vector2 Folding(Vector2 desired)
+    {
+        openHeight = desired.Y;
+        return desired with { Y = FoldedFrom(desired.Y) };
+    }
+
+    /// <summary>Where the chevron that folds it is, empty while nobody listens for it.</summary>
+    public UIRect FoldBounds
+    {
+        get
+        {
+            if (OnFold is null)
+                return default;
+
+            UIRect header = HeaderBounds;
+            float side = header.Height;
+            return new UIRect(new Vector2(header.Max.X - side, header.Min.Y), header.Max);
+        }
+    }
 
     /// <summary>How big the names of the tabs are written, 0 for the skin's text size.</summary>
     public float TextScale { get; set; }
@@ -102,7 +191,20 @@ public class TabPanel : UIComponent
     }
 
     /// <summary>What the tab of a page says.</summary>
-    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : $"Tab {index + 1}";
+    public string TitleOf(int index) => index < tabs.Length && tabs[index].Length > 0 ? Resolve(tabs[index]) : Numbered(index);
+
+    // "Tab 3" for a page nobody named, made once for each number, it's measured every tick
+    private static readonly List<string> numbered = [];
+
+    private static string Numbered(int index)
+    {
+        lock (numbered)
+        {
+            while (numbered.Count <= index)
+                numbered.Add($"Tab {numbered.Count + 1}");
+            return numbered[index];
+        }
+    }
 
     /// <summary>Opens a page, wrapping round past either end.</summary>
     public void Select(int index)
@@ -143,7 +245,8 @@ public class TabPanel : UIComponent
         return false;
     }
 
-    protected internal override bool ShowsChild(UIComponent child) => child == SelectedPage;
+    // Folded all the way the page isn't there to be seen or clicked or tabbed to, only its tab
+    protected internal override bool ShowsChild(UIComponent child) => child == SelectedPage && foldProgress < 1.0f;
 
     private float TextScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
@@ -167,12 +270,36 @@ public class TabPanel : UIComponent
 
     protected override void Arrange(UIRect content)
     {
-        // The pages get everything under the strip, each placed by its own anchor and position like in a panel
+        // The pages get everything under the strip, each placed by its own anchor and position like in a panel. Folding,
+        // they keep the height they have open and hang off the bottom
         float header = Module?.Compositor.Skin is { } skin ? HeaderOf(skin) + Spacing * 0.5f : 0.0f;
-        var pages = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - header));
+        float tall = MathF.Max(content.Height, openHeight - Padding.Total.Y);
+        var pages = new UIRect(new Vector2(content.Min.X, content.Max.Y - tall), new Vector2(content.Max.X, content.Max.Y - header));
 
         foreach (var child in ChildSpan)
             child.ArrangeTree(child.Place(pages));
+    }
+
+    // How much of the way down it's gone by the time its page has faded out, folding or sliding away
+    private const float PAGE_FADE = 0.6f;
+
+    // What of the page hangs off the bottom as it folds is cut off there, and the page fades out as it goes and in as it
+    // comes back. A terminal on it paints its cells in steps, a tick at a time, and they went down in jumps beside its
+    // marks and everything round it gliding
+    protected override void PaintChildren(UIDrawList list)
+    {
+        float gone = MathF.Max(FoldAmount, Sliding ? 1.0f - SlideAmount : 0.0f);
+        if (gone <= 0.0f)
+        {
+            base.PaintChildren(list);
+            return;
+        }
+
+        list.PushClip(Bounds);
+        list.PushVisual(Vector2.Zero, Vector2.One, Vector2.Zero, Math.Clamp(1.0f - gone / PAGE_FADE, 0.0f, 1.0f));
+        base.PaintChildren(list);
+        list.PopVisual();
+        list.PopClip();
     }
 
     /// <summary>Where the strip of tabs is.</summary>
@@ -219,7 +346,8 @@ public class TabPanel : UIComponent
         float scale = TextScaleOf(skin);
         UIRect header = HeaderBounds;
 
-        Vector4 accent = AccentColor ?? skin.AccentColor;
+        // The open one in the text's colour on its pill, the accent only when one's given. It was gold, words and an underline
+        Vector4 accent = AccentColor ?? skin.TextColor;
         Vector4 dim = Color ?? skin.TextColor * skin.DisabledTint;
         Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
 
@@ -229,17 +357,26 @@ public class TabPanel : UIComponent
             UIRect tab = TabBounds(i);
             bool open = i == Selected;
 
-            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
-            list.Box(tab, !open && IsHovered && tab.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            // A pill under the open one, the same as a tab strip's and a picked row's, a fainter one under the pointer.
+            // Always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
+            UIRect pill = tab.Shrink(new UIEdges(2.0f, 3.0f));
+            list.Box(pill, open ? (AccentColor is { } given ? given with { W = ListBox.PICKED } : skin.TextColor with { W = ListBox.PICKED })
+                : IsHovered && tab.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             list.Text(TitleOf(i), tab, Origin.Center, scale, open ? accent : dim);
-
-            // The open one is underlined, which reads as a tab whatever the skin looks like
-            if (open)
-                list.Rect(new UIRect(tab.Min, new Vector2(tab.Max.X, tab.Min.Y + UNDERLINE)), accent);
         }
 
         list.EndParts();
+
+        // The chevron that folds it, quiet, lit under the pointer, always painted while it's there so the quads don't shift
+        if (OnFold is not null)
+        {
+            UIRect fold = FoldBounds;
+            bool over = IsHovered && fold.Contains(pointer);
+            list.Box(fold.Shrink(new UIEdges(3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
+            float side = MathF.Round(fold.Height * 0.5f);
+            list.Symbol(Folded ? "chevron-up" : "chevron-down", UIRect.FromCenter(fold.Center, new Vector2(side)), over ? skin.TextColor : dim);
+        }
 
         if (PreviousHint.Length > 0)
             list.Text(Resolve(PreviousHint), header, Origin.Left, scale, Vector4.One);
@@ -249,8 +386,22 @@ public class TabPanel : UIComponent
 
     protected internal override void OnPointerUp(Vector2 point)
     {
-        if (EnabledInHierarchy && TabAt(point) is >= 0 and var index)
+        if (!EnabledInHierarchy)
+            return;
+
+        if (FoldBounds.Contains(point))
+        {
+            OnFold?.Invoke(!Folded);
+            return;
+        }
+
+        // A tab clicked on a folded panel opens it as well as its page
+        if (TabAt(point) is >= 0 and var index)
+        {
+            if (Folded)
+                OnFold?.Invoke(false);
             Select(index);
+        }
     }
 
     protected override void DefineScript()

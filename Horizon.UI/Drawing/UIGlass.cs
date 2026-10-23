@@ -36,8 +36,13 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
     // defaults, and frosted glass came out with no blur and no clarity, a solid panel over nothing
     public static UIGlass Frosted => new(Blur: 18.0f, Clarity: 0.35f, Rim: 0.3f, Bend: 6.0f);
 
-    /// <summary>Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at.</summary>
-    public static UIGlass Clear => new(Blur: 16.0f, Clarity: 0.8f, Rim: 0.4f, Bend: 10.0f);
+    /// <summary>
+    /// Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at (its Fluid Glass). Blurred far
+    /// enough that text behind it is colour and not words, a blur of 16 had the code under a palette ghosting through it.
+    /// Half of what's behind comes through. Nearly three quarters of it had a palette over anything bright washed out to
+    /// grey, the glass was all backdrop and its text had nothing to stand on.
+    /// </summary>
+    public static UIGlass Clear => new(Blur: 24.0f, Clarity: 0.55f, Rim: 0.5f, Bend: 12.0f);
 
     /// <summary>The glass of popups (dialogs, menus, a palette) out of four sliders, each held to what still looks like glass.</summary>
     public static UIGlass Lens(float blur, float clarity, float rim, float bend) =>
@@ -50,8 +55,21 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
     public static UIGlass Pane(float blur, float clarity, float rim) =>
         new(Blur: Math.Clamp(blur * 1.2f, 0.0f, 64.0f), Clarity: Math.Clamp(clarity + 0.05f, 0.0f, 1.0f), Rim: Math.Clamp(rim * 0.35f, 0.0f, 1.0f), Bend: 0.0f);
 
-    /// <summary>Helper method for a background as it is painted over the glass, the see through part of it taken off its alpha.</summary>
-    public Vector4 Over(Vector4 background) => background with { W = background.W * Math.Clamp(1.0f - Clarity, 0.0f, 1.0f) };
+    // How far towards white a background on glass that lets nothing through is lifted, frosted glass scatters the light.
+    // A tenth was milk, a dark theme's popups came out grey
+    private const float MILK = 0.05f;
+
+    /// <summary>
+    /// Helper method for a background as it is painted over the glass, the see through part of it taken off its alpha,
+    /// and the less there is of that the milkier it is, a little towards white. Clear glass and frosted glass came out the
+    /// same colour with only more or less of it, and nobody could tell the two looks apart.
+    /// </summary>
+    public Vector4 Over(Vector4 background)
+    {
+        float frost = Math.Clamp(1.0f - Clarity, 0.0f, 1.0f);
+        Vector4 milky = Vector4.Lerp(background, Vector4.One, frost * MILK);
+        return milky with { W = background.W * frost };
+    }
 }
 
 /// <summary>

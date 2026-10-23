@@ -1,7 +1,13 @@
-// A pane of frosted glass, what is behind a component blurred and laid inside its bounds with round corners, for a UI
-// that draws in goes (see UIGlassPass). One triangle over the lot and everything outside the pane thrown away, which
-// for a few panes a frame is cheaper than it sounds. The corners are worked out per pixel like the UI's own boxes,
-// so the glass and the box painted over it have the same edge.
+// A pane of glass, what is behind a component blurred and laid inside its bounds with round corners, for a UI that
+// draws in goes (see UIGlassPass). One triangle over the lot and everything outside the pane thrown away, which for a
+// few panes a frame is cheaper than it sounds. The corners are worked out per pixel like the UI's own boxes, so the
+// glass and the box painted over it have the same edge.
+//
+// Two kinds of it. With no bend it's frosted, the blur laid flat. With a bend it's liquid, Apple's Liquid Glass more or
+// less, a slab with a rounded rim that bends what's behind it hard as the rim gets near (what's just outside the pane
+// squeezed into its edge), splits the light a little there the way a prism does, and blurs less at the rim than in the
+// middle. It costs a handful of reads more a pixel of the pane than the frosted kind and nothing else, the blur is the
+// dear part and both have that.
 
 #include <common/screen.slang>
 
@@ -51,17 +57,40 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
         outward = normalize(q);
     outward *= sign(p - middle);
 
-    // The lens. Nothing in the middle, what is behind pulled in from further out as the rim gets near, the way a
-    // slab of glass with a rounded edge bends it. A few sums, the same reads as without
-    float lens = params.uBend * pow(saturate(1.0 + outside / max(params.uBend * 3.0, 1.0)), 2.0);
-    float2 uv = input.texCoords + outward * lens * params.uTexel;
+    float3 colour;
+    if (params.uBend <= 0.0)
+    {
+        // Frosted, the blur as it is
+        float2 uv = input.texCoords;
+        colour = lerp(uSharp.Sample(uv).rgb, uSource.Sample(uv).rgb, params.uShare);
+    }
+    else
+    {
+        // Liquid. How far into the rim this is, 0 on the flat of the slab and 1 at its very edge, the rim three bends wide
+        float rim = max(params.uBend * 3.0, 6.0);
+        float t = saturate(1.0 + outside / rim);
 
-    float3 colour = lerp(uSharp.Sample(uv).rgb, uSource.Sample(uv).rgb, params.uShare);
+        // The rim is the round of a quarter circle, its slope steepening to the edge, and what's behind is taken from as
+        // far further out as the slope is steep. Held short of straight up at the very edge or it reads from the moon
+        float slope = min(t / sqrt(max(1.0 - t * t, 0.0625)), 4.0);
+        float2 bend = outward * params.uBend * slope * params.uTexel;
+
+        // Split, the red bent the least and the blue the most, only where it bends at all
+        float2 uv = input.texCoords;
+        float3 sharp = float3(uSharp.Sample(uv + bend * 0.94).r, uSharp.Sample(uv + bend).g, uSharp.Sample(uv + bend * 1.08).b);
+        float3 soft = float3(uSource.Sample(uv + bend * 0.94).r, uSource.Sample(uv + bend).g, uSource.Sample(uv + bend * 1.08).b);
+
+        // A little less of the blur at the rim, where the glass is a lens rather than a pane, and a thin line of light
+        // right on the edge. Half as much blur there let what was behind it be read, words doubled along the rim. It
+        // lifted the whole pane a little towards white as well, which on a dark theme was the wash over everything
+        colour = lerp(sharp, soft, params.uShare * (1.0 - 0.15 * t * t));
+        colour += pow(t, 8.0) * 0.06;
+    }
 
     // The sheen, Liquid Glass's light caught along the top inside of the pane, strongest at the rim and gone by a
     // third of the way down. One term, no reads
     float fromTop = (p.y - params.uRect.y) / max(extent.y * 0.66, 1.0);
-    float sheen = pow(saturate(1.0 - fromTop), 3.0) * 0.06;
+    float sheen = pow(saturate(1.0 - fromTop), 3.0) * 0.035;
     colour += sheen;
 
     return float4(colour, coverage);

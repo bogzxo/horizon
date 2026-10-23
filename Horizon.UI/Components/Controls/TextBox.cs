@@ -43,6 +43,9 @@ public class TextBox : UIComponent
     private const float DEFAULT_WIDTH = 320.0f;
     private const float BLINK_INTERVAL = 0.5f;
 
+    // How wide the soft ring round a box with the keyboard is
+    private const float FOCUS_RING = 3.0f;
+
     private IRuntimeValue? changedHandler;
     private IRuntimeValue? submittedHandler;
     private float blink;
@@ -109,6 +112,13 @@ public class TextBox : UIComponent
     /// </summary>
     public Action<char>? OnKey { get; set; }
 
+    /// <summary>
+    /// Offered every key before the box does anything with it (<see cref="UIKeyboard"/>'s codes and what's typed), true
+    /// when it was taken and the box leaves it be. For a box in front of a list that wants Enter, or a Backspace on
+    /// nothing, as well as the arrows, a file dialog's name.
+    /// </summary>
+    public Func<char, bool>? TakeKey { get; set; }
+
     /* A button in the box, for whatever fills it in some other way than typing. A file dialog, a list to pick
        from, a clear. It is part of the box and not a component of its own, so a box with one is laid out like a
        box without */
@@ -132,6 +142,21 @@ public class TextBox : UIComponent
 
     /// <summary>Whether the box has a button.</summary>
     public bool HasButton => ButtonLabel.Length > 0;
+
+    /// <summary>
+    /// Whether it's only what is typed, no box, no rim and no ring round it, for a box that sits on a card which is its
+    /// box already (a palette's, Spotlight's). A skin's art for a box is drawn whatever this says.
+    /// </summary>
+    public bool Bare { get; set; }
+
+    /// <summary>
+    /// Whether what's in it shows only while it's typed in. Something drawn over it says it the rest of the time, the
+    /// <see cref="Breadcrumbs"/> of a file dialog's path.
+    /// </summary>
+    public bool TextWhileTyped { get; set; }
+
+    /// <summary>A Codicon drawn at its left, before what is typed (search for a box that finds), empty for none.</summary>
+    public string LeadIcon { get; set; } = string.Empty;
 
     /// <summary>Where the button is, as the box was last laid out. Empty for a box without one.</summary>
     public UIRect ButtonBounds
@@ -249,6 +274,14 @@ public class TextBox : UIComponent
         blink = 0.0f;
     }
 
+    /// <summary>Selects from one character to another, the caret at the second, a file's name without its extension.</summary>
+    public void Select(int from, int to)
+    {
+        anchor = Math.Clamp(from, 0, text.Length);
+        caret = Math.Clamp(to, 0, text.Length);
+        blink = 0.0f;
+    }
+
     /// <summary>Helper to take what is selected out of the text, which is a change only if anything was.</summary>
     private void RemoveSelection()
     {
@@ -315,6 +348,9 @@ public class TextBox : UIComponent
 
     protected internal override void OnTextInput(char character)
     {
+        if (TakeKey?.Invoke(character) == true)
+            return;
+
         switch (character)
         {
             case UIKeyboard.BACKSPACE:
@@ -518,21 +554,31 @@ public class TextBox : UIComponent
             // Art with a thick rim (a plank frame) has what is typed start inside of it, not on it
             rim = art.Border.Left * art.Scale + 3.0f;
         }
-        else
+        else if (!Bare)
         {
             list.Box(Bounds, skin.FieldColor * tint);
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, enabled && IsHovered && !focused ? 0.4f : 0.0f));
 
-            // A thin rim that turns into a thick one in the colour of the skin while it is being typed in
-            if (focused)
-                list.Frame(Bounds, 2.0f, skin.HighlightColor);
-            else
-                list.Frame(Bounds, 1.0f, skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
+            // A hairline rim, and while it's typed in a crisp line in the accent with a soft ring of it round the outside,
+            // the way a field that has the keyboard is drawn on a Mac. It was a thick frame of gold, which shouted. The
+            // ring is always painted, see-through when it isn't wanted, so the quads after it don't shift
+            float ring = FOCUS_RING;
+            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = focused ? 0.28f : 0.0f });
+            list.Frame(Bounds, 1.0f, focused ? skin.HighlightColor with { W = 0.85f } : skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 
         UIRect content = Bounds.Shrink(new UIEdges(MathF.Max(Padding.Left, rim), Padding.Top, MathF.Max(Padding.Right, rim), Padding.Bottom));
         bool empty = Text.Length == 0;
+
+        // The icon in front, as tall as a line of what is typed and a little quieter than it
+        if (LeadIcon.Length > 0)
+        {
+            float side = MathF.Min(content.Height, skin.Font.LineHeight * scale);
+            var icon = new UIRect(new Vector2(content.Min.X, content.Center.Y - side * 0.5f), new Vector2(content.Min.X + side, content.Center.Y + side * 0.5f));
+            list.Symbol(LeadIcon, icon, ink with { W = ink.W * 0.6f } * tint);
+            content = new UIRect(new Vector2(icon.Max.X + side * 0.5f, content.Min.Y), content.Max);
+        }
 
         // The button takes its end of the box, the text has the rest
         if (HasButton)
@@ -574,18 +620,26 @@ public class TextBox : UIComponent
         if (focused && HasSelection)
         {
             float from = line.Min.X + Offset(SelectionStart), to = line.Min.X + Offset(SelectionEnd);
-            list.Rect(new UIRect(new Vector2(from, content.Min.Y), new Vector2(to, content.Max.Y)), skin.HighlightColor with { W = 0.45f });
+            list.Rect(new UIRect(new Vector2(from, content.Min.Y), new Vector2(to, content.Max.Y)), skin.Palette.Selection);
         }
 
-        if (!empty)
+        // The placeholder stays until something is typed, the caret sitting in front of it, an empty box with the
+        // keyboard said nothing about what it was for. Too long for the box and not being typed in, its end is shown with
+        // dots in front, where the path along the top of a file dialog started on half a letter
+        // A box with something said over it (a path's crumbs) shows its text only while it's typed in
+        bool shown = focused || !TextWhileTyped;
+        if (shown && !empty && !focused && width > content.Width)
+            list.Text(Tail(skin, scale, content.Width), content, Origin.Left, scale, ink * tint, markup: false);
+        else if (shown && !empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
-        else if (!focused)
+        else if (shown)
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
 
         if (focused && blink < BLINK_INTERVAL)
         {
-            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X);
+            // In front of the placeholder of an empty box, not over its first letter
+            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X) - (empty ? 3.0f : 0.0f);
             list.Rect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)), ink);
         }
 
@@ -611,6 +665,33 @@ public class TextBox : UIComponent
         Expose("button_side", () => ButtonOnRight ? "right" : "left", value => ButtonOnRight = value == "right");
         Expose("button_width", () => ButtonWidth, value => ButtonWidth = MathF.Max(0.0f, value));
         Expose("on_button", () => buttonHandler ?? new NullValue(), value => buttonHandler = value);
+    }
+
+    // The end of the text with dots in front, as much of it as fits, kept until the text or the room changes
+    private const string CUT = "...";
+    private string? tailOf;
+    private float tailRoom;
+    private string tail = string.Empty;
+
+    private string Tail(UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(tailOf, text) && tailRoom == room)
+            return tail;
+
+        // The fewest letters cut off the front for the rest to fit after the dots
+        float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+        int low = 1, high = text.Length;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (dots + skin.Font.Measure(text.AsSpan(middle), scale, markup: false).X <= room)
+                high = middle;
+            else
+                low = middle + 1;
+        }
+
+        (tailOf, tailRoom, tail) = (text, room, CUT + text[low..]);
+        return tail;
     }
 
     /// <summary>

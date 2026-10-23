@@ -103,7 +103,7 @@ public sealed class TerminalSettings
     /// <summary>Every setting, for an editor's completion, hover and form, and api.hor.</summary>
     public static readonly TerminalSettingInfo[] Described =
     [
-        new("theme", "choice", "\"horizon\"", "Which theme of the flat skin Dusk is in, its terminals' sixteen colours worked out of it.",
+        new("theme", "choice", "\"horizon\"", "The colours Dusk is drawn in, its terminals' sixteen colours made from them.",
             ["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"]),
         new("profile", "text", "\"\"", "The id of the shell a new tab opens with (pwsh, powershell, cmd, git_bash, wsl:Ubuntu), empty for the first one found."),
         new("text_scale", "number", "0.16", "How big the terminals' text is, Ctrl+Shift+= and - change it.", Least: 0.06f, Most: 0.6f),
@@ -277,16 +277,22 @@ public sealed class TerminalSettings
         values.TryGetValue(key, out var value) && value is StringValue text ? text.Value : otherwise;
 
     /// <summary>The settings as their file, every one of them with its line of help over it.</summary>
-    public string Write()
+    public string Write() =>
+        // the terminal's section of Hex's one settings file, the editor's and the extensions' kept as the file has them
+        SettingsSections.Write(Path, (SettingsSections.TERMINAL, Own()));
+
+    /// <summary>The terminal's own settings as they are, written out, for telling whether a read of the file changed any of them.</summary>
+    public string OwnText() => new HIDLDocument().Let("terminal", Own()).Write();
+
+    // Helper method for the terminal's section, every setting with what it does, then the ones it doesn't know
+    private HIDLObject Own()
     {
         var settings = new HIDLObject();
         foreach (TerminalSettingInfo setting in Described)
             settings.Add(setting.Key, Get(setting.Key)!, setting.Help);
         foreach (var (key, value) in Extra.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             settings.Add(key, value);
-
-        // the terminal's section of Hex's one settings file, the editor's and the extensions' kept as the file has them
-        return SettingsSections.Write(Path, (SettingsSections.TERMINAL, settings));
+        return settings;
     }
 
     /// <summary>Writes the settings to their file. Says what went wrong if they couldn't be, null if they could.</summary>

@@ -146,7 +146,9 @@ public sealed partial class TerminalHost : IDisposable
         view.OnOutput = bytes => reader.Feed(bytes);
         view.OnRequest = Requested;
 
-        // A program put on the PATH since the last terminal was opened is known to this one's colouring
+        // A program put on the PATH since the last terminal was opened is known to this one's colouring, and to the shells
+        // started after it, a compiler installed while the program was up was nowhere for them
+        Horizon.Core.Platform.PlatformPaths.RefreshPath();
         TerminalCommandLookup.ScanPath();
     }
 
@@ -664,18 +666,28 @@ public sealed partial class TerminalHost : IDisposable
             tickingNow = new (TerminalPlugin, IRuntimeValue)[ticking.Count];
         ticking.CopyTo(tickingNow);
 
+        IRuntimeValue elapsed = new NumberValue(dt);
         for (int i = 0; i < tickingNow.Length; i++)
         {
             var (plugin, function) = tickingNow[i];
             if (!plugin.Enabled || plugin.Failed is not null)
                 continue;
 
-            if (!plugin.Invoke(function, [ObjectOf(plugin), new NumberValue(dt)], out _))
-            {
-                ticking.RemoveAll(pair => pair.Plugin == plugin);
-                PluginFailed(plugin);
-            }
+            tickArguments[0] = ObjectOf(plugin);
+            tickArguments[1] = elapsed;
+            if (!plugin.Invoke(function, tickArguments, out _))
+                StopTicking(plugin);
         }
+    }
+
+    // What on_tick is handed, the plugin's object and the seconds since the last tick, the one array every tick
+    private readonly IRuntimeValue[] tickArguments = new IRuntimeValue[2];
+
+    // A plugin whose on_tick failed, out of the ticking. Apart from TickPlugins so its lambda isn't made every tick
+    private void StopTicking(TerminalPlugin plugin)
+    {
+        ticking.RemoveAll(pair => pair.Plugin == plugin);
+        PluginFailed(plugin);
     }
 
     /* The history on the arrows */

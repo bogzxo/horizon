@@ -56,13 +56,22 @@ public sealed class UICommands
     {
         var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = key, Icon = icon };
         GroupAt(where).Add(item);
+        Declared menu = MenuCalled(where[..where.IndexOf('/')]);
 
         if (use != UIKeyUse.Shown)
         {
             var read = UIKeys.Read(key) ?? throw new ArgumentException($"{label}: \"{key}\" isn't a key", nameof(key));
 
-            // A key written without shift goes off with shift held too, unless the key with shift is another command's
-            Keys.Add(read.Key, picked, read.Control, use == UIKeyUse.BoundWhileTyping, read.Shift ? true : null, read.Alt);
+            // A key written without shift goes off with shift held too, unless the key with shift is another command's. It
+            // picks the command only while the command is there to be picked, its menu on the bar and it in the menu, or
+            // two commands on one key both went off (Hex's Ctrl+G went to a line and grouped in the designer at once)
+            void Pressed()
+            {
+                if ((menu.Shown?.Invoke() ?? true) && (item.IsVisible?.Invoke() ?? true))
+                    picked();
+            }
+
+            Keys.Add(read.Key, Pressed, read.Control, use == UIKeyUse.BoundWhileTyping, read.Shift ? true : null, read.Alt);
         }
 
         return item;

@@ -1,7 +1,9 @@
 // The one named after the engine. Dusk over the sea, night blue underneath, teal where the light still is, and the
 // sun gold for the accent. Dark enough for a long session and not grey. The one Hex comes up in, so the comments, the
 // line numbers and the edges of things are a shade lighter than the rest of the themes have them, a laptop in the sun
-// has to read them too.
+// has to read them too. The edges are hairlines, there to be found rather than seen, the way glass has an edge. The gold
+// is kept for what's on and what's picked so it means something when it's there, and what has the keyboard (the caret,
+// a box being typed in, a terminal's cursor) is the sky over it instead.
 
 let theme = {
     title: "Horizon",
@@ -9,9 +11,11 @@ let theme = {
     surface: vec(0.08, 0.14, 0.2, 1.0),
     control_color: vec(0.14, 0.24, 0.3, 1.0),
     text_color: vec(0.88, 0.93, 0.94, 1.0),
-    border_color: vec(0.4, 0.8, 0.9, 0.26),
-    hover_color: vec(0.6, 0.9, 1.0, 0.12),
+    border_color: vec(0.55, 0.82, 0.92, 0.14),
+    hover_color: vec(0.6, 0.9, 1.0, 0.08),
     accent_color: vec(1.0, 0.76, 0.3, 1.0),
+    highlight_color: vec(0.6, 0.82, 1.0, 0.9),
+    selection_color: vec(0.36, 0.6, 0.86, 0.34),
     bar_text_color: vec(0.05, 0.08, 0.13, 1.0),
     text_shadow_color: vec(1.0, 1.0, 1.0, 0.0),
     syntax: {

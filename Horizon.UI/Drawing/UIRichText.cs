@@ -166,6 +166,31 @@ public sealed class UIRichText
     public static string Literal(string text) => HasTags(text) ? Plain(text) : text;
 
     /// <summary>
+    /// What somebody wrote as it is in a label that reads markdown, every character markdown would take for its own (a
+    /// backslash, a star, an underscore, a backtick, a tilde) said to be only itself. A path on Windows lost every one
+    /// of its backslashes.
+    /// </summary>
+    public static string MarkdownLiteral(string text)
+    {
+        string literal = Literal(text);
+        if (literal.AsSpan().IndexOfAny(MARKDOWN_OWN) < 0)
+            return literal;
+
+        var built = new System.Text.StringBuilder(literal.Length + 8);
+        foreach (char character in literal)
+        {
+            if (MARKDOWN_OWN.Contains(character))
+                built.Append('\\');
+            built.Append(character);
+        }
+
+        return built.ToString();
+    }
+
+    // What markdown reads as its own in a line
+    private const string MARKDOWN_OWN = "\\*_`~";
+
+    /// <summary>
     /// Whether a text has anything in it that this does differently from plain text, a style tag. For a label that only
     /// lays text out this way when it has to.
     /// </summary>

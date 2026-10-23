@@ -216,9 +216,12 @@ public abstract partial class UIComponent
         UISkin skin = list.Skin;
         UIRect bounds = Bounds;
 
-        // Something to see on a dark panel and on a light one, the colour text is written in
-        Vector4 quiet = skin.TextColor with { W = 0.28f };
-        Vector4 lit = skin.AccentColor with { W = 1.0f };
+        // Something to see on a dark panel and on a light one, the colour text is written in, and only once the pointer
+        // finds the edge. Every edge of every split and side bar wore a pill all the time, a window full of handles. An
+        // editor marking edges out (no outward given) still shows them all, that's what it's for. Always painted,
+        // see-through when not wanted, so the quads don't shift as the pointer comes
+        Vector4 quiet = skin.TextColor with { W = float.IsNaN(outward) ? 0.28f : 0.0f };
+        Vector4 lit = skin.AccentColor with { W = 0.85f };
 
         for (int i = 0; i < 4; i++)
         {
@@ -264,11 +267,8 @@ public abstract partial class UIComponent
                 _ => new Vector2(0.0f, -shift)
             };
 
-            if (active)
-            {
-                Vector2 whole = upright ? new Vector2(2.0f, along) : new Vector2(along, 2.0f);
-                list.Rect(UIRect.FromCenter(middle + inward, whole), lit);
-            }
+            Vector2 whole = upright ? new Vector2(2.0f, along) : new Vector2(along, 2.0f);
+            list.Rect(UIRect.FromCenter(middle + inward, whole), active ? lit with { W = 0.5f } : lit with { W = 0.0f });
 
             Vector2 size = upright ? new Vector2(TAB_THICKNESS, tab) : new Vector2(tab, TAB_THICKNESS);
             list.Box(UIRect.FromCenter(middle + inward, size), active ? lit : quiet);

@@ -66,6 +66,11 @@ public partial class WindowManager
         hitTesting = SdlProvider.SDL.Value.SetWindowHitTest(window, new PfnHitTest(&HitTest), null) == 0;
         if (!hitTesting)
             Logging.Log.Warning($"[{Name}] SDL can't be asked to move the window, it is moved by hand.");
+
+        // Resizable as far as SDL's concerned, which a window with no frame isn't made as. SDL holds one that isn't to the
+        // size it is, its least and most both that on Wayland and X11, and takes no other size the compositor offers, so
+        // the edges said to resize it and did nothing at all
+        SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

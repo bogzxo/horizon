@@ -121,10 +121,15 @@ public sealed partial class TerminalHost
 
         if (settings)
         {
+            // The file is the editor's as well, a change to its section alone (Hex saving its own) is nothing to say
+            string before = Settings.OwnText();
             if (Settings.Reload())
             {
-                ApplySettings();
-                Say("settings.hor read again");
+                if (Settings.OwnText() != before)
+                {
+                    ApplySettings();
+                    Say("settings.hor read again");
+                }
             }
             else
             {

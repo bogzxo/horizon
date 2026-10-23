@@ -26,7 +26,9 @@ public sealed record UISetting(
     float Step = 1.0f,
     string[]? Buttons = null,
     bool Slider = false,
-    bool ButtonsOnly = false);
+    bool ButtonsOnly = false,
+    string Placeholder = "",
+    string Unit = "");
 
 /// <summary>
 /// A page of settings the way VS Code has one, because it works. A search box over all of them, the sections down the
@@ -41,12 +43,22 @@ public class SettingsPage : UIComponent
 {
     private const float SEARCH_HEIGHT = 34.0f, NAV_WIDTH = 210.0f, GAP = 12.0f, ROW_GAP = 6.0f, CONTROL_HEIGHT = 28.0f;
 
+    // How round the sidebar the sections are on is
+    private const float NAV_RADIUS = 10.0f;
+
     private readonly TextBox search;
     private readonly Label title;
     private readonly Button close;
+    private readonly ScrollPanel navScroll;
     private readonly StackPanel nav;
     private readonly ScrollPanel scroll;
     private readonly StackPanel rows;
+
+    // What the rows say when a search leaves none of them
+    private readonly Label nothing;
+
+    // What had the keyboard the last update, a row's control tabbed to is scrolled into sight once
+    private UIComponent? focusSeen;
     private readonly List<UISetting> settings = [];
     private readonly Dictionary<string, SettingRow> rowOf = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Label> headerOf = new(StringComparer.Ordinal);
@@ -70,6 +82,9 @@ public class SettingsPage : UIComponent
 
     /// <summary>Whether a setting is not what it comes as.</summary>
     public Func<string, bool>? IsModified { get; set; }
+
+    /// <summary>Where a section goes among the others, lower first, null for the order they came in. Equal ones keep that order.</summary>
+    public Func<string, int>? GroupOrder { get; set; }
 
     /// <summary>A setting changed on the page.</summary>
     public Action<string, IRuntimeValue>? OnChanged { get; set; }
@@ -104,7 +119,7 @@ public class SettingsPage : UIComponent
 
     public float BodyScale { get; set; }
 
-    /// <summary>What the page says at its top left, over the sections.</summary>
+    /// <summary>What the page says at its top left, over the sections. Empty for nothing, the sections up to the top, for a page in a window whose title says it already.</summary>
     public string Title
     {
         get => titleText;
@@ -112,6 +127,7 @@ public class SettingsPage : UIComponent
         {
             titleText = value;
             title.Text = $"[b]{value}[/b]";
+            title.Visible = value.Length > 0;
         }
     }
 
@@ -159,9 +175,13 @@ public class SettingsPage : UIComponent
         search = Add(new TextBox { Placeholder = "Search settings", Padding = new UIEdges(10.0f, 6.0f, 10.0f, 6.0f) });
         search.OnChanged = Filter;
         close = Add(new Button { Icon = "close", Style = "button_flat", Animated = false, Tooltip = "Close the settings", Visible = false, OnPressed = () => onClose?.Invoke() });
-        nav = Add(new StackPanel { Spacing = 2.0f, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
+        // The sections down the left scroll as well, a few extensions with settings of their own ran them off the bottom
+        navScroll = Add(new ScrollPanel { Padding = new UIEdges(0.0f, 6.0f, 2.0f, 6.0f) });
+        // No gaps between the sections' rows, a pointer going down them is always on one, the gap is in their pills
+        nav = navScroll.Add(new StackPanel { Spacing = 0.0f, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
         scroll = Add(new ScrollPanel());
         rows = scroll.Add(new StackPanel { Spacing = ROW_GAP, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
+        nothing = Add(new Label { Align = Origin.Center, Visible = false });
     }
 
     /// <summary>Every row showing what its setting is now.</summary>
@@ -227,6 +247,63 @@ public class SettingsPage : UIComponent
             onClose();
     }
 
+    // Escape in the search box, or anything else of the page with the keyboard, closes it. It only let go of the box
+    protected internal override bool OnEscape()
+    {
+        if (onClose is null)
+            return false;
+
+        onClose();
+        return true;
+    }
+
+    // A control of a row given the keyboard (tabbed to) brought into sight, it was typed into off the bottom of the page
+    private void ShowFocused()
+    {
+        UIComponent? focused = Module?.Compositor.Focus;
+        if (ReferenceEquals(focused, focusSeen))
+            return;
+
+        focusSeen = focused;
+        for (UIComponent? at = focused; at is not null; at = at.Parent)
+        {
+            if (at is SettingRow row)
+            {
+                scroll.ScrollIntoView(row);
+                return;
+            }
+
+            // A control in a section's panel (the profiles, the language servers' form) is brought into sight itself,
+            // the keyboard went down a form off the bottom of the window
+            if (at.Parent == rows && focused is not null)
+            {
+                scroll.ScrollIntoView(focused);
+                return;
+            }
+        }
+    }
+
+    /// <summary>The section at the top of the rows as they're scrolled, the one lit down the left.</summary>
+    public string? CurrentGroup { get; private set; }
+
+    // The last heading that has reached the top of the rows, the first while none has
+    private void FindCurrent()
+    {
+        float top = scroll.Bounds.Max.Y - scroll.Padding.Top;
+        string? current = null;
+        foreach (var (group, header) in headerOf)
+        {
+            if (!header.Visible || header.Bounds.IsEmpty)
+                continue;
+
+            current ??= group;
+            if (header.Bounds.Max.Y >= top - 12.0f)
+                current = group;
+        }
+
+        CurrentGroup = current;
+    }
+
     protected override void Update(float dt)
     {
         float width = scroll.Bounds.Width - 18.0f;
@@ -240,6 +317,9 @@ public class SettingsPage : UIComponent
         if (wantedGroup is { } wanted && headerOf.TryGetValue(wanted, out Label? heading) && !heading.Bounds.IsEmpty)
             GoTo(wanted);
 
+        FindCurrent();
+        ShowFocused();
+
         base.Update(dt);
     }
 
@@ -252,10 +332,13 @@ public class SettingsPage : UIComponent
         var searchArea = new UIRect(new Vector2(content.Min.X + NAV_WIDTH + GAP, content.Max.Y - SEARCH_HEIGHT), new Vector2(content.Max.X - GAP - closeWidth, content.Max.Y));
         title.ArrangeTree(titleArea);
         close.ArrangeTree(new UIRect(new Vector2(content.Max.X - SEARCH_HEIGHT, content.Max.Y - SEARCH_HEIGHT), content.Max));
-        var navArea = new UIRect(new Vector2(content.Min.X, content.Min.Y), new Vector2(content.Min.X + NAV_WIDTH, content.Max.Y - SEARCH_HEIGHT - GAP));
+        // With no title the sections go up to the top, beside the search
+        float navTop = title.Visible ? content.Max.Y - SEARCH_HEIGHT - GAP : content.Max.Y;
+        var navArea = new UIRect(new Vector2(content.Min.X, content.Min.Y), new Vector2(content.Min.X + NAV_WIDTH, navTop));
         var scrollArea = new UIRect(new Vector2(content.Min.X + NAV_WIDTH + GAP, content.Min.Y), new Vector2(content.Max.X, content.Max.Y - SEARCH_HEIGHT - GAP));
         search.ArrangeTree(searchArea);
-        nav.ArrangeTree(new UIRect(new Vector2(navArea.Min.X, navArea.Max.Y - nav.DesiredSize.Y), navArea.Max));
+        nothing.ArrangeTree(new UIRect(new Vector2(scrollArea.Min.X, scrollArea.Max.Y - 120.0f), scrollArea.Max));
+        navScroll.ArrangeTree(navArea);
         scroll.ArrangeTree(scrollArea);
     }
 
@@ -267,9 +350,10 @@ public class SettingsPage : UIComponent
         if (Opaque)
             list.Rect(Bounds, list.Skin.PanelColor with { W = 1.0f });
 
-        // the line between the sections and the rows
-        float x = Bounds.Min.X + NAV_WIDTH + GAP * 0.5f;
-        list.Rect(new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + 1.0f, Bounds.Max.Y - SEARCH_HEIGHT - GAP)), list.Skin.TextColor with { W = 0.12f });
+        // The sections down the left on a sidebar of their own, a round well a breath lighter than what it's on. It was a
+        // line between them and the rows, and with the sections' scroll bar beside it that was two lines
+        if (!navScroll.Bounds.IsEmpty)
+            list.RoundRect(navScroll.Bounds, NAV_RADIUS, list.Skin.TextColor with { W = 0.035f });
     }
 
     private void Build(float width)
@@ -293,22 +377,28 @@ public class SettingsPage : UIComponent
 
         // the rows of a section together, the sections in the order they first come, the panels' after them
         var groups = settings.Select(setting => setting.Group).Concat(panels.Select(panel => panel.Group)).Distinct().ToList();
+        if (GroupOrder is { } order)
+            groups = [.. groups.Select((group, at) => (group, at)).OrderBy(pair => order(pair.group)).ThenBy(pair => pair.at).Select(pair => pair.group)];
         string? part = null;
         foreach (string group in groups)
         {
             string named = group.Length == 0 ? "General" : group;
-            headerOf[group] = rows.Add(new Label { Text = $"[b]{named}[/b]", TextScale = headingSize, Align = Origin.Left, Size = new Vector2(width, 44.0f) });
-
-            // down the left, the part a section is of (Terminal, Editor) once, its sections under it
             int dot = named.IndexOf(" · ", StringComparison.Ordinal);
             string top = dot < 0 ? named : named[..dot], under = dot < 0 ? named : named[(dot + 3)..];
+
+            // The section big and the part it's of quietly in front of it
+            string heading = dot < 0 ? $"[b]{named}[/b]" : $"[color:dim]{top} ·[/color] [b]{under}[/b]";
+            headerOf[group] = rows.Add(new Label { Text = heading, TextScale = headingSize, Align = Origin.Left, Size = new Vector2(width, 44.0f) });
+
+            // down the left, the part a section is of (Terminal, Editor) once, small and quiet the way a sidebar heads
+            // its groups, its sections under it
             if (top != part)
             {
                 part = top;
-                nav.Add(new Label { Text = $"[b]{top}[/b]", TextScale = sentenceSize, Align = Origin.Left, Size = new Vector2(NAV_WIDTH, 30.0f), Anchor = Origin.Left, Pivot = Origin.Left });
+                nav.Add(new Label { Text = $"[color:dim][b]{top}[/b][/color]", TextScale = sentenceSize * 0.9f, Align = Origin.BottomLeft, Size = new Vector2(NAV_WIDTH - 12.0f, nav.Children.Count == 0 ? 22.0f : 34.0f), Padding = new UIEdges(10.0f, 0.0f, 0.0f, 4.0f), Anchor = Origin.Left, Pivot = Origin.Left });
             }
 
-            nav.Add(new SectionLink(this, group) { Text = under, TextScale = sentenceSize, Align = Origin.Left, Size = new Vector2(NAV_WIDTH, 26.0f), Padding = new UIEdges(14.0f, 0.0f, 0.0f, 0.0f), Anchor = Origin.Left, Pivot = Origin.Left });
+            nav.Add(new SectionLink(this, group) { Text = under, TextScale = sentenceSize, Align = Origin.Left, Size = new Vector2(NAV_WIDTH - 12.0f, 30.0f), Padding = new UIEdges(10.0f, 0.0f, 0.0f, 0.0f), Anchor = Origin.Left, Pivot = Origin.Left });
 
             foreach (UISetting setting in settings)
             {
@@ -348,16 +438,43 @@ public class SettingsPage : UIComponent
                 seen.Add(setting.Group);
         }
 
-        // A panel by the name of its section, it has no rows to search
+        // A panel by the name of its section or by what's written in it, it has no rows to search. Only its section's name
+        // found it, and "add a language" found nothing though the panel said so in its heading
         foreach (var (group, content) in panels)
         {
-            content.Visible = words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase));
+            content.Visible = words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase) || Says(content, word));
             if (content.Visible)
                 seen.Add(group);
         }
 
         foreach (var (name, header) in headerOf)
             header.Visible = seen.Contains(name);
+
+        // A search that leaves nothing says so rather than leaving the page blank
+        nothing.Visible = seen.Count == 0 && words.Length > 0;
+        nothing.Text = $"[color:dim]No settings match \"{typed.Trim()}\"[/color]";
+        nothing.TextScale = sentenceSize;
+    }
+
+    // Whether a panel has a word in anything written in it, a label's text or a button's
+    private static bool Says(UIComponent content, string word)
+    {
+        string? written = content switch
+        {
+            Label label => label.Text,
+            Button button => button.Label,
+            _ => null
+        };
+        if (written?.Contains(word, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+
+        foreach (UIComponent child in content.Children)
+        {
+            if (Says(child, word))
+                return true;
+        }
+
+        return false;
     }
 
     internal void Changed(string key, IRuntimeValue value)
@@ -377,14 +494,30 @@ public class SettingsPage : UIComponent
     /// <summary>A section's name down the left, a click scrolls to it.</summary>
     private sealed class SectionLink(SettingsPage page, string group) : Label
     {
+        // How far the pointer's pill has come on, eased in and out over the hover's time so a pointer going down the list
+        // leaves a little wake rather than pills blinking on and off
+        private float lit;
+
         protected override bool HitTestVisible => true;
 
         protected internal override void OnClick() => page.GoTo(group);
 
+        protected override void Update(float dt)
+        {
+            float time = MotionTime(DEFAULT_HOVER_TIME);
+            float step = time > 0.0f ? dt / time : 1.0f;
+            lit = IsHovered ? MathF.Min(1.0f, lit + step) : MathF.Max(0.0f, lit - step);
+            base.Update(dt);
+        }
+
         protected override void Paint(UIDrawList list)
         {
-            // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
-            list.Rect(Bounds, list.Skin.TextColor with { W = IsHovered ? 0.06f : 0.0f });
+            // A pill under the section that's at the top of the rows, the way a sidebar has what's open, and a fainter
+            // one under the pointer, a pixel in from the row's top and bottom so two side by side are apart. Always there,
+            // see-through when not lit, or the quads after it shift (ToggleButton has why)
+            bool current = page.CurrentGroup == group;
+            float hover = lit * (2.0f - lit);
+            list.Box(Bounds.Shrink(new UIEdges(0.0f, 1.0f)), list.Skin.TextColor with { W = current ? 0.1f : 0.05f * hover });
             base.Paint(list);
         }
     }

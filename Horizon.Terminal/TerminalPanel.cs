@@ -17,13 +17,11 @@ public sealed class TerminalTab
     public SplitNode<TerminalView>? Focused { get; internal set; }
 
     /// <summary>
-    /// What the tab is called when nobody renamed it, the title the program set or the profile's name. A title that is
-    /// the path of a program (what the console calls itself before a shell says anything) counts as nothing said.
+    /// What the tab is called when nobody renamed it, the title the program set or the folder its shell is in (the
+    /// profile's name before it's in one). A title that says nothing of its own counts as none, see
+    /// <see cref="TerminalView.SaysNothing"/>.
     /// </summary>
-    public string Title => Renamed ?? (Focused?.Content?.Title is { Length: > 0 } said && !IsProgramPath(said) ? said : Profile?.Name ?? "terminal");
-
-    private static bool IsProgramPath(string title) =>
-        title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && (title.Contains('\\') || title.Contains('/'));
+    public string Title => Renamed ?? (Focused?.Content is { Title: { Length: > 0 } said } view && !TerminalView.SaysNothing(said, view.Profile) ? said : Focused?.Content?.FolderTitle ?? Profile?.Name ?? "terminal");
 
     /// <summary>What somebody renamed it to, null for the title the program or its profile gives it.</summary>
     public string? Renamed { get; set; }
@@ -79,6 +77,9 @@ public class TerminalPanel : UIComponent, IDisposable
 
     private const float GAP = 4.0f, FRAME = 1.5f, SLIDE_DISTANCE = 28.0f;
 
+    // How much of the background is laid over a pane that hasn't the keyboard, while a tab is split
+    private const float UNFOCUSED_DIM = 0.28f;
+
     private readonly TabStrip strip;
     private readonly Button add;
     private readonly Room room;
@@ -118,6 +119,35 @@ public class TerminalPanel : UIComponent, IDisposable
 
     /// <summary>The colours of every terminal, handed to each as it is made and when this is set again (<see cref="ApplyPalette"/>).</summary>
     public TerminalPalette Palette { get; set; } = new();
+
+    /// <summary>Where the panes are, under the tabs, for a program that draws round them (Dusk's field of light).</summary>
+    public UIRect PanesBounds => room.Bounds;
+
+    /// <summary>What is painted behind the row of tabs, null for nothing (the window shows through).</summary>
+    public Vector4? StripColor { get; set; }
+
+    /// <summary>
+    /// How round the panes are, each a card of its own on what's behind the panel with the gaps between them showing it.
+    /// 0 for square panes on the panel's own dark, the way they were.
+    /// </summary>
+    public float PaneRadius
+    {
+        get => paneRadius;
+        set
+        {
+            paneRadius = value;
+            foreach (TerminalTab tab in tabs)
+            {
+                foreach (TerminalView view in tab.Views)
+                    view.Radius = value;
+            }
+        }
+    }
+
+    private float paneRadius;
+
+    /// <summary>The room round the panes inside the panel, under the row of tabs, for panes that float as cards.</summary>
+    public UIEdges RoomPadding { get; set; }
 
     /// <summary>How many rows every terminal keeps of what went off the top.</summary>
     public int Scrollback { get; set; } = 5000;
@@ -176,7 +206,8 @@ public class TerminalPanel : UIComponent, IDisposable
     {
         Size = new Vector2(800, 500);
         strip = Add(new TabStrip());
-        add = Add(new Button { Icon = "add", Tooltip = "New terminal" });
+        // Only its icon until the pointer finds it, a box at the end of the tabs looked like a tab that wasn't one
+        add = Add(new Button { Icon = "add", Tooltip = "New terminal", Style = "button_flat" });
         room = Add(new Room(this));
 
         strip.OnSelected = index => Select(index);
@@ -443,6 +474,12 @@ public class TerminalPanel : UIComponent, IDisposable
             return null;
 
         profile ??= leaf.Content!.Profile ?? tab.Profile ?? DefaultProfile ?? Profiles.FirstOrDefault();
+
+        // The new pane starts where the one split is, the folder its shell said it's in, when that's a folder here (a
+        // shell in WSL says its own sort of path). It started where Dusk did, every split a cd away from the work
+        if (workingDirectory is null && leaf.Content!.WorkingDirectory is { } there && Directory.Exists(there))
+            workingDirectory = there;
+
         TerminalView view = MakeView(profile);
         view.Visible = tab == current;
         bool slide = Animated;
@@ -585,6 +622,7 @@ public class TerminalPanel : UIComponent, IDisposable
             Animated = Animated,
             CursorGlide = CursorGlide,
             Profile = profile,
+            Radius = paneRadius,
             Visible = false
         };
         view.Intercept = press => OnKey?.Invoke(press) ?? false;
@@ -800,7 +838,7 @@ public class TerminalPanel : UIComponent, IDisposable
         float stripHeight = strip.DesiredSize.Y;
         var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight, content.Max.Y));
         var addArea = new UIRect(new Vector2(content.Max.X - stripHeight, content.Max.Y - stripHeight), content.Max);
-        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f));
+        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f)).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
         add.ArrangeTree(addArea);
         room.ArrangeTree(roomArea);
@@ -846,19 +884,31 @@ public class TerminalPanel : UIComponent, IDisposable
 
     protected override void Paint(UIDrawList list)
     {
-        // The room's dark behind the panes, so the gaps between them read as gaps
-        list.Rect(room.Bounds, Palette.Background with { W = 0.6f });
+        // The row of tabs tinted when it's asked for, always painted so the quads after it don't shift
+        list.Rect(new UIRect(new Vector2(Bounds.Min.X, room.Bounds.Max.Y), Bounds.Max), StripColor ?? Vector4.Zero);
+
+        // The room's dark behind the panes, so the gaps between them read as gaps, nothing when the panes are cards of
+        // their own and the gaps show what's behind the panel
+        list.Rect(room.Bounds, Palette.Background with { W = paneRadius > 0.0f ? 0.0f : 0.6f });
     }
 
     protected override void PaintChildren(UIDrawList list)
     {
         base.PaintChildren(list);
 
-        // The pane with the keyboard framed in the accent, only when there is more than one to tell apart
-        if (current is { Focused: { } leaf, Tree.Count: > 1, Zoomed: null } && leaf.Content is { Visible: true })
+        // Only when there is more than one to tell apart, the panes without the keyboard are dimmed a little, the way
+        // iTerm has them, and the one with it gets a hairline of the accent. It was a frame of gold round the whole of it
+        if (current is { Focused: { } leaf, Tree.Count: > 1, Zoomed: null } focusedTab && leaf.Content is { Visible: true })
         {
-            Vector4 ink = list.Skin.AccentColor with { W = leaf.Content.IsFocused ? 0.9f : 0.45f };
-            list.RoundOutline(leaf.Bounds, 0.0f, FRAME, ink);
+            var leaves = focusedTab.Leaves;
+            for (int i = 0; i < leaves.Count; i++)
+            {
+                if (leaves[i] != leaf && leaves[i].Content is { Visible: true })
+                    list.RoundRect(leaves[i].Bounds, paneRadius, Palette.Background with { W = UNFOCUSED_DIM });
+            }
+
+            Vector4 ink = list.Skin.HighlightColor with { W = leaf.Content.IsFocused ? 0.35f : 0.15f };
+            list.RoundOutline(leaf.Bounds, paneRadius, 1.0f, ink);
         }
 
         // A pane being dragged by its badge, the pane it would swap with outlined

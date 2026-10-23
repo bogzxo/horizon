@@ -96,6 +96,7 @@ public sealed class DebugSession : IDisposable
             Process? process = Process.Start(start);
             if (process is null)
                 return null;
+            Horizon.Core.Platform.ChildProcesses.Adopt(process);
 
             // What it says on stderr is nobody's, but it's read so the pipe never fills and stops it
             process.ErrorDataReceived += (_, _) => { };
@@ -111,11 +112,20 @@ public sealed class DebugSession : IDisposable
     /// <summary>A session over streams an adapter is on the other end of, for a test.</summary>
     public static DebugSession Over(Stream input, Stream output) => new(new DebugAdapterConnection(input, output), null);
 
+    /// <summary>The kind of debugger netcoredbg is, .NET's, the one <see cref="Launch"/> goes by when it isn't told.</summary>
+    public const string CORECLR = "coreclr";
+
     /// <summary>
     /// Launches a program under the debugger, with its breakpoints (file, then lines counted from 0), and comes back once
-    /// it's going or didn't go (<see cref="Failed"/>). netcoredbg takes a .dll and runs it with dotnet.
+    /// it's going or didn't go (<see cref="Failed"/>). netcoredbg (coreclr) takes a .dll and runs it with dotnet, lldb-dap
+    /// (lldb-dap) a program of the machine's own, a D one built with -g.
     /// </summary>
-    public async Task<bool> Launch(string program, IReadOnlyList<string> arguments, string workingDirectory, IReadOnlyDictionary<string, IReadOnlyCollection<int>> breakpointsByFile)
+    /// <param name="kind">What kind of debugger it is, the type of its launch, coreclr or lldb-dap.</param>
+    /// <param name="output">
+    /// A file what the program writes goes to, for a debugger that doesn't say it (lldb-dap on Windows), null for the
+    /// debugger to say it itself.
+    /// </param>
+    public async Task<bool> Launch(string program, IReadOnlyList<string> arguments, string workingDirectory, IReadOnlyDictionary<string, IReadOnlyCollection<int>> breakpointsByFile, string kind = CORECLR, string? output = null)
     {
         try
         {
@@ -123,12 +133,12 @@ public sealed class DebugSession : IDisposable
             {
                 ["clientID"] = "hex",
                 ["clientName"] = "Hex",
-                ["adapterID"] = "coreclr",
+                ["adapterID"] = kind,
                 ["linesStartAt1"] = true,
                 ["columnsStartAt1"] = true,
                 ["pathFormat"] = "path",
                 ["supportsVariableType"] = true
-            });
+            }).ConfigureAwait(false);
 
             var args = new JsonArray();
             foreach (string argument in arguments)
@@ -136,27 +146,43 @@ public sealed class DebugSession : IDisposable
 
             // The launch goes off and is answered once the configuration is done, which the adapter asks for with an
             // initialized event once it's ready for the breakpoints
-            Task<JsonNode?> launched = connection.Request("launch", new JsonObject
-            {
-                ["name"] = "Hex",
-                ["type"] = "coreclr",
-                ["request"] = "launch",
-                ["program"] = program,
-                ["args"] = args,
-                ["cwd"] = workingDirectory,
-                ["stopAtEntry"] = false,
-                ["console"] = "internalConsole",
-                ["justMyCode"] = true
-            });
+            JsonObject launch = kind == CORECLR
+                ? new JsonObject
+                {
+                    ["name"] = "Hex",
+                    ["type"] = kind,
+                    ["request"] = "launch",
+                    ["program"] = program,
+                    ["args"] = args,
+                    ["cwd"] = workingDirectory,
+                    ["stopAtEntry"] = false,
+                    ["console"] = "internalConsole",
+                    ["justMyCode"] = true
+                }
+                : new JsonObject
+                {
+                    ["name"] = "Hex",
+                    ["type"] = kind,
+                    ["request"] = "launch",
+                    ["program"] = program,
+                    ["args"] = args,
+                    ["cwd"] = workingDirectory,
+                    ["stopOnEntry"] = false
+                };
 
-            Task first = await Task.WhenAny(initialized.Task, launched, Task.Delay(TimeSpan.FromSeconds(20)));
+            // What it writes into a file, stdin left as it is and stdout and stderr both there
+            if (output is not null)
+                launch["stdio"] = new JsonArray(null, output, output);
+            Task<JsonNode?> launched = connection.Request("launch", launch);
+
+            Task first = await Task.WhenAny(initialized.Task, launched, Task.Delay(TimeSpan.FromSeconds(20))).ConfigureAwait(false);
             if (first == launched)
-                await launched;
+                await launched.ConfigureAwait(false);
 
             foreach (var (file, lines) in breakpointsByFile)
-                await SetBreakpointsNow(file, lines);
-            await connection.Request("configurationDone");
-            await launched;
+                await SetBreakpointsNow(file, lines).ConfigureAwait(false);
+            await connection.Request("configurationDone").ConfigureAwait(false);
+            await launched.ConfigureAwait(false);
 
             if (state == DebugState.Starting)
                 state = DebugState.Running;
@@ -182,7 +208,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await SetBreakpointsNow(file, lines);
+            await SetBreakpointsNow(file, lines).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -202,7 +228,7 @@ public sealed class DebugSession : IDisposable
         {
             ["source"] = new JsonObject { ["path"] = file, ["name"] = Path.GetFileName(file) },
             ["breakpoints"] = list
-        });
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Goes on from where it stopped.</summary>
@@ -247,7 +273,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await connection.Request("disconnect", new JsonObject { ["terminateDebuggee"] = true }).WaitAsync(TimeSpan.FromSeconds(3));
+            await connection.Request("disconnect", new JsonObject { ["terminateDebuggee"] = true }).WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -261,12 +287,12 @@ public sealed class DebugSession : IDisposable
     public async Task<IReadOnlyList<DebugScope>> Scopes(int frameId)
     {
         var scopes = new List<DebugScope>();
-        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }) is JsonObject body && body["scopes"] is JsonArray list)
+        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }).ConfigureAwait(false) is JsonObject body && body["scopes"] is JsonArray list)
         {
             foreach (JsonNode? scope in list)
             {
                 if (scope is JsonObject named)
-                    scopes.Add(new DebugScope(named["name"]?.GetValue<string>() ?? "?", named["variablesReference"]?.GetValue<int>() ?? 0));
+                    scopes.Add(new DebugScope(named["name"]?.GetValue<string>() ?? "?", JsonNumbers.Int(named["variablesReference"], 0)));
             }
         }
 
@@ -277,14 +303,14 @@ public sealed class DebugSession : IDisposable
     public async Task<IReadOnlyList<DebugVariable>> Variables(int reference)
     {
         var variables = new List<DebugVariable>();
-        if (await connection.Request("variables", new JsonObject { ["variablesReference"] = reference }) is JsonObject body && body["variables"] is JsonArray list)
+        if (await connection.Request("variables", new JsonObject { ["variablesReference"] = reference }).ConfigureAwait(false) is JsonObject body && body["variables"] is JsonArray list)
         {
             foreach (JsonNode? variable in list)
             {
                 if (variable is JsonObject one)
                 {
                     variables.Add(new DebugVariable(one["name"]?.GetValue<string>() ?? "?", one["value"]?.GetValue<string>() ?? string.Empty,
-                        one["type"]?.GetValue<string>(), one["variablesReference"]?.GetValue<int>() ?? 0));
+                        one["type"]?.GetValue<string>(), JsonNumbers.Int(one["variablesReference"], 0)));
                 }
             }
         }
@@ -297,12 +323,31 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            var body = await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = "repl" });
+            var body = await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = "repl" }).ConfigureAwait(false);
             return body?["result"]?.GetValue<string>() ?? string.Empty;
         }
         catch (Exception e)
         {
             return e.Message;
+        }
+    }
+
+    /// <summary>
+    /// What an expression comes to in a frame as a variable, the expression its name, what's inside it its reference, null
+    /// when the debugger couldn't say. The context is DAP's, "watch", "hover" or "repl".
+    /// </summary>
+    public async Task<DebugVariable?> TryEvaluate(string expression, int frameId, string context = "watch")
+    {
+        try
+        {
+            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }).ConfigureAwait(false) is not JsonObject body)
+                return null;
+
+            return new DebugVariable(expression, body["result"]?.GetValue<string>() ?? string.Empty, body["type"]?.GetValue<string>(), JsonNumbers.Int(body["variablesReference"], 0));
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 
@@ -319,8 +364,9 @@ public sealed class DebugSession : IDisposable
                 break;
 
             case "stopped":
-                stoppedThread = body?["threadId"]?.GetValue<int>() ?? stoppedThread;
-                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>());
+                stoppedThread = JsonNumbers.Int(body?["threadId"], stoppedThread);
+                // lldb-dap says what an exception was in the description and leaves the text out
+                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>() ?? body?["description"]?.GetValue<string>());
                 break;
 
             case "continued":
@@ -336,7 +382,7 @@ public sealed class DebugSession : IDisposable
                 break;
 
             case "exited":
-                End(body?["exitCode"]?.GetValue<int>() ?? 0);
+                End(JsonNumbers.Int(body?["exitCode"], 0));
                 break;
 
             case "terminated":
@@ -351,14 +397,14 @@ public sealed class DebugSession : IDisposable
         var frames = new List<DebugFrame>();
         try
         {
-            if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = stoppedThread, ["levels"] = 50 }) is JsonObject body && body["stackFrames"] is JsonArray list)
+            if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = stoppedThread, ["levels"] = 50 }).ConfigureAwait(false) is JsonObject body && body["stackFrames"] is JsonArray list)
             {
                 foreach (JsonNode? frame in list)
                 {
                     if (frame is not JsonObject one)
                         continue;
-                    frames.Add(new DebugFrame(one["id"]?.GetValue<int>() ?? 0, one["name"]?.GetValue<string>() ?? "?", one["source"]?["path"]?.GetValue<string>(),
-                        Math.Max(0, (one["line"]?.GetValue<int>() ?? 1) - 1), Math.Max(0, (one["column"]?.GetValue<int>() ?? 1) - 1)));
+                    frames.Add(new DebugFrame(JsonNumbers.Int(one["id"], 0), one["name"]?.GetValue<string>() ?? "?", one["source"]?["path"]?.GetValue<string>(),
+                        Math.Max(0, JsonNumbers.Int(one["line"], 1) - 1), Math.Max(0, JsonNumbers.Int(one["column"], 1) - 1)));
                 }
             }
         }
@@ -387,7 +433,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await task;
+            await task.ConfigureAwait(false);
         }
         catch (Exception)
         {

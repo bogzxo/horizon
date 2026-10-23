@@ -42,6 +42,11 @@
     <PackageReference Include="TextMateSharp.Grammars" Version="2.0.4" />
   </ItemGroup>
 
+  <!-- Grammars of the engine's own for languages TextMateSharp has none of, see CodeLanguages -->
+  <ItemGroup>
+    <EmbeddedResource Include="Scripting\Grammars\*.json" LogicalName="Horizon.UI.Grammars.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
     <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />

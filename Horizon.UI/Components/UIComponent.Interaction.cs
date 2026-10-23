@@ -292,6 +292,19 @@ public abstract partial class UIComponent
     protected internal virtual bool KeepsTab => false;
 
     /// <summary>
+    /// Whether Tab stops on it. Whatever takes the keyboard does, and so does a control a key works (a button, a toggle,
+    /// a dropdown) though a click doesn't give it the keyboard, it's drawn with a ring while it has it. Nothing but the
+    /// text boxes could be got to with the keys, a dialog's buttons were the mouse's.
+    /// </summary>
+    protected internal virtual bool TabStop => Focusable;
+
+    /// <summary>
+    /// Whether Tab goes round what's in it and no further while the keyboard is in it, a window over the rest (a dialog,
+    /// the settings). It went on to whatever was behind, and the keys typed there.
+    /// </summary>
+    protected internal virtual bool HoldsTab => false;
+
+    /// <summary>
     /// Whether the keys come to it as themselves through <see cref="OnKeyDown"/>, with the modifiers, rather than as the
     /// characters and editing codes of <see cref="OnTextInput"/>. A terminal, which sends them on to a program. Escape
     /// and tab are its own then too, the compositor leaves them alone.
@@ -301,6 +314,13 @@ public abstract partial class UIComponent
     /// <summary>A key pressed (or held) while this has the focus and takes its keys raw, see <see cref="TakesRawKeys"/>.</summary>
     protected internal virtual void OnKeyDown(in UIKeyPress press)
     { }
+
+    /// <summary>
+    /// Escape pressed while the focus is in this or anything inside it, with no dialog or popup up for it to close first.
+    /// True to say it was taken (a page of settings closing), false to leave it to the next one out and in the end to the
+    /// focus being let go of, which is what escape does otherwise.
+    /// </summary>
+    protected internal virtual bool OnEscape() => false;
 
     /// <summary>
     /// Makes this the component the keyboard types into, whether it is <see cref="Focusable"/> by the

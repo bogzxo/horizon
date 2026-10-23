@@ -31,6 +31,20 @@ public sealed class UITreeItem
     /// <summary>What it says under the pointer, nothing for nothing.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
+    /// <summary>
+    /// A piece of the text lit behind, from which character for how many, what was found on a line of Find in Files.
+    /// A length of 0 for none.
+    /// </summary>
+    public (int Start, int Length) Mark { get; set; }
+
+    // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
+    internal string? fittedOf;
+    internal float fittedRoom;
+    internal string fitted = string.Empty;
+    internal string? detailOf;
+    internal float detailRoom;
+    internal string detailFitted = string.Empty;
+
     /// <summary>The rows under it, null for none.</summary>
     public List<UITreeItem>? Children { get; set; }
 
@@ -88,6 +102,9 @@ public class TreeView : UIComponent
     private const float DEFAULT_WIDTH = 260.0f, DEFAULT_ROWS = 10.0f;
     private const float ROW_PADDING = 8.0f, BAR_WIDTH = 5.0f, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
+
+    // How far in from its top and bottom the rows fade while there are more past that edge, see ScrollPanel.Fade
+    private const float FADE = 18.0f;
 
     // The rows that are showing, every item whose parents are all open, in order, with how deep each is
     private readonly List<(UITreeItem Item, int Depth)> rows = [];
@@ -414,7 +431,8 @@ public class TreeView : UIComponent
         Vector4 text = skin.TextColor;
         Vector4 dim = text with { W = text.W * 0.55f };
         Vector4 guide = text with { W = text.W * 0.12f };
-        Vector4 lit = skin.AccentColor with { W = 0.28f };
+        Vector4 lit = text with { W = ListBox.PICKED };
+        bool keyed = IsFocused && TakesKeys;
 
         if (Color is { } behind)
         {
@@ -423,6 +441,8 @@ public class TreeView : UIComponent
         }
 
         list.PushClip(bounds);
+        float fade = MathF.Min(FADE, bounds.Height * 0.25f);
+        list.PushFade(bounds, MathF.Min(fade, scroll), MathF.Min(fade, travel - scroll));
 
         int first = (int)(scroll / line);
         int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
@@ -438,7 +458,12 @@ public class TreeView : UIComponent
             // The highlight is always there, see-through on a row that isn't lit. A row's quads are blended with the same
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
-            list.Rect(row, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
+            list.Box(pill, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+
+            // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
+            // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted
+            list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.Palette.Highlight with { W = item == selected && keyed ? 0.8f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -462,21 +487,43 @@ public class TreeView : UIComponent
                 x += icon + ICON_GAP;
             }
 
-            Vector2 size = skin.Font.Measure(item.Text, scale, markup: false);
-            list.Text(item.Text, new Vector2(x, MathF.Round(row.Center.Y + size.Y * 0.5f)), scale, item.Color ?? text, markup: false);
+            // As much of the text as there's room for with its detail after it, cut short with dots rather than off at the
+            // edge of the tree, a long line found by Find in Files ran under the side's edge
+            // The text comes first, a detail that won't fit beside all of it gets at most a third of the row, cut short
+            // itself. A variable's value was cut off to leave its whole type there, "box = geomet...  geometry.shapes.Rect"
+            float room = right - x - LEFT_PAD;
+            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, markup: false).X + DETAIL_GAP : 0.0f;
+            if (detailWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth > room)
+                detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
+            string rowText = Fitted(item, skin, scale, room - detailWidth);
+            Vector2 size = skin.Font.Measure(rowText, scale, markup: false);
+            float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
 
-            if (item.Detail.Length > 0)
+            // What was found lit behind it, the colour of a selection, where it still is after any cut
+            if (item.Mark.Length > 0 && item.Mark.Start >= 0 && item.Mark.Start + item.Mark.Length <= rowText.Length)
             {
-                Vector2 detail = skin.Font.Measure(item.Detail, scale, markup: false);
-                list.Text(item.Detail, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, dim, markup: false);
+                float from = x + skin.Font.Measure(rowText.AsSpan(0, item.Mark.Start), scale, markup: false).X;
+                float width = skin.Font.Measure(rowText.AsSpan(item.Mark.Start, item.Mark.Length), scale, markup: false).X;
+                var found = new UIRect(new Vector2(from - 1.0f, row.Center.Y - size.Y * 0.5f - 1.0f), new Vector2(from + width + 1.0f, row.Center.Y + size.Y * 0.5f + 1.0f));
+                list.RoundRect(found, 3.0f, skin.Palette.Selection);
+            }
+
+            list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
+
+            if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - (x + size.X + DETAIL_GAP)) is { Length: > 0 } said)
+            {
+                Vector2 detail = skin.Font.Measure(said, scale, markup: false);
+                list.Text(said, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, dim, markup: false);
             }
         }
 
         list.EndParts();
+        list.PopFade();
         list.PopClip();
 
+        // The keyboard's in it, in the colour the keyboard is everywhere, the accent's for what's picked
         if (FocusLine && IsFocused)
-            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - FOCUS_LINE), bounds.Max), skin.AccentColor);
+            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - 1.0f), bounds.Max), skin.Palette.Highlight with { W = 0.55f });
 
         // A thin bar along the right says how much of the tree is in sight, and where
         if (scrolls)
@@ -486,6 +533,74 @@ public class TreeView : UIComponent
             float barX = bounds.Max.X - BAR_WIDTH * 1.5f;
             list.Rect(new UIRect(new Vector2(barX, barTop - bounds.Height * share), new Vector2(barX + BAR_WIDTH, barTop)), skin.TextColor with { W = 0.25f });
         }
+    }
+
+    // The dots a row cut short ends with
+    private const string CUT = "...";
+
+    // The most of a row a detail gets when the row's too short for all of both
+    private const float DETAIL_MOST = 0.34f;
+
+    // A row's detail cut to its room with dots, kept like its text is, nothing when not even the dots fit
+    private static string FittedDetail(UITreeItem item, UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
+            return item.detailFitted;
+
+        string shown = item.Detail;
+        if (skin.Font.Measure(shown, scale, markup: false).X > room)
+            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(shown, skin, scale, room);
+
+        (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
+        return shown;
+    }
+
+    // As much of some text as fits with dots after it
+    private static string Cut(string text, UISkin skin, float scale, float room)
+    {
+        float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+        int low = 0, high = text.Length;
+        while (low < high)
+        {
+            int middle = (low + high + 1) / 2;
+            if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+
+        return text[..low].TrimEnd() + CUT;
+    }
+
+    /// <summary>
+    /// Helper method for a row's text as much as fits in so much room, cut with dots at the end, worked out once for the
+    /// text and the room and kept on the row.
+    /// </summary>
+    private static string Fitted(UITreeItem item, UISkin skin, float scale, float room)
+    {
+        string text = item.Text;
+        if (ReferenceEquals(item.fittedOf, text) && item.fittedRoom == room)
+            return item.fitted;
+
+        string shown = text;
+        if (room > 0.0f && skin.Font.Measure(text, scale, markup: false).X > room)
+        {
+            float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+            int low = 0, high = text.Length;
+            while (low < high)
+            {
+                int middle = (low + high + 1) / 2;
+                if (skin.Font.Measure(text.AsSpan(0, middle), scale, markup: false).X + dots <= room)
+                    low = middle;
+                else
+                    high = middle - 1;
+            }
+
+            shown = text[..low].TrimEnd() + CUT;
+        }
+
+        (item.fittedOf, item.fittedRoom, item.fitted) = (text, room, shown);
+        return shown;
     }
 
     protected override void DefineScript()

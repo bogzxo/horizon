@@ -33,6 +33,13 @@ public sealed class JsonRpcConnection : IDisposable
     /// <summary>Answers the other side's requests, given the method and its params. Null answers null, which is what most want.</summary>
     public Func<string, JsonNode?, JsonNode?>? OnRequest { get; set; }
 
+    /// <summary>
+    /// Asked first about each of the other side's requests, a task for one that's answered later (a question for
+    /// whoever is at the keyboard), which goes back when it's done while the reader goes on. Null for one that
+    /// <see cref="OnRequest"/> answers on the spot.
+    /// </summary>
+    public Func<string, JsonNode?, Task<JsonNode?>?>? OnRequestLater { get; set; }
+
     /// <summary>Called once when the other side goes away or the stream breaks, with what broke it or null for a plain end.</summary>
     public Action<Exception?>? Closed { get; set; }
 
@@ -191,6 +198,19 @@ public sealed class JsonRpcConnection : IDisposable
         return body;
     }
 
+    // Helper method to answer one of the other side's requests, nothing if the connection has gone meanwhile
+    private void Answer(JsonNode id, JsonNode? result)
+    {
+        try
+        {
+            Send(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id, ["result"] = result });
+        }
+        catch (Exception)
+        {
+            // Gone while it was being asked
+        }
+    }
+
     private void Dispatch(JsonObject message)
     {
         JsonNode? id = message["id"];
@@ -198,7 +218,25 @@ public sealed class JsonRpcConnection : IDisposable
 
         if (method is not null && id is not null)
         {
-            // Their request, answered on the spot
+            // Their request, answered when it's done if it's answered later, the reader going on meanwhile
+            Task<JsonNode?>? later = null;
+            try
+            {
+                later = OnRequestLater?.Invoke(method, message["params"]);
+            }
+            catch (Exception)
+            {
+                // Answered on the spot instead
+            }
+
+            if (later is not null)
+            {
+                JsonNode answering = id.DeepClone();
+                later.ContinueWith(done => Answer(answering, done.IsCompletedSuccessfully ? done.Result : null), TaskScheduler.Default);
+                return;
+            }
+
+            // Answered on the spot
             JsonNode? result = null;
             try
             {
@@ -226,15 +264,25 @@ public sealed class JsonRpcConnection : IDisposable
             Action<JsonNode?>? handler;
             lock (notifications)
                 notifications.TryGetValue(method, out handler);
-            handler?.Invoke(message["params"]);
+
+            // One message that can't be made sense of is that message lost, not the server. A throw in here ended the
+            // reader, and serve-d was gone for the run over one diagnostic
+            try
+            {
+                handler?.Invoke(message["params"]);
+            }
+            catch (Exception)
+            {
+            }
+
             return;
         }
 
         // An answer to one of ours
-        if (id is not null && id.GetValueKind() == JsonValueKind.Number && pending.TryRemove(id.GetValue<int>(), out var waiting))
+        if (id is not null && id.GetValueKind() == JsonValueKind.Number && pending.TryRemove(JsonNumbers.Int(id, -1), out var waiting))
         {
             if (message["error"] is JsonObject error)
-                waiting.TrySetException(new RemoteException(error["code"]?.GetValue<int>() ?? 0, error["message"]?.GetValue<string>() ?? "no reason given"));
+                waiting.TrySetException(new RemoteException(JsonNumbers.Int(error["code"], 0), error["message"]?.GetValue<string>() ?? "no reason given"));
             else
                 waiting.TrySetResult(message["result"]);
         }

@@ -101,6 +101,12 @@ public sealed class UIWorkCards
         cards[going] = (card, -1);
     }
 
+    // What the status item said last, so it's only written again when that changes
+    private (WorkItem?, string?, int, int) itemSays;
+
+    // The work with cards this tick, gathered once so the cards can change as they're gone through
+    private readonly List<WorkItem> cardsNow = [];
+
     /// <summary>Every tick, what the work that ended left for the UI's thread, and the cards and the count brought up to date.</summary>
     public void Update()
     {
@@ -109,19 +115,27 @@ public sealed class UIWorkCards
         int going = Work.Active;
         if (going > 0 && item is not null)
         {
-            WorkItem? first = Work.Items.FirstOrDefault(work => work.IsActive && (Listed?.Invoke(work) ?? true));
-            string text = first is null ? $"$(sync) {going} going" : going == 1 ? $"$(sync) {first.Title}" : $"$(sync) {first.Title} and {going - 1} more";
-            if (first?.Progress is { } progress and < 1.0f)
-                text += $" {progress:P0}";
-            item.Text = text;
+            // Written again only when what it says changes, the work, how many, or its progress by the percent
+            WorkItem? first = Work.NewestActive(Listed);
+            int percent = first?.Progress is { } progress and < 1.0f ? (int)(progress * 100.0f) : -1;
+            if (itemSays != (first, first?.Title, going, percent))
+            {
+                itemSays = (first, first?.Title, going, percent);
+                string text = first is null ? $"$(sync) {going} going" : going == 1 ? $"$(sync) {first.Title}" : $"$(sync) {first.Title} and {going - 1} more";
+                item.Text = percent >= 0 ? $"{text} {percent}%" : text;
+            }
         }
 
         // every tick, so nothing is made when there's nothing to show
         if (cards.Count == 0)
             return;
 
-        foreach (var (work, (card, shown)) in cards.ToArray())
+        // The cards are changed as they're gone through, so the work is gathered first, into the same list every tick
+        cardsNow.Clear();
+        cardsNow.AddRange(cards.Keys);
+        foreach (WorkItem work in cardsNow)
         {
+            var (card, shown) = cards[work];
             // The version read before what it covers, a change made on the work's thread in between is seen next tick
             int version = work.Version;
             if (version == shown)

@@ -55,9 +55,19 @@ public class WindowPanel : Panel
     /// <summary>Called as it is dragged about, with where it is now.</summary>
     public Action<Vector2>? OnMoved { get; set; }
 
+    /// <summary>
+    /// Asked first when Escape comes to it, true when that dealt with it and the window stays (a file dialog naming a new
+    /// folder lets go of the name). Null, or false, and Escape closes it.
+    /// </summary>
+    public Func<bool>? BeforeEscape { get; set; }
+
+    // How far the shadow under one reaches, a window floats over what's behind it the way a popup does
+    private const float LIFT = 28.0f;
+
     public WindowPanel()
     {
         MinSize = new Vector2(120.0f, 80.0f);
+        Lift = LIFT;
     }
 
     public WindowPanel(string title)
@@ -67,6 +77,9 @@ public class WindowPanel : Panel
     }
 
     protected override bool HitTestVisible => true;
+
+    // Tab goes round what's in it, never out to what's behind
+    protected internal override bool HoldsTab => true;
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
@@ -90,36 +103,51 @@ public class WindowPanel : Panel
 
     private Vector2 Pointer => Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
 
+    // As round as a popup unless it says otherwise, a window over everything is a popup that stays
+    private float CornerOf(UISkin skin) => Radius > 0.0f ? Radius : skin.TryGetRegion(Background, out _) ? skin.CornerRadius : skin.PopupRadius;
+
+    protected override float GlassRadius(UISkin skin) => CornerOf(skin);
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
         Vector2 pointer = Pointer;
 
-        // The body is the panel's own (a colour, a background of the skin's art, its outline), a box of the skin's without
+        // The body is the panel's own (a colour, a background of the skin's art, its outline), on its glass when it has
+        // some, as round as a popup, a box of the skin's without. With no colour of its own it's the palette's raised
+        // tone, the one every popup is made of, a window is a popup that stays
         list.BeginPart(-1);
-        if (HasBackdrop)
+        float corner = CornerOf(skin);
+        if (skin.TryGetRegion(Background, out _))
             base.Paint(list);
         else
-            list.Box(Bounds, skin.PanelColor with { W = 1.0f });
+        {
+            Vector4 body = Color ?? skin.Palette.Raised;
+            list.RoundRect(Bounds, corner, Glass is { } glass ? glass.Over(body) : body);
+        }
 
-        // The title bar, a shade darker, with a line of the accent under it
+        // One surface with the title bar, Apple's way, a hairline under the title and round the whole of it in the colour
+        // of the skin's edges. It was a darker bar with a line of the accent under it and a frame of the accent round the
+        // window, which in Horizon was a gold cage round the settings
         list.BeginPart(-2);
         UIRect bar = TitleBounds;
-        Vector4 panel = Color ?? skin.PanelColor;
-        list.Rect(bar, new Vector4(panel.X * 0.75f, panel.Y * 0.75f, panel.Z * 0.75f, 1.0f));
-        list.Rect(new UIRect(bar.Min, new Vector2(bar.Max.X, bar.Min.Y + 1.0f)), skin.AccentColor with { W = 0.6f });
-        list.Frame(Bounds, 1.0f, skin.AccentColor with { W = 0.45f });
+        list.Rect(new UIRect(bar.Min, new Vector2(bar.Max.X, bar.Min.Y + 1.0f)), skin.BorderColor);
+        list.RoundOutline(Bounds, corner, 1.0f, skin.BorderColor);
 
-        float x = bar.Min.X + 8.0f;
+        float x = bar.Min.X + MathF.Max(10.0f, corner * 0.75f);
         if (Icon.Length > 0)
         {
             float side = MathF.Round(TitleHeight * 0.55f);
-            list.Symbol(Icon, new UIRect(new Vector2(x, bar.Center.Y - side * 0.5f), new Vector2(x + side, bar.Center.Y + side * 0.5f)), skin.AccentColor);
+            list.Symbol(Icon, new UIRect(new Vector2(x, bar.Center.Y - side * 0.5f), new Vector2(x + side, bar.Center.Y + side * 0.5f)), skin.DimTextColor);
             x += side + 6.0f;
         }
 
+        // The title in bold, it's the heading of what's in it, as a dialog's is
+        string title = Resolve(Title);
+        float scale = ScaleOf(skin);
+        float tall = list.Font.Measure(title, scale, false).Y;
         list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f), bar.Max.Y)));
-        list.Text(Resolve(Title), new UIRect(new Vector2(x, bar.Min.Y), bar.Max), Origin.Left, ScaleOf(skin), skin.TextColor, markup: false);
+        list.Text(title, new Vector2(x, bar.Center.Y + tall * 0.5f), scale, skin.TextColor, false, UITextStyle.Bold, default);
         list.PopClip();
 
         list.BeginPart(-3);
@@ -130,18 +158,26 @@ public class WindowPanel : Panel
             UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor);
         }
 
-        // The grip, three short lines across the corner, VS's
+        // The grip, three dots along the curve of the corner, and only while the pointer's on it or it's being dragged.
+        // Dots sat square in the corner always, out past the curve of a round one, a corner of a box stuck on a round window
         list.BeginPart(-4);
         if (ResizeGrip)
         {
             UIRect grip = GripBounds;
             bool over = (IsHovered && grip.Contains(pointer)) || drag == Drag.Resize;
-            Vector4 shade = over ? skin.AccentColor : skin.TextColor with { W = 0.35f };
-            for (int i = 1; i <= 3; i++)
+            if (over)
             {
-                float step = i * 4.0f;
-                list.Rect(new UIRect(new Vector2(grip.Max.X - step, grip.Min.Y + 2.0f), new Vector2(grip.Max.X - step + 2.0f, grip.Min.Y + 4.0f)), shade);
-                list.Rect(new UIRect(new Vector2(grip.Max.X - 4.0f, grip.Min.Y + step - 2.0f), new Vector2(grip.Max.X - 2.0f, grip.Min.Y + step)), shade);
+                // Round the centre of the corner's curve a little way in from it, from near the bottom edge to near the side
+                Vector4 shade = skin.TextColor with { W = drag == Drag.Resize ? 0.7f : 0.45f };
+                float bend = MathF.Max(corner, 8.0f);
+                Vector2 middle = new(Bounds.Max.X - bend, Bounds.Min.Y + bend);
+                float reach = bend - 4.0f;
+                for (int i = 0; i < 3; i++)
+                {
+                    float angle = MathF.PI * (-0.4f + 0.15f * i);
+                    Vector2 dot = middle + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * reach;
+                    list.RoundRect(new UIRect(dot - new Vector2(1.25f), dot + new Vector2(1.25f)), 1.25f, shade);
+                }
             }
         }
 
@@ -194,12 +230,65 @@ public class WindowPanel : Panel
     protected internal override void OnPointerUp(Vector2 point)
     {
         if (drag == Drag.Close && CloseBounds.Contains(point))
-        {
-            Visible = false;
-            OnClosed?.Invoke();
-        }
+            Close();
 
         drag = Drag.None;
+    }
+
+    /// <summary>Hides it and says so, what its x does.</summary>
+    public void Close()
+    {
+        Visible = false;
+        GiveKeyboardBack();
+        OnClosed?.Invoke();
+    }
+
+    // Whoever had the keyboard before the window took it, see TakeKeyboard
+    private UIComponent? keyboardBefore;
+
+    /// <summary>
+    /// Has the keyboard come to the window itself, for one with nothing in it that takes it (About, a page of help), so
+    /// the first Escape closes it and no key goes on to what's behind. It took two, the first only let go of the code
+    /// under it. Whoever had the keyboard gets it back as the window closes, while it's still somewhere in the window.
+    /// </summary>
+    public void TakeKeyboard()
+    {
+        if (Module is not { } module)
+            return;
+
+        keyboardBefore = module.Compositor.Focus;
+        Focus();
+    }
+
+    private void GiveKeyboardBack()
+    {
+        UIComponent? before = keyboardBefore;
+        keyboardBefore = null;
+        if (before is not { Module: not null } || Module is not { } module)
+            return;
+
+        for (UIComponent? at = module.Compositor.Focus; at is not null; at = at.Parent)
+        {
+            if (at == this)
+            {
+                before.Focus();
+                return;
+            }
+        }
+    }
+
+    // Escape with the keyboard in it (its filter box, say) closes one with an x, as the x would. The first press only let
+    // go of the box and it took a second
+    protected internal override bool OnEscape()
+    {
+        if (BeforeEscape?.Invoke() == true)
+            return true;
+
+        if (!Closable || !Visible)
+            return false;
+
+        Close();
+        return true;
     }
 
     /// <summary>Puts it after the others in its parent, which is in front of them.</summary>

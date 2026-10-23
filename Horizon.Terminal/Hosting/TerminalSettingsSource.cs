@@ -36,6 +36,9 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
             Set(key, comesAs);
     }
 
+    // How far apart the ends of a number can be for it to be a slider, and how many steps one goes in
+    private const float SLIDES_UP_TO = 3.0f, SLIDER_STEPS = 100.0f;
+
     // the terminal's settings as rows, in the groups the forms have, the lists ticked from what there is
     private static List<UISetting> Describe(TerminalHost host, string? themeGroup = null)
     {
@@ -59,9 +62,16 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
             };
             // The theme goes where the program says (Hex has Dusk's with Dawn's, under how Hex looks), the rest are the terminal's own
             bool theme = setting.Key == "theme";
+
+            // A number between two that aren't far apart is a slider, the way Dawn's caret glide is. Cursor glide was a box
+            // to type into under a slider that did the same for the caret
+            bool slides = kind == UIFormKind.Number && setting.Most > setting.Least && setting.Most - setting.Least <= SLIDES_UP_TO;
+            float step = slides ? (setting.Most - setting.Least) / SLIDER_STEPS : kind == UIFormKind.Number ? 0.01f : 1.0f;
+            string unit = setting.Key.EndsWith("_glide", StringComparison.Ordinal) || setting.Key.EndsWith("_time", StringComparison.Ordinal) ? "s"
+                : setting.Key == "scale" ? "×" : string.Empty;
             rows.Add(new UISetting(setting.Key, theme ? "Dusk's theme" : Title(setting.Key), kind, setting.Help,
                 theme ? themeGroup ?? "Terminal · Theme" : "Terminal · " + TerminalSettingsForm.Group(setting.Key), choices,
-                setting.Least, setting.Most, kind == UIFormKind.Number ? 0.01f : 1.0f));
+                setting.Least, setting.Most, step, Slider: slides, Unit: unit));
         }
 
         return rows;

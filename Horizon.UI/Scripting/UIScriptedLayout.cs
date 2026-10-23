@@ -169,9 +169,17 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
             }
         }
 
-        if (Tick is { } tick && !Owner.Invoke(tick, [this, number ??= new NumberValue(dt)], out _))
-            failed(Owner);
+        if (Tick is { } tick)
+        {
+            tickArguments[0] = this;
+            tickArguments[1] = number ??= new NumberValue(dt);
+            if (!Owner.Invoke(tick, tickArguments, out _))
+                failed(Owner);
+        }
     }
+
+    // What on_tick is handed, the view and the seconds since the last tick, the one array every tick
+    private readonly IRuntimeValue[] tickArguments = new IRuntimeValue[2];
 
     /// <summary>
     /// A key handed to it, true if it took it (its on_key handed back true), which is how a program lets Ctrl+Z undo a

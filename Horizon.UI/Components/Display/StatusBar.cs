@@ -51,9 +51,9 @@ public sealed class StatusItem
 /// </summary>
 public class StatusBar : UIComponent
 {
-    // How much of the accent the bar is tinted with when it isn't given a colour, and the least contrast an item's own
-    // colour is allowed on it, the web's for text beside the point
-    private const float ACCENT_SHARE = 0.16f;
+    // How much the words on it are seen through, a bar that says where things stand is said quietly, and the least
+    // contrast an item's own colour is allowed on it, the web's for text beside the point
+    private const float TEXT_SHARE = 0.78f;
     private const float LEAST_CONTRAST = 3.0f;
 
     private const float ITEM_PADDING = 8.0f;
@@ -62,10 +62,17 @@ public class StatusBar : UIComponent
     private readonly List<StatusItem> items = [];
     private StatusItem? pressed;
 
+    // What each item was last cut to, by what it said and the room it had, made again only when either changes. Cut
+    // every paint it made a string a letter tried, a kilobyte a tick in the designer with a long message
+    private readonly Dictionary<StatusItem, (string Text, float Room, string Fitted)> fitted = [];
+
     public IReadOnlyList<StatusItem> Items => items;
 
-    /// <summary>The colour of the strip, null for the skin's accent.</summary>
+    /// <summary>The colour of the strip, null for the skin's panel.</summary>
     public Vector4? Color { get; set; }
+
+    /// <summary>Whether a hairline runs along its top, between it and what it's under. Off for a bar that's part of a frame of one tone.</summary>
+    public bool Hairline { get; set; } = true;
 
     /// <summary>The colour of the words on it, null for the skin's text colour.</summary>
     public Vector4? TextColor { get; set; }
@@ -83,7 +90,11 @@ public class StatusBar : UIComponent
         return item;
     }
 
-    public void Clear() => items.Clear();
+    public void Clear()
+    {
+        items.Clear();
+        fitted.Clear();
+    }
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
@@ -110,6 +121,17 @@ public class StatusBar : UIComponent
             }
         }
 
+        // The left ones stop short of where the right ones start, a long message was written over them
+        float rightStart = Bounds.Max.X;
+        if (!item.Right)
+        {
+            foreach (StatusItem other in items)
+            {
+                if (other.Right && other.Shown)
+                    rightStart -= WidthOf(skin, other);
+            }
+        }
+
         foreach (StatusItem other in items)
         {
             if (other.Right != item.Right || !other.Shown)
@@ -117,13 +139,41 @@ public class StatusBar : UIComponent
 
             float width = WidthOf(skin, other);
             if (other == item)
-                return new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + width, Bounds.Max.Y));
+            {
+                if (!item.Right)
+                    width = MathF.Min(width, rightStart - LEFT_GAP - x);
+                return width <= ITEM_PADDING * 2.0f ? default : new UIRect(new Vector2(x, Bounds.Min.Y), new Vector2(x + width, Bounds.Max.Y));
+            }
 
             x += width;
         }
 
         return default;
     }
+
+    // The room kept between the last of the left items and the first of the right
+    private const float LEFT_GAP = 12.0f;
+
+    /// <summary>
+    /// Helper method for what an item says cut to its room with three dots, all of it when it fits. A pixel either way
+    /// is a fit, the room is worked out of the same measure and came out a hair short of it, every item on the right lost
+    /// its last letter. Three dots and not the one character of them, the UI's font has none and drew a question mark. A
+    /// text with an icon in it is left whole, cut it would be half a tag.
+    /// </summary>
+    private static string Fitted(UIFont font, string text, float room, float scale)
+    {
+        if (font.Measure(text, scale).X <= room + FIT_SLACK || text.Contains("$(", StringComparison.Ordinal))
+            return text;
+
+        int length = text.Length;
+        while (length > 0 && font.Measure(string.Concat(text.AsSpan(0, length), CUT), scale).X > room + FIT_SLACK)
+            length--;
+        return length == 0 ? string.Empty : string.Concat(text.AsSpan(0, length).TrimEnd(), CUT);
+    }
+
+    // What's put where an item was cut, and how far over its room a text may be and still be a fit
+    private const string CUT = "...";
+    private const float FIT_SLACK = 1.0f;
 
     private StatusItem? ItemAt(Vector2 point)
     {
@@ -150,17 +200,19 @@ public class StatusBar : UIComponent
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
         Vector2 pointer = Pointer;
-        // The panel tinted with the accent unless told, the accent itself was a blinding bar of gold in the Horizon theme
-        // with the skin's white text on it. The text is whichever of the skin's two reads best on what the bar is
-        Vector4 bar = Color ?? Vector4.Lerp(skin.PanelColor with { W = 1.0f }, skin.AccentColor with { W = 1.0f }, ACCENT_SHARE);
+        // The panel unless told, the chrome the rest of the window's edge is. It was the accent, a blinding bar of gold in
+        // the Horizon theme, and then the panel tinted with it, which came out olive. The text is whichever of the skin's
+        // two reads best on what the bar is, a little seen through
+        Vector4 bar = Color ?? skin.PanelColor with { W = 1.0f };
         Vector4 text = TextColor ?? (UIPalette.Contrast(skin.TextColor, bar) >= UIPalette.Contrast(skin.BarTextColor, bar) ? skin.TextColor : skin.BarTextColor);
+        if (TextColor is null)
+            text = text with { W = text.W * TEXT_SHARE };
 
         list.BeginPart(-1);
         list.Rect(Bounds, bar);
 
-        // A hairline in the accent along its top, which is what's left of the accent colour of the whole bar
-        if (Color is null)
-            list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.6f });
+        // A hairline along its top in the colour of the skin's edges, between it and what it's under
+        list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.BorderColor with { W = Hairline ? skin.BorderColor.W : 0.0f });
 
         for (int i = 0; i < items.Count; i++)
         {
@@ -170,17 +222,31 @@ public class StatusBar : UIComponent
             if (area.IsEmpty)
                 continue;
 
+            // What's behind an item (the red of errors) and its hover are pills inside the bar, not slabs the bar's height.
+            // A square block of red on a window of round cards was the one hard corner left on it
+            UIRect pill = Pill(area);
+            float round = pill.Height * 0.5f;
             if (item.Background is { } background)
-                list.Rect(area, background);
+                list.RoundRect(pill, round, background);
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
-            list.Rect(area, item.OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.RoundRect(pill, round, item.OnPressed is not null && IsHovered && area.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             // A colour of its own that can't be read on the bar (red on the accent) is the bar's text instead
             Vector4 said = item.Color is { } own && UIPalette.Contrast(own, item.Background ?? bar) >= LEAST_CONTRAST ? own : text;
-            list.Text(item.Text, area, Origin.Center, scale, said);
+            float room = area.Width - ITEM_PADDING * 2.0f;
+            if (!fitted.TryGetValue(item, out var was) || !ReferenceEquals(was.Text, item.Text) || was.Room != room)
+                fitted[item] = was = (item.Text, room, Fitted(skin.Font, item.Text, room, scale));
+            list.Text(was.Fitted, area, Origin.Center, scale, said);
         }
 
         list.EndParts();
+    }
+
+    // An item's area a little in from the bar's top and bottom and its own sides
+    private static UIRect Pill(UIRect area)
+    {
+        float down = MathF.Min(3.0f, MathF.Max(0.0f, (area.Height - 12.0f) * 0.5f));
+        return new UIRect(area.Min + new Vector2(1.0f, down), area.Max - new Vector2(1.0f, down));
     }
 
     protected internal override void OnPointerDown(Vector2 point) => pressed = ItemAt(point);

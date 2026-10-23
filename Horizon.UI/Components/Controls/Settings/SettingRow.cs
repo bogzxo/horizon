@@ -13,7 +13,7 @@ namespace Horizon.UI.Components;
 /// </summary>
 internal sealed class SettingRow : StackPanel
 {
-    private const float PAD = 10.0f, TYPED_AFTER = 0.6f;
+    private const float PAD = 10.0f, TYPED_AFTER = 0.6f, BUTTON_COLUMN = 440.0f;
 
     private readonly SettingsPage page;
     private readonly Button reset;
@@ -56,16 +56,25 @@ internal sealed class SettingRow : StackPanel
         if (setting.Buttons is { Length: > 0 } || setting.Slider || setting.ButtonsOnly)
             line = Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
 
-        show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, Math.Min(inner, 420.0f));
+        // What sets it as wide as the row has left once its buttons have their room, a box with three buttons after it
+        // ran off the end of the row and cut the last of them to its first two letters
+        float[] widths = [.. (setting.Buttons ?? []).Select(label => MathF.Max(90.0f, label.Length * 8.5f + 28.0f))];
+        float buttonsTake = widths.Sum() + 8.0f * widths.Length;
 
-        for (int i = 0; i < (setting.Buttons?.Length ?? 0); i++)
+        // Rows with a few buttons keep them in a column of one width, so the first of them sits at the same x down the
+        // page whether a row has two or three. Sized to the room it left they wandered by a few pixels row to row
+        if (widths.Length > 1)
+            buttonsTake = MathF.Max(buttonsTake, BUTTON_COLUMN);
+        show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, Math.Clamp(inner - buttonsTake, 160.0f, 420.0f));
+
+        for (int i = 0; i < widths.Length; i++)
         {
             int which = i;
             string label = setting.Buttons![i];
             line!.Add(new Button
             {
                 Label = label,
-                Size = new Vector2(MathF.Max(90.0f, label.Length * 8.5f + 28.0f), SettingsPage.RowControlHeight),
+                Size = new Vector2(widths[i], SettingsPage.RowControlHeight),
                 LabelScale = page.RowBodyScale,
                 Animated = false,
                 OnPressed = () => page.ButtonPressed(setting.Key, which)
@@ -133,22 +142,28 @@ internal sealed class SettingRow : StackPanel
         _ => Text(setting, width)
     };
 
+    // A switch and nothing written beside it, the switch says on or off itself the way a phone's does
     private Action<IRuntimeValue?> Toggle(UISetting setting)
     {
-        var toggle = Put(new ToggleButton { Size = new Vector2(120.0f, SettingsPage.RowControlHeight), LabelScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        var toggle = Put(new ToggleButton { Size = new Vector2(56.0f, SettingsPage.RowControlHeight), LabelScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
         toggle.OnPressed = () => page.Changed(setting.Key, Values.Bool(toggle.State));
-        return value =>
-        {
-            toggle.State = value is BooleanValue { Value: true };
-            toggle.Label = toggle.State ? "On" : "Off";
-        };
+        return value => toggle.State = value is BooleanValue { Value: true };
     }
 
     private Action<IRuntimeValue?> Choice(UISetting setting, float width)
     {
-        var dropdown = Put(new Dropdown(setting.Choices ?? []) { Size = new Vector2(MathF.Min(width, 280.0f), SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        // A choice says itself with a capital, "None" and "Horizon", whatever its value is written as. They were lowercase
+        // beside the rest of the page's words
+        var dropdown = Put(new Dropdown(setting.Choices ?? []) { Size = new Vector2(MathF.Min(width, 280.0f), SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, OptionText = Capitalised });
         dropdown.OnChanged = chosen => page.Changed(setting.Key, new StringValue(chosen));
         return value => dropdown.Value = value is StringValue text ? text.Value : string.Empty;
+    }
+
+    /// <summary>A choice as a person reads it, its first letter a capital and its underscores spaces, "solarized_dark" as "Solarized dark".</summary>
+    public static string Capitalised(string choice)
+    {
+        string spaced = choice.Replace('_', ' ');
+        return spaced.Length > 0 && char.IsLower(spaced[0]) ? char.ToUpperInvariant(spaced[0]) + spaced[1..] : spaced;
     }
 
     private Action<IRuntimeValue?> Number(UISetting setting, float width)
@@ -190,9 +205,21 @@ internal sealed class SettingRow : StackPanel
         };
     }
 
-    // How a slider's number is written, a share as a percentage, anything else as it is
-    private static string Said(UISetting setting, float number) =>
-        setting.Least >= 0.0f && setting.Most <= 1.0f ? $"{number * 100.0f:0}%" : setting.Step >= 1.0f ? $"{number:0}" : $"{number:0.##}";
+    // How a slider's number is written, a share (nothing to all of it) as a percentage, seconds as milliseconds under one,
+    // and anything else as it is with its unit after. Anything up to 1 was a share, and the caret's glide of a few
+    // hundredths of a second read 5%, then 0.036 with nothing to say what of
+    private static string Said(UISetting setting, float number)
+    {
+        if (setting.Unit == "s")
+            return number < 1.0f ? Invariant($"{number * 1000.0f:0} ms") : Invariant($"{number:0.#} s");
+        if (setting.Least == 0.0f && setting.Most == 1.0f && setting.Unit.Length == 0)
+            return Invariant($"{number * 100.0f:0}%");
+
+        string written = setting.Step >= 1.0f ? Invariant($"{number:0}") : Invariant($"{number:0.##}");
+        return setting.Unit.Length == 0 ? written : setting.Unit == "×" ? written + "×" : $"{written} {setting.Unit}";
+    }
+
+    private static string Invariant(FormattableString text) => FormattableString.Invariant(text);
 
     // A button a choice, lit when it is one of them, for a list of what there is (plugins, profiles)
     private Action<IRuntimeValue?> Flags(UISetting setting, float width)
@@ -232,7 +259,7 @@ internal sealed class SettingRow : StackPanel
 
     private Action<IRuntimeValue?> Text(UISetting setting, float width)
     {
-        var box = Put(new TextBox { Size = new Vector2(width, SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        var box = Put(new TextBox { Size = new Vector2(width, SettingsPage.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, Placeholder = setting.Placeholder });
         box.OnChanged = text =>
         {
             typed = text;

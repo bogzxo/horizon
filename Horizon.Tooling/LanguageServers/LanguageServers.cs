@@ -13,10 +13,18 @@ public static class LanguageServers
     /// <summary>A server an editor can run, as a configuration names it.</summary>
     /// <param name="Name">What it is called, a status bar says it.</param>
     /// <param name="Command">The program, on the PATH or a full path.</param>
-    /// <param name="Arguments">What the program is started with, --stdio for the ones that want asking.</param>
+    /// <param name="Arguments">
+    /// What the program is started with, --stdio for the ones that want asking. {solution} in one is the solution of the
+    /// folder it's started in (see <see cref="ArgumentsIn"/>).
+    /// </param>
     /// <param name="LanguageId">The language id of the protocol, csharp, python.</param>
     /// <param name="Extensions">The files it lints, ".cs" and the like.</param>
-    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions);
+    /// <param name="Settings">
+    /// What it's told to be, see <see cref="LanguageServer.Settings"/>, null for nothing. A text in it that says {root}
+    /// is the folder the server is started in, for a server that wants its import folders said (serve-d's
+    /// d.projectImportPaths, a lone file's folder it knew nothing of).
+    /// </param>
+    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions, System.Text.Json.Nodes.JsonObject? Settings = null);
 
     private static readonly Lock gate = new();
     private static readonly List<Registration> registrations = [];
@@ -45,13 +53,13 @@ public static class LanguageServers
     /// server, if it was running, stopped off the caller's thread: what's handed back is that stop, done once the
     /// process is gone (for whoever wants to write over its program).
     /// </summary>
-    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions)
+    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions, System.Text.Json.Nodes.JsonObject? settings = null)
     {
         Task stopping = Task.CompletedTask;
         lock (gate)
         {
             registrations.RemoveAll(other => other.Name == name);
-            registrations.Add(new Registration(name, command, arguments, languageId, extensions));
+            registrations.Add(new Registration(name, command, arguments, languageId, extensions, settings));
             // Every one of its folders, asked to shut down and given a couple of seconds for it, off the caller's thread,
             // which is the UI's
             var going = new List<LanguageServer>();
@@ -100,12 +108,75 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, entry.Arguments, entry.LanguageId, rootDirectory) : null;
+            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, ArgumentsIn(entry.Arguments, rootDirectory), entry.LanguageId, rootDirectory, SettingsIn(entry.Settings, rootDirectory)) : null;
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
         }
+    }
+
+    /// <summary>
+    /// A registration's arguments for a server started in a folder, {solution} the folder's own .sln or .slnx (the one
+    /// named after the folder, or the first), and an argument for a solution there isn't left out with the flag before
+    /// it. csharp-ls looks for solutions all the way down and loads the first it likes, Fighter2D's was the engine's in
+    /// its external folder, and nothing of the game's own code had a hover or a definition.
+    /// </summary>
+    internal static string[] ArgumentsIn(string[] arguments, string rootDirectory)
+    {
+        if (!arguments.Any(argument => argument.Contains("{solution}", StringComparison.Ordinal)))
+            return arguments;
+
+        string? solution = SolutionIn(rootDirectory);
+        var filled = new List<string>(arguments.Length);
+        foreach (string argument in arguments)
+        {
+            if (!argument.Contains("{solution}", StringComparison.Ordinal))
+            {
+                filled.Add(argument);
+                continue;
+            }
+
+            if (solution is not null)
+                filled.Add(argument.Replace("{solution}", solution, StringComparison.Ordinal));
+            else if (filled.Count > 0 && filled[^1].StartsWith('-'))
+                filled.RemoveAt(filled.Count - 1);
+        }
+
+        return [.. filled];
+    }
+
+    /// <summary>The solution of a folder, in it and not under it, the one named after the folder first, null for none.</summary>
+    internal static string? SolutionIn(string folder)
+    {
+        try
+        {
+            string[] found = [.. Directory.EnumerateFiles(folder, "*.sln").Concat(Directory.EnumerateFiles(folder, "*.slnx")).Order(StringComparer.OrdinalIgnoreCase)];
+            string name = Path.GetFileName(Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return found.FirstOrDefault(file => Path.GetFileNameWithoutExtension(file).Equals(name, StringComparison.OrdinalIgnoreCase)) ?? found.FirstOrDefault();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>A registration's settings for a server started in a folder, every {root} in them that folder.</summary>
+    internal static System.Text.Json.Nodes.JsonObject? SettingsIn(System.Text.Json.Nodes.JsonObject? settings, string rootDirectory)
+    {
+        if (settings is null || !settings.ToJsonString().Contains("{root}", StringComparison.Ordinal))
+            return settings;
+
+        string root = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        System.Text.Json.Nodes.JsonNode? Filled(System.Text.Json.Nodes.JsonNode? node) => node switch
+        {
+            System.Text.Json.Nodes.JsonObject inside => new System.Text.Json.Nodes.JsonObject(inside.Select(pair => KeyValuePair.Create(pair.Key, Filled(pair.Value)))),
+            System.Text.Json.Nodes.JsonArray list => new System.Text.Json.Nodes.JsonArray([.. list.Select(Filled)]),
+            System.Text.Json.Nodes.JsonValue value when value.TryGetValue(out string? text) => System.Text.Json.Nodes.JsonValue.Create(text.Contains("{root}", StringComparison.Ordinal) ? Path.GetFullPath(text.Replace("{root}", root, StringComparison.Ordinal)) : text),
+            _ => node?.DeepClone()
+        };
+
+        return (System.Text.Json.Nodes.JsonObject?)Filled(settings);
     }
 
     /// <summary>The servers that were started, running or not. The same array until one starts or stops, nothing to iterate it costs.</summary>
@@ -174,7 +245,7 @@ public static class LanguageServers
         return Task.WhenAll(going.Select(server => Task.Run(server.Dispose)));
     }
 
-    /// <summary>Shuts every running server down.</summary>
+    /// <summary>Shuts every running server down, all at once, each given a moment to go by itself before it's ended.</summary>
     public static void StopAll()
     {
         List<LanguageServer> stopping;
@@ -185,7 +256,6 @@ public static class LanguageServers
             started = [];
         }
 
-        foreach (LanguageServer server in stopping)
-            server.Dispose();
+        Task.WaitAll([.. stopping.Select(server => Task.Run(server.Dispose))]);
     }
 }

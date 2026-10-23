@@ -364,4 +364,18 @@ public class UITextDocumentTests
         doc.SelectWordsTo(from, to, new UITextPosition(0, 12));
         Assert.Equal("brown", doc.SelectedText);
     }
+
+    [Theory]
+    [InlineData(0, 1, 0, 4)]
+    [InlineData(0, 2, 1, 3)]
+    [InlineData(0, 0, 2, 5)]
+    [InlineData(1, 0, 1, 0)]
+    [InlineData(2, 5, 0, 1)]
+    public void TheSelectedLengthIsTheSelectedTextsLength(int fromLine, int fromColumn, int toLine, int toColumn)
+    {
+        var doc = new UITextDocument { Text = "one two\nthree\nfour five" };
+        doc.Select(new UITextPosition(fromLine, fromColumn), new UITextPosition(toLine, toColumn));
+
+        Assert.Equal(doc.SelectedText.Length, doc.SelectedLength);
+    }
 }

@@ -45,11 +45,26 @@ public class ScrollPanel : Panel
     /// </summary>
     public float BarGap { get; set; } = 6.0f;
 
+    /// <summary>
+    /// How far in from its top and bottom what's in it fades out while there's more of it past that edge, zero for a
+    /// hard edge. The fade grows in as it's scrolled off the end, so nothing jumps.
+    /// </summary>
+    public float Fade { get; set; } = 18.0f;
+
     /// <summary>How far down the content can go, which is what of it doesn't fit.</summary>
     public float MaxOffset => MathF.Max(0.0f, contentHeight - Bounds.Shrink(Padding).Height);
 
     /// <summary>Scrolls all the way down, for content that grows at its end (a log).</summary>
     public void ScrollToEnd() => offset = float.MaxValue;
+
+    /// <summary>
+    /// Whether a panel scrolled to its end stays there as what's in it grows, a log's. Scrolled up it stays where it was
+    /// put. The newest lines of the output went in under the bottom of it, the end was the one before they were laid out.
+    /// </summary>
+    public bool StickToEnd { get; set; }
+
+    // How far down it could go the last time it was laid out, what at the end means while it sticks there
+    private float laidMax;
 
     /// <summary>
     /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
@@ -117,8 +132,11 @@ public class ScrollPanel : Panel
                 contentHeight = MathF.Max(contentHeight, child.DesiredSize.Y);
         }
 
-        // The content can have shrunk under us, or the panel grown.
-        offset = Math.Clamp(offset, 0.0f, MathF.Max(0.0f, contentHeight - content.Height));
+        // The content can have shrunk under us, or the panel grown. At its end it stays there, when it sticks to it
+        float max = MathF.Max(0.0f, contentHeight - content.Height);
+        bool atEnd = StickToEnd && offset >= laidMax - 0.5f;
+        offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
+        laidMax = max;
 
         float width = MathF.Max(0.0f, content.Width - BAR_WIDTH - BarGap);
         foreach (var child in ChildSpan)
@@ -135,11 +153,16 @@ public class ScrollPanel : Panel
     {
         UIRect content = Bounds.Shrink(Padding);
 
+        // Soft at an edge there's more past, as much of the fade as there's room scrolled
+        float fade = MathF.Min(Fade, content.Height * 0.25f);
         list.PushClip(content);
+        list.PushFade(content, MathF.Min(fade, offset), MathF.Min(fade, MaxOffset - offset));
         base.PaintChildren(list);
+        list.PopFade();
         list.PopClip();
 
-        if (MaxOffset <= 0.0f)
+        // No bar on a panel folded too short for one, its thumb is never shorter than its least and stuck out of it
+        if (MaxOffset <= 0.0f || content.Height < MIN_THUMB * 1.5f)
             return;
 
         // The bar is as long compared to its track as the panel is compared to its content.
@@ -150,11 +173,19 @@ public class ScrollPanel : Panel
         // Pills, for a skin that has round corners at all
         float round = list.Skin.CornerRadius > 0.0f ? BAR_WIDTH * 0.5f : 0.0f;
 
-        list.RoundRect(track, round, list.Skin.HoverColor);
+        // No track to speak of and a thumb in the text's colour seen through, brighter with the pointer on the bar and
+        // while it's dragged. The thumb was the accent, a bar of gold down the side of every list that meant nothing, and
+        // the track is painted see-through rather than left out so the quads don't shift as it lights. It lit for the
+        // pointer anywhere on the panel that wasn't on a row of it, so a pointer going down a list had it blinking
+        Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
+        bool overBar = pointer.X >= track.Min.X - BAR_WIDTH && pointer.X <= Bounds.Max.X && pointer.Y >= content.Min.Y && pointer.Y <= content.Max.Y
+            && PointerWithin();
+        Vector4 text = list.Skin.TextColor;
+        list.RoundRect(track, round, text with { W = draggingBar || overBar ? 0.05f : 0.0f });
         list.RoundRect(
             new UIRect(new Vector2(track.Min.X, top - length), new Vector2(track.Max.X, top)),
             round,
-            draggingBar ? list.Skin.HighlightColor : list.Skin.AccentColor);
+            text with { W = draggingBar ? 0.5f : overBar ? 0.32f : 0.2f });
     }
 
     protected internal override bool OnScroll(float delta)
@@ -204,5 +235,6 @@ public class ScrollPanel : Panel
         Expose("offset", () => Offset, value => Offset = value);
         Expose("wheel_step", () => WheelStep, value => WheelStep = value);
         Expose("bar_gap", () => BarGap, value => BarGap = value);
+        Expose("fade", () => Fade, value => Fade = MathF.Max(0.0f, value));
     }
 }

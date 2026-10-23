@@ -42,6 +42,12 @@ public class Label : UIComponent
     public Origin Align { get; set; } = Origin.Center;
 
     /// <summary>
+    /// Whether a line of plain text is written in bold, a heading of a side bar or a section without markdown for it. Text
+    /// that wraps or is styled already goes its own way.
+    /// </summary>
+    public bool Bold { get; set; }
+
+    /// <summary>
     /// Whether text that is wider than the label is broken into more lines rather than running off the edge.
     /// The label grows downwards for them unless it has a height of its own. See the class for what it wraps to.
     /// </summary>
@@ -165,6 +171,8 @@ public class Label : UIComponent
         }
 
         wrapped = width > 0.0f;
+        if (!wrapped && Bold && !text.Contains('\n'))
+            return new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
         if (!wrapped)
             return skin.Font.Measure(text, scale);
 
@@ -247,6 +255,14 @@ public class Label : UIComponent
 
         if (wrapped)
             list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), Bounds, Align, ScaleOf(skin), color);
+        else if (Bold && !text.Contains('\n'))
+        {
+            // Placed the way a plain line is in its box, by its bold width
+            float scale = ScaleOf(skin);
+            var size = new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
+            Vector2 center = Bounds.PointAt(Align) - Align.ToVector() * size;
+            list.Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, true, UITextStyle.Bold, default);
+        }
         else
             list.Text(text, Bounds, Align, ScaleOf(skin), color);
     }
@@ -257,6 +273,7 @@ public class Label : UIComponent
 
         Expose("text", () => Text, value => Text = value);
         Expose("text_scale", () => TextScale, value => TextScale = value);
+        Expose("bold", () => Bold, value => Bold = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("wrap", () => Wrap, value => Wrap = value);
         Expose("markdown", () => Markdown, value => Markdown = value);

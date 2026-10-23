@@ -28,13 +28,20 @@ public sealed class SettingsWindow
     /// The parts of the window in the order they're shown, what a setting's group says before its dot, whichever source
     /// it came from. A part not named goes after them, in the order it came.
     /// </param>
-    public SettingsWindow(IEnumerable<ISettingsSource> sources, Action close, IReadOnlyList<string>? parts = null, float titleScale = 0.0f, float bodyScale = 0.0f)
+    /// <param name="sections">
+    /// Sections by their whole names in the order they're shown inside their part, the rest of a part's after them in the
+    /// order they came. A section that's only a panel (Hex's profiles) can come first this way, a panel's section went
+    /// after every section that had settings.
+    /// </param>
+    public SettingsWindow(IEnumerable<ISettingsSource> sources, Action close, IReadOnlyList<string>? parts = null, float titleScale = 0.0f, float bodyScale = 0.0f,
+        IReadOnlyList<string>? sections = null)
     {
         this.sources = [.. sources];
         this.parts = parts ?? [];
+        this.sections = sections ?? [];
         Page = new SettingsPage
         {
-            Title = "Settings",
+            Title = string.Empty,
             TitleScale = titleScale,
             BodyScale = bodyScale,
             Opaque = false,
@@ -47,7 +54,8 @@ public sealed class SettingsWindow
             OnButton = (key, which) => SourceOf(key)?.Press(key, which),
 
             // Escape closes it, the window has the x
-            OnClose = close
+            OnClose = close,
+            GroupOrder = OrderOf
         };
         Page.HideClose = true;
 
@@ -65,8 +73,24 @@ public sealed class SettingsWindow
     }
 
     // The parts of the window in the order they're shown, whichever source a setting came from (Dusk's theme is the
-    // terminal's and goes with Dawn's under how Hex looks)
-    private readonly IReadOnlyList<string> parts;
+    // terminal's and goes with Dawn's under how Hex looks), and the sections named inside them
+    private readonly IReadOnlyList<string> parts, sections;
+
+    // Where a section goes, by its part and then by where it's named, the ones not named after those of their part
+    private int OrderOf(string group)
+    {
+        int named = -1;
+        for (int i = 0; i < sections.Count; i++)
+        {
+            if (sections[i] == group)
+            {
+                named = i;
+                break;
+            }
+        }
+
+        return IndexOf(group.Split(" · ")[0]) * 1000 + (named >= 0 ? named : 999);
+    }
 
     private List<UISetting> Ordered(IEnumerable<UISetting> settings) =>
         [.. settings.Select((setting, at) => (setting, at))

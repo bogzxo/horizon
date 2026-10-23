@@ -238,12 +238,13 @@ namespace Horizon.UI
         /// </summary>
         internal void CollectFocusable(List<UIComponent> into) => CollectFocusable(Root, into);
 
-        private static void CollectFocusable(UIComponent component, List<UIComponent> into)
+        /// <summary>Helper method to list what Tab stops on in a component and everything in it, in the order it's laid out in.</summary>
+        internal static void CollectFocusable(UIComponent component, List<UIComponent> into)
         {
             if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled)
                 return;
 
-            if (component.Focusable)
+            if (component.TabStop)
                 into.Add(component);
 
             foreach (UIComponent child in component.Children)

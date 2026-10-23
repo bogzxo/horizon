@@ -1,0 +1,248 @@
+{
+  "name": "D",
+  "scopeName": "source.d",
+  "fileTypes": [ "d", "di" ],
+  "patterns": [
+    { "include": "#shebang" },
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#characters" },
+    { "include": "#numbers" },
+    { "include": "#special-tokens" },
+    { "include": "#declarations" },
+    { "include": "#attributes" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#calls" },
+    { "include": "#type-names" },
+    { "include": "#operators" },
+    { "include": "#braces" }
+  ],
+  "repository": {
+    "shebang": {
+      "name": "comment.line.shebang.d",
+      "match": "\\A#!.*$"
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.d",
+          "begin": "/\\*\\*(?!/)",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.d" } }
+        },
+        {
+          "name": "comment.block.d",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "captures": { "0": { "name": "punctuation.definition.comment.d" } }
+        },
+        { "include": "#nested-comment" },
+        {
+          "name": "comment.line.documentation.d",
+          "begin": "///",
+          "end": "$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.d" } }
+        },
+        {
+          "name": "comment.line.double-slash.d",
+          "begin": "//",
+          "end": "$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.comment.d" } }
+        }
+      ]
+    },
+    "nested-comment": {
+      "name": "comment.block.nested.d",
+      "begin": "/\\+",
+      "end": "\\+/",
+      "captures": { "0": { "name": "punctuation.definition.comment.d" } },
+      "patterns": [ { "include": "#nested-comment" } ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.raw.d",
+          "begin": "\\br\"",
+          "end": "\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } }
+        },
+        {
+          "name": "string.quoted.other.backtick.d",
+          "begin": "`",
+          "end": "`[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } }
+        },
+        {
+          "name": "string.quoted.double.hex.d",
+          "begin": "\\bx\"",
+          "end": "\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } },
+          "patterns": [ { "name": "constant.character.escape.hex.d", "match": "[0-9A-Fa-f]{2}" } ]
+        },
+        {
+          "name": "string.quoted.other.delimited.d",
+          "begin": "\\bq\"\\(",
+          "end": "\\)\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } },
+          "patterns": [ { "include": "#nested-parens" } ]
+        },
+        {
+          "name": "string.quoted.other.delimited.d",
+          "begin": "\\bq\"\\[",
+          "end": "\\]\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } },
+          "patterns": [ { "include": "#nested-brackets" } ]
+        },
+        {
+          "name": "string.quoted.other.delimited.d",
+          "begin": "\\bq\"\\{",
+          "end": "\\}\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } },
+          "patterns": [ { "include": "#nested-curlies" } ]
+        },
+        {
+          "name": "string.quoted.other.delimited.d",
+          "begin": "\\bq\"<",
+          "end": ">\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } }
+        },
+        {
+          "name": "string.unquoted.heredoc.d",
+          "begin": "\\bq\"([A-Za-z_]\\w*)$",
+          "end": "^\\1\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } }
+        },
+        {
+          "begin": "\\bq\\{",
+          "end": "\\}",
+          "captures": { "0": { "name": "string.quoted.other.token.d" } },
+          "patterns": [ { "include": "#token-braces" }, { "include": "$self" } ]
+        },
+        {
+          "name": "string.quoted.double.d",
+          "begin": "\"",
+          "end": "\"[cwd]?",
+          "captures": { "0": { "name": "punctuation.definition.string.d" } },
+          "patterns": [ { "include": "#escapes" } ]
+        }
+      ]
+    },
+    "token-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [ { "include": "#token-braces" }, { "include": "$self" } ]
+    },
+    "nested-parens": { "begin": "\\(", "end": "\\)", "patterns": [ { "include": "#nested-parens" } ] },
+    "nested-brackets": { "begin": "\\[", "end": "\\]", "patterns": [ { "include": "#nested-brackets" } ] },
+    "nested-curlies": { "begin": "\\{", "end": "\\}", "patterns": [ { "include": "#nested-curlies" } ] },
+    "escapes": {
+      "patterns": [
+        { "name": "constant.character.escape.d", "match": "\\\\(?:[\\\\'\"?0abfnrtv]|x[0-9A-Fa-f]{2}|[0-7]{1,3}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|&\\w+;)" },
+        { "name": "invalid.illegal.escape.d", "match": "\\\\." }
+      ]
+    },
+    "characters": {
+      "name": "string.quoted.single.d",
+      "match": "'(?:\\\\(?:[\\\\'\"?0abfnrtv]|x[0-9A-Fa-f]{2}|[0-7]{1,3}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|&\\w+;)|[^'\\\\])'",
+      "captures": { "0": { "name": "constant.character.d" } }
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.d", "match": "\\b0[xX][0-9A-Fa-f_]+(?:\\.[0-9A-Fa-f_]*)?(?:[pP][+-]?[0-9_]+)?(?:[LuU]{1,2}|[fFL]?i?)?\\b" },
+        { "name": "constant.numeric.binary.d", "match": "\\b0[bB][01_]+(?:[LuU]{1,2})?\\b" },
+        { "name": "constant.numeric.float.d", "match": "(?<![\\w.])(?:[0-9][0-9_]*\\.(?!\\.)[0-9_]*|\\.[0-9][0-9_]*)(?:[eE][+-]?[0-9_]+)?[fFL]?i?" },
+        { "name": "constant.numeric.float.d", "match": "\\b[0-9][0-9_]*(?:[eE][+-]?[0-9_]+[fFL]?i?|[fF]i?|Li|i)\\b" },
+        { "name": "constant.numeric.integer.d", "match": "\\b[0-9][0-9_]*(?:[LuU]{1,2})?\\b" }
+      ]
+    },
+    "special-tokens": {
+      "patterns": [
+        { "name": "keyword.control.directive.d", "match": "^\\s*#\\s*line\\b.*$" },
+        { "name": "keyword.control.directive.d", "match": "\\b(?:pragma|version|debug)\\b" },
+        { "name": "keyword.control.directive.d", "match": "\\bstatic\\s+(?:if|else|assert|foreach|foreach_reverse)\\b" },
+        { "name": "support.function.builtin.d", "match": "\\b(?:__traits|__vector|__parameters|__ctfe|__rvalue)\\b" },
+        { "name": "constant.language.special.d", "match": "\\b__(?:FILE|FILE_FULL_PATH|LINE|MODULE|FUNCTION|PRETTY_FUNCTION|DATE|TIME|TIMESTAMP|VENDOR|VERSION|EOF)__\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(module|import)\\s+((?:[A-Za-z_]\\w*\\s*=\\s*)?[A-Za-z_][\\w.]*)",
+          "captures": {
+            "1": { "name": "keyword.other.import.d" },
+            "2": { "name": "entity.name.namespace.d" }
+          }
+        },
+        {
+          "match": "\\b(class|struct|union|interface|enum|template)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.d" },
+            "2": { "name": "entity.name.type.d" }
+          }
+        },
+        {
+          "match": "\\b(mixin)\\s+(template)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "storage.type.d" },
+            "2": { "name": "storage.type.d" },
+            "3": { "name": "entity.name.type.d" }
+          }
+        },
+        {
+          "match": "\\b(alias)\\s+([A-Za-z_]\\w*)\\s*(?==)",
+          "captures": {
+            "1": { "name": "storage.type.d" },
+            "2": { "name": "entity.name.type.d" }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        { "name": "entity.other.attribute-name.d", "match": "@(?:safe|trusted|system|nogc|property|disable|live|mustuse|nonnull|future|standalone|optional|selector|weak)\\b" },
+        { "name": "entity.other.attribute-name.d", "match": "@[A-Za-z_]\\w*" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.d", "match": "\\b(?:if|else|while|do|for|foreach|foreach_reverse|switch|case|default|break|continue|return|goto|with|try|catch|finally|throw|assert|in|out|body)\\b" },
+        { "name": "keyword.control.scope.d", "match": "\\bscope\\s*(?=\\(\\s*(?:exit|success|failure)\\s*\\))" },
+        { "name": "keyword.operator.wordlike.d", "match": "\\b(?:is|new|delete|typeof|typeid|cast|mixin|asm|invariant|unittest)\\b" },
+        { "name": "storage.type.d", "match": "\\b(?:class|struct|union|interface|enum|template|alias|function|delegate|module|import)\\b" },
+        { "name": "storage.modifier.d", "match": "\\b(?:auto|const|immutable|shared|inout|static|final|abstract|override|synchronized|extern|export|private|protected|public|package|ref|out|lazy|scope|__gshared|nothrow|pure|deprecated|align|return)\\b" }
+      ]
+    },
+    "types": {
+      "name": "support.type.builtin.d",
+      "match": "\\b(?:void|bool|byte|ubyte|short|ushort|int|uint|long|ulong|cent|ucent|char|wchar|dchar|float|double|real|ifloat|idouble|ireal|cfloat|cdouble|creal|size_t|ptrdiff_t|sizediff_t|hash_t|string|wstring|dstring|noreturn|Object|Throwable|Exception|Error)\\b"
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.d", "match": "\\b(?:true|false|null)\\b" },
+        { "name": "variable.language.d", "match": "\\b(?:this|super|outer)\\b" }
+      ]
+    },
+    "calls": {
+      "match": "\\b([A-Za-z_]\\w*)\\s*(?=(?:!\\s*(?:\\([^()]*\\)|[\\w.]+))?\\s*\\()",
+      "captures": { "1": { "name": "entity.name.function.d" } }
+    },
+    "type-names": {
+      "name": "entity.name.type.d",
+      "match": "\\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\\b"
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.lambda.d", "match": "=>" },
+        { "name": "keyword.operator.d", "match": "\\.\\.\\.|\\.\\.|\\^\\^=?|>>>=?|<<=|>>=|[-+*/%&|^~!=<>]=?|&&|\\|\\||\\+\\+|--|\\?|:|\\$" }
+      ]
+    },
+    "braces": {
+      "patterns": [
+        { "name": "punctuation.terminator.statement.d", "match": ";" },
+        { "name": "punctuation.separator.comma.d", "match": "," }
+      ]
+    }
+  }
+}

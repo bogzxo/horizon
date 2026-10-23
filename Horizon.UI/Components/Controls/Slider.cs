@@ -71,11 +71,20 @@ public class Slider : ProgressBar
         return true;
     }
 
+    // A slider of a skin with no art, a thin groove and a round knob, how big each is
+    private const float GROOVE = 4.0f, KNOB = 18.0f;
+
     protected override void Paint(UIDrawList list)
     {
+        UISkin skin = list.Skin;
+        if (!HasArt(skin) && !skin.TryGetRegion(HandleStyle, out _))
+        {
+            PaintFlat(list);
+            return;
+        }
+
         base.Paint(list);
 
-        UISkin skin = list.Skin;
         bool enabled = EnabledInHierarchy;
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
 
@@ -100,6 +109,44 @@ public class Slider : ProgressBar
         PaintSelection(list);
     }
 
+    /// <summary>
+    /// A slider with no art, the way a Mac or a phone has one. A thin rounded groove, the accent along it as far as the
+    /// value, and a round knob in the light with a soft shadow under it that gets a ring of the accent under the pointer.
+    /// It was a box as tall as the row filled with gold and a slab for a handle.
+    /// </summary>
+    private void PaintFlat(UIDrawList list)
+    {
+        UISkin skin = list.Skin;
+        bool enabled = EnabledInHierarchy;
+        Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
+
+        float knob = MathF.Min(KNOB, Bounds.Height);
+        float left = Bounds.Min.X + knob * 0.5f, right = Bounds.Max.X - knob * 0.5f;
+        float y = Bounds.Center.Y, x = left + (right - left) * Progress;
+        var groove = new UIRect(new Vector2(left, y - GROOVE * 0.5f), new Vector2(right, y + GROOVE * 0.5f));
+
+        list.RoundRect(groove, GROOVE * 0.5f, skin.TextColor with { W = 0.16f } * tint);
+        list.RoundRect(new UIRect(groove.Min, new Vector2(MathF.Max(groove.Min.X + GROOVE, x), groove.Max.Y)), GROOVE * 0.5f, skin.AccentColor * tint);
+
+        UIRect handle = UIRect.FromCenter(new Vector2(x, y), new Vector2(knob));
+        bool lit = enabled && (IsHovered || IsPressed || IsSelected);
+        list.Shadow(handle, knob * 0.5f, 5.0f, new Vector4(0.0f, 0.0f, 0.0f, 0.35f), new Vector2(0.0f, -1.0f));
+        list.RoundOutline(UIRect.FromCenter(handle.Center, new Vector2(knob + 8.0f)), knob * 0.5f + 4.0f, 4.0f, skin.HighlightColor with { W = lit ? 0.3f : 0.0f });
+        list.RoundRect(handle, knob * 0.5f, new Vector4(0.96f, 0.97f, 0.98f, 1.0f) * tint);
+
+        PaintSelection(list);
+    }
+
+    // Where along it the value goes from its least to its most, the middle of the knob's travel for a slider with no art
+    private UIRect Travel(UISkin skin)
+    {
+        if (HasArt(skin) || skin.TryGetRegion(HandleStyle, out _))
+            return GetTrack(skin);
+
+        float knob = MathF.Min(KNOB, Bounds.Height);
+        return new UIRect(new Vector2(Bounds.Min.X + knob * 0.5f, Bounds.Min.Y), new Vector2(Bounds.Max.X - knob * 0.5f, Bounds.Max.Y));
+    }
+
     protected internal override void OnPointerDown(Vector2 point) => MoveTo(point);
 
     protected internal override void OnPointerDrag(Vector2 point) => MoveTo(point);
@@ -109,7 +156,7 @@ public class Slider : ProgressBar
         if (Module?.Compositor.Skin is not { } skin)
             return;
 
-        UIRect track = GetTrack(skin);
+        UIRect track = Travel(skin);
         if (track.Width <= 0.0f)
             return;
 

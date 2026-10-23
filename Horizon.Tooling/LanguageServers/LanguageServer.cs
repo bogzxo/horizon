@@ -31,7 +31,7 @@ public enum LanguageServerFileChange
 /// until it has, so a file can be opened the moment the server is started. Completions, hovers and signatures go
 /// through the same connection when they come, onto the editor's CompletionSource, HoverSource and SignatureSource.
 /// </summary>
-public sealed class LanguageServer : IDisposable
+public sealed partial class LanguageServer : IDisposable
 {
     /// <summary>What it is called in a configuration, csharp-ls, pyright, what a status bar says.</summary>
     public string Name { get; }
@@ -47,6 +47,13 @@ public sealed class LanguageServer : IDisposable
 
     /// <summary>Whether its process is up and the connection open.</summary>
     public bool IsRunning => rpc is { IsClosed: false } && process is { HasExited: false };
+
+    /// <summary>
+    /// What it's told to be, its settings by their sections the way an editor's settings have them
+    /// (<c>{ d: { lintOnFileOpen: "always" } }</c> for serve-d), said once it's up and answered whenever it asks for a
+    /// section. Null for a server left to its own, which isn't told the editor has any.
+    /// </summary>
+    public JsonObject? Settings { get; }
 
     /// <summary>Whether initialize has been answered, after which what was asked goes straight out.</summary>
     public bool IsReady { get; private set; }
@@ -64,14 +71,16 @@ public sealed class LanguageServer : IDisposable
     // What has been asked of the server and not answered, answered with nothing when it stops
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
-    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc)
+    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null)
     {
         Name = name;
         LanguageId = languageId;
         RootDirectory = rootDirectory;
+        Settings = settings;
         this.process = process;
         this.rpc = rpc;
         rpc.OnNotification("textDocument/publishDiagnostics", Published);
+        ListenForTalk();
         rpc.Closed = why => Fail(why?.Message ?? "the server closed the connection");
         Initialize();
     }
@@ -80,7 +89,8 @@ public sealed class LanguageServer : IDisposable
     /// Starts a server's process in a folder and begins initializing it. Null when the process can't be started
     /// (the command isn't there), see <see cref="LanguageServers.IsAvailable"/> for asking first.
     /// </summary>
-    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory)
+    /// <param name="settings">What it's told to be (see <see cref="Settings"/>), null for whatever it is by itself.</param>
+    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null)
     {
         var info = new ProcessStartInfo(command)
         {
@@ -98,6 +108,10 @@ public sealed class LanguageServer : IDisposable
         try
         {
             process = Process.Start(info);
+
+            // Gone with this program however it goes, serve-d and its dcd-server outlived every Hex that was killed
+            if (process is not null)
+                Horizon.Core.Platform.ChildProcesses.Adopt(process);
         }
         catch (Exception)
         {
@@ -111,12 +125,12 @@ public sealed class LanguageServer : IDisposable
         process.ErrorDataReceived += static (_, _) => { };
         process.BeginErrorReadLine();
 
-        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream));
+        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
-    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output) =>
-        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output));
+    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null) =>
+        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings);
 
     private async void Initialize()
     {
@@ -124,7 +138,7 @@ public sealed class LanguageServer : IDisposable
         {
             ["textDocument"] = new JsonObject
             {
-                ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = false },
+                ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = true },
                 ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = false, ["versionSupport"] = false },
 
                 // What is inserted is plain text, the editor has no placeholders to tab between
@@ -139,14 +153,48 @@ public sealed class LanguageServer : IDisposable
                         ["labelDetailsSupport"] = false,
                         ["documentationFormat"] = new JsonArray("markdown", "plaintext")
                     }
+                },
+
+                // Asking about the code, and asking for it changed (LanguageServer.Navigation and Edits)
+                ["hover"] = new JsonObject { ["dynamicRegistration"] = false, ["contentFormat"] = new JsonArray("markdown", "plaintext") },
+                ["signatureHelp"] = new JsonObject
+                {
+                    ["dynamicRegistration"] = false,
+                    ["signatureInformation"] = new JsonObject
+                    {
+                        ["documentationFormat"] = new JsonArray("markdown", "plaintext"),
+                        ["parameterInformation"] = new JsonObject { ["labelOffsetSupport"] = true },
+                        ["activeParameterSupport"] = true
+                    }
+                },
+                ["definition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
+                ["references"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["documentSymbol"] = new JsonObject { ["dynamicRegistration"] = false, ["hierarchicalDocumentSymbolSupport"] = true },
+                ["rename"] = new JsonObject { ["dynamicRegistration"] = false, ["prepareSupport"] = false },
+                ["formatting"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["codeAction"] = new JsonObject
+                {
+                    ["dynamicRegistration"] = false,
+                    ["isPreferredSupport"] = true,
+                    ["disabledSupport"] = true,
+                    ["codeActionLiteralSupport"] = new JsonObject
+                    {
+                        ["codeActionKind"] = new JsonObject { ["valueSet"] = new JsonArray("", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports") }
+                    }
                 }
             },
+            // csharp-ls says where a name of the framework is declared (a csharp:/ place, its source decompiled) only to a
+            // client that says it can open one (LanguageServer.Navigation's Source)
+            ["experimental"] = new JsonObject { ["csharp"] = new JsonObject { ["metadataUris"] = true } },
+
             // The files of the workspace that change on the disk are said (FilesChanged), a project added, a branch checked
             // out. A server asks for the ones it wants watched, and is told of every one, it takes what it wants of them
             ["workspace"] = new JsonObject
             {
                 ["workspaceFolders"] = false,
-                ["configuration"] = false,
+                ["configuration"] = Settings is not null,
+                ["applyEdit"] = true,
+                ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true }
             }
         };
@@ -164,8 +212,13 @@ public sealed class LanguageServer : IDisposable
 
         try
         {
-            await rpc.Request("initialize", parameters).ConfigureAwait(false);
+            JsonNode? started = await rpc.Request("initialize", parameters).ConfigureAwait(false);
+            serverCapabilities = started?["capabilities"] as JsonObject;
             rpc.Notify("initialized", new JsonObject());
+
+            // What it's told to be, for a server that has settings, said once it's up and asked for again as it wants
+            if (Settings is not null)
+                rpc.Notify("workspace/didChangeConfiguration", new JsonObject { ["settings"] = Settings.DeepClone() });
         }
         catch (Exception e)
         {
@@ -371,23 +424,90 @@ public sealed class LanguageServer : IDisposable
         if (item["label"]?.GetValue<string>() is not { Length: > 0 } label)
             return null;
 
+        // A snippet a server sends whether it was asked for snippets or not, which it sorts with a space after its name.
+        // Roslyn's for and forr after shelf. came out as properties, and picked they were text that broke the line
+        if (item["sortText"]?.GetValue<string>() is { Length: > 0 } sort && sort.EndsWith(' '))
+            return null;
+
         // An edit the server worked out wins, as long as it replaces from where the editor will, otherwise what it says
         // to insert, otherwise the label
         string? insert = item["insertText"]?.GetValue<string>();
         if (item["textEdit"] is JsonObject edit && edit["newText"]?.GetValue<string>() is { } newText
             && (edit["range"] ?? edit["insert"]) is JsonObject range && range["start"] is JsonObject from
-            && from["line"]?.GetValue<int>() == line && from["character"]?.GetValue<int>() == start)
+            && JsonNumbers.Int(from["line"], int.MinValue) == line && JsonNumbers.Int(from["character"], int.MinValue) == start)
             insert = newText;
 
         // A snippet anyway (some servers send them asked or not), its placeholders become what they stand for
-        if (insert is not null && item["insertTextFormat"]?.GetValue<int>() == 2)
+        if (insert is not null && JsonNumbers.Int(item["insertTextFormat"], int.MinValue) == 2)
             insert = PlainSnippet(insert);
 
-        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? said : KindOf(item["kind"]?.GetValue<int>() ?? 0);
+        // A detail of one line, serve-d says every overload of a name on a line of its own and they were drawn over each other
+        string detail = item["detail"]?.GetValue<string>() is { Length: > 0 } said ? DetailWithout(said.Split('\n')[0].Trim(), label) : KindOf(JsonNumbers.Int(item["kind"], 0));
         if (detail.Length > 60)
             detail = string.Concat(detail.AsSpan(0, 59), "\u2026");
 
-        return new UICompletion(label, detail, insert == label ? null : insert);
+        // serve-d's label says how many overloads in markdown's italics, "(*2 overloads*)", which read with the stars
+        string shown = label.Replace("(*", "(", StringComparison.Ordinal).Replace("*)", ")", StringComparison.Ordinal);
+        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])));
+    }
+
+    // How much of what an item does goes beside the list
+    private const int MOST_DOCS = 600;
+
+    /// <summary>
+    /// What a server's markdown documentation of something says as plain text for a box beside a list, its prose up to
+    /// the first example, the marks of the markdown taken out (the code, the bold, a link's target) and the blank lines
+    /// between paragraphs kept as one.
+    /// </summary>
+    public static string PlainDocs(string markdown)
+    {
+        if (markdown.Length == 0)
+            return string.Empty;
+
+        // Up to the first example, its heading with it, or the first block of code
+        int cut = markdown.Length;
+        foreach (string example in (string[])["```", "**Example"])
+        {
+            if (markdown.IndexOf(example, StringComparison.Ordinal) is var at and >= 0)
+                cut = Math.Min(cut, at);
+        }
+
+        string prose = markdown[..cut];
+        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\[([^\]]*)\]\([^)]*\)", "$1");
+        prose = prose.Replace("**", string.Empty, StringComparison.Ordinal).Replace("`", string.Empty, StringComparison.Ordinal);
+
+        // A dash the fonts have, serve-d's long one came out as a question mark
+        prose = prose.Replace('—', '-').Replace('–', '-');
+
+        var paragraphs = System.Text.RegularExpressions.Regex.Split(prose.ReplaceLineEndings("\n"), @"\n\s*\n")
+            .Select(paragraph => System.Text.RegularExpressions.Regex.Replace(paragraph, @"\s+", " ").Trim())
+            .Where(paragraph => paragraph.Length > 0);
+        string plain = string.Join("\n", paragraphs);
+        return plain.Length > MOST_DOCS ? string.Concat(plain.AsSpan(0, MOST_DOCS - 3), "...") : plain;
+    }
+
+    /// <summary>
+    /// What a server says about an item without the item's own name in it, its name being right beside it in the list.
+    /// serve-d says "int x" of x, and the list said x twice. All of it when that's all there is.
+    /// </summary>
+    public static string DetailWithout(string detail, string label)
+    {
+        string name = label.Split('(', ' ')[0];
+        if (name.Length == 0)
+            return detail;
+
+        static bool Word(char character) => char.IsLetterOrDigit(character) || character == '_';
+        for (int at = detail.IndexOf(name, StringComparison.Ordinal); at >= 0; at = detail.IndexOf(name, at + 1, StringComparison.Ordinal))
+        {
+            int after = at + name.Length;
+            if ((at > 0 && Word(detail[at - 1])) || (after < detail.Length && Word(detail[after])))
+                continue;
+
+            string left = string.Join(' ', (detail[..at] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            return left.Length > 0 ? left : detail;
+        }
+
+        return detail;
     }
 
     /// <summary>A snippet's text without its placeholders, ${1:name} as name, $1 and $0 as nothing, \$ as $.</summary>
@@ -483,15 +603,8 @@ public sealed class LanguageServer : IDisposable
         if (parameters is not JsonObject published || published["uri"]?.GetValue<string>() is not { } uri)
             return;
 
-        string path;
-        try
-        {
-            path = new Uri(uri).LocalPath;
-        }
-        catch (UriFormatException)
-        {
+        if (PathOf(uri) is not { } path)
             return;
-        }
 
         var found = new List<UICodeDiagnostic>();
         if (published["diagnostics"] is JsonArray diagnostics)
@@ -502,20 +615,23 @@ public sealed class LanguageServer : IDisposable
                     || range["start"] is not JsonObject start || range["end"] is not JsonObject end)
                     continue;
 
-                int line = start["line"]?.GetValue<int>() ?? 0, column = start["character"]?.GetValue<int>() ?? 0;
-                int endLine = end["line"]?.GetValue<int>() ?? line, endColumn = end["character"]?.GetValue<int>() ?? column;
+                int line = JsonNumbers.Int(start["line"], 0), column = JsonNumbers.Int(start["character"], 0);
+                int endLine = JsonNumbers.Int(end["line"], line), endColumn = JsonNumbers.Int(end["character"], column);
                 int length = endLine == line ? Math.Max(1, endColumn - column) : Math.Max(1, 200 - column);
 
-                // 1 is an error, 2 a warning, 3 information and 4 a hint, which are shown as warnings, nothing is red that isn't wrong
-                int severity = diagnostic["severity"]?.GetValue<int>() ?? 1;
+                // 1 is an error, 2 a warning, 3 information and 4 a hint, the last two drawn quieter than a warning, nothing
+                // is red that isn't wrong. A code goes after what it says when there is one, an empty one said "()"
+                int severity = JsonNumbers.Int(diagnostic["severity"], 1);
                 string message = diagnostic["message"]?.GetValue<string>() ?? string.Empty;
-                if (diagnostic["code"] is { } code && code.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number)
-                    message = $"{message} ({code})";
+                if (diagnostic["code"] is { } code && code.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number
+                    && code.ToString() is { Length: > 0 } said)
+                    message = $"{message} ({said})";
 
-                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1));
+                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3));
             }
         }
 
+        KeepDiagnostics(path, published["diagnostics"] as JsonArray);
         arrived.Enqueue((path, found));
         Woken?.Invoke();
     }

@@ -44,7 +44,6 @@ public class TabStrip : UIComponent
 {
     private const float TAB_PADDING = 10.0f;
     private const float GAP = 6.0f;
-    private const float ACCENT_LINE = 2.0f;
     private const float WHEEL_STEP = 60.0f;
 
     private float scroll;
@@ -212,15 +211,10 @@ public class TabStrip : UIComponent
             bool open = i == Selected;
             bool over = IsHovered && area.Contains(pointer);
 
-            if (open)
-            {
-                list.Rect(area, skin.PanelColor with { W = 1.0f });
-                list.Rect(new UIRect(new Vector2(area.Min.X, area.Max.Y - ACCENT_LINE), area.Max), skin.AccentColor);
-            }
-            else if (over)
-            {
-                list.Rect(area, skin.HoverColor);
-            }
+            // A pill under the open one, the one pick there is in lists and menus, and a fainter one under the pointer. It
+            // was a square of the panel with a stripe of the accent along its top, sharp corners in a window of round ones.
+            // Always painted, see-through when not lit, so the quads after it don't shift
+            list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             Vector4 text = open ? skin.TextColor : dim;
             float x = area.Min.X + TAB_PADDING;

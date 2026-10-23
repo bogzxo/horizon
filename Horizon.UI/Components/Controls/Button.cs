@@ -17,7 +17,7 @@ public class Button : UIComponent
 {
     // What the name of a style ends in when it has no body of its own, and how much of the skin's colour the chosen one of those is filled with
     private const string FLAT_SUFFIX = "_flat";
-    private const float CHOSEN_FILL = 0.28f;
+    private const float CHOSEN_FILL = 0.13f;
 
     private string style = "button";
     private string pressedStyle = "button_pressed";
@@ -32,6 +32,12 @@ public class Button : UIComponent
     /// label, or the whole of the button with no label. Empty for none.
     /// </summary>
     public string Icon { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Where on the button its icon and label sit, in the middle unless told. A grid of them (a toolbox) reads better
+    /// from the left, their icons in a column, than each one centred on its own.
+    /// </summary>
+    public Origin Align { get; set; } = Origin.Center;
 
     // The icon and the label written as one text, made again only when either changes
     private string shownIcon = string.Empty, shownLabel = string.Empty, shown = string.Empty;
@@ -180,10 +186,12 @@ public class Button : UIComponent
         if (enabled && Chosen && skin.TryGetRegion(SELECTION_REGION, out var marker))
             list.NineSlice(marker, Bounds.Shrink(new UIEdges(-marker.Scale)), Vector4.One);
 
+        // The edge of the chosen one marked in the text's colour, the pill under it says it's chosen and the accent is for
+        // what's on
         if (enabled && Chosen && Indicator != UIResize.None)
         {
             UIRect at = Bounds;
-            Vector4 accent = skin.AccentColor with { W = 1.0f };
+            Vector4 accent = skin.TextColor with { W = 0.85f };
             if ((Indicator & UIResize.Left) != 0) list.Rect(new UIRect(at.Min, new Vector2(at.Min.X + INDICATOR, at.Max.Y)), accent);
             if ((Indicator & UIResize.Right) != 0) list.Rect(new UIRect(new Vector2(at.Max.X - INDICATOR, at.Min.Y), at.Max), accent);
             if ((Indicator & UIResize.Top) != 0) list.Rect(new UIRect(new Vector2(at.Min.X, at.Max.Y - INDICATOR), at.Max), accent);
@@ -201,7 +209,7 @@ public class Button : UIComponent
         list.Text(
             Written(),
             area,
-            Origin.Center,
+            Align,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
             (primary ? OnAccent(skin) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
         list.EndParts();
@@ -214,7 +222,9 @@ public class Button : UIComponent
 
     /// <summary>
     /// Helper method to draw the button for a skin that has no art for it. A box that darkens when it is held down,
-    /// lights up under the pointer and gets a rim in the colour of the skin when it is the chosen one.
+    /// lights up under the pointer and gets a rim in the colour of the skin when it is the chosen one. Its edge is half
+    /// the skin's hairline, a button is told from its panel by its fill the way a Mac's are, and a rim round every one
+    /// of a grid of them made a cage of it.
     /// </summary>
     private void PaintFlat(UIDrawList list, UISkin skin, bool down, bool hovered, Vector4 tint)
     {
@@ -223,8 +233,10 @@ public class Button : UIComponent
         // A style that calls itself flat has no body. It is a label that lights up, and stays lit while it is the chosen one
         if (style.EndsWith(FLAT_SUFFIX))
         {
+            // The chosen one a lighter pill of the text's colour, a segment of a segmented control. It was the accent seen
+            // through, gold over Horizon's blue, which came out olive, and the accent is for the indicator when it has one
             if (chosen)
-                list.Box(Bounds, skin.AccentColor with { W = CHOSEN_FILL });
+                list.Box(Bounds, skin.TextColor with { W = CHOSEN_FILL });
             if (hovered || down)
                 list.Box(Bounds, skin.HoverColor);
             return;
@@ -236,9 +248,9 @@ public class Button : UIComponent
             list.Box(Bounds, skin.HoverColor);
 
         if (chosen)
-            list.Frame(Bounds, 2.0f, skin.HighlightColor);
+            list.Frame(Bounds, 1.5f, skin.HighlightColor with { W = 0.8f });
         else if (skin.BorderColor.W > 0.0f)
-            list.Frame(Bounds, 1.0f, skin.BorderColor * tint);
+            list.Frame(Bounds, 1.0f, skin.BorderColor * new Vector4(1.0f, 1.0f, 1.0f, 0.5f) * tint);
     }
 
     protected override void Update(float dt)
@@ -262,12 +274,22 @@ public class Button : UIComponent
         InvokeScript(pressedHandler);
     }
 
+    // Tab gets to it, and Enter or space presses it the way a click does
+    protected internal override bool TabStop => OnPressed is not null || pressedHandler is not null;
+
+    protected internal override void OnTextInput(char character)
+    {
+        if (character is UIKeyboard.ENTER or ' ' && EnabledInHierarchy)
+            OnClick();
+    }
+
     protected override void DefineScript()
     {
         base.DefineScript();
 
         Expose("label", () => Label, value => Label = value);
         Expose("icon", () => Icon, value => Icon = value);
+        Expose("align", () => UIScript.FromEnum(Align), value => Align = UIScript.ToEnum<Origin>(value, "align"));
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);
