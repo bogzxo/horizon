@@ -155,7 +155,6 @@ public sealed class WorkItem
             Report(1.0f, null);
         state = how;
         Interlocked.Increment(ref version);
-        Finished.TrySetResult();
     }
 }
 

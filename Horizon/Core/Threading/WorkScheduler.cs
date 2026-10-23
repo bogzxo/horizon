@@ -224,6 +224,10 @@ public sealed class WorkScheduler
         });
         Woken?.Invoke();
         item.Cancelling.Dispose();
+
+        // Done last, once what's to be done on the UI's thread is queued. Done first, whoever waited on it could pump
+        // before that was there and miss its done (a test on a fast Linux runner did)
+        item.Finished.TrySetResult();
     }
 
     // Helper method to let go of the oldest of what ended. Under the lock

@@ -138,7 +138,7 @@ public sealed class DebugSession : IDisposable
                 ["columnsStartAt1"] = true,
                 ["pathFormat"] = "path",
                 ["supportsVariableType"] = true
-            });
+            }).ConfigureAwait(false);
 
             var args = new JsonArray();
             foreach (string argument in arguments)
@@ -175,14 +175,14 @@ public sealed class DebugSession : IDisposable
                 launch["stdio"] = new JsonArray(null, output, output);
             Task<JsonNode?> launched = connection.Request("launch", launch);
 
-            Task first = await Task.WhenAny(initialized.Task, launched, Task.Delay(TimeSpan.FromSeconds(20)));
+            Task first = await Task.WhenAny(initialized.Task, launched, Task.Delay(TimeSpan.FromSeconds(20))).ConfigureAwait(false);
             if (first == launched)
-                await launched;
+                await launched.ConfigureAwait(false);
 
             foreach (var (file, lines) in breakpointsByFile)
-                await SetBreakpointsNow(file, lines);
-            await connection.Request("configurationDone");
-            await launched;
+                await SetBreakpointsNow(file, lines).ConfigureAwait(false);
+            await connection.Request("configurationDone").ConfigureAwait(false);
+            await launched.ConfigureAwait(false);
 
             if (state == DebugState.Starting)
                 state = DebugState.Running;
@@ -208,7 +208,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await SetBreakpointsNow(file, lines);
+            await SetBreakpointsNow(file, lines).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -228,7 +228,7 @@ public sealed class DebugSession : IDisposable
         {
             ["source"] = new JsonObject { ["path"] = file, ["name"] = Path.GetFileName(file) },
             ["breakpoints"] = list
-        });
+        }).ConfigureAwait(false);
     }
 
     /// <summary>Goes on from where it stopped.</summary>
@@ -273,7 +273,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await connection.Request("disconnect", new JsonObject { ["terminateDebuggee"] = true }).WaitAsync(TimeSpan.FromSeconds(3));
+            await connection.Request("disconnect", new JsonObject { ["terminateDebuggee"] = true }).WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         }
         catch (Exception)
         {
@@ -287,7 +287,7 @@ public sealed class DebugSession : IDisposable
     public async Task<IReadOnlyList<DebugScope>> Scopes(int frameId)
     {
         var scopes = new List<DebugScope>();
-        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }) is JsonObject body && body["scopes"] is JsonArray list)
+        if (await connection.Request("scopes", new JsonObject { ["frameId"] = frameId }).ConfigureAwait(false) is JsonObject body && body["scopes"] is JsonArray list)
         {
             foreach (JsonNode? scope in list)
             {
@@ -303,7 +303,7 @@ public sealed class DebugSession : IDisposable
     public async Task<IReadOnlyList<DebugVariable>> Variables(int reference)
     {
         var variables = new List<DebugVariable>();
-        if (await connection.Request("variables", new JsonObject { ["variablesReference"] = reference }) is JsonObject body && body["variables"] is JsonArray list)
+        if (await connection.Request("variables", new JsonObject { ["variablesReference"] = reference }).ConfigureAwait(false) is JsonObject body && body["variables"] is JsonArray list)
         {
             foreach (JsonNode? variable in list)
             {
@@ -323,7 +323,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            var body = await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = "repl" });
+            var body = await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = "repl" }).ConfigureAwait(false);
             return body?["result"]?.GetValue<string>() ?? string.Empty;
         }
         catch (Exception e)
@@ -340,7 +340,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }) is not JsonObject body)
+            if (await connection.Request("evaluate", new JsonObject { ["expression"] = expression, ["frameId"] = frameId, ["context"] = context }).ConfigureAwait(false) is not JsonObject body)
                 return null;
 
             return new DebugVariable(expression, body["result"]?.GetValue<string>() ?? string.Empty, body["type"]?.GetValue<string>(), JsonNumbers.Int(body["variablesReference"], 0));
@@ -397,7 +397,7 @@ public sealed class DebugSession : IDisposable
         var frames = new List<DebugFrame>();
         try
         {
-            if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = stoppedThread, ["levels"] = 50 }) is JsonObject body && body["stackFrames"] is JsonArray list)
+            if (await connection.Request("stackTrace", new JsonObject { ["threadId"] = stoppedThread, ["levels"] = 50 }).ConfigureAwait(false) is JsonObject body && body["stackFrames"] is JsonArray list)
             {
                 foreach (JsonNode? frame in list)
                 {
@@ -433,7 +433,7 @@ public sealed class DebugSession : IDisposable
     {
         try
         {
-            await task;
+            await task.ConfigureAwait(false);
         }
         catch (Exception)
         {

@@ -35,13 +35,25 @@ public class DebugSessionTests
         to.Flush();
     }
 
+    // The next request the session sent, or a failure saying so when none comes. On Linux and macOS runners a request
+    // never came and the read sat there until the whole run was given up on three minutes later, saying nothing of where
     private static JsonObject ReadRequest(Stream from)
+    {
+        Task<JsonObject> reading = Task.Run(() => ReadRequestNow(from));
+        if (!reading.Wait(TimeSpan.FromSeconds(15)))
+            throw new TimeoutException("the session sent no request for 15 seconds");
+        return reading.Result;
+    }
+
+    private static JsonObject ReadRequestNow(Stream from)
     {
         var header = new StringBuilder();
         int length = -1;
         while (true)
         {
             int b = from.ReadByte();
+            if (b < 0)
+                throw new EndOfStreamException("the session closed its end of the pipe");
             if (b == '\n')
             {
                 string line = header.ToString().TrimEnd('\r');
