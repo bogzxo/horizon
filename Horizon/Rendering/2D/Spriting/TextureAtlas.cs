@@ -7,8 +7,6 @@ using Horizon.Logging;
 using Horizon.Engine;
 using Horizon.Graphics;
 
-
-
 namespace Horizon.Rendering.Spriting;
 
 /// <summary>
@@ -103,9 +101,12 @@ public sealed class TextureAtlas : IDisposable
     private int _height;
     private readonly bool _shared;
 
-    // The texture a grown atlas left behind. Whoever drew with it this frame still points at it, so it goes the
-    // next time round rather than from under them
-    private Texture _retired = Texture.Invalid;
+    // The texture a grown atlas left behind. A UI draws the last two lists it captured blended, painted a tick or two
+    // before, and those still point at it, so it hangs on for a few frames rather than one and goes from under nobody
+    private readonly List<(Texture Texture, int Frames)> _retired = [];
+
+    // How many frames a retired texture is kept, past the two captured lists and the frames in flight
+    private const int RETIRED_FRAMES = 6;
 
     // What has been packed (Pack) and not yet sent up, the pieces themselves, the regions they came to and whether
     // the atlas grew for them. Everything that packs or sends up holds the lock, the cuts and the skyline are one
@@ -140,6 +141,13 @@ public sealed class TextureAtlas : IDisposable
     /// on the first frame calls <see cref="Pack"/> as well.
     /// </summary>
     public bool PacksOnWorker { get; init; }
+
+    /// <summary>
+    /// Something run over the pixels of every part before it goes up, RGBA a byte each and a row after the other. A game
+    /// that draws a second fighter off the first one's art in other colours (a palette swap) gives it one, null for the
+    /// pixels as they are. Called on whichever thread packs, so it keeps its hands off anything else.
+    /// </summary>
+    public Action<Span<byte>>? Recolour { get; init; }
 
     /// <summary>How much of the atlas holds something, 0 to 1, padding included as in use.</summary>
     public float Occupancy => _width * (long)_height == 0 ? 0.0f : (float)_used / (_width * (long)_height);
@@ -241,10 +249,16 @@ public sealed class TextureAtlas : IDisposable
     /// <returns>Whether anything was added.</returns>
     public bool Update()
     {
-        if (_retired.Handle != 0)
+        for (int i = _retired.Count - 1; i >= 0; i--)
         {
-            GameEngine.Instance.ObjectManager.Textures.Remove(_retired);
-            _retired = Texture.Invalid;
+            if (_retired[i].Frames + 1 < RETIRED_FRAMES)
+            {
+                _retired[i] = _retired[i] with { Frames = _retired[i].Frames + 1 };
+                continue;
+            }
+
+            GameEngine.Instance.ObjectManager.Textures.Remove(_retired[i].Texture);
+            _retired.RemoveAt(i);
         }
 
         if (_pending.IsEmpty && _packed is null && Texture.Handle != 0) return false;
@@ -337,6 +351,7 @@ public sealed class TextureAtlas : IDisposable
                     .CopyTo(pixels.AsSpan(row * width * 4));
             }
 
+            Recolour?.Invoke(pixels);
             _cuts.Add(new Cut(x, y, width, height, pixels));
             regions[pending.Key] = new AtlasRegion(new Vector2(x, y), new Vector2(width, height), new Vector2(left, top), new Vector2(part.Width, part.Height));
         }
@@ -538,8 +553,7 @@ public sealed class TextureAtlas : IDisposable
             Texture old = Texture;
             if (old.Handle != 0)
             {
-                if (_retired.Handle != 0) engine.ObjectManager.Textures.Remove(_retired);
-                _retired = old;
+                _retired.Add((old, 0));
             }
 
             // A shared atlas is the engine's, not the scene's that happened to fill it first
@@ -581,11 +595,8 @@ public sealed class TextureAtlas : IDisposable
 
     public void Dispose()
     {
-        if (_retired.Handle != 0)
-        {
-            GameEngine.Instance.ObjectManager.Textures.Remove(_retired);
-            _retired = Texture.Invalid;
-        }
+        foreach (var (retired, _) in _retired) GameEngine.Instance.ObjectManager.Textures.Remove(retired);
+        _retired.Clear();
 
         if (Texture.Handle != 0)
         {

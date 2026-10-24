@@ -157,9 +157,12 @@ public sealed class SpriteSheetDefinition
             for (int frame = tag.From; frame <= tag.To; frame++) time += document.Duration(frame);
             time /= Math.Max(tag.Frames, 1);
 
+            // A reverse tag is the same frames played the other way round (standing up off the frames of falling over),
+            // so it starts on its last frame and walks back along the sheet
+            bool reverse = tag.Direction == 1;
             definition.Add(tag.Name, new SpriteDefinition(
-                image, 0, tag.From * document.Width, 0, document.Width, document.Height, Vector4.Zero, Vector4.Zero,
-                tag.Frames, time > 0.0f ? time : 0.1f, (document.Width, 0), null));
+                image, 0, (reverse ? tag.To : tag.From) * document.Width, 0, document.Width, document.Height, Vector4.Zero, Vector4.Zero,
+                tag.Frames, time > 0.0f ? time : 0.1f, (reverse ? -document.Width : document.Width, 0), null));
         }
 
         return definition;
