@@ -498,6 +498,12 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public Action<float>? OnZoom { get; set; }
 
+    /// <summary>
+    /// Called as Tab is pressed with one caret and nothing selected, before it indents. True when it took the key (an
+    /// abbreviation before the caret written out) and nothing is indented. Null, Tab only ever indents.
+    /// </summary>
+    public Func<bool>? OnTab { get; set; }
+
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
 
@@ -1335,7 +1341,10 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.WORD_BACKSPACE: document.DeleteWord(-1); break;
             case UIKeyboard.WORD_DELETE: document.DeleteWord(1); break;
             case UIKeyboard.ENTER: document.NewLine(); break;
-            case UIKeyboard.TAB: document.IndentLines(); break;
+            case UIKeyboard.TAB:
+                if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)
+                    document.IndentLines();
+                break;
             case UIKeyboard.SHIFT_TAB: document.Outdent(); break;
             case UIKeyboard.UNDO: document.Undo(); break;
             case UIKeyboard.REDO: document.Redo(); break;
