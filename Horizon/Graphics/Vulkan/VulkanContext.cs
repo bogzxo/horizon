@@ -105,15 +105,126 @@ internal sealed unsafe class VulkanContext : IDisposable
 
     public VulkanContext(IVkSurface surfaceSource)
     {
+        VulkanLoader.Configure();
         Vk = Vk.GetApi();
 
-        CreateInstance(surfaceSource);
-        CreateSurface(surfaceSource);
-        PickPhysicalDevice();
+        StartVulkan(WindowExtensionsOf(surfaceSource), () => CreateSurface(surfaceSource));
         CreateDevice();
     }
 
-    private void CreateInstance(IVkSurface surfaceSource)
+    /// <summary>
+    /// A context made before there is a window to draw into, the instance, the card and the device, with the surface
+    /// to come later (<see cref="Attach"/>). Making the device is a good part of what starting takes and the system
+    /// making the window is another, so they're done side by side. Windows only, where the instance needs the same two
+    /// extensions for any window and whether a queue can show pictures is asked of the card without a surface.
+    /// </summary>
+    private VulkanContext(string[] windowExtensions)
+    {
+        VulkanLoader.Configure();
+        Vk = Vk.GetApi();
+
+        StartVulkan(windowExtensions, () =>
+        {
+            if (!Vk.TryGetInstanceExtension(Instance, out KhrWin32Surface win32))
+                throw new InvalidOperationException("The Vulkan instance has no Win32 surface extension.");
+            khrWin32 = win32;
+        });
+        CreateDevice();
+    }
+
+    /// <summary>
+    /// Helper method to make the instance, whatever the window needs of it (its surface), and pick the card. If the loader
+    /// was told to load only the driver of the card picked last time (VulkanLoader) and that came to nothing, all of it
+    /// is done once more with every driver. The vendor of the card picked is kept for the next start.
+    /// </summary>
+    private void StartVulkan(string[] windowExtensions, Action withInstance)
+    {
+        try
+        {
+            CreateInstance(windowExtensions);
+            withInstance();
+            PickPhysicalDevice();
+        }
+        catch (Exception) when (VulkanLoader.ForgetDriver())
+        {
+            DropInstance();
+            CreateInstance(windowExtensions);
+            withInstance();
+            PickPhysicalDevice();
+        }
+
+        VulkanLoader.Remember(Properties.VendorID);
+    }
+
+    /// <summary>Helper method to let go of an instance (and its surface and messenger) that came to nothing, to make it again.</summary>
+    private void DropInstance()
+    {
+        if (Surface.Handle != 0 && KhrSurface is not null) KhrSurface.DestroySurface(Instance, Surface, null);
+        if (messenger.Handle != 0) debugUtils?.DestroyDebugUtilsMessenger(Instance, messenger, null);
+        if (Instance.Handle != 0) Vk.DestroyInstance(Instance, null);
+        Surface = default;
+        messenger = default;
+        Instance = default;
+        debugUtils = null;
+    }
+
+    // What a window on Windows needs of the instance, whoever made the window
+    private static readonly string[] WIN32_EXTENSIONS = [KhrSurface.ExtensionName, KhrWin32Surface.ExtensionName];
+
+    // How a queue's showing of pictures is asked of the card before there is a surface, on Windows
+    private KhrWin32Surface? khrWin32;
+
+    // The instance extensions the window asked for, to check a context made ahead has them all
+    private string[] instanceExtensions = [];
+
+    /// <summary>
+    /// Makes a context ahead of the window, see the constructor above. Null where that can't be done (anywhere but
+    /// Windows) or if it went wrong, the context is made the usual way once the window is there then. Any thread.
+    /// </summary>
+    public static VulkanContext? Prepare()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+
+        try
+        {
+            return new VulkanContext(WIN32_EXTENSIONS);
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"[Vulkan] Couldn't get the device going ahead of the window, it's made once the window is up instead. {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gives a context made ahead (<see cref="Prepare"/>) the window it draws into. False if the window needs something
+    /// of the instance it wasn't made with or the queue it picked can't show pictures in it, the context is no good
+    /// then and whoever asked disposes of it and makes one the usual way.
+    /// </summary>
+    public bool Attach(IVkSurface surfaceSource)
+    {
+        foreach (string wanted in WindowExtensionsOf(surfaceSource))
+        {
+            if (Array.IndexOf(instanceExtensions, wanted) < 0)
+                return false;
+        }
+
+        CreateSurface(surfaceSource);
+        KhrSurface.GetPhysicalDeviceSurfaceSupport(PhysicalDevice, GraphicsFamily, Surface, out Bool32 presents);
+        return presents;
+    }
+
+    private static string[] WindowExtensionsOf(IVkSurface surfaceSource)
+    {
+        byte** windowExtensions = surfaceSource.GetRequiredExtensions(out uint windowExtensionCount);
+        var names = new string[windowExtensionCount];
+        for (uint i = 0; i < windowExtensionCount; i++)
+            names[i] = Marshal.PtrToStringAnsi((nint)windowExtensions[i])!;
+        return names;
+    }
+
+    private void CreateInstance(string[] windowExtensions)
     {
         string? setting = Environment.GetEnvironmentVariable(VALIDATION_VARIABLE);
         bool wantValidation = !string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase) && setting != "0";
@@ -129,10 +240,8 @@ internal sealed unsafe class VulkanContext : IDisposable
 #endif
         bool wantDebugUtils = (ValidationEnabled || wantLabels) && HasInstanceExtension(ExtDebugUtils.ExtensionName);
 
-        byte** windowExtensions = surfaceSource.GetRequiredExtensions(out uint windowExtensionCount);
-        var extensions = new List<string>();
-        for (uint i = 0; i < windowExtensionCount; i++)
-            extensions.Add(Marshal.PtrToStringAnsi((nint)windowExtensions[i])!);
+        var extensions = new List<string>(windowExtensions);
+        instanceExtensions = windowExtensions;
         if (wantDebugUtils) extensions.Add(ExtDebugUtils.ExtensionName);
 
         // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
@@ -423,7 +532,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         for (uint i = 0; i < count; i++)
         {
             var flags = families[i].QueueFlags;
-            KhrSurface.GetPhysicalDeviceSurfaceSupport(device, i, Surface, out Bool32 presents);
+            bool presents = Presents(device, i);
 
             if (graphics == uint.MaxValue && (flags & QueueFlags.GraphicsBit) != 0 && presents)
                 graphics = i;
@@ -434,6 +543,21 @@ internal sealed unsafe class VulkanContext : IDisposable
         }
 
         return graphics != uint.MaxValue;
+    }
+
+    /// <summary>
+    /// Whether a queue family of a card can show pictures, in the window's surface, or before there is one (a context
+    /// made ahead) as Windows answers for any window of the machine's, which <see cref="Attach"/> checks again.
+    /// </summary>
+    private bool Presents(PhysicalDevice device, uint family)
+    {
+        if (Surface.Handle != 0)
+        {
+            KhrSurface.GetPhysicalDeviceSurfaceSupport(device, family, Surface, out Bool32 presents);
+            return presents;
+        }
+
+        return khrWin32 is not null && khrWin32.GetPhysicalDeviceWin32PresentationSupport(device, family);
     }
 
     private void CreateDevice()

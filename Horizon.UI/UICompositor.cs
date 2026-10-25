@@ -88,9 +88,17 @@ public partial class UICompositor : GameComponent, IDisposable
 
     /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
-    /// fitting the <see cref="DesignSize"/> comes to. A unit of the layout is this many units of the camera.
+    /// fitting the <see cref="DesignSize"/> comes to, times the <see cref="DisplayScale"/>. A unit of the layout is
+    /// this many units of the camera.
     /// </summary>
     public float UIScale { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// How much bigger the screen the window is on wants things drawn, 1.5 on one Windows scales by 150%. Only for a
+    /// window that follows the scale (<c>WindowManagerConfiguration.ScaleToDisplay</c>) and a UI with no
+    /// <see cref="DesignSize"/>, which is fitted to the screen whatever its scale, 1 otherwise. Part of <see cref="UIScale"/>.
+    /// </summary>
+    public float DisplayScale { get; private set; } = 1.0f;
 
     // Scrolling that was asked for with Scroll and hasn't been handed out yet.
     private float pendingScroll;
@@ -568,7 +576,8 @@ public partial class UICompositor : GameComponent, IDisposable
         float fit = DesignSize is { X: > 0.0f, Y: > 0.0f } design && !screen.IsEmpty
             ? MathF.Min(screen.Width / design.X, screen.Height / design.Y)
             : 1.0f;
-        UIScale = MathF.Max(0.01f, fit * Scale);
+        DisplayScale = DesignSize is null && GameEngine.Instance?.WindowManager is { ScalesToDisplay: true } scaled ? scaled.DisplayScale : 1.0f;
+        UIScale = MathF.Max(0.01f, fit * Scale * DisplayScale);
 
         // Every module that was designed for a screen of its own works out its own scale the same way
         foreach (var module in snapshot)

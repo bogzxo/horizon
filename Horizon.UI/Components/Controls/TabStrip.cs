@@ -18,6 +18,12 @@ public sealed class StripTab
     /// <summary>The colour of the icon, null for the colour of the title.</summary>
     public Vector4? IconColor { get; set; }
 
+    /// <summary>
+    /// The colour of the title, null for the skin's (bright on the open one, dim on the rest). For saying something about
+    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter.
+    /// </summary>
+    public Vector4? TitleColor { get; set; }
+
     /// <summary>What comes up when the pointer rests on it, the whole path of the file say.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
@@ -216,7 +222,7 @@ public class TabStrip : UIComponent
             // Always painted, see-through when not lit, so the quads after it don't shift
             list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            Vector4 text = open ? skin.TextColor : dim;
+            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : open ? skin.TextColor : dim;
             float x = area.Min.X + TAB_PADDING;
             float side = MathF.Round(line);
 

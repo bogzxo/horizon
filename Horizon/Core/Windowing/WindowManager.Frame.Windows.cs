@@ -123,20 +123,36 @@ public partial class WindowManager
                 }
                 return 0;
 
-            // Maximised over the room the taskbar leaves, and never dragged smaller than its own title bar and buttons fit in
+            // Maximised the way Windows does it for any window, and never dragged smaller than its own title bar and buttons
+            // fit in. Not GLFW's way, which for a window without a frame sets the biggest it gets to the work area of the
+            // screen it's on now. Windows takes that size as one for the main screen and stretches it by however much
+            // bigger the screen it's maximised on is, so maximised on a screen bigger than the main one the window came
+            // out the size of both, hanging over onto the other. The defaults are what that stretching is made for, and
+            // whatever they leave over the taskbar is cut off in WM_NCCALCSIZE
             case WM_GETMINMAXINFO:
                 {
-                    nint result = CallWindowProc(glfwProcedure, window, message, wParam, lParam);
+                    nint result = DefWindowProc(window, message, wParam, lParam);
                     var info = (MinMaxInfo*)lParam;
-                    info->MinTrackSize = new NativePoint { X = MinimumSize.X, Y = MinimumSize.Y };
+                    float scale = ScalesToDisplay ? displayScale : 1.0f;
+                    info->MinTrackSize = new NativePoint { X = (int)MathF.Ceiling(MinimumSize.X * scale), Y = (int)MathF.Ceiling(MinimumSize.Y * scale) };
+                    return result;
+                }
 
-                    nint monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-                    var screen = new MonitorInfo { Size = sizeof(MonitorInfo) };
-                    if (monitor != 0 && GetMonitorInfo(monitor, ref screen))
-                    {
-                        info->MaxPosition = new NativePoint { X = screen.Work.Left - screen.Monitor.Left, Y = screen.Work.Top - screen.Monitor.Top };
-                        info->MaxSize = new NativePoint { X = screen.Work.Right - screen.Work.Left, Y = screen.Work.Bottom - screen.Work.Top };
-                    }
+            // Going to a screen scaled differently. A window that follows the scale is resized by it so it looks the same
+            // size there (Windows works the new size out itself when it's left to, which returning false here does),
+            // and either way the UI is told so it draws at the new scale. GLFW hears it too, for its content scale
+            case WM_GETDPISCALEDSIZE when ScalesToDisplay:
+                return 0;
+
+            case WM_DPICHANGED:
+                if (ScalesToDisplay && !IsZoomed(window))
+                {
+                    var suggested = (NativeRect*)lParam;
+                    SetWindowPos(window, 0, suggested->Left, suggested->Top, suggested->Right - suggested->Left, suggested->Bottom - suggested->Top, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+                {
+                    nint result = CallWindowProc(glfwProcedure, window, message, wParam, lParam);
+                    UpdateDisplayScale();
                     return result;
                 }
 
@@ -208,6 +224,7 @@ public partial class WindowManager
     private const int GWL_STYLE = -16, GWLP_WNDPROC = -4;
     private const long WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000;
     private const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
+    private const uint WM_DPICHANGED = 0x02E0, WM_GETDPISCALEDSIZE = 0x02E4;
     private const uint WM_SIZE = 0x0005, WM_GETMINMAXINFO = 0x0024, WM_NCCALCSIZE = 0x0083, WM_NCHITTEST = 0x0084, WM_NCMOUSEMOVE = 0x00A0, WM_NCLBUTTONDOWN = 0x00A1,
         WM_NCLBUTTONUP = 0x00A2, WM_NCLBUTTONDBLCLK = 0x00A3, WM_MOUSEMOVE = 0x0200, WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202;
     private const int MK_LBUTTON = 0x1, HTMAXBUTTON = 9, HTCAPTION = 2,HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14, HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
@@ -247,6 +264,9 @@ public partial class WindowManager
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     private static extern nint GetWindowLongPtr(nint window, int index);
 
+    [DllImport("user32.dll", EntryPoint = "DefWindowProcW")]
+    private static extern nint DefWindowProc(nint window, uint message, nint wParam, nint lParam);
+
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
     private static extern nint CallWindowProc(nint procedure, nint window, uint message, nint wParam, nint lParam);
 
@@ -282,9 +302,6 @@ public partial class WindowManager
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsZoomed(nint window);
-
-    [DllImport("user32.dll")]
-    private static extern nint MonitorFromWindow(nint window, uint flags);
 
     [DllImport("user32.dll")]
     private static extern nint MonitorFromRect(in NativeRect rect, uint flags);

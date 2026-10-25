@@ -64,6 +64,15 @@ public readonly struct WindowManagerConfiguration
     public readonly bool CustomFrame { get; init; }
 
     /// <summary>
+    /// Whether the window follows the scale the system has for the screen it's on (150% on a 4K screen, say), the way
+    /// any other program does. Its <see cref="WindowSize"/> is then in the system's units, the pixels of a screen at 100%,
+    /// it's resized by the scale of whatever screen it is dragged onto, and every UI in it that isn't fitted to a design
+    /// size of its own is drawn that much bigger. Off, the window and its UI are a unit per pixel wherever they are,
+    /// which is what a game that fits itself to the screen wants.
+    /// </summary>
+    public readonly bool ScaleToDisplay { get; init; }
+
+    /// <summary>
     /// A picture for the window's corner and the taskbar, a .png (anything ImageSharp reads, which isn't an .ico), from
     /// the exe's folder unless the path says where. Null for the system's own. A Mac takes its Dock icon from the app
     /// bundle and ignores this.

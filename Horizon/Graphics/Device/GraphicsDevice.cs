@@ -153,8 +153,14 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// Makes the device for a window's surface. The window has to have been made for Vulkan.
     /// </summary>
     public GraphicsDevice(IVkSurface surface, uint width, uint height, bool vsync)
+        : this(new VulkanContext(surface), width, height, vsync) { }
+
+    /// <summary>
+    /// A device on a context that was made ahead of the window and has its surface by now, see <see cref="VulkanContext.Prepare"/>.
+    /// </summary>
+    internal GraphicsDevice(VulkanContext context, uint width, uint height, bool vsync)
     {
-        Context = new VulkanContext(surface);
+        Context = context;
         Memory = new VulkanMemory(Context);
         Bindless = new BindlessTextures(Context);
         Layouts = new DescriptorLayouts(Context, Bindless);

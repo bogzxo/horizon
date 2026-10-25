@@ -65,11 +65,12 @@ public class TitleBar : StackPanel
     /// <summary>
     /// Whether its height, its title and its buttons are in the window's pixels rather than the UI's units, so a UI that
     /// is drawn bigger (a bigger screen, <see cref="UICompositor.Scale"/>) doesn't have a title bar that grows with it, the
-    /// system's never does. What is put in it is the program's to size.
+    /// system's never does. On a screen the system scales (<see cref="UICompositor.DisplayScale"/>) they're that much
+    /// bigger, the same as the system's own title bars there. What is put in it is the program's to size.
     /// </summary>
     public bool PixelSized { get; set; } = true;
 
-    // A window's pixel in the UI's units
+    // A window's pixel in the UI's units, times the scale of the screen it's on when the window follows that
     private float Unit => PixelSized && Module?.Compositor.Scale is > 0.0f and var scale ? 1.0f / scale : 1.0f;
 
     private float BarHeight => Height * Unit;

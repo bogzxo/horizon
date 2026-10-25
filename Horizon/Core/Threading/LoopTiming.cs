@@ -24,6 +24,20 @@ internal static class LoopTiming
     {
         double frequency = Stopwatch.Frequency;
 
+        // On Windows a timer that wakes to a fraction of a millisecond does most of the wait, so only the last
+        // little bit is spun. Sleeping a millisecond at a time left up to two of them to spin, every tick and every
+        // frame, which was most of what an editor sitting there blinking its caret cost
+        if (PreciseTimer() is var timer && timer != 0)
+        {
+            double sleepFor = moment - Stopwatch.GetTimestamp() / frequency - PRECISE_MARGIN;
+            if (sleepFor > 0.0)
+            {
+                long due = -(long)(sleepFor * 10_000_000.0);
+                if (SetWaitableTimer(timer, ref due, 0, 0, 0, false) != 0)
+                    WaitForSingleObject(timer, uint.MaxValue);
+            }
+        }
+
         while (true)
         {
             double left = moment - Stopwatch.GetTimestamp() / frequency;
@@ -33,6 +47,43 @@ internal static class LoopTiming
             else Thread.SpinWait(32);
         }
     }
+
+    // How close to the moment the precise timer is told to wake, it can run over by about this much
+    private const double PRECISE_MARGIN = 0.0006;
+
+    // The precise timer of this thread, made the first time it waits, 0 where there isn't one (before Windows 10 1803,
+    // or anywhere else), and whether that was found out already
+    [ThreadStatic] private static nint preciseTimer;
+    [ThreadStatic] private static bool preciseTimerTried;
+
+    private static nint PreciseTimer()
+    {
+        if (preciseTimerTried || !OperatingSystem.IsWindows())
+            return preciseTimer;
+
+        preciseTimerTried = true;
+        try
+        {
+            preciseTimer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        }
+        catch (Exception)
+        {
+            preciseTimer = 0;
+        }
+
+        return preciseTimer;
+    }
+
+    private const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2, TIMER_ALL_ACCESS = 0x1F0003;
+
+    [DllImport("kernel32.dll")]
+    private static extern nint CreateWaitableTimerExW(nint attributes, nint name, uint flags, uint access);
+
+    [DllImport("kernel32.dll")]
+    private static extern int SetWaitableTimer(nint timer, ref long due, int period, nint routine, nint argument, bool resume);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WaitForSingleObject(nint handle, uint milliseconds);
 
     /// <summary>
     /// Has the system wake sleeping threads to the millisecond for as long as anybody who keeps time runs. Windows

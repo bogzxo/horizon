@@ -25,7 +25,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -244,7 +244,7 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -284,7 +284,7 @@ public partial class CodeEditor
     private void AddRows(int line, string text, int columns, float digit)
     {
         float at = 0.0f;
-        if (!wordWrap || Columns(text, 0, text.Length) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
+        if (!wordWrap || Columns(text, 0, text.Length) + InlayColumnsOf(line) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
         {
             rows.Add(new CodeRow(line, 0, text.Length, at));
             return;
@@ -301,9 +301,10 @@ public partial class CodeEditor
         {
             int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
             int end = start, used = 0;
-            while (end < text.Length && used + (text[end] == '\t' ? TAB_SPACES : 1) <= room)
+            // A hint just before a character takes its room along with it
+            while (end < text.Length && used + (text[end] == '\t' ? TAB_SPACES : 1) + InlayColumnsAt(line, end) <= room)
             {
-                used += text[end] == '\t' ? TAB_SPACES : 1;
+                used += (text[end] == '\t' ? TAB_SPACES : 1) + InlayColumnsAt(line, end);
                 end++;
             }
 
@@ -401,8 +402,11 @@ public partial class CodeEditor
             return 0.0f;
 
         int from = Math.Min(row.Start, column);
-        return row.Indent + (column <= from ? 0.0f : Width(skin, scale, text.AsSpan(from, column - from)));
+        return row.Indent + (column <= from ? 0.0f : Width(skin, scale, text.AsSpan(from, column - from)) + InlaysWidth(skin, scale, line, from, column));
     }
+
+    /// <summary>How far along its last row the end of a line is, past any hints after it, for what goes after the line.</summary>
+    private float EndX(UISkin skin, float scale, int line, int length) => ColumnX(skin, scale, line, length) + InlaysWidth(skin, scale, line, length, int.MaxValue);
 
     // The lines the top of the view is inside of, outermost first, worked out when the top or the folds change
     private List<int> StickyLines(int firstLine)

@@ -261,4 +261,50 @@ public sealed partial class LanguageServer
 
         return new UISignature(label, start, length);
     }
+
+    /// <summary>
+    /// The inlay hints of some lines of a file (textDocument/inlayHint), the names of parameters and the types of names a
+    /// server writes in among the code. Nothing for a server that doesn't do them.
+    /// </summary>
+    public async Task<IReadOnlyList<UICodeInlay>> InlayHints(string path, int fromLine, int toLine)
+    {
+        if (!Offers("inlayHintProvider"))
+            return [];
+
+        var asked = new JsonObject
+        {
+            ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
+            ["range"] = new JsonObject
+            {
+                ["start"] = new JsonObject { ["line"] = fromLine, ["character"] = 0 },
+                ["end"] = new JsonObject { ["line"] = toLine, ["character"] = 0 }
+            }
+        };
+
+        var found = new List<UICodeInlay>();
+        if (await Ask("textDocument/inlayHint", asked).ConfigureAwait(false) is not JsonArray hints)
+            return found;
+
+        foreach (JsonNode? node in hints)
+        {
+            if (node is not JsonObject hint || hint["position"] is not JsonObject at)
+                continue;
+
+            // The label's a string, or parts of one each with a value
+            string label = hint["label"] switch
+            {
+                JsonValue text when text.TryGetValue(out string? plain) => plain,
+                JsonArray parts => string.Concat(parts.OfType<JsonObject>().Select(part => part["value"]?.GetValue<string>() ?? string.Empty)),
+                _ => string.Empty
+            };
+            if (label.Trim().Length == 0)
+                continue;
+
+            bool padLeft = hint["paddingLeft"] is JsonValue left && left.TryGetValue(out bool l) && l;
+            bool padRight = hint["paddingRight"] is JsonValue right && right.TryGetValue(out bool r) && r;
+            found.Add(new UICodeInlay(at["line"]?.GetValue<int>() ?? 0, at["character"]?.GetValue<int>() ?? 0, label.Trim(), padLeft, padRight));
+        }
+
+        return found;
+    }
 }

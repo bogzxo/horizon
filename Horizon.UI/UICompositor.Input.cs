@@ -28,7 +28,7 @@ public partial class UICompositor
     /// </summary>
     public bool ResizesWindow { get; set; }
 
-    // How near the edge of the window the pointer has hold of it, in the window's pixels
+    // How near the edge of the window the pointer has hold of it, in the window's pixels at a scale of 100%
     private const float WINDOW_EDGE = 6.0f;
 
     /// <summary>Which edges of the window the pointer is on, none unless this UI drags them and the window has no frame.</summary>
@@ -46,10 +46,12 @@ public partial class UICompositor
         if (at.X < 0.0f || at.Y < 0.0f || at.X > size.X || at.Y > size.Y)
             return WindowEdges.None;
 
-        if (at.X <= WINDOW_EDGE) edges |= WindowEdges.Left;
-        if (at.X >= size.X - WINDOW_EDGE) edges |= WindowEdges.Right;
-        if (at.Y <= WINDOW_EDGE) edges |= WindowEdges.Top;
-        if (at.Y >= size.Y - WINDOW_EDGE) edges |= WindowEdges.Bottom;
+        // As wide as the system's own on a scaled screen, a 6 pixel edge on a 4K one is a needle to thread
+        float edge = WINDOW_EDGE * (window.ScalesToDisplay ? window.WindowUnitScale : 1.0f);
+        if (at.X <= edge) edges |= WindowEdges.Left;
+        if (at.X >= size.X - edge) edges |= WindowEdges.Right;
+        if (at.Y <= edge) edges |= WindowEdges.Top;
+        if (at.Y >= size.Y - edge) edges |= WindowEdges.Bottom;
         return edges;
     }
 

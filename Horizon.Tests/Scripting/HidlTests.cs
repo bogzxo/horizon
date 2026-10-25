@@ -487,6 +487,19 @@ public class HidlTests
     }
 
     [Fact]
+    public void DigitsOfOtherScriptsAreNoNumbers()
+    {
+        // An N'Ko digit and an Arabic-Indic one, what a png opened as text is full of. float.Parse took Hex down on them
+        Token[] tokens = Lexer.Tokenize("1߁2 ٣", lenient: true);
+
+        Assert.Equal(TokenType.Number, tokens[0].Type);
+        Assert.Equal("1", tokens[0].Value);
+        Assert.Equal(TokenType.Unknown, tokens[1].Type);
+        Assert.Equal(TokenType.Number, tokens[2].Type);
+        Assert.Equal(TokenType.Unknown, tokens[3].Type);
+    }
+
+    [Fact]
     public void TokensKnowWhereTheyAre()
     {
         Token[] tokens = Lexer.Tokenize("let name = \"a\\\"b\"; // hi", lenient: true);

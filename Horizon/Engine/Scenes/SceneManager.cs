@@ -691,6 +691,8 @@ public class SceneManager : Entity
                 using (incoming.Assets.Enter())
                     turns = SetUp(incoming, dt);
 
+                Horizon.Core.Diagnostics.StartupTrace.Mark("scene set up");
+                Horizon.Core.Diagnostics.StartupTrace.SceneReady = true;
                 Log.Info($"[SceneManager] Set up '{(incoming.Name.Length > 0 ? incoming.Name : incoming.GetType().Name)}' in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0} ms: {_setUpMs:0} ms making it, {_warmUpMs:0} ms warming it up ({turns} turns).");
 
                 // What the warm up drew is not for showing

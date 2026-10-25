@@ -355,6 +355,7 @@ public partial class WindowManager : GameComponent, IDisposable
         };
 
         CustomFrame = config.CustomFrame;
+        ScalesToDisplay = config.ScaleToDisplay;
         Mode = config.Mode;
         Behaviour = config.Behaviour ?? (config.Mode == RunMode.Application ? ApplicationBehaviour.All : ApplicationBehaviour.None);
         maximizeWhenMade = config.Maximized && config.CustomFrame && OperatingSystem.IsWindows() && !config.Fullscreen;
@@ -369,6 +370,12 @@ public partial class WindowManager : GameComponent, IDisposable
             FramesPerSecond = Math.Max(0.0, config.FramesPerSecond)
         };
         framePeriod = PeriodOf(Display.FramesPerSecond);
+
+        // What the Vulkan loader is told goes in before GLFW or the device ask it anything, see VulkanLoader
+        Horizon.Graphics.Vulkan.VulkanLoader.Configure();
+
+        // The GPU gets going now, while the game makes its scene and the window is made, see WindowManager.Device
+        StartDeviceAhead();
 
         this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
         SubscribeWindowEvents();
@@ -407,9 +414,15 @@ public partial class WindowManager : GameComponent, IDisposable
     {
         this._window.Resize += WindowResize;
 
+        // Moved onto another screen, which may be scaled differently
+        this._window.Move += _ => UpdateDisplayScale();
+
         // The window's half of getting going, on its thread. The rest happens on the thread that draws, see SetUpDrawing
         this._window.Load += () =>
         {
+            UpdateDisplayScale();
+            SizeToDisplay();
+
             // A maximised window is where it belongs already, centering it would take it back out of that
             if (WindowOptions.WindowState != WindowState.Maximized)
                 _window.Center();
@@ -427,8 +440,9 @@ public partial class WindowManager : GameComponent, IDisposable
             UpdateViewport();
 
             // The window was made before anybody could know what a point is worth on this screen, so on a Retina one
-            // it came out twice the size it was asked to be. Put right now that it is known
-            if (WindowOptions.WindowState == WindowState.Normal && screenScale != Vector2.One)
+            // it came out twice the size it was asked to be. Put right now that it is known, unless its size was in
+            // points all along (ScaleToDisplay)
+            if (WindowOptions.WindowState == WindowState.Normal && screenScale != Vector2.One && !ScalesToDisplay)
             {
                 _window.Size = InPoints(new Vector2(WindowOptions.Size.X, WindowOptions.Size.Y));
                 _window.Center();
@@ -464,17 +478,16 @@ public partial class WindowManager : GameComponent, IDisposable
         if (OperatingSystem.IsMacOS())
             surface = new WindowThreadSurface(surface, OnWindowThread);
 
-        Graphics = new GraphicsDevice(
-            surface,
-            (uint)ViewportSize.X,
-            (uint)ViewportSize.Y,
-            Display.VSync);
+        // Most of it made already on Windows, see WindowManager.Device
+        Graphics = MakeDevice(surface);
+        StartupTrace.Mark("device made");
 
         // The first thing in the window, before anything of the engine or the game is set up (the engine's loading
         // screen), and only then is there a window to see
         DeviceReady?.Invoke();
         if (!WindowOptions.IsVisible)
             OnWindowThread(ShowWindow);
+        StartupTrace.Mark("window shown with the loading screen");
 
         Parent.Initialize();
 
@@ -656,6 +669,7 @@ public partial class WindowManager : GameComponent, IDisposable
         if (size.X <= 0 || size.Y <= 0) return;
 
         UpdateViewport();
+        UpdateDisplayScale();
         resized = true;
 
         // SDL sets the layer's drawables to the size of the window whenever that changes, and a swapchain that stays
@@ -898,8 +912,10 @@ public partial class WindowManager : GameComponent, IDisposable
         IsRunning = true;
 
         // The window, and then everything that draws happens on a thread of its own, see DrawFrames
+        StartupTrace.Mark("window being made");
         _window.Initialize();
         SetUpFrame();
+        StartupTrace.Mark("window made");
 
         renderThread = new Thread(DrawFrames)
         {
@@ -1003,6 +1019,8 @@ public partial class WindowManager : GameComponent, IDisposable
                 Graphics!.BeginFrame((uint)ViewportSize.X, (uint)ViewportSize.Y);
                 DrawFrame(dt);
                 Graphics.EndFrame();
+                if (StartupTrace.SceneReady)
+                    StartupTrace.Finish("first frame of the scene shown");
 
                 long ended = Stopwatch.GetTimestamp();
 
@@ -1048,7 +1066,10 @@ public partial class WindowManager : GameComponent, IDisposable
     {
         simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new Host(this));
         if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
+        {
             simulation.IsIdle = IdleNow;
+            UpdateIdlePeriod();
+        }
 
         Loops = [renderStatistics, simulation.Ticks, simulation.Logic, simulation.Physics];
 
@@ -1121,6 +1142,9 @@ public partial class WindowManager : GameComponent, IDisposable
     private void Rendezvous()
     {
         simulationParked.Release();
+
+        // A window that only draws when asked has to be asked, or this waited for its heartbeat
+        RequestFrames();
 
         if (simulationResumed.Wait(LONGEST_SET_UP_WAIT))
             return;
@@ -1195,6 +1219,9 @@ public partial class WindowManager : GameComponent, IDisposable
         GC.SuppressFinalize(this);
 
         simulation?.Dispose();
+
+        // A device made ahead for a window that never ran
+        TakeDeviceAhead()?.Dispose();
 
         if (SnapshotClock.Active == snapshots)
             SnapshotClock.Active = null;

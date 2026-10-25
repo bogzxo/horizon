@@ -24,6 +24,22 @@ public partial class WindowManager
     // How long the window's thread waits for the system while idle, the longest it takes to notice a closing flag
     private const double EVENT_WAIT = 0.1;
 
+    // How long the simulation sleeps between idle ticks, in the window that has the keyboard, in one that hasn't (the
+    // caret blinks a touch less evenly, nobody's looking at it), and minimised, where nothing's seen at all. That one
+    // is as long as an idle tick can stretch (SimulationLoop.MAX_STRETCH), so whatever counts its time in ticks
+    // (an auto save, a poll) still keeps time
+    private const double IDLE_FOCUSED = 0.05, IDLE_UNFOCUSED = 0.1, IDLE_MINIMISED = 0.25;
+
+    // How long frames are still drawn after the window is minimised, enough for the one that sizes everything down
+    private const double FRAMES_MINIMISED = 0.25;
+
+    // Whether the window has the keyboard and whether it's minimised, kept by the window's thread, and when it was minimised
+    private volatile bool windowFocused = true, windowMinimised;
+    private long minimisedAt;
+
+    /// <summary>Whether the window has the keyboard, for whatever only moves for somebody looking (a caret's blink). From any thread.</summary>
+    public bool IsFocused => windowFocused;
+
     /// <summary>What the window is run for, see <see cref="WindowManagerConfiguration.Mode"/>.</summary>
     public RunMode Mode { get; }
 
@@ -124,12 +140,46 @@ public partial class WindowManager
     private void OnScroll(IMouse mouse, ScrollWheel wheel) => NoteInput();
     private void OnKey(IKeyboard keyboard, Silk.NET.Input.Key key, int code) => NoteInput();
     private void OnChar(IKeyboard keyboard, char character) => NoteInput();
-    private void OnFocus(bool focused) => NoteInput();
-    private void OnState(Silk.NET.Windowing.WindowState state) => NoteInput();
+    private void OnFocus(bool focused)
+    {
+        windowFocused = focused;
+        UpdateIdlePeriod();
+        NoteInput();
+    }
+
+    private void OnState(Silk.NET.Windowing.WindowState state)
+    {
+        bool minimised = state == Silk.NET.Windowing.WindowState.Minimized;
+        if (minimised && !windowMinimised)
+            Volatile.Write(ref minimisedAt, Stopwatch.GetTimestamp());
+        windowMinimised = minimised;
+        UpdateIdlePeriod();
+        NoteInput();
+    }
+
+    /// <summary>
+    /// Helper method to have the simulation sleep longer between idle ticks while nobody's looking, see IDLE_FOCUSED.
+    /// An application only, a self test run as a game keeps its pace. Any thread.
+    /// </summary>
+    private void UpdateIdlePeriod()
+    {
+        if (simulation is not { } loop || Mode != RunMode.Application)
+            return;
+
+        loop.IdlePeriod = windowMinimised ? IDLE_MINIMISED : windowFocused ? IDLE_FOCUSED : IDLE_UNFOCUSED;
+    }
+
+    /// <summary>
+    /// Whether frames are held back because the window is minimised and has been for a moment, whatever painted
+    /// something new. There's nothing to see, and the window has been sized down already. An application only.
+    /// </summary>
+    private bool Hidden => Mode == RunMode.Application && windowMinimised &&
+        Stopwatch.GetTimestamp() - Volatile.Read(ref minimisedAt) > (long)(FRAMES_MINIMISED * Stopwatch.Frequency);
 
     /// <summary>
     /// Helper method to hold the thread that draws until a frame is wanted, or a second has gone by. Nothing for a window
-    /// that draws every frame. The thread that draws, before every frame.
+    /// that draws every frame. Minimised, only for work that waits on a frame to be done (a scene swapped, something
+    /// added to be set up), not for what painted something new or the heartbeat. The thread that draws, before every frame.
     /// </summary>
     private void WaitForDemand()
     {
@@ -138,10 +188,11 @@ public partial class WindowManager
 
         while (!renderStopping)
         {
-            if (Stopwatch.GetTimestamp() < Volatile.Read(ref drawUntil))
+            bool hidden = Hidden;
+            if (hidden ? exclusiveRequested || EntityLifecycle.HasWork : Stopwatch.GetTimestamp() < Volatile.Read(ref drawUntil))
                 return;
 
-            if (!frameWanted.WaitOne(HEARTBEAT_MS))
+            if (!frameWanted.WaitOne(HEARTBEAT_MS) && !hidden)
                 return;
         }
     }

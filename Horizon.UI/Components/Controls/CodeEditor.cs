@@ -43,6 +43,25 @@ public readonly record struct UISignature(string Text, int Start, int Length);
 /// <summary>A few words written faintly after the end of a line, the value a let came to in Hex (Light Table's inline results).</summary>
 public readonly record struct UICodeHint(int Line, string Text);
 
+/// <summary>What happened to some lines since a version they're measured against, the last commit say.</summary>
+public enum UILineChangeKind
+{
+    Added,
+    Modified,
+
+    /// <summary>Lines taken out from just before <see cref="UICodeLineChange.Line"/>, which has nothing to colour so it gets a wedge at its top.</summary>
+    Deleted,
+
+    /// <summary>Lines that are there to show what was taken out (a diff shows them), a bar of the error colour like added's of success.</summary>
+    Removed
+}
+
+/// <summary>A run of lines with a colour behind them right across, from a line (0 based) for so many, the lines a diff took out or put in.</summary>
+public readonly record struct UICodeLineHighlight(int Line, int Count, Vector4 Colour);
+
+/// <summary>A run of lines that changed, from a line (0 based) for so many, drawn as a bar down the gutter beside them.</summary>
+public readonly record struct UICodeLineChange(int Line, int Count, UILineChangeKind Kind);
+
 /// <summary>
 /// HIDL code to edit, which is what every .hor file is. Coloured in by the language's own lexer the way a
 /// <see cref="CodeView"/> is, with its lines numbered, and edited like code. It keeps the indentation, closes brackets
@@ -190,11 +209,34 @@ public partial class CodeEditor : UIComponent
         }
     }
 
-    /// <summary>The scale of the text, or zero to use the skin's.</summary>
-    public float TextScale { get; set; }
+    /// <summary>
+    /// The scale of the text, or zero to use the skin's. Changed (a zoom), the caret's line stays where it was on the
+    /// screen, or the line at the top when the caret is out of sight. The scroll is in pixels, so it went on pointing at the
+    /// same pixel of a taller or shorter text and the code slid away under the caret.
+    /// </summary>
+    public float TextScale
+    {
+        get => textScale;
+        set
+        {
+            if (value == textScale)
+                return;
+
+            KeepPlaceThroughZoom();
+            textScale = value;
+        }
+    }
+
+    private float textScale;
+
+    // The line (and column, for a wrapped one) a zoom keeps in place and how far down the view it was, null for none
+    private (int Line, int Column, float Down, float OldScale)? zoomAnchor;
 
     /// <summary>Whether the lines are numbered down the left.</summary>
     public bool LineNumbers { get; set; } = true;
+
+    /// <summary>What the first line is numbered, 1 unless it shows a piece of a file from further in (a peek at a declaration).</summary>
+    public int FirstLineNumber { get; set; } = 1;
 
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
@@ -343,6 +385,12 @@ public partial class CodeEditor : UIComponent
 
     private IReadOnlyList<UICodeHint> inlineHints = [];
 
+    /// <summary>
+    /// A note about the line the caret is on, fainter than a hint and after it, shown only while the caret is on that
+    /// line (who last changed it, git blame). The program keeps it up as the caret moves. Null for none.
+    /// </summary>
+    public UICodeHint? LineNote { get; set; }
+
     /// <summary>Called when the swatch of a colour written in the code is clicked, to pick another (see <see cref="HidlSwatch"/>).</summary>
     public Action<HidlSwatch>? OnSwatchPressed { get; set; }
 
@@ -489,6 +537,64 @@ public partial class CodeEditor : UIComponent
     /// <summary>The line a debugger stopped on, lit right across and an arrow in the gutter, -1 for none.</summary>
     public int ExecutionLine { get; set; } = -1;
 
+    /// <summary>
+    /// The lines that changed since some version of them (git's), a bar down the gutter between the numbers and the code,
+    /// the skin's success colour for added, warning for changed, and a wedge of the error colour where lines were taken
+    /// out. The program works them out and keeps them up as the text changes, the editor only shows them. Empty for none.
+    /// </summary>
+    public IReadOnlyList<UICodeLineChange> LineChanges
+    {
+        get => lineChanges;
+        set
+        {
+            lineChanges = value ?? [];
+            changedLines.Clear();
+            deletedBefore.Clear();
+            foreach (UICodeLineChange change in lineChanges)
+            {
+                if (change.Kind == UILineChangeKind.Deleted)
+                    deletedBefore.Add(change.Line);
+                else
+                    for (int line = change.Line; line < change.Line + change.Count; line++)
+                        changedLines[line] = change.Kind;
+            }
+        }
+    }
+
+    private IReadOnlyList<UICodeLineChange> lineChanges = [];
+
+    // The same by the line, for painting a row at a time
+    private readonly Dictionary<int, UILineChangeKind> changedLines = [];
+    private readonly HashSet<int> deletedBefore = [];
+
+    /// <summary>A press on the bar or the wedge of a change in the gutter, given the change. Null and it selects the line as ever.</summary>
+    public Action<UICodeLineChange>? OnChangePressed { get; set; }
+
+    /// <summary>Runs of lines with a colour behind them right across, under the selection, the lines of a diff. Empty for none.</summary>
+    public IReadOnlyList<UICodeLineHighlight> LineHighlights
+    {
+        get => lineHighlights;
+        set
+        {
+            lineHighlights = value ?? [];
+            highlightedLines.Clear();
+            foreach (UICodeLineHighlight highlight in lineHighlights)
+                for (int line = highlight.Line; line < highlight.Line + highlight.Count; line++)
+                    highlightedLines[line] = highlight.Colour;
+        }
+    }
+
+    private IReadOnlyList<UICodeLineHighlight> lineHighlights = [];
+    private readonly Dictionary<int, Vector4> highlightedLines = [];
+
+    // The colour of a change's bar, in the gutter and down the minimap
+    private static Vector4 ChangeColour(UILineChangeKind kind, UISkin skin) => kind switch
+    {
+        UILineChangeKind.Added => skin.Palette.Success,
+        UILineChangeKind.Removed => skin.ErrorColor,
+        _ => skin.WarningColor
+    };
+
     /// <summary>Every place the word under the caret is, which are lit faintly.</summary>
     public IReadOnlyList<UITextPosition> Occurrences => occurrences;
 
@@ -503,6 +609,12 @@ public partial class CodeEditor : UIComponent
     /// abbreviation before the caret written out) and nothing is indented. Null, Tab only ever indents.
     /// </summary>
     public Func<bool>? OnTab { get; set; }
+
+    /// <summary>
+    /// Called as Enter is pressed with Control held, true when it took the key and no line is started. For an editor that
+    /// is a box of text with a button after it (a commit's message), Control and Enter being the button. Null, it's a new line.
+    /// </summary>
+    public Func<bool>? OnControlEnter { get; set; }
 
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
@@ -573,6 +685,7 @@ public partial class CodeEditor : UIComponent
             OnChanged?.Invoke();
         };
         document.LinesMoved += MoveDiagnostics;
+        document.LinesMoved += MoveInlays;
     }
 
     public CodeEditor(string text)
@@ -654,7 +767,7 @@ public partial class CodeEditor : UIComponent
             return TEXT_PAD;
 
         // Room for the biggest number there is, every digit of a font is as wide as its zero
-        int count = document.LineCount, digits = 1;
+        int count = document.LineCount + FirstLineNumber - 1, digits = 1;
         while ((count /= 10) > 0) digits++;
         // And the room of an icon in front of them, for a line with something wrong on it, with a little gap after it. It
         // touched a number of two digits ("x11")
@@ -823,7 +936,7 @@ public partial class CodeEditor : UIComponent
     private UIRect TextArea(UISkin skin, float scale)
     {
         UIRect content = Bounds.Shrink(Padding);
-        return new UIRect(new Vector2(content.Min.X + GutterWidth(skin, scale), content.Min.Y), new Vector2(content.Max.X - BAR_WIDTH, content.Max.Y));
+        return new UIRect(new Vector2(content.Min.X + GutterWidth(skin, scale), content.Min.Y), new Vector2(content.Max.X - BAR_WIDTH - MinimapWidth, content.Max.Y));
     }
 
     /// <summary>Where in the text a point is, by where it was last drawn.</summary>
@@ -849,16 +962,34 @@ public partial class CodeEditor : UIComponent
         float wanted = point.X - (area.Min.X + TEXT_PAD - scrollX) - row.Indent;
         float before = 0.0f;
 
+        // Each character from where it's drawn, after a hint just before it, a click on the hint is before the character
         for (int i = row.Start + 1; i <= rowEnd; i++)
         {
-            float after = Width(skin, scale, text.AsSpan(row.Start, i - row.Start));
-            if (wanted < (before + after) * 0.5f)
+            float hints = InlaysWidth(skin, scale, line, row.Start, i);
+            float after = Width(skin, scale, text.AsSpan(row.Start, i - row.Start)) + hints;
+            if (wanted < (before + hints + after) * 0.5f)
                 return new UITextPosition(line, i - 1);
-            before = after;
+            before = after - hints;
         }
 
         // Past the end of a row that isn't the last of its line is the start of the next, which is the same place
         return new UITextPosition(line, rowEnd);
+    }
+
+    /// <summary>Where a place in the text was last drawn, the left of its column halfway down its row, the other way round to <see cref="PositionAt"/>.</summary>
+    public Vector2 PlaceOf(UITextPosition at)
+    {
+        if (paintedSkin is not { } skin || document.LineCount == 0)
+            return default;
+
+        float scale = paintedScale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
+        EnsureRows(skin, scale);
+
+        int line = Math.Clamp(at.Line, 0, document.LineCount - 1);
+        float x = area.Min.X + TEXT_PAD - scrollX + ColumnX(skin, scale, line, at.Column);
+        return new Vector2(x, TopOf(area, line, at.Column, lineHeight) - lineHeight * 0.5f);
     }
 
     protected override Vector2 Measure(UISkin skin) => new Vector2(480, 320) + Padding.Total;
@@ -875,7 +1006,9 @@ public partial class CodeEditor : UIComponent
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
             TakeHoverDown();
 
-        blink = (blink + dt) % (BLINK * 2.0f);
+        // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
+        // in the background isn't painted again twice a second for a caret nobody's typing at
+        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
         tickTime = dt;
         if (waiting.Length > 0)
             waitedFor += dt;
@@ -1340,6 +1473,7 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.DELETE: document.Delete(); break;
             case UIKeyboard.WORD_BACKSPACE: document.DeleteWord(-1); break;
             case UIKeyboard.WORD_DELETE: document.DeleteWord(1); break;
+            case UIKeyboard.ENTER when OnControlEnter is not null && GameEngine.Instance.Input.Keyboard.Control && OnControlEnter(): break;
             case UIKeyboard.ENTER: document.NewLine(); break;
             case UIKeyboard.TAB:
                 if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)
@@ -1785,7 +1919,7 @@ public partial class CodeEditor : UIComponent
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
-        UIRect track = new(new Vector2(area.Max.X, area.Min.Y), new Vector2(area.Max.X + BAR_WIDTH, area.Max.Y));
+        UIRect track = new(new Vector2(area.Max.X + MinimapWidth, area.Min.Y), new Vector2(area.Max.X + MinimapWidth + BAR_WIDTH, area.Max.Y));
         float total = Math.Max(1, rows.Count) * lineHeight;
         float length = MathF.Max(24.0f, track.Height * area.Height / MathF.Max(1.0f, total));
         float most = MathF.Max(1.0f, total - area.Height * 0.5f);
@@ -1829,7 +1963,11 @@ public partial class CodeEditor : UIComponent
         CloseCompletion();
         wordDrag = null;
 
-        if (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X)
+        // The minimap, its slider taken hold of or the code gone to where it was pressed
+        if (PressMinimap(point))
+            return;
+
+        if (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X + MinimapWidth)
         {
             // Taken by the thumb it stays where it was taken, anywhere else on the track the thumb's middle goes there
             var (_, length, _, top) = BarGeometry(skin, paintedScale);
@@ -1845,6 +1983,10 @@ public partial class CodeEditor : UIComponent
 
         UITextPosition at = PositionAt(point);
         double now = Environment.TickCount64 / 1000.0;
+
+        // A change's bar is the program's to say what to do with (show what changed), ahead of the chevron it's next to
+        if (PressLineChange(point, at))
+            return;
 
         // In the gutter a press on a chevron folds, anywhere else in it is the whole line
         if (PressFold(point, at))
@@ -1898,6 +2040,15 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void OnPointerDrag(Vector2 point)
     {
+        if (changePressed)
+            return;
+
+        if (draggingMinimap)
+        {
+            DragMinimap(point);
+            return;
+        }
+
         if (draggingBar)
         {
             if (paintedSkin is { } skin)
@@ -1924,6 +2075,8 @@ public partial class CodeEditor : UIComponent
     protected internal override void OnPointerUp(Vector2 point)
     {
         draggingBar = false;
+        draggingMinimap = false;
+        changePressed = false;
         wordDrag = null;
         columnFrom = null;
     }
@@ -1979,6 +2132,7 @@ public partial class CodeEditor : UIComponent
         float scale = ScaleOf(skin);
         paintedScale = scale;
         EnsureRows(skin, scale);
+        ApplyZoomAnchor(skin, scale);
 
         float lineHeight = FontOf(skin).LineHeight * scale;
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
@@ -2021,6 +2175,9 @@ public partial class CodeEditor : UIComponent
             if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
 
+            if (highlightedLines.Count > 0 && highlightedLines.TryGetValue(row.Line, out Vector4 highlight))
+                list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), highlight);
+
             if (row.Line == ExecutionLine)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), skin.WarningColor with { W = 0.2f });
 
@@ -2034,6 +2191,8 @@ public partial class CodeEditor : UIComponent
                     PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, extras[i].Start, extras[i].End, selection);
             }
         }
+
+        PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
         if (findQuery.Length > 0)
         {
@@ -2093,7 +2252,7 @@ public partial class CodeEditor : UIComponent
             // can't be (it starts inside a comment over several lines)
             if ((ColoursOf(row.Line, written) ?? FreshColours(row.Line, written)) is not { } colours)
             {
-                x = DrawFlowing(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin);
+                x = DrawWithInlays(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
             }
             else
             {
@@ -2108,14 +2267,18 @@ public partial class CodeEditor : UIComponent
                     if (to <= from)
                         continue;
 
-                    x += Width(skin, scale, written.AsSpan(at, from - at));
-                    x = DrawFlowing(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind), left, origin);
+                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, from - at), x, top, default, left, origin, colors, draw: false);
+                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind), left, origin, colors);
                     at = to;
                 }
 
                 if (at < rowEnd)
-                    x = DrawFlowing(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin);
+                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
             }
+
+            // The hints after the end of the line, once its last row is drawn
+            if (rowEnd == written.Length)
+                x = DrawInlaysAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
 
             // A folded line says what it folds away after it, the closing line, the way VS Code does
             if (rowEnd == written.Length && folded.Contains(row.Line) && foldable.TryGetValue(row.Line, out int foldEnd))
@@ -2145,8 +2308,22 @@ public partial class CodeEditor : UIComponent
                 continue;
 
             int length = document.LineAt(hint.Line).Length;
-            float x = left + ColumnX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2) + ArtWidthOn(hint.Line);
+            float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2) + ArtWidthOn(hint.Line);
             list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.8f }, markup: false);
+        }
+
+        // The caret line's note, after its hint if it has one, fainter still, and only while the caret is on its line
+        if (LineNote is { } note && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
+        {
+            int length = document.LineAt(note.Line).Length;
+            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + 4) + ArtWidthOn(note.Line);
+            for (int i = 0; i < inlineHints.Count; i++)
+            {
+                if (inlineHints[i].Line == note.Line)
+                    x += FontOf(skin).Measure(inlineHints[i].Text, scale, markup: false).X + digit * 2;
+            }
+
+            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.55f }, markup: false);
         }
 
         // What is wrong, a line under it
@@ -2182,13 +2359,18 @@ public partial class CodeEditor : UIComponent
             for (int index = first; index <= last; index++)
             {
                 CodeRow row = rows[index];
+
+                // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
+                if ((changedLines.Count > 0 || deletedBefore.Count > 0) && (row.Start == 0 || index == first))
+                    PaintLineChange(list, skin, area, index, origin, lineHeight, digit);
+
                 if (row.Start > 0)
                     continue;
 
                 int line = row.Line;
                 list.BeginPart(PART_GUTTER + line);
                 float top = FlowTop(line, RowTop(area, index, lineHeight), origin);
-                if (!(line + 1).TryFormat(number, out int length))
+                if (!(line + FirstLineNumber).TryFormat(number, out int length))
                     continue;
 
                 float right = area.Min.X - digit * GUTTER_GAP;
@@ -2245,6 +2427,8 @@ public partial class CodeEditor : UIComponent
         // The bar, as long against its track as what is in sight is against all of it, and the line along the top that
         // says it has the keyboard, a hairline of the accent and not a stripe of it. The thumb is the text seen through,
         // the way ScrollPanel's is, it was a bar of gold down the side of every file
+        PaintMinimap(list, skin, scale, colors, lineHeight);
+
         list.BeginPart(PART_BAR);
         if (FocusLine && focused)
             list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.55f });
@@ -2390,10 +2574,11 @@ public partial class CodeEditor : UIComponent
         int fromColumn = start > rowStart ? start.Column : row.Start;
         int toColumn = end < rowEnd ? end.Column : row.End;
 
-        float from = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, fromColumn - row.Start)));
-        float to = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, toColumn - row.Start)));
+        // Starting at a character that has a hint before it, the hint isn't in it, and a hint before where it ends isn't either
+        float from = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, fromColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, start > rowStart ? fromColumn + 1 : fromColumn);
+        float to = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, toColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, toColumn);
         if (end > rowEnd && row.End == text.Length)
-            to += digit * 0.5f;
+            to += InlaysWidth(skin, scale, row.Line, text.Length, int.MaxValue) + digit * 0.5f;
 
         if (to > from)
             list.Rect(new UIRect(new Vector2(left + from, top - lineHeight), new Vector2(left + to, top)), color);
@@ -2460,6 +2645,128 @@ public partial class CodeEditor : UIComponent
     }
 
     // The lines the top of the view is inside of, on a strip of their own over the code and the gutter, numbered
+    /// <summary>
+    /// Helper method to remember, before the scale changes, which line a zoom keeps in place and how far down the view it
+    /// is. The caret's when it's in sight, the top row's otherwise. A second zoom before the first was painted keeps the first's.
+    /// </summary>
+    private void KeepPlaceThroughZoom()
+    {
+        if (zoomAnchor is not null || paintedSkin is not { } skin || rows.Count == 0)
+            return;
+
+        float lineHeight = FontOf(skin).LineHeight * paintedScale;
+        UIRect area = TextArea(skin, paintedScale);
+        UITextPosition caret = document.Caret;
+        float down = RowOf(caret.Line, caret.Column) * lineHeight - scrollY;
+        if (down >= 0.0f && down + lineHeight <= area.Height)
+        {
+            zoomAnchor = (caret.Line, caret.Column, down, paintedScale);
+            return;
+        }
+
+        int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
+        zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
+    }
+
+    /// <summary>Helper method to scroll the line a zoom kept back to where it was on the screen, once the rows are laid out at the new scale.</summary>
+    private void ApplyZoomAnchor(UISkin skin, float scale)
+    {
+        if (zoomAnchor is not { } anchor || anchor.OldScale == scale)
+        {
+            zoomAnchor = null;
+            return;
+        }
+
+        zoomAnchor = null;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        scrollGoal = null;
+        scrollY = RowOf(anchor.Line, anchor.Column) * lineHeight - anchor.Down;
+
+        // Sideways it's the same share of the way along, a line too long for the view keeps the caret's part of it in sight
+        if (!wordWrap)
+            scrollX *= scale / MathF.Max(0.0001f, anchor.OldScale);
+        ClampScroll(skin, scale);
+    }
+
+    // How wide a change's bar is and how much of the gutter next to the code it takes, in units of a digit's width
+    private const float CHANGE_BAR = 0.3f, CHANGE_ZONE = 0.8f;
+
+    // A press that went to a change's bar, which a drag after it leaves alone
+    private bool changePressed;
+
+    /// <summary>
+    /// Helper method to paint the bar of a changed line down all of its rows, and the wedge of lines taken out above it.
+    /// The line's top is where its number goes, the first row's as it flows, and the bar is as tall as every row it
+    /// wraps onto. Painted a row at a time a wrapped line's bars flowed apart from each other while the lines moved.
+    /// </summary>
+    private void PaintLineChange(UIDrawList list, UISkin skin, UIRect area, int index, float origin, float lineHeight, float digit)
+    {
+        int line = rows[index].Line;
+        int from = index, to = index;
+        while (from > 0 && rows[from - 1].Line == line) from--;
+        while (to + 1 < rows.Count && rows[to + 1].Line == line) to++;
+
+        float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
+        float bottom = top - (to - from + 1) * lineHeight;
+        float width = MathF.Max(2.0f, MathF.Round(digit * CHANGE_BAR));
+        float right = area.Min.X - MathF.Round(digit * 0.15f);
+
+        // A folded line has the bar of anything changed that's folded away under it, or nobody would know it was there
+        bool hiddenChange = false, hiddenDelete = false;
+        if (folded.Contains(line) && foldable.TryGetValue(line, out int foldEnd))
+        {
+            for (int under = line + 1; under <= foldEnd && !(hiddenChange && hiddenDelete); under++)
+            {
+                hiddenChange |= changedLines.ContainsKey(under);
+                hiddenDelete |= deletedBefore.Contains(under);
+            }
+        }
+
+        if (changedLines.TryGetValue(line, out UILineChangeKind kind) || hiddenChange)
+        {
+            Vector4 colour = hiddenChange ? skin.WarningColor : ChangeColour(kind, skin);
+            list.Box(new UIRect(new Vector2(right - width, bottom), new Vector2(right, top)), colour);
+        }
+
+        // Lines taken out from just before this one, a wedge across the line between, out into the gutter so it doesn't
+        // read as a dot. Lines taken out at the very end of a text with no line after them have theirs under the last one
+        float half = MathF.Max(2.0f, MathF.Round(lineHeight * 0.16f));
+        float wedge = width * 4.0f;
+        if (deletedBefore.Contains(line) || hiddenDelete)
+            list.Box(new UIRect(new Vector2(right - wedge, top - half), new Vector2(right, top + half)), skin.ErrorColor);
+        if (line == document.LineCount - 1 && deletedBefore.Contains(document.LineCount))
+            list.Box(new UIRect(new Vector2(right - wedge, bottom - half), new Vector2(right, bottom + half)), skin.ErrorColor);
+    }
+
+    /// <summary>Helper method for a press on a change's bar, handed to whoever wants it. False when it wasn't on one.</summary>
+    private bool PressLineChange(Vector2 point, UITextPosition at)
+    {
+        if (OnChangePressed is null || paintedSkin is not { } skin || lineChanges.Count == 0)
+            return false;
+
+        float digit = FontOf(skin).Measure("0", paintedScale, markup: false).X;
+        float codeStarts = TextArea(skin, paintedScale).Min.X;
+        if (point.X >= codeStarts || point.X < codeStarts - digit * CHANGE_ZONE)
+            return false;
+
+        // The change the line is in, or the lines taken out just above it
+        foreach (UICodeLineChange change in lineChanges)
+        {
+            bool on = change.Kind == UILineChangeKind.Deleted
+                ? at.Line == change.Line || at.Line == change.Line - 1
+                : at.Line >= change.Line && at.Line < change.Line + change.Count;
+            if (on)
+            {
+                // The press was the bar's, a drag from it isn't a selection from the caret
+                changePressed = true;
+                OnChangePressed(change);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void PaintSticky(UIDrawList list, UISkin skin, float scale, UIRect content, UIRect area, float lineHeight, float digit, int firstLine, UISyntaxColors colors)
     {
         List<int> held = StickyLines(firstLine);
@@ -2483,7 +2790,7 @@ public partial class CodeEditor : UIComponent
             float x = area.Min.X + TEXT_PAD;
             int at = 0;
 
-            if (LineNumbers && (line + 1).TryFormat(number, out int length))
+            if (LineNumbers && (line + FirstLineNumber).TryFormat(number, out int length))
                 list.Text(number[..length], new Vector2(area.Min.X - digit * GUTTER_GAP - digit * length, top), scale, colors.LineNumber, markup: false);
 
             if ((ColoursOf(line, written) ?? FreshColours(line, written)) is { } colours)
@@ -2527,7 +2834,7 @@ public partial class CodeEditor : UIComponent
         int length = document.LineAt(swatch.Line).Length;
         float side = MathF.Round(lineHeight * 0.6f);
         float top = TopOf(area, swatch.Line, length, lineHeight);
-        float x = left + ColumnX(skin, scale, swatch.Line, length) + side * 0.8f + before * (side + 4.0f);
+        float x = left + EndX(skin, scale, swatch.Line, length) + side * 0.8f + before * (side + 4.0f);
         float middle = MathF.Round(top - lineHeight * 0.5f);
         return new UIRect(new Vector2(x, middle - side * 0.5f), new Vector2(x + side, middle + side * 0.5f));
     }
@@ -2576,7 +2883,7 @@ public partial class CodeEditor : UIComponent
             {
                 line = item.Line;
                 int length = document.LineAt(line).Length;
-                x = left + ColumnX(skin, scale, line, length) + swatchSide * 0.8f + SwatchesOn(line) * (swatchSide + ART_GAP);
+                x = left + EndX(skin, scale, line, length) + swatchSide * 0.8f + SwatchesOn(line) * (swatchSide + ART_GAP);
                 middle = MathF.Round(TopOf(area, line, length, lineHeight) - lineHeight * 0.5f);
             }
 
