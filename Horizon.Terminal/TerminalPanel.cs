@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Core.Processes;
 using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.UI.Drawing;
@@ -267,6 +268,22 @@ public class TerminalPanel : UIComponent, IDisposable
         tabs.Add(tab);
         Select(tab);
         StartIn(view, profile, workingDirectory);
+        return tab;
+    }
+
+    /// <summary>
+    /// Opens a tab on a process that's running already (a console Windows handed over to the terminal), selects it and
+    /// gives it the keyboard. It has no profile, its title is what the program says or else what it's called.
+    /// </summary>
+    public TerminalTab AdoptTab(PseudoTerminal running, string? workingDirectory = null)
+    {
+        var tab = new TerminalTab();
+        TerminalView view = MakeView(null);
+        tab.Focused = tab.Tree.Add(view);
+        tab.Refresh();
+        tabs.Add(tab);
+        Select(tab);
+        view.Attach(running, workingDirectory ?? WorkingDirectory);
         return tab;
     }
 

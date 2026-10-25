@@ -200,6 +200,24 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>Starts a command in the terminal, the machine's shell when none is given, in a folder, ending whatever ran before.</summary>
     public PseudoTerminal Start(string? commandLine = null, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null)
     {
+        string folder = workingDirectory ?? Environment.CurrentDirectory;
+        return Attach(() => PseudoTerminal.Start(commandLine ?? PseudoTerminal.DefaultShell(), folder, screen.Columns, screen.Rows, environment), folder);
+    }
+
+    /// <summary>
+    /// Shows a process that's running already in the terminal (a console Windows handed over), ending whatever ran before,
+    /// and tells it how big the terminal is.
+    /// </summary>
+    public PseudoTerminal Attach(PseudoTerminal running, string? workingDirectory = null)
+    {
+        PseudoTerminal attached = Attach(() => running, workingDirectory ?? Environment.CurrentDirectory);
+        attached.Resize(screen.Columns, screen.Rows);
+        return attached;
+    }
+
+    // What both have, whatever ran before ended, the screen cleared, and the process listened to
+    private PseudoTerminal Attach(Func<PseudoTerminal> make, string folder)
+    {
         process?.Dispose();
         program?.Dispose();
         program = null;
@@ -207,8 +225,8 @@ public partial class TerminalView : UIComponent, IDisposable
         scrolled = 0;
         hasSelection = false;
 
-        startedIn = workingDirectory ?? Environment.CurrentDirectory;
-        PseudoTerminal started = PseudoTerminal.Start(commandLine ?? PseudoTerminal.DefaultShell(), startedIn, screen.Columns, screen.Rows, environment);
+        startedIn = folder;
+        PseudoTerminal started = make();
         // Windows' ConPTY lets the shell's marks through ahead of the text it paints, the screen settles them after
         screen.LateMarks = OperatingSystem.IsWindows();
         started.Output += Arrived;

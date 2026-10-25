@@ -105,7 +105,13 @@ public static class TerminalIntegration
             case "powershell":
             {
                 string script = Path.Combine(scripts, "dusk.ps1");
-                return File.Exists(script) ? $"{command} -NoExit -Command \". '{script.Replace("'", "''")}'\"" : command;
+                if (!File.Exists(script))
+                    return command;
+
+                // a stock Windows install is Restricted and won't dot source the script, Bypass is for this process only
+                // and writes no policy anywhere. One the profile already picks is left alone
+                string policy = HasExecutionPolicy(command) ? string.Empty : " -ExecutionPolicy Bypass";
+                return $"{command}{policy} -NoExit -Command \". '{script.Replace("'", "''")}'\"";
             }
 
             case "bash":
@@ -132,6 +138,10 @@ public static class TerminalIntegration
                 return command;
         }
     }
+
+    // Whether a PowerShell command line gives its own policy, -ExecutionPolicy or how PowerShell lets it be cut short (-ep, -ex, -exec)
+    private static bool HasExecutionPolicy(string command) =>
+        System.Text.RegularExpressions.Regex.IsMatch(command, @"(^|\s)[-/](ep|ex[a-z]*)(\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // The program a command line starts, its file's name without a folder or .exe, lower case
     private static string ProgramOf(string command)

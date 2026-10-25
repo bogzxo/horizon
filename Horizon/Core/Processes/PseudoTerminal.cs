@@ -116,6 +116,18 @@ public abstract class PseudoTerminal : IDisposable
         throw new PlatformNotSupportedException("There is no pseudo terminal on this platform.");
     }
 
+    /// <summary>
+    /// A console Windows handed over to the terminal, for a terminal that is the default one (ITerminalHandoff3). The
+    /// console's input that is written to, its output that is read, the signal pipe its size goes down, the handle that
+    /// keeps the console alive, and the console host's and the program's processes, all of them the terminal's to close.
+    /// The command is what it's called, for a title, it was started by whoever started the program.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static PseudoTerminal HandedOver(Microsoft.Win32.SafeHandles.SafeFileHandle input, Microsoft.Win32.SafeHandles.SafeFileHandle output,
+        Microsoft.Win32.SafeHandles.SafeFileHandle signal, Microsoft.Win32.SafeHandles.SafeFileHandle reference,
+        Microsoft.Win32.SafeHandles.SafeFileHandle server, Microsoft.Win32.SafeHandles.SafeFileHandle client, string command) =>
+        new HandedOverPseudoTerminal(input, output, signal, reference, server, client, command);
+
     /// <summary>The shell this machine comes with, PowerShell (pwsh if it is there), bash, zsh, whatever $SHELL says.</summary>
     public static string DefaultShell()
     {
