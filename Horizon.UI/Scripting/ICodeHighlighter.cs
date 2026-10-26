@@ -30,4 +30,18 @@ public interface ICodeHighlighter
     /// a plain name until the whole is coloured.
     /// </summary>
     List<SyntaxSpan> ReadLine(string line, in CodeLineStart start);
+
+    /// <summary>
+    /// Colours code again after it was edited, given the last colouring of it. What comes out is what <see cref="Read"/>
+    /// would make, one that can do better reads from the first line that changed and stops once a line after the edit
+    /// starts the way it did last time, the rest taken over from then. Typing into a file of twenty thousand lines read
+    /// every one of them again for every pause, near a second of a core and tens of megabytes of garbage a time.
+    /// </summary>
+    /// <param name="lines">The lines of <paramref name="code"/>, the same strings the document has.</param>
+    /// <param name="starts">Where every line starts, filled in, as many as there are lines.</param>
+    List<SyntaxSpan>[] ReadAgain(string code, string[] lines, CodeLineStart[] starts, CodeColouring last, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null) =>
+        Read(code, lines.Length, starts, swatches, art);
 }
+
+/// <summary>A colouring as it was made, the lines it was of, their spans and where every line started, for the next to go on from.</summary>
+public sealed record CodeColouring(string[] Lines, List<SyntaxSpan>[] Spans, CodeLineStart[] Starts);

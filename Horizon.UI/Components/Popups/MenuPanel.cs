@@ -103,12 +103,12 @@ internal sealed partial class MenuPanel
     private UIRect VisibleBounds(UISkin skin, int index)
     {
         UIRect area = ItemBounds(skin, index);
-        if (area.IsEmpty)
-            return default;
-
-        UIRect view = View(skin);
-        return area.Min.Y >= view.Min.Y - 0.5f && area.Max.Y <= view.Max.Y + 0.5f ? area : area.Intersect(view) is { IsEmpty: false } cut ? cut : default;
+        return area.IsEmpty ? default : Visible(area, View(skin));
     }
+
+    // The part of an item's place that's in view, empty when none of it is
+    private static UIRect Visible(UIRect area, UIRect view) =>
+        area.Min.Y >= view.Min.Y - 0.5f && area.Max.Y <= view.Max.Y + 0.5f ? area : area.Intersect(view) is { IsEmpty: false } cut ? cut : default;
 
     /// <summary>
     /// Where an item is by what it says, in this list or the open one of its items, scrolled into view first unless
@@ -165,9 +165,18 @@ internal sealed partial class MenuPanel
             return;
         }
 
+        // Down the list once, every item's place from the one before. Asked of ItemBounds one at a time, each counted
+        // the ones above it again, every tick the list is open
+        UIRect view = View(skin);
+        float row = RowHeight(skin, textScale), top = view.Max.Y + scroll;
         for (int i = 0; i < menu.Items.Count; i++)
         {
-            UIRect area = VisibleBounds(skin, i);
+            if (!ShownAt(i))
+                continue;
+
+            float height = HeightOf(menu.Items[i], row);
+            UIRect area = Visible(new UIRect(new Vector2(view.Min.X, top - height), new Vector2(view.Max.X, top)), view);
+            top -= height;
             if (!area.Contains(pointer) || i == childIndex)
                 continue;
 
@@ -314,16 +323,25 @@ internal sealed partial class MenuPanel
         // The item under the pointer first, the one whose list is open when the pointer is on none of this list's
         UIRect target = default;
         bool any = false;
-        bool inView = View(skin).Contains(pointer);
+        UIRect view = View(skin);
+        bool inView = view.Contains(pointer);
+        float row = RowHeight(skin, textScale);
         for (int pass = 0; pass < 2 && !any; pass++)
         {
+            // Every item's place from the one before, down the list once a pass
+            float top = view.Max.Y + scroll;
             for (int i = 0; i < menu.Items.Count && !any; i++)
             {
                 MenuItem item = menu.Items[i];
-                if (!ShownAt(i) || item.IsSeparator || !item.Enabled)
+                if (!ShownAt(i))
                     continue;
 
-                UIRect area = ItemBounds(skin, i);
+                float height = HeightOf(item, row);
+                var area = new UIRect(new Vector2(view.Min.X, top - height), new Vector2(view.Max.X, top));
+                top -= height;
+                if (item.IsSeparator || !item.Enabled)
+                    continue;
+
                 if (pass == 0 ? inView && area.Contains(pointer) : childIndex == i)
                 {
                     target = area.Shrink(new UIEdges(4.0f, 1.0f));
@@ -376,6 +394,7 @@ internal sealed partial class MenuPanel
         // The highlight glides from the item it was on to the one under the pointer rather than jumping, a part of its own
         PaintHighlight(list, skin, pointer);
 
+        float top = view.Max.Y + scroll;
         for (int i = 0; i < menu.Items.Count; i++)
         {
             // An item at a time, or the highlight of one has the rule after it blended with it for a tick
@@ -384,7 +403,10 @@ internal sealed partial class MenuPanel
             if (!ShownAt(i))
                 continue;
 
-            UIRect area = ItemBounds(skin, i);
+            // Where it is from where the one before it was, rather than counting down from the top again for every item
+            float height = HeightOf(item, row);
+            var area = new UIRect(new Vector2(view.Min.X, top - height), new Vector2(view.Max.X, top));
+            top -= height;
             if (area.Max.Y < view.Min.Y || area.Min.Y > view.Max.Y)
                 continue;
 
@@ -409,7 +431,9 @@ internal sealed partial class MenuPanel
                 list.Symbol(item.Icon, mark, color);
 
             UIRect text = new(new Vector2(content.Min.X + CHECK_WIDTH, content.Min.Y), content.Max);
-            list.Text(Fitted(skin, item.Label, text.Width - EndWidth(skin, item, row)), text, Origin.Left, scale, color, markup: false);
+            // Cut short only in a list narrower than its longest item, the room its keys take measured only then
+            string label = naturalWidth <= bounds.Width + 0.5f ? item.Label : Fitted(skin, item.Label, text.Width - EndWidth(skin, item, row));
+            list.Text(label, text, Origin.Left, scale, color, markup: false);
 
             if (item.Submenu is not null)
                 list.Symbol(SUBMENU_ARROW, new UIRect(new Vector2(content.Max.X - side, mark.Min.Y), new Vector2(content.Max.X, mark.Max.Y)), dim);

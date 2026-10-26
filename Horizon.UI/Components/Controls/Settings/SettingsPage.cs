@@ -589,9 +589,12 @@ public partial class SettingsPage : UIComponent
         float top = scroll.Bounds.Max.Y - scroll.Padding.Top;
         string? current = null;
 
-        // Down the page the way they're showing, a search puts the sections it found the most in first
-        foreach (var (group, header) in SectionsInOrder())
+        // Down the page the way they're showing, a search puts the sections it found the most in first. Through the list
+        // itself and not SectionsInOrder, whose Select was garbage on every tick
+        foreach (BuiltSection section in ranked ?? built)
         {
+            string group = section.Group;
+            Label header = section.Header;
             if (!header.Visible || header.Bounds.IsEmpty)
                 continue;
 

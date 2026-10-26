@@ -61,6 +61,80 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         return spans;
     }
 
+    public List<SyntaxSpan>[] ReadAgain(string code, string[] lines, CodeLineStart[] starts, CodeColouring last, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
+    {
+        swatches?.Clear();
+        art?.Clear();
+        return ReadAgain(lines, starts, last, copyKept: false);
+    }
+
+    /// <summary>
+    /// Helper method for <see cref="ReadAgain(string, string[], CodeLineStart[], CodeColouring, List{HidlSwatch}?, List{HidlArt}?)"/>,
+    /// the lines before the first that changed and after the last kept as they were, the ones between read again from
+    /// the state the first of them started in. The reading stops at the first line past the edit that starts in the
+    /// state and at the depth of brackets it started in last time, everything after it is coloured the same as it was.
+    /// </summary>
+    /// <param name="copyKept">Whether what's kept is copied, for a highlighter that writes over the spans after (HIDL's).</param>
+    internal List<SyntaxSpan>[] ReadAgain(string[] lines, CodeLineStart[] starts, CodeColouring last, bool copyKept)
+    {
+        int count = Math.Max(1, lines.Length), was = last.Lines.Length;
+        var spans = new List<SyntaxSpan>[count];
+        if (lines.Length == 0 || was == 0 || last.Spans.Length != was || last.Starts.Length != was)
+        {
+            ReadFrom(lines, starts, spans, 0, CodeLineStart.First, last, int.MaxValue, copyKept);
+            return spans;
+        }
+
+        // The first line that isn't what it was, and how many at the end are
+        int limit = Math.Min(lines.Length, was), first = 0;
+        while (first < limit && string.Equals(lines[first], last.Lines[first], StringComparison.Ordinal))
+            first++;
+        int same = 0;
+        while (same < limit - first && string.Equals(lines[lines.Length - 1 - same], last.Lines[was - 1 - same], StringComparison.Ordinal))
+            same++;
+
+        // From where the first changed line started last time, or the last line again for lines added after the end
+        int from = Math.Min(first, was - 1);
+        for (int line = 0; line < from; line++)
+        {
+            spans[line] = Kept(last.Spans[line], copyKept);
+            starts[line] = last.Starts[line];
+        }
+
+        ReadFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same, copyKept);
+        return spans;
+    }
+
+    // The lines from one on, read until one at or past where the lines are the same again starts as it did last time
+    private void ReadFrom(string[] lines, CodeLineStart[] starts, List<SyntaxSpan>[] spans, int from, CodeLineStart start, CodeColouring last, int sameFrom, bool copyKept)
+    {
+        IStateStack? state = start.State as IStateStack;
+        int depth = start.Depth, shift = lines.Length - last.Lines.Length;
+
+        lock (grammar)
+        {
+            for (int line = from; line < spans.Length; line++)
+            {
+                int old = line - shift;
+                if (line >= sameFrom && old >= 0 && old < last.Starts.Length && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
+                {
+                    for (; line < spans.Length; line++)
+                    {
+                        spans[line] = Kept(last.Spans[line - shift], copyKept);
+                        starts[line] = last.Starts[line - shift];
+                    }
+
+                    return;
+                }
+
+                starts[line] = new CodeLineStart(depth, state);
+                spans[line] = ReadLine((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth);
+            }
+        }
+    }
+
+    private static List<SyntaxSpan> Kept(List<SyntaxSpan> spans, bool copy) => copy ? [.. spans] : spans;
+
     public List<SyntaxSpan> ReadLine(string line, in CodeLineStart start)
     {
         IStateStack? state = start.State as IStateStack;

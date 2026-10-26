@@ -130,7 +130,11 @@ public partial class CodeEditor : UIComponent
     private bool recolourNow = true;
 
     // The colouring going on off the editor's thread, and the lines coloured on their own while it does, by their text
-    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art);
+    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art, ICodeHighlighter Reader);
+
+    // What the colours there are now were worked out by, null for none (plain text), the next colouring goes on from them
+    // when it's the same
+    private ICodeHighlighter? colouredWith;
 
     // The art named in the code, found with the colours, where the last paint put each of it (nothing for what it couldn't
     // draw), which of it the pointer is on, and where the pictures named in it are on disk by the name, asked once a name
@@ -151,6 +155,12 @@ public partial class CodeEditor : UIComponent
     private readonly List<UITextPosition> occurrences = [];
     private int occurrenceLength;
     private (int Version, UITextPosition Caret) occurrencesFor = (-1, default);
+
+    // How long the typing has to stop before the word's other places are looked for again. Looked for on every key, a
+    // file of twenty thousand lines was gone through a line at a time for every letter typed
+    private const float OCCURRENCES_AFTER = 0.1f;
+    private int occurrencesVersionSeen = -1;
+    private float occurrencesWait;
     private const int MAX_OCCURRENCES = 500;
 
     // What the hover hint was last asked about, so it is asked once for as long as the pointer stays on one word
@@ -848,9 +858,10 @@ public partial class CodeEditor : UIComponent
         recolourNow = false;
         fresh.Clear();
 
+        // New arrays, a colouring going on in the background may be reading the last ones
         int count = document.LineCount;
-        if (lineStarts.Length != count)
-            lineStarts = new CodeLineStart[count];
+        lineStarts = new CodeLineStart[count];
+        colouredWith = Highlight ? highlighter : null;
 
         if (Highlight)
         {
@@ -865,8 +876,7 @@ public partial class CodeEditor : UIComponent
 
         TookArt();
 
-        if (colouredLines.Length != count)
-            colouredLines = new string[count];
+        colouredLines = new string[count];
         for (int i = 0; i < colouredLines.Length; i++)
             colouredLines[i] = document.LineAt(i);
         FindFoldable();
@@ -883,13 +893,16 @@ public partial class CodeEditor : UIComponent
 
         changeSeen = version;
         ICodeHighlighter reader = highlighter;
+
+        // Gone on from the last colouring when it was this highlighter's, only the lines from the edit on read again
+        CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
         colouring = Task.Run(() =>
         {
             var found = new List<HidlSwatch>();
             var named = new List<HidlArt>();
             var starts = new CodeLineStart[count];
-            List<SyntaxSpan>[] read = reader.Read(text, count, starts, found, named);
-            return new Colouring(version, read, lines, found, starts, named);
+            List<SyntaxSpan>[] read = last is null ? reader.Read(text, count, starts, found, named) : reader.ReadAgain(text, lines, starts, last, found, named);
+            return new Colouring(version, read, lines, found, starts, named, reader);
         });
     }
 
@@ -898,6 +911,7 @@ public partial class CodeEditor : UIComponent
         spans = done.Spans;
         colouredLines = done.Lines;
         lineStarts = done.Starts;
+        colouredWith = done.Reader;
         swatches.Clear();
         swatches.AddRange(done.Swatches);
         art.Clear();
@@ -1101,7 +1115,7 @@ public partial class CodeEditor : UIComponent
             FindBracket();
 
         if (occurrencesFor != (document.Version, document.Caret))
-            FindOccurrences();
+            UpdateOccurrences(dt);
 
         if (signatureFor != (document.Version, document.Caret))
             FindSignature();
@@ -1354,6 +1368,31 @@ public partial class CodeEditor : UIComponent
     }
 
     // Every place the word under the caret is, whole words only, unless something is selected
+    /// <summary>
+    /// Helper method for the word's other places, looked for at once when the caret moved and a moment after the typing
+    /// stops when the text changed. What was lit goes as soon as the text changes, it would be in the wrong places.
+    /// </summary>
+    private void UpdateOccurrences(float dt)
+    {
+        if (occurrencesFor.Version == document.Version)
+        {
+            FindOccurrences();
+            return;
+        }
+
+        if (occurrencesVersionSeen != document.Version)
+        {
+            occurrencesVersionSeen = document.Version;
+            occurrencesWait = OCCURRENCES_AFTER;
+            occurrences.Clear();
+            occurrenceLength = 0;
+            return;
+        }
+
+        if ((occurrencesWait -= dt) <= 0.0f)
+            FindOccurrences();
+    }
+
     private void FindOccurrences()
     {
         occurrencesFor = (document.Version, document.Caret);

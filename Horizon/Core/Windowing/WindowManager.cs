@@ -1064,7 +1064,11 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void StartSimulation()
     {
-        simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new Host(this));
+        simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new Host(this))
+        {
+            // An application's ticks that run late are one longer tick, not a run of them, see SimulationLoop.StretchWhenBehind
+            StretchWhenBehind = Mode == RunMode.Application
+        };
         if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
         {
             simulation.IsIdle = IdleNow;

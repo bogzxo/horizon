@@ -79,6 +79,13 @@ public sealed class SimulationLoop : IDisposable
     /// </summary>
     public Func<bool>? IsIdle { get; set; }
 
+    /// <summary>
+    /// Whether a loop that falls behind makes a single tick as long as the time that went by instead of ticks one after
+    /// another to catch up, for a program that isn't a game (an editor), where what moves keeps to real time and the
+    /// physics, stepped by its own clock, is nothing to keep in step. Off, a game catches up the way it always did.
+    /// </summary>
+    public bool StretchWhenBehind { get; set; }
+
     /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
     public double IdlePeriod { get; set; } = 0.05;
 
@@ -240,6 +247,23 @@ public sealed class SimulationLoop : IDisposable
             next = now;
 
         double behind = now - next;
+
+        // A loop that fell a tick or more behind (a tick that took longer than a tick) makes one tick of all the time that
+        // went by, when it's told to. Caught up a tick at a time, every one of them did the whole of a tick's work again
+        // for a frame nobody saw, and whatever moves only moved a tick's worth for each, so a menu coming in while ticks took
+        // twice as long as they should came in at half the speed, in slow motion
+        if (StretchWhenBehind && behind >= period && lastStamp != 0)
+        {
+            stretch = Math.Clamp((now - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
+            next = now;
+            MakeTick(now);
+
+            // Unless it was held up on purpose at the end of it, the next one is a tick from now
+            if (!double.IsNaN(next))
+                next = now + period;
+            return;
+        }
+
         int due = 1 + (int)Math.Clamp(Math.Floor(behind / period), 0, MAX_CATCH_UP - 1);
 
         if (behind > period * MAX_CATCH_UP)

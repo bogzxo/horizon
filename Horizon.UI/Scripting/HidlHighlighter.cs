@@ -100,6 +100,18 @@ public sealed class HidlHighlighter : ICodeHighlighter
         return spans;
     }
 
+    /// <summary>
+    /// The grammar's part read again from the first line that changed (see <see cref="TextMateHighlighter"/>), the spans it
+    /// keeps copied, since what the lexer knows is laid over them in place, and that laid over all of it again as always.
+    /// What was laid over a kept line last time is laid over again or left the colour it is, so it comes out the same.
+    /// </summary>
+    public List<SyntaxSpan>[] ReadAgain(string code, string[] lines, CodeLineStart[] starts, CodeColouring last, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
+    {
+        List<SyntaxSpan>[] spans = Grammar.ReadAgain(lines, starts, last, copyKept: true);
+        Overlay(spans, code, swatches, art);
+        return spans;
+    }
+
     public List<SyntaxSpan> ReadLine(string line, in CodeLineStart start)
     {
         List<SyntaxSpan>[] spans = [Grammar.ReadLine(line, start)];

@@ -151,6 +151,38 @@ public sealed partial class UITextDocument
         }
     }
 
+    /// <summary>
+    /// Whether the whole text is the one given, its lines ended with '\n' the way <see cref="Text"/> has them, without
+    /// putting the lines together to ask. Asked on every key whether a file still is what was saved, the joined text was
+    /// most of what a key in a big file allocated, near a megabyte in one of twenty thousand lines.
+    /// </summary>
+    public bool TextEquals(string text)
+    {
+        if (joined is not null)
+            return string.Equals(joined, text, StringComparison.Ordinal);
+
+        // The length first, which tells them apart after almost any edit without looking at a character
+        long length = lines.Count - 1;
+        for (int i = 0; i < lines.Count; i++)
+            length += lines[i].Length;
+        if (length != text.Length)
+            return false;
+
+        int at = 0;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (!text.AsSpan(at, line.Length).SequenceEqual(line))
+                return false;
+
+            at += line.Length;
+            if (i < lines.Count - 1 && text[at++] != '\n')
+                return false;
+        }
+
+        return true;
+    }
+
     /// <summary>Replaces the whole text as one step that can be undone, keeping the caret where it can.</summary>
     public void Replace(string text)
     {

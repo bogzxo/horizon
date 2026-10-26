@@ -69,6 +69,47 @@ public class SimulationLoopTests
     }
 
     [Fact]
+    public void An_application_that_falls_behind_makes_one_long_tick_and_keeps_to_real_time()
+    {
+        var host = new Recorder();
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, host, () => now) { StretchWhenBehind = true };
+
+        loop.Step();
+        now += Seconds(0.01);
+        loop.Step();
+
+        // Three and a half ticks late, one tick of all of it rather than four to catch up
+        now += Seconds(0.045);
+        loop.Step();
+
+        Assert.Equal(3, host.LogicDeltas.Count);
+        Assert.Equal(0.045f, host.LogicDeltas[^1], 1e-4f);
+        Assert.Equal(now, host.Stamps[^1]);
+        Assert.Equal(0.065, loop.Time, 4);
+
+        // And back to a tick at a time from there
+        now += Seconds(0.01);
+        loop.Step();
+        Assert.Equal(0.01f, host.LogicDeltas[^1], 1e-4f);
+    }
+
+    [Fact]
+    public void A_game_that_falls_behind_still_catches_up_a_tick_at_a_time()
+    {
+        var host = new Recorder();
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, host, () => now);
+
+        loop.Step();
+        now += Seconds(0.035);
+        loop.Step();
+
+        Assert.Equal(4, host.LogicDeltas.Count);
+        Assert.All(host.LogicDeltas, dt => Assert.Equal(0.01f, dt, 1e-6f));
+    }
+
+    [Fact]
     public void Logic_slower_than_the_physics_is_told_how_long_it_has_been()
     {
         var host = new Recorder();
