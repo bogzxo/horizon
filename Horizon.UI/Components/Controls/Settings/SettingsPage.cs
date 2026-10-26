@@ -149,6 +149,24 @@ public partial class SettingsPage : UIComponent
         }
     }
 
+    /// <summary>
+    /// The keys of the settings people change the most, in the order they're shown, VS Code's Commonly Used. With some
+    /// the sections down the left start with an entry that leaves only these (<see cref="COMMON"/> in the search). A key
+    /// with no row on the page is passed over. Empty for none, as it comes.
+    /// </summary>
+    public IReadOnlyList<string> Common
+    {
+        get => common;
+        set
+        {
+            common = [.. value];
+            ApplyTexts();
+            dirty = true;
+        }
+    }
+
+    private string[] common = [];
+
     /// <summary>What a setting is now.</summary>
     public Func<string, IRuntimeValue?>? ValueOf { get; set; }
 
@@ -205,7 +223,7 @@ public partial class SettingsPage : UIComponent
     // The page's own words put on what says them, as it's made and whenever it's given others
     private void ApplyTexts()
     {
-        search.Placeholder = texts.SearchPlaceholder;
+        search.Placeholder = common.Length > 0 ? texts.SearchPlaceholderCommon : texts.SearchPlaceholder;
         filters.Tooltip = texts.FilterTooltip;
         clear.Tooltip = texts.ClearTooltip;
         close.Tooltip = texts.CloseTooltip;
@@ -298,9 +316,10 @@ public partial class SettingsPage : UIComponent
         Size = new Vector2(900, 600);
         Padding = new UIEdges(20.0f, 14.0f, 20.0f, 14.0f);
         title = Add(new Label { Align = Origin.Left });
-        search = Add(new TextBox { Padding = new UIEdges(10.0f, 6.0f, 10.0f, 6.0f) });
+        search = Add(new SearchBox { Padding = new UIEdges(10.0f, 6.0f, 10.0f, 6.0f) });
         search.OnChanged = Filter;
         search.OnKey = SearchKey;
+        search.TakeKey = SearchTakeKey;
 
         // How many the search found and the x that empties it, both over the right end of the box and only while it has
         // something in it
@@ -424,6 +443,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>The rows narrowed to what has every word of a text in it, as typing it in the search box does.</summary>
     public void Find(string text)
     {
+        restoring = null;
         search.Text = text;
         Filter(text);
     }
@@ -431,6 +451,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>The page scrolled to a section, as a click on its name does.</summary>
     public void GoTo(string group)
     {
+        restoring = null;
         scrollBack = null;
         wentTo = group;
         wentToAt = float.NaN;
@@ -538,6 +559,7 @@ public partial class SettingsPage : UIComponent
             GoTo(wanted);
 
         UpdateReveal();
+        UpdateRestore();
         ScrollBack();
         FindCurrent();
         UpdateKeys();
@@ -622,6 +644,9 @@ public partial class SettingsPage : UIComponent
         var groups = settings.Select(setting => setting.Group).Concat(panels.Select(panel => panel.Group)).Distinct().ToList();
         if (GroupOrder is { } order)
             groups = [.. groups.Select((group, at) => (group, at)).OrderBy(pair => order(pair.group)).ThenBy(pair => pair.at).Select(pair => pair.group)];
+
+        // Commonly used at the very top down the left, over every part, when any of them has a row
+        AddCommonLink();
         foreach (string group in groups)
         {
             string named = group.Length == 0 ? texts.General : group;

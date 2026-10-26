@@ -104,6 +104,11 @@ public partial class SettingsPage
             fresh = true;
         }
 
+        // Commonly used stays at the top while nothing's typed or while it's what the search is, a search for words has
+        // its own sections down the left
+        if (commonLink is not null)
+            commonLink.Visible = !searching || commonShown;
+
         foreach (var (part, heading, links) in navParts)
         {
             bool any = false;
@@ -164,7 +169,11 @@ public partial class SettingsPage
 
         shownParts = order;
         int index = 0;
-        bool firstShown = true;
+
+        // Commonly used over everything, the first part then has its rule over it to keep the two apart
+        bool firstShown = commonLink is not { Visible: true };
+        if (commonLink is not null)
+            Place(commonLink);
         foreach (var (_, heading, links) in order)
         {
             Place(heading);
@@ -270,7 +279,7 @@ public partial class SettingsPage
     // step rather than thirty and Shift+Tab from the first row comes back to them
     private bool IsNavStop(SectionLink link)
     {
-        if (!link.Visible)
+        if (!link.Visible || CommonIsStop)
             return false;
 
         SectionLink? lit = null, first = null;
@@ -288,6 +297,8 @@ public partial class SettingsPage
     private List<UIComponent> NavStops()
     {
         var stops = new List<UIComponent>();
+        if (commonLink is { Visible: true })
+            stops.Add(commonLink);
         foreach (var (_, heading, links) in shownParts)
         {
             if (!heading.Visible)
@@ -310,9 +321,15 @@ public partial class SettingsPage
         stops[Math.Clamp(at + delta, 0, stops.Count - 1)].Focus();
     }
 
-    // The links' ends, Home and End
+    // The links' ends, Home and End. Home goes up to Commonly used while it's there
     private void LinkAtEnd(bool last)
     {
+        if (!last && commonLink is { Visible: true })
+        {
+            commonLink.Focus();
+            return;
+        }
+
         var links = VisibleLinks().ToList();
         if (links.Count > 0)
             (last ? links[^1] : links[0]).Focus();

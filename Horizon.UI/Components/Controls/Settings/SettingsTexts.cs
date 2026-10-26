@@ -19,6 +19,15 @@ public sealed class SettingsTexts
     /// <summary>What the search box says while nothing is typed in it.</summary>
     public string SearchPlaceholder { get; init; } = "Search settings (@modified, @id:, @section:)";
 
+    /// <summary>The same for a page with settings that are commonly used (<see cref="SettingsPage.Common"/>), @common among the words.</summary>
+    public string SearchPlaceholderCommon { get; init; } = "Search settings (@common, @modified, @id:, @section:)";
+
+    /// <summary>The entry at the top of the sections down the left that leaves only the settings people change the most.</summary>
+    public string CommonlyUsed { get; init; } = "Commonly used";
+
+    /// <summary>The funnel's line for the same.</summary>
+    public string FilterCommon { get; init; } = "Commonly used settings";
+
     /// <summary>A reset's tooltip when nobody says what it puts back.</summary>
     public string ResetToDefault { get; init; } = SettingsPage.RESET_TO_DEFAULT;
 

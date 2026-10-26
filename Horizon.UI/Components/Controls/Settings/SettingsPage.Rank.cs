@@ -10,8 +10,13 @@ public partial class SettingsPage
     // anywhere in it, then its key, its keywords, one of its choices, its sentence or the line of a choice, its section
     private const int TITLE_START = 70, TITLE_WORD = 60, IN_TITLE = 55, IN_KEY = 40, IN_KEYWORDS = 30, IN_CHOICE = 20, IN_HELP = 10, IN_SECTION = 5;
 
-    // A name that's the whole of what was typed, for every word of it, so Font is first for font among the rest
-    private const int WHOLE_TITLE = 100;
+    // The same found only once the word and the name, key or keywords are run together (tabsize in Tab size), a little
+    // under finding it as it was typed so a word as it's written still goes first
+    private const int SQUASHED_TITLE = 50, SQUASHED_KEY = 35, SQUASHED_KEYWORDS = 25;
+
+    // A name that's the whole of what was typed, for every word of it, so Font is first for font among the rest. A key
+    // or a keyword that's the whole of it run together comes next, "word wrap" is wrap_code's wordwrap
+    private const int WHOLE_TITLE = 100, WHOLE_KEY = 90;
 
     // What a row of the part the page is for has over the rest. Code font in Dawn is over the terminal's Font for font,
     // a word in a name here over a whole name there, and a word only in the keywords here isn't
@@ -57,11 +62,15 @@ public partial class SettingsPage
         string compact = Compact(word);
         bool squashed = compact.Length > 0;
         if (squashed && Compact(title).Contains(compact, StringComparison.Ordinal))
-            return IN_TITLE;
-        if (setting.Key.Contains(word, StringComparison.OrdinalIgnoreCase) || squashed && Compact(setting.Key).Contains(compact, StringComparison.Ordinal))
+            return SQUASHED_TITLE;
+        if (setting.Key.Contains(word, StringComparison.OrdinalIgnoreCase))
             return IN_KEY;
-        if (setting.Keywords.Contains(word, StringComparison.OrdinalIgnoreCase) || squashed && Compact(setting.Keywords).Contains(compact, StringComparison.Ordinal))
+        if (squashed && Compact(setting.Key).Contains(compact, StringComparison.Ordinal))
+            return SQUASHED_KEY;
+        if (setting.Keywords.Contains(word, StringComparison.OrdinalIgnoreCase))
             return IN_KEYWORDS;
+        if (squashed && Compact(setting.Keywords).Contains(compact, StringComparison.Ordinal))
+            return SQUASHED_KEYWORDS;
         if (ChoiceLabelOf(setting, word) is not null)
             return IN_CHOICE;
         if (setting.Help.Contains(word, StringComparison.OrdinalIgnoreCase) || ChoiceMatches(setting, word))
@@ -76,8 +85,13 @@ public partial class SettingsPage
         foreach (string word in words)
             score += Score(setting, word);
 
-        if (words.Count > 0 && Compact(setting.Title) is { Length: > 0 } title && title == Compact(string.Concat(words)))
+        if (words.Count == 0 || Compact(string.Concat(words)) is not { Length: > 0 } whole)
+            return score;
+
+        if (Compact(setting.Title) == whole)
             score = Math.Max(score, WHOLE_TITLE * words.Count);
+        else if (words.Count > 1 && (Compact(setting.Key) == whole || setting.Keywords.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(keyword => Compact(keyword) == whole)))
+            score = Math.Max(score, WHOLE_KEY * words.Count);
         return score;
     }
 
@@ -110,7 +124,7 @@ public partial class SettingsPage
         {
             string? by = Score(setting, word) switch
             {
-                IN_KEYWORDS => KeywordOf(setting, word),
+                IN_KEYWORDS or SQUASHED_KEYWORDS => KeywordOf(setting, word),
                 IN_CHOICE => ChoiceLabelOf(setting, word),
                 _ => null
             };
@@ -141,9 +155,24 @@ public partial class SettingsPage
     }
 
     // The rows best first for the words typed, or back in the order they were made in for none. The first row showing
-    // is the one Down in the search goes to, it's the first child of the rows that has a control
-    private void Rank(string[] words)
+    // is the one Down in the search goes to, it's the first child of the rows that has a control. The commonly used go
+    // in the order they were given, at the top, whatever else is typed
+    private void Rank(string[] words, bool onlyCommon)
     {
+        if (onlyCommon)
+        {
+            ranked = [.. built];
+            var first = new List<SettingRow>();
+            foreach (string key in common)
+            {
+                if (rowOf.TryGetValue(key, out SettingRow? row))
+                    first.Add(row);
+            }
+
+            PutInOrder(built, section => section.Rows, first);
+            return;
+        }
+
         if (words.Length == 0)
         {
             if (ranked is null)
@@ -169,8 +198,9 @@ public partial class SettingsPage
             .OrderByDescending(pair => pair.row.Visible ? scores.GetValueOrDefault(pair.row) : -1).ThenBy(pair => pair.at).Select(pair => pair.row)]);
     }
 
-    // Every heading, row and panel moved to where it goes among the rows, only those not already there
-    private void PutInOrder(IEnumerable<BuiltSection> sections, Func<BuiltSection, IEnumerable<SettingRow>> rowsOf)
+    // Every heading, row and panel moved to where it goes among the rows, only those not already there. Rows put first
+    // go over everything, each once
+    private void PutInOrder(IEnumerable<BuiltSection> sections, Func<BuiltSection, IEnumerable<SettingRow>> rowsOf, IReadOnlyList<SettingRow>? first = null)
     {
         int at = 0;
         void Place(UIComponent child)
@@ -181,11 +211,21 @@ public partial class SettingsPage
             at++;
         }
 
+        var placed = new HashSet<SettingRow>();
+        foreach (SettingRow row in first ?? [])
+        {
+            if (placed.Add(row))
+                Place(row);
+        }
+
         foreach (BuiltSection section in sections)
         {
             Place(section.Header);
             foreach (SettingRow row in rowsOf(section))
-                Place(row);
+            {
+                if (!placed.Contains(row))
+                    Place(row);
+            }
             foreach (UIComponent panel in section.Panels)
                 Place(panel);
         }

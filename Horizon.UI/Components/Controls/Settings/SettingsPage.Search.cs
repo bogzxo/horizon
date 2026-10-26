@@ -12,6 +12,9 @@ public partial class SettingsPage
     /// <summary>The word in a search that leaves only the settings that aren't what they come as, VS Code's.</summary>
     public const string MODIFIED = "@modified";
 
+    /// <summary>The word in a search that leaves only the settings people change the most (<see cref="Common"/>), in their order.</summary>
+    public const string COMMON = "@common";
+
     /// <summary>What a word in a search starts with to leave only the setting of the key after it (<c>@id:wrap_code</c>), VS Code's.</summary>
     public const string ID = "@id:";
 
@@ -77,11 +80,14 @@ public partial class SettingsPage
 
     // The rows whose name, key, sentence or one of its choices has every word typed in it, the sections with none of
     // them hidden. @modified among the words leaves only the changed ones as well, @id:key only the one by that key and
-    // @section:word only the sections with the word in their name
+    // @section:word only the sections with the word in their name. @common leaves the ones people change the most, in
+    // their own order and under no headings. Words run together count as well, "tab size" finds what "tabsize" does
     private void Filter(string typed)
     {
-        var (words, onlyModified, ids, sections) = Parse(typed);
+        var (words, onlyModified, onlyCommon, ids, sections) = Parse(typed);
         bool InSection(string group) => sections.Count == 0 || sections.Any(word => group.Contains(word, StringComparison.OrdinalIgnoreCase));
+        string squashed = words.Length > 1 ? Compact(string.Concat(words)) : string.Empty;
+        commonShown = onlyCommon;
 
         bool was = searching;
         searching = typed.Trim().Length > 0;
@@ -95,9 +101,10 @@ public partial class SettingsPage
         {
             UISetting setting = row.Setting;
             row.Visible = (!onlyModified || IsModified?.Invoke(setting.Key) == true)
+                && (!onlyCommon || common.Contains(setting.Key))
                 && (ids.Count == 0 || ids.Contains(setting.Key, StringComparer.OrdinalIgnoreCase))
                 && InSection(setting.Group)
-                && words.All(word => Matches(setting, word) || row.PairsMatch(word));
+                && (words.All(word => Matches(setting, word) || row.PairsMatch(word)) || squashed.Length > 0 && SquashedMatches(setting, squashed));
             if (row.Visible)
             {
                 seen.Add(setting.Group);
@@ -115,16 +122,17 @@ public partial class SettingsPage
         // and has no key, so @modified and @id hide it, and @section does unless its section is one asked for
         foreach (var (group, content) in panels)
         {
-            content.Visible = !onlyModified && ids.Count == 0 && InSection(group) && words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase) || Says(content, word));
+            content.Visible = !onlyModified && !onlyCommon && ids.Count == 0 && InSection(group) && words.All(word => group.Contains(word, StringComparison.OrdinalIgnoreCase) || Says(content, word));
             if (content.Visible)
                 seen.Add(group);
         }
 
+        // The commonly used are one list from all over, no section's heading is over them
         foreach (var (name, header) in headerOf)
-            header.Visible = seen.Contains(name);
+            header.Visible = !onlyCommon && seen.Contains(name);
 
         // Best first while words are typed, and a search typed afresh starts at the top, where the best of it is
-        Rank(words);
+        Rank(words, onlyCommon);
         if (searching && typed != rankedFor)
             scroll.Offset = 0.0f;
         rankedFor = searching ? typed : null;
@@ -160,18 +168,21 @@ public partial class SettingsPage
         navStale = true;
     }
 
-    // What's typed split into its words, whether @modified is among them, the keys of any @id: in it and the words of
-    // any @section:, those taken out of the words
-    private static (string[] Words, bool OnlyModified, List<string> Ids, List<string> Sections) Parse(string typed)
+    // What's typed split into its words, whether @modified and @common are among them, the keys of any @id: in it and
+    // the words of any @section:, those taken out of the words. A word that's one of VS Code's ids is the name after its
+    // dot, editor.tabSize is tabSize
+    private static (string[] Words, bool OnlyModified, bool OnlyCommon, List<string> Ids, List<string> Sections) Parse(string typed)
     {
         var words = new List<string>();
         var ids = new List<string>();
         var sections = new List<string>();
-        bool onlyModified = false;
+        bool onlyModified = false, onlyCommon = false;
         foreach (string word in typed.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             if (word.Equals(MODIFIED, StringComparison.OrdinalIgnoreCase))
                 onlyModified = true;
+            else if (word.Equals(COMMON, StringComparison.OrdinalIgnoreCase))
+                onlyCommon = true;
             else if (word.StartsWith(ID, StringComparison.OrdinalIgnoreCase))
             {
                 // @id: with nothing after it yet (picked off the funnel, the key still to come) narrows nothing
@@ -185,11 +196,28 @@ public partial class SettingsPage
                     sections.Add(word[SECTION.Length..]);
             }
             else
-                words.Add(word);
+                words.Add(Undotted(word));
         }
 
-        return ([.. words], onlyModified, ids, sections);
+        return ([.. words], onlyModified, onlyCommon, ids, sections);
     }
+
+    /// <summary>
+    /// A word that's one of VS Code's ids (editor.tabSize, files.associations) as the name after its last dot, the part
+    /// the rows here go by. Anything else as it is, *.orig and 1.5 among them, the dot has to have letters either side.
+    /// </summary>
+    public static string Undotted(string word)
+    {
+        int dot = word.LastIndexOf('.');
+        return dot > 0 && dot < word.Length - 1 && char.IsLetter(word[dot - 1]) && char.IsLetter(word[dot + 1]) ? word[(dot + 1)..] : word;
+    }
+
+    // Whether all of what was typed run together is in a setting's name, key or keywords run together, "tab size" in
+    // tab_size and "word wrap" in wordwrap
+    private static bool SquashedMatches(UISetting setting, string squashed) =>
+        Compact(setting.Title).Contains(squashed, StringComparison.Ordinal)
+        || Compact(setting.Key).Contains(squashed, StringComparison.Ordinal)
+        || Compact(setting.Keywords).Contains(squashed, StringComparison.Ordinal);
 
     // Whether a word is in a setting's name, key, sentence, section or one of its choices, as it's written or as the
     // dropdown says it ("subtle" finds the effects though neither their name nor their sentence says so), or in the line
@@ -209,10 +237,7 @@ public partial class SettingsPage
 
         // Only a word with a letter or a digit in it, a lone dash would be nothing and found everything
         string compact = Compact(word);
-        return compact.Length > 0
-            && (Compact(setting.Title).Contains(compact, StringComparison.Ordinal)
-                || Compact(setting.Key).Contains(compact, StringComparison.Ordinal)
-                || Compact(setting.Keywords).Contains(compact, StringComparison.Ordinal));
+        return compact.Length > 0 && SquashedMatches(setting, compact);
     }
 
     // The pair a row of pairs was found by when a word is in none of what it says but in one of its keys or values,
@@ -359,8 +384,83 @@ public partial class SettingsPage
         menu.Add(texts.FilterModified, () => AddToSearch(MODIFIED), MODIFIED);
         menu.Add(texts.FilterId, () => AddToSearch(ID), ID);
         menu.Add(texts.FilterSection, () => AddToSearch(SECTION), SECTION);
+        if (common.Length > 0)
+            menu.Add(texts.FilterCommon, () => AddToSearch(COMMON), COMMON);
         AddResetAll(menu);
         return menu;
+    }
+
+    // The words of a search that stand for a filter, drawn as chips in the box and taken out whole by a Backspace after them
+    private static readonly string[] CHIPS = [MODIFIED, COMMON];
+
+    // Whether @common is among what's typed, the entry at the top of the sections lit while it is
+    private bool commonShown;
+
+    /// <summary>Whether the search is leaving only the commonly used settings, @common among its words.</summary>
+    public bool ShowingCommon => commonShown;
+
+    // Backspace straight after a chip (and the space after it) takes the whole of it out, the way a chip goes in one
+    // press rather than a letter at a time
+    private bool SearchTakeKey(char key)
+    {
+        if (key != UIKeyboard.BACKSPACE || search.Selection.Length > 0)
+            return false;
+
+        string before = search.Text[..search.Caret];
+        string trimmed = before.EndsWith(' ') ? before[..^1] : before;
+        foreach (string chip in CHIPS)
+        {
+            int at = trimmed.Length - chip.Length;
+            if (at < 0 || !trimmed.EndsWith(chip, StringComparison.OrdinalIgnoreCase) || (at > 0 && trimmed[at - 1] != ' '))
+                continue;
+
+            search.Select(at, search.Caret);
+            search.Backspace();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The chips in the search box as they were last drawn, each word and where it is. For a test.</summary>
+    public IReadOnlyList<(string Word, UIRect Bounds)> SearchChips => ((SearchBox)search).Chips;
+
+    // The search box, a chip of the accent round every filter word in it (@modified, @common) so they read as what they
+    // do rather than as words to find. Only while all of it fits in the box, scrolled along a chip would be off its word
+    private sealed class SearchBox : TextBox
+    {
+        public List<(string Word, UIRect Bounds)> Chips { get; } = [];
+
+        protected override void Paint(UIDrawList list)
+        {
+            base.Paint(list);
+            Chips.Clear();
+            if (Text.Length == 0)
+                return;
+
+            var skin = list.Skin;
+            float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
+            float left = Bounds.Min.X + Padding.Left, room = Bounds.Width - Padding.Left - Padding.Right;
+            if (skin.Font.Measure(Text, scale, markup: false).X > room)
+                return;
+
+            int at = 0;
+            foreach (string word in Text.Split(' '))
+            {
+                if (CHIPS.Any(chip => chip.Equals(word, StringComparison.OrdinalIgnoreCase)))
+                {
+                    float from = left + (at > 0 ? skin.Font.Measure(Text.AsSpan(0, at), scale, markup: false).X : 0.0f);
+                    float to = left + skin.Font.Measure(Text.AsSpan(0, at + word.Length), scale, markup: false).X;
+                    var chip = new UIRect(new Vector2(from - 4.0f, Bounds.Min.Y + 4.0f), new Vector2(to + 4.0f, Bounds.Max.Y - 4.0f));
+                    Vector4 accent = skin.AccentColor;
+                    list.RoundRect(chip, chip.Height * 0.5f, accent with { W = 0.18f });
+                    list.RoundOutline(chip, chip.Height * 0.5f, 1.0f, accent with { W = 0.5f });
+                    Chips.Add((word, chip));
+                }
+
+                at += word.Length + 1;
+            }
+        }
     }
 
     // Reset all settings on the end of a menu, after a rule, only while somebody's there to ask and something's changed

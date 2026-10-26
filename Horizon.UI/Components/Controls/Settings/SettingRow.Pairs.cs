@@ -9,7 +9,9 @@ namespace Horizon.UI.Components;
 // A row of pairs, an object of texts by text (files_associations the first of them), the way VS Code edits one. A line a
 // pair under the sentence, its key and its value in two columns with a pencil and a bin at its end, and Add Item under
 // them. The pencil turns its line into two boxes, Enter puts it in and Escape leaves it as it was, Add Item does the same
-// with a new line at the end. Up and Down go along the buttons, and on to the rows either side past the first and last
+// with a new line at the end. Delete on a line's pencil or bin takes it out. Up and Down go along the buttons, and on to
+// the rows either side past the first and last. Editing it never flashes the row, and the line the keyboard is on has a
+// faint tint of its own inside the row's usual wash. With no pairs a dim example sits where they go
 internal sealed partial class SettingRow
 {
     // What the row has now, which line is being typed (as many as there are for a new one, -1 for none) and its boxes
@@ -69,6 +71,11 @@ internal sealed partial class SettingRow
             heading.Add(new Label { Text = $"[color:dim]{UIRichText.Literal(page.Texts.PairKey)}[/color]", TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Size = new Vector2(column, tall * 0.8f) });
             heading.Add(new Label { Text = $"[color:dim]{UIRichText.Literal(page.Texts.PairValue)}[/color]", TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Size = new Vector2(column, tall * 0.8f) });
         }
+        else if (Setting.KeyPlaceholder.Length > 0)
+        {
+            // Nothing yet, a dim example of a pair where they go, *.orig and csharp
+            pairList.Add(ExampleLine($"{UIRichText.Literal(Setting.KeyPlaceholder)}  =  {UIRichText.Literal(Setting.ValuePlaceholder)}", column * 2.0f));
+        }
 
         for (int i = 0; i < pairs.Count; i++)
         {
@@ -103,12 +110,12 @@ internal sealed partial class SettingRow
     // A pair as it is, its key and its value with its pencil and its bin
     private void PairLine(int at, float column, float side)
     {
-        var line = pairList!.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
+        var line = pairList!.Add(new FocusLine { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
         float tall = page.RowControlHeight;
         line.Add(new Label { Text = UIRichText.Literal(pairs[at].Key), TextScale = page.RowBodyScale, Align = Origin.Left, Size = new Vector2(column, tall) });
         line.Add(new Label { Text = UIRichText.Literal(pairs[at].Value), TextScale = page.RowBodyScale, Align = Origin.Left, Size = new Vector2(column, tall) });
-        pairEdits.Add(line.Add(new PairButton(this) { Icon = "edit", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.EditItem, OnPressed = () => EditPair(at) }));
-        pairRemoves.Add(line.Add(new PairButton(this) { Icon = "trash", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.RemoveItem, OnPressed = () => RemovePair(at) }));
+        pairEdits.Add(line.Add(new PairButton(this) { Icon = "edit", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.EditItem, OnPressed = () => EditPair(at), OnDelete = () => RemovePair(at) }));
+        pairRemoves.Add(line.Add(new PairButton(this) { Icon = "trash", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.RemoveItem, OnPressed = () => RemovePair(at), OnDelete = () => RemovePair(at) }));
     }
 
     // The line being typed, a box for its key and one for its value with what one looks like in each, then OK and Cancel
@@ -116,8 +123,8 @@ internal sealed partial class SettingRow
     {
         var line = pairList!.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
         float tall = page.RowControlHeight;
-        keyBox = line.Add(new PairBox(this) { Text = key, Placeholder = Setting.KeyPlaceholder, Size = new Vector2(column, tall), TextScale = page.RowBodyScale, MaxLength = 256 });
-        valueBox = line.Add(new PairBox(this) { Text = value, Placeholder = Setting.ValuePlaceholder, Size = new Vector2(column, tall), TextScale = page.RowBodyScale, MaxLength = 256 });
+        keyBox = line.Add(new PairBox(CancelPair) { Text = key, Placeholder = Setting.KeyPlaceholder, Size = new Vector2(column, tall), TextScale = page.RowBodyScale, MaxLength = 256 });
+        valueBox = line.Add(new PairBox(CancelPair) { Text = value, Placeholder = Setting.ValuePlaceholder, Size = new Vector2(column, tall), TextScale = page.RowBodyScale, MaxLength = 256 });
         keyBox.TakeKey = valueBox.TakeKey = PairKey;
         float wide = MathF.Max(64.0f * page.ZoomNow, page.Texts.PairCancel.Length * page.RowBodyScale * 0.6f + 20.0f);
         line.Add(new PairButton(this) { Label = page.Texts.PairOk, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Animated = false, OnPressed = CommitPair });
@@ -145,6 +152,7 @@ internal sealed partial class SettingRow
     // Add Item, a new line of two empty boxes at the end with the keyboard in the first
     private void AddPair()
     {
+        StopFlash();
         editingPair = pairs.Count;
         BuildPairs();
         keyBox?.Focus();
@@ -156,6 +164,7 @@ internal sealed partial class SettingRow
         if (at < 0 || at >= pairs.Count)
             return;
 
+        StopFlash();
         editingPair = at;
         BuildPairs();
         keyBox?.Focus();
@@ -176,6 +185,7 @@ internal sealed partial class SettingRow
             return;
         }
 
+        StopFlash();
         var next = new List<(string Key, string Value)>(pairs);
         (string, string) typed = (key, valueBox.Text.Trim());
         if (editingPair < next.Count)
@@ -198,6 +208,7 @@ internal sealed partial class SettingRow
         if (editingPair < 0)
             return;
 
+        StopFlash();
         int was = editingPair;
         editingPair = -1;
         BuildPairs();
@@ -210,6 +221,7 @@ internal sealed partial class SettingRow
         if (at < 0 || at >= pairs.Count)
             return;
 
+        StopFlash();
         pairs = [.. pairs.Where((_, index) => index != at)];
         editingPair = -1;
         BuildPairs();
@@ -230,11 +242,12 @@ internal sealed partial class SettingRow
     // on to the next row
     private bool MoveInPairs(UIComponent from, int delta)
     {
-        if (pairList is null)
+        // A row of a list goes along its own lines the same way
+        if ((pairList ?? itemList) is not { } lines)
             return false;
 
         var stops = new List<UIComponent>();
-        UIModule.CollectFocusable(pairList, stops);
+        UIModule.CollectFocusable(lines, stops);
         int at = stops.IndexOf(from);
         int to = at + delta;
         if (at < 0 || to < 0 || to >= stops.Count)
@@ -257,12 +270,15 @@ internal sealed partial class SettingRow
     public (UIRect AddItem, UIRect[] Edits, UIRect[] Removes) PairBounds =>
         (addItem?.Bounds ?? default, [.. pairEdits.Select(button => button.Bounds)], [.. pairRemoves.Select(button => button.Bounds)]);
 
-    /// <summary>Whether a word is in one of the keys or values of a row of pairs, what a search finds it by.</summary>
+    /// <summary>Whether a word is in one of the keys or values of a row of pairs, or an item of a list, what a search finds it by.</summary>
     public bool PairsMatch(string word) => pairsText.Length > 0 && pairsText.Contains(word, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The first pair a word is in, "*.orig = csharp", for the pill after the key, null for none.</summary>
+    /// <summary>The first pair a word is in, "*.orig = csharp", or item of a list, for the pill after the key, null for none.</summary>
     public string? PairFoundBy(string word)
     {
+        if (Setting.Kind == UIFormKind.List)
+            return UIFormList.Of(page.ValueOf?.Invoke(Setting.Key)).FirstOrDefault(item => item.Contains(word, StringComparison.OrdinalIgnoreCase));
+
         foreach (var (key, value) in UIFormPairs.Of(page.ValueOf?.Invoke(Setting.Key)))
         {
             if (key.Contains(word, StringComparison.OrdinalIgnoreCase) || value.Contains(word, StringComparison.OrdinalIgnoreCase))
@@ -272,26 +288,51 @@ internal sealed partial class SettingRow
         return null;
     }
 
+    // A dim line in place of the pairs while there are none, what one looks like (*.orig and csharp), so an empty row
+    // still says what it's for
+    private Label ExampleLine(string said, float column) =>
+        new() { Text = $"[color:dim]{said}[/color]", TextScale = page.RowBodyScale, Opacity = 0.7f, Align = Origin.Left, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(column, page.RowControlHeight) };
+
     // A box of the line being typed, Escape leaves the line rather than the page
-    private sealed class PairBox(SettingRow row) : TextBox
+    private sealed class PairBox(Action cancel) : TextBox
     {
         protected internal override bool OnEscape()
         {
-            row.CancelPair();
+            cancel();
             return true;
         }
     }
 
-    // One of the pairs' buttons, Up and Down along them before they go row to row
+    // One of the pairs' or a list's buttons, Up and Down along them before they go row to row, and Delete on a line's
+    // pencil or bin takes the line out
     private sealed class PairButton(SettingRow row) : Button
     {
+        public Action? OnDelete { get; init; }
+
         protected internal override void OnTextInput(char character)
         {
             if (character is UIKeyboard.UP or UIKeyboard.DOWN && row.MoveInPairs(this, character == UIKeyboard.DOWN ? 1 : -1))
                 return;
 
+            if (character == UIKeyboard.DELETE && OnDelete is { } delete)
+            {
+                delete();
+                return;
+            }
+
             if (!row.Offer(this, character))
                 base.OnTextInput(character);
+        }
+    }
+
+    // A line of pairs or of a list, a faint tint behind it while the keyboard is on one of its buttons, so the line Enter
+    // and Delete go to is plain inside the row's own wash. Always drawn, see-through without it, like the row's own
+    private sealed class FocusLine : StackPanel
+    {
+        protected override void Paint(UIDrawList list)
+        {
+            list.RoundRect(new UIRect(Bounds.Min - new Vector2(4.0f, 1.0f), Bounds.Max + new Vector2(4.0f, 1.0f)), 4.0f, list.Skin.TextColor with { W = HasFocus(this) ? FOCUSED_LINE : 0.0f });
+            base.Paint(list);
         }
     }
 }

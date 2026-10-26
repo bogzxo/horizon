@@ -17,6 +17,7 @@ internal sealed partial class SettingRow
         UIFormKind.Number or UIFormKind.Whole => Number(setting, width),
         UIFormKind.Flags => Flags(setting, width),
         UIFormKind.Pairs => Pairs(setting, width),
+        UIFormKind.List => ListOf(setting, width),
         _ => Text(setting, width)
     };
 

@@ -22,6 +22,7 @@ public partial class SettingsPage
         if (search.Text.Length > 0)
             Find(string.Empty);
 
+        restoring = null;
         scrollBack = null;
         revealing = key;
         revealSteps = 0;
@@ -80,6 +81,64 @@ public partial class SettingsPage
 
     /// <summary>What a row's pill says a search found it by, plain, null for none or no row. For a test.</summary>
     public string? FoundByShown(string key) => rowOf.TryGetValue(key, out SettingRow? row) && row.Visible ? row.FoundByText : null;
+
+    /// <summary>
+    /// Where a row's key is, how far its words are painted (never past it) and where the pill of what a search found it
+    /// by is (empty for none), and whether the key is cut short for want of room. Null for a key with no row. For a test
+    /// of the key and the pill not running into each other.
+    /// </summary>
+    public (UIRect Key, UIRect KeyPainted, UIRect FoundBy, bool KeyCut)? KeyParts(string key) =>
+        rowOf.TryGetValue(key, out SettingRow? row) ? (row.KeyBounds, row.KeyPainted, row.FoundByBounds, row.KeyCut) : null;
+
+    /// <summary>
+    /// Where the page is now, the section lit down the left, what's typed in the search and how far the rows are
+    /// scrolled, for a program to open it there again the next time (<see cref="Restore"/>).
+    /// </summary>
+    public (string? Group, string Query, float Offset) Place => (CurrentGroup, search.Text, scroll.Offset);
+
+    /// <summary>
+    /// The page put back where it was (<see cref="Place"/>), the search typed again, its section gone to and the rows
+    /// scrolled as they were, once it's built and laid out. Going anywhere else first (<see cref="GoTo"/>,
+    /// <see cref="Reveal"/>, <see cref="Find"/>) wins over it.
+    /// </summary>
+    public void Restore(string? group, string query, float offset)
+    {
+        search.Text = query;
+        Filter(query);
+        restoring = (group, offset, RESTORE_TRIES, false);
+    }
+
+    /// <summary>Whether the page is still putting itself back where it was, for a test to wait on.</summary>
+    public bool Restoring => restoring is not null;
+
+    // How many updates the scroll is set again for while the rows are laid out round it
+    private const int RESTORE_TRIES = 12;
+
+    // Where the page is being put back to, how many tries are left and whether its section has been gone to yet
+    private (string? Group, float Offset, int Tries, bool Went)? restoring;
+
+    // Once the rows are laid out its section is gone to, then the rows are scrolled where they were till that holds
+    private void UpdateRestore()
+    {
+        if (restoring is not { } back || dirty)
+            return;
+
+        if (!back.Went)
+        {
+            if (!rowOf.Values.Any(row => row.Visible && !row.Bounds.IsEmpty) && !headerOf.Values.Any(header => header.Visible && !header.Bounds.IsEmpty))
+            {
+                restoring = --back.Tries > 0 ? back : null;
+                return;
+            }
+
+            if (back.Group is { } group && headerOf.TryGetValue(group, out Label? header) && header.Visible)
+                GoTo(group);
+            restoring = back = back with { Went = true, Tries = RESTORE_TRIES };
+        }
+
+        scroll.Offset = back.Offset;
+        restoring = MathF.Abs(scroll.Offset - back.Offset) < 0.5f && back.Tries < RESTORE_TRIES - 2 || back.Tries <= 1 ? null : back with { Tries = back.Tries - 1 };
+    }
 
     // The row flashed and the keyboard put on what sets it. What had the keyboard is taken as seen already, or the
     // scroll to a focused row would go by where the row was before the search was emptied

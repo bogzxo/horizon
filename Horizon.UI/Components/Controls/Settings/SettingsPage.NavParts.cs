@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Rendering;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -109,7 +110,118 @@ public partial class SettingsPage
 
     // The heading Tab stops on, only while no link is showing to stop on (every part folded), the first one then
     private bool IsHeadingStop(PartHeading heading) =>
-        heading.Visible && !VisibleLinks().Any() && shownParts.FirstOrDefault(each => each.Heading.Visible).Heading == heading;
+        heading.Visible && commonLink is not { Visible: true } && !VisibleLinks().Any() && shownParts.FirstOrDefault(each => each.Heading.Visible).Heading == heading;
+
+    /* Commonly used, the entry over every part */
+
+    // The entry at the top down the left that leaves only the commonly used, null while the page has none of them
+    private CommonLink? commonLink;
+
+    // Commonly used made at the top of the sections, only when one of the keys it's given has a row
+    private void AddCommonLink()
+    {
+        commonLink = null;
+        if (!common.Any(key => settings.Any(setting => setting.Key == key)))
+            return;
+
+        commonLink = nav.Add(new CommonLink(this)
+        {
+            Text = texts.CommonlyUsed,
+            Bold = true,
+            TextScale = MathF.Max(nameSize, sentenceSize * 1.1f),
+            Align = Origin.Left,
+            Size = new Vector2(NavWidth - 12.0f, LinkHeight),
+            Anchor = Origin.Left,
+            Pivot = Origin.Left
+        });
+    }
+
+    // Whether Tab stops on Commonly used rather than a section, while it's what the search is or there's no section to stop on
+    private bool CommonIsStop => commonLink is { Visible: true } && (commonShown || !VisibleLinks().Any());
+
+    /// <summary>
+    /// The rows down to the commonly used (<see cref="Common"/>) in their order, @common in the search in place of what
+    /// was typed, what a click on Commonly used does. False while the page has none.
+    /// </summary>
+    public bool ShowCommon()
+    {
+        if (commonLink is null)
+            return false;
+
+        Find(COMMON + " ");
+        navScroll.Offset = 0.0f;
+        return true;
+    }
+
+    /// <summary>Whether Commonly used is the first thing showing down the left. For a test.</summary>
+    public bool CommonFirst => commonLink is { Visible: true } && nav.Children.FirstOrDefault(child => child.Visible) == commonLink;
+
+    /// <summary>Where Commonly used is down the left, empty while it isn't showing. For a test to click.</summary>
+    public UIRect CommonBounds => commonLink is { Visible: true } link ? link.Bounds : default;
+
+    /// <summary>What Commonly used says, null while the page has none. For a test.</summary>
+    public string? CommonText => commonLink?.Text;
+
+    /// <summary>Whether Commonly used has the keyboard. For a test.</summary>
+    public bool CommonFocused => commonLink is not null && Module?.Compositor.Focus == commonLink;
+
+    /// <summary>
+    /// Commonly used down the left, the first of the sections and lit while the search is @common. A click (or Enter or
+    /// Space) leaves only those rows, Up and Down go on along the sections from it the way they do from a link
+    /// </summary>
+    private sealed class CommonLink(SettingsPage page) : Label
+    {
+        private float lit;
+
+        protected override bool HitTestVisible => true;
+
+        protected internal override bool Focusable => true;
+
+        protected internal override bool TabStop => IsFocused || page.CommonIsStop;
+
+        protected internal override void OnClick() => page.ShowCommon();
+
+        // Enter or Space (or Right) shows them and goes into the first of them, the way a section's link goes into it
+        protected internal override void OnTextInput(char character)
+        {
+            switch (character)
+            {
+                case UIKeyboard.UP or UIKeyboard.DOWN:
+                    page.MoveLink(this, character == UIKeyboard.DOWN ? 1 : -1);
+                    break;
+                case UIKeyboard.HOME or UIKeyboard.END:
+                    page.LinkAtEnd(character == UIKeyboard.END);
+                    break;
+                case UIKeyboard.ENTER or ' ' or UIKeyboard.RIGHT:
+                    page.ShowCommon();
+                    page.FocusFirstRow();
+                    break;
+                case '/':
+                    page.FocusSearch();
+                    break;
+            }
+        }
+
+        protected override void Update(float dt)
+        {
+            float time = MotionTime(DEFAULT_HOVER_TIME);
+            float step = time > 0.0f ? dt / time : 1.0f;
+            lit = IsHovered ? MathF.Min(1.0f, lit + step) : MathF.Max(0.0f, lit - step);
+            base.Update(dt);
+        }
+
+        // The pill a section's link has, lit while @common is the search, the pointer's fainter one and the keyboard's
+        // ring. Always there and see-through when not wanted (ToggleButton has why)
+        protected override void Paint(UIDrawList list)
+        {
+            float hover = lit * (2.0f - lit);
+            UIRect pill = Bounds.Shrink(new UIEdges(0.0f, 1.0f));
+            list.Box(pill, list.Skin.TextColor with { W = page.commonShown ? 0.1f : 0.05f * hover });
+            Vector4 ring = list.Skin.Palette.Highlight;
+            list.RoundOutline(pill, list.Skin.CornerRadius, 1.5f, ring with { W = IsFocused ? ring.W : 0.0f });
+            base.Paint(list);
+        }
+    }
 
     /// <summary>How big a part's heading is written and how big a section's link, for a test of the headings standing out.</summary>
     public (float Part, float Section) NavScales =>

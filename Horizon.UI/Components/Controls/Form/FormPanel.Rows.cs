@@ -97,6 +97,7 @@ public partial class FormPanel
         UIFormKind.Flags => FlagsEditor(field, row, width),
         UIFormKind.Vec => VecEditor(field, row, width),
         UIFormKind.Pairs => PairsEditor(field, row, width),
+        UIFormKind.List => ListEditor(field, row, width),
         _ => TextEditor(field, row, width)
     };
 
@@ -243,6 +244,25 @@ public partial class FormPanel
         {
             if (!box.IsFocused)
                 box.Text = UIFormPairs.Line(value);
+        };
+    }
+
+    // A list on one line between commas, "**/bin, **/obj", told about when Enter is pressed, the same as pairs
+    private Action<IRuntimeValue?> ListEditor(UIFormField field, StackPanel row, float width)
+    {
+        var box = row.Add(new TextBox { Size = new Vector2(width, ROW_HEIGHT), Enabled = !field.ReadOnly, TextScale = TextScale, Placeholder = field.Unset, MaxLength = 4096 });
+        box.OnSubmitted = text =>
+        {
+            if (text.Trim().Length == 0)
+                Cleared(field);
+            else
+                Changed(field, UIFormList.Parse(text));
+        };
+
+        return value =>
+        {
+            if (!box.IsFocused)
+                box.Text = UIFormList.Line(value);
         };
     }
 

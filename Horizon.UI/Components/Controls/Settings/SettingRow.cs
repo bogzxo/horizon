@@ -50,6 +50,10 @@ internal sealed partial class SettingRow : StackPanel
     // How long the flash of a row gone to takes to fade, and how strong the accent is at its brightest
     private const float FLASH_TIME = 0.8f, FLASH_STRENGTH = 0.3f;
 
+    // How strong the keyboard's wash over the whole row is, the same for every kind of row, and the faint tint of the line
+    // of pairs or of a list the keyboard is on inside it
+    private const float FOCUS_WASH = 0.06f, FOCUSED_LINE = 0.05f;
+
     private readonly SettingsPage page;
     private readonly Button reset;
 
@@ -163,7 +167,7 @@ internal sealed partial class SettingRow : StackPanel
 
         // Under the sentence, what sets it and its buttons on one line, a slider with the number it's at beside it. A list
         // of choices makes lines of its own
-        if (!sideways && (setting.Kind is not (UIFormKind.Flags or UIFormKind.Pairs) || setting.Buttons is { Length: > 0 }))
+        if (!sideways && (setting.Kind is not (UIFormKind.Flags or UIFormKind.Pairs or UIFormKind.List) || setting.Buttons is { Length: > 0 }))
         {
             line = Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
             faded.Add(line);
@@ -178,7 +182,7 @@ internal sealed partial class SettingRow : StackPanel
         // page whether a row has two or three. Sized to the room it left they wandered by a few pixels row to row
         if (widths.Length > 1)
             buttonsTake = MathF.Max(buttonsTake, ButtonColumn);
-        float room = sideways ? ControlColumn : setting.Kind == UIFormKind.Pairs ? MathF.Max(240.0f, helpWidth) : Math.Clamp(inner - buttonsTake, 160.0f, 420.0f);
+        float room = sideways ? ControlColumn : setting.Kind is UIFormKind.Pairs or UIFormKind.List ? MathF.Max(240.0f, helpWidth) : Math.Clamp(inner - buttonsTake, 160.0f, 420.0f);
         show = setting.ButtonsOnly ? _ => { } : MakeControl(setting, room);
 
         for (int i = 0; i < widths.Length; i++)
@@ -345,6 +349,14 @@ internal sealed partial class SettingRow : StackPanel
         Tweens.Play(Tween.To(() => flash, value => flash = value, 0.0f, FLASH_TIME).SetEasing(Easing.InQuad), this);
     }
 
+    // The flash put out there and then, for a row being edited. A pair added straight after going to the row was a flood
+    // of the accent over the line being typed
+    private void StopFlash()
+    {
+        Tweens.Kill(this);
+        flash = 0.0f;
+    }
+
     protected override void Update(float dt)
     {
         if (typed is { } text)
@@ -369,7 +381,7 @@ internal sealed partial class SettingRow : StackPanel
         // A soft wash of the accent while the keyboard is somewhere in it, so the row being set stands out as a whole
         // and not only the ring round its control. There and see-through without it for the same reason
         Vector4 accent = list.Skin.AccentColor;
-        list.RoundRect(Bounds, ROUND, accent with { W = HasFocusInside() ? 0.06f : 0.0f });
+        list.RoundRect(Bounds, ROUND, accent with { W = HasFocus(this) ? FOCUS_WASH : 0.0f });
 
         // The flash of a row gone to over that, there and see-through the rest of the time for the same reason
         list.RoundRect(Bounds, ROUND, accent with { W = accent.W * FLASH_STRENGTH * flash });
@@ -381,12 +393,12 @@ internal sealed partial class SettingRow : StackPanel
         base.Paint(list);
     }
 
-    // Whether whatever has the keyboard is this or something in it
-    private bool HasFocusInside()
+    // Whether whatever has the keyboard is something or in it
+    private static bool HasFocus(UIComponent of)
     {
-        for (UIComponent? at = Module?.Compositor.Focus; at is not null; at = at.Parent)
+        for (UIComponent? at = of.Module?.Compositor.Focus; at is not null; at = at.Parent)
         {
-            if (at == this)
+            if (at == of)
                 return true;
         }
 

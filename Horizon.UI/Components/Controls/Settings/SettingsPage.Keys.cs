@@ -223,6 +223,12 @@ public partial class SettingsPage
     /// </summary>
     public bool FocusNav()
     {
+        if (commonLink is { Visible: true } && CommonIsStop)
+        {
+            commonLink.Focus();
+            return true;
+        }
+
         var links = VisibleLinks().ToList();
         if (links.Count == 0)
             return shownParts.FirstOrDefault(part => part.Heading.Visible).Part is { } part && FocusPart(part);

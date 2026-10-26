@@ -240,7 +240,7 @@ internal static class UILayoutOverlay
         LabelText label = labels.GetValue(component, static _ => new LabelText());
         if (label.Text.Length == 0 || label.Size != size || label.Padding != padding || !label.Gap.Equals(gap))
         {
-            string written = $"{component.GetType().Name}  {size.X:0} x {size.Y:0}";
+            string written = $"{component.GetType().Name}  {size.X:0} × {size.Y:0}";
             if (padding != default)
                 written += $"  pad {padding.Left:0} {padding.Top:0} {padding.Right:0} {padding.Bottom:0}";
             if (!float.IsNaN(gap))
