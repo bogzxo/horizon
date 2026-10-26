@@ -97,7 +97,7 @@ public sealed class ContextMenu : UIComponent
             if (Showing is not { } shown || Skin is not { } skin || Module is not { } module)
                 return null;
 
-            panel ??= new MenuPanel(shown, skin, TextScale, corner, module.Frame);
+            panel ??= new MenuPanel(shown, skin, TextScale, MenuPlacement.AtPoint, new UIRect(corner, corner), module.Frame);
             return panel;
         }
     }
@@ -108,14 +108,27 @@ public sealed class ContextMenu : UIComponent
     /// <summary>Where an item of the showing menu is, in the module's units.</summary>
     public UIRect ItemBounds(int index) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, index) : default;
 
-    /// <summary>Where an item of the showing menu, or of a menu open off it, is by what it says.</summary>
-    public UIRect ItemBounds(string label) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, label) : default;
+    /// <summary>
+    /// Where an item of the showing menu, or of a menu open off it, is by what it says, scrolled into view first unless
+    /// <paramref name="reveal"/> says not to (then empty while it is scrolled out of view).
+    /// </summary>
+    public UIRect ItemBounds(string label, bool reveal = true) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, label, reveal) : default;
 
     /// <summary>Opens the menu of one of its items, by what it says, as resting the pointer on it would.</summary>
     public bool OpenSubmenuOf(string label) =>
         Skin is { } skin && Module is { } module && Panel is { } shown && shown.OpenSubmenuOf(skin, module.Frame, label);
 
+    /// <summary>Whether the list is taller than the window and scrolls.</summary>
+    public bool ListScrolls => Panel?.Scrolls ?? false;
+
+    /// <summary>Where every list open now is, the menu's and the ones open off it, in the module's units.</summary>
+    public IEnumerable<UIRect> OpenListBounds => Panel?.AllBounds() ?? [];
+
     protected internal override bool PopupContains(Vector2 point) => Panel?.Contains(point) ?? false;
+
+    // The wheel scrolls the list under the pointer, one too tall for the window
+    protected internal override bool OnScroll(float delta) =>
+        Skin is { } skin && Module is { } module && Panel is { } shown && shown.Wheel(skin, module.ToLocal(module.Compositor.Pointer.Position), delta);
 
     protected internal override void PaintPopup(UIDrawList list)
     {

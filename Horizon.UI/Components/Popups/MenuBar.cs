@@ -39,7 +39,16 @@ public sealed class MenuItem
     /// <summary>Whether this is a rule between two groups of items rather than an item.</summary>
     public bool IsSeparator { get; init; }
 
+    /// <summary>
+    /// Whether the item is left out of the menu it's in when that is drawn, for one that's rare enough to only want the
+    /// command palette and its key. It is still in <see cref="Menu.Everything"/>, and its key still goes off.
+    /// </summary>
+    public bool PaletteOnly { get; set; }
+
     internal bool Shown => IsVisible?.Invoke() ?? true;
+
+    /// <summary>Whether the item is drawn in its menu right now, there and not one for the palette alone.</summary>
+    public bool Listed => !PaletteOnly && Shown;
 
     internal bool Enabled => !IsSeparator && Shown && (IsEnabled?.Invoke() ?? true);
 }
@@ -64,6 +73,54 @@ public sealed class Menu(string title)
     public IReadOnlyList<MenuItem> Items => items;
 
     internal bool Shown => IsVisible?.Invoke() ?? true;
+
+    /// <summary>
+    /// Whether the item at an index is there right now. A rule is only there between two items that are, so a group
+    /// with all of its items hidden doesn't leave two rules in a row, and nothing starts or ends on one.
+    /// </summary>
+    public bool IsShown(int index)
+    {
+        if (!items[index].IsSeparator)
+            return items[index].Listed;
+
+        // The nearest item before it that is there has to be a real one, a rule there means this one isn't needed
+        bool before = false;
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (!items[i].IsSeparator && !items[i].Listed)
+                continue;
+
+            before = !items[i].IsSeparator;
+            break;
+        }
+
+        if (!before)
+            return false;
+
+        for (int i = index + 1; i < items.Count; i++)
+        {
+            if (!items[i].IsSeparator && items[i].Listed)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether anything of the menu that does something is drawn in it right now, what an item opening it goes by.</summary>
+    public bool HasShown() => items.Any(item => !item.IsSeparator && item.Listed);
+
+    /// <summary>How many rows the menu shows right now, rules and all, for keeping a menu short enough to read.</summary>
+    public int ShownCount()
+    {
+        int count = 0;
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (IsShown(i))
+                count++;
+        }
+
+        return count;
+    }
 
     /// <summary>Adds something to do at the end of the menu.</summary>
     /// <param name="icon">One of the icons every skin has (<see cref="UISymbols"/>) in front of it.</param>
@@ -221,7 +278,7 @@ public class MenuBar : UIComponent
             if (panel is null || panel.Menu != menu)
             {
                 UIRect title = TitleBounds(open);
-                panel = new MenuPanel(menu, skin, TextScale, new Vector2(title.Min.X, title.Min.Y), module.Frame, title.Width);
+                panel = new MenuPanel(menu, skin, TextScale, MenuPlacement.Below, title, module.Frame, title.Width);
             }
 
             return panel;
@@ -231,11 +288,23 @@ public class MenuBar : UIComponent
     /// <summary>Where the list of the menu that is open is, in the space of the module. Empty while none is.</summary>
     public UIRect ListBounds => Panel?.Bounds ?? default;
 
+    /// <summary>Whether the list of the open menu is taller than the room under the bar and scrolls.</summary>
+    public bool ListScrolls => Panel?.Scrolls ?? false;
+
+    /// <summary>Where every list open now is, the menu's and the ones open off it, in the space of the module.</summary>
+    public IEnumerable<UIRect> OpenListBounds => Panel?.AllBounds() ?? [];
+
+    // The wheel scrolls the list under the pointer, one too tall for the window
+    protected internal override bool OnScroll(float delta) => Skin is { } skin && Panel is { } shown && shown.Wheel(skin, Pointer, delta);
+
     /// <summary>Where one of the items of the open menu is, counted from the top and with the separators counted too.</summary>
     public UIRect ItemBounds(int index) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, index) : default;
 
-    /// <summary>Where an item of the open menu, or of a menu open off it, is by what it says. Empty if there is no such item.</summary>
-    public UIRect ItemBounds(string label) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, label) : default;
+    /// <summary>
+    /// Where an item of the open menu, or of a menu open off it, is by what it says, scrolled into view first unless
+    /// <paramref name="reveal"/> says not to (then empty while it is scrolled out of view). Empty if there is no such item.
+    /// </summary>
+    public UIRect ItemBounds(string label, bool reveal = true) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, label, reveal) : default;
 
     /// <summary>Opens the menu of an item of the open menu, by what it says, as resting the pointer on it would.</summary>
     public bool OpenSubmenuOf(string label) =>

@@ -33,6 +33,20 @@ public sealed class UICommands
         public string[] Groups { get; } = groups;
         public Func<bool>? Shown { get; set; }
         public List<MenuItem>[] Items { get; } = [.. groups.Select(_ => new List<MenuItem>())];
+
+        // The menus of its own declared in a group of it, each after what was added to that group
+        public List<Submenu> Submenus { get; } = [];
+    }
+
+    // A menu of its own declared in a group of a menu of the bar, commands go in its groups the way they go in the bar's
+    private sealed class Submenu(string name, int group, Menu menu, MenuItem row, string[] groups)
+    {
+        public string Name { get; } = name;
+        public int Group { get; } = group;
+        public Menu Menu { get; } = menu;
+        public MenuItem Row { get; } = row;
+        public string[] Groups { get; } = groups;
+        public List<MenuItem>[] Items { get; } = [.. groups.Select(_ => new List<MenuItem>())];
     }
 
     private readonly List<Declared> menus = [];
@@ -48,6 +62,23 @@ public sealed class UICommands
 
     /// <summary>A menu of the bar, after the ones declared before it, with the names of its groups in their order.</summary>
     public void Declare(string title, params string[] groups) => menus.Add(new Declared(title, groups));
+
+    /// <summary>
+    /// A menu of its own in a group of a menu of the bar ("File/preferences"), which opens to the side, with groups of its
+    /// own that commands are added to by name ("File/preferences/prefs:main", or "Help/developer/dev" for one with no
+    /// groups). Its commands are the bar menu's, their keys go off the same, and it is only there while something in
+    /// it is. It goes after what is added to its group.
+    /// </summary>
+    /// <param name="name">What commands call it by in where they go.</param>
+    /// <param name="title">What its item says.</param>
+    public Menu DeclareSubmenu(string where, string name, string title, string icon = "", params string[] groups)
+    {
+        var (menu, group) = MenuAndGroup(where);
+        var submenu = new Menu(title);
+        var row = new MenuItem { Label = title, Icon = icon, Submenu = submenu, IsVisible = submenu.HasShown };
+        menu.Submenus.Add(new Submenu(name, group, submenu, row, groups.Length > 0 ? groups : [string.Empty]));
+        return submenu;
+    }
 
     /// <summary>
     /// Has a menu on the bar only while something is so (Hex's Layout menu while a layout is in its designer). Said before
@@ -68,7 +99,7 @@ public sealed class UICommands
     {
         var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = key, Icon = icon };
         GroupAt(where).Add(item);
-        Declared menu = MenuCalled(where[..where.IndexOf('/')]);
+        Declared menu = BarMenuOf(where);
         added[item] = (menu, use);
 
         if (use != UIKeyUse.Shown)
@@ -143,12 +174,15 @@ public sealed class UICommands
         return false;
     }
 
-    /// <summary>Adds a menu of its own to a group of a menu, which opens to the side, to fill.</summary>
+    /// <summary>
+    /// Adds a menu of its own to a group of a menu, which opens to the side, to fill. Its item is there while the menu
+    /// says it is (<see cref="Menu.IsVisible"/>).
+    /// </summary>
     public Menu AddMenu(string where, string title, string icon = "")
     {
         var submenu = new Menu(title);
-        GroupAt(where).Add(new MenuItem { Label = title, Icon = icon, Submenu = submenu });
-        submenus.Add((submenu, MenuCalled(where[..where.IndexOf('/')])));
+        GroupAt(where).Add(new MenuItem { Label = title, Icon = icon, Submenu = submenu, IsVisible = () => submenu.Shown });
+        submenus.Add((submenu, BarMenuOf(where)));
         return submenu;
     }
 
@@ -163,32 +197,81 @@ public sealed class UICommands
         {
             Menu menu = bar.AddMenu(declared.Title);
             menu.IsVisible = declared.Shown;
-            foreach (List<MenuItem> group in declared.Items)
+            for (int group = 0; group < declared.Items.Length; group++)
             {
-                if (group.Count == 0)
-                    continue;
+                // What was added to the group, then the menus of its own declared in it
+                List<MenuItem> items = [.. declared.Items[group]];
+                foreach (Submenu submenu in declared.Submenus.Where(submenu => submenu.Group == group))
+                {
+                    Fill(submenu.Menu, submenu.Items);
+                    items.Add(submenu.Row);
+                }
 
-                menu.AddSeparator();
-                foreach (MenuItem item in group)
-                    menu.Add(item);
+                Fill(menu, [items]);
             }
+        }
+    }
+
+    // Puts groups of items in a menu, a rule before each one that has something in it and isn't the first
+    private static void Fill(Menu menu, List<MenuItem>[] groups)
+    {
+        foreach (List<MenuItem> group in groups)
+        {
+            if (group.Count == 0)
+                continue;
+
+            menu.AddSeparator();
+            foreach (MenuItem item in group)
+                menu.Add(item);
         }
     }
 
     private Declared MenuCalled(string title) =>
         menus.Find(menu => menu.Title == title) ?? throw new ArgumentException($"there is no menu called {title}", nameof(title));
 
-    private List<MenuItem> GroupAt(string where)
+    // The menu of the bar a place is in, the one a menu of its own in it is in for one of those
+    private Declared BarMenuOf(string where)
     {
         int slash = where.IndexOf('/');
         if (slash < 0)
             throw new ArgumentException($"\"{where}\" isn't a menu and a group of it, Edit/find", nameof(where));
 
-        Declared menu = MenuCalled(where[..slash]);
-        int group = Array.IndexOf(menu.Groups, where[(slash + 1)..]);
-        if (group < 0)
-            throw new ArgumentException($"the {menu.Title} menu has no group called {where[(slash + 1)..]}", nameof(where));
+        return MenuCalled(where[..slash]);
+    }
 
-        return menu.Items[group];
+    // A menu of the bar and the index of a group of it, from "Edit/find"
+    private (Declared Menu, int Group) MenuAndGroup(string where)
+    {
+        string[] parts = where.Split('/');
+        Declared menu = BarMenuOf(where);
+        int group = parts.Length >= 2 ? Array.IndexOf(menu.Groups, parts[1]) : -1;
+        if (group < 0)
+            throw new ArgumentException($"the {menu.Title} menu has no group called {(parts.Length >= 2 ? parts[1] : "")}", nameof(where));
+
+        return (menu, group);
+    }
+
+    // The items of a group, a bar menu's ("Edit/find") or of a menu of its own in one ("File/preferences/prefs:main",
+    // its first group when it says none)
+    private List<MenuItem> GroupAt(string where)
+    {
+        string[] parts = where.Split('/');
+        var (menu, group) = MenuAndGroup(where);
+        if (parts.Length == 2)
+            return menu.Items[group];
+
+        if (parts.Length != 3)
+            throw new ArgumentException($"\"{where}\" isn't a menu, a group and a menu of its own in it, File/preferences/prefs:main", nameof(where));
+
+        int colon = parts[2].IndexOf(':');
+        string name = colon < 0 ? parts[2] : parts[2][..colon];
+        Submenu submenu = menu.Submenus.Find(submenu => submenu.Name == name && submenu.Group == group)
+            ?? throw new ArgumentException($"the {menu.Title} menu has no menu called {name} in {parts[1]}", nameof(where));
+
+        int inside = colon < 0 ? 0 : Array.IndexOf(submenu.Groups, parts[2][(colon + 1)..]);
+        if (inside < 0)
+            throw new ArgumentException($"{submenu.Menu.Title} has no group called {parts[2][(colon + 1)..]}", nameof(where));
+
+        return submenu.Items[inside];
     }
 }
