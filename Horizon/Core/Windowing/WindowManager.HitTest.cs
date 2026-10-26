@@ -102,16 +102,18 @@ public partial class WindowManager
         var size = _window.Size;
         if (!maximized && !IsFullscreen())
         {
-            int edge = (int)MathF.Ceiling(WINDOW_EDGE);
-            bool left = at.X < edge, right = at.X >= size.X - edge, top = at.Y < edge, bottom = at.Y >= size.Y - edge;
-            if (top && left) return HitTestResult.HittestResizeTopleft;
-            if (top && right) return HitTestResult.HittestResizeTopright;
-            if (bottom && left) return HitTestResult.HittestResizeBottomleft;
-            if (bottom && right) return HitTestResult.HittestResizeBottomright;
-            if (top) return HitTestResult.HittestResizeTop;
-            if (bottom) return HitTestResult.HittestResizeBottom;
-            if (left) return HitTestResult.HittestResizeLeft;
-            if (right) return HitTestResult.HittestResizeRight;
+            WindowEdges edges = EdgesAt(new System.Numerics.Vector2(at.X, at.Y), new System.Numerics.Vector2(size.X, size.Y), ScalesToDisplay ? WindowUnitScale : 1.0f);
+            switch (edges)
+            {
+                case WindowEdges.Top | WindowEdges.Left: return HitTestResult.HittestResizeTopleft;
+                case WindowEdges.Top | WindowEdges.Right: return HitTestResult.HittestResizeTopright;
+                case WindowEdges.Bottom | WindowEdges.Left: return HitTestResult.HittestResizeBottomleft;
+                case WindowEdges.Bottom | WindowEdges.Right: return HitTestResult.HittestResizeBottomright;
+                case WindowEdges.Top: return HitTestResult.HittestResizeTop;
+                case WindowEdges.Bottom: return HitTestResult.HittestResizeBottom;
+                case WindowEdges.Left: return HitTestResult.HittestResizeLeft;
+                case WindowEdges.Right: return HitTestResult.HittestResizeRight;
+            }
         }
 
         if (frameArea is not { } area || !area.Bar.Contains(at))
@@ -140,7 +142,4 @@ public partial class WindowManager
 
         return HitTestResult.HittestDraggable;
     }
-
-    // How near the edge of the window a press resizes it, the compositor's UIEdge
-    private const float WINDOW_EDGE = 6.0f;
 }

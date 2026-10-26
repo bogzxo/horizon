@@ -28,9 +28,6 @@ public partial class UICompositor
     /// </summary>
     public bool ResizesWindow { get; set; }
 
-    // How near the edge of the window the pointer has hold of it, in the window's pixels at a scale of 100%
-    private const float WINDOW_EDGE = 6.0f;
-
     /// <summary>Which edges of the window the pointer is on, none unless this UI drags them and the window has no frame.</summary>
     public WindowEdges WindowEdgeAt()
     {
@@ -38,21 +35,9 @@ public partial class UICompositor
         if (!ResizesWindow || PointerSource is not null || GameEngine.Instance?.WindowManager is not { CustomFrame: true, IsMaximized: false } window)
             return WindowEdges.None;
 
-        Vector2 at = GameEngine.Instance.Input.Mouse.WindowPosition;
+        // As wide as the system's own on a scaled screen, an edge of a few pixels on a 4K one is a needle to thread
         var size = window.Window.Size;
-        var edges = WindowEdges.None;
-
-        // Off the window altogether is no edge of it
-        if (at.X < 0.0f || at.Y < 0.0f || at.X > size.X || at.Y > size.Y)
-            return WindowEdges.None;
-
-        // As wide as the system's own on a scaled screen, a 6 pixel edge on a 4K one is a needle to thread
-        float edge = WINDOW_EDGE * (window.ScalesToDisplay ? window.WindowUnitScale : 1.0f);
-        if (at.X <= edge) edges |= WindowEdges.Left;
-        if (at.X >= size.X - edge) edges |= WindowEdges.Right;
-        if (at.Y <= edge) edges |= WindowEdges.Top;
-        if (at.Y >= size.Y - edge) edges |= WindowEdges.Bottom;
-        return edges;
+        return WindowManager.EdgesAt(GameEngine.Instance.Input.Mouse.WindowPosition, new Vector2(size.X, size.Y), window.ScalesToDisplay ? window.WindowUnitScale : 1.0f);
     }
 
     private UIPointer ReadMouse()

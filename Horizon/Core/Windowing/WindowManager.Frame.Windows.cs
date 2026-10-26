@@ -1,4 +1,7 @@
+using System.Numerics;
 using System.Runtime.InteropServices;
+
+using Silk.NET.Windowing;
 
 namespace Horizon.Core;
 
@@ -168,6 +171,8 @@ public partial class WindowManager
             case WM_NCHITTEST:
                 if (OverMaximizeButton(window, lParam))
                     return HTMAXBUTTON;
+                if (EdgeOf(window, lParam) is var edge and not HTCAPTION)
+                    return edge;
                 break;
 
             case WM_NCMOUSEMOVE when wParam == HTMAXBUTTON:
@@ -198,6 +203,24 @@ public partial class WindowManager
 
         var at = UnpackPoint(lParam);
         return ScreenToClient(window, ref at) && button.Contains(at.X, at.Y);
+    }
+
+    /// <summary>
+    /// The edge or corner of the window the pointer is on, as the hit test code of it, HTCAPTION for none. Said to
+    /// Windows as the frame's, so it puts up the arrows of a resize as the pointer comes near and sizes the window itself
+    /// on a press, rather than the UI hearing the press and handing the drag over after the fact with an arrow showing.
+    /// </summary>
+    private int EdgeOf(nint window, nint lParam)
+    {
+        if (IsZoomed(window) || _window.WindowState == WindowState.Fullscreen || !GetClientRect(window, out NativeRect inside))
+            return HTCAPTION;
+
+        var at = UnpackPoint(lParam);
+        if (!ScreenToClient(window, ref at))
+            return HTCAPTION;
+
+        WindowEdges edges = EdgesAt(new Vector2(at.X, at.Y), new Vector2(inside.Right - inside.Left, inside.Bottom - inside.Top), displayScale);
+        return edges == WindowEdges.None ? HTCAPTION : HitTestOf(edges);
     }
 
     /// <summary>Helper method to hand GLFW a message about the pointer over the frame as one about the inside of the window.</summary>
@@ -292,6 +315,10 @@ public partial class WindowManager
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ScreenToClient(nint window, ref NativePoint point);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetClientRect(nint window, out NativeRect rect);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
