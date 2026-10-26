@@ -59,6 +59,19 @@ public class CodeLanguagesFilesTests
     }
 
     [Fact]
+    public void Languages_with_no_grammar_get_the_nearest_one()
+    {
+        Assert.Same(CodeLanguages.ForLanguageId("html"), CodeLanguages.ForFile("App.svelte"));
+        Assert.Same(CodeLanguages.ForLanguageId("html"), CodeLanguages.ForFile("App.vue"));
+        Assert.Same(CodeLanguages.ForLanguageId("ini"), CodeLanguages.ForFile("Cargo.toml"));
+        Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("x.rej"));
+        Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("x.cs.rej"));
+        Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("fix.patch"));
+        Assert.Same(CodeLanguages.ForFile("main.tf"), CodeLanguages.ForFile("main.tf.bak"));
+        Assert.Equal("x.rej", CodeLanguages.WithoutBackupSuffix("x.rej"));
+    }
+
+    [Fact]
     public void A_shebang_says_what_a_file_with_no_extension_is()
     {
         Assert.Same(CodeLanguages.ForLanguageId("shellscript"), CodeLanguages.ForFile("build", "#!/usr/bin/env bash"));

@@ -51,12 +51,25 @@ public static partial class CodeLanguages
         { ".fsproj", ["xml"] },
         { ".vbproj", ["xml"] },
         { ".props", ["xml"] },
-        { ".targets", ["xml"] }
+        { ".targets", ["xml"] },
+        // Components of the web frameworks are HTML round their script and styles, the nearest there's a grammar for
+        { ".svelte", ["svelte", "html"] },
+        { ".vue", ["vue", "html"] },
+        // TOML is sections and keys the way an ini is, Cargo.toml and pyproject.toml read well enough as one
+        { ".toml", ["toml", "ini", "properties"] },
+        // What patch couldn't put in, and a patch, are diffs whatever they were made from
+        { ".rej", ["diff"] },
+        { ".patch", ["diff"] },
+        // Terraform and HCL have no grammar of their own here, a grammar registered for them later is picked up
+        { ".tf", ["terraform", "hcl"] },
+        { ".tfvars", ["terraform", "hcl"] },
+        { ".hcl", ["hcl", "terraform"] }
     };
 
-    // The suffixes an editor, a merge or a patch leaves on a copy of a file
+    // The suffixes an editor, a merge or a patch leaves on a copy of a file. A .rej isn't one of them, it's the diff
+    // patch couldn't put in, not a copy of the file
     private static readonly string[] backupSuffixes =
-        [".orig", ".bak", ".rej", ".tmp", ".old", ".swp", ".swo", ".copy", ".new", ".save", ".dist", ".sample"];
+        [".orig", ".bak", ".tmp", ".old", ".swp", ".swo", ".copy", ".new", ".save", ".dist", ".sample"];
 
     // What git's mergetool calls the sides of a conflict, a number after each
     private static readonly string[] mergeSuffixes = [".BACKUP", ".BASE", ".LOCAL", ".REMOTE"];
@@ -265,7 +278,7 @@ public static partial class CodeLanguages
         if (ByNameOrExtension(bare) is { } found)
             return found;
 
-        // A file whose suffix is a language of its own (x.rej is a diff) when nothing was under it
+        // A file whose suffix is a language of its own when nothing was under it
         if (bare.Length != name.Length && ByNameOrExtension(name) is { } whole)
             return whole;
 
