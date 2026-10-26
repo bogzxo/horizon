@@ -2675,8 +2675,9 @@ public partial class CodeEditor : UIComponent
     }
 
     /// <summary>
-    /// How long the caret takes to glide to where it went, in seconds (about two thirds of the way in that long), 0 for
-    /// it to jump there the way it always did. Only the caret that is drawn glides, typing goes where the caret is.
+    /// How long the caret takes to glide to where it went, in seconds, all the way there in that long and quickest at
+    /// the start, 0 for it to jump there the way it always did. Only the caret that is drawn glides, typing goes where
+    /// the caret is.
     /// </summary>
     public float CaretGlide { get; set; }
 
@@ -2691,6 +2692,11 @@ public partial class CodeEditor : UIComponent
     private float tickTime;
     private Vector2 caretDrawn;
     private bool caretSeen;
+
+    // The glide going, from where the caret was drawn to where it went and how far into it. A glide that eased towards
+    // the caret forever crept up on it over its last few pixels, which read as a caret slower than every other editor's
+    private Vector2 glideFrom, glideTo;
+    private float glideTime;
 
     private void PaintCaret(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, UITextPosition caret)
     {
@@ -2708,12 +2714,22 @@ public partial class CodeEditor : UIComponent
 
             // A long way (a page, the end of the file) is jumped, a glide over half the screen only looks slow
             if (CaretGlide <= 0.0f || !caretSeen || Vector2.Distance(caretDrawn, wanted) > lineHeight * 12.0f)
-                caretDrawn = wanted;
+            {
+                caretDrawn = glideFrom = glideTo = wanted;
+                glideTime = CaretGlide;
+            }
             else
             {
-                caretDrawn += (wanted - caretDrawn) * (1.0f - MathF.Exp(-tickTime / CaretGlide));
-                if (Vector2.DistanceSquared(caretDrawn, wanted) < 0.25f)
-                    caretDrawn = wanted;
+                if (wanted != glideTo)
+                {
+                    glideFrom = caretDrawn;
+                    glideTo = wanted;
+                    glideTime = 0.0f;
+                }
+
+                glideTime = MathF.Min(glideTime + tickTime, CaretGlide);
+                float t = 1.0f - glideTime / CaretGlide;
+                caretDrawn = Vector2.Lerp(glideFrom, glideTo, 1.0f - t * t * t);
             }
 
             caretSeen = true;
