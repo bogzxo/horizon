@@ -24,7 +24,7 @@ public enum UIBrowse
 /// by saying so and wanting Save pressed again. It has the keyboard while it's up (<see cref="TakeKeyboard"/>), up and
 /// down go along the list from the box that has it, Enter opens what was gone to, Backspace with no name goes up a folder.
 /// </summary>
-public sealed class UIFileBrowser
+public sealed partial class UIFileBrowser
 {
     private const float WIDTH = 860.0f, HEIGHT = 600.0f, PLACES = 200.0f, GAP = 8.0f, HIDDEN = 140.0f, FILTER = 260.0f;
     private const int ROWS = 14;
@@ -106,6 +106,7 @@ public sealed class UIFileBrowser
         }
         this.filters = [(ALL_FILES, ["*"]), .. filters.Select(pair => (pair.Name, pair.Pattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))];
         folder = Directory.Exists(directory) ? Path.GetFullPath(directory) : PlatformPaths.Home;
+        Opened();
 
         Window = new WindowPanel(title)
         {
@@ -223,6 +224,7 @@ public sealed class UIFileBrowser
 
         var actions = new Panel { Size = new Vector2(WIDTH - 24.0f, 30.0f) };
         body.Add(actions);
+        actions.Add(new SideButtons(this));
         make.Anchor = Horizon.Rendering.Origin.Left;
         make.Pivot = Horizon.Rendering.Origin.Left;
         actions.Add(make);
@@ -960,6 +962,7 @@ public sealed class UIFileBrowser
         if (!answer.TrySetResult(picked))
             return;
 
+        Closed();
         previousBackward = [.. backward];
 
         // The keyboard back to whoever had it, unless it was taken somewhere else while the window was up
