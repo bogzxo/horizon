@@ -11,13 +11,13 @@ let asking = null;
 let said = "";
 
 func refresh(tui) {
-    all = tui.processes().sort(func(process) { return 0 - process.memory; });
+    all = tui.processes().sort(process => 0 - process.memory);
     narrow();
 }
 
 func narrow() {
     let typed = filter.text;
-    ui.list_set(shown, all.filter(func(process) { return ui.matches(process.name, typed); }));
+    ui.list_set(shown, all.filter(process => ui.matches(process.name, typed)));
 }
 
 func on_start(tui) {
@@ -26,19 +26,13 @@ func on_start(tui) {
 }
 
 func on_tick(tui) {
-    if (asking == null) {
-        refresh(tui);
-    }
+    if (asking == null) refresh(tui);
 }
 
 func on_key(tui, key) {
     if (asking != null) {
         if (key.name == "y") {
-            if (tui.kill(asking.pid)) {
-                said = `ended {asking.name}`;
-            } else {
-                said = `{asking.name} couldn't be ended`;
-            }
+            said = tui.kill(asking.pid) ? `ended {asking.name}` : `{asking.name} couldn't be ended`;
             refresh(tui);
         }
         asking = null;
@@ -60,13 +54,8 @@ func on_key(tui, key) {
         return;
     }
 
-    if (ui.list_key(shown, key, tui.rows() - 4)) {
-        return;
-    }
-
-    if (ui.field_key(filter, key)) {
-        narrow();
-    }
+    if (ui.list_key(shown, key, tui.rows() - 4)) return;
+    if (ui.field_key(filter, key)) narrow();
 }
 
 func draw(tui) {
@@ -75,10 +64,10 @@ func draw(tui) {
     ui.field_draw(tui, filter, ui.rect(3, 0, parts[0].w - 3, 1), "a few letters of a name", asking == null);
 
     let columns = [
-        { title: "name", width: 0, get: func(process) { return process.name; } },
-        { title: "pid", width: 9, get: func(process) { return process.pid; } },
-        { title: "memory", width: 12, get: func(process) { return `{math.round(process.memory)} MB`; } },
-        { title: "threads", width: 9, get: func(process) { return process.threads; } }
+        { title: "name", width: 0, get: process => process.name },
+        { title: "pid", width: 9, get: process => process.pid },
+        { title: "memory", width: 12, get: process => `{math.round(process.memory)} MB` },
+        { title: "threads", width: 9, get: process => process.threads }
     ];
     ui.table_draw(tui, shown, parts[1], columns, true);
 

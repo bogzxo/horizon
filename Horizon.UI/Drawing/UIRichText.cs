@@ -2,6 +2,7 @@
 using System.Numerics;
 
 using Horizon.Rendering;
+using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Drawing;
@@ -19,10 +20,12 @@ namespace Horizon.UI.Drawing;
 /// 1. a numbered one
 /// > a quote
 /// ---
-/// ```
-/// a block of code, written as it is
+/// ```cs
+/// a block of code, written as it is and coloured the way the code editor colours C#
 /// ```
 /// </code>
+/// A block of code says what it is in after its fence (hidl, cs, json, py, diff, see <see cref="CodeLanguage"/> for one
+/// that says nothing), and is coloured the way the code editor colours that language, in the skin's colours of code.
 /// The colours a tag can name are a hex (#rgb, #rrggbb, #rrggbbaa), the skin's (accent, highlight, text, dim) and the
 /// usual words (red, green, blue, yellow, orange, purple, cyan, pink, white, black, grey). A size is a multiple of the
 /// size the text is drawn at. <c>[/color]</c> and <c>[/size]</c> go back one, <c>[reset]</c> (or <c>[/]</c>) to plain.
@@ -33,7 +36,7 @@ namespace Horizon.UI.Drawing;
 /// other face to load. Nothing is allocated while painting, the pieces are slices of the text it was given.
 /// </para>
 /// </summary>
-public sealed class UIRichText
+public sealed partial class UIRichText
 {
     // What a piece is, a run of letters or a box (a code background, a quote's bar, a bullet, a line under or through)
     private enum Kind : byte
@@ -56,7 +59,10 @@ public sealed class UIRichText
         Warning,
         Success,
         Field,
-        Border
+        Border,
+
+        // A piece of a block of code, in the colour its language gives the kind of thing it is
+        Syntax
     }
 
     private struct Piece
@@ -77,6 +83,10 @@ public sealed class UIRichText
         public float Alpha;
         public int IconsStart, IconsLength;
         public int Link;
+
+        // Which block of code it is in (-1 for none), and what it is there as far as colouring goes
+        public int Block;
+        public SyntaxKind Syntax;
     }
 
     /// <summary>
@@ -103,6 +113,8 @@ public sealed class UIRichText
         public float Alpha;
         public int Link;
         public int IconsStart, IconsLength;
+        public int Block;
+        public SyntaxKind Syntax;
     }
 
     // A piece of a word waiting to see whether the word fits on the line
@@ -228,10 +240,14 @@ public sealed class UIRichText
     public void Build(string text, UIFont font, float scale, float maxWidth, bool markdown, Room? room, int roomKey)
     {
         if (room is null) roomKey = 0;
-        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown && roomKey == builtRoom)
+        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown && roomKey == builtRoom && CodeLanguage == builtCode)
             return;
 
-        (builtText, builtFont, builtScale, builtWidth, builtMarkdown, builtRoom) = (text, font, scale, maxWidth, markdown, roomKey);
+        // The code is only coloured again for other text, or for a fence that says nothing being something else now
+        if (!ReferenceEquals(text, builtText) || CodeLanguage != builtCode)
+            codeRead.Clear();
+
+        (builtText, builtFont, builtScale, builtWidth, builtMarkdown, builtRoom, builtCode) = (text, font, scale, maxWidth, markdown, roomKey, CodeLanguage);
         this.room = room;
 
         source = text;
@@ -245,6 +261,8 @@ public sealed class UIRichText
         links.Clear();
         word.Clear();
         fullWidth.Clear();
+        blocks.Clear();
+        block = -1;
         ResetState();
 
         lineStartPiece = 0;
@@ -275,7 +293,7 @@ public sealed class UIRichText
 
     private void ResetState()
     {
-        state = new State { Shade = Shade.Inherit, Size = 1.0f, Alpha = 1.0f, Link = -1 };
+        state = new State { Shade = Shade.Inherit, Size = 1.0f, Alpha = 1.0f, Link = -1, Block = -1 };
         colours.Clear();
         sizes.Clear();
     }
@@ -331,23 +349,10 @@ public sealed class UIRichText
         ReadOnlySpan<char> trimmed = line.TrimStart();
         int leading = length - trimmed.Length;
 
-        // A fence opens a block of code and closes it again, what is in it is written as it is
+        // A fence opens a block of code and closes it again, what is in it is written as it is (see UIRichText.Code)
         if (trimmed.StartsWith("```"))
         {
-            if (inCode)
-            {
-                CloseCodeBlock(codeFirstLine, codeIndent);
-                inCode = false;
-                pendingGap = font.LineHeight * baseScale * 0.3f;
-            }
-            else
-            {
-                inCode = true;
-                codeFirstLine = lineCount;
-                codeIndent = 0.0f;
-                if (!first) pendingGap = MathF.Max(pendingGap, font.LineHeight * baseScale * 0.3f);
-            }
-
+            Fence(start + length, trimmed[3..], ref inCode, ref codeFirstLine, ref codeIndent, first);
             return;
         }
 
@@ -355,14 +360,7 @@ public sealed class UIRichText
 
         if (inCode)
         {
-            ResetState();
-            state.Code = true;
-
-            float pad = font.LineHeight * baseScale * 0.4f;
-            lineIndent = wrapIndent = penX = pad;
-            LayOutLiteral(start, length);
-            FlushWord();
-            EndLine();
+            LayOutCodeLine(start, length);
             return;
         }
 
@@ -409,7 +407,8 @@ public sealed class UIRichText
                 Height = thickness,
                 Shade = Shade.Dim,
                 Alpha = 1.0f,
-                Link = -1
+                Link = -1,
+                Block = -1
             });
 
             cursorY += pendingGap + height;
@@ -515,52 +514,12 @@ public sealed class UIRichText
             Shade = state.Shade,
             Color = state.Color,
             Alpha = state.Alpha,
-            Link = -1
-        });
-    }
-
-    private void CloseCodeBlock(int firstLine, float indent)
-    {
-        if (firstLine >= lines.Count)
-            return;
-
-        float top = lines[firstLine].Top;
-        float bottom = lines[^1].Top + lines[^1].Height;
-
-        fullWidth.Add(pieces.Count);
-        pieces.Add(new Piece
-        {
-            Kind = Kind.Box,
-            Line = -1,
-            X = indent,
-            Y = top,
-            Height = bottom - top,
-            Shade = Shade.Field,
-            Alpha = 1.0f,
-            Link = -1
+            Link = -1,
+            Block = -1
         });
     }
 
     /* A line's words, with the tags and the markdown that change how they are written */
-
-    /// <summary>Helper method to lay out a line of a block of code, every character of it as it is written.</summary>
-    private void LayOutLiteral(int start, int length)
-    {
-        int segment = start;
-        for (int i = start; i < start + length; i++)
-        {
-            if (source[i] != ' ')
-                continue;
-
-            Take(segment, i - segment);
-            FlushWord();
-            Take(i, 1);
-            FlushWord();
-            segment = i + 1;
-        }
-
-        Take(segment, start + length - segment);
-    }
 
     private void LayOutInline(int start, int length, bool inline)
     {
@@ -924,15 +883,18 @@ public sealed class UIRichText
             Alpha = style.Alpha,
             IconsStart = style.IconsStart,
             IconsLength = style.IconsLength,
-            Link = style.Link
+            Link = style.Link,
+            Block = style.Block,
+            Syntax = style.Syntax
         });
 
         // What is drawn round a piece rather than in it, which the line puts in place with the rest of it. A space is
-        // underlined (the line runs on between two words of a link) but has no code behind it
+        // underlined (the line runs on between two words of a link) but has no code behind it, and neither does a piece
+        // of a block of code, the block has one of its own
         Piece text = pieces[^1];
         bool blank = length == 1 && source[start] == ' ';
 
-        if (style.Code && !blank)
+        if (style.Code && !blank && style.Block < 0)
             pieces.Add(Decoration(text, scale, -font.Baseline * scale, font.LineHeight * scale, Shade.Field, style, padded: true));
         if (style.Underline)
             pieces.Add(Decoration(text, scale, MathF.Round(font.LineHeight * scale * 0.06f), Thickness(scale), style.Shade, style));
@@ -959,7 +921,8 @@ public sealed class UIRichText
             Shade = shade,
             Color = style.Color,
             Alpha = style.Alpha,
-            Link = -1
+            Link = -1,
+            Block = -1
         };
     }
 
@@ -1025,7 +988,8 @@ public sealed class UIRichText
                 Height = baseline + below,
                 Shade = Shade.Accent,
                 Alpha = 1.0f,
-                Link = -1
+                Link = -1,
+                Block = -1
             });
         }
 
@@ -1078,7 +1042,11 @@ public sealed class UIRichText
     {
         Vector2 topLeft = TopLeft(area, align);
         float side = align.ToVector().X;
-        UISkin skin = list.Skin;
+        UIPalette palette = list.Skin.Palette;
+
+        // The colours of code of the block the pieces are in, looked up again only when the block changes
+        int syntaxBlock = -1;
+        UISyntaxColors? syntax = null;
 
         // Behind the letters first, the back of the code and the bars, then the letters over them
         for (int pass = 0; pass < 2; pass++)
@@ -1093,7 +1061,9 @@ public sealed class UIRichText
 
                 float shift = piece.Line >= 0 && piece.Line < lines.Count ? (side + 0.5f) * (Width - lines[piece.Line].Width) : 0.0f;
                 Vector2 corner = new(topLeft.X + shift + piece.X, topLeft.Y - piece.Y);
-                Vector4 ink = ShadeOf(piece, skin, color);
+                if (piece.Shade == Shade.Syntax)
+                    syntax = SyntaxColours(piece.Block, palette, ref syntaxBlock, syntax);
+                Vector4 ink = ShadeOf(piece, palette, color, syntax);
 
                 if (kind == Kind.Box)
                 {
@@ -1115,21 +1085,22 @@ public sealed class UIRichText
         return center + new Vector2(-0.5f, 0.5f) * size;
     }
 
-    private static Vector4 ShadeOf(in Piece piece, UISkin skin, Vector4 inherited)
+    private static Vector4 ShadeOf(in Piece piece, UIPalette palette, Vector4 inherited, UISyntaxColors? syntax)
     {
         Vector4 colour = piece.Shade switch
         {
             Shade.Explicit => piece.Color,
-            Shade.Accent => skin.AccentColor,
-            Shade.Highlight => skin.HighlightColor,
-            Shade.Text => skin.TextColor,
-            Shade.Dim => skin.DimTextColor,
-            Shade.Link => skin.LinkColor,
-            Shade.Error => skin.ErrorColor,
-            Shade.Warning => skin.WarningColor,
-            Shade.Success => skin.SuccessColor,
-            Shade.Field => skin.FieldColor.W > 0.0f ? skin.FieldColor : new Vector4(0.0f, 0.0f, 0.0f, 0.3f),
-            Shade.Border => skin.BorderColor,
+            Shade.Accent => palette.Accent,
+            Shade.Highlight => palette.Highlight,
+            Shade.Text => palette.Text,
+            Shade.Dim => palette.DimText,
+            Shade.Link => palette.Link,
+            Shade.Error => palette.Error,
+            Shade.Warning => palette.Warning,
+            Shade.Success => palette.Success,
+            Shade.Field => palette.Field.W > 0.0f ? palette.Field : new Vector4(0.0f, 0.0f, 0.0f, 0.3f),
+            Shade.Border => palette.Border,
+            Shade.Syntax => syntax?.Of(piece.Syntax) ?? inherited,
             _ => inherited
         };
 

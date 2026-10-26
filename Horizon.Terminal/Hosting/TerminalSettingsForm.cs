@@ -39,15 +39,15 @@ public static class TerminalSettingsForm
         return fields;
     }
 
-    /// <summary>Which section of the form a setting is in.</summary>
+    /// <summary>Which section of the form a setting is in, plain nouns the way VS Code names its groups.</summary>
     public static string Group(string key) => key switch
     {
-        "theme" or "scale" or "font" or "text_scale" => "How it looks",
-        "animations" or "animation_time" or "cursor_glide" => "What moves",
-        "profile" or "wsl" or "close_on_exit" or "start_in" or "shell_integration" => "Shells",
-        "highlight_line" or "plain_profiles" or "completion" or "completion_tools" or "highlight_output" => "Colours",
-        "copy_on_select" or "right_click_paste" or "bell" or "clipboard_write" or "quake_key" => "Mouse, bell and window",
-        "history" or "history_size" or "scrollback" or "restore_sessions" => "What is kept",
+        "theme" or "scale" or "font" or "text_scale" => "Display",
+        "animations" or "animation_time" or "cursor_glide" => "Animation",
+        "profile" or "wsl" or "close_on_exit" or "start_in" or "shell_integration" => "Shell",
+        "highlight_line" or "plain_profiles" or "completion" or "completion_tools" or "highlight_output" => "Highlighting",
+        "copy_on_select" or "right_click_paste" or "bell" or "clipboard_write" or "quake_key" => "Input and bell",
+        "history" or "history_size" or "scrollback" or "restore_sessions" => "Scrollback",
         _ => "Plugins"
     };
 

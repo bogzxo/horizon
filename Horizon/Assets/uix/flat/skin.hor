@@ -18,7 +18,6 @@
 // background, its surface, its text and its accent and the rest is worked out from those (see UIPalette), or it
 // writes out any colour it wants its own way, and under syntax only the colours of code it changes. An editor made
 // in this skin lets whoever uses it pick (Hex does, in its settings).
-// Comments can't go inside of the object, the parser won't have it.
 
 let skin = {
     title: "Flat",

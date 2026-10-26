@@ -11,7 +11,6 @@
 // themselves (text_color in sprites.hor).
 // The font is Cascadia Mono at 55 pixels to the em, which is what makes a letter of it as wide as one of Dead
 // Revolver's font. A layout that says how big its text is means it in that font, so the two have to agree.
-// Comments can't go inside of the object, the parser won't have it.
 
 let bark = vec(0.27, 0.17, 0.08, 1.0);
 let ink = vec(0.13, 0.17, 0.23, 1.0);

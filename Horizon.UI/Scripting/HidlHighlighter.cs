@@ -3,6 +3,7 @@ using System.Numerics;
 
 using Horizon.HIDL;
 using Horizon.HIDL.Lexing;
+using Horizon.HIDL.Parsing;
 
 namespace Horizon.UI.Scripting;
 
@@ -47,8 +48,9 @@ public readonly record struct HidlArt(int Line, int Column, int Length, HidlArtK
 /// preprocessor's lines, numbers, operators and the brackets by their depth, through the same
 /// <see cref="TextMateHighlighter"/> as every other language. Over that goes what only the language's own lexer knows,
 /// the way VS Code lays semantic tokens over a grammar. What a name is from what is round it (made with let, const or
-/// func, a parameter, called, the language's own, the kind after compositor.), the colours written in the code for the
-/// editor's swatches, and the art it names for the pictures at the ends of its lines. The lexer is run lenient, so code
+/// func or taken out of something with let { }, a parameter of a function or an arrow, called, the language's own, the
+/// kind after compositor.), the colours written in the code for the editor's swatches, and the art it names for the
+/// pictures at the ends of its lines. The lexer is run lenient, so code
 /// that is half typed or plain wrong still gets coloured in, and it only ever writes over a span the grammar called a
 /// name of some sort, never a text or a comment.
 /// </summary>
@@ -124,24 +126,32 @@ public sealed class HidlHighlighter : ICodeHighlighter
 
         Token[] tokens = Lexer.Tokenize(code, lenient: true);
 
-        // Whether the names being read are a function's parameters, from the bracket after func name to its pair
-        bool parameters = false;
+        // The names being made that the token before doesn't give away. A function's parameters (and not what their
+        // defaults use), the names a let takes out of an object or a list (let { a, b }) and the names of a for
+        HashSet<int>? declared = null;
 
         for (int i = 0; i < tokens.Length; i++)
         {
             Token token = tokens[i];
             switch (token.Type)
             {
-                case TokenType.OpenParenthesis when Before(tokens, i, 1) == TokenType.Identifier && Before(tokens, i, 2) == TokenType.Function:
-                    parameters = true;
+                case TokenType.OpenParenthesis when HIDLDeclarations.OpensParameters(tokens, i):
+                    foreach (Token name in HIDLDeclarations.Parameters(tokens, i))
+                        (declared ??= []).Add(name.Index);
+                    break;
+
+                case TokenType.Let or TokenType.Const when i + 1 < tokens.Length && tokens[i + 1].Type is TokenType.OpenBracket or TokenType.OpenBrace:
+                    foreach (Token name in HIDLDeclarations.Declared(tokens, i))
+                        (declared ??= []).Add(name.Index);
+                    break;
+
+                case TokenType.For:
+                    foreach (Token name in HIDLDeclarations.LoopNames(tokens, i))
+                        (declared ??= []).Add(name.Index);
                     break;
 
                 case TokenType.OpenParenthesis when swatches is not null && i > 0 && tokens[i - 1].Type == TokenType.Vector:
                     ReadSwatch(tokens, i, swatches);
-                    break;
-
-                case TokenType.CloseParenthesis:
-                    parameters = false;
                     break;
 
                 case TokenType.TextLiteral when art is not null:
@@ -149,7 +159,8 @@ public sealed class HidlHighlighter : ICodeHighlighter
                     break;
 
                 case TokenType.Identifier:
-                    Place(spans, starts, token.Index, token.Length, KindOf(tokens, i, parameters));
+                    bool made = HIDLDeclarations.IsArrowParameter(tokens, i) || declared?.Contains(token.Index) == true;
+                    Place(spans, starts, token.Index, token.Length, KindOf(tokens, i, made));
                     break;
             }
         }

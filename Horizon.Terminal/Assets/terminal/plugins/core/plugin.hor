@@ -12,98 +12,92 @@ let plugin = {
 };
 
 // The tabs
-terminal.command("new_tab", "New tab", func(terminal) { terminal.new_tab(); }, "Ctrl+Shift+T");
-terminal.command("new_tab_with", "New tab with a shell...", func(terminal) { terminal.new_tab_with(); }, "Ctrl+Shift+N");
+terminal.command("new_tab", "New tab", terminal => terminal.new_tab(), "Ctrl+Shift+T");
+terminal.command("new_tab_with", "New tab with a shell...", terminal => terminal.new_tab_with(), "Ctrl+Shift+N");
 // Closing closes what is active, the pane with the keyboard (the newest split, the innermost, unless another was picked),
 // and the tab with it only when that was its last pane. The whole tab at once is close_whole_tab, or the x on it
-terminal.command("close_tab", "Close pane", func(terminal) { terminal.close_pane(); }, "Ctrl+Shift+W");
-terminal.command("close_whole_tab", "Close tab", func(terminal) { terminal.close_tab(); }, "");
-terminal.command("next_tab", "Next tab", func(terminal) { terminal.next_tab(); }, "Ctrl+Tab");
-terminal.command("previous_tab", "Previous tab", func(terminal) { terminal.previous_tab(); }, "Ctrl+Shift+Tab");
-terminal.command("rename_tab", "Rename tab...", func(terminal) { terminal.ask_rename(); }, "Ctrl+Shift+R");
+terminal.command("close_tab", "Close pane", terminal => terminal.close_pane(), "Ctrl+Shift+W");
+terminal.command("close_whole_tab", "Close tab", terminal => terminal.close_tab(), "");
+terminal.command("next_tab", "Next tab", terminal => terminal.next_tab(), "Ctrl+Tab");
+terminal.command("previous_tab", "Previous tab", terminal => terminal.previous_tab(), "Ctrl+Shift+Tab");
+terminal.command("rename_tab", "Rename tab...", terminal => terminal.ask_rename(), "Ctrl+Shift+R");
 
 // Tabs by number, the first five
 for (let index in range(5)) {
     let number = index + 1;
-    terminal.command(`tab_{number}`, `Tab {number}`, func(terminal) { terminal.select_tab(index); }, `Ctrl+Alt+{number}`);
+    terminal.command(`tab_{number}`, `Tab {number}`, terminal => terminal.select_tab(index), `Ctrl+Alt+{number}`);
 }
 
 // The panes of a tab
-terminal.command("split_right", "Split right", func(terminal) { terminal.split("right"); }, "Ctrl+Shift+D");
-terminal.command("split_down", "Split down", func(terminal) { terminal.split("down"); }, "Ctrl+Shift+E");
-terminal.command("close_pane", "Close pane", func(terminal) { terminal.close_pane(); }, "Ctrl+Shift+Q");
-terminal.command("zoom_pane", "Zoom pane", func(terminal) { terminal.zoom_pane(); }, "Ctrl+Shift+Z");
-terminal.command("move_tab_left", "Move tab left", func(terminal) { terminal.step_tab(-1); }, "Ctrl+Shift+PgUp");
-terminal.command("move_tab_right", "Move tab right", func(terminal) { terminal.step_tab(1); }, "Ctrl+Shift+PgDn");
-terminal.command("swap_pane_left", "Swap pane left", func(terminal) { terminal.swap_pane("left"); }, "Ctrl+Alt+Shift+Left");
-terminal.command("swap_pane_right", "Swap pane right", func(terminal) { terminal.swap_pane("right"); }, "Ctrl+Alt+Shift+Right");
-terminal.command("swap_pane_up", "Swap pane up", func(terminal) { terminal.swap_pane("up"); }, "Ctrl+Alt+Shift+Up");
-terminal.command("swap_pane_down", "Swap pane down", func(terminal) { terminal.swap_pane("down"); }, "Ctrl+Alt+Shift+Down");
-terminal.command("rename_pane", "Rename pane...", func(terminal) { terminal.rename_pane(); }, "");
+terminal.command("split_right", "Split right", terminal => terminal.split("right"), "Ctrl+Shift+D");
+terminal.command("split_down", "Split down", terminal => terminal.split("down"), "Ctrl+Shift+E");
+terminal.command("close_pane", "Close pane", terminal => terminal.close_pane(), "Ctrl+Shift+Q");
+terminal.command("zoom_pane", "Zoom pane", terminal => terminal.zoom_pane(), "Ctrl+Shift+Z");
+terminal.command("move_tab_left", "Move tab left", terminal => terminal.step_tab(-1), "Ctrl+Shift+PgUp");
+terminal.command("move_tab_right", "Move tab right", terminal => terminal.step_tab(1), "Ctrl+Shift+PgDn");
+terminal.command("swap_pane_left", "Swap pane left", terminal => terminal.swap_pane("left"), "Ctrl+Alt+Shift+Left");
+terminal.command("swap_pane_right", "Swap pane right", terminal => terminal.swap_pane("right"), "Ctrl+Alt+Shift+Right");
+terminal.command("swap_pane_up", "Swap pane up", terminal => terminal.swap_pane("up"), "Ctrl+Alt+Shift+Up");
+terminal.command("swap_pane_down", "Swap pane down", terminal => terminal.swap_pane("down"), "Ctrl+Alt+Shift+Down");
+terminal.command("rename_pane", "Rename pane...", terminal => terminal.rename_pane(), "");
 
 // The programs with a screen of their own that come with the terminal (Assets/terminal/tui), in a tab of their own.
 // Their titles start with TUI so typing tui into the palette lists them all, and tui at a prompt does the same
-terminal.command("tui_files", "TUI · Files, a file picker", func(terminal) { terminal.tui("files"); }, "Ctrl+Shift+O");
-terminal.command("tui_git", "TUI · Git, the status and the log", func(terminal) { terminal.tui("git"); }, "Ctrl+Shift+G");
-terminal.command("tui_processes", "TUI · Processes", func(terminal) { terminal.tui("processes"); }, "");
-terminal.command("tui_settings", "TUI · Settings in the terminal", func(terminal) { terminal.tui("settings"); }, "");
-terminal.command("tui_repl", "TUI · HIDL with a list of names", func(terminal) { terminal.tui("repl", "split"); }, "");
-terminal.command("tui_help", "TUI · Which there are, and how to start one", func(terminal) {
+terminal.command("tui_files", "TUI · Files, a file picker", terminal => terminal.tui("files"), "Ctrl+Shift+O");
+terminal.command("tui_git", "TUI · Git, the status and the log", terminal => terminal.tui("git"), "Ctrl+Shift+G");
+terminal.command("tui_processes", "TUI · Processes", terminal => terminal.tui("processes"), "");
+terminal.command("tui_settings", "TUI · Settings in the terminal", terminal => terminal.tui("settings"), "");
+terminal.command("tui_repl", "TUI · HIDL with a list of names", terminal => terminal.tui("repl", "split"), "");
+terminal.command("tui_help", "TUI · Which there are, and how to start one", terminal => {
     let names = terminal.tuis().join(", ");
     terminal.say(`the programs with a screen of their own are {names}, start one with tui and its name at a prompt (tui on its own says more), or from here`);
 }, "");
-terminal.command("focus_left", "Focus pane left", func(terminal) { terminal.focus("left"); }, "Ctrl+Shift+Left");
-terminal.command("focus_right", "Focus pane right", func(terminal) { terminal.focus("right"); }, "Ctrl+Shift+Right");
-terminal.command("focus_up", "Focus pane up", func(terminal) { terminal.focus("up"); }, "Ctrl+Shift+Up");
-terminal.command("focus_down", "Focus pane down", func(terminal) { terminal.focus("down"); }, "Ctrl+Shift+Down");
+terminal.command("focus_left", "Focus pane left", terminal => terminal.focus("left"), "Ctrl+Shift+Left");
+terminal.command("focus_right", "Focus pane right", terminal => terminal.focus("right"), "Ctrl+Shift+Right");
+terminal.command("focus_up", "Focus pane up", terminal => terminal.focus("up"), "Ctrl+Shift+Up");
+terminal.command("focus_down", "Focus pane down", terminal => terminal.focus("down"), "Ctrl+Shift+Down");
 
 // The palette, the clipboard and the history
-terminal.command("palette", "Command palette", func(terminal) { terminal.palette(); }, "Ctrl+Shift+P");
-terminal.command("copy", "Copy", func(terminal) { terminal.copy(); }, "Ctrl+Shift+C");
-terminal.command("clear", "Clear the screen", func(terminal) { terminal.feed("\u001b[H\u001b[2J\u001b[3J"); }, "");
-terminal.command("clear_history", "Clear history", func(terminal) { terminal.clear_history(); }, "");
-terminal.command("history_toggle", "Toggle history on the arrows", func(terminal) {
+terminal.command("palette", "Command palette", terminal => terminal.palette(), "Ctrl+Shift+P");
+terminal.command("copy", "Copy", terminal => terminal.copy(), "Ctrl+Shift+C");
+terminal.command("clear", "Clear the screen", terminal => terminal.feed("\u001b[H\u001b[2J\u001b[3J"), "");
+terminal.command("clear_history", "Clear history", terminal => terminal.clear_history(), "");
+terminal.command("history_toggle", "Toggle history on the arrows", terminal => {
     let on = terminal.setting("history") == false;
     terminal.set_setting("history", on);
-    if (on) {
-        terminal.say("Up and Down step the history of every shell");
-    } else {
-        terminal.say("Up and Down go to the shell");
-    }
+    terminal.say(on ? "Up and Down step the history of every shell" : "Up and Down go to the shell");
 }, "");
 
 // The commands as blocks, when the shell says where they are (shell_integration in settings.hor) or guessed
-terminal.command("previous_command", "Previous command", func(terminal) { terminal.jump_command(-1); }, "Ctrl+Up");
-terminal.command("next_command", "Next command", func(terminal) { terminal.jump_command(1); }, "Ctrl+Down");
-terminal.command("select_output", "Select last output", func(terminal) { terminal.select_output(); }, "Ctrl+Shift+A");
-terminal.command("copy_output", "Copy last output", func(terminal) { terminal.copy_output(); }, "");
-terminal.command("rerun", "Run last command again", func(terminal) { terminal.rerun(); }, "");
-terminal.command("list_commands", "Commands run in this terminal...", func(terminal) { terminal.list_commands(); }, "Ctrl+Shift+L");
+terminal.command("previous_command", "Previous command", terminal => terminal.jump_command(-1), "Ctrl+Up");
+terminal.command("next_command", "Next command", terminal => terminal.jump_command(1), "Ctrl+Down");
+terminal.command("select_output", "Select last output", terminal => terminal.select_output(), "Ctrl+Shift+A");
+terminal.command("copy_output", "Copy last output", terminal => terminal.copy_output(), "");
+terminal.command("rerun", "Run last command again", terminal => terminal.rerun(), "");
+terminal.command("list_commands", "Commands run in this terminal...", terminal => terminal.list_commands(), "Ctrl+Shift+L");
 
 // Getting about the scrollback and the line
-terminal.command("scroll_top", "To the top of the scrollback", func(terminal) { terminal.scroll("top"); }, "Ctrl+Shift+Home");
-terminal.command("scroll_bottom", "To the bottom, where the shell is", func(terminal) { terminal.scroll("bottom"); }, "Ctrl+Shift+End");
-terminal.command("find", "Find in the scrollback...", func(terminal) { terminal.find(); }, "Ctrl+Shift+F");
-terminal.command("find_next", "The next match", func(terminal) { terminal.find_next(1); }, "F3");
-terminal.command("find_previous", "The match before", func(terminal) { terminal.find_next(-1); }, "Shift+F3");
-terminal.command("history_search", "Search every shell's history...", func(terminal) { terminal.history_search(); }, "Ctrl+R");
-terminal.command("run_in_split", "Run the line in a new split", func(terminal) { terminal.run_in_split(); }, "Ctrl+Shift+Enter");
-terminal.command("broadcast", "Type into every pane of the tab, on and off", func(terminal) { terminal.broadcast(); }, "Ctrl+Shift+B");
+terminal.command("scroll_top", "To the top of the scrollback", terminal => terminal.scroll("top"), "Ctrl+Shift+Home");
+terminal.command("scroll_bottom", "To the bottom, where the shell is", terminal => terminal.scroll("bottom"), "Ctrl+Shift+End");
+terminal.command("find", "Find in the scrollback...", terminal => terminal.find(), "Ctrl+Shift+F");
+terminal.command("find_next", "The next match", terminal => terminal.find_next(1), "F3");
+terminal.command("find_previous", "The match before", terminal => terminal.find_next(-1), "Shift+F3");
+terminal.command("history_search", "Search every shell's history...", terminal => terminal.history_search(), "Ctrl+R");
+terminal.command("run_in_split", "Run the line in a new split", terminal => terminal.run_in_split(), "Ctrl+Shift+Enter");
+terminal.command("broadcast", "Type into every pane of the tab, on and off", terminal => terminal.broadcast(), "Ctrl+Shift+B");
 
 // The text's size
-terminal.command("zoom_in", "Bigger text", func(terminal) { terminal.zoom(1); }, "Ctrl+Shift+=");
-terminal.command("zoom_out", "Smaller text", func(terminal) { terminal.zoom(-1); }, "Ctrl+Shift+-");
-terminal.command("zoom_reset", "Text as it comes", func(terminal) { terminal.zoom(0); }, "Ctrl+Shift+0");
+terminal.command("zoom_in", "Bigger text", terminal => terminal.zoom(1), "Ctrl+Shift+=");
+terminal.command("zoom_out", "Smaller text", terminal => terminal.zoom(-1), "Ctrl+Shift+-");
+terminal.command("zoom_reset", "Text as it comes", terminal => terminal.zoom(0), "Ctrl+Shift+0");
 
 // Help and the files
-terminal.command("keys", "Keyboard shortcuts", func(terminal) { terminal.keys(); }, "Ctrl+Shift+K");
-terminal.command("plugins", "Plugins", func(terminal) { terminal.plugins(); }, "");
-terminal.command("open_settings", "Open the settings file", func(terminal) { terminal.open_settings(); }, "Ctrl+Shift+,");
-terminal.command("open_keys", "Open the keys file", func(terminal) { terminal.open_keys(); }, "");
+terminal.command("keys", "Keyboard shortcuts", terminal => terminal.keys(), "Ctrl+Shift+K");
+terminal.command("plugins", "Plugins", terminal => terminal.plugins(), "");
+terminal.command("open_settings", "Open the settings file", terminal => terminal.open_settings(), "Ctrl+Shift+,");
+terminal.command("open_keys", "Open the keys file", terminal => terminal.open_keys(), "");
 
 // A shell that ends is said so in the status bar, which is also the first plugin hook there is
 func on_exit(terminal, code) {
-    if (code != 0) {
-        terminal.say(`the shell ended with {code}`);
-    }
+    if (code != 0) terminal.say(`the shell ended with {code}`);
 }

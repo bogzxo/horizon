@@ -29,7 +29,7 @@ public sealed record CodeLanguage(string Name, string Id, IReadOnlyList<string> 
 /// neither does TextMateSharp. A grammar of that folder is one more scope in the registry, by its scopeName.
 /// </para>
 /// </summary>
-public static class CodeLanguages
+public static partial class CodeLanguages
 {
     private static readonly Lock gate = new();
     private static Options? options;
@@ -98,11 +98,22 @@ public static class CodeLanguages
         {
             ownExtensions[extension] = scopeName;
             byExtension.Remove(extension);
+            Version++;
         }
     }
 
-    /// <summary>The highlighter for a file by its extension, null for one nothing has a grammar for, which is shown as plain text.</summary>
-    public static ICodeHighlighter? ForFile(string path) => ForExtension(Path.GetExtension(path));
+    /// <summary>
+    /// The highlighter for a file, null for one nothing has a grammar for, which is shown as plain text. What it was set
+    /// to by hand comes first, then the associations, then its name (Dockerfile) and its extension, both with a backup's
+    /// suffix taken off (a.cs.orig is C#), see CodeLanguages.Files.
+    /// </summary>
+    public static ICodeHighlighter? ForFile(string path) => Resolve(path, null, useOverride: true);
+
+    /// <summary>
+    /// The same, with the file's first line to go on for a file with no extension, a shebang (#!/usr/bin/env bash) says
+    /// which language it is when nothing else does.
+    /// </summary>
+    public static ICodeHighlighter? ForFile(string path, string? firstLine) => Resolve(path, firstLine, useOverride: true);
 
     /// <summary>The highlighter for files with an extension (".cs"), null for one nothing has a grammar for.</summary>
     public static ICodeHighlighter? ForExtension(string extension)

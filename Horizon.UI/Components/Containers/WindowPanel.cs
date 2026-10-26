@@ -18,12 +18,12 @@ namespace Horizon.UI.Components;
 /// Closing it hides it (<see cref="UIComponent.Visible"/>) and says so with <see cref="OnClosed"/>, showing it again is
 /// the program's business.
 /// </summary>
-public class WindowPanel : Panel
+public partial class WindowPanel : Panel
 {
     private const float GRIP = 14.0f;
     private const float CLOSE_WIDTH = 30.0f;
 
-    private enum Drag { None, Move, Resize, Close }
+    private enum Drag { None, Move, Resize, Close, Action }
     private Drag drag;
     private Vector2 dragFrom;
     private Vector2 startPosition, startSize;
@@ -146,7 +146,7 @@ public class WindowPanel : Panel
         string title = Resolve(Title);
         float scale = ScaleOf(skin);
         float tall = list.Font.Measure(title, scale, false).Y;
-        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f), bar.Max.Y)));
+        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f) - ActionsWidth, bar.Max.Y)));
         list.Text(title, new Vector2(x, bar.Center.Y + tall * 0.5f), scale, skin.TextColor, false, UITextStyle.Bold, default);
         list.PopClip();
 
@@ -157,6 +157,8 @@ public class WindowPanel : Panel
             bool over = IsHovered && close.Contains(pointer);
             UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor);
         }
+
+        PaintTitleActions(list, pointer);
 
         // The grip, three dots along the curve of the corner, and only while the pointer's on it or it's being dragged.
         // Dots sat square in the corner always, out past the curve of a round one, a corner of a box stuck on a round window
@@ -193,8 +195,11 @@ public class WindowPanel : Panel
         startPosition = Position;
         startSize = Size == Vector2.Zero ? Bounds.Size : Size;
 
+        pressedAction = ActionAt(point);
         if (CloseBounds.Contains(point))
             drag = Drag.Close;
+        else if (pressedAction >= 0)
+            drag = Drag.Action;
         else if (GripBounds.Contains(point))
             drag = Drag.Resize;
         else if (Movable && TitleBounds.Contains(point))
@@ -231,8 +236,11 @@ public class WindowPanel : Panel
     {
         if (drag == Drag.Close && CloseBounds.Contains(point))
             Close();
+        else if (drag == Drag.Action && pressedAction >= 0 && ActionAt(point) == pressedAction)
+            titleActions[pressedAction].Pressed();
 
         drag = Drag.None;
+        pressedAction = -1;
     }
 
     /// <summary>Hides it and says so, what its x does.</summary>

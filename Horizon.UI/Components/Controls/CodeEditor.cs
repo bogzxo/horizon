@@ -89,8 +89,6 @@ public partial class CodeEditor : UIComponent
     private const float BAR_WIDTH = 6.0f;
     private const int WHEEL_LINES = 3;
 
-    // How many spaces wide a tab is drawn, the font has no tab of its own
-    private const int TAB_SPACES = 4;
 
     // The list of what can be completed, as many rows as it shows at once and the most it holds
     private const int COMPLETION_ROWS = 10;
@@ -257,6 +255,12 @@ public partial class CodeEditor : UIComponent
         set
         {
             Highlight = value is not null;
+
+            // Ctrl+/ and Shift+Alt+A write the comments of the language, # in Python, -- in SQL, <!-- --> in HTML
+            CodeComment comment = CodeComments.For(value);
+            document.LineComment = comment.Line;
+            document.BlockComment = (comment.BlockStart, comment.BlockEnd);
+
             if (value is not null && !ReferenceEquals(value, highlighter))
             {
                 highlighter = value;
@@ -464,6 +468,27 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>Whether guides are drawn down the indentation.</summary>
     public bool IndentGuides { get; set; } = true;
+
+    /// <summary>
+    /// How many spaces wide a tab is drawn (the font has no tab of its own) and how far apart the guides are, 1 to 16.
+    /// What Tab puts in is the document's <see cref="UITextDocument.Indent"/>, the program sets the two together.
+    /// </summary>
+    public int TabSize
+    {
+        get => tabSize;
+        set
+        {
+            int clamped = Math.Clamp(value, 1, 16);
+            if (clamped == tabSize)
+                return;
+
+            // A tab is wider or narrower, so a wrapped line can wrap somewhere else
+            tabSize = clamped;
+            rowsFor = rowsFor with { Version = -1 };
+        }
+    }
+
+    private int tabSize = 4;
 
     /// <summary>
     /// A picture drawn behind the code in its bottom right corner, the way an IDE has a background picture (somebody's
@@ -788,7 +813,7 @@ public partial class CodeEditor : UIComponent
         return width + FontOf(skin).Measure(text, scale, markup: false).X;
     }
 
-    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TAB_SPACES;
+    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TabSize;
 
     /// <summary>Draws a piece of a line, leaving the room of a tab where there is one.</summary>
     private float Draw(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color)
@@ -1456,6 +1481,12 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.CARETS_AT_LINE_ENDS:
                 document.CaretsAtLineEnds();
                 return;
+            case UIKeyboard.SELECT_ALL_OCCURRENCES:
+                document.SelectAllOccurrences();
+                return;
+            case UIKeyboard.SELECT_LINE:
+                document.ExpandLineSelection();
+                return;
             case UIKeyboard.FOLD:
                 FoldAtCaret();
                 return;
@@ -1477,15 +1508,18 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.ENTER: document.NewLine(); break;
             case UIKeyboard.TAB:
                 if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)
-                    document.IndentLines();
+                    IndentOrTab();
                 break;
             case UIKeyboard.SHIFT_TAB: document.Outdent(); break;
             case UIKeyboard.UNDO: document.Undo(); break;
             case UIKeyboard.REDO: document.Redo(); break;
             case UIKeyboard.TOGGLE_COMMENT: document.ToggleComment(); break;
+            case UIKeyboard.TOGGLE_BLOCK_COMMENT: document.ToggleBlockComment(); break;
             case UIKeyboard.DUPLICATE: document.Duplicate(); break;
             case UIKeyboard.MOVE_LINES_UP: document.MoveLines(-1); break;
             case UIKeyboard.MOVE_LINES_DOWN: document.MoveLines(1); break;
+            case UIKeyboard.COPY_LINES_UP: document.CopyLines(-1); break;
+            case UIKeyboard.COPY_LINES_DOWN: document.CopyLines(1); break;
 
             case UIKeyboard.CUT:
                 UIKeyboard.Copy(CopiedText());
@@ -1984,6 +2018,10 @@ public partial class CodeEditor : UIComponent
         UITextPosition at = PositionAt(point);
         double now = Environment.TickCount64 / 1000.0;
 
+        // A lens after the end of a line is the program's, ahead of the caret going there
+        if (PressLens(point))
+            return;
+
         // A change's bar is the program's to say what to do with (show what changed), ahead of the chevron it's next to
         if (PressLineChange(point, at))
             return;
@@ -2192,6 +2230,7 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        PaintRanges(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
         if (findQuery.Length > 0)
@@ -2225,6 +2264,8 @@ public partial class CodeEditor : UIComponent
 
         if (IndentGuides)
             PaintGuides(list, skin, scale, area, left, lineHeight, first, last);
+        PaintRulers(list, skin, area, left, digit);
+        PaintWhitespace(list, skin, scale, left, area, lineHeight, first, last);
 
         if (focused && bracket is { } one && bracketPair is { } two)
         {
@@ -2312,11 +2353,13 @@ public partial class CodeEditor : UIComponent
             list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.8f }, markup: false);
         }
 
+        PaintLenses(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
+
         // The caret line's note, after its hint if it has one, fainter still, and only while the caret is on its line
         if (LineNote is { } note && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
         {
             int length = document.LineAt(note.Line).Length;
-            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + 4) + ArtWidthOn(note.Line);
+            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + 4) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
             for (int i = 0; i < inlineHints.Count; i++)
             {
                 if (inlineHints[i].Line == note.Line)
@@ -2590,6 +2633,9 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public float CaretGlide { get; set; }
 
+    /// <summary>How the caret is drawn, a thin line before the character, a block over it or a line under it.</summary>
+    public UICaretStyle CaretStyle { get; set; }
+
     /// <summary>Where the caret was drawn last, the middle of its left edge, for something to happen there (sparks).</summary>
     public Vector2 CaretPoint { get; private set; }
 
@@ -2607,6 +2653,7 @@ public partial class CodeEditor : UIComponent
 
         float top = RowTop(area, row, lineHeight);
         float x = left + ColumnX(skin, scale, caret.Line, caret.Column);
+        float placedX = x, placedTop = top;
         if (caret == document.Caret)
         {
             Vector2 origin = new(left, RowTop(area, 0, lineHeight));
@@ -2628,7 +2675,36 @@ public partial class CodeEditor : UIComponent
             CaretPoint = new Vector2(x, top - lineHeight * 0.5f);
         }
 
-        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + MathF.Max(1.0f, MathF.Round(scale * 8.0f)), top)), skin.HighlightColor);
+        if (CaretStyle == UICaretStyle.Line)
+        {
+            list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + MathF.Max(1.0f, MathF.Round(scale * 8.0f)), top)), skin.HighlightColor);
+            return;
+        }
+
+        // A block or an underline is as wide as the character it's on, a tab's room for a tab and a digit at the end
+        string text = document.LineAt(caret.Line);
+        int column = Math.Clamp(caret.Column, 0, text.Length);
+        float width = column < text.Length && RowOf(caret.Line, column + 1) == row
+            ? ColumnX(skin, scale, caret.Line, column + 1) - ColumnX(skin, scale, caret.Line, column)
+            : FontOf(skin).Measure("0", scale, markup: false).X;
+        width = MathF.Max(width, 1.0f);
+
+        if (CaretStyle == UICaretStyle.Underline)
+        {
+            float thick = MathF.Max(1.0f, MathF.Round(scale * 8.0f));
+            list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + width, top - lineHeight + thick)), skin.HighlightColor);
+            return;
+        }
+
+        // The block, and the character under it written again on top in the colour behind the code so it still reads.
+        // Where the character really is, the block glides over it
+        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + width, top)), skin.HighlightColor);
+        if (column < text.Length && text[column] is not ('\t' or ' '))
+        {
+            Vector4 behind = Color ?? skin.FieldColor;
+            behind = behind.W > 0.0f ? behind with { W = 1.0f } : new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
+            list.Text(text.AsSpan(column, char.IsHighSurrogate(text[column]) && column + 1 < text.Length ? 2 : 1), new Vector2(placedX, placedTop), scale, behind, markup: false);
+        }
     }
 
     // After a folded line, a box with the lines it hides counted and the line that closes it, "… }"
@@ -3033,7 +3109,7 @@ public partial class CodeEditor : UIComponent
     private void PaintGuides(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last)
     {
         float space = FontOf(skin).Measure(" ", scale, markup: false).X;
-        float tab = space * TAB_SPACES;
+        float tab = space * TabSize;
         Vector4 guide = skin.TextColor with { W = 0.08f };
 
         for (int index = first; index <= last; index++)
@@ -3050,7 +3126,7 @@ public partial class CodeEditor : UIComponent
             }
 
             float top = RowTop(area, index, lineHeight);
-            for (int level = 1; level * TAB_SPACES <= depth; level++)
+            for (int level = 1; level * TabSize <= depth; level++)
             {
                 float x = MathF.Round(left + (level - 1) * tab);
                 list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + 1.0f, top)), guide);
@@ -3058,7 +3134,24 @@ public partial class CodeEditor : UIComponent
         }
     }
 
-    // How many spaces in a line starts, a tab as four, -1 for a line with nothing on it
+    /// <summary>
+    /// Tab as the key does it once nothing else wanted it (a snippet's next stop). A document indented with tabs gets a
+    /// tab where the caret is (the document's own Tab goes to the next stop in spaces), and a selection over more than
+    /// one line is indented a level either way.
+    /// </summary>
+    public void IndentOrTab()
+    {
+        if (ReadOnly)
+            return;
+
+        bool lines = document.HasSelection && document.SelectionStart.Line != document.SelectionEnd.Line;
+        if (!lines && document.Indent.StartsWith('\t'))
+            document.Insert("\t");
+        else
+            document.IndentLines();
+    }
+
+    // How many spaces in a line starts, a tab as TabSize of them, -1 for a line with nothing on it
     private int Indentation(int line)
     {
         string text = document.LineAt(line);
@@ -3066,7 +3159,7 @@ public partial class CodeEditor : UIComponent
         foreach (char character in text)
         {
             if (character == ' ') spaces++;
-            else if (character == '\t') spaces += TAB_SPACES;
+            else if (character == '\t') spaces += TabSize;
             else return spaces;
         }
 
@@ -3175,4 +3268,17 @@ public partial class CodeEditor : UIComponent
         Expose("highlight", () => Highlight, value => Highlight = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value.W > 0.0f ? value : null);
     }
+}
+
+/// <summary>How the caret of a code editor is drawn, VS Code's editor.cursorStyle.</summary>
+public enum UICaretStyle
+{
+    /// <summary>A thin line before the character, the way it always was.</summary>
+    Line,
+
+    /// <summary>A block over the character, the character still written in it.</summary>
+    Block,
+
+    /// <summary>A line under the character.</summary>
+    Underline
 }

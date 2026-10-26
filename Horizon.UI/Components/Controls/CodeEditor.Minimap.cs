@@ -7,10 +7,11 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 // The minimap, the whole of the code drawn small down the right between the text and the scroll bar, VS Code's and
-// Sublime's. Every row is a strip a couple of units tall with its words as little bars in their colours, the part in
+// Sublime's. Every row is a strip a couple of pixels tall with its words as little bars in their colours, the part in
 // sight under a lighter slider that's dragged to scroll, a click anywhere else goes there. Down its left edge the bars of
 // the lines that changed (LineChanges), and over it what was found and what's wrong, so a long file's busy places show
-// at a glance. Taller than the view, it scrolls along with the code so the slider never leaves it.
+// at a glance. Taller than the view, it scrolls along with the code so the slider never leaves it. A file that's all in
+// sight has nothing to scroll, it gets its rows and no slider.
 public partial class CodeEditor
 {
     // How wide it is, and how big a character and a row are drawn in it, in the editor's units
@@ -23,6 +24,23 @@ public partial class CodeEditor
 
     /// <summary>Whether the code is drawn small down the right, a slider over what's in sight. Off unless the program turns it on.</summary>
     public bool Minimap { get; set; }
+
+    /// <summary>How many of the screen's pixels tall a row of the minimap was last drawn, a whole number at any scale of the UI.</summary>
+    public int MinimapRowPixels { get; private set; } = 2;
+
+    /// <summary>The top of the minimap as it was last drawn, in the screen's pixels up from its bottom.</summary>
+    public float MinimapTop { get; private set; }
+
+    /// <summary>The top of its slider as it was last drawn, in the screen's pixels, NaN when there was no slider.</summary>
+    public float MinimapSliderTop { get; private set; } = float.NaN;
+
+    /// <summary>How far the minimap itself was scrolled when it was last drawn, in the screen's pixels.</summary>
+    public float MinimapScrollPixels { get; private set; }
+
+    /// <summary>The tops of the rows it last drew, in the screen's pixels, the first one in sight first.</summary>
+    public IReadOnlyList<float> MinimapRowTops => minimapRowTops;
+
+    private readonly List<float> minimapRowTops = [];
 
     // Where the slider was taken from, as a share of the slider's height, while it's dragged
     private bool draggingMinimap;
@@ -37,13 +55,29 @@ public partial class CodeEditor
         return new UIRect(new Vector2(area.Max.X, area.Min.Y), new Vector2(area.Max.X + MinimapWidth, area.Max.Y));
     }
 
+    // How many of the screen's pixels a unit of the editor is, 1.11 at a UI scale of 111%
+    private float PixelsPerUnit => Module is { } module ? MathF.Max(0.01f, module.ToWorld(Vector2.UnitY).Y - module.ToWorld(Vector2.Zero).Y) : 1.0f;
+
+    // How tall a row of the minimap is in units, a whole number of pixels, two at 100% and 111% and three at 150%
+    private float MinimapRow()
+    {
+        float pixels = PixelsPerUnit;
+        return MathF.Max(1.0f, MathF.Round(MINIMAP_ROW * pixels)) / pixels;
+    }
+
+    // A place moved onto the nearest corner of the screen's pixels
+    private Vector2 OnPixel(Vector2 point) => Module is { } module ? module.ToLocal(Vector2.Round(module.ToWorld(point))) : Vector2.Round(point);
+
+    // A height in units as it is on the screen, in pixels up from its bottom
+    private float ScreenY(float y) => Module is { } module ? module.ToWorld(new Vector2(0.0f, y)).Y : y;
+
     /// <summary>
     /// Helper method for how far the minimap itself is scrolled, as much of it as the code is, so that the slider is at the
     /// top with the code at the top and at the bottom with the code at the bottom.
     /// </summary>
-    private float MinimapScroll(UIRect map, float lineHeight)
+    private float MinimapScroll(UIRect map, float lineHeight, float row)
     {
-        float content = rows.Count * MINIMAP_ROW;
+        float content = rows.Count * row;
         if (content <= map.Height)
             return 0.0f;
 
@@ -52,12 +86,12 @@ public partial class CodeEditor
     }
 
     /// <summary>Helper method for the slider's top, down from the minimap's top, for a scroll of the code.</summary>
-    private float SliderDown(UIRect map, float lineHeight, float scroll)
+    private float SliderDown(UIRect map, float lineHeight, float scroll, float row)
     {
-        float content = rows.Count * MINIMAP_ROW;
+        float content = rows.Count * row;
         float most = MathF.Max(1.0f, rows.Count * lineHeight - map.Height * 0.5f);
         float mapScroll = content <= map.Height ? 0.0f : (content - map.Height) * Math.Clamp(scroll / most, 0.0f, 1.0f);
-        return scroll / lineHeight * MINIMAP_ROW - mapScroll;
+        return scroll / lineHeight * row - mapScroll;
     }
 
     private void PaintMinimap(UIDrawList list, UISkin skin, float scale, UISyntaxColors colors, float lineHeight)
@@ -65,16 +99,35 @@ public partial class CodeEditor
         if (!Minimap || rows.Count == 0)
             return;
 
-        UIRect map = MinimapArea(skin, scale);
-        float mapScroll = MinimapScroll(map, lineHeight);
-        int first = Math.Clamp((int)(mapScroll / MINIMAP_ROW), 0, rows.Count - 1);
-        int last = Math.Min(rows.Count - 1, first + (int)(map.Height / MINIMAP_ROW) + 1);
+        // Everything of it sits on whole pixels of the screen and a row is a whole number of them tall. A row was two
+        // units, 2.22 pixels at 111%, and slid along by a bit of a pixel every tick as the code scrolled each one covered
+        // other pixels from one frame to the next, the whole map flashing as it went and as the window was resized
+        float pixels = PixelsPerUnit, pixel = 1.0f / pixels;
+        float row = MinimapRow();
+        float character = MathF.Max(1.0f, MathF.Round(MINIMAP_CHAR * pixels)) * pixel;
+        UIRect area = MinimapArea(skin, scale);
+        var map = new UIRect(OnPixel(area.Min), OnPixel(area.Max));
+        float top = map.Max.Y;
+
+        // The scroll goes a whole row at a time, so every row stays on the pixels it's on and just stands for another line
+        int scrolledRows = (int)MathF.Round(MinimapScroll(map, lineHeight, row) / row);
+        int first = Math.Clamp(scrolledRows, 0, rows.Count - 1);
+        int last = Math.Min(rows.Count - 1, first + (int)(map.Height / row) + 1);
+
+        // All of the code in sight, there's nothing to scroll and no slider to show where
+        bool fits = rows.Count * lineHeight <= map.Height;
+
+        MinimapRowPixels = (int)MathF.Round(row * pixels);
+        MinimapTop = ScreenY(top);
+        MinimapScrollPixels = scrolledRows * MinimapRowPixels;
+        minimapRowTops.Clear();
 
         // Its rows stand for other lines from one tick to the next as it scrolls, nothing of it is blended between ticks
         list.BeginPart(PART_MINIMAP);
         list.BeginSteps();
         list.PushClip(map);
-        list.Rect(map, skin.TextColor with { W = 0.025f });
+        if (!fits)
+            list.Rect(map, skin.TextColor with { W = 0.025f });
 
         // The words of a line are worked out once and kept by its text, typing into a big file paints a few hundred rows
         // of these every tick and going through every span of every row again was most of a tick. Kept across colourings,
@@ -86,41 +139,51 @@ public partial class CodeEditor
             minimapColoursFor = colors;
         }
 
-        float left = map.Min.X + 4.0f;
+        // A gap of a pixel between rows once they're three or more tall, two pixels with one of them gap is a dotted mess
+        float gap = MinimapRowPixels >= 3 ? pixel : 0.0f;
+        float left = OnPixel(new Vector2(map.Min.X + 4.0f, 0.0f)).X;
         for (int index = first; index <= last; index++)
         {
-            CodeRow row = rows[index];
-            float top = map.Max.Y - (index * MINIMAP_ROW - mapScroll);
-            string text = document.LineAt(row.Line);
-            MinimapWord[] words = WordsOf(row.Line, text, colors);
+            CodeRow shown = rows[index];
+            float rowTop = top - (index - scrolledRows) * row;
+            minimapRowTops.Add(ScreenY(rowTop));
+            string text = document.LineAt(shown.Line);
+            MinimapWord[] words = WordsOf(shown.Line, text, colors);
 
             // A wrapped row starts its columns again where it starts in the line
-            int rowColumn = row.Start == 0 ? 0 : Column(text, 0, row.Start);
+            int rowColumn = shown.Start == 0 ? 0 : Column(text, 0, shown.Start);
             foreach (MinimapWord word in words)
             {
-                if (word.End <= row.Start || word.Start >= row.End)
+                if (word.End <= shown.Start || word.Start >= shown.End)
                     continue;
 
                 int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
-                int to = Math.Min(MINIMAP_COLUMNS, Math.Min(word.EndColumn, row.End >= text.Length ? word.EndColumn : Column(text, 0, row.End)) - rowColumn);
+                int to = Math.Min(MINIMAP_COLUMNS, Math.Min(word.EndColumn, shown.End >= text.Length ? word.EndColumn : Column(text, 0, shown.End)) - rowColumn);
                 if (to > from)
-                    list.Rect(new UIRect(new Vector2(left + from * MINIMAP_CHAR, top - MINIMAP_ROW + 0.4f), new Vector2(left + to * MINIMAP_CHAR, top)), word.Colour);
+                    list.Rect(new UIRect(new Vector2(left + from * character, rowTop - row + gap), new Vector2(left + to * character, rowTop)), word.Colour);
             }
         }
 
-        PaintMinimapMarks(list, skin, map, mapScroll, first, last);
+        PaintMinimapMarks(list, skin, map, row, scrolledRows, first, last);
 
-        // The slider over what's in sight, lighter under the pointer and while it's held
-        float down = SliderDown(map, lineHeight, scrollY);
-        float height = MathF.Max(MINIMAP_ROW * 2.0f, map.Height / lineHeight * MINIMAP_ROW);
+        // The slider over what's in sight, lighter under the pointer and while it's held. Its top on a pixel and its
+        // height a whole number of them, so it doesn't swim over the rows under it
         Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
-        var slider = new UIRect(new Vector2(map.Min.X, map.Max.Y - down - height), new Vector2(map.Max.X, map.Max.Y - down));
         bool lit = draggingMinimap || (IsHovered && map.Contains(pointer));
-        list.Rect(slider, skin.TextColor with { W = lit ? 0.2f : 0.12f });
+        MinimapSliderTop = float.NaN;
+        if (!fits)
+        {
+            float height = MathF.Max(row * 2.0f, map.Height / lineHeight * row);
+            float sliderTop = OnPixel(new Vector2(0.0f, top - SliderDown(map, lineHeight, scrollY, row))).Y;
+            var slider = new UIRect(new Vector2(map.Min.X, sliderTop - MathF.Round(height * pixels) * pixel), new Vector2(map.Max.X, sliderTop));
+            list.Rect(slider, skin.TextColor with { W = lit ? 0.2f : 0.12f });
+            MinimapSliderTop = ScreenY(sliderTop);
+        }
 
         list.PopClip();
         list.EndSteps();
     }
+
 
     /// <summary>A word of a line as the minimap draws it, where it starts and ends in the line and its colour.</summary>
     private readonly record struct MinimapWord(int Start, int End, int StartColumn, int EndColumn, Vector4 Colour);
@@ -226,25 +289,27 @@ public partial class CodeEditor
         return column;
     }
 
+
     /// <summary>Helper method for the changes down the left edge, and what was found and what's wrong across the rows.</summary>
-    private void PaintMinimapMarks(UIDrawList list, UISkin skin, UIRect map, float mapScroll, int first, int last)
+    private void PaintMinimapMarks(UIDrawList list, UISkin skin, UIRect map, float row, int scrolledRows, int first, int last)
     {
+        float pixel = 1.0f / PixelsPerUnit;
         for (int index = first; index <= last; index++)
         {
-            CodeRow row = rows[index];
-            float top = map.Max.Y - (index * MINIMAP_ROW - mapScroll);
+            CodeRow shown = rows[index];
+            float top = map.Max.Y - (index - scrolledRows) * row;
 
-            if (changedLines.TryGetValue(row.Line, out UILineChangeKind kind))
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - MINIMAP_ROW), new Vector2(map.Min.X + 2.0f, top)), ChangeColour(kind, skin));
-            if (row.Start == 0 && deletedBefore.Contains(row.Line))
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - 1.0f), new Vector2(map.Min.X + 4.0f, top + 1.0f)), skin.ErrorColor);
+            if (changedLines.TryGetValue(shown.Line, out UILineChangeKind kind))
+                list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Min.X + 2.0f, top)), ChangeColour(kind, skin));
+            if (shown.Start == 0 && deletedBefore.Contains(shown.Line))
+                list.Rect(new UIRect(new Vector2(map.Min.X, top - pixel), new Vector2(map.Min.X + 4.0f, top + pixel)), skin.ErrorColor);
 
             // A TODO or a FIXME, a mark down the right edge in its colour
-            if (HighlightTodos && row.Start == 0 && TodoKindOf(row.Line) is var todo and >= 0)
-                list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - MINIMAP_ROW), new Vector2(map.Max.X, top)), todo > 0 ? skin.ErrorColor : skin.WarningColor);
+            if (HighlightTodos && shown.Start == 0 && TodoKindOf(shown.Line) is var todo and >= 0)
+                list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), todo > 0 ? skin.ErrorColor : skin.WarningColor);
 
-            if (row.Line == document.Caret.Line && row.Start == 0)
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - MINIMAP_ROW), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
+            if (shown.Line == document.Caret.Line && shown.Start == 0)
+                list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
         }
 
         // What was found, and what's wrong, across the rows they're on
@@ -252,17 +317,17 @@ public partial class CodeEditor
         {
             Vector4 lit = skin.HighlightColor with { W = 0.5f };
             foreach (UITextMatch match in found)
-                MarkMinimapLine(list, map, mapScroll, first, last, match.Line, lit);
+                MarkMinimapLine(list, map, row, scrolledRows, first, last, match.Line, lit);
         }
 
         foreach (UICodeDiagnostic diagnostic in diagnostics)
         {
             if (!diagnostic.Hint)
-                MarkMinimapLine(list, map, mapScroll, first, last, diagnostic.Line, (diagnostic.Warning ? skin.WarningColor : skin.ErrorColor) with { W = 0.6f });
+                MarkMinimapLine(list, map, row, scrolledRows, first, last, diagnostic.Line, (diagnostic.Warning ? skin.WarningColor : skin.ErrorColor) with { W = 0.6f });
         }
     }
 
-    private void MarkMinimapLine(UIDrawList list, UIRect map, float mapScroll, int first, int last, int line, Vector4 colour)
+    private void MarkMinimapLine(UIDrawList list, UIRect map, float row, int scrolledRows, int first, int last, int line, Vector4 colour)
     {
         if (line < 0 || line >= document.LineCount)
             return;
@@ -271,8 +336,8 @@ public partial class CodeEditor
         if (index < first || index > last)
             return;
 
-        float top = map.Max.Y - (index * MINIMAP_ROW - mapScroll);
-        list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - MINIMAP_ROW), new Vector2(map.Max.X, top)), colour);
+        float top = map.Max.Y - (index - scrolledRows) * row;
+        list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), colour);
     }
 
     /// <summary>Helper method for a press on the minimap, the slider taken hold of, or the code gone to there and then held. False off it.</summary>
@@ -285,17 +350,18 @@ public partial class CodeEditor
         if (!map.Contains(point))
             return false;
 
+        float row = MinimapRow();
         float lineHeight = FontOf(skin).LineHeight * paintedScale;
-        float down = SliderDown(map, lineHeight, scrollY);
-        float height = MathF.Max(MINIMAP_ROW * 2.0f, map.Height / lineHeight * MINIMAP_ROW);
+        float down = SliderDown(map, lineHeight, scrollY, row);
+        float height = MathF.Max(row * 2.0f, map.Height / lineHeight * row);
         float pointerDown = map.Max.Y - point.Y;
 
         // Off the slider, the row under the pointer is brought to the middle and the slider is held by its middle
         if (pointerDown < down || pointerDown > down + height)
         {
-            int row = Math.Clamp((int)((pointerDown + MinimapScroll(map, lineHeight)) / MINIMAP_ROW), 0, rows.Count - 1);
+            int at = Math.Clamp((int)((pointerDown + MinimapScroll(map, lineHeight, row)) / row), 0, rows.Count - 1);
             scrollGoal = null;
-            scrollY = row * lineHeight - TextArea(skin, paintedScale).Height * 0.5f;
+            scrollY = at * lineHeight - TextArea(skin, paintedScale).Height * 0.5f;
             ClampScroll(skin, paintedScale);
 
             // Held by its middle from here, a jump in a long file moves the minimap under the pointer as well
@@ -321,7 +387,7 @@ public partial class CodeEditor
 
         // The slider's place goes along with the scroll in a straight line, so where it's wanted gives the scroll
         float wanted = map.Max.Y - point.Y - minimapGrab;
-        float atBottom = SliderDown(map, lineHeight, most);
+        float atBottom = SliderDown(map, lineHeight, most, MinimapRow());
         scrollGoal = null;
         scrollY = atBottom <= 0.0f ? 0.0f : Math.Clamp(wanted / atBottom, 0.0f, 1.0f) * most;
     }

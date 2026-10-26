@@ -96,6 +96,7 @@ public partial class FormPanel
         UIFormKind.Choice => ChoiceEditor(field, row, width),
         UIFormKind.Flags => FlagsEditor(field, row, width),
         UIFormKind.Vec => VecEditor(field, row, width),
+        UIFormKind.Pairs => PairsEditor(field, row, width),
         _ => TextEditor(field, row, width)
     };
 
@@ -222,6 +223,26 @@ public partial class FormPanel
             // What is being typed is left alone, it's told about once it stops
             if (!box.IsFocused)
                 box.Text = value is StringValue text ? text.Value : value is null ? string.Empty : value.ToString() ?? string.Empty;
+        };
+    }
+
+    // Pairs on one line, "*.orig = csharp, *.log = plaintext", told about when Enter is pressed. A form is a narrow
+    // thing, the settings page has a line a pair with buttons of its own
+    private Action<IRuntimeValue?> PairsEditor(UIFormField field, StackPanel row, float width)
+    {
+        var box = row.Add(new TextBox { Size = new Vector2(width, ROW_HEIGHT), Enabled = !field.ReadOnly, TextScale = TextScale, Placeholder = field.Unset, MaxLength = 4096 });
+        box.OnSubmitted = text =>
+        {
+            if (text.Trim().Length == 0)
+                Cleared(field);
+            else
+                Changed(field, UIFormPairs.Parse(text));
+        };
+
+        return value =>
+        {
+            if (!box.IsFocused)
+                box.Text = UIFormPairs.Line(value);
         };
     }
 

@@ -17,29 +17,93 @@ public static class SettingsSections
     private static readonly string[] Order = [TERMINAL, EDITOR, EXTENSIONS];
 
     /// <summary>The settings object a file declares, null for a file that isn't there or doesn't read.</summary>
-    public static Dictionary<string, IRuntimeValue>? Read(string? path)
+    public static Dictionary<string, IRuntimeValue>? Read(string? path) => TryRead(path, out _);
+
+    /// <summary>
+    /// The settings object a file declares, null for a file that isn't there or doesn't read. One that doesn't read says
+    /// why in <paramref name="error"/>, what HIDL said with the line it's on, a file that isn't there says nothing.
+    /// </summary>
+    public static Dictionary<string, IRuntimeValue>? TryRead(string? path, out string? error)
     {
+        error = null;
         if (path is null || !File.Exists(path))
             return null;
         try
         {
             return ReadText(File.ReadAllText(path));
         }
-        catch (Exception)
+        catch (Exception e)
         {
+            error = e.Message;
             return null;
         }
     }
 
-    /// <summary>The settings object of a file's text. Throws when it doesn't declare one.</summary>
+    /// <summary>
+    /// The settings object of a file's text. Throws a <see cref="SettingsReadException"/> when it doesn't declare one,
+    /// with the line and column HIDL said when there's one. A file without the <c>settings</c> object round it is read too,
+    /// one that declares <c>let editor = { ... }</c> (or terminal, or extensions) at the top, or that is only the inside of
+    /// the object, the editor section in its braces and nothing round it. It's written back with the object round it.
+    /// </summary>
     public static Dictionary<string, IRuntimeValue> ReadText(string text)
     {
         HIDLRuntime runtime = new() { Output = null };
-        var (success, message) = runtime.Evaluate(text);
-        if (!success || runtime.UserScope.Lookup("settings") is not ObjectValue settings)
-            throw new InvalidDataException(success ? "it has to declare an object called 'settings'" : message);
-        return settings.Properties;
+        try
+        {
+            runtime.Run(text);
+        }
+        catch (Exception e)
+        {
+            // What it says is about the file as it is, not the one with the object put round it
+            return Unwrapped(text) ?? throw Placed(e);
+        }
+
+        if (runtime.UserScope.Lookup("settings") is ObjectValue settings)
+            return settings.Properties;
+
+        // The sections declared at the top without the object round them
+        var loose = new Dictionary<string, IRuntimeValue>(StringComparer.Ordinal);
+        foreach (string name in Order)
+        {
+            if (runtime.UserScope.Variables.TryGetValue(name, out IRuntimeValue? declared) && declared is ObjectValue section)
+                loose[name] = section;
+        }
+
+        if (loose.Count > 0)
+            return loose;
+        return Unwrapped(text) ?? throw new SettingsReadException(Missing, 0, 0);
     }
+
+    /// <summary>
+    /// What's said when a file declares no settings at all, the skeleton it needs written the way the file is. A program
+    /// sets its own (Hex has it in its strings), this is what the engine says by itself.
+    /// </summary>
+    public static string Missing { get; set; } = "it has to declare settings with an editor section, like let settings = { editor: { tab_size: 4 } };";
+
+    // The text read as the inside of the settings object, null when that doesn't read either or has none of the sections
+    private static Dictionary<string, IRuntimeValue>? Unwrapped(string text)
+    {
+        HIDLRuntime runtime = new() { Output = null };
+        try
+        {
+            runtime.Run("let settings = {\n" + text + "\n};");
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        return runtime.UserScope.Lookup("settings") is ObjectValue settings && IsSectioned(settings.Properties) ? settings.Properties : null;
+    }
+
+    // What went wrong with where it went wrong, when HIDL knows
+    private static SettingsReadException Placed(Exception e) => e switch
+    {
+        SettingsReadException already => already,
+        Horizon.HIDL.Parsing.ParseException parse => new SettingsReadException(e.Message, parse.Line, parse.Col),
+        HidlRuntimeException run => new SettingsReadException(e.Message, run.Line, run.Column),
+        _ => new SettingsReadException(e.Message, 0, 0)
+    };
 
     /// <summary>Whether a settings object is in sections, rather than the terminal's keys at the top as before.</summary>
     public static bool IsSectioned(Dictionary<string, IRuntimeValue> settings) =>
@@ -120,4 +184,14 @@ public static class SettingsSections
             made.Add(key, value, help?.Invoke(key));
         return made;
     }
+}
+
+/// <summary>
+/// A settings file that doesn't read, what's wrong with it and where, the line and the column from 1 (0 when it's the
+/// whole file, one that declares no settings).
+/// </summary>
+public sealed class SettingsReadException(string message, int line, int column) : Exception(message)
+{
+    public int Line { get; } = line;
+    public int Column { get; } = column;
 }

@@ -24,11 +24,8 @@ func refresh(tui) {
     if (status.code != 0) {
         problem = status.errors.trim();
         outside = problem.contains("not a git repository");
-        if (outside) {
-            problem = `{tui.folder()} isn't in a git repository, git init makes one`;
-        } else if (problem.length == 0) {
-            problem = "git isn't there, or this isn't a repository";
-        }
+        if (outside) problem = `{tui.folder()} isn't in a git repository, git init makes one`;
+        else if (problem.length == 0) problem = "git isn't there, or this isn't a repository";
         return;
     }
 
@@ -36,38 +33,21 @@ func refresh(tui) {
     outside = false;
     let found = [];
     for (let line in tui.lines(status.output)) {
-        if (line.starts_with("## ")) {
-            branch = line.substring(3);
-        } else if (line.length > 3) {
-            found.push({ staged: line.substring(0, 1), changed: line.substring(1, 2), path: line.substring(3) });
-        }
+        if (line.starts_with("## ")) branch = line.substring(3);
+        else if (line.length > 3) found.push({ staged: line.substring(0, 1), changed: line.substring(1, 2), path: line.substring(3) });
     }
     ui.list_set(changes, found);
 
     let log = git(tui, ["log", "--oneline", "--decorate", "-n", "300"]);
-    let lines = [];
-    if (log.code == 0) {
-        lines = tui.lines(log.output).filter(func(line) { return line.length > 0; });
-    }
-    ui.list_set(commits, lines);
+    ui.list_set(commits, log.code == 0 ? tui.lines(log.output).filter(line => line.length > 0) : []);
 }
 
 func describe(change) {
-    let staged = change.staged;
-    let changed = change.changed;
-    if (staged == "?") {
-        return `new      {change.path}`;
-    }
-    let what = "";
-    if (staged != " ") {
-        what = `staged {staged}`;
-    }
-    if (changed != " ") {
-        if (what.length > 0) {
-            what = what + ", ";
-        }
-        what = what + `changed {changed}`;
-    }
+    let { staged, changed } = change;
+    if (staged == "?") return `new      {change.path}`;
+
+    let what = staged != " " ? `staged {staged}` : "";
+    if (changed != " ") what = what.length > 0 ? `{what}, changed {changed}` : `changed {changed}`;
     return `{ui.pad(what, 22)}{change.path}`;
 }
 
@@ -76,7 +56,7 @@ func on_start(tui) {
 }
 
 func on_key(tui, key) {
-    if (key.name == "escape" || key.name == "q") {
+    if (key.name in ["escape", "q"]) {
         tui.exit(0);
         return;
     }
@@ -94,28 +74,18 @@ func on_key(tui, key) {
 
     let height = tui.rows() - 3;
     if (tab == 0) {
-        if (ui.list_key(changes, key, height)) {
-            return;
-        }
+        if (ui.list_key(changes, key, height)) return;
 
         let change = ui.list_chosen(changes);
-        if (change == null) {
-            return;
-        }
+        if (change == null) return;
 
         if (key.name == "s") {
             let done = git(tui, ["add", "--", change.path]);
-            said = `staged {change.path}`;
-            if (done.code != 0) {
-                said = done.errors.trim();
-            }
+            said = done.code != 0 ? done.errors.trim() : `staged {change.path}`;
             refresh(tui);
         } else if (key.name == "u") {
             let done = git(tui, ["restore", "--staged", "--", change.path]);
-            said = `unstaged {change.path}`;
-            if (done.code != 0) {
-                said = done.errors.trim();
-            }
+            said = done.code != 0 ? done.errors.trim() : `unstaged {change.path}`;
             refresh(tui);
         } else if (key.name == "enter") {
             tui.open(tui.join(tui.folder(), change.path), 0);
@@ -144,22 +114,15 @@ func draw(tui) {
     tui.write(parts[0].w - branch.length - 1, 0, branch, "cyan");
 
     if (problem.length > 0) {
-        let colour = "red";
-        if (outside) {
-            colour = "dim";
-        }
-        tui.write(1, 2, ui.clip(problem, parts[1].w - 2), colour);
+        tui.write(1, 2, ui.clip(problem, parts[1].w - 2), outside ? "dim" : "red");
         ui.status(tui, parts[2], "r again  esc leave", "");
         return;
     }
 
     if (tab == 0) {
         let inside = ui.panel(tui, parts[1], `{changes.items.count} changes`, true);
-        if (changes.items.count == 0) {
-            tui.write(inside.x + 1, inside.y, "nothing changed, the tree is clean", "green");
-        } else {
-            ui.list_draw(tui, changes, inside, describe, true);
-        }
+        if (changes.items.count == 0) tui.write(inside.x + 1, inside.y, "nothing changed, the tree is clean", "green");
+        else ui.list_draw(tui, changes, inside, describe, true);
         ui.status(tui, parts[2], "s stage  u unstage  enter open  tab log  r again  esc leave", said);
         return;
     }
@@ -168,15 +131,9 @@ func draw(tui) {
     let left = ui.panel(tui, halves[0], "Log", true);
     ui.list_draw(tui, commits, left, null, true);
     let right = ui.panel(tui, halves[1], "What it changed", false);
-    let row = 0;
-    for (let line in shown) {
-        if (row < right.h) {
-            tui.write(right.x, right.y + row, ui.pad(" " + line, right.w), "default");
-        }
-        row += 1;
+    for (let row, line in shown) {
+        if (row < right.h) tui.write(right.x, right.y + row, ui.pad(` {line}`, right.w), "default");
     }
-    if (shown.count == 0) {
-        tui.write(right.x + 1, right.y, "enter on a commit shows it here", "dim");
-    }
+    if (shown.count == 0) tui.write(right.x + 1, right.y, "enter on a commit shows it here", "dim");
     ui.status(tui, parts[2], "enter show  tab status  r again  esc leave", said);
 }

@@ -302,9 +302,9 @@ public partial class CodeEditor
             int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
             int end = start, used = 0;
             // A hint just before a character takes its room along with it
-            while (end < text.Length && used + (text[end] == '\t' ? TAB_SPACES : 1) + InlayColumnsAt(line, end) <= room)
+            while (end < text.Length && used + (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end) <= room)
             {
-                used += (text[end] == '\t' ? TAB_SPACES : 1) + InlayColumnsAt(line, end);
+                used += (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end);
                 end++;
             }
 
@@ -353,11 +353,11 @@ public partial class CodeEditor
     }
 
     // How many columns a piece of a line takes, a tab as so many spaces
-    private static int Columns(string text, int from, int to)
+    private int Columns(string text, int from, int to)
     {
         int columns = 0;
         for (int i = from; i < to; i++)
-            columns += text[i] == '\t' ? TAB_SPACES : 1;
+            columns += text[i] == '\t' ? TabSize : 1;
         return columns;
     }
 

@@ -59,6 +59,15 @@ public class Label : UIComponent
     /// </summary>
     public bool Markdown { get; set; }
 
+    /// <summary>
+    /// What a block of code in the markdown is coloured as when its fence doesn't say, "hidl" or "cs" the way a fence
+    /// would put it, null for code in one colour. A fence that names a language always wins.
+    /// </summary>
+    public string? CodeLanguage { get; set; }
+
+    /// <summary>The text as it was laid out with its styles the last time, what a test looks into to see how it came out.</summary>
+    public UIRichText RichText => rich;
+
     /// <summary>Called with where a link of the markdown goes when it is clicked, <c>[the words](where)</c>.</summary>
     public Action<string>? OnLink { get; set; }
 
@@ -165,6 +174,7 @@ public class Label : UIComponent
         paintedAlign = shapes != 0 ? Origin.TopLeft : Align;
         if (drawnRich)
         {
+            rich.CodeLanguage = CodeLanguage;
             rich.Build(text, skin.Font, scale, width, Markdown, shapes != 0 ? roomOf ??= RoomAt : null, shapes);
             wrapped = false;
             return new Vector2(width > 0.0f ? width : rich.Width, rich.Height);
@@ -277,6 +287,7 @@ public class Label : UIComponent
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
         Expose("wrap", () => Wrap, value => Wrap = value);
         Expose("markdown", () => Markdown, value => Markdown = value);
+        Expose("code_language", () => CodeLanguage ?? string.Empty, value => CodeLanguage = string.IsNullOrWhiteSpace(value) ? null : value);
         Expose(
             "wrap_around",
             () => new Horizon.HIDL.Runtime.ListValue([.. WrapAround.Select(other => other.Object)]),

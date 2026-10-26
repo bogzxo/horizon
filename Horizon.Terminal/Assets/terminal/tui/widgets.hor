@@ -5,7 +5,7 @@
 // and its key function takes a key it has a use for and says true, so a program hands a key round until one wants it.
 
 func rect(x, y, w, h) {
-    return { x: x, y: y, w: w, h: h };
+    return { x, y, w, h };
 }
 
 // @doc The whole screen as an area
@@ -19,21 +19,11 @@ func inset(area, by) {
 
 // @doc A length cut into pieces, a size over 0 that many, a 0 a share of what is left (the last share gets the odd one)
 func split(total, sizes) {
-    let fixed = 0;
-    let shares = 0;
-    for (let size in sizes) {
-        if (size > 0) {
-            fixed += size;
-        } else {
-            shares += 1;
-        }
-    }
+    let fixed = sizes.filter(size => size > 0).sum();
+    let shares = sizes.filter(size => size <= 0).count;
 
     let left = math.max(0, total - fixed);
-    let each = 0;
-    if (shares > 0) {
-        each = math.floor(left / shares);
-    }
+    let each = shares > 0 ? math.floor(left / shares) : 0;
 
     let out = [];
     let seen = 0;
@@ -42,11 +32,7 @@ func split(total, sizes) {
             out.push(size);
         } else {
             seen += 1;
-            if (seen == shares) {
-                out.push(left - each * (shares - 1));
-            } else {
-                out.push(each);
-            }
+            out.push(seen == shares ? left - each * (shares - 1) : each);
         }
     }
 
@@ -79,18 +65,9 @@ func columns(area, sizes) {
 
 // @doc A text no wider than so many cells, cut with an ellipsis
 func clip(said, width) {
-    if (width <= 0) {
-        return "";
-    }
-
-    if (said.length > width) {
-        if (width == 1) {
-            return "…";
-        }
-        return said.substring(0, width - 1) + "…";
-    }
-
-    return said;
+    if (width <= 0) return "";
+    if (said.length <= width) return said;
+    return width == 1 ? "…" : said.substring(0, width - 1) + "…";
 }
 
 // @doc A text exactly so many cells wide
@@ -100,32 +77,22 @@ func pad(said, width) {
 
 // @doc A size in bytes as a person says it
 func size(bytes) {
-    if (bytes < 1024) {
-        return `{bytes} B`;
-    }
-    if (bytes < 1024 * 1024) {
-        return `{math.round(bytes / 1024)} KB`;
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-        return `{math.round(bytes / (1024 * 1024))} MB`;
-    }
+    if (bytes < 1024) return `{bytes} B`;
+    if (bytes < 1024 * 1024) return `{math.round(bytes / 1024)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `{math.round(bytes / (1024 * 1024))} MB`;
     return `{math.round(bytes / (1024 * 1024 * 1024))} GB`;
 }
 
 // @doc Whether the letters typed are in the text in that order, the way quick open matches
 func matches(said, typed) {
     let lower = said.lower();
-    let wanted = typed.lower();
     let at = 0;
-    for (let i in range(wanted.length)) {
-        let letter = wanted.substring(i, i + 1);
-        if (letter != " ") {
-            let found = lower.substring(at).index_of(letter);
-            if (found < 0) {
-                return false;
-            }
-            at = at + found + 1;
-        }
+    for (let letter in typed.lower()) {
+        if (letter == " ") continue;
+
+        let found = lower.substring(at).index_of(letter);
+        if (found < 0) return false;
+        at = at + found + 1;
     }
 
     return true;
@@ -135,11 +102,7 @@ func matches(said, typed) {
 
 // @doc A box with a title round an area, the accent when it has the keys, the inside handed back
 func panel(tui, area, title, focused) {
-    let style = "dim";
-    if (focused) {
-        style = "cyan";
-    }
-    tui.box(area.x, area.y, area.w, area.h, title, style, focused);
+    tui.box(area.x, area.y, area.w, area.h, title, focused ? "cyan" : "dim", focused);
     return inset(area, 1);
 }
 
@@ -154,7 +117,7 @@ func status(tui, area, left, right) {
 
 // @doc A list's state, its items and which is picked
 func list(items) {
-    return { items: items, selected: 0, top: 0 };
+    return { items, selected: 0, top: 0 };
 }
 
 // @doc Other items in a list, the picked one kept where it can be
@@ -165,48 +128,38 @@ func list_set(state, items) {
 
 // @doc The picked item, null for none
 func list_chosen(state) {
-    if (state.items.count == 0) {
-        return null;
-    }
+    if (state.items.count == 0) return null;
     return state.items[state.selected];
 }
 
 // @doc The arrows, the pages, home and end, true when the key was one of them
 func list_key(state, key, height) {
     let n = state.items.count;
-    if (n == 0) {
-        return false;
-    }
+    if (n == 0) return false;
 
     let page = math.max(1, height - 1);
-    if (key.name == "up") {
-        state.selected = math.max(0, state.selected - 1);
-    } else if (key.name == "down") {
-        state.selected = math.min(n - 1, state.selected + 1);
-    } else if (key.name == "pgup") {
-        state.selected = math.max(0, state.selected - page);
-    } else if (key.name == "pgdn") {
-        state.selected = math.min(n - 1, state.selected + page);
-    } else if (key.name == "home" && !key.shift) {
-        state.selected = 0;
-    } else if (key.name == "end" && !key.shift) {
-        state.selected = n - 1;
-    } else {
-        return false;
-    }
+    if (key.name == "up") state.selected = math.max(0, state.selected - 1);
+    else if (key.name == "down") state.selected = math.min(n - 1, state.selected + 1);
+    else if (key.name == "pgup") state.selected = math.max(0, state.selected - page);
+    else if (key.name == "pgdn") state.selected = math.min(n - 1, state.selected + page);
+    else if (key.name == "home" && !key.shift) state.selected = 0;
+    else if (key.name == "end" && !key.shift) state.selected = n - 1;
+    else return false;
 
     return true;
 }
 
 // the first row shown moved so the picked one is in sight
 func list_scroll(state, height) {
-    if (state.selected < state.top) {
-        state.top = state.selected;
-    }
-    if (state.selected >= state.top + height) {
-        state.top = state.selected - height + 1;
-    }
+    if (state.selected < state.top) state.top = state.selected;
+    if (state.selected >= state.top + height) state.top = state.selected - height + 1;
     state.top = math.clamp(state.top, 0, math.max(0, state.items.count - height));
+}
+
+// The style of a row of a list or a table, the picked one bold, and lit when it has the keys
+func row_style(at, state, focused) {
+    if (at != state.selected) return "default";
+    return focused ? "inverse" : "bold";
 }
 
 // @doc A list drawn in an area, show turns an item into its text (null for an item that is a text), the picked one lit
@@ -220,20 +173,8 @@ func list_draw(tui, state, area, show, focused) {
         }
 
         let item = state.items[at];
-        let shown = item;
-        if (show != null) {
-            shown = show(item);
-        }
-
-        let style = "default";
-        if (at == state.selected) {
-            style = "bold";
-            if (focused) {
-                style = "inverse";
-            }
-        }
-
-        tui.write(area.x, area.y + row, pad(" " + shown, area.w), style);
+        let shown = show != null ? show(item) : item;
+        tui.write(area.x, area.y + row, pad(` {shown}`, area.w), row_style(at, state, focused));
     }
 
     // where in the list the view is, down the right edge, when there is more than fits
@@ -248,18 +189,12 @@ func list_draw(tui, state, area, show, focused) {
 
 // @doc A list as columns, each { title, width, get } (a width of 0 a share of what is left, get the item's text)
 func table_draw(tui, state, area, cols, focused) {
-    let sizes = [];
-    for (let column in cols) {
-        sizes.push(column.width);
-    }
-    let widths = split(area.w, sizes);
+    let widths = split(area.w, cols.map(column => column.width));
 
     let x = area.x;
-    let i = 0;
-    for (let column in cols) {
-        tui.write(x, area.y, pad(" " + column.title, widths[i]), "bold underline");
+    for (let i, column in cols) {
+        tui.write(x, area.y, pad(` {column.title}`, widths[i]), "bold underline");
         x += widths[i];
-        i += 1;
     }
 
     let body = rect(area.x, area.y + 1, area.w, math.max(0, area.h - 1));
@@ -272,20 +207,11 @@ func table_draw(tui, state, area, cols, focused) {
         }
 
         let item = state.items[at];
-        let style = "default";
-        if (at == state.selected) {
-            style = "bold";
-            if (focused) {
-                style = "inverse";
-            }
-        }
-
+        let style = row_style(at, state, focused);
         let cx = body.x;
-        let j = 0;
-        for (let column in cols) {
-            tui.write(cx, body.y + row, pad(" " + text(column.get(item)), widths[j]), style);
+        for (let j, column in cols) {
+            tui.write(cx, body.y + row, pad(` {column.get(item)}`, widths[j]), style);
             cx += widths[j];
-            j += 1;
         }
     }
 }
@@ -305,9 +231,7 @@ func field_key(state, key) {
         state.text = before + key.text + after;
         state.caret += key.text.length;
     } else if (key.name == "backspace") {
-        if (state.caret == 0) {
-            return false;
-        }
+        if (state.caret == 0) return false;
         state.text = before.substring(0, before.length - 1) + after;
         state.caret -= 1;
     } else if (key.name == "delete") {
@@ -334,15 +258,10 @@ func field_key(state, key) {
 func field_draw(tui, state, area, placeholder, focused) {
     let width = math.max(1, area.w);
     let start = math.max(0, state.caret - width + 1);
-    if (state.text.length == 0) {
-        tui.write(area.x, area.y, pad(placeholder, width), "dim");
-    } else {
-        tui.write(area.x, area.y, pad(state.text.substring(start, start + width), width), "default");
-    }
+    if (state.text.length == 0) tui.write(area.x, area.y, pad(placeholder, width), "dim");
+    else tui.write(area.x, area.y, pad(state.text.substring(start, start + width), width), "default");
 
-    if (focused) {
-        tui.cursor(area.x + state.caret - start, area.y);
-    }
+    if (focused) tui.cursor(area.x + state.caret - start, area.y);
 }
 
 /* Tabs, a menu, a progress bar */
@@ -351,49 +270,30 @@ func field_draw(tui, state, area, placeholder, focused) {
 func tabs_draw(tui, names, selected, area) {
     tui.fill(area.x, area.y, area.w, 1);
     let x = area.x;
-    let i = 0;
-    for (let name in names) {
-        let style = "dim";
-        if (i == selected) {
-            style = "bold inverse";
-        }
-        x = tui.write(x, area.y, ` {name} `, style);
+    for (let i, name in names) {
+        x = tui.write(x, area.y, ` {name} `, i == selected ? "bold inverse" : "dim");
         x = tui.write(x, area.y, " ", "default");
-        i += 1;
     }
 }
 
 // @doc Tab and shift tab step through so many tabs, the one open handed back
 func tabs_key(count, selected, key) {
-    if (key.name != "tab") {
-        return selected;
-    }
-    if (key.shift) {
-        return (selected + count - 1) % count;
-    }
+    if (key.name != "tab") return selected;
+    if (key.shift) return (selected + count - 1) % count;
     return (selected + 1) % count;
 }
 
 // @doc A menu of texts in a box at a place, over whatever is there, the picked one lit
 func menu_draw(tui, items, selected, x, y) {
-    let width = 4;
-    for (let item in items) {
-        width = math.max(width, item.length + 4);
-    }
+    let width = math.max([4, ...items.map(item => item.length + 4)]);
     width = math.min(width, tui.columns() - x);
     let height = math.min(items.count + 2, tui.rows() - y);
-    if (height < 3) {
-        return;
-    }
+    if (height < 3) return;
 
     tui.fill(x, y, width, height, " ");
     tui.box(x, y, width, height, "", "cyan");
     for (let i in range(height - 2)) {
-        let style = "default";
-        if (i == selected) {
-            style = "inverse";
-        }
-        tui.write(x + 1, y + 1 + i, pad(" " + items[i], width - 2), style);
+        tui.write(x + 1, y + 1 + i, pad(` {items[i]}`, width - 2), i == selected ? "inverse" : "default");
     }
 }
 

@@ -11,7 +11,6 @@
 // title bar (header) it is white, which the sprite says itself.
 // The font is Cascadia Mono at 55 pixels to the em, which is what makes a letter of it as wide as one of Dead
 // Revolver's font. A layout that says how big its text is means it in that font, so the two have to agree.
-// Comments can't go inside of the object, the parser won't have it.
 
 let skin = {
     inherit: "../dead_revolver/skin.hor",

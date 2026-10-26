@@ -61,13 +61,33 @@ public class HIDLSerializerTests
             .Write();
 
         Assert.StartsWith("// The first line.\n// The second.\n#define dusk\n#define version 2\n\nlet settings = {\n    // Which theme.\n    theme: \"horizon\",", text);
-        Assert.Contains("        // A number.\n        x: 1\n", text);
+        Assert.Contains("        // A number.\n        x: 1,\n    },\n", text);
+        Assert.Contains("        {\n            b: false,\n        },\n    ],\n", text);
         Assert.Contains("    // example: 1,\n}", text);
 
         var read = Assert.IsType<ObjectValue>(Evaluate(text, "settings"));
         Assert.Equal("horizon", Assert.IsType<StringValue>(read.Properties["theme"]).Value);
         Assert.Equal(2, Assert.IsType<ListValue>(read.Properties["rows"]).Count);
         Assert.False(read.Properties.ContainsKey("example"));
+    }
+
+    [Fact]
+    public void Trailing_commas_are_only_for_what_goes_over_lines_and_read_back_the_same()
+    {
+        const string source = "let thing = { name: \"jab\", hits: [1, 2], frames: [{ at: vec(1, 2) }, { at: vec(3, 4) }], inner: { deep: { x: 1 } }, none: {} };";
+        IRuntimeValue value = Evaluate(source, "thing");
+
+        // The writer goes by the line endings of the machine, these by \n
+        string plain = HIDLWriter.Write(value).ReplaceLineEndings("\n"), trailing = HIDLWriter.Write(value, trailingCommas: true).ReplaceLineEndings("\n");
+        Assert.DoesNotContain(",\n}", plain);
+        Assert.Contains("hits: [1, 2],", trailing);
+        Assert.Contains("none: {},\n}", trailing);
+        Assert.Contains("            x: 1,\n        },\n    },\n", trailing);
+
+        // Load, save, load, and the second save is the first
+        string again = HIDLWriter.Write(Evaluate("let thing = " + trailing + ";", "thing"), trailingCommas: true).ReplaceLineEndings("\n");
+        Assert.Equal(trailing, again);
+        Assert.Equal(plain, HIDLWriter.Write(Evaluate("let thing = " + trailing + ";", "thing")).ReplaceLineEndings("\n"));
     }
 
     [Fact]

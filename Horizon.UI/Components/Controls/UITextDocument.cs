@@ -44,7 +44,7 @@ public readonly record struct UITextSelection(UITextPosition Caret, UITextPositi
 /// selection made by a program) lets go of the others.
 /// </para>
 /// </summary>
-public sealed class UITextDocument
+public sealed partial class UITextDocument
 {
     // What one step of the undo history comes back to. The lines and not the text joined up, a line is a string nobody
     // changes, so a step shares every line it has with the text and the steps either side of it and costs a reference a
@@ -94,8 +94,11 @@ public sealed class UITextDocument
     /// <summary>What one level of indentation is.</summary>
     public string Indent { get; set; } = "    ";
 
-    /// <summary>What a line comment starts with, for <see cref="ToggleComment"/>.</summary>
+    /// <summary>What a line comment starts with, for <see cref="ToggleComment"/>. Empty for a language without one, CSS or HTML.</summary>
     public string LineComment { get; set; } = "//";
+
+    /// <summary>What a block comment goes between, for <see cref="ToggleBlockComment"/>. Both empty for a language without one.</summary>
+    public (string Start, string End) BlockComment { get; set; } = ("/*", "*/");
 
     /// <summary>Whether brackets and quotes close themselves as they are typed.</summary>
     public bool ClosePairs { get; set; } = true;
@@ -667,62 +670,6 @@ public sealed class UITextDocument
 
         Caret = Clamp(Caret with { Column = Math.Max(0, Caret.Column - caretTaken) });
         Anchor = Clamp(Anchor with { Column = Math.Max(0, Anchor.Column - anchorTaken) });
-        preferredColumn = Caret.Column;
-        Touched();
-    }
-
-    /// <summary>
-    /// The lines of the selection (or the caret's) made comments, or made code again if every one of them is a comment
-    /// already. The comment goes in at the indentation of the least indented of them.
-    /// </summary>
-    public void ToggleComment()
-    {
-        if (AtEveryCaret(ToggleComment, EditKind.Other))
-            return;
-
-        Record(EditKind.Other);
-        var (first, last) = SelectedLines();
-        string mark = LineComment + " ";
-
-        bool allComments = true;
-        int indent = int.MaxValue;
-        for (int line = first; line <= last; line++)
-        {
-            string text = lines[line];
-            if (text.Trim().Length == 0) continue;
-            indent = Math.Min(indent, text.Length - text.TrimStart().Length);
-            if (!text.TrimStart().StartsWith(LineComment)) allComments = false;
-        }
-
-        if (indent == int.MaxValue)
-            return;
-
-        int caretShift = 0, anchorShift = 0;
-        for (int line = first; line <= last; line++)
-        {
-            string text = lines[line];
-            if (text.Trim().Length == 0) continue;
-
-            int shift;
-            if (allComments)
-            {
-                int at = text.IndexOf(LineComment, StringComparison.Ordinal);
-                int length = text.AsSpan(at).StartsWith(mark) ? mark.Length : LineComment.Length;
-                lines[line] = text.Remove(at, length);
-                shift = -length;
-            }
-            else
-            {
-                lines[line] = text.Insert(indent, mark);
-                shift = mark.Length;
-            }
-
-            if (line == Caret.Line) caretShift = shift;
-            if (line == Anchor.Line) anchorShift = shift;
-        }
-
-        Caret = Clamp(Caret with { Column = Math.Max(0, Caret.Column + caretShift) });
-        Anchor = Clamp(Anchor with { Column = Math.Max(0, Anchor.Column + anchorShift) });
         preferredColumn = Caret.Column;
         Touched();
     }

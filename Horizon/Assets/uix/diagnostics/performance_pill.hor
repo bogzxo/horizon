@@ -13,14 +13,14 @@ let pill = compositor.stack({
     size: vec(0, 30),
     color: vec(0.05, 0.058, 0.082, 0.96),
     radius: 15,
-    outline: vec(1, 1, 1, 0.09)
+    outline: vec(1, 1, 1, 0.09),
 });
 
 let dot = compositor.panel({
     parent: pill,
     size: vec(8, 8),
     radius: 4,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let starting = compositor.label({
@@ -28,13 +28,13 @@ let starting = compositor.label({
     text: "starting up",
     text_scale: 0.125,
     color: vec(0.8, 0.83, 0.9, 1),
-    visible: false
+    visible: false,
 });
 
 let numbers = compositor.stack({
     parent: pill,
     spacing: 10,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let fps = compositor.readout({
@@ -46,21 +46,21 @@ let fps = compositor.readout({
     text_scale: 0.1625,
     unit_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_rule = compositor.divider({
     parent: numbers,
     direction: "vertical",
     size: vec(1, 14),
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let cpu_name = compositor.label({
     parent: numbers,
     text: "cpu",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_ms = compositor.readout({
@@ -71,27 +71,27 @@ let cpu_ms = compositor.readout({
     unit: "ms",
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu = compositor.stack({
     parent: numbers,
     spacing: 10,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let gpu_rule = compositor.divider({
     parent: gpu,
     direction: "vertical",
     size: vec(1, 14),
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let gpu_name = compositor.label({
     parent: gpu,
     text: "gpu",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_ms = compositor.readout({
@@ -102,14 +102,14 @@ let gpu_ms = compositor.readout({
     unit: "ms",
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let spark_rule = compositor.divider({
     parent: numbers,
     direction: "vertical",
     size: vec(1, 14),
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let spark = compositor.graph({
@@ -119,7 +119,7 @@ let spark = compositor.graph({
     boxed: false,
     bar_width: 2,
     peaks_only: true,
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let cap = compositor.panel({
@@ -127,12 +127,12 @@ let cap = compositor.panel({
     padding: vec(6, 2, 6, 2),
     color: vec(1, 1, 1, 0.09),
     radius: 5,
-    outline: vec(1, 1, 1, 0.13)
+    outline: vec(1, 1, 1, 0.13),
 });
 
 let cap_key = compositor.label({
     parent: cap,
     text: "F3",
     text_scale: 0.125,
-    color: vec(1, 0.86, 0.3, 1)
+    color: vec(1, 0.86, 0.3, 1),
 });

@@ -17,22 +17,26 @@ public static class UIShortcutText
         if (!Horizon.Input.Keyboard.PrimaryIsCommand || written.Length == 0)
             return written;
 
-        return shown.GetOrAdd(written, static text =>
-        {
-            var parts = text.Split('+');
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                parts[i] = parts[i].Trim().ToLowerInvariant() switch
-                {
-                    "ctrl" or "control" => "Cmd",
-                    "alt" => "Option",
-                    "super" or "win" or "cmd" => "Cmd",
-                    "rawctrl" => "Ctrl",
-                    _ => parts[i]
-                };
-            }
+        // Each key of a chord on its own, "Ctrl+K Ctrl+S" is Cmd+K Cmd+S
+        return shown.GetOrAdd(written, static text => string.Join(' ', text.Split(' ').Select(Stroke)));
+    }
 
-            return string.Join('+', parts);
-        });
+    // One key and what's held with it, the held ones in this machine's words
+    private static string Stroke(string text)
+    {
+        var parts = text.Split('+');
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            parts[i] = parts[i].Trim().ToLowerInvariant() switch
+            {
+                "ctrl" or "control" => "Cmd",
+                "alt" => "Option",
+                "super" or "win" or "cmd" => "Cmd",
+                "rawctrl" => "Ctrl",
+                _ => parts[i]
+            };
+        }
+
+        return string.Join('+', parts);
     }
 }

@@ -45,7 +45,8 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
         var rows = new List<UISetting>();
         foreach (TerminalSettingInfo setting in TerminalSettings.Described)
         {
-            UIFormKind kind = setting.Kind switch
+            // The font and the shell are picked from what there is, a name typed wrong was no font at all or a tab of nothing
+            UIFormKind kind = setting.Key is "font" or "profile" ? UIFormKind.Choice : setting.Kind switch
             {
                 "choice" => UIFormKind.Choice,
                 "flag" => UIFormKind.Flag,
@@ -54,10 +55,13 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
                 "list" => UIFormKind.Flags,
                 _ => UIFormKind.Text
             };
+            string[]? labels = null;
             string[]? choices = setting.Key switch
             {
                 "disabled_plugins" => [.. host.Plugins.Where(plugin => !plugin.BuiltIn).Select(plugin => plugin.Id)],
                 "plain_profiles" => [.. host.Panel.Profiles.Select(profile => profile.Id)],
+                "font" => FontChoices(host.Settings.Font, out labels),
+                "profile" => ProfileChoices(host, out labels),
                 _ => setting.Choices
             };
             // The theme goes where the program says (Hex has Dusk's with Dawn's, under how Hex looks), the rest are the terminal's own
@@ -71,10 +75,61 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
                 : setting.Key == "scale" ? "×" : string.Empty;
             rows.Add(new UISetting(setting.Key, theme ? "Dusk's theme" : Title(setting.Key), kind, setting.Help,
                 theme ? themeGroup ?? "Terminal · Theme" : "Terminal · " + TerminalSettingsForm.Group(setting.Key), choices,
-                setting.Least, setting.Most, step, Slider: slides, Unit: unit));
+                setting.Least, setting.Most, step, Slider: slides, Unit: unit, ChoiceLabels: labels));
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// The fonts the terminals can write in, empty for the skin's and then every folder of Assets/fonts with a .ttf of its
+    /// own name in it (the code's font row goes by the same), Hack first. The one set now is kept on the end when it isn't
+    /// among them, a font of somebody's own still shows as what it is.
+    /// </summary>
+    public static string[] FontChoices(string current, out string[] labels)
+    {
+        string fonts = Path.Combine(Horizon.Core.Platform.PlatformPaths.Program, "Assets", "fonts");
+        var found = new List<string> { string.Empty };
+        if (Directory.Exists(fonts))
+        {
+            found.AddRange(Directory.GetDirectories(fonts).Select(Path.GetFileName).OfType<string>()
+                .Where(name => File.Exists(Path.Combine(fonts, name, name + ".ttf")))
+                .OrderBy(name => name == "hack" ? 0 : 1).ThenBy(name => name, StringComparer.OrdinalIgnoreCase));
+        }
+
+        if (!found.Contains(current, StringComparer.OrdinalIgnoreCase))
+            found.Add(current);
+
+        labels = [.. found.Select(font => font.Length == 0 ? "The skin's font" : string.Empty)];
+        return [.. found];
+    }
+
+    /// <summary>
+    /// The shells a new tab can open with by their ids, empty for the first one found and then the profiles there are,
+    /// each called by its name in the dropdown. The one set now is kept on the end when it isn't among them (a WSL
+    /// distro that's gone), so the row still says what the file does.
+    /// </summary>
+    public static string[] ProfileChoices(TerminalHost host, out string[] labels)
+    {
+        var ids = new List<string> { string.Empty };
+        var names = new List<string> { "The first one found" };
+        foreach (TerminalProfile profile in host.Panel.Profiles)
+        {
+            if (profile.Id.Length == 0 || ids.Contains(profile.Id, StringComparer.Ordinal))
+                continue;
+            ids.Add(profile.Id);
+            names.Add(profile.Name.Length > 0 ? profile.Name : profile.Id);
+        }
+
+        string current = host.Settings.Profile;
+        if (!ids.Contains(current, StringComparer.Ordinal))
+        {
+            ids.Add(current);
+            names.Add(current);
+        }
+
+        labels = [.. names];
+        return [.. ids];
     }
 
     /// <summary>text_scale as "Text scale".</summary>

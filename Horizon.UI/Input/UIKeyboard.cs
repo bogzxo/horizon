@@ -111,8 +111,21 @@ public static class UIKeyboard
     public const char CARET_ABOVE = '\uE014';
     public const char CARET_BELOW = '\uE015';
 
-    /// <summary>Control, shift and L, a caret at the end of every line of the selection.</summary>
+    /// <summary>Shift, alt and I, a caret at the end of every line of the selection. It was control, shift and L, VS Code has it here.</summary>
     public const char CARETS_AT_LINE_ENDS = '\uE016';
+
+    /// <summary>Control, shift and L, a caret on every place the selection (or the word at the caret) is, each with it selected.</summary>
+    public const char SELECT_ALL_OCCURRENCES = '\uE01C';
+
+    /// <summary>Control with L, the caret's line selected, and the next one as well every time again.</summary>
+    public const char SELECT_LINE = '\uE01B';
+
+    /// <summary>Shift, alt and up or down, the line (or the lines of the selection) copied above or below itself.</summary>
+    public const char COPY_LINES_UP = '\uE019';
+    public const char COPY_LINES_DOWN = '\uE01A';
+
+    /// <summary>Shift, alt and A, the selection put in a block comment or taken out of one.</summary>
+    public const char TOGGLE_BLOCK_COMMENT = '\uE01D';
 
     /// <summary>Control, shift and [ folds what the caret is inside of, and ] opens it again.</summary>
     public const char FOLD = '\uE017';
@@ -231,53 +244,7 @@ public static class UIKeyboard
         }
 
         // What the key means, and whether holding it does it over and over
-        (char code, bool repeats) = key switch
-        {
-            // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
-            Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
-            Key.Delete when mac && alt => (WORD_DELETE, true),
-            Key.Left when mac && primary => (shift ? SELECT_HOME : HOME, false),
-            Key.Right when mac && primary => (shift ? SELECT_END : END, false),
-            Key.Left when mac && alt => (shift ? SELECT_WORD_LEFT : WORD_LEFT, true),
-            Key.Right when mac && alt => (shift ? SELECT_WORD_RIGHT : WORD_RIGHT, true),
-            Key.Up when mac && primary && !alt => (shift ? SELECT_TEXT_START : TEXT_START, false),
-            Key.Down when mac && primary && !alt => (shift ? SELECT_TEXT_END : TEXT_END, false),
-            Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
-            Key.Delete => (primary ? WORD_DELETE : DELETE, true),
-            // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
-            Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
-            // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
-            Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
-            Key.Escape => (ESCAPE, false),
-            // Alt with left and right is somebody's going back and forward, not the caret's
-            Key.Left or Key.Right when alt && !primary => (NOTHING, false),
-            Key.Left => ((shift, primary) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
-            Key.Right => ((shift, primary) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
-            Key.Home => ((shift, primary) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
-            Key.End => ((shift, primary) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
-            Key.Up when alt && primary => (CARET_ABOVE, true),
-            Key.Down when alt && primary => (CARET_BELOW, true),
-            Key.Up when alt => (MOVE_LINES_UP, true),
-            Key.Down when alt => (MOVE_LINES_DOWN, true),
-            Key.Up => (shift ? SELECT_UP : UP, true),
-            Key.Down => (shift ? SELECT_DOWN : DOWN, true),
-            Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
-            Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
-            Key.Z when primary && shift => (REDO, true),
-            Key.Z when primary => (UNDO, true),
-            Key.Y when primary => (REDO, true),
-            Key.Slash when primary => (TOGGLE_COMMENT, false),
-            Key.D when primary && shift => (DUPLICATE, false),
-            Key.D when primary => (NEXT_OCCURRENCE, false),
-            Key.L when primary && shift => (CARETS_AT_LINE_ENDS, false),
-            Key.LeftBracket when primary && shift => (FOLD, false),
-            Key.RightBracket when primary && shift => (UNFOLD, false),
-            Key.Space when primary => (COMPLETE, false),
-            Key.A when primary => (SELECT_ALL, false),
-            Key.C when primary => (COPY, false),
-            Key.X when primary => (CUT, false),
-            _ => ('\0', false)
-        };
+        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac);
 
         if (key == Key.V && primary)
         {
@@ -297,6 +264,63 @@ public static class UIKeyboard
             Volatile.Write(ref heldCode, code);
         }
     }
+
+    /// <summary>
+    /// What a key pressed comes to in the queue, and whether holding it does it over and over, nothing (0) for a key that
+    /// types nothing. Primary is control, command on a Mac. On its own so the keys can be tested without a keyboard.
+    /// </summary>
+    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac) => key switch
+    {
+        // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
+        Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
+        Key.Delete when mac && alt => (WORD_DELETE, true),
+        Key.Left when mac && primary => (shift ? SELECT_HOME : HOME, false),
+        Key.Right when mac && primary => (shift ? SELECT_END : END, false),
+        Key.Left when mac && alt => (shift ? SELECT_WORD_LEFT : WORD_LEFT, true),
+        Key.Right when mac && alt => (shift ? SELECT_WORD_RIGHT : WORD_RIGHT, true),
+        Key.Up when mac && primary && !alt => (shift ? SELECT_TEXT_START : TEXT_START, false),
+        Key.Down when mac && primary && !alt => (shift ? SELECT_TEXT_END : TEXT_END, false),
+        Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
+        Key.Delete => (primary ? WORD_DELETE : DELETE, true),
+        // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
+        Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
+        // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
+        Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
+        Key.Escape => (ESCAPE, false),
+        // Alt with left and right is somebody's going back and forward, not the caret's
+        Key.Left or Key.Right when alt && !primary => (NOTHING, false),
+        Key.Left => ((shift, primary) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
+        Key.Right => ((shift, primary) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
+        Key.Home => ((shift, primary) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
+        Key.End => ((shift, primary) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
+        Key.Up when alt && primary => (CARET_ABOVE, true),
+        Key.Down when alt && primary => (CARET_BELOW, true),
+        Key.Up when alt && shift => (COPY_LINES_UP, true),
+        Key.Down when alt && shift => (COPY_LINES_DOWN, true),
+        Key.Up when alt => (MOVE_LINES_UP, true),
+        Key.Down when alt => (MOVE_LINES_DOWN, true),
+        Key.Up => (shift ? SELECT_UP : UP, true),
+        Key.Down => (shift ? SELECT_DOWN : DOWN, true),
+        Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
+        Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
+        Key.Z when primary && shift => (REDO, true),
+        Key.Z when primary => (UNDO, true),
+        Key.Y when primary => (REDO, true),
+        Key.Slash when primary => (TOGGLE_COMMENT, false),
+        Key.D when primary && shift => (DUPLICATE, false),
+        Key.D when primary => (NEXT_OCCURRENCE, false),
+        Key.L when primary && shift => (SELECT_ALL_OCCURRENCES, false),
+        Key.L when primary => (SELECT_LINE, true),
+        Key.I when alt && shift && !primary => (CARETS_AT_LINE_ENDS, false),
+        Key.A when alt && shift && !primary => (TOGGLE_BLOCK_COMMENT, false),
+        Key.LeftBracket when primary && shift => (FOLD, false),
+        Key.RightBracket when primary && shift => (UNFOLD, false),
+        Key.Space when primary => (COMPLETE, false),
+        Key.A when primary => (SELECT_ALL, false),
+        Key.C when primary => (COPY, false),
+        Key.X when primary => (CUT, false),
+        _ => ('\0', false)
+    };
 
     /// <summary>
     /// Helper to queue what is on the clipboard, as one paste. Whoever has the focus takes what it can use of it.

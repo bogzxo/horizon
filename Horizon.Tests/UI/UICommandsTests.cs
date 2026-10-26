@@ -40,6 +40,24 @@ public class UICommandsTests
     }
 
     [Fact]
+    public void A_chord_is_two_keys_with_a_gap_between()
+    {
+        Assert.Equal((new UIKeyStroke(Key.K, true, false, false), new UIKeyStroke(Key.S, true, false, false)), UIKeys.ReadChord("Ctrl+K Ctrl+S"));
+        Assert.Equal((new UIKeyStroke(Key.K, true, false, false), new UIKeyStroke(Key.Z, false, false, false)), UIKeys.ReadChord("ctrl+k  z"));
+        Assert.Equal((new UIKeyStroke(Key.B, true, false, true), (UIKeyStroke?)null), UIKeys.ReadChord("ctrl + alt + b"));
+        Assert.Equal("Ctrl+K Z", UIKeys.Tidy("control+k z"));
+        Assert.Equal("Ctrl+K", UIKeys.FirstOf("Ctrl+K Ctrl+C"));
+        Assert.True(UIKeys.IsChord("Ctrl+K Ctrl+C"));
+        Assert.False(UIKeys.IsChord("Ctrl+K"));
+
+        // One key reads as ever, a chord isn't one key, and three keys or a key that isn't aren't a chord
+        Assert.Null(UIKeys.Read("Ctrl+K Z"));
+        Assert.Null(UIKeys.ReadChord("Ctrl+K Z X"));
+        Assert.Null(UIKeys.ReadChord("Ctrl+K Nope"));
+        Assert.Equal("Ctrl+K Ctrl+S", UIShortcutText.Shown("Ctrl+K Ctrl+S").Replace("Cmd", "Ctrl"));
+    }
+
+    [Fact]
     public void A_key_without_shift_leaves_shift_to_the_same_key_with_it_when_that_is_something_else()
     {
         var shortcuts = new UIShortcuts();

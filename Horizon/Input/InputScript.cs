@@ -24,7 +24,10 @@ namespace Horizon.Input;
 /// Start any game of the engine with <see cref="ENVIRONMENT_VARIABLE"/> set to the path of such a file and it is played from the first update on.
 /// The gamepad it plays on takes the first slot, so it is player one wherever that matters. A step can be a key of the
 /// keyboard as well (<c>2.0 tap key:J</c>), which is played on the real keyboard, and a script of nothing but keys makes
-/// no gamepad at all, so whatever reads the keyboard is driven the way a person at it would drive it.
+/// no gamepad at all, so whatever reads the keyboard is driven the way a person at it would drive it. Keys held over
+/// each other are held together (<c>2.0 hold key:ControlLeft 0.5</c> then <c>2.1 tap key:G</c> is Ctrl+G), and a chord
+/// says a shortcut in one line the way a menu writes it, <c>2.0 chord Ctrl+Shift+G</c>, the modifiers held round a tap
+/// of the last key. A key is Silk's name for it (ControlLeft, ShiftLeft), LeftControl and Ctrl are read as well.
 /// </summary>
 public sealed class InputScript
 {
@@ -36,6 +39,10 @@ public sealed class InputScript
     private const string STEP_TAP = "tap";
     private const string STEP_HOLD = "hold";
     private const string STEP_QUIT = "quit";
+    private const string STEP_CHORD = "chord";
+
+    // How long a chord's modifiers are down before its key and after it lets go, so every update rate sees them held
+    private const float CHORD_LEAD = 0.05f;
 
     private readonly record struct Step(float From, float Until, GamepadInput Input);
     private readonly record struct KeyStep(float From, float Until, Key Key);
@@ -78,6 +85,21 @@ public sealed class InputScript
         _keySteps.Add(new KeyStep(at, at + MathF.Max(0.0f, seconds), key));
         Length = MathF.Max(Length, at + seconds);
         return this;
+    }
+
+    /// <summary>
+    /// Presses a shortcut, the modifiers held down, the last key tapped while they are, and the modifiers let go of after
+    /// it (Ctrl+Shift+G is <c>Chord(2.0f, Key.ControlLeft, Key.ShiftLeft, Key.G)</c>).
+    /// </summary>
+    public InputScript Chord(float at, params Key[] keys)
+    {
+        if (keys.Length == 0)
+            return this;
+
+        float tapped = at + CHORD_LEAD;
+        for (int i = 0; i < keys.Length - 1; i++)
+            HoldKey(at, keys[i], CHORD_LEAD * 2.0f + TAP_TIME);
+        return HoldKey(tapped, keys[^1], TAP_TIME);
     }
 
     /// <summary>Every key the script holds at a moment.</summary>
@@ -174,6 +196,10 @@ public sealed class InputScript
                 Quit(at);
                 return true;
 
+            case STEP_CHORD when words.Length >= 3 && TryChord(words[2], out Key[] chord):
+                Chord(at, chord);
+                return true;
+
             case STEP_TAP when words.Length >= 3 && TryKey(words[2], out Key tappedKey):
                 TapKey(at, tappedKey);
                 return true;
@@ -198,8 +224,66 @@ public sealed class InputScript
     private static bool TryKey(string word, out Key key)
     {
         key = Key.Unknown;
-        return word.StartsWith(KEY_PREFIX, StringComparison.OrdinalIgnoreCase)
-            && Enum.TryParse(word[KEY_PREFIX.Length..], ignoreCase: true, out key) && key != Key.Unknown;
+        return word.StartsWith(KEY_PREFIX, StringComparison.OrdinalIgnoreCase) && TryKeyName(word[KEY_PREFIX.Length..], out key);
+    }
+
+    /// <summary>
+    /// Helper method to read a key by its name, Silk's (ControlLeft, G, Number1) or the way people write it, a side in
+    /// front (LeftControl), Ctrl for Control, a digit for its key. LeftControl was a line the script skipped, and a tester
+    /// holding it with shift for Ctrl+Shift+G got a G.
+    /// </summary>
+    private static bool TryKeyName(string name, out Key key)
+    {
+        key = Key.Unknown;
+        if (name.Length == 0)
+            return false;
+
+        if (name.Length == 1 && char.IsAsciiDigit(name[0]))
+            name = "Number" + name;
+
+        string named = name.Replace("ctrl", "Control", StringComparison.OrdinalIgnoreCase);
+        foreach (string side in new[] { "Left", "Right" })
+        {
+            if (named.Length > side.Length && named.StartsWith(side, StringComparison.OrdinalIgnoreCase))
+                named = named[side.Length..] + side;
+        }
+
+        // A modifier with no side is the left one, Ctrl is ControlLeft
+        if (named.ToLowerInvariant() is "control" or "shift" or "alt" or "super")
+            named += "Left";
+
+        // Silk's name first, a key whose name starts with a side of its own (LeftBracket) is that
+        return (Enum.TryParse(name, ignoreCase: true, out key) || Enum.TryParse(named, ignoreCase: true, out key))
+            && key != Key.Unknown && !int.TryParse(name, out _);
+    }
+
+    /// <summary>
+    /// Helper method to read a shortcut written the way a menu writes it (Ctrl+Shift+G) into its keys, the modifiers the
+    /// left ones and the last key whatever it names. False when a part of it isn't a key.
+    /// </summary>
+    private static bool TryChord(string written, out Key[] keys)
+    {
+        string[] parts = written.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        keys = new Key[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string part = parts[i].StartsWith(KEY_PREFIX, StringComparison.OrdinalIgnoreCase) ? parts[i][KEY_PREFIX.Length..] : parts[i];
+            Key? modifier = part.ToLowerInvariant() switch
+            {
+                "ctrl" or "control" => Key.ControlLeft,
+                "shift" => Key.ShiftLeft,
+                "alt" => Key.AltLeft,
+                "cmd" or "super" or "win" or "meta" => Key.SuperLeft,
+                _ => null
+            };
+
+            if (modifier is { } held && i < parts.Length - 1)
+                keys[i] = held;
+            else if (!TryKeyName(part, out keys[i]))
+                return false;
+        }
+
+        return keys.Length > 0;
     }
 
     private static bool TryNumber(string text, out float number) =>

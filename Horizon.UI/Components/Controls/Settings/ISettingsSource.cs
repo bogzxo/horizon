@@ -26,6 +26,9 @@ public interface ISettingsSource
     /// <summary>A setting back to what it comes as.</summary>
     void Reset(string key);
 
+    /// <summary>What a setting comes as, what its reset puts back and says it does, null for a section that doesn't say.</summary>
+    IRuntimeValue? Default(string key) => null;
+
     /// <summary>One of a setting's buttons pressed (the picture's Choose), by which, nothing unless a section has buttons.</summary>
     void Press(string key, int which)
     {

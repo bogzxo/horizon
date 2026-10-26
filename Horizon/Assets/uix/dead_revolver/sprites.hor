@@ -274,8 +274,8 @@ let click_star = {
 // "name_pressed" is the button held down, for a key of a keyboard on screen.
 // Where a button sits, and where its four frames start
 func pressable(sprites, name, x, y, frames_x, w, h) {
-    sprites[name] = { x: x, y: y, w: w, h: h, frames: [vec(frames_x, y), vec(frames_x + w, y), vec(frames_x + w * 2, y), vec(frames_x + w * 3, y)], time: 0.12 };
-    sprites[name + "_pressed"] = { x: frames_x + w, y: y, w: w, h: h };
+    sprites[name] = { x, y, w, h, frames: [vec(frames_x, y), vec(frames_x + w, y), vec(frames_x + w * 2, y), vec(frames_x + w * 3, y)], time: 0.12 };
+    sprites[`{name}_pressed`] = { x: frames_x + w, y, w, h };
 }
 
 // The Xbox gamepad. The round buttons, the bumpers and the triggers are 16 by 16 and the d-pad is bigger.
@@ -353,13 +353,12 @@ let keyboard = {
 };
 let keyboard_rows = [16, 129, 242, 353];
 func key(name, x, w, row) {
-    let frames = [];
-    for (i in range(1, 4)) { frames.push(vec(x, keyboard_rows[i] + row * 16)); }
-    keyboard.sprites["key_" + name] = { x: x, y: keyboard_rows[0] + row * 16, w: w, h: 16, frames: frames, time: 0.12 };
-    keyboard.sprites["key_" + name + "_pressed"] = { x: x, y: keyboard_rows[2] + row * 16, w: w, h: 16 };
+    let frames = range(1, 4).map(i => vec(x, keyboard_rows[i] + row * 16));
+    keyboard.sprites[`key_{name}`] = { x, y: keyboard_rows[0] + row * 16, w, h: 16, frames, time: 0.12 };
+    keyboard.sprites[`key_{name}_pressed`] = { x, y: keyboard_rows[2] + row * 16, w, h: 16 };
 }
 func keys_along(names, x, row) {
-    for (i in range(names.count)) { key(names[i], x + i * 16, 16, row); }
+    for (i, name in names) key(name, x + i * 16, 16, row);
 }
 key("esc", 32, 16, 0);
 keys_along(["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"], 64, 0);

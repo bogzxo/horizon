@@ -16,10 +16,10 @@ namespace Horizon.UI.Components;
 /// of save games or stages where picking one is the point. For a few options a <see cref="Dropdown"/> or a
 /// <see cref="Selector"/> takes less room.
 /// <code>
-/// let stages = compositor.list({ items: ["Dojo", "Harbour", "Rooftop"], rows: 5, on_changed: func(name) { ... } });
+/// let stages = compositor.list({ items: ["Dojo", "Harbour", "Rooftop"], rows: 5, on_changed: name => { ... } });
 /// </code>
 /// </summary>
-public class ListBox : UIComponent
+public partial class ListBox : UIComponent
 {
     private const float DEFAULT_WIDTH = 260.0f;
     private const float ROW_PADDING = 8.0f;
@@ -47,7 +47,8 @@ public class ListBox : UIComponent
         set
         {
             items = value ?? [];
-            index = Math.Clamp(index, 0, Math.Max(0, items.Length - 1));
+            matched.Clear();
+            index =Math.Clamp(index, 0, Math.Max(0, items.Length - 1));
             top = Math.Clamp(top, 0, Math.Max(0, items.Length - Rows));
 
             // Other items are other rows, they're where they are at once rather than gliding from the last ones' place
@@ -372,7 +373,9 @@ public class ListBox : UIComponent
             Vector4 ink = skin.TextColor;
             float size = scale;
             UIRect inside = PaintAround(list, items[i], slip.Shrink(new UIEdges(ROW_PADDING, 0.0f)), size, ink * tint);
-            if (Columns is { } columns)
+            if (Choice?.Invoke(items[i]) is { } choice)
+                PaintChoice(list, items[i], choice, inside, size, ink * tint, chosen);
+            else if (Columns is { } columns)
                 PaintColumns(list, columns(items[i]), inside, size, ink * tint, chosen);
             else if (Details is not null)
             {
@@ -473,25 +476,7 @@ public class ListBox : UIComponent
     {
         UISkin skin = list.Skin;
         Vector4 quiet = ink with { W = ink.W * 0.6f };
-
-        // The keys from the right, each part of a chord a cap of its own
-        float right = area.Max.X;
-        if (row.Keys.Length > 0)
-        {
-            float keyScale = scale * 0.82f;
-            float height = MathF.Min(area.Height - 6.0f, skin.Font.LineHeight * keyScale + 6.0f);
-            string[] caps = row.Keys.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
-            for (int c = caps.Length - 1; c >= 0; c--)
-            {
-                float width = MathF.Max(height, skin.Font.Measure(caps[c], keyScale, markup: false).X + KEY_PAD * 2.0f);
-                var cap = new UIRect(new Vector2(right - width, area.Center.Y - height * 0.5f), new Vector2(right, area.Center.Y + height * 0.5f));
-                list.RoundRect(cap, MathF.Min(skin.CornerRadius, 5.0f), ink with { W = chosen ? 0.16f : 0.08f });
-                list.Text(caps[c], cap, Origin.Center, keyScale, quiet, markup: false);
-                right = cap.Min.X - KEY_GAP;
-            }
-
-            right -= KEY_PAD * 2.0f;
-        }
+        float right = PaintKeys(list, row.Keys, area, scale, ink, chosen);
 
         list.PushClip(new UIRect(area.Min, new Vector2(MathF.Max(area.Min.X, right), area.Max.Y)));
         float left = area.Min.X;

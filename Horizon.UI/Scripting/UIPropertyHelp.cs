@@ -195,6 +195,7 @@ public static class UIPropertyHelp
         ["unit_scale"] = "how big the unit is written, 0 for the skin's size, which next to a big number is smaller than it",
         ["wrap_around"] = "a component, or a list of them, that wrapped text runs round instead of over, a line cut short where one is in its way. An image of a file goes by the shape of what is drawn in it, anything else by its box",
         ["markdown"] = "reads the text as markdown, **bold**, *italic*, `code`, # headings, - lists, > quotes, --- rules and [links](somewhere). The [b], [i], [color:#ff8040] and [size:1.5] tags work whether it is on or not",
+        ["code_language"] = "what a block of code in the markdown is coloured as when its fence names no language, hidl or cs the way a fence would say it, nothing for code in one colour",
         ["wrap"] = "breaks text that is wider than the label into more lines instead of running off the edge",
         ["region"] = "which piece of the skin's art it shows, the ... button shows them all",
         ["file"] = "a PNG to show instead of a piece of the skin, the path from the game's folder",

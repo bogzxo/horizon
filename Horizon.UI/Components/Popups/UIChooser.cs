@@ -18,7 +18,7 @@ namespace Horizon.UI.Components;
 /// it. Only for the list the dialog started with, a prefix's list is a list of its own.
 /// </para>
 /// </summary>
-public static class UIChooser
+public static partial class UIChooser
 {
     private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.13f;
 
@@ -34,35 +34,48 @@ public static class UIChooser
     /// <param name="typed">What's in the box as it opens, ":" for the lines of a file, the way VS Code's Ctrl+G opens.</param>
     public static UIDialog Show(UIModule module, string title, string message, List<(string Text, Action Picked)> choices,
         string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<(string Text, Action Picked)>?>? prefixed = null,
+        UIRecentList? recent = null, string typed = "") =>
+        Show(module, title, message, Rows(choices), placeholder, shortestFirst,
+            prefixed is null ? null : prefix => prefixed(prefix) is { } some ? Rows(some) : null, recent, typed);
+
+    /// <summary>Rows written the old way, <c>"File: Save   (Ctrl+S)"</c>, as rows in their parts (<see cref="UIChoice.Of"/>).</summary>
+    public static List<UIChoice> Rows(List<(string Text, Action Picked)> choices) => [.. choices.Select(choice => UIChoice.Of(choice.Text, choice.Picked))];
+
+    /// <summary>
+    /// The chooser of rows in their parts, the menu quiet in front, a symbol, a folder or an author dim after, keys as
+    /// keycaps, and the letters typed lit up in the accent. Rows are told apart, narrowed down and remembered by their
+    /// <see cref="UIChoice.Id"/>.
+    /// </summary>
+    public static UIDialog Show(UIModule module, string title, string message, List<UIChoice> choices,
+        string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<UIChoice>?>? prefixed = null,
         UIRecentList? recent = null, string typed = "")
     {
         string[] texts = [];
-        var byText = new Dictionary<string, Action>();
+        var byText = new Dictionary<string, UIChoice>();
         char showing = '￿';
-
-        // The list that is being narrowed down, the one the dialog started with or another for a prefix
-        void Use(char prefix, List<(string Text, Action Picked)> from)
-        {
-            showing = prefix;
-            texts = [.. from.Select(choice => choice.Text)];
-            byText.Clear();
-            foreach (var (text, picked) in from)
-                byText.TryAdd(text, picked);
-        }
-
-        Use('\0', choices);
-
         ListBox list = null!;
         Label nothing = null!;
+
+        // The list that is being narrowed down, the one the dialog started with or another for a prefix
+        void Use(char prefix, List<UIChoice> from)
+        {
+            showing = prefix;
+            byText.Clear();
+            foreach (UIChoice choice in from)
+                byText.TryAdd(choice.Id, choice);
+            texts = [.. byText.Keys];
+            list.IconRoom = byText.Values.Any(choice => choice.Icon.Length > 0);
+        }
+
         void PickChosen()
         {
-            if (list.Index < 0 || list.Index >= list.Items.Length || !byText.TryGetValue(list.Items[list.Index], out Action? picked))
+            if (list.Index < 0 || list.Index >= list.Items.Length || !byText.TryGetValue(list.Items[list.Index], out UIChoice? picked))
                 return;
 
             // Remembered before it runs, what it runs might well open another chooser
             if (showing == '\0')
                 recent?.Remember(list.Items[list.Index]);
-            picked();
+            picked.Picked();
         }
 
         // What is left for what was typed, the ones picked last first when it's the list the dialog started with
@@ -77,8 +90,10 @@ public static class UIChooser
             // Trigger Completion under Close and Close All
             int best = ranked.Count > 0 ? ranked.Min(pair => pair.Rank) : 0;
             var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE).OrderBy(pair => pair.Rank);
+
+            // Files, a backup or a picture after the code as good as it, a short a.bak sat over Program.cs
             if (shortestFirst && showing == '\0')
-                ordered = ordered.ThenBy(pair => Path.GetFileName(pair.Text).Length);
+                ordered = ordered.ThenBy(pair => Leftover(pair.Text)).ThenBy(pair => Path.GetFileName(pair.Text).Length);
 
             // the shorter one goes first between two as good, nothing typed keeps the list's own order
             if (query.Trim().Length > 0)
@@ -89,7 +104,8 @@ public static class UIChooser
                 ? [.. recent.Items.Where(text => byText.ContainsKey(text) && Matches(text, query))]
                 : [];
             list.Lead = lead.Length;
-            list.Items = lead.Length == 0 ? [.. left.Take(MOST)] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST)];
+            list.Query = query;
+            list.Items =lead.Length == 0 ? [.. left.Take(MOST)] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST)];
             if (list.Items.Length > 0) list.Choose(0);
 
             // The card as tall as what's left and no taller, Spotlight's, and a line saying so when nothing is
@@ -114,7 +130,7 @@ public static class UIChooser
             LeadIcon = "search"
         });
         picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
-        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Columns = Columns });
+        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Choice = id => byText.GetValueOrDefault(id) });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
         // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
         // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
@@ -124,6 +140,7 @@ public static class UIChooser
             foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
         }
 
+        Use('\0', choices);
         Narrow(string.Empty);
 
         box.OnChanged = typed =>

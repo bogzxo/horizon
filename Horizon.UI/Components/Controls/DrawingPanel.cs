@@ -19,7 +19,7 @@ namespace Horizon.UI.Components;
 /// canvas.clear();
 /// canvas.sprite(art, "jab", 3, vec(-64, -64), vec(64, 64));
 /// canvas.frame(vec(0, 0), vec(20, 30), 2, vec(1, 0.2, 0.2, 1));
-/// canvas.on_pointer = func(e) { print(e.kind, e.at); };
+/// canvas.on_pointer = e => print(e.kind, e.at);
 /// </code>
 /// </summary>
 public class DrawingPanel : UIComponent

@@ -33,6 +33,8 @@ public sealed class FileSectionSource(string? path, string section, IReadOnlyLis
 
     public void Reset(string key) => Write(values => values.Remove(key));
 
+    public IRuntimeValue? Default(string key) => usual.GetValueOrDefault(key);
+
     private void Write(Action<Dictionary<string, IRuntimeValue>> change)
     {
         if (path is null)
