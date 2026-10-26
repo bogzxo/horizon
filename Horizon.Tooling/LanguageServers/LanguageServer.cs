@@ -139,7 +139,7 @@ public sealed partial class LanguageServer : IDisposable
             ["textDocument"] = new JsonObject
             {
                 ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = true },
-                ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = false, ["versionSupport"] = false },
+                ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = false, ["versionSupport"] = false, ["tagSupport"] = new JsonObject { ["valueSet"] = new JsonArray(1, 2) } },
 
                 // What is inserted is plain text, the editor has no placeholders to tab between
                 ["completion"] = new JsonObject
@@ -170,6 +170,7 @@ public sealed partial class LanguageServer : IDisposable
                 ["definition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
                 ["references"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["inlayHint"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["semanticTokens"] = SemanticCapabilities(),
                 ["documentSymbol"] = new JsonObject { ["dynamicRegistration"] = false, ["hierarchicalDocumentSymbolSupport"] = true },
                 ["rename"] = new JsonObject { ["dynamicRegistration"] = false, ["prepareSupport"] = false },
                 ["formatting"] = new JsonObject { ["dynamicRegistration"] = false },
@@ -196,7 +197,8 @@ public sealed partial class LanguageServer : IDisposable
                 ["configuration"] = Settings is not null,
                 ["applyEdit"] = true,
                 ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
-                ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true }
+                ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true },
+                ["semanticTokens"] = new JsonObject { ["refreshSupport"] = true }
             }
         };
 
@@ -628,7 +630,11 @@ public sealed partial class LanguageServer : IDisposable
                     && code.ToString() is { Length: > 0 } said)
                     message = $"{message} ({said})";
 
-                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3));
+                // Tagged 2 is about something obsolete, which is struck through as well. csharp-ls doesn't tag them, so C#'s
+                // own codes for using something [Obsolete] count too
+                bool deprecated = diagnostic["tags"] is JsonArray tags && tags.Any(tag => JsonNumbers.Int(tag, 0) == 2)
+                    || diagnostic["code"]?.ToString() is "CS0612" or "CS0618" or "CS0619";
+                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3, Deprecated: deprecated));
             }
         }
 

@@ -228,6 +228,52 @@ public class GameEngine : Entity
     /// </summary>
     public void CaptureScreenshot(string path) => Interlocked.Exchange(ref requestedScreenshot, path);
 
+    // Who's waiting for the pixels of the next frame, see CapturePixels
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TaskCompletionSource<ImagePixels>> pixelsWanted = new();
+
+    /// <summary>
+    /// What the window shows at the end of the next frame, as its pixels top row first, for whoever wants them in memory
+    /// rather than in a file (Hex's tools for agents send them down a pipe). From any thread. A frame is asked for, so an
+    /// application that only draws on a change still draws one.
+    /// </summary>
+    public Task<ImagePixels> CapturePixels()
+    {
+        var waiting = new TaskCompletionSource<ImagePixels>(TaskCreationOptions.RunContinuationsAsynchronously);
+        pixelsWanted.Enqueue(waiting);
+        WindowManager.RequestFrames(0.2);
+        WindowManager.Wake();
+        return waiting.Task;
+    }
+
+    /// <summary>Helper method to read the frame back for everybody waiting on CapturePixels, at the end of a frame on the render thread.</summary>
+    private void HandOverPixels()
+    {
+        uint width = (uint)WindowManager.ViewportSize.X, height = (uint)WindowManager.ViewportSize.Y;
+        if (width == 0 || height == 0)
+            return;
+
+        var pixels = new byte[width * height * 4];
+        Graphics.BindWindow();
+        Graphics.ReadPixels(0, 0, width, height, pixels);
+
+        var waiting = new List<TaskCompletionSource<ImagePixels>>();
+        while (pixelsWanted.TryDequeue(out var one))
+            waiting.Add(one);
+
+        // Turned the right way up off the render thread, the pixels come out bottom row first
+        Task.Run(() =>
+        {
+            int row = (int)width * 4;
+            var upright = new byte[pixels.Length];
+            for (int y = 0; y < height; y++)
+                Buffer.BlockCopy(pixels, y * row, upright, ((int)height - 1 - y) * row, row);
+
+            var picture = new ImagePixels((int)width, (int)height, upright);
+            foreach (var one in waiting)
+                one.TrySetResult(picture);
+        });
+    }
+
     /// <summary>
     /// Helper method to read the frame back and write it out, at the end of a frame on the render thread.
     /// </summary>
@@ -390,6 +436,9 @@ public class GameEngine : Entity
 
         if (Interlocked.Exchange(ref requestedScreenshot, null) is { } path)
             TakeScreenshot(path);
+
+        if (!pixelsWanted.IsEmpty)
+            HandOverPixels();
 
         EventManager.PostRender?.Invoke(dt);
     }

@@ -61,14 +61,79 @@ public enum SyntaxKind
 
     // The keywords that send the code somewhere else, if, else, for, return, break, await. A skin colours them as the
     // other keywords unless it says otherwise, Visual Studio has them apart
-    Control
+    Control,
+
+    /* What a name is rather than what it looks like, the way ReSharper colours identifiers. A grammar never says these,
+       they come from something that knows the code, a language server's semantic tokens or Hex's own reading of HIDL,
+       laid over the grammar's colours (SemanticOverlay). A skin that doesn't colour one gets the closest of the kinds
+       above, a class is a type and a method is a call, see UISyntaxColors */
+
+    Class,
+    Struct,
+    Interface,
+    Enum,
+
+    // One of the names of an enum, Color.Red
+    EnumMember,
+    Record,
+    Delegate,
+
+    // The T of List<T>
+    TypeParameter,
+    Namespace,
+
+    // A method or a function, declared or called
+    Method,
+    ExtensionMethod,
+    Field,
+
+    // A const, a name whose value never changes. Constant above is true, false and null
+    NamedConstant,
+    Event,
+
+    // A variable of a block, a let inside a function
+    Local,
+    Parameter,
+
+    // Where a goto goes
+    Label
+}
+
+/// <summary>
+/// What else is true of a name besides what kind it is, carried with its span. ReSharper strikes out what's obsolete and
+/// underlines a local that's written to again, the rest is for a skin that wants it.
+/// </summary>
+[Flags]
+public enum SyntaxModifiers : byte
+{
+    None = 0,
+    Static = 1,
+    Readonly = 2,
+
+    // A local or a parameter that's given a new value somewhere after it's made
+    Mutable = 4,
+
+    // Obsolete, deprecated, there's something newer to use
+    Deprecated = 8,
+
+    // The name being made here rather than used
+    Declaration = 16
 }
 
 /// <summary>
 /// A stretch of a line of code that is all one kind of thing.
 /// </summary>
 /// <param name="Start">Where in the line it starts.</param>
-public readonly record struct SyntaxSpan(int Start, int Length, SyntaxKind Kind);
+/// <param name="Modifiers">What else is true of it, nothing for everything a grammar says.</param>
+public readonly record struct SyntaxSpan(int Start, int Length, SyntaxKind Kind, SyntaxModifiers Modifiers = SyntaxModifiers.None);
+
+/// <summary>
+/// A name somewhere in a file and what it is, a language server's semantic token or what Hex worked out of HIDL, for
+/// the code editor to lay over the grammar's colours (<see cref="Components.CodeEditor.SemanticSpans"/>).
+/// </summary>
+/// <param name="Line">The line, from 0.</param>
+/// <param name="Start">Where on it it starts.</param>
+public readonly record struct SemanticSpan(int Line, int Start, int Length, SyntaxKind Kind, SyntaxModifiers Modifiers = SyntaxModifiers.None);
 
 /// <summary>
 /// Where a line starts, as the last colouring of the whole found it, which is all a highlighter needs to colour that

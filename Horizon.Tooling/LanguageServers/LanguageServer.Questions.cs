@@ -103,6 +103,12 @@ public sealed partial class LanguageServer
         if (method == "workspace/applyEdit")
             return ApplyAsked(parameters);
 
+        if (method == "workspace/semanticTokens/refresh")
+        {
+            SemanticsRefreshed();
+            return null;
+        }
+
         if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
             return null;
 

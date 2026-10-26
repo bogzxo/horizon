@@ -43,4 +43,12 @@ public static class ImageFile
         using FileStream stream = File.Create(path);
         new StbImageWriteSharp.ImageWriter().WritePng(written, width, height, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, stream);
     }
+
+    /// <summary>Pixels (top row first) as the bytes of a PNG, for a picture that goes somewhere other than a file.</summary>
+    public static byte[] EncodePng(byte[] pixels, int width, int height)
+    {
+        using var stream = new MemoryStream();
+        new StbImageWriteSharp.ImageWriter().WritePng(pixels, width, height, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, stream);
+        return stream.ToArray();
+    }
 }

@@ -277,6 +277,30 @@ public abstract partial class UIComponent
             snapshot[i].PlayIntro(wait + i * step);
     }
 
+    /// <summary>
+    /// Whether the pointer or the keys can do anything with this component, a button, a box, a list, rather than something
+    /// only drawn. For whoever lists what there is to click (Hex's tools for agents).
+    /// </summary>
+    public bool IsInteractive => HitTestVisible || Navigable || Focusable || TabStop;
+
+    /// <summary>
+    /// Whether the component is on screen as far as it and its parents go, every one of them visible, none on a hidden
+    /// layer, each a child its parent is showing (a tab's page that isn't open isn't), in a module that's switched on.
+    /// </summary>
+    public bool IsShownInHierarchy
+    {
+        get
+        {
+            for (UIComponent? at = this; at is not null; at = at.Parent)
+            {
+                if (!at.Visible || at.IsOnHiddenLayer || (at.Parent is { } parent && !parent.ShowsChild(at)))
+                    return false;
+            }
+
+            return Module is { Enabled: true };
+        }
+    }
+
     /* The keyboard */
 
     /// <summary>

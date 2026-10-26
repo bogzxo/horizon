@@ -22,7 +22,8 @@ namespace Horizon.UI.Components;
 /// a warning, a dotted line in the text's colour and no mark in the gutter. One is a warning as well, for whoever only
 /// tells what's wrong apart from what isn't.
 /// </param>
-public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false);
+/// <param name="Deprecated">Whether it says what it's about is obsolete, struck through the way ReSharper strikes it as well as marked.</param>
+public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false, bool Deprecated = false);
 
 /// <summary>Something a <see cref="CodeEditor"/> offers to write where the caret is, a word it knows.</summary>
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
@@ -2291,7 +2292,7 @@ public partial class CodeEditor : UIComponent
 
             // Typed into and not coloured with the rest yet, coloured on its own, or all one colour for a moment when it
             // can't be (it starts inside a comment over several lines)
-            if ((ColoursOf(row.Line, written) ?? FreshColours(row.Line, written)) is not { } colours)
+            if (DrawnColours(row.Line, written) is not { } colours)
             {
                 x = DrawWithInlays(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
             }
@@ -2309,7 +2310,11 @@ public partial class CodeEditor : UIComponent
                         continue;
 
                     x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, from - at), x, top, default, left, origin, colors, draw: false);
-                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind), left, origin, colors);
+                    Vector4 colour = ColourOf(colors, span);
+                    float started = x;
+                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);
+                    if (span.Modifiers != SyntaxModifiers.None)
+                        DrawModifiers(list, scale, span.Modifiers, started, x, top, lineHeight, colour);
                     at = to;
                 }
 
@@ -2869,14 +2874,14 @@ public partial class CodeEditor : UIComponent
             if (LineNumbers && (line + FirstLineNumber).TryFormat(number, out int length))
                 list.Text(number[..length], new Vector2(area.Min.X - digit * GUTTER_GAP - digit * length, top), scale, colors.LineNumber, markup: false);
 
-            if ((ColoursOf(line, written) ?? FreshColours(line, written)) is { } colours)
+            if (DrawnColours(line, written) is { } colours)
             {
                 foreach (SyntaxSpan span in colours)
                 {
                     if (span.Start + span.Length > written.Length)
                         break;
                     x += Width(skin, scale, written.AsSpan(at, span.Start - at));
-                    x = Draw(list, skin, scale, written.AsSpan(span.Start, span.Length), x, top, colors.Of(span.Kind));
+                    x = Draw(list, skin, scale, written.AsSpan(span.Start, span.Length), x, top, ColourOf(colors, span));
                     at = span.Start + span.Length;
                 }
             }
@@ -3186,6 +3191,13 @@ public partial class CodeEditor : UIComponent
         UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
         float to = MathF.Max(piece.Min.X + lineHeight * 0.5f, piece.Max.X);
         float thickness = MathF.Max(2.0f, MathF.Round(lineHeight * 0.08f));
+
+        // Something obsolete struck through, whatever else it's marked with
+        if (diagnostic.Deprecated)
+        {
+            float middle = MathF.Round((piece.Min.Y + piece.Max.Y) * 0.5f), thin = MathF.Max(1.0f, MathF.Round(scale));
+            list.Rect(new UIRect(new Vector2(piece.Min.X, middle), new Vector2(piece.Max.X, middle + thin)), skin.TextColor with { W = skin.TextColor.W * 0.7f });
+        }
 
         // A hint is a line of dots in the text's colour, seen through, a warning and an error a line of theirs. Always as
         // many quads for a diagnostic of a kind, the dots a few of them under the whole of it

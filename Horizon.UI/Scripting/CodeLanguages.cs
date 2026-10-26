@@ -70,6 +70,13 @@ public static partial class CodeLanguages
             ownColors[scopeName] = (dark, light);
     }
 
+    /// <summary>Takes the colours a language was given of its own away, it's the skin's again.</summary>
+    public static void ForgetColors(string scopeName)
+    {
+        lock (gate)
+            ownColors.Remove(scopeName);
+    }
+
     /// <summary>The colours code of a language is painted in on a skin's palette, its own when it was given some, the palette's otherwise.</summary>
     public static UISyntaxColors ColorsFor(ICodeHighlighter? highlighter, UIPalette palette)
     {

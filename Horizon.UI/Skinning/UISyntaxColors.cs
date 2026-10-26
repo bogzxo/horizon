@@ -8,7 +8,7 @@ namespace Horizon.UI.Skinning;
 /// The colours a skin shows code in, one for every kind of thing the code is cut into (<see cref="SyntaxKind"/>), whatever the language.
 /// A skin file sets them under syntax, and only the ones it wants different from these.
 /// </summary>
-public sealed class UISyntaxColors
+public sealed partial class UISyntaxColors
 {
     public Vector4 Name { get; set; } = new(0.84f, 0.87f, 0.93f, 1.0f);
     public Vector4 Keyword { get; set; } = new(0.78f, 0.57f, 0.95f, 1.0f);
@@ -115,7 +115,17 @@ public sealed class UISyntaxColors
         Operator = Rgb(0xB4B4B4),
         Bracket1 = Rgb(0xB4B4B4),
         Bracket2 = Rgb(0xB4B4B4),
-        Bracket3 = Rgb(0xB4B4B4)
+        Bracket3 = Rgb(0xB4B4B4),
+
+        // What it tells apart by what a name is, its user types, locals and parameters
+        Interface = Rgb(0xB8D7A3),
+        Enum = Rgb(0xB8D7A3),
+        TypeParameter = Rgb(0xB8D7A3),
+        Struct = Rgb(0x86C691),
+        Local = Rgb(0x9CDCFE),
+        Parameter = Rgb(0x9CDCFE),
+        EnumMember = Rgb(0xDCDCDC),
+        NamedConstant = Rgb(0xDCDCDC)
     };
 
     /// <summary>Visual Studio's colours for code on its light theme, the ones it has for C#.</summary>
@@ -142,7 +152,11 @@ public sealed class UISyntaxColors
         Operator = Rgb(0x000000),
         Bracket1 = Rgb(0x000000),
         Bracket2 = Rgb(0x000000),
-        Bracket3 = Rgb(0x000000)
+        Bracket3 = Rgb(0x000000),
+        Local = Rgb(0x1F377F),
+        Parameter = Rgb(0x1F377F),
+        EnumMember = Rgb(0x000000),
+        NamedConstant = Rgb(0x000000)
     };
 
     // A colour written the way a theme file writes it, 0xRRGGBB
@@ -175,7 +189,7 @@ public sealed class UISyntaxColors
             case "bracket2": Bracket2 = color; break;
             case "bracket3": Bracket3 = color; break;
             case "control": Control = color; break;
-            default: return false;
+            default: return SetSemantic(key, color);
         }
 
         return true;
@@ -190,6 +204,7 @@ public sealed class UISyntaxColors
         other.Constant = Constant; other.Reference = Reference; other.Escape = Escape; other.Markup = Markup;
         other.Operator = Operator; other.Bracket1 = Bracket1; other.Bracket2 = Bracket2; other.Bracket3 = Bracket3;
         other.control = control;
+        CopySemanticTo(other);
     }
 
     public Vector4 Of(SyntaxKind kind) => kind switch
@@ -214,6 +229,7 @@ public sealed class UISyntaxColors
         SyntaxKind.Bracket1 => Bracket1,
         SyntaxKind.Bracket2 => Bracket2,
         SyntaxKind.Bracket3 => Bracket3,
+        >= SyntaxKind.Class => OfSemantic(kind),
         _ => Name
     };
 }

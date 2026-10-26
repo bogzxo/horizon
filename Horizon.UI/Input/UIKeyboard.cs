@@ -468,6 +468,85 @@ public static class UIKeyboard
     /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
     public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
 
+    /* Typing without a keyboard, for a program driven by something other than a person (Hex's tools for agents) */
+
+    /// <summary>How many more characters the queue takes before it's full, for whoever types a lot to wait for room.</summary>
+    public static int Room => Math.Max(0, MAX_PENDING - typed.Count);
+
+    /// <summary>
+    /// Types a character as though it came off the keyboard, a new line being enter. False when the queue is full and it
+    /// went nowhere, see <see cref="Room"/>. From any thread.
+    /// </summary>
+    public static bool Type(char character)
+    {
+        if (typed.Count >= MAX_PENDING)
+            return false;
+
+        Push(character == '\r' ? ENTER : character);
+        return true;
+    }
+
+    /// <summary>
+    /// Presses a key as though it came off the keyboard, what it comes to in the queue (an arrow's code, enter, control
+    /// with Z's undo, a letter's character), or the key itself while a component takes them raw (a terminal). The keys of
+    /// a program's shortcuts are the engine keyboard's, see Keyboard.Tap, whoever drives both says it to both. From any thread.
+    /// </summary>
+    public static void Press(Key key, bool control, bool shift, bool alt, bool super)
+    {
+        bool mac = Horizon.Input.Keyboard.PrimaryIsCommand;
+        bool primary = mac ? super : control;
+        if (rawMode)
+        {
+            if (key == Key.V && primary)
+                RequestPaste();
+            else if (rawKeys.Count < MAX_PENDING)
+                rawKeys.Enqueue(new UIKeyPress(key, control, shift, alt, super));
+
+            // A letter without control or alt is typed as well, the way the keyboard's character comes with its key
+            if (!control && !alt && CharacterOf(key, shift) is { } raw)
+                Push(raw);
+            return;
+        }
+
+        if (key == Key.V && primary)
+        {
+            RequestPaste();
+            return;
+        }
+
+        (char code, _) = Meaning(key, primary, shift, alt, mac);
+        if (code != NOTHING)
+            Push(code);
+        else if (!control && !alt && !super && CharacterOf(key, shift) is { } character)
+            Push(character);
+    }
+
+    /// <summary>The character a key types on a US keyboard, null for one that types none.</summary>
+    public static char? CharacterOf(Key key, bool shift)
+    {
+        if (key is >= Key.A and <= Key.Z)
+            return (char)((shift ? 'A' : 'a') + (key - Key.A));
+        if (key is >= Key.Number0 and <= Key.Number9)
+            return shift ? ")!@#$%^&*("[key - Key.Number0] : (char)('0' + (key - Key.Number0));
+
+        return key switch
+        {
+            Key.Space => ' ',
+            Key.Comma => shift ? '<' : ',',
+            Key.Period => shift ? '>' : '.',
+            Key.Slash => shift ? '?' : '/',
+            Key.Semicolon => shift ? ':' : ';',
+            Key.Apostrophe => shift ? '"' : '\'',
+            Key.LeftBracket => shift ? '{' : '[',
+            Key.RightBracket => shift ? '}' : ']',
+            Key.BackSlash => shift ? '|' : '\\',
+            Key.Minus => shift ? '_' : '-',
+            Key.Equal => shift ? '+' : '=',
+            Key.GraveAccent => shift ? '~' : '`',
+            _ => null
+        };
+    }
+
     /// <summary>Throws away whatever was typed while nothing was listening, pastes and all.</summary>
     public static void Clear()
     {

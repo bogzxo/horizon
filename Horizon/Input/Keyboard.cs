@@ -118,6 +118,19 @@ public sealed class Keyboard
     internal void Hear(Key key, bool down) => _heard.Enqueue((key, down));
 
     /// <summary>
+    /// Presses keys as though somebody had, the ones before the last held round it (Ctrl, Shift, P) and all of them let go
+    /// of again, for a program driven by something other than a person (Hex's tools for agents). Down and up between two
+    /// updates is a tap, so the next update has them all down and pressed, and the one after lets go. From any thread.
+    /// </summary>
+    public void Tap(IReadOnlyList<Key> chord)
+    {
+        foreach (Key key in chord)
+            Hear(key, true);
+        for (int i = chord.Count - 1; i >= 0; i--)
+            Hear(chord[i], false);
+    }
+
+    /// <summary>
     /// Moves the keyboard on to what was heard since the last time. Once an update, before anybody reads it.
     /// </summary>
     internal void Update()

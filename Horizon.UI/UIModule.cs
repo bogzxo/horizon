@@ -221,6 +221,9 @@ namespace Horizon.UI
         /// </summary>
         /// <param name="point">Where the pointer is, in the module's units.</param>
         /// <param name="markdown">Whether the text is markdown, see <see cref="UIComponent.TooltipMarkdown"/>.</param>
+        /// <summary>The text of the tooltip the module has up right now, null while none is, for whoever reads the screen as text.</summary>
+        public string? TooltipText => tooltip;
+
         internal void ShowTooltip(string? text, Vector2 point, bool markdown = false)
         {
             // Another tooltip (or none) comes in afresh, the same one stays put
