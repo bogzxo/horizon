@@ -79,6 +79,9 @@ public sealed class SettingsWindow
             Ticked = KeepRowKey
         };
         Window.Add(Page);
+
+        // A wheel over a part of the window with no use for it (the title bar, the search) goes down the rows
+        Window.WheelTarget = Page;
     }
 
     /// <summary>

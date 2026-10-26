@@ -113,6 +113,7 @@ public partial class SettingsPage : UIComponent
             return;
         zoom = fit;
         dirty = true;
+        FitBars();
     }
 
     // The page's sizes at its zoom
@@ -606,8 +607,8 @@ public partial class SettingsPage : UIComponent
         CurrentGroup = current;
     }
 
-    // How much narrower the rows are than the scroll they're in, its bar and the gap before it
-    private const float ROWS_INSET = 18.0f;
+    // How much narrower the rows are than the scroll they're in, its bar, the gap before it and a little more
+    private float RowsInset => scroll.BarWidth + scroll.BarGap + 6.0f;
 
     // How wide a row is in rows a width wide, all of it up to MAX_ROW
     private float RowWidth(float width) => MathF.Min(MathF.Max(240.0f, width), MAX_ROW * zoom);
@@ -615,7 +616,7 @@ public partial class SettingsPage : UIComponent
     protected override void Update(float dt)
     {
         FitZoom();
-        float width = scroll.Bounds.Width - ROWS_INSET;
+        float width = scroll.Bounds.Width - RowsInset;
         if (dirty || width > 0.0f && MathF.Abs(width - builtWidth) > 1.0f)
         {
             dirty = false;
@@ -650,7 +651,7 @@ public partial class SettingsPage : UIComponent
 
         // The search ends where the rows do, so the box, the rows and the controls down their right share one edge. It ran
         // on to the window's edge past rows held to MAX_ROW and the two edges were a hand apart
-        float rowsEnd = scrollArea.Min.X + scroll.Padding.Left + RowWidth(scrollArea.Width - ROWS_INSET);
+        float rowsEnd = scrollArea.Min.X + scroll.Padding.Left + RowWidth(scrollArea.Width - RowsInset);
         var searchArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Max.Y - SearchHeight), new Vector2(MathF.Min(content.Max.X - GAP - closeWidth, rowsEnd), content.Max.Y));
         title.ArrangeTree(titleArea);
         close.ArrangeTree(new UIRect(new Vector2(content.Max.X - SearchHeight, content.Max.Y - SearchHeight), content.Max));

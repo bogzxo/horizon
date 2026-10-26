@@ -75,6 +75,11 @@ internal static class UILayoutOverlay
             point = component.Bounds.Center + (point - component.VisualOffset - component.Bounds.Center) / component.VisualScale;
         }
 
+        // What a scroll panel cuts off isn't drawn there, the rows of a long list ran on past the bottom of their window
+        // and were found over whatever was really under the pointer
+        if (component.CutsOffChildren && !hidden && !component.Bounds.Contains(point))
+            return null;
+
         var children = component.Children;
         for (int i = children.Count - 1; i >= 0; i--)
         {

@@ -28,6 +28,9 @@ public abstract partial class UIComponent
     /// </summary>
     protected virtual bool ClipsChildren => false;
 
+    /// <summary>Whether what sticks out of this component is cut off, for whoever looks for what's drawn where.</summary>
+    internal bool CutsOffChildren => ClipsChildren;
+
     /// <summary>
     /// Whether a child is part of what is shown right now. Not shown it is neither drawn nor hit by the pointer,
     /// without anything about the child itself changing (its <see cref="Visible"/> included, which goes into the

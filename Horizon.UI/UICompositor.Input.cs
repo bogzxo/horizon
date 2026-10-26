@@ -274,6 +274,9 @@ public partial class UICompositor
     /// <summary>Whether a component has a tooltip pinned up right now.</summary>
     public bool Pinned(UIComponent owner) => pinned?.Owner == owner;
 
+    /// <summary>The component that took the last turn of the wheel, null when nothing had a use for it. For a test.</summary>
+    public UIComponent? WheelTakenBy { get; private set; }
+
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component
     /// first, then the ones it is inside of.
@@ -285,27 +288,43 @@ public partial class UICompositor
         if (delta == 0.0f)
             return;
 
+        WheelTakenBy = null;
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
             if (!snapshot[i].Enabled || !snapshot[i].Interactive)
                 continue;
 
-            // Whatever is open on top of the module is asked before what is under it.
-            if (snapshot[i].Popup is { } popup && popup.PopupContains(snapshot[i].ToLocal(pointer)) && popup.OnScroll(delta))
-            {
-                if (wheel != 0.0f) UIKeyboard.UseScroll();
-                return;
-            }
+            // Found the way the pointer finds what it's over, what's open on top first, then what's raised, cut off where
+            // it's drawn cut off. The wheel went by everything whose box held the pointer, clipped or not, so the rows of a
+            // window's list running on far past its bottom took the wheel off whatever was down there
+            if (snapshot[i].HitTest(pointer) is not { } over)
+                continue;
 
-            for (UIComponent? component = snapshot[i].FindAt(pointer); component is not null; component = component.Parent)
-            {
-                if (component.OnScroll(delta))
-                {
-                    if (wheel != 0.0f) UIKeyboard.UseScroll();
-                    return;
-                }
-            }
+            // Whatever is in front has the wheel over itself, used or not. Nothing behind it gets it, a window of settings
+            // with nothing to scroll where the pointer is doesn't scroll the code under it
+            WheelTakenBy = GiveWheel(over, snapshot[i].Popup, delta);
+            if (wheel != 0.0f) UIKeyboard.UseScroll();
+            return;
         }
+    }
+
+    /// <summary>
+    /// Helper method to hand a turn of the wheel to the innermost component that has a use for it, starting at what the
+    /// pointer is over and going out through what that's inside of. Returns whoever took it, null for nobody.
+    /// </summary>
+    internal static UIComponent? GiveWheel(UIComponent over, UIComponent? popup, float delta)
+    {
+        for (UIComponent? component = over; component is not null; component = component.Parent)
+        {
+            if (component.OnScroll(delta))
+                return component;
+
+            // An open list or menu that can't scroll is still on top of the rest, what it was opened from doesn't get it
+            if (component == popup)
+                return null;
+        }
+
+        return null;
     }
 
     private void RoutePointer(UIModule[] snapshot)

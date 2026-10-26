@@ -81,6 +81,20 @@ public partial class WindowPanel : Panel
     // Tab goes round what's in it, never out to what's behind
     protected internal override bool HoldsTab => true;
 
+    /// <summary>
+    /// What the wheel scrolls when it's turned over a part of the window that has no use for it (its title bar, a
+    /// button, a box), the window's main list usually. Null for nothing. Either way the wheel never goes through the
+    /// window to whatever is behind it.
+    /// </summary>
+    public UIComponent? WheelTarget { get; set; }
+
+    protected internal override bool OnScroll(float delta)
+    {
+        if (WheelTarget is { Visible: true } target && target.Module == Module)
+            target.OnScroll(delta);
+        return true;
+    }
+
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
 
     protected override Vector2 Measure(UISkin skin) => base.Measure(skin) + new Vector2(0.0f, TitleHeight);
