@@ -37,6 +37,12 @@ public sealed class TerminalSettings
     /// <summary>How many rows every terminal keeps of what went off the top.</summary>
     public int Scrollback = 5000;
 
+    /// <summary>
+    /// Whether every terminal has its rows drawn small down its right, a slider over the ones in sight. Its key is
+    /// terminal_minimap, the editor's minimap is minimap and the settings window has both.
+    /// </summary>
+    public bool Minimap = true;
+
     /// <summary>Whether anything moves, splits sliding open, tabs sliding over, the cursor's glide, and how long each takes.</summary>
     public bool Animations = true;
     public float AnimationTime = 0.16f;
@@ -109,6 +115,7 @@ public sealed class TerminalSettings
         new("text_scale", "number", "0.16", "How big the terminals' text is, Ctrl+Shift+= and - change it.", Least: 0.06f, Most: 0.6f),
         new("scale", "number", "1", "How big Dusk's own parts, the tabs and the bars, are drawn.", Least: 0.5f, Most: 3.0f),
         new("scrollback", "whole", "5000", "How many rows every terminal keeps of what went off the top.", Least: 0, Most: 100000),
+        new("terminal_minimap", "flag", "true", "Whether every terminal has its rows drawn small down its right, the code editor's minimap for what went off the top. The rows in sight are under a slider that's dragged to scroll, a click anywhere else goes there, and the prompts are marked by how their commands ended."),
         new("animations", "flag", "true", "Whether anything moves, splits sliding open, tabs sliding over, a tab folding away, the cursor's glide."),
         new("animation_time", "number", "0.16", "How long each of those takes, in seconds.", Least: 0.02f, Most: 1.0f),
         new("cursor_glide", "number", "0.036", "How long the cursor takes to glide to where it goes, in seconds, 0 for it jumping there. It jumps anyway with the animations off.", Least: 0.0f, Most: 0.3f),
@@ -174,6 +181,7 @@ public sealed class TerminalSettings
         TextScale = Math.Clamp(Number(values, "text_scale", TextScale), 0.06f, 0.6f);
         Scale = Math.Clamp(Number(values, "scale", Scale), 0.5f, 3.0f);
         Scrollback = (int)Math.Clamp(Number(values, "scrollback", Scrollback), 0, 100000);
+        Minimap = Flag(values, "terminal_minimap", Minimap);
         Animations = Flag(values, "animations", Animations);
         AnimationTime = Math.Clamp(Number(values, "animation_time", AnimationTime), 0.02f, 1.0f);
         CursorGlide = Math.Clamp(Number(values, "cursor_glide", CursorGlide), 0.0f, 0.3f);
@@ -232,6 +240,7 @@ public sealed class TerminalSettings
         "text_scale" => new NumberValue(TextScale),
         "scale" => new NumberValue(Scale),
         "scrollback" => new NumberValue(Scrollback),
+        "terminal_minimap" => Values.Bool(Minimap),
         "animations" => Values.Bool(Animations),
         "animation_time" => new NumberValue(AnimationTime),
         "cursor_glide" => new NumberValue(CursorGlide),

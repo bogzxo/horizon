@@ -527,6 +527,7 @@ public sealed partial class TerminalHost : IDisposable
         Panel.AnimationTime = Settings.Animations ? Settings.AnimationTime : 0.0f;
         Panel.CursorGlide = Settings.CursorGlide;
         Panel.Scrollback = Settings.Scrollback;
+        Panel.Minimap = Settings.Minimap;
         Panel.CloseOnExit = Settings.CloseOnExit;
         Panel.TextScale = Settings.TextScale;
         History.Limit = Settings.HistorySize;

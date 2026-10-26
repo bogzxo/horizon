@@ -42,7 +42,7 @@ public static class TerminalSettingsForm
     /// <summary>Which section of the form a setting is in, plain nouns the way VS Code names its groups.</summary>
     public static string Group(string key) => key switch
     {
-        "theme" or "scale" or "font" or "text_scale" => "Display",
+        "theme" or "scale" or "font" or "text_scale" or "terminal_minimap" => "Display",
         "animations" or "animation_time" or "cursor_glide" => "Animation",
         "profile" or "wsl" or "close_on_exit" or "start_in" or "shell_integration" => "Shell",
         "highlight_line" or "plain_profiles" or "completion" or "completion_tools" or "highlight_output" => "Highlighting",

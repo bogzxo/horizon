@@ -14,8 +14,8 @@ namespace Horizon.UI.Components;
 // sight has nothing to scroll, it gets its rows and no slider.
 public partial class CodeEditor
 {
-    // How wide it is, and how big a character and a row are drawn in it, in the editor's units
-    private const float MINIMAP_WIDTH = 96.0f, MINIMAP_CHAR = 1.0f, MINIMAP_ROW = 2.0f;
+    // How wide it is in the editor's units, a character and a row are UIMinimap's
+    private const float MINIMAP_WIDTH = 96.0f;
 
     // The most characters of a row drawn, past that it runs off the edge like it would anyway
     private const int MINIMAP_COLUMNS = 92;
@@ -56,20 +56,16 @@ public partial class CodeEditor
     }
 
     // How many of the screen's pixels a unit of the editor is, 1.11 at a UI scale of 111%
-    private float PixelsPerUnit => Module is { } module ? MathF.Max(0.01f, module.ToWorld(Vector2.UnitY).Y - module.ToWorld(Vector2.Zero).Y) : 1.0f;
+    private float PixelsPerUnit => UIMinimap.PixelsPerUnit(Module);
 
     // How tall a row of the minimap is in units, a whole number of pixels, two at 100% and 111% and three at 150%
-    private float MinimapRow()
-    {
-        float pixels = PixelsPerUnit;
-        return MathF.Max(1.0f, MathF.Round(MINIMAP_ROW * pixels)) / pixels;
-    }
+    private float MinimapRow() => UIMinimap.Row(PixelsPerUnit);
 
     // A place moved onto the nearest corner of the screen's pixels
-    private Vector2 OnPixel(Vector2 point) => Module is { } module ? module.ToLocal(Vector2.Round(module.ToWorld(point))) : Vector2.Round(point);
+    private Vector2 OnPixel(Vector2 point) => UIMinimap.OnPixel(Module, point);
 
     // A height in units as it is on the screen, in pixels up from its bottom
-    private float ScreenY(float y) => Module is { } module ? module.ToWorld(new Vector2(0.0f, y)).Y : y;
+    private float ScreenY(float y) => UIMinimap.ScreenY(Module, y);
 
     /// <summary>
     /// Helper method for how far the minimap itself is scrolled, as much of it as the code is, so that the slider is at the
@@ -102,9 +98,9 @@ public partial class CodeEditor
         // Everything of it sits on whole pixels of the screen and a row is a whole number of them tall. A row was two
         // units, 2.22 pixels at 111%, and slid along by a bit of a pixel every tick as the code scrolled each one covered
         // other pixels from one frame to the next, the whole map flashing as it went and as the window was resized
-        float pixels = PixelsPerUnit, pixel = 1.0f / pixels;
+        float pixels = PixelsPerUnit;
         float row = MinimapRow();
-        float character = MathF.Max(1.0f, MathF.Round(MINIMAP_CHAR * pixels)) * pixel;
+        float character = UIMinimap.Whole(UIMinimap.CHARACTER, pixels);
         UIRect area = MinimapArea(skin, scale);
         var map = new UIRect(OnPixel(area.Min), OnPixel(area.Max));
         float top = map.Max.Y;
@@ -139,8 +135,8 @@ public partial class CodeEditor
             minimapColoursFor = colors;
         }
 
-        // A gap of a pixel between rows once they're three or more tall, two pixels with one of them gap is a dotted mess
-        float gap = MinimapRowPixels >= 3 ? pixel : 0.0f;
+        // A gap of a pixel between rows once they're three or more tall
+        float gap = UIMinimap.Gap(row, pixels);
         float left = OnPixel(new Vector2(map.Min.X + 4.0f, 0.0f)).X;
         for (int index = first; index <= last; index++)
         {
@@ -158,25 +154,21 @@ public partial class CodeEditor
                     continue;
 
                 int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
-                int to = Math.Min(MINIMAP_COLUMNS, Math.Min(word.EndColumn, shown.End >= text.Length ? word.EndColumn : Column(text, 0, shown.End)) - rowColumn);
-                if (to > from)
-                    list.Rect(new UIRect(new Vector2(left + from * character, rowTop - row + gap), new Vector2(left + to * character, rowTop)), word.Colour);
+                int to = Math.Min(word.EndColumn, shown.End >= text.Length ? word.EndColumn : Column(text, 0, shown.End)) - rowColumn;
+                UIMinimap.Bar(list, left, character, rowTop, row, gap, from, to, MINIMAP_COLUMNS, word.Colour);
             }
         }
 
         PaintMinimapMarks(list, skin, map, row, scrolledRows, first, last);
 
-        // The slider over what's in sight, lighter under the pointer and while it's held. Its top on a pixel and its
-        // height a whole number of them, so it doesn't swim over the rows under it
+        // The slider over what's in sight, lighter under the pointer and while it's held
         Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
         bool lit = draggingMinimap || (IsHovered && map.Contains(pointer));
         MinimapSliderTop = float.NaN;
         if (!fits)
         {
             float height = MathF.Max(row * 2.0f, map.Height / lineHeight * row);
-            float sliderTop = OnPixel(new Vector2(0.0f, top - SliderDown(map, lineHeight, scrollY, row))).Y;
-            var slider = new UIRect(new Vector2(map.Min.X, sliderTop - MathF.Round(height * pixels) * pixel), new Vector2(map.Max.X, sliderTop));
-            list.Rect(slider, skin.TextColor with { W = lit ? 0.2f : 0.12f });
+            float sliderTop = UIMinimap.Slider(list, Module, map, top - SliderDown(map, lineHeight, scrollY, row), height, skin.TextColor, lit);
             MinimapSliderTop = ScreenY(sliderTop);
         }
 

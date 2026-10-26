@@ -102,6 +102,12 @@ public sealed class TerminalRow
     /// <summary>What the shell integration marks said of the row, see <see cref="TerminalRowMark"/>.</summary>
     public TerminalRowMark Mark;
 
+    // What a view's minimap made of the row, its runs of ink, kept until the row changes so a minimap of thousands of
+    // rows goes through the cells of the few that did (TerminalView.Minimap)
+    internal Horizon.UI.Drawing.UIMinimapBar[]? MinimapBars;
+    internal int MinimapBarCount;
+    internal long MinimapStamp = -1;
+
     public TerminalRow(int columns)
     {
         Cells = new TerminalCell[columns];

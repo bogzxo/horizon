@@ -16,7 +16,7 @@ namespace Horizon.UI.Components;
 /// Dusk), as many columns and rows as fit, fed from a <see cref="PseudoTerminal"/> (<see cref="Start"/>, a shell or
 /// anything else) or by hand (<see cref="Feed"/>, for a log or a test), with the keys going to the program as the
 /// bytes a terminal sends (<see cref="TerminalKeys"/>), the mouse when the program asked for it and a selection by
-/// cells when it didn't, the wheel through the scrollback, a cursor that glides to where it is going and blinks, and
+/// cells when it didn't, the wheel, a scroll bar and a minimap down the right through the scrollback, a cursor that glides to where it is going and blinks, and
 /// the bell as a flash. Nothing in its paint allocates, a row is drawn as runs of one style and the text of a run is
 /// put together in a buffer kept for it. What the program writes arrives on the pty's thread and is queued, the
 /// screen is only ever touched on the UI's thread, in <see cref="Update"/>.
@@ -59,8 +59,10 @@ public partial class TerminalView : UIComponent, IDisposable
     private bool cursorPlaced;
     private float blink, bell;
 
-    // How many rows up into the scrollback the view is, 0 for the bottom
+    // How many rows up into the scrollback the view is, 0 for the bottom, and how many rows had gone off the top as of
+    // the last update
     private int scrolled;
+    private long scrolledOffSeen;
 
     // The selection by cell, in rows of the whole (scrollback and grid), anchor to end, inclusive
     private (int X, int Y) selectionAnchor, selectionEnd;
@@ -356,11 +358,18 @@ public partial class TerminalView : UIComponent, IDisposable
                 titleSaid = screen.Title;
                 OnTitle?.Invoke(titleSaid);
             }
-
-            // New output takes the view back to the bottom unless it is being read, in which case it stays where it is
-            if (scrolled > 0 && scrolled > screen.Scrollback.Count)
-                scrolled = screen.Scrollback.Count;
         }
+
+        // New output is followed at the bottom. Read up in the scrollback the view stays on what it shows, moved up by the
+        // rows that went off the top under it, where it went down with them and the text slid out from under the reader
+        long gone = screen.RowsScrolledOff - scrolledOffSeen;
+        scrolledOffSeen = screen.RowsScrolledOff;
+        if (scrolled > 0 && gone > 0)
+            scrolled = (int)Math.Min(scrolled + gone, screen.Scrollback.Count);
+        if (scrolled > screen.Scrollback.Count)
+            scrolled = screen.Scrollback.Count;
+
+        UpdateScrollBar(dt);
 
         if (exitedWith is { } code)
         {
@@ -537,6 +546,10 @@ public partial class TerminalView : UIComponent, IDisposable
         if (BadgePressed(point))
             return;
 
+        // The scroll bar and the minimap down the right, theirs whatever the program asked of the mouse
+        if (PressScrollBar(point) || PressMinimap(point))
+            return;
+
         var (x, y) = CellAt(point);
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
@@ -586,6 +599,22 @@ public partial class TerminalView : UIComponent, IDisposable
         if (BadgeDragged(point))
             return;
 
+        if (draggingBar)
+        {
+            DragScrollBar(point);
+            return;
+        }
+
+        if (draggingMinimap)
+        {
+            DragMinimap(point);
+            return;
+        }
+
+        // The track held pages on in the update, towards where the pointer is now
+        if (paging != 0)
+            return;
+
         var (x, y) = CellAt(point);
         if (reporting)
         {
@@ -609,7 +638,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     protected override void OnPointerUp(Vector2 point)
     {
-        if (BadgeReleased(point))
+        if (BadgeReleased(point) || ReleaseSide())
             return;
 
         var (x, y) = CellAt(point);
@@ -780,10 +809,11 @@ public partial class TerminalView : UIComponent, IDisposable
         cellWidth = font.Measure("M", scale, markup: false).X;
         cellHeight = font.LineHeight * scale;
         // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it. A pane with round corners
-        // keeps its cells clear of them
+        // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
         float pad = MathF.Max(PADDING, Radius * 0.6f);
         float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
-        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad, pad));
+        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad));
+        PlaceSide();
         if (cellWidth <= 0.0f || cellHeight <= 0.0f)
             return;
 
@@ -887,6 +917,8 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         list.PopClip();
+        PaintMinimap(list, palette);
+        PaintScrollBar(list, palette);
         PaintBadge(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
@@ -1113,5 +1145,6 @@ public partial class TerminalView : UIComponent, IDisposable
         Expose("scrollback", () => (float)Scrollback, value => Scrollback = (int)value);
         Expose("animated", () => Animated, value => Animated = value);
         Expose("cursor_glide", () => CursorGlide, value => CursorGlide = MathF.Max(0.0f, value));
+        Expose("minimap", () => Minimap, value => Minimap = value);
     }
 }

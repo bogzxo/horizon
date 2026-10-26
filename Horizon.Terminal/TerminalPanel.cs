@@ -162,6 +162,25 @@ public class TerminalPanel : UIComponent, IDisposable
     /// <summary>How long every terminal's cursor takes to glide to its next cell, 0 for it jumping there, see <see cref="TerminalView.CursorGlide"/>.</summary>
     public float CursorGlide { get; set; } = TerminalView.DEFAULT_CURSOR_GLIDE;
 
+    /// <summary>Whether every terminal has its rows drawn small down its right, see <see cref="TerminalView.Minimap"/>. Set on the terminals there are as well.</summary>
+    public bool Minimap
+    {
+        get => minimap;
+        set
+        {
+            minimap = value;
+            foreach (TerminalTab tab in Tabs)
+            {
+                foreach (TerminalView view in tab.Views)
+                    view.Minimap = value;
+            }
+
+            RequestFrame();
+        }
+    }
+
+    private bool minimap = true;
+
     /// <summary>The least a pane can be dragged or squeezed to, along the split's axis.</summary>
     public float MinPane { get; set; } = 48.0f;
 
@@ -638,6 +657,7 @@ public class TerminalPanel : UIComponent, IDisposable
             Scrollback = Scrollback,
             Animated = Animated,
             CursorGlide = CursorGlide,
+            Minimap = Minimap,
             Profile = profile,
             Radius = paneRadius,
             Visible = false
@@ -964,6 +984,7 @@ public class TerminalPanel : UIComponent, IDisposable
 
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("scrollback", () => (float)Scrollback, value => Scrollback = (int)value);
+        Expose("minimap", () => Minimap, value => Minimap = value);
         Expose("animation_time", () => AnimationTime, value => AnimationTime = MathF.Max(0.0f, value));
         Expose("min_pane", () => MinPane, value => MinPane = MathF.Max(8.0f, value));
     }
