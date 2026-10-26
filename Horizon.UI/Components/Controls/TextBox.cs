@@ -100,6 +100,12 @@ public class TextBox : UIComponent
     /// <summary>The only characters that can be typed, or null to allow everything the font can draw.</summary>
     public string? AllowedCharacters { get; set; }
 
+    /// <summary>
+    /// Whether the text is only there to be read, selected and copied, nothing typed, pasted, cut or deleted. A value
+    /// somebody wants out of a properties panel (a path, a size) without being able to change it by accident.
+    /// </summary>
+    public bool ReadOnly { get; set; }
+
     /// <summary>Called with the new text whenever typing changes it.</summary>
     public Action<string>? OnChanged { get; set; }
 
@@ -212,7 +218,7 @@ public class TextBox : UIComponent
     /// </summary>
     public bool Insert(char character)
     {
-        if (char.IsControl(character) || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.PrivateUse)
+        if (ReadOnly || char.IsControl(character) || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.PrivateUse)
             return false;
         if (AllowedCharacters is not null && !AllowedCharacters.Contains(character))
             return false;
@@ -285,7 +291,7 @@ public class TextBox : UIComponent
     /// <summary>Helper to take what is selected out of the text, which is a change only if anything was.</summary>
     private void RemoveSelection()
     {
-        if (!HasSelection)
+        if (!HasSelection || ReadOnly)
             return;
 
         int at = SelectionStart;

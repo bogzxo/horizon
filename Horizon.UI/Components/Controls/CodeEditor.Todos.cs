@@ -45,37 +45,61 @@ public partial class CodeEditor
         string text = document.LineAt(line);
 
         // Most lines have neither, which is all most lines cost
-        if (!text.Contains("TODO", StringComparison.Ordinal) && !text.Contains("FIXME", StringComparison.Ordinal))
+        if (!MightHaveTodo(text))
+            return [];
+
+        // Plain text is coloured all one name, which says nothing of where a comment is, it's all comment
+        if (!Highlight)
+            return TodosIn(text, null);
+
+        // A line typed into is coloured on its own until the rest catches up. One that can't be yet (it starts inside a
+        // comment over several lines the last colouring never saw) waits for its colours, a string lit for a moment
+        // because nothing said it wasn't a comment is worse than a TODO lit a moment late
+        List<SyntaxSpan>? spans = ColoursOf(line, text) ?? FreshColours(line, text);
+        return spans is null ? [] : TodosIn(text, spans);
+    }
+
+    /// <summary>
+    /// The TODOs and FIXMEs of a line of text that are in a comment by the line's colours, where each starts and ends and
+    /// whether it's a FIXME, the TODOs first. No colours at all is plain text, where every one is lit.
+    /// </summary>
+    public static IEnumerable<(int From, int To, bool Urgent)> TodosIn(string text, IReadOnlyList<SyntaxSpan>? spans)
+    {
+        if (!MightHaveTodo(text))
             yield break;
 
-        List<SyntaxSpan>? spans = ColoursOf(line, text);
         foreach (var (word, urgent) in TodoWords)
         {
             for (int at = text.IndexOf(word, StringComparison.Ordinal); at >= 0; at = text.IndexOf(word, at + word.Length, StringComparison.Ordinal))
             {
+                // A word on its own, an underscore is part of a name the way a letter is (MY_TODO, TODO_LIST)
                 int end = at + word.Length;
-                bool alone = (at == 0 || !char.IsLetterOrDigit(text[at - 1])) && (end >= text.Length || !char.IsLetterOrDigit(text[end]));
+                bool alone = (at == 0 || !IsWordChar(text[at - 1])) && (end >= text.Length || !IsWordChar(text[end]));
                 if (alone && InComment(spans, at))
                     yield return (at, end, urgent);
             }
         }
     }
 
+    private static bool MightHaveTodo(string text) =>
+        text.Contains("TODO", StringComparison.Ordinal) || text.Contains("FIXME", StringComparison.Ordinal);
+
     // Whether a place of a line is in a comment by its colours, everything is when the line isn't coloured as code
-    private static bool InComment(List<SyntaxSpan>? spans, int at)
+    private static bool InComment(IReadOnlyList<SyntaxSpan>? spans, int at)
     {
         if (spans is null || spans.Count == 0)
             return true;
 
-        bool anyComment = false;
+        bool anyComment = false, allNames = true;
         foreach (SyntaxSpan span in spans)
         {
             anyComment |= span.Kind == SyntaxKind.Comment;
+            allNames &= span.Kind == SyntaxKind.Name;
             if (at >= span.Start && at < span.Start + span.Length)
                 return span.Kind == SyntaxKind.Comment;
         }
 
         // Past the spans (white space a grammar left out), or a plain text file that's all names
-        return !anyComment && spans.TrueForAll(span => span.Kind == SyntaxKind.Name);
+        return !anyComment && allNames;
     }
 }

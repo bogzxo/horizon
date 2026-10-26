@@ -63,7 +63,6 @@ public class CodeLanguagesFilesTests
     {
         Assert.Same(CodeLanguages.ForLanguageId("html"), CodeLanguages.ForFile("App.svelte"));
         Assert.Same(CodeLanguages.ForLanguageId("html"), CodeLanguages.ForFile("App.vue"));
-        Assert.Same(CodeLanguages.ForLanguageId("ini"), CodeLanguages.ForFile("Cargo.toml"));
         Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("x.rej"));
         Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("x.cs.rej"));
         Assert.Same(CodeLanguages.ForLanguageId("diff"), CodeLanguages.ForFile("fix.patch"));

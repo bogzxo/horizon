@@ -218,6 +218,21 @@ internal sealed partial class SettingRow
     {
         var box = Put(new TextBox { Size = new Vector2(width, page.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, Placeholder = setting.Placeholder });
         box.TakeKey = key => Offer(box, key);
+
+        // One that's only read is there to select and copy, as long as it likes, with nothing to tell anybody about
+        if (setting.ReadOnly)
+        {
+            box.ReadOnly = true;
+            box.MaxLength = 4096;
+            return value => box.Text = value switch
+            {
+                StringValue text => text.Value,
+                NumberValue number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                null or NullValue => string.Empty,
+                _ => value.ToString() ?? string.Empty
+            };
+        }
+
         box.OnChanged = text =>
         {
             typed = text;

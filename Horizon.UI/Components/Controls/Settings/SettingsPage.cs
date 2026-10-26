@@ -21,6 +21,7 @@ namespace Horizon.UI.Components;
 /// wrap_code). A row that <paramref name="DependsOn"/> the key of a switch is in a little under it and faint while the
 /// switch is off. A row of <see cref="UIFormKind.Pairs"/> has <paramref name="KeyPlaceholder"/> and
 /// <paramref name="ValuePlaceholder"/> in the two boxes of a pair being typed, what one looks like (*.orig and csharp).
+/// A row that is <paramref name="ReadOnly"/> is a value to read, select and copy (a file's path), never typed into.
 /// </summary>
 public sealed record UISetting(
     string Key,
@@ -42,7 +43,8 @@ public sealed record UISetting(
     string Keywords = "",
     string DependsOn = "",
     string KeyPlaceholder = "",
-    string ValuePlaceholder = "")
+    string ValuePlaceholder = "",
+    bool ReadOnly = false)
 {
     /// <summary>What a choice says in its dropdown, its label when it has one and otherwise the choice with a capital.</summary>
     public string LabelOf(string choice) => LabelAt(Choices is null ? -1 : Array.IndexOf(Choices, choice), choice);
@@ -115,6 +117,49 @@ public partial class SettingsPage : UIComponent
 
     // The page's sizes at its zoom
     private float NavWidth => NAV_WIDTH * zoom;
+
+    // What the sections down the left and the gap after them take of the width, nothing on a page without them
+    private float NavRoom => ShowNav ? NavWidth + GAP : 0.0f;
+
+    /// <summary>
+    /// Whether the sections are listed down the left. A page in a side panel (Hex's properties) hasn't the room, its rows
+    /// and its search take the whole width and its sections fold where they are instead.
+    /// </summary>
+    public bool ShowNav
+    {
+        get => showNav;
+        set
+        {
+            showNav = value;
+            navScroll.Visible = value;
+            dirty = true;
+        }
+    }
+
+    private bool showNav = true;
+
+    /// <summary>Whether a click on a section's heading folds its rows away and opens them again, the properties panel's way.</summary>
+    public bool CollapsibleSections { get; set; }
+
+    /// <summary>
+    /// Whether a right click on a row copies its value rather than its key and its line of the file, for a page of what
+    /// something is (a file's properties) rather than of settings with keys.
+    /// </summary>
+    public bool CopyValues { get; set; }
+
+    // The sections folded away by a click on their heading, by name, kept while the page is built again for something else
+    private readonly HashSet<string> folded = new(StringComparer.Ordinal);
+
+    /// <summary>Whether a section is folded away.</summary>
+    public bool IsFolded(string group) => folded.Contains(group);
+
+    /// <summary>A section folded away or opened again, as a click on its heading does.</summary>
+    public void ToggleSection(string group)
+    {
+        if (!folded.Remove(group))
+            folded.Add(group);
+        Filter(search.Text);
+    }
     private float SearchHeight => SEARCH_HEIGHT * zoom;
     private float ControlHeight => CONTROL_HEIGHT * zoom;
 
@@ -418,10 +463,32 @@ public partial class SettingsPage : UIComponent
             menu.AddSeparator();
         }
 
+        if (CopyValues)
+        {
+            menu.Add(texts.CopyValue, () => UIClipboard.Copy(ValueText(key)), icon: "copy");
+            return menu;
+        }
+
         menu.Add(texts.CopyId, () => UIClipboard.Copy(key), icon: "copy");
         if (LineOf(key) is { } line)
             menu.Add(texts.CopyLine, () => UIClipboard.Copy(line), icon: "copy");
         return menu;
+    }
+
+    /// <summary>A row's value as somebody would paste it, a text as it is, a choice by its label, a switch on or off.</summary>
+    public string ValueText(string key)
+    {
+        IRuntimeValue? value = ValueOf?.Invoke(key);
+        UISetting? setting = rowOf.TryGetValue(key, out SettingRow? row) ? row.Setting : null;
+        return value switch
+        {
+            StringValue text when setting?.Kind == UIFormKind.Choice => setting.LabelOf(text.Value),
+            StringValue text => text.Value,
+            BooleanValue flag => flag.Value ? texts.On : texts.Off,
+            NumberValue number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            null or NullValue => string.Empty,
+            _ => LineOf(key) is { } line ? line[(key.Length + 2)..] : string.Empty
+        };
     }
 
     /// <summary>A setting the way its section of the file writes it (<c>wrap_code: true</c>), null while it has no value HIDL can write.</summary>
@@ -549,7 +616,7 @@ public partial class SettingsPage : UIComponent
         if (dirty || width > 0.0f && MathF.Abs(width - builtWidth) > 1.0f)
         {
             dirty = false;
-            Build(MathF.Max(240.0f, width > 0.0f ? width : Size.X - NavWidth - GAP * 2.0f));
+            Build(MathF.Max(240.0f, width > 0.0f ? width : Size.X - NavRoom - GAP));
         }
 
         // A part asked for while the page was being made, its first section, and a section once its heading is laid out
@@ -576,12 +643,12 @@ public partial class SettingsPage : UIComponent
     {
         var titleArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - SearchHeight), new Vector2(content.Min.X + NavWidth, content.Max.Y));
         float closeWidth = close.Visible ? SearchHeight + GAP : 0.0f;
-        var scrollArea = new UIRect(new Vector2(content.Min.X + NavWidth + GAP, content.Min.Y), new Vector2(content.Max.X, content.Max.Y - SearchHeight - GAP));
+        var scrollArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Min.Y), new Vector2(content.Max.X, content.Max.Y - SearchHeight - GAP));
 
         // The search ends where the rows do, so the box, the rows and the controls down their right share one edge. It ran
         // on to the window's edge past rows held to MAX_ROW and the two edges were a hand apart
         float rowsEnd = scrollArea.Min.X + scroll.Padding.Left + RowWidth(scrollArea.Width - ROWS_INSET);
-        var searchArea = new UIRect(new Vector2(content.Min.X + NavWidth + GAP, content.Max.Y - SearchHeight), new Vector2(MathF.Min(content.Max.X - GAP - closeWidth, rowsEnd), content.Max.Y));
+        var searchArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Max.Y - SearchHeight), new Vector2(MathF.Min(content.Max.X - GAP - closeWidth, rowsEnd), content.Max.Y));
         title.ArrangeTree(titleArea);
         close.ArrangeTree(new UIRect(new Vector2(content.Max.X - SearchHeight, content.Max.Y - SearchHeight), content.Max));
         // With no title the sections go up to the top, beside the search
@@ -655,7 +722,7 @@ public partial class SettingsPage : UIComponent
 
             // The section big and the part it's of quietly in front of it
             string heading = dot < 0 ? $"[b]{named}[/b]" : $"[color:dim]{top} ·[/color] [b]{under}[/b]";
-            var header = headerOf[group] = rows.Add(new Label { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, 44.0f * zoom) });
+            var header = headerOf[group] = rows.Add(new SectionHeading(this, group) { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, 44.0f * zoom) });
             var section = new BuiltSection(group, header);
             built.Add(section);
 

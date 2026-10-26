@@ -158,6 +158,8 @@ public static partial class CodeLanguages
             ICodeHighlighter? found = null;
             if (id.Equals("d", StringComparison.OrdinalIgnoreCase))
                 found = ForScopeLocked(D_SCOPE, "D");
+            else if (id.Equals("toml", StringComparison.OrdinalIgnoreCase))
+                found = ForScopeLocked(TOML_SCOPE, "TOML");
             else if (id.Equals("slang", StringComparison.OrdinalIgnoreCase))
                 found = ForScopeLocked("source.hlsl", null);
             else if (LanguageLocked(id) is { } language && OptionsLocked().GetScopeByLanguageId(language.Id) is { } scope)
@@ -181,6 +183,8 @@ public static partial class CodeLanguages
                 string scope = textMate.ScopeName;
                 if (scope == D_SCOPE)
                     return "d";
+                if (scope == TOML_SCOPE)
+                    return "toml";
                 lock (gate)
                 {
                     foreach (Language language in OptionsLocked().GetAvailableLanguages())

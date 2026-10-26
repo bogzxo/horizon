@@ -1506,6 +1506,9 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.WORD_BACKSPACE: document.DeleteWord(-1); break;
             case UIKeyboard.WORD_DELETE: document.DeleteWord(1); break;
             case UIKeyboard.ENTER when OnControlEnter is not null && GameEngine.Instance.Input.Keyboard.Control && OnControlEnter(): break;
+            // Alt+Enter is a command's key in every editor (Properties in Hex, a quick fix elsewhere), never a new line. It
+            // put one in the file as it brought the Properties up
+            case UIKeyboard.ENTER when GameEngine.Instance.Input.Keyboard.Alt: break;
             case UIKeyboard.ENTER: document.NewLine(); break;
             case UIKeyboard.TAB:
                 if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)

@@ -88,6 +88,9 @@ public sealed class SettingsTexts
 
     public string CopyLine { get; init; } = "Copy as HIDL line";
 
+    /// <summary>A row's right click on a page of values rather than settings (<see cref="SettingsPage.CopyValues"/>).</summary>
+    public string CopyValue { get; init; } = "Copy value";
+
     /// <summary>A number box's tooltip, {least} and {most}.</summary>
     public string Between { get; init; } = "Between {least} and {most}";
 

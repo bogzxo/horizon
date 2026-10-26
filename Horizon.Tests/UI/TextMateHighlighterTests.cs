@@ -140,6 +140,17 @@ public class TextMateHighlighterTests
     }
 
     [Fact]
+    public void Xml_comments_are_coloured_between_their_marks()
+    {
+        // TextMateSharp's grammar names the marks and not what's between them, CodeLanguages mends it
+        var spans = Read(".xml", "<root>\n  <!-- one line -->\n  <!--\n    over lines\n  -->\n</root>\n");
+
+        Assert.Equal(SyntaxKind.Comment, KindAt(spans, 1, 7));
+        Assert.Equal(SyntaxKind.Comment, KindAt(spans, 3, 6));
+        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 5, 3));
+    }
+
+    [Fact]
     public void A_block_comment_carries_over_the_lines_and_a_line_inside_it_is_read_alone_from_its_start()
     {
         const string code = "int a; /* over\nthe lines\n*/ int b;";

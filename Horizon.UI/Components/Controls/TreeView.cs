@@ -155,6 +155,8 @@ public partial class TreeView : UIComponent
         get => selected;
         set
         {
+            if (value != selected)
+                alsoSelected.Clear();
             selected = value;
             revealSelected = value is not null;
         }
@@ -246,6 +248,11 @@ public partial class TreeView : UIComponent
             if (RowAt(point) is not { } at)
                 return;
 
+            // One of several selected keeps them all, the menu is for all of them
+            if (!IsSelected(at))
+                alsoSelected.Clear();
+            else if (at != selected && selected is not null)
+                alsoSelected.Add(selected);
             Select(at, notify: false);
             OnItemContextMenu?.Invoke(at, point);
         };
@@ -267,6 +274,7 @@ public partial class TreeView : UIComponent
         // The selected row went away, or into a row that closed
         if (selected is not null && rows.FindIndex(row => row.Item == selected) < 0)
             selected = null;
+        ForgetHidden();
     }
 
     private void Flatten(UITreeItem item, UITreeItem? parent, int depth)
@@ -377,6 +385,9 @@ public partial class TreeView : UIComponent
             OnActivated?.Invoke(at);
             return;
         }
+
+        if (PickMany(at))
+            return;
 
         Select(at, notify: true);
         if (at.HasChildren && (onChevron || ToggleOnClick))
@@ -518,7 +529,7 @@ public partial class TreeView : UIComponent
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
             UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
-            list.Box(pill, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(pill, IsSelected(item) ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
             // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted

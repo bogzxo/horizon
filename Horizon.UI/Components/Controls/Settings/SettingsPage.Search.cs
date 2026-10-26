@@ -114,6 +114,9 @@ public partial class SettingsPage
                 // and the keyword or choice it was found by after its key when that's nowhere it shows
                 row.Highlight(words);
                 row.ShowFoundBy((FoundBy(setting, words) ?? PairFoundBy(row, words)) is { } by ? Highlighted(by, words) : null);
+
+                // A folded section keeps its heading and hides its rows, till a search looks in it
+                row.Visible = searching || !folded.Contains(setting.Group);
             }
         }
 
