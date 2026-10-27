@@ -169,6 +169,36 @@ public static class UIKeyboard
     private static Key heldKey;
     private static long repeatDue;
 
+    // When the key being repeated went down, for how long it's been held
+    private static long heldSince;
+
+    // Most repeats in one update, so a long tick doesn't fire a burst of them all at once when it ends
+    private const int MOST_REPEATS = 6;
+
+    /// <summary>
+    /// How long an arrow key is held, in seconds, before the caret it moves goes quicker, the way it does in Visual
+    /// Studio after a moment. 0 for never.
+    /// </summary>
+    public static float FastAfter { get; set; } = 1.0f;
+
+    /// <summary>How many times a second an arrow key held past <see cref="FastAfter"/> moves the caret, at least the usual rate.</summary>
+    public static float FastRate { get; set; } = 80.0f;
+
+    // Whether a key that's repeated moves the caret about (arrows, with shift or a word at a time), the ones that speed up
+    private static bool MovesCaret(int code) => code is LEFT or RIGHT or UP or DOWN or WORD_LEFT or WORD_RIGHT
+        or SELECT_LEFT or SELECT_RIGHT or SELECT_UP or SELECT_DOWN or SELECT_WORD_LEFT or SELECT_WORD_RIGHT;
+
+    // Between two repeats of a key held so long, in the stopwatch's ticks
+    internal static long IntervalFor(int code, long held)
+    {
+        long usual = REPEAT_INTERVAL * Stopwatch.Frequency / 1000;
+        float after = FastAfter, rate = FastRate;
+        if (after <= 0.0f || rate <= 0.0f || !MovesCaret(code) || held < (long)(after * Stopwatch.Frequency))
+            return usual;
+
+        return Math.Min(usual, Math.Max(1L, (long)(Stopwatch.Frequency / rate)));
+    }
+
     // What is waiting to be put on the clipboard, which only the thread of the window may touch
     private static string? clipboardPending;
     private static IKeyboard? clipboardOwner;
@@ -260,7 +290,8 @@ public static class UIKeyboard
         if (repeats)
         {
             heldKey = key;
-            repeatDue = Stopwatch.GetTimestamp() + REPEAT_DELAY * Stopwatch.Frequency / 1000;
+            heldSince = Stopwatch.GetTimestamp();
+            repeatDue = heldSince + REPEAT_DELAY * Stopwatch.Frequency / 1000;
             Volatile.Write(ref heldCode, code);
         }
     }
@@ -375,11 +406,22 @@ public static class UIKeyboard
             return;
 
         long now = Stopwatch.GetTimestamp();
-        if (now < Volatile.Read(ref repeatDue))
+        long due = Volatile.Read(ref repeatDue);
+        if (now < due)
             return;
 
-        Volatile.Write(ref repeatDue, now + REPEAT_INTERVAL * Stopwatch.Frequency / 1000);
-        Push((char)code);
+        // As many as were due since the last update, quicker than updates come once an arrow's been held a while, a few
+        // at most, and then due again from now rather than catching up on a stall
+        long interval = IntervalFor(code, now - heldSince);
+        int repeats = 0;
+        while (now >= due && repeats < MOST_REPEATS)
+        {
+            Push((char)code);
+            due += interval;
+            repeats++;
+        }
+
+        Volatile.Write(ref repeatDue, now >= due ? now + interval : due);
     }
 
     /// <summary>
