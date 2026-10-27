@@ -32,6 +32,10 @@ public partial class WindowManager
     private Point barPressedWhere;
     private bool buttonWasDown;
 
+    // When SDL last asked (Environment.TickCount64), and how close behind the last an ask is the pointer moving rather than a press
+    private long lastAsked;
+    private const long MOVING_ASKS_MS = 40;
+
     // A second press on the bar this soon (and near) after the first is a double click
     private const int DOUBLE_CLICK_MS = 450, DOUBLE_CLICK_SLOP = 4;
 
@@ -89,15 +93,22 @@ public partial class WindowManager
     // What of the window a point is, an edge (unless it's maximised), the bar, or the UI's
     private unsafe HitTestResult WhatIsAt(Point at)
     {
-        // On Wayland and X11 SDL asks as a button goes down and at no other time, before it has the button down itself, so
-        // every time is a press. A Mac asks as the pointer moves as well, and is asked whether its button is down
-        bool pressed = true;
-        if (OperatingSystem.IsMacOS())
+        // A Mac and X11 ask as the pointer moves as well (for the cursor over an edge), so they're asked whether the button
+        // is down, which they know. Taking every ask for a press had the pointer moving slowly along the bar on X11 count
+        // as a double click over and over, the window maximised and back again without a button touched. Wayland asks
+        // before SDL has the button down itself, so there an ask is a press unless it comes hard on the heels of the last
+        // one, the way the asks of a pointer moving do, nobody presses twice in forty milliseconds
+        bool pressed;
+        long asked = Environment.TickCount64;
+        if (OperatingSystem.IsMacOS() || CanPlaceWindow)
         {
             bool down = (SdlProvider.SDL.Value.GetGlobalMouseState((int*)null, (int*)null) & 1) != 0;
             pressed = down && !buttonWasDown;
             buttonWasDown = down;
         }
+        else
+            pressed = asked - lastAsked > MOVING_ASKS_MS;
+        lastAsked = asked;
 
         var size = _window.Size;
         if (!maximized && !IsFullscreen())
