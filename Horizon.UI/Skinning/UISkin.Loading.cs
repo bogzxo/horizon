@@ -322,7 +322,7 @@ public sealed partial class UISkin
                     skin.IconBlink = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
                 // Read with the colours, see ReadPalette
-                case "syntax":
+                case "syntax" or "terminal":
                     break;
                 case "icon_scale":
                     skin.IconScale = UIScript.ToNumber(value, key);
@@ -437,6 +437,8 @@ public sealed partial class UISkin
         bool syntaxGiven = properties.TryGetValue("syntax", out var syntax);
         if (syntaxGiven)
             ReadSyntax(palette.Syntax, syntax!);
+        if (properties.TryGetValue("terminal", out var terminal))
+            ReadTerminal(palette, terminal);
 
         palette.Derive(given, syntaxGiven);
     }
@@ -453,6 +455,21 @@ public sealed partial class UISkin
         {
             if (!colors.Set(name, UIScript.ToColor(color, $"syntax.{name}")))
                 throw new Exception($"'{name}' isn't something code is coloured by.");
+        }
+    }
+
+    /// <summary>
+    /// The colours of a terminal a skin (or a theme) wants its own way, by the names of the sixteen (red, bright_red).
+    /// </summary>
+    private static void ReadTerminal(UIPalette palette, IRuntimeValue value)
+    {
+        if (value is not ObjectValue terminal)
+            throw new Exception("terminal has to be an object, a colour under the name of each of the sixteen it changes.");
+
+        foreach (var (name, color) in terminal.Properties)
+        {
+            if (!palette.SetTerminal(name, UIScript.ToColor(color, $"terminal.{name}")))
+                throw new Exception($"'{name}' isn't one of a terminal's sixteen colours, they're {string.Join(", ", UIPalette.TerminalNames)}.");
         }
     }
 

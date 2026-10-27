@@ -67,6 +67,10 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
             // The theme goes where the program says (Hex has Dusk's with Dawn's, under how Hex looks), the rest are the terminal's own
             bool theme = setting.Key == "theme";
 
+            // A theme by every word of its name, Visual Studio and not Visual studio
+            if (theme && choices is not null)
+                labels = [.. choices.Select(name => string.Join(' ', name.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(word => char.ToUpperInvariant(word[0]) + word[1..])))];
+
             // A number between two that aren't far apart is a slider, the way Dawn's caret glide is. Cursor glide was a box
             // to type into under a slider that did the same for the caret
             bool slides = kind == UIFormKind.Number && setting.Most > setting.Least && setting.Most - setting.Least <= SLIDES_UP_TO;

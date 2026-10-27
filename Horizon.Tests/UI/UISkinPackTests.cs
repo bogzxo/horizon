@@ -123,7 +123,7 @@ public class UISkinPackTests
 
         Assert.Equal("horizon", usual);
         Assert.Equal("horizon", themes[0]);
-        Assert.Equal(["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"], themes);
+        Assert.Equal(["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset", "visual_studio"], themes);
 
         // Every one has a title of its own and a file in the folder
         foreach (UIThemeInfo theme in infos)
@@ -131,6 +131,34 @@ public class UISkinPackTests
             Assert.NotEqual(theme.Name, theme.Title);
             Assert.True(File.Exists(Path.Combine(Folder("flat"), "themes", theme.Name + ".hor")), theme.Name);
         }
+    }
+
+    [Fact]
+    public void Visual_Studios_theme_has_its_own_terminal_colours_and_the_rest_work_theirs_out()
+    {
+        UIPalette studio = UISkin.PaletteOf(Folder("flat"), UISkins.FILE, "visual_studio");
+        Assert.NotNull(studio.Terminal);
+        Assert.Equal(16, studio.Terminal!.Length);
+        Assert.All(studio.Terminal, colour => Assert.NotNull(colour));
+        Assert.Equal(0x88 / 255.0f, studio.Terminal[5]!.Value.X, 2);
+
+        // Nobody else wrote any, theirs are worked out of the rest of their colours like they always were
+        Assert.Null(UISkin.PaletteOf(Folder("flat"), UISkins.FILE, "horizon").Terminal);
+
+        // A name that isn't one of the sixteen is refused
+        Assert.False(new UIPalette().SetTerminal("purple", System.Numerics.Vector4.One));
+    }
+
+    [Fact]
+    public void A_theme_may_say_how_round_it_is_and_how_tall_a_row_is()
+    {
+        var theme = UITheme.Read("square", new Horizon.HIDL.Runtime.ObjectValue(new Dictionary<string, Horizon.HIDL.Runtime.IRuntimeValue>
+        {
+            ["corner_radius"] = new Horizon.HIDL.Runtime.NumberValue(0.0f),
+            ["popup_radius"] = new Horizon.HIDL.Runtime.NumberValue(0.0f),
+            ["row_height"] = new Horizon.HIDL.Runtime.NumberValue(22.0f)
+        }), "themes.square");
+        Assert.Equal(3, theme.Changes.Count);
     }
 
     [Fact]

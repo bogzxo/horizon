@@ -13,7 +13,7 @@ namespace Horizon.UI.Skinning;
 /// accent, and only what it writes out itself is taken as written.
 /// </para>
 /// </summary>
-public sealed class UIPalette
+public sealed partial class UIPalette
 {
     /// <summary>The colour of text that stands on its own. Labels and captions.</summary>
     public Vector4 Text { get; set; } = new(0.08f, 0.09f, 0.13f, 1.0f);
@@ -276,7 +276,7 @@ public sealed class UIPalette
             Text = Text, ControlText = ControlText, Control = Control, Field = Field, Border = Border, Panel = Panel, Track = Track,
             Hover = Hover, Accent = Accent, Highlight = Highlight, DisabledTint = DisabledTint, BarText = BarText, TextShadow = TextShadow,
             IconLabel = IconLabel, DimText = DimText, Link = Link, Error = Error, Warning = Warning, Success = Success,
-            Selection = Selection
+            Selection = Selection, Terminal = Terminal is null ? null : (Vector4?[])Terminal.Clone()
         };
         Syntax.CopyTo(copy.Syntax);
         return copy;

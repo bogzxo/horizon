@@ -110,7 +110,7 @@ public sealed class TerminalSettings
     public static readonly TerminalSettingInfo[] Described =
     [
         new("theme", "choice", "\"horizon\"", "The colours Dusk is drawn in, its terminals' sixteen colours made from them.",
-            ["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"]),
+            ["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset", "visual_studio"]),
         new("profile", "text", "\"\"", "The id of the shell a new tab opens with (pwsh, powershell, cmd, git_bash, wsl:Ubuntu), empty for the first one found."),
         new("text_scale", "number", "0.16", "How big the terminals' text is, Ctrl+Shift+= and - change it.", Least: 0.06f, Most: 0.6f),
         new("scale", "number", "1", "How big Dusk's own parts, the tabs and the bars, are drawn.", Least: 0.5f, Most: 3.0f),

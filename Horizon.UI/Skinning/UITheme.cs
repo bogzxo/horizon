@@ -22,9 +22,12 @@ public sealed record UIThemeInfo(string Name, string Title, string Art, string? 
 /// <item>Any colour of the <see cref="UIPalette"/> (<c>text_color</c>, <c>accent_color</c>...), and <c>background</c> and
 /// <c>surface</c>, which the colours it doesn't write are worked out from.</item>
 /// <item><c>syntax</c>, the colours of code it wants its own way, the rest stay as they were.</item>
+/// <item><c>terminal</c>, the sixteen colours of a terminal it wants its own way (red, bright_red), the rest worked out of its other colours.</item>
 /// <item><c>regions</c> and <c>icons</c>, a piece of art tinted for this theme, added to the skin's.</item>
+/// <item><c>corner_radius</c>, <c>popup_radius</c> and <c>row_height</c>, for a theme that's another shape of the skin as well as
+/// other colours, square and tight the way Visual Studio is.</item>
 /// </list>
-/// Anything else (a font, a size, the art scale) is the skin's and a theme that says it is refused.
+/// Anything else (a font, the size of its text, the art scale) is the skin's and a theme that says it is refused.
 /// </summary>
 internal sealed class UITheme
 {
@@ -40,7 +43,7 @@ internal sealed class UITheme
 
     public UIThemeInfo Info => new(Name, Title, Art, Base);
 
-    private static readonly HashSet<string> Allowed = ["title", "base", "art", "syntax", "regions", "icons"];
+    private static readonly HashSet<string> Allowed = ["title", "base", "art", "syntax", "terminal", "regions", "icons", "corner_radius", "popup_radius", "row_height"];
 
     private UITheme(string name, string title, string? baseTheme, string art, Dictionary<string, IRuntimeValue> changes)
     {
