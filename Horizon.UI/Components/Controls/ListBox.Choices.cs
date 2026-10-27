@@ -149,7 +149,10 @@ public partial class ListBox
         {
             if (choice.Quiet.Length > 0)
                 left = Write(list, choice.Quiet, 0, lit, left, area, scale, quiet, accent) + KEY_PAD;
+            float textLeft = left;
             left = Write(list, choice.Text, 1, lit, left, area, scale, ink, accent);
+            if (choice.TextDigits > 0)
+                left = MathF.Max(left, textLeft + list.Skin.Font.Measure("0", scale, markup: false).X * choice.TextDigits);
             if (choice.Detail.Length > 0)
                 Write(list, choice.Detail, 2, lit, left + DETAIL_INDENT, area, scale * DETAIL_SCALE, quiet, accent);
         }
@@ -205,26 +208,6 @@ public partial class ListBox
     /// Helper method to draw keys as keycaps from the right of a row, each part of a chord a cap of its own, giving back
     /// where the rest of the row has to stop.
     /// </summary>
-    private static float PaintKeys(UIDrawList list, string keys, UIRect area, float scale, Vector4 ink, bool chosen)
-    {
-        float right = area.Max.X;
-        if (keys.Length == 0)
-            return right;
-
-        UISkin skin = list.Skin;
-        Vector4 quiet = ink with { W = ink.W * 0.6f };
-        float keyScale = scale * 0.82f;
-        float height = MathF.Min(area.Height - 6.0f, skin.Font.LineHeight * keyScale + 6.0f);
-        string[] caps = keys.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries);
-        for (int c = caps.Length - 1; c >= 0; c--)
-        {
-            float width = MathF.Max(height, skin.Font.Measure(caps[c], keyScale, markup: false).X + KEY_PAD * 2.0f);
-            var cap = new UIRect(new Vector2(right - width, area.Center.Y - height * 0.5f), new Vector2(right, area.Center.Y + height * 0.5f));
-            list.RoundRect(cap, MathF.Min(skin.CornerRadius, 5.0f), ink with { W = chosen ? 0.16f : 0.08f });
-            list.Text(caps[c], cap, Origin.Center, keyScale, quiet, markup: false);
-            right = cap.Min.X - KEY_GAP;
-        }
-
-        return right - KEY_PAD * 2.0f;
-    }
+    private static float PaintKeys(UIDrawList list, string keys, UIRect area, float scale, Vector4 ink, bool chosen) =>
+        UIKeycaps.PaintRight(list, keys, area, scale, ink, chosen);
 }

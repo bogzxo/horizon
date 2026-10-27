@@ -260,6 +260,10 @@ public partial class UICompositor : GameComponent, IDisposable
     private Vector2 restingAt;
     private UIModule? tooltipModule;
 
+    // What was last clicked and where, its tooltip kept down until the pointer leaves it
+    private UIComponent? hushed;
+    private Vector2 hushedAt;
+
     // A tooltip put up by a component rather than the pointer resting on it (a hover asked for with the keyboard), where,
     // and where the pointer was as it went up, it comes down once the pointer moves
     private (UIComponent Owner, string Text, Vector2 At, bool Markdown, Vector2 Pointer)? pinned;
@@ -365,6 +369,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
             // Whatever was typed before now was not meant for this component.
             UIKeyboard.Clear();
+            NoteWindowsEntered(focus, value);
             focus = value;
 
             // So the paste of an editor knows whether a text box somewhere has the keyboard

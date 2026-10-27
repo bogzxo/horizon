@@ -136,7 +136,7 @@ public static partial class UIChooser
         // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
         if (message.Length > 0)
         {
-            Panel foot = picking.Add(new Panel { Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
+            Panel foot = picking.Add(new Panel { Size = new Vector2(WIDTH, 0.0f), Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
             foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
         }
 

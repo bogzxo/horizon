@@ -111,6 +111,7 @@ public sealed partial class UIFileBrowser
         Window = new WindowPanel(title)
         {
             Icon = kind == UIBrowse.Folder ? "folder" : "file",
+            Modal = true,
             Size = new Vector2(WIDTH, HEIGHT),
             MinSize = new Vector2(WIDTH, HEIGHT),
             ResizeGrip = false,

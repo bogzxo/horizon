@@ -107,7 +107,7 @@ internal sealed partial class SettingRow
         itemRemoves.Add(line.Add(new PairButton(this) { Icon = "trash", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.RemoveItem, OnPressed = () => RemoveItem(at), OnDelete = () => RemoveItem(at) }));
     }
 
-    // The line being typed, a box with what one looks like in it, then OK and Cancel
+    // The line being typed, a box with what one looks like in it, then Cancel and OK
     private void ItemBox(float column, string item)
     {
         var line = itemList!.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
@@ -115,8 +115,10 @@ internal sealed partial class SettingRow
         float wide = MathF.Max(64.0f * page.ZoomNow, page.Texts.PairCancel.Length * page.RowBodyScale * 0.6f + 20.0f);
         itemBox = line.Add(new PairBox(CancelItem) { Text = item, Placeholder = Setting.KeyPlaceholder, Size = new Vector2(MathF.Max(120.0f, column - wide * 2.0f + tall * 2.0f), tall), TextScale = page.RowBodyScale, MaxLength = 512 });
         itemBox.TakeKey = ItemKey;
-        line.Add(new PairButton(this) { Label = page.Texts.PairOk, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Animated = false, OnPressed = CommitItem });
-        line.Add(new PairButton(this) { Label = page.Texts.PairCancel, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, OnPressed = CancelItem });
+
+        // Cancel then OK, the one Enter presses last and in the accent, the way every dialog has them
+        line.Add(new PairButton(this) { Label = page.Texts.PairCancel, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Animated = false, OnPressed = CancelItem });
+        line.Add(new PairButton(this) { Label = page.Texts.PairOk, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Primary = true, Animated = false, OnPressed = CommitItem });
     }
 
     // Enter puts the line in and Escape leaves it, Up and Down stay in the box rather than leaving a line half typed

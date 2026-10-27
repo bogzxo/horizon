@@ -415,10 +415,13 @@ public abstract partial class UIComponent
     /// <summary>Where its shadow, its glass and the lining of the glass go, its bounds unless it draws itself further in (a Panel's Inset).</summary>
     protected virtual UIRect SurfaceBounds => Bounds;
 
-    // The ring round a control the keyboard is on, its part (out of the way of any a component numbers its own), how far
-    // out of it it is and how wide
+    // The ring round a control the keyboard is on, its part (out of the way of any a component numbers its own) and how
+    // far out of it it is
     private const int FOCUS_RING_PART = 0x7F0C;
-    private const float FOCUS_RING_GAP = 2.0f, FOCUS_RING_WIDTH = 1.5f;
+    private const float FOCUS_RING_GAP = 2.0f;
+
+    /// <summary>How wide the ring round whatever has the keyboard is, the one width every ring is drawn at.</summary>
+    internal const float FOCUS_RING_WIDTH = 1.5f;
 
     internal void PaintTree(UIDrawList list)
     {
@@ -471,8 +474,9 @@ public abstract partial class UIComponent
             list.PopClip();
 
         // The keyboard on a control a click doesn't give it to (a button Tab went to), a ring round it in the colour the
-        // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes
-        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy)
+        // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes. Only once the
+        // keys moved about, a click on it rings nothing
+        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible)
         {
             list.BeginPart(FOCUS_RING_PART);
             float out_ = FOCUS_RING_GAP;

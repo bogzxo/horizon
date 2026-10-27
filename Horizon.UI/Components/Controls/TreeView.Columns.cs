@@ -20,6 +20,12 @@ public sealed partial class UITreeItem
     internal string? badgeOf;
     internal float badgeRoom;
     internal string badgeFitted = string.Empty;
+
+    /// <summary>
+    /// Whether its detail is keys ("Ctrl+K Ctrl+S"), drawn as keycaps in a table's column the way the palette draws them,
+    /// not written as words.
+    /// </summary>
+    public bool DetailKeys { get; set; }
 }
 
 // The tree as a table, VS Code's keyboard shortcuts. With columns the rows have a strip of titles over them, pressed to
@@ -154,9 +160,15 @@ public partial class TreeView
         UISkin skin = list.Skin;
         for (int column = 0; column < Columns!.Count && column < 4; column++)
         {
-            var (shown, x, _) = Cell(item, skin, scale, row, textLeft, column);
+            var (shown, x, room) = Cell(item, skin, scale, row, textLeft, column);
             if (shown.Length == 0)
                 continue;
+
+            if (column == 1 && item.DetailKeys)
+            {
+                UIKeycaps.PaintLeft(list, item.Detail, new UIRect(new Vector2(x, row.Min.Y), new Vector2(x + room, row.Max.Y)), scale, item.DetailColor ?? text, false);
+                continue;
+            }
 
             Vector2 size = skin.Font.Measure(shown, scale, markup: false);
             var at = new Vector2(x, MathF.Round(row.Center.Y + size.Y * 0.5f));

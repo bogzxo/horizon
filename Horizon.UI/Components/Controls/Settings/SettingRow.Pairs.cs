@@ -118,7 +118,7 @@ internal sealed partial class SettingRow
         pairRemoves.Add(line.Add(new PairButton(this) { Icon = "trash", Size = new Vector2(side, side), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, Tooltip = page.Texts.RemoveItem, OnPressed = () => RemovePair(at), OnDelete = () => RemovePair(at) }));
     }
 
-    // The line being typed, a box for its key and one for its value with what one looks like in each, then OK and Cancel
+    // The line being typed, a box for its key and one for its value with what one looks like in each, then Cancel and OK
     private void PairBoxes(float column, string key, string value)
     {
         var line = pairList!.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
@@ -127,8 +127,10 @@ internal sealed partial class SettingRow
         valueBox = line.Add(new PairBox(CancelPair) { Text = value, Placeholder = Setting.ValuePlaceholder, Size = new Vector2(column, tall), TextScale = page.RowBodyScale, MaxLength = 256 });
         keyBox.TakeKey = valueBox.TakeKey = PairKey;
         float wide = MathF.Max(64.0f * page.ZoomNow, page.Texts.PairCancel.Length * page.RowBodyScale * 0.6f + 20.0f);
-        line.Add(new PairButton(this) { Label = page.Texts.PairOk, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Animated = false, OnPressed = CommitPair });
-        line.Add(new PairButton(this) { Label = page.Texts.PairCancel, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Style = "button_flat", Animated = false, OnPressed = CancelPair });
+
+        // Cancel then OK, the one Enter presses last and in the accent, the way every dialog has them
+        line.Add(new PairButton(this) { Label = page.Texts.PairCancel, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Animated = false, OnPressed = CancelPair });
+        line.Add(new PairButton(this) { Label = page.Texts.PairOk, Size = new Vector2(wide, tall), LabelScale = page.RowBodyScale, Primary = true, Animated = false, OnPressed = CommitPair });
     }
 
     // Enter puts the line in and Escape leaves it, Up and Down stay in the box rather than leaving a line half typed

@@ -53,11 +53,12 @@ public partial class UICompositor
 
     private void RouteKeyboard(UIModule[] snapshot)
     {
-        // A component that left the UI takes the focus with it.
-        if (focus is not null && focus.Module is not { Enabled: true })
-            Focus = null;
+        // A component that left the UI takes the focus with it, unless it went with a window, which gives it back
+        KeepKeyboardSomewhere();
 
         var keyboard = GameEngine.Instance.Input.Keyboard;
+        if (KeysMoved(keyboard))
+            FocusVisible = true;
 
         // Escape closes whatever is open, top down. A dialog, then a popup, then the focus, one thing a press
         // A component that takes its keys raw gets them all, escape and tab among them. Only the UI whose component has
@@ -66,6 +67,10 @@ public partial class UICompositor
         // raw keys off a moment after the terminal switched them on and threw the presses away, Return among them
         if (focusOwner == this || focusOwner is null)
             UIKeyboard.RawKeys = focus is { TakesRawKeys: true };
+
+        // A menu that's open has the keys to itself, Escape and all
+        if (RouteToPopup(snapshot, keyboard))
+            return;
 
         if (keyboard.WasPressed(Key.Escape) && !UIKeyboard.RawKeys)
             Escape(snapshot);
@@ -184,6 +189,15 @@ public partial class UICompositor
             }
         }
 
+        // Somewhere of its own to go, when that's on screen
+        if (focus?.TabTo?.Invoke(by) is { Module.Enabled: true } chosen && chosen.IsShownInHierarchy && chosen.EnabledInHierarchy)
+        {
+            Focus = chosen;
+            if (chosen is TextBox chosenBox)
+                chosenBox.SelectAll();
+            return;
+        }
+
         if (focusable.Count == 0)
             return;
 
@@ -196,6 +210,10 @@ public partial class UICompositor
         if (focus is TextBox box)
             box.SelectAll();
     }
+
+    // Whether a key took the tooltip down, and where the pointer was then, it comes back once the pointer moves on
+    private bool keyHushed;
+    private Vector2 keyHushedAt;
 
     /// <summary>
     /// Helper method to bring the tooltip of whatever the pointer has been resting on up, and take it down again the
@@ -221,7 +239,19 @@ public partial class UICompositor
             restingFor = 0.0f;
         }
 
-        UIComponent? over = hovered;
+        // A key pressed takes the tooltip down until the pointer moves on, the one of the button it rests on stayed up
+        // over whatever was typed after
+        if (GameEngine.Instance?.Input.Keyboard is { AnyPressed: true })
+        {
+            keyHushedAt = lastPointer;
+            keyHushed = true;
+        }
+        else if (keyHushed && Vector2.Distance(lastPointer, keyHushedAt) > TOOLTIP_DRIFT)
+        {
+            keyHushed = false;
+        }
+
+        UIComponent? over = keyHushed ? null : hovered;
         bool still = Vector2.Distance(lastPointer, restingAt) <= TOOLTIP_DRIFT && !Pointer.Down;
 
         if (!still)
@@ -234,9 +264,17 @@ public partial class UICompositor
             restingFor += dt;
         }
 
+        // A click puts the tooltip of what was clicked away until the pointer goes off it, or a little way from where it
+        // was clicked (the next row of a list is the same list). It came back over the Run button while the window the
+        // click opened was up
+        if (Pointer.Down)
+            (hushed, hushedAt) = (over, lastPointer);
+        else if (hushed is not null && (hushed != over || Vector2.Distance(lastPointer, hushedAt) > TOOLTIP_DRIFT * 3.0f))
+            hushed = null;
+
         // The component the pointer is over, or the nearest thing around it that has something to say
         UIComponent? showing = null;
-        if (still && restingFor >= TOOLTIP_DELAY && over is not null)
+        if (still && restingFor >= TOOLTIP_DELAY && over is not null && over != hushed)
         {
             for (UIComponent? at = over; at is not null && showing is null; at = at.Parent)
             {
@@ -356,6 +394,7 @@ public partial class UICompositor
         // it, then whoever listens on the whole compositor (an editor deciding by what was clicked)
         if (pointer.SecondaryDown && !secondaryWasDown)
         {
+            FocusVisible = false;
             foreach (var module in snapshot)
                 module.Popup = null;
 
@@ -417,9 +456,10 @@ public partial class UICompositor
             }
 
             // Pressing on something that isn't part of the UI at all leaves the focus where it is,
-            // or a click meant for the game would stop the typing.
-            if (over is not null)
-                Focus = over.Focusable && over.EnabledInHierarchy ? over : null;
+            // or a click meant for the game would stop the typing. So does a menu, which has nothing to type into
+            FocusVisible = false;
+            if (over is not null && !over.LeavesFocus)
+                Focus = FocusForPress(over);
 
             if (over is { Module: { } pressedIn } && over.EnabledInHierarchy)
             {

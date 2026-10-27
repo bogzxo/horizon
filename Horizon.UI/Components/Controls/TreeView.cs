@@ -130,7 +130,7 @@ public partial class TreeView : UIComponent
     private const float FOCUS_LINE = 2.0f;
 
     private const float DEFAULT_WIDTH = 260.0f, DEFAULT_ROWS = 10.0f;
-    private const float ROW_PADDING = 8.0f, BAR_WIDTH = 5.0f, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
+    private const float ROW_PADDING = 8.0f, BAR_WIDTH = UIScrollBar.WIDTH, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
 
     // How far in from its top and bottom the rows fade while there are more past that edge, see ScrollPanel.Fade
@@ -201,8 +201,18 @@ public partial class TreeView : UIComponent
     /// </summary>
     public bool FocusLine { get; set; }
 
-    /// <summary>A click on a row (or the keys selecting one).</summary>
+    /// <summary>A click on a row (or the keys selecting one, unless <see cref="ArrowsPress"/> says not).</summary>
     public Action<UITreeItem>? OnPressed { get; set; }
+
+    /// <summary>
+    /// Whether the arrows moving the selection press the row they land on, as a click would. No for a tree whose press
+    /// does something big (opens a file, goes into a folder), where the arrows only move along and Space presses the row
+    /// with the keyboard staying in the tree, VS Code's explorer. Enter is <see cref="OnActivated"/> either way.
+    /// </summary>
+    public bool ArrowsPress { get; set; } = true;
+
+    /// <summary>Whether the press going on right now came off the keyboard rather than the pointer, for an owner that keeps the keys in the tree then.</summary>
+    public bool PressedByKey { get; private set; }
 
     /// <summary>A double click on a row, or enter on the selected one.</summary>
     public Action<UITreeItem>? OnActivated { get; set; }
@@ -269,6 +279,11 @@ public partial class TreeView : UIComponent
             else if (at != selected && selected is not null)
                 alsoSelected.Add(selected);
             Select(at, notify: false);
+
+            // The keyboard comes with it, so the keys after the menu go to the tree the menu was for. The explorer's row
+            // left them in the code and Source Control's took them, depending on the menu
+            if (TakesKeys)
+                Focus();
             OnItemContextMenu?.Invoke(at, point);
         };
     }
@@ -432,29 +447,41 @@ public partial class TreeView : UIComponent
             return;
 
         int at = IndexOf(selected);
-        switch (character)
+        PressedByKey = true;
+        try
         {
-            case UIKeyboard.UP when rows.Count > 0:
-                Select(rows[Math.Max(0, at - 1)].Item, notify: true);
-                break;
+            switch (character)
+            {
+                case UIKeyboard.UP when rows.Count > 0:
+                    Select(rows[Math.Max(0, at - 1)].Item, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.DOWN when rows.Count > 0:
-                Select(rows[Math.Min(rows.Count - 1, at + 1)].Item, notify: true);
-                break;
+                case UIKeyboard.DOWN when rows.Count > 0:
+                    Select(rows[Math.Min(rows.Count - 1, at + 1)].Item, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.LEFT when selected is { } item:
-                if (item.Expanded && item.HasChildren) Toggle(item);
-                else if (item.Parent is { } parent) Select(parent, notify: true);
-                break;
+                case UIKeyboard.LEFT when selected is { } item:
+                    if (item.Expanded && item.HasChildren) Toggle(item);
+                    else if (item.Parent is { } parent) Select(parent, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.RIGHT when selected is { } item:
-                if (item.HasChildren && !item.Expanded) Toggle(item);
-                else if (item.Expanded && item.Children is [var first, ..]) Select(first, notify: true);
-                break;
+                case UIKeyboard.RIGHT when selected is { } item:
+                    if (item.HasChildren && !item.Expanded) Toggle(item);
+                    else if (item.Expanded && item.Children is [var first, ..]) Select(first, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.ENTER when selected is { } item:
-                OnActivated?.Invoke(item);
-                break;
+                case ' ' when selected is { } item && !ArrowsPress:
+                    OnPressed?.Invoke(item);
+                    break;
+
+                case UIKeyboard.ENTER when selected is { } item:
+                    OnActivated?.Invoke(item);
+                    break;
+            }
+        }
+        finally
+        {
+            PressedByKey = false;
         }
     }
 
@@ -521,6 +548,7 @@ public partial class TreeView : UIComponent
         Vector4 guide = text with { W = text.W * 0.12f };
         Vector4 lit = text with { W = ListBox.PICKED };
         bool keyed = IsFocused && TakesKeys;
+        bool ringed = Module?.Compositor.FocusVisible == true;
 
         if (Color is { } behind)
         {
@@ -563,8 +591,9 @@ public partial class TreeView : UIComponent
             }
 
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
-            // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted
-            list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.Palette.Highlight with { W = item == selected && keyed ? 0.8f : 0.0f });
+            // Tab into the keys window's list had nothing on screen change. Only once the keys moved about, the click on
+            // the explorer's icon that gave it the keyboard rang its first row. Always painted, see-through when not wanted
+            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, skin.Palette.Highlight with { W = item == selected && keyed && ringed ? 1.0f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -674,8 +703,7 @@ public partial class TreeView : UIComponent
         {
             float share = bounds.Height / (bounds.Height + travel);
             float barTop = bounds.Max.Y - (bounds.Height * (1.0f - share)) * (scroll / travel);
-            float barX = bounds.Max.X - BAR_WIDTH * 1.5f;
-            list.Rect(new UIRect(new Vector2(barX, barTop - bounds.Height * share), new Vector2(barX + BAR_WIDTH, barTop)), skin.TextColor with { W = 0.25f });
+            UIScrollBar.Paint(list, bounds.Max.X - BAR_WIDTH * 0.5f, bounds.Min.Y, bounds.Max.Y, barTop, bounds.Height * share, BAR_WIDTH, 0.0f, false, skin.TextColor);
         }
     }
 

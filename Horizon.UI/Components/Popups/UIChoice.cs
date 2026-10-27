@@ -47,6 +47,12 @@ public sealed record UIChoice(string Text, Action Picked)
     /// <summary>The keys it's on, written as keycaps along the right ("Ctrl+Shift+P", a chord split by a space). Empty for none.</summary>
     public string Keys { get; init; } = string.Empty;
 
+    /// <summary>
+    /// How many digits wide its text takes at least, so the detail after it starts in the one column down the list (Go to
+    /// Line's numbers, whose lines drifted right as the numbers got longer). 0 for as wide as the text is.
+    /// </summary>
+    public int TextDigits { get; init; }
+
     /// <summary>One of <see cref="UISymbols"/>' names drawn in front of it, empty for none.</summary>
     public string Icon { get; init; } = string.Empty;
 

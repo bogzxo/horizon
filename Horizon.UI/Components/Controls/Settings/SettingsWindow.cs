@@ -213,16 +213,14 @@ public sealed class SettingsWindow
         // The zoom the page is drawn at, which the title bar goes with
         public Func<float>? Zoom { get; init; }
 
-        // How tall the title bar is at a zoom of 1, and how much bigger its words are than a window's usual ones. It was a
-        // little window's 26 with its icon a speck in the corner of a window that fills most of the screen
-        private const float TITLE = 36.0f, TITLE_TEXT = 1.1f;
+        // The title bar every window has (WindowPanel.TITLE_HEIGHT) at the page's zoom, so it grows with the page
 
         protected override void Update(float dt)
         {
             Ticked?.Invoke();
 
             float zoom = Zoom?.Invoke() ?? 1.0f;
-            TitleHeight = MathF.Round(TITLE * zoom);
+            TitleHeight = MathF.Round(TITLE_HEIGHT * zoom);
             if (Module?.Compositor.Skin is { } skin)
                 TextScale = skin.TextScale * TITLE_TEXT * zoom;
             if (!sized && Parent is { Bounds.IsEmpty: false } parent)

@@ -242,8 +242,12 @@ public class TabStrip : UIComponent
         foreach (StripTab tab in Tabs)
             total += WidthOf(skin, tab);
 
+        TabsWidth = total;
         scroll = Math.Clamp(scroll, 0.0f, MathF.Max(0.0f, total - Bounds.Width));
     }
+
+    /// <summary>How wide the tabs are all together, as of the last tick, more than the strip is wide when they don't all fit.</summary>
+    public float TabsWidth { get; private set; }
 
     protected override void Paint(UIDrawList list)
     {

@@ -75,6 +75,7 @@ public partial class WindowPanel
     protected override void Update(float dt)
     {
         base.Update(dt);
+        KeepScrim();
         if (titleActions.Count == 0)
             return;
 

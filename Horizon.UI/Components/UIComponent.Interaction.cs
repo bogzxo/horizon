@@ -220,6 +220,16 @@ public abstract partial class UIComponent
     /// <summary>Whether a point is on what the component has open, in which case the pointer is this component's.</summary>
     protected internal virtual bool PopupContains(Vector2 point) => false;
 
+    /// <summary>
+    /// Whether what it has open takes the keys while it's open, a menu the arrows go down and Enter picks from. Nothing
+    /// behind it types or hears a shortcut meanwhile, the keyboard stays where it was and gets them again once it shuts.
+    /// </summary>
+    protected internal virtual bool TakesPopupKeys => false;
+
+    /// <summary>The keys pressed this update while what it has open takes them, see <see cref="TakesPopupKeys"/>.</summary>
+    protected internal virtual void OnPopupKeys(Horizon.Input.Keyboard keyboard)
+    { }
+
     /* Tweens a layout asks for */
 
     /// <summary>How the component makes its entrance when <see cref="PlayIntro"/> is called, which loading a layout does.</summary>
@@ -330,6 +340,19 @@ public abstract partial class UIComponent
     /// the settings). It went on to whatever was behind, and the keys typed there.
     /// </summary>
     protected internal virtual bool HoldsTab => false;
+
+    /// <summary>
+    /// Whether a press on it leaves the keyboard where it was, a menu bar's word or an item of a menu, which do something
+    /// and have nothing to type into. A press on anything else that doesn't take the keyboard takes it away, and the
+    /// code a menu was opened over had nothing typing into it after.
+    /// </summary>
+    protected internal virtual bool LeavesFocus => false;
+
+    /// <summary>
+    /// Where Tab goes from it, given 1 for Tab and -1 for Shift+Tab, null for the next one along the layout. For an order
+    /// the layout doesn't have, a find box going to its replace box before the toggles beside it.
+    /// </summary>
+    public Func<int, UIComponent?>? TabTo { get; set; }
 
     /// <summary>
     /// Whether the keys come to it as themselves through <see cref="OnKeyDown"/>, with the modifiers, rather than as the

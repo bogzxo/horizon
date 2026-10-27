@@ -126,6 +126,33 @@ public sealed class ContextMenu : UIComponent
 
     protected internal override bool PopupContains(Vector2 point) => Panel?.Contains(point) ?? false;
 
+    // An item pressed leaves the keyboard where it was, with whatever the menu was opened over
+    protected internal override bool LeavesFocus => true;
+
+    // Up and Down go along it, Right opens the menu off an item and Left shuts it, Enter picks and Escape shuts it
+    protected internal override bool TakesPopupKeys => IsPopupOpen;
+
+    /// <summary>The item the keys are on, in the deepest menu open off it, null while the pointer has the say.</summary>
+    public MenuItem? KeyedItem => Panel?.KeyedItem;
+
+    protected internal override void OnPopupKeys(Horizon.Input.Keyboard keyboard)
+    {
+        if (Panel is not { } shown || Skin is not { } skin || Module is not { } module || MenuPanel.Read(keyboard) is not { } read)
+            return;
+
+        Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+        switch (shown.Key(skin, module.Frame, pointer, read.Key, read.Letter, out MenuItem? picked))
+        {
+            case MenuKeyResult.Picked:
+                Close();
+                picked?.OnPicked?.Invoke();
+                break;
+            case MenuKeyResult.Close:
+                Close();
+                break;
+        }
+    }
+
     // The wheel scrolls the list under the pointer, one too tall for the window
     protected internal override bool OnScroll(float delta) =>
         Skin is { } skin && Module is { } module && Panel is { } shown && shown.Wheel(skin, module.ToLocal(module.Compositor.Pointer.Position), delta);

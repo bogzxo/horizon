@@ -107,7 +107,7 @@ internal sealed partial class MenuPanel
             if (!ShownAt(index)) continue;
 
             height += HeightOf(item, row);
-            width = MathF.Max(width, CHECK_WIDTH + skin.Font.Measure(item.Label, scale, markup: false).X + EndWidth(skin, item, row) + ITEM_PADDING * 2.0f);
+            width = MathF.Max(width, Lead(row) + skin.Font.Measure(item.Label, scale, markup: false).X + EndWidth(skin, item, row) + ITEM_PADDING * 2.0f);
         }
 
         contentHeight = height;

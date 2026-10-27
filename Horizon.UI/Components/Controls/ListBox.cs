@@ -23,7 +23,7 @@ public partial class ListBox : UIComponent
 {
     private const float DEFAULT_WIDTH = 260.0f;
     private const float ROW_PADDING = 8.0f;
-    private const float BAR_WIDTH = 6.0f;
+    private const float BAR_WIDTH = UIScrollBar.WIDTH;
     private const int DEFAULT_ROWS = 6;
 
     private IRuntimeValue? changedHandler, activatedHandler;
@@ -321,8 +321,10 @@ public partial class ListBox : UIComponent
         else if (!Plain)
             list.Box(Bounds, skin.FieldColor * tint);
 
+        // A list on a card (a palette) keeps the bar's room whether it scrolls or not, so a row's highlight is as wide in
+        // a picker of three rows as in one of three hundred
         bool scrolls = items.Length > Rows;
-        float right = scrolls ? Bounds.Max.X - BAR_WIDTH * 2.0f : Bounds.Max.X;
+        float right = scrolls || Plain ? Bounds.Max.X - BAR_WIDTH * 2.0f : Bounds.Max.X;
         float headingHeight = HeadingHeight(rowHeight);
 
         list.PushClip(Bounds);
@@ -414,9 +416,7 @@ public partial class ListBox : UIComponent
             float share = Rows / (float)items.Length;
             float travel = height * (1.0f - share);
             float barTop = Bounds.Max.Y - headingHeight - travel * (shown / (items.Length - Rows));
-            float x = Bounds.Max.X - BAR_WIDTH * 1.5f;
-
-            list.RoundRect(new UIRect(new Vector2(x, barTop - height * share), new Vector2(x + BAR_WIDTH, barTop)), BAR_WIDTH * 0.5f, skin.TextColor with { W = 0.2f });
+            UIScrollBar.Paint(list, Bounds.Max.X - BAR_WIDTH * 0.5f, Bounds.Min.Y, Bounds.Max.Y - headingHeight, barTop, height * share, BAR_WIDTH, 0.0f, false, skin.TextColor);
         }
 
         if (skin.BorderColor.W > 0.0f && !Plain)

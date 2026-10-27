@@ -69,6 +69,12 @@ public sealed class UIShortcuts
     /// <summary>The second key pressed after a chord's first was no chord's, both of them as the menus write them.</summary>
     public Action<string>? OnChordMissed { get; set; }
 
+    /// <summary>
+    /// The wait for a chord's second key is over, the chord went off, Escape or the clock gave up on it, or a second key
+    /// that's no chord came (before OnChordMissed says so). Whatever said it was waiting can stop saying it.
+    /// </summary>
+    public Action? OnChordEnded { get; set; }
+
     /// <summary>The first key of a chord while the second is waited for, null while nothing is.</summary>
     public string? Pending => pending?.ToString();
 
@@ -194,7 +200,10 @@ public sealed class UIShortcuts
         Swallowed = false;
 
         if (pending is not null && Clock() - pendingSince > ChordWait)
+        {
             pending = null;
+            OnChordEnded?.Invoke();
+        }
 
         if (pending is { } first)
         {
@@ -256,7 +265,10 @@ public sealed class UIShortcuts
         pending = null;
         Swallowed = true;
         if (next == Key.Escape && !control && !shift && !alt)
+        {
+            OnChordEnded?.Invoke();
             return;
+        }
 
         var second = new UIKeyStroke(next, control, shift, alt);
         bool fired = false, took = false;
@@ -277,6 +289,7 @@ public sealed class UIShortcuts
             }
         }
 
+        OnChordEnded?.Invoke();
         if (!fired)
             OnChordMissed?.Invoke(UIKeys.WriteChord(first, second));
     }

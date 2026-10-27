@@ -186,11 +186,12 @@ public class Notifications : UIComponent
     private static UIRect CloseBounds(UIRect card) =>
         new(new Vector2(card.Max.X - PADDING - CLOSE, card.Max.Y - PADDING - CLOSE), new Vector2(card.Max.X - PADDING, card.Max.Y - PADDING));
 
+    // The first of them at the right end, it's the one to press as a dialog's is, the rest leftwards in the order given
     private UIRect ActionBounds(UIRect card, UINotification notification, int action, UISkin skin)
     {
         float right = card.Max.X - PADDING;
         float scale = ScaleOf(skin);
-        for (int i = notification.Actions.Count - 1; i >= 0; i--)
+        for (int i = 0; i < notification.Actions.Count; i++)
         {
             float width = skin.Font.Measure(notification.Actions[i].Label, scale, markup: false).X + PADDING * 2.0f;
             if (i == action)
@@ -296,8 +297,19 @@ public class Notifications : UIComponent
             {
                 UIRect button = ActionBounds(bounds, card, action, skin);
                 bool lit = button.Contains(pointer);
-                list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
-                list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+
+                // Only the first in the accent, the rest a quiet fill of the text's colour. Three gold buttons had none of
+                // them the one to press
+                if (action == 0)
+                {
+                    list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
+                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+                }
+                else
+                {
+                    list.RoundRect(button, skin.CornerRadius, skin.TextColor with { W = (lit ? 0.18f : 0.1f) * card.Alpha });
+                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
+                }
             }
 
             list.PopVisual();

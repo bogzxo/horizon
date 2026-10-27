@@ -35,12 +35,21 @@ public sealed class UIDialog : Panel
     private const float TITLE_SCALE = 1.25f;
     private const float TEXT_SCALE = 0.95f;
 
-    private static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.55f);
-
-    // A palette's shade is a hint of one, it's a quick thing and what's behind it is still what's being worked on, and its
-    // card hangs this far under the top of the module rather than in the middle
-    private static readonly Vector4 PaletteShade = new(0.02f, 0.03f, 0.05f, 0.22f);
+    // A palette dims nothing, it's a quick thing and what's behind it is still what's being worked on (it still takes the
+    // pointer). Its card hangs this far under the top of the module rather than in the middle. A question has the soft
+    // dim of every modal thing (UIScrim), it was nearly black
+    private static readonly Vector4 PaletteShade = Vector4.Zero;
     private const float PALETTE_DROP = 88.0f;
+
+    /// <summary>
+    /// Whether what's behind it is dimmed, true as it comes. Peek is shown over the code it's about and dims nothing,
+    /// it still takes the pointer.
+    /// </summary>
+    public bool Dims
+    {
+        get => Color is { W: > 0.0f };
+        set => Color = value ? UIScrim.Shade : Vector4.Zero;
+    }
 
     // Whether it's shown as a palette, see ShowPalette
     private bool palette;
@@ -90,7 +99,7 @@ public sealed class UIDialog : Panel
         // The shade over everything, which also stops the pointer getting through, eased in with the card rather than
         // slammed on under it
         Fill = UIFill.Both;
-        Color = Shade;
+        Color = UIScrim.Shade;
         Intro = UIIntro.Fade;
         IntroTime = 0.16f;
 
@@ -119,21 +128,19 @@ public sealed class UIDialog : Panel
             made[i] = new Button(choices[i].Label) { OnPressed = () => Pick(index) };
         }
 
-        // The first is the one to press when there's a choice, the last is what Escape picks. A risky first one isn't
-        // pressed by a key, the last is the one to press then
-        int primary = made.Length > 1 ? (choices[0].Risky ? made.Length - 1 : 0) : -1;
+        // The first is the one to press when there's a choice, in the accent, the last is what Escape picks. A risky one is
+        // in the skin's red and never the one the keyboard starts on, a risky first one leaves the keyboard on the last
+        // (Cancel, plain) and nothing in the accent. Reset all had Cancel in the accent and Reset all plain next to it
+        int primary = made.Length > 1 && !choices[0].Risky ? 0 : -1;
         if (primary >= 0)
             made[primary].Primary = true;
+        for (int i = 0; i < made.Length; i++)
+            made[i].Danger = choices[i].Risky;
 
-        // Along the bottom the rest in the order they were given from the right, and the one to press at the right end,
-        // the way every dialog of the engine's has them (Cancel, Don't save, Save). It was first, at the left
+        // Along the bottom in the order they were given from the right, the first at the right end, the way every dialog
+        // of the engine's has them (Cancel, Don't save, Save) and (Cancel, Reset all)
         for (int i = made.Length - 1; i >= 0; i--)
-        {
-            if (i != primary)
-                buttons.Add(made[i]);
-        }
-        if (primary >= 0)
-            buttons.Add(made[primary]);
+            buttons.Add(made[i]);
 
         Buttons = made;
     }
@@ -175,8 +182,9 @@ public sealed class UIDialog : Panel
         dialog.scopeBefore = navigation.Scope;
         dialog.selectedBefore = navigation.Current;
         navigation.Scope = dialog;
-        if (dialog.Buttons.FirstOrDefault(button => button.Primary) is { } primary)
-            navigation.Select(primary);
+        Button? starting = dialog.Buttons.FirstOrDefault(button => button.Primary) ?? dialog.Buttons.LastOrDefault();
+        if (starting is not null)
+            navigation.Select(starting);
         else
             navigation.SelectFirst();
 
@@ -184,7 +192,7 @@ public sealed class UIDialog : Panel
         // went on to what was behind it (Enter added a line to the code under a question), and the Enter that picked
         // Close in the palette pressed Save in the question it asked
         dialog.focusBefore = module.Compositor.Focus;
-        (dialog.Buttons.FirstOrDefault(button => button.Primary) ?? dialog.Buttons.LastOrDefault())?.Focus();
+        starting?.Focus();
 
         dialog.PlayIntro();
         return dialog;

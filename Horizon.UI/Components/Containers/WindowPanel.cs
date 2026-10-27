@@ -47,9 +47,15 @@ public partial class WindowPanel : Panel
     public bool Movable { get; set; } = true;
 
     /// <summary>How tall its title bar is.</summary>
-    public float TitleHeight { get; set; } = 26.0f;
+    public float TitleHeight { get; set; } = TITLE_HEIGHT;
 
-    /// <summary>The scale of the title, or zero for a little smaller than the skin's.</summary>
+    /// <summary>
+    /// How tall a title bar is as it comes, and how much bigger than the skin's its words are. Every window has the one
+    /// title bar, the settings' one. The keys and the dialogs had a little 26 with a speck of an icon and a smaller title.
+    /// </summary>
+    public const float TITLE_HEIGHT = 36.0f, TITLE_TEXT = 1.1f;
+
+    /// <summary>The scale of the title, or zero for the skin's a touch bigger (<see cref="TITLE_TEXT"/>).</summary>
     public float TextScale { get; set; }
 
     /// <summary>Called once its x was clicked and it was hidden.</summary>
@@ -98,7 +104,7 @@ public partial class WindowPanel : Panel
         return true;
     }
 
-    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
+    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * TITLE_TEXT;
 
     protected override Vector2 Measure(UISkin skin) => base.Measure(skin) + new Vector2(0.0f, TitleHeight);
 
@@ -268,38 +274,39 @@ public partial class WindowPanel : Panel
         OnClosed?.Invoke();
     }
 
-    // Whoever had the keyboard before the window took it, see TakeKeyboard
-    private UIComponent? keyboardBefore;
+    /// <summary>
+    /// Whoever had the keyboard before it came into the window, from outside of it. The compositor notes it as the
+    /// keyboard comes in and hands it back as the window closes, is hidden or is taken out of the UI with the keyboard
+    /// still in it, whichever window it was (the settings, the keys, Set Up F5). Only About had it given back, and Escape
+    /// out of the rest left the keyboard on nothing.
+    /// </summary>
+    internal UIComponent? KeyboardBefore { get; set; }
 
     /// <summary>
     /// Has the keyboard come to the window itself, for one with nothing in it that takes it (About, a page of help), so
     /// the first Escape closes it and no key goes on to what's behind. It took two, the first only let go of the code
     /// under it. Whoever had the keyboard gets it back as the window closes, while it's still somewhere in the window.
     /// </summary>
-    public void TakeKeyboard()
-    {
-        if (Module is not { } module)
-            return;
-
-        keyboardBefore = module.Compositor.Focus;
-        Focus();
-    }
+    public void TakeKeyboard() => Focus();
 
     private void GiveKeyboardBack()
     {
-        UIComponent? before = keyboardBefore;
-        keyboardBefore = null;
-        if (before is not { Module: not null } || Module is not { } module)
+        if (Module is not { } module || module.Compositor.Focus is not { } focus || !Holds(focus))
             return;
 
-        for (UIComponent? at = module.Compositor.Focus; at is not null; at = at.Parent)
+        module.Compositor.Focus = UICompositor.KeyboardAfter(this);
+    }
+
+    /// <summary>Whether a component is the window or somewhere inside it.</summary>
+    public bool Holds(UIComponent component)
+    {
+        for (UIComponent? at = component; at is not null; at = at.Parent)
         {
             if (at == this)
-            {
-                before.Focus();
-                return;
-            }
+                return true;
         }
+
+        return false;
     }
 
     // Escape with the keyboard in it (its filter box, say) closes one with an x, as the x would. The first press only let

@@ -21,6 +21,14 @@ internal sealed partial class MenuPanel
     private const float CHECK_WIDTH = 22.0f;
     private const float SHORTCUT_GAP = 28.0f;
 
+    // How far in from the sides of the list the highlight of an item is, and the rules between groups the same, a rule
+    // was further in than the highlight
+    private const float HIGHLIGHT_INSET = 4.0f;
+
+    // Where an item's words start from the start of its row, after the room of its icon or tick (as tall as six tenths
+    // of the row) and a gap. A tick in a tall row ran into the words
+    private static float Lead(float row) => MathF.Max(CHECK_WIDTH, MathF.Round(row * 0.6f) + 4.0f);
+
     // How tall a separator is against an item
     private const float SEPARATOR_SHARE = 0.4f;
 
@@ -150,6 +158,14 @@ internal sealed partial class MenuPanel
     {
         PlaceIfChanged(skin, frame);
         child?.Track(skin, frame, pointer);
+
+        // The keys have the say until the pointer moves, a pointer left resting on an item doesn't open it under them
+        tracked = pointer;
+        if (KeysHave)
+        {
+            Moved(pointer);
+            return;
+        }
 
         // Somewhere in the list that is open off this one, it stays open
         if (child is not null && child.Contains(pointer))
@@ -342,9 +358,11 @@ internal sealed partial class MenuPanel
                 if (item.IsSeparator || !item.Enabled)
                     continue;
 
-                if (pass == 0 ? inView && area.Contains(pointer) : childIndex == i)
+                // The keys' item while they have the say, otherwise the pointer's
+                bool lit = KeysHave ? keyed == i : inView && area.Contains(pointer);
+                if (pass == 0 ? lit : childIndex == i)
                 {
-                    target = area.Shrink(new UIEdges(4.0f, 1.0f));
+                    target = area.Shrink(new UIEdges(HIGHLIGHT_INSET, 1.0f));
                     any = true;
                 }
             }
@@ -413,7 +431,7 @@ internal sealed partial class MenuPanel
             if (item.IsSeparator)
             {
                 float middle = MathF.Round(area.Center.Y);
-                list.Rect(new UIRect(new Vector2(area.Min.X + ITEM_PADDING, middle), new Vector2(area.Max.X - ITEM_PADDING, middle + 1.0f)), dim);
+                list.Rect(new UIRect(new Vector2(area.Min.X + HIGHLIGHT_INSET, middle), new Vector2(area.Max.X - HIGHLIGHT_INSET, middle + 1.0f)), dim);
                 continue;
             }
 
@@ -430,7 +448,7 @@ internal sealed partial class MenuPanel
             else if (item.Icon.Length > 0)
                 list.Symbol(item.Icon, mark, color);
 
-            UIRect text = new(new Vector2(content.Min.X + CHECK_WIDTH, content.Min.Y), content.Max);
+            UIRect text = new(new Vector2(content.Min.X + Lead(row), content.Min.Y), content.Max);
             // Cut short only in a list narrower than its longest item, the room its keys take measured only then
             string label = naturalWidth <= bounds.Width + 0.5f ? item.Label : Fitted(skin, item.Label, text.Width - EndWidth(skin, item, row));
             list.Text(label, text, Origin.Left, scale, color, markup: false);

@@ -452,7 +452,7 @@ public sealed partial class LanguageServer : IDisposable
 
         // serve-d's label says how many overloads in markdown's italics, "(*2 overloads*)", which read with the stars
         string shown = label.Replace("(*", "(", StringComparison.Ordinal).Replace("*)", ")", StringComparison.Ordinal);
-        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])));
+        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])), KindOf(JsonNumbers.Int(item["kind"], 0)));
     }
 
     // How much of what an item does goes beside the list

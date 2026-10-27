@@ -75,6 +75,12 @@ public class Button : UIComponent
     public bool Primary { get; set; }
 
     /// <summary>
+    /// Whether what it does can't be taken back (Reset all, Don't save, Delete), filled with the skin's error red where
+    /// the skin has no art for a button. A dialog never has the keyboard start on one.
+    /// </summary>
+    public bool Danger { get; set; }
+
+    /// <summary>
     /// An edge of the button that gets a line in the accent colour while it is selected, the bar down the left of the
     /// view that is open in an activity bar, VS Code's. None for none, which is what a button comes as. In a layout
     /// <c>indicator: "left"</c>.
@@ -164,9 +170,9 @@ public class Button : UIComponent
         bool primary = false;
         if (stateArt || skin.TryGetRegion(style, out region))
             list.NineSlice(region, Bounds, tint);
-        else if (Primary)
+        else if (Primary || Danger)
         {
-            Vector4 accent = skin.AccentColor with { W = 1.0f };
+            Vector4 accent = FillOf(skin);
             list.Box(Bounds, (down ? accent * 0.85f : hovered ? Vector4.Lerp(accent, Vector4.One, 0.12f) : accent) with { W = tint.W });
             primary = true;
         }
@@ -211,13 +217,16 @@ public class Button : UIComponent
             area,
             Align,
             LabelScale > 0.0f ? LabelScale : skin.TextScale,
-            (primary ? OnAccent(skin) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
+            (primary ? OnFill(skin, FillOf(skin)) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
         list.EndParts();
     }
 
-    // Whichever of the skin's text colours reads on its accent
-    private static Vector4 OnAccent(UISkin skin) =>
-        Horizon.UI.Skinning.UIPalette.Contrast(skin.BarTextColor, skin.AccentColor with { W = 1.0f }) >= Horizon.UI.Skinning.UIPalette.Contrast(skin.TextColor, skin.AccentColor with { W = 1.0f })
+    // The fill of a primary button, the accent, or the skin's error red for a dangerous one
+    private Vector4 FillOf(UISkin skin) => (Danger ? skin.ErrorColor : skin.AccentColor) with { W = 1.0f };
+
+    // Whichever of the skin's text colours reads on that fill
+    private static Vector4 OnFill(UISkin skin, Vector4 fill) =>
+        Horizon.UI.Skinning.UIPalette.Contrast(skin.BarTextColor, fill) >= Horizon.UI.Skinning.UIPalette.Contrast(skin.TextColor, fill)
             ? skin.BarTextColor : skin.TextColor;
 
     /// <summary>

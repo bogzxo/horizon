@@ -269,8 +269,8 @@ public class LanguageServerTests
         Assert.False(offered.Value.Incomplete);
         Assert.Equal(
         [
-            new UICompletion("alpha", "the first"),
-            new UICompletion("call", "method", "call(x, )"),
+            new UICompletion("alpha", "the first", Kind: "function"),
+            new UICompletion("call", "method", "call(x, )", Kind: "method"),
             new UICompletion("zeta"),
             new UICompletion("edited", Insert: "edited!")
         ], offered.Value.Items);
@@ -282,7 +282,7 @@ public class LanguageServerTests
         // After a dot, the server is told it was a dot
         offered = await server.Complete(file, 0, 2, start: 2, trigger: '.').WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(offered!.Value.Incomplete);
-        Assert.Equal([new UICompletion("member", "field")], offered.Value.Items);
+        Assert.Equal([new UICompletion("member", "field", Kind: "field")], offered.Value.Items);
     }
 
     [Fact]

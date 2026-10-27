@@ -566,11 +566,12 @@ public class TextBox : UIComponent
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, enabled && IsHovered && !focused ? 0.4f : 0.0f));
 
-            // A hairline rim, and while it's typed in a crisp line in the accent with a soft ring of it round the outside,
-            // the way a field that has the keyboard is drawn on a Mac. It was a thick frame of gold, which shouted. The
-            // ring is always painted, see-through when it isn't wanted, so the quads after it don't shift
+            // A hairline rim, and while it's typed in a crisp line in the accent, the one ring whatever has the keyboard
+            // gets. It was a thick frame of gold, which shouted, and then a soft ring round the outside of the line as well,
+            // two rings where a tree's row had one. The soft one's quad is still painted, see-through, so the quads after
+            // it don't shift
             float ring = FOCUS_RING;
-            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = focused ? 0.28f : 0.0f });
+            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = 0.0f });
             list.Frame(Bounds, 1.0f, focused ? skin.HighlightColor with { W = 0.85f } : skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 

@@ -196,7 +196,7 @@ public sealed class Menu(string title)
 /// A menu that only means something some of the time says so with <see cref="Menu.IsVisible"/> and is left off the
 /// bar the rest of it. A layout only says where the bar goes (<c>compositor.menu_bar</c>), what is in it is up to the program.
 /// </summary>
-public class MenuBar : UIComponent
+public partial class MenuBar : UIComponent
 {
     private const float TITLE_PADDING = 12.0f;
 
@@ -234,7 +234,7 @@ public class MenuBar : UIComponent
 
     private float TextScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
-    private float TitleWidth(UISkin skin, Menu menu) => skin.Font.Measure(menu.Title, TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
+    private float TitleWidth(UISkin skin, Menu menu) => skin.Font.Measure(TitleShown(menu.Title), TextScaleOf(skin), markup: false).X + TITLE_PADDING * 2.0f;
 
     protected override Vector2 Measure(UISkin skin)
     {
@@ -318,6 +318,7 @@ public class MenuBar : UIComponent
 
         open = index;
         panel = null;
+        armed = false;
         OpenPopup();
     }
 
@@ -328,6 +329,7 @@ public class MenuBar : UIComponent
     {
         closingPanel = panel ?? closingPanel;
         panel = null;
+        armed = false;
     }
 
     protected internal override bool PaintClosing(UIDrawList list, ref float closedAt)
@@ -349,6 +351,7 @@ public class MenuBar : UIComponent
         closingPanel = panel ?? closingPanel;
         open = -1;
         panel = null;
+        armed = false;
         ClosePopup();
     }
 
@@ -367,13 +370,14 @@ public class MenuBar : UIComponent
                 continue;
 
             UIRect title = TitleBounds(i);
-            bool shown = OpenMenu == menus[i];
+            bool shown = OpenMenu == menus[i] || (armed && hot == i);
 
             // The word of the open menu stays lit, the others light up under the pointer
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(title, shown ? skin.TextColor with { W = ListBox.PICKED } : IsHovered && title.Contains(pointer) ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            list.Text(menus[i].Title, title, Origin.Center, scale, skin.TextColor, markup: false);
+            list.Text(TitleShown(menus[i].Title), title, Origin.Center, scale, skin.TextColor, markup: false);
+            PaintMnemonic(list, skin, menus[i], title, scale);
         }
 
         list.EndParts();
@@ -391,8 +395,11 @@ public class MenuBar : UIComponent
 
     protected override void Update(float dt)
     {
-        // Going along the bar with a menu open opens the menu of the word the pointer is on, the way every menu bar does
-        if (OpenMenu is null || !IsHovered)
+        UpdateAlt();
+
+        // Going along the bar with a menu open opens the menu of the word the pointer is on, the way every menu bar does.
+        // Not while the keys have it and the pointer hasn't moved, or Right from the menu under it opened it again
+        if (OpenMenu is null || !IsHovered || !PointerMovedSinceKeys)
             return;
 
         Vector2 pointer = Pointer;
