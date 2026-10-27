@@ -143,6 +143,10 @@ public partial class CodeEditor
             CodeRow shown = rows[index];
             float rowTop = top - (index - scrolledRows) * row;
             minimapRowTops.Add(ScreenY(rowTop));
+
+            // A lens row is a gap in the minimap, its line is drawn on the row after it
+            if (shown.Lens)
+                continue;
             string text = document.LineAt(shown.Line);
             MinimapWord[] words = WordsOf(shown.Line, text, colors);
 
@@ -290,6 +294,8 @@ public partial class CodeEditor
         {
             CodeRow shown = rows[index];
             float top = map.Max.Y - (index - scrolledRows) * row;
+            if (shown.Lens)
+                continue;
 
             if (changedLines.TryGetValue(shown.Line, out UILineChangeKind kind))
                 list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Min.X + 2.0f, top)), ChangeColour(kind, skin));

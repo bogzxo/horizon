@@ -16,7 +16,11 @@ public readonly record struct LanguageServerPlace(string Path, int Line, int Cha
 }
 
 /// <summary>Something a file declares, its name, what kind of thing it is, more about it, where, and what it declares inside it.</summary>
-public sealed record LanguageServerSymbol(string Name, string Kind, string Detail, int Line, int Character, IReadOnlyList<LanguageServerSymbol> Children);
+public sealed record LanguageServerSymbol(string Name, string Kind, string Detail, int Line, int Character, IReadOnlyList<LanguageServerSymbol> Children)
+{
+    /// <summary>The line the whole of it starts on, its attributes and all, the name's own line when the server doesn't say.</summary>
+    public int StartLine { get; init; } = Line;
+}
 
 // Asking a server about the code rather than telling it, what a name is (hover), where it's declared and everywhere it's
 // used, what a file declares, and what the call the caret is in takes. Each answers null or nothing for a server that
@@ -211,9 +215,10 @@ public sealed partial class LanguageServer
     private static LanguageServerSymbol SymbolOf(JsonObject symbol)
     {
         var (line, character, _, _) = (symbol["selectionRange"] ?? symbol["range"]) is JsonObject range ? RangeOf(range) : (0, 0, 0, 0);
+        int start = symbol["range"] is JsonObject whole ? Math.Min(RangeOf(whole).Line, line) : line;
         return new LanguageServerSymbol(symbol["name"]?.GetValue<string>() ?? string.Empty, SymbolKindOf(JsonNumbers.Int(symbol["kind"], 0)),
             symbol["detail"]?.GetValue<string>() ?? string.Empty, line, character,
-            symbol["children"] is JsonArray children ? [.. children.OfType<JsonObject>().Select(SymbolOf)] : []);
+            symbol["children"] is JsonArray children ? [.. children.OfType<JsonObject>().Select(SymbolOf)] : []) { StartLine = start };
     }
 
     /// <summary>What kind of thing a symbol is, by the protocol's numbers, the way a codicon is named (symbol-class).</summary>

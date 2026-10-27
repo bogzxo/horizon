@@ -15,8 +15,11 @@ public partial class CodeEditor
     // How many lines are held at the top at the most
     private const int MAX_STICKY = 4;
 
-    /// <summary>A row the code is drawn in, a piece of a line from one column to another, so far in from the left.</summary>
-    private readonly record struct CodeRow(int Line, int Start, int End, float Indent);
+    /// <summary>
+    /// A row the code is drawn in, a piece of a line from one column to another, so far in from the left. A lens row has
+    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove).
+    /// </summary>
+    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false);
 
     private readonly List<CodeRow> rows = [];
 
@@ -25,7 +28,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -66,6 +69,11 @@ public partial class CodeEditor
 
     /// <summary>How many rows the code takes as it's drawn, more than its lines when they wrap, fewer when some are folded.</summary>
     public int RowCount => rows.Count;
+
+    /// <summary>How many of the rows are the room over a line for its lenses (CodeEditor.LensesAbove) rather than any of the code.</summary>
+    public int LensRowCount => lensRows;
+
+    private int lensRows;
 
     /// <summary>The lines that are folded, by the line each opens on.</summary>
     public IReadOnlyCollection<int> FoldedLines => folded;
@@ -244,7 +252,7 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -263,8 +271,17 @@ public partial class CodeEditor
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         int columns = wordWrap ? Math.Max(8, (int)((width - TEXT_PAD * 2.0f) / MathF.Max(1.0f, digit))) : int.MaxValue;
 
+        int lens = 0;
+        lensRows = 0;
         for (int line = 0; line < count; line++)
         {
+            // A line with lenses has a row over it for them, the line itself starts on the row after
+            if (lensesAbove.Count > 0 && LensAboveOn(line, ref lens))
+            {
+                rows.Add(new CodeRow(line, 0, 0, 0.0f, Lens: true));
+                lensRows++;
+            }
+
             lineRow[line] = rows.Count;
             string text = document.LineAt(line);
             AddRows(line, text, columns, digit);

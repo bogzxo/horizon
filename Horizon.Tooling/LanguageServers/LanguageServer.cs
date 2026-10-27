@@ -169,6 +169,7 @@ public sealed partial class LanguageServer : IDisposable
                 },
                 ["definition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
                 ["references"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["codeLens"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["inlayHint"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["semanticTokens"] = SemanticCapabilities(),
                 ["documentSymbol"] = new JsonObject { ["dynamicRegistration"] = false, ["hierarchicalDocumentSymbolSupport"] = true },

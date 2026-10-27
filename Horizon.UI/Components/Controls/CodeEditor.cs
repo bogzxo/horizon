@@ -733,6 +733,7 @@ public partial class CodeEditor : UIComponent
         };
         document.LinesMoved += MoveDiagnostics;
         document.LinesMoved += MoveInlays;
+        document.LinesMoved += MoveLensesAbove;
     }
 
     public CodeEditor(string text)
@@ -1214,6 +1215,7 @@ public partial class CodeEditor : UIComponent
         UITextPosition caret = document.Caret;
         EnsureRows(skin, scale);
         float top = RowOf(caret.Line, caret.Column) * lineHeight;
+        float lensTop = top - LensRoomAbove(caret.Line, caret.Column, lineHeight);
 
         // The caret has the say, wherever the wheel was taking it. A line or a few it went off the edge are eased into
         // sight the way the wheel's are, a page or more away is gone to at once. A line at a time it jumped, and the
@@ -1225,7 +1227,7 @@ public partial class CodeEditor : UIComponent
             scrollGoal = null;
             scrollY = top - area.Height * 0.4f;
         }
-        else if ((top < from ? top : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
+        else if ((lensTop < from ? lensTop : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
         {
             if (MathF.Abs(wanted - scrollY) > area.Height)
             {
@@ -1339,6 +1341,13 @@ public partial class CodeEditor : UIComponent
                 if (Tooltip.Length > 0) Tooltip = string.Empty;
                 return;
             }
+        }
+
+        // A lens row over a line has none of the line on it to say anything about
+        if (OverLensRow(pointer))
+        {
+            if (Tooltip.Length > 0) Tooltip = string.Empty;
+            return;
         }
 
         UITextPosition at = PositionAt(pointer);
@@ -2268,6 +2277,8 @@ public partial class CodeEditor : UIComponent
         {
             CodeRow row = rows[index];
             float top = RowTop(area, index, lineHeight);
+            if (row.Lens)
+                continue;
 
             if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
@@ -2342,6 +2353,8 @@ public partial class CodeEditor : UIComponent
         for (int index = first; index <= last; index++)
         {
             CodeRow row = rows[index];
+            if (row.Lens)
+                continue;
             list.BeginPart(HashCode.Combine(row.Line, row.Start) & 0x3FFFFFFF);
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
@@ -2388,6 +2401,9 @@ public partial class CodeEditor : UIComponent
             if (rowEnd == written.Length && folded.Contains(row.Line) && foldable.TryGetValue(row.Line, out int foldEnd))
                 PaintFolded(list, skin, scale, x, top, lineHeight, foldEnd, colors);
         }
+
+        // The lenses over the lines, on the rows left for them
+        PaintLensesAbove(list, skin, scale, area, left, lineHeight, first, last, colors);
 
         // The colours written in the code, a swatch at the end of their line
         list.BeginPart(PART_SWATCHES);
@@ -2466,6 +2482,8 @@ public partial class CodeEditor : UIComponent
             for (int index = first; index <= last; index++)
             {
                 CodeRow row = rows[index];
+                if (row.Lens)
+                    continue;
 
                 // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
                 if ((changedLines.Count > 0 || deletedBefore.Count > 0) && (row.Start == 0 || index == first))
@@ -2821,6 +2839,8 @@ public partial class CodeEditor : UIComponent
         }
 
         int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
+        if (rows[top].Lens && top + 1 < rows.Count)
+            top++;
         zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
     }
 
@@ -2859,7 +2879,7 @@ public partial class CodeEditor : UIComponent
     {
         int line = rows[index].Line;
         int from = index, to = index;
-        while (from > 0 && rows[from - 1].Line == line) from--;
+        while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens) from--;
         while (to + 1 < rows.Count && rows[to + 1].Line == line) to++;
 
         float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
