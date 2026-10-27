@@ -60,6 +60,12 @@ public class TabPanel : UIComponent
     /// </summary>
     public Action<bool>? OnFold { get; set; }
 
+    /// <summary>What the chevron says under the pointer while the panel is open, nothing for nothing.</summary>
+    public string FoldTip { get; set; } = string.Empty;
+
+    /// <summary>What the chevron says under the pointer while the panel is folded, nothing for nothing.</summary>
+    public string UnfoldTip { get; set; } = string.Empty;
+
     // How long folding it down or opening it up takes, a drawer's time, see UIComponent.Sliding
     private const float FOLD_TIME = DEFAULT_SLIDE_TIME + 0.04f;
 
@@ -110,6 +116,10 @@ public class TabPanel : UIComponent
             foldProgress = folded ? MathF.Min(1.0f, foldProgress + step) : MathF.Max(0.0f, foldProgress - step);
         }
 
+        // The chevron's tooltip while the pointer is on it, the panel's own (none) anywhere else
+        if (OnFold is not null && Module is { } module)
+            Tooltip = IsHovered && FoldBounds.Contains(module.ToLocal(module.Compositor.Pointer.Position)) ? Folded ? UnfoldTip : FoldTip : string.Empty;
+
         base.Update(dt);
     }
 
@@ -138,7 +148,9 @@ public class TabPanel : UIComponent
                 return default;
 
             UIRect header = HeaderBounds;
-            float side = header.Height;
+
+            // A little wider than tall, so lit it's a pill like the tabs' and not a circle beside them
+            float side = MathF.Round(header.Height * 1.4f);
             return new UIRect(new Vector2(header.Max.X - side, header.Min.Y), header.Max);
         }
     }
@@ -368,12 +380,13 @@ public class TabPanel : UIComponent
 
         list.EndParts();
 
-        // The chevron that folds it, quiet, lit under the pointer, always painted while it's there so the quads don't shift
+        // The chevron that folds it, quiet, lit under the pointer, always painted while it's there so the quads don't shift.
+        // Lit the shape a tab is lit, the same way in from the strip's edges, it was a circle beside the tabs' pills
         if (OnFold is not null)
         {
             UIRect fold = FoldBounds;
             bool over = IsHovered && fold.Contains(pointer);
-            list.Box(fold.Shrink(new UIEdges(3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
+            list.Box(fold.Shrink(new UIEdges(2.0f, 3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
             float side = MathF.Round(fold.Height * 0.5f);
             list.Symbol(Folded ? "chevron-up" : "chevron-down", UIRect.FromCenter(fold.Center, new Vector2(side)), over ? skin.TextColor : dim);
         }

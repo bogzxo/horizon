@@ -435,6 +435,11 @@ public partial class SettingsPage
             UIRect pill = Bounds.Shrink(new UIEdges(0.0f, 1.0f));
             list.Box(pill, list.Skin.TextColor with { W = current ? 0.1f : 0.05f * hover });
 
+            // The open one has a bar of the text's colour down its left as well, the activity bar's, so it can't be taken
+            // for the one the pointer happens to be on. The two pills alone were two rows lit near enough the same
+            Vector4 bar = list.Skin.TextColor with { W = current ? 0.85f : 0.0f };
+            list.Rect(new UIRect(new Vector2(pill.Min.X, pill.Min.Y + 4.0f), new Vector2(pill.Min.X + 2.0f, pill.Max.Y - 4.0f)), bar);
+
             // The ring of the keyboard round the pill, inside it so the sidebar's edge doesn't cut it off, there and
             // see-through without the keyboard for the same reason
             Vector4 ring = list.Skin.Palette.Highlight;

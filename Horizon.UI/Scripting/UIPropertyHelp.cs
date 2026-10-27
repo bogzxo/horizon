@@ -55,6 +55,8 @@ public static class UIPropertyHelp
         ["style"] = "which piece of the skin's art it wears, the ... button shows them all to pick one by eye. A style is the name less what its pieces end in (_hover, _on, _frame)",
         ["align"] = "where in its box the text sits, left, center, right, top_left and so on",
         ["bold"] = "whether its line of text is written in bold, a heading's",
+        ["dim"] = "whether its text is in the dim colour of the theme when it has no colour of its own, a heading of a side bar or a caption",
+        ["max_tab_width"] = "the most a tab is wide, a longer title cut short in the middle with dots, 0 for as wide as its title",
         ["icon_color"] = "the colour of its icon, the skin's accent if it is left at nothing",
         ["window_buttons"] = "whether it has the window's minimise, maximise and close at its right end",
         ["closable"] = "whether its title bar has an x that closes it",

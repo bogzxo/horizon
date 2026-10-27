@@ -123,7 +123,10 @@ public class Slider : ProgressBar
         float knob = MathF.Min(KNOB, Bounds.Height);
         float left = Bounds.Min.X + knob * 0.5f, right = Bounds.Max.X - knob * 0.5f;
         float y = Bounds.Center.Y, x = left + (right - left) * Progress;
-        var groove = new UIRect(new Vector2(left, y - GROOVE * 0.5f), new Vector2(right, y + GROOVE * 0.5f));
+
+        // The groove runs the whole width, so its ends are where a toggle's or a dropdown's are in a column of them. It
+        // stopped half a knob short of either end, the knob's middle still goes no further than that
+        var groove = new UIRect(new Vector2(Bounds.Min.X, y - GROOVE * 0.5f), new Vector2(Bounds.Max.X, y + GROOVE * 0.5f));
 
         list.RoundRect(groove, GROOVE * 0.5f, skin.TextColor with { W = 0.16f } * tint);
         list.RoundRect(new UIRect(groove.Min, new Vector2(MathF.Max(groove.Min.X + GROOVE, x), groove.Max.Y)), GROOVE * 0.5f, skin.AccentColor * tint);

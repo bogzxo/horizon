@@ -38,6 +38,13 @@ public class Label : UIComponent
     /// <summary>The colour of the text, or null to use the skin's.</summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>
+    /// Whether the text is in the skin's dim colour when it has no colour of its own, the one every quiet line of a theme
+    /// is in (a heading of a side bar, a caption, a note). A layout says <c>dim: true</c> rather than a colour of its own
+    /// that stays the same whatever the theme.
+    /// </summary>
+    public bool Dim { get; set; }
+
     /// <summary>Where the text goes when the label is bigger than it.</summary>
     public Origin Align { get; set; } = Origin.Center;
 
@@ -254,7 +261,7 @@ public class Label : UIComponent
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
-        Vector4 color = Color ?? skin.TextColor;
+        Vector4 color = Color ?? (Dim ? skin.DimTextColor : skin.TextColor);
         string text = Resolve(Text);
 
         if (drawnRich)
@@ -285,6 +292,7 @@ public class Label : UIComponent
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("bold", () => Bold, value => Bold = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
+        Expose("dim", () => Dim, value => Dim = value);
         Expose("wrap", () => Wrap, value => Wrap = value);
         Expose("markdown", () => Markdown, value => Markdown = value);
         Expose("code_language", () => CodeLanguage ?? string.Empty, value => CodeLanguage = string.IsNullOrWhiteSpace(value) ? null : value);

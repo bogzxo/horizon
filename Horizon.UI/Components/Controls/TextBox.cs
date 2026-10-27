@@ -635,7 +635,7 @@ public class TextBox : UIComponent
         // A box with something said over it (a path's crumbs) shows its text only while it's typed in
         bool shown = focused || !TextWhileTyped;
         if (shown && !empty && !focused && width > content.Width)
-            list.Text(Tail(skin, scale, content.Width), content, Origin.Left, scale, ink * tint, markup: false);
+            list.Text(Tail(skin, scale, content.Width - 4.0f), content, Origin.Left, scale, ink * tint, markup: false);
         else if (shown && !empty)
             list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
         else if (shown)

@@ -38,7 +38,7 @@ internal sealed partial class SettingRow
         // capital, "None" and "Horizon", whatever its value is written as. They were lowercase beside the rest of the
         // page's words, and ff_only read "Ff only"
         // The whole of the column down the right, so its right end is where every other row's control ends
-        var dropdown = Put(new RowDropdown(this, setting.Choices ?? []) { Size = new Vector2(MathF.Min(width, ControlColumn), page.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, OptionText = setting.LabelOf });
+        var dropdown = Put(new RowDropdown(this, setting.Choices ?? []) { Size = new Vector2(width, page.RowControlHeight), TextScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left, OptionText = setting.LabelOf });
 
         // What the one picked does, on a line under its sentence the way VS Code says what a value of a setting is, and
         // only for a setting whose choices say so. The colour of the sentence over it, dim as well it was hard to read

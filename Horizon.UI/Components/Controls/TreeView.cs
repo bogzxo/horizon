@@ -61,6 +61,12 @@ public sealed partial class UITreeItem
     /// <summary>A line down the row's left edge in this colour, the bar a changed setting has. Null for none.</summary>
     public Vector4? Edge { get; set; }
 
+    /// <summary>
+    /// Whether the row is drawn as a button, a box with an edge round it that lights under the pointer, so a row that
+    /// does something reads as one (Source Control's Commit under a repository's heading).
+    /// </summary>
+    public bool Button { get; set; }
+
     // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
     internal string? fittedOf;
     internal float fittedRoom;
@@ -210,6 +216,9 @@ public partial class TreeView : UIComponent
     /// <summary>A right click on a row, with where the pointer is.</summary>
     public Action<UITreeItem, Vector2>? OnItemContextMenu { get; set; }
 
+    /// <summary>A right click under the rows, on no row at all, with where the pointer is. The explorer's New File and Refresh.</summary>
+    public Action<Vector2>? OnEmptyContextMenu { get; set; }
+
     /// <summary>
     /// Where a row is on screen right now (in the module's units, like <see cref="UIComponent.Bounds"/>), null if it isn't
     /// showing or is scrolled out of sight. For a test pointing at a row, or something laid over one.
@@ -249,7 +258,10 @@ public partial class TreeView : UIComponent
         OnContextMenu = point =>
         {
             if (RowAt(point) is not { } at)
+            {
+                OnEmptyContextMenu?.Invoke(point);
                 return;
+            }
 
             // One of several selected keeps them all, the menu is for all of them
             if (!IsSelected(at))
@@ -271,6 +283,7 @@ public partial class TreeView : UIComponent
     public void Refresh()
     {
         rows.Clear();
+        hasWraps = false;
         foreach (UITreeItem item in items)
             Flatten(item, null, 0);
 
@@ -283,6 +296,12 @@ public partial class TreeView : UIComponent
     private void Flatten(UITreeItem item, UITreeItem? parent, int depth)
     {
         item.Parent = parent;
+        if (item.Wraps)
+        {
+            FlattenNote(item, parent, depth);
+            return;
+        }
+
         rows.Add((item, depth));
         if (!item.Expanded || item.Children is null)
             return;
@@ -441,6 +460,7 @@ public partial class TreeView : UIComponent
 
     protected override void Update(float dt)
     {
+        RewrapNotes();
         sinceClick += dt;
         scroll = ease.Step(scroll, dt);
 
@@ -533,6 +553,14 @@ public partial class TreeView : UIComponent
             // quads and smeared across the tree as the pointer swept over it
             UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
             list.Box(pill, IsSelected(item) ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+
+            // A row that's a button has a box of its own over that. A row is one or it isn't for as long as it's there, so
+            // its quads don't come and go under the pointer
+            if (item.Button)
+            {
+                list.RoundRect(pill, skin.CornerRadius, skin.HoverColor);
+                list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.BorderColor);
+            }
 
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
             // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted

@@ -110,10 +110,10 @@ public class StatusBar : UIComponent
             return default;
 
         // The left ones from the left in their order, the right ones end at the right in theirs
-        float x = Bounds.Min.X;
+        float x = Bounds.Min.X + EDGE;
         if (item.Right)
         {
-            x = Bounds.Max.X;
+            x = Bounds.Max.X - EDGE;
             foreach (StatusItem other in items)
             {
                 if (other.Right && other.Shown)
@@ -122,7 +122,7 @@ public class StatusBar : UIComponent
         }
 
         // The left ones stop short of where the right ones start, a long message was written over them
-        float rightStart = Bounds.Max.X;
+        float rightStart = Bounds.Max.X - EDGE;
         if (!item.Right)
         {
             foreach (StatusItem other in items)
@@ -153,6 +153,10 @@ public class StatusBar : UIComponent
 
     // The room kept between the last of the left items and the first of the right
     private const float LEFT_GAP = 12.0f;
+
+    // The room kept between the items and the ends of the bar, so the pill of one with a colour behind it (the red of
+    // errors) doesn't run into the edge of the window with nothing in front of it
+    private const float EDGE = 6.0f;
 
     /// <summary>
     /// Helper method for what an item says cut to its room with three dots, all of it when it fits. A pixel either way

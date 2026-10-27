@@ -32,6 +32,11 @@ public sealed class StripTab
 
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
+
+    // The title cut short to the room it had last, kept until the title or the room changes
+    internal string? fittedOf;
+    internal float fittedRoom;
+    internal string fitted = string.Empty;
 }
 
 /// <summary>
@@ -109,11 +114,52 @@ public class TabStrip : UIComponent
 
     protected override Vector2 Measure(UISkin skin) => new(0.0f, MathF.Round(Line(skin) + TAB_PADDING * 1.6f));
 
+    /// <summary>
+    /// The most a tab is wide, its title cut short in the middle with dots past that so the start and the end of it (the
+    /// extension) still show. 0 for as wide as its title. One long name took most of the strip and pushed the rest off it.
+    /// </summary>
+    public float MaxTabWidth { get; set; }
+
     private float WidthOf(UISkin skin, StripTab tab)
     {
         float line = Line(skin);
         float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
-        return MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        return MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
+    }
+
+    // The dots a title cut short has in its middle
+    private const string CUT = "...";
+
+    /// <summary>Helper method for a tab's title in so much room, cut in the middle with dots, kept on the tab until either changes.</summary>
+    private static string Fitted(StripTab tab, UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(tab.fittedOf, tab.Title) && tab.fittedRoom == room)
+            return tab.fitted;
+
+        string title = tab.Title, shown = title;
+        if (skin.Font.Measure(title, scale, markup: false).X > room)
+        {
+            // As many characters of the end as of the start, a few more of the start when it's odd, the most that fit
+            float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+            int low = 0, high = title.Length;
+            while (low < high)
+            {
+                int keep = (low + high + 1) / 2;
+                int head = (keep + 1) / 2, tail = keep - head;
+                float wide = skin.Font.Measure(title.AsSpan(0, head), scale, markup: false).X + dots + skin.Font.Measure(title.AsSpan(title.Length - tail), scale, markup: false).X;
+                if (wide <= room)
+                    low = keep;
+                else
+                    high = keep - 1;
+            }
+
+            int start = (low + 1) / 2, end = low - start;
+            shown = title[..start] + CUT + title[(title.Length - end)..];
+        }
+
+        (tab.fittedOf, tab.fittedRoom, tab.fitted) = (title, room, shown);
+        return shown;
     }
 
     /// <summary>Where a tab is, in the module's units, scrolled along. Partly or wholly out of sight past the ends of a strip that is too short.</summary>
@@ -222,7 +268,10 @@ public class TabStrip : UIComponent
             // Always painted, see-through when not lit, so the quads after it don't shift
             list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
 
-            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : open ? skin.TextColor : dim;
+            // The title in its own colour (git's, say), the dot and the x in the strip's, so a file that's new to git and one
+            // with changes not saved can still be told apart. Both were the green of a new file
+            Vector4 plain = open ? skin.TextColor : dim;
+            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : plain;
             float x = area.Min.X + TAB_PADDING;
             float side = MathF.Round(line);
 
@@ -232,18 +281,20 @@ public class TabStrip : UIComponent
                 x += side + GAP;
             }
 
-            list.Text(tab.Title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
+            // Up to the x, cut in the middle with dots once the tab is at its most
+            UIRect close = CloseBounds(i);
+            string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
+            list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
 
             // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise
-            UIRect close = CloseBounds(i);
             bool onClose = over && close.Contains(pointer);
             if (onClose)
                 list.Box(close, skin.HoverColor);
 
             if (open || over)
-                list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), text);
+                list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), plain);
             else if (tab.Modified)
-                list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), text);
+                list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), plain);
         }
 
         list.EndParts();
@@ -299,5 +350,6 @@ public class TabStrip : UIComponent
         base.DefineScript();
 
         Expose("text_scale", () => TextScale, value => TextScale = value);
+        Expose("max_tab_width", () => MaxTabWidth, value => MaxTabWidth = MathF.Max(0.0f, value));
     }
 }

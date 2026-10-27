@@ -881,7 +881,9 @@ public class TerminalPanel : UIComponent, IDisposable
         var addArea = new UIRect(new Vector2(content.Max.X - stripHeight, content.Max.Y - stripHeight), content.Max);
         var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f)).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
-        add.ArrangeTree(addArea);
+
+        // In from the strip's edges as far as a tab's pill is, so the plus lights the shape the tabs do
+        add.ArrangeTree(addArea.Shrink(new UIEdges(2.0f, 3.0f)));
         room.ArrangeTree(roomArea);
     }
 

@@ -433,6 +433,41 @@ public sealed class UIFont
         // Text that ends without a line break still has its last line
         if (lineEnd > lineStart || lines.Count == 0)
             lines.Add((lineStart, lineEnd - lineStart));
+
+        KeepOffWidow(text, scale, maxWidth, lines, markup);
+    }
+
+    /// <summary>
+    /// Helper method so the last line isn't one word on its own when the line over it can spare one. "Type a new name and
+    /// press Enter to rename" and then "it" by itself. The word over it comes down when the two fit in the width, so the
+    /// count of lines stays what it was.
+    /// </summary>
+    private void KeepOffWidow(ReadOnlySpan<char> text, float scale, float maxWidth, List<(int Start, int Length)> lines, bool markup)
+    {
+        if (lines.Count < 2)
+            return;
+
+        var (lastStart, lastLength) = lines[^1];
+        var (overStart, overLength) = lines[^2];
+        ReadOnlySpan<char> last = text.Slice(lastStart, lastLength);
+        ReadOnlySpan<char> over = text.Slice(overStart, overLength);
+
+        // Only a single word last, broken from the line over it at a space rather than by a line break or in the middle of a
+        // word too long for a line, and a line over it with at least two words more so it isn't left with one either
+        ReadOnlySpan<char> between = text[(overStart + overLength)..lastStart];
+        if (last.Length == 0 || last.IndexOfAny(' ', '\t') >= 0 || between.Length == 0 || between.Contains('\n'))
+            return;
+
+        int cut = over.TrimEnd().LastIndexOf(' ');
+        if (cut <= 0 || over[..cut].TrimEnd().IndexOf(' ') < 0)
+            return;
+
+        int moved = overStart + cut + 1;
+        if (Measure(text[moved..(lastStart + lastLength)], scale, markup).X > maxWidth)
+            return;
+
+        lines[^2] = (overStart, over[..cut].TrimEnd().Length);
+        lines[^1] = (moved, lastStart + lastLength - moved);
     }
 
     /// <summary>
