@@ -723,6 +723,9 @@ public class TerminalPanel : UIComponent, IDisposable
     /// <summary>How far the picture is in from the right edge and up from the bottom one, as shares of the window's width and height.</summary>
     public Vector2 BackdropOffset { get; set; }
 
+    /// <summary>How wide the picture is against its own shape, 1 for the shape it has.</summary>
+    public float BackdropStretch { get; set; } = 1.0f;
+
     /// <summary>Helper method to hand the picture to the panes of the tab that's showing, with the room they take together.</summary>
     private void ShowBackdrop()
     {
@@ -747,6 +750,7 @@ public class TerminalPanel : UIComponent, IDisposable
             view.BackdropScale = BackdropScale;
             view.BackdropOpacity = BackdropOpacity;
             view.BackdropOffset = BackdropOffset;
+            view.BackdropStretch = BackdropStretch;
             view.BackdropArea = area;
         }
     }

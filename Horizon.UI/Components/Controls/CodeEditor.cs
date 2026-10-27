@@ -549,7 +549,7 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>Where the <see cref="Backdrop"/> is drawn in the text area, its bottom right corner moved by the offset.</summary>
     private UIRect BackdropBounds(UIRect area, Horizon.Graphics.Texture picture) =>
-        PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset);
+        PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset, BackdropStretch);
 
     /// <summary>
     /// Where a backdrop goes in an area, its bottom right corner moved in by the offset, the size and the offset both

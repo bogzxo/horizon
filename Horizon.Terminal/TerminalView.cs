@@ -52,6 +52,9 @@ public partial class TerminalView : UIComponent, IDisposable
 
     public Vector2 BackdropOffset { get; set; }
 
+    /// <summary>How wide the picture is against its own shape, 1 for the shape it has (see <see cref="CodeEditor.BackdropStretch"/>).</summary>
+    public float BackdropStretch { get; set; } = 1.0f;
+
     public UIRect? BackdropArea { get; set; }
 
     /// <summary>The middle of the cursor where it was last drawn, in the UI's units, for whoever throws sparks off it.</summary>
@@ -836,7 +839,7 @@ public partial class TerminalView : UIComponent, IDisposable
         if (Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f && !screen.AlternateScreen)
         {
             UIRect area = BackdropArea ?? Bounds;
-            UIRect placed = CodeEditor.PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset);
+            UIRect placed = CodeEditor.PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset, BackdropStretch);
             list.PushClip(Bounds);
             list.Image(picture, placed, new Vector4(1.0f, 1.0f, 1.0f, BackdropOpacity));
             list.PopClip();
