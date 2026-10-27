@@ -19,6 +19,9 @@ public sealed partial class UITreeItem
     /// <summary>A few words after the text, in the dim colour, how many there are of something or what it is.</summary>
     public string Detail { get; set; } = string.Empty;
 
+    /// <summary>Whether the detail has icons in it to draw, <c>$(arrow-down)</c> and <c>[icon:name]</c>, off for details that hold a name somebody gave something.</summary>
+    public bool DetailMarkup { get; set; }
+
     /// <summary>The colour of the detail, null for the dim one. A key in a list of keys, which is what the row is about.</summary>
     public Vector4? DetailColor { get; set; }
 
@@ -572,7 +575,7 @@ public partial class TreeView : UIComponent
             // The badge has its own room at the right end, and the buttons sit over the end of the text while they show
             float badge = BadgeWidth(item, skin, scale);
             float room = right - x - LEFT_PAD - badge;
-            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, markup: false).X + DETAIL_GAP : 0.0f;
+            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, item.DetailMarkup).X + DETAIL_GAP : 0.0f;
             if (detailWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth > room)
                 detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
 
@@ -615,8 +618,8 @@ public partial class TreeView : UIComponent
 
             if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - badge - (x + size.X + noteWidth + DETAIL_GAP)) is { Length: > 0 } said)
             {
-                Vector2 detail = skin.Font.Measure(said, scale, markup: false);
-                list.Text(said, new Vector2(x + size.X + noteWidth + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, item.DetailColor ?? dim, markup: false);
+                Vector2 detail = skin.Font.Measure(said, scale, item.DetailMarkup);
+                list.Text(said, new Vector2(x + size.X + noteWidth + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, item.DetailColor ?? dim, item.DetailMarkup);
             }
 
             if (actions)
@@ -690,12 +693,38 @@ public partial class TreeView : UIComponent
         if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
             return item.detailFitted;
 
+        // Icons in it are drawn whole or not at all, one too long for its room is cut short without them rather than in the
+        // middle of a tag
         string shown = item.Detail;
-        if (skin.Font.Measure(shown, scale, markup: false).X > room)
-            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(shown, skin, scale, room);
+        if (skin.Font.Measure(shown, scale, item.DetailMarkup).X > room)
+            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(item.DetailMarkup ? WithoutIcons(shown) : shown, skin, scale, room);
 
         (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
         return shown;
+    }
+
+    // Some text with its icons taken out, $(name) and [icon:name] both
+    private static string WithoutIcons(string text)
+    {
+        var plain = new System.Text.StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '[' && text.AsSpan(i).StartsWith("[icon:") && text.IndexOf(']', i) is var end and > 0)
+            {
+                i = end;
+                continue;
+            }
+
+            if (text[i] == '$' && text.AsSpan(i).StartsWith("$(") && text.IndexOf(')', i) is var close and > 0)
+            {
+                i = close;
+                continue;
+            }
+
+            plain.Append(text[i]);
+        }
+
+        return plain.ToString();
     }
 
     // As much of some text as fits with dots after it

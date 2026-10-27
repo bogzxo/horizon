@@ -360,8 +360,14 @@ public sealed partial class UIDrawList
         Vector2 clipMin = float.IsFinite(clip.Min.X) && float.IsFinite(clip.Min.Y) ? (clip.Min * visualScale + visualOffset) * scale + origin : new Vector2(float.NegativeInfinity);
         Vector2 clipMax = float.IsFinite(clip.Max.X) && float.IsFinite(clip.Max.Y) ? (clip.Max * visualScale + visualOffset) * scale + origin : new Vector2(float.PositiveInfinity);
 
-        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), opacity, bend * MathF.Abs(drawn.X)));
+        // Frosted well ahead of the rest fading in. Faded along with it, a menu coming in had the code behind it sharp
+        // through its half there text, the two sets of words on top of each other for the first few frames
+        float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
+        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X)));
     }
+
+    // How many times quicker a pane of glass comes in than what's painted over it, see Glass
+    private const float GLASS_LEAD = 3.0f;
 
     /// <summary>
     /// The silver lining of a pane of glass, a thin lit edge round a rounded rectangle, brightest along the top and the
