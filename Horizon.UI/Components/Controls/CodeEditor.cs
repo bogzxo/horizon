@@ -172,6 +172,13 @@ public partial class CodeEditor : UIComponent
     private (int Version, int Line, int Start) hoverFor = (-1, -1, -1);
     private string hoverText = string.Empty;
 
+    // How long the text has to stay the same before the hint is asked again after a change, and how long it has been. A
+    // hint can be worked out of the whole file (HIDL's is), and a pointer left resting on the code had a five thousand
+    // line .hor parsed for every key typed, sixty milliseconds a letter
+    private const float HOVER_AFTER = 0.3f;
+    private int hoverVersionSeen = -1;
+    private float hoverQuiet;
+
     // Parsing a moment after the last change, and what came of it
     private int checkedVersion = -1;
     private float checkIn;
@@ -1327,6 +1334,16 @@ public partial class CodeEditor : UIComponent
     private void UpdateTooltip()
     {
         hoveredArt = -1;
+        if (hoverVersionSeen != document.Version)
+        {
+            hoverVersionSeen = document.Version;
+            hoverQuiet = 0.0f;
+        }
+        else
+        {
+            hoverQuiet += tickTime;
+        }
+
         if (!IsHovered || Module is not { } module || paintedSkin is null)
         {
             if (Tooltip.Length > 0) Tooltip = string.Empty;
@@ -1376,7 +1393,14 @@ public partial class CodeEditor : UIComponent
         if (said.Length == 0 && HoverSource is { } source)
         {
             var (start, end) = document.WordAt(at);
-            if (end > start && at.Column < document.LineAt(at.Line).Length)
+
+            // The text changed under a word that was asked about, nothing until the typing stops, what it said may be wrong now
+            bool typing = hoverFor.Version >= 0 && hoverFor.Version != document.Version && hoverQuiet < HOVER_AFTER;
+            if (typing)
+            {
+                hoverText = string.Empty;
+            }
+            else if (end > start && at.Column < document.LineAt(at.Line).Length)
             {
                 if (hoverFor != (document.Version, at.Line, start))
                 {
