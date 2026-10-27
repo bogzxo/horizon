@@ -15,15 +15,36 @@ internal static class UIWindowButtons
 {
     public static readonly Vector4 CloseRed = new(0.9f, 0.17f, 0.2f, 1.0f);
 
-    public static void Paint(UIDrawList list, UIRect area, string icon, bool hovered, bool pressed, bool close, Vector4 color)
+    /// <param name="corner">How round its top right corner is, the window's own corner when it's the close button in it, 0 for square.</param>
+    public static void Paint(UIDrawList list, UIRect area, string icon, bool hovered, bool pressed, bool close, Vector4 color, float corner = 0.0f)
     {
         UISkin skin = list.Skin;
         if (hovered)
-            list.Rect(area, close ? CloseRed with { W = pressed ? 0.75f : 1.0f } : pressed ? skin.HoverColor * 1.6f : skin.HoverColor);
+        {
+            Vector4 fill = close ? CloseRed with { W = pressed ? 0.75f : 1.0f } : pressed ? skin.HoverColor * 1.6f : skin.HoverColor;
+            if (corner <= 0.0f)
+                list.Rect(area, fill);
+            else
+                CornerRect(list, area, MathF.Min(corner, MathF.Min(area.Width, area.Height) * 0.5f), fill);
+        }
 
         float side = MathF.Round(MathF.Min(area.Height, area.Width) * 0.42f);
         Vector2 middle = Vector2.Round(area.Center);
         list.Symbol(icon, new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f)), hovered && close ? Vector4.One : color);
+    }
+
+    // A box with only its top right corner rounded, in three pieces that don't overlap, so one that's partly see through
+    // (a close button held down) has no darker seams. The red of a close in the corner of a round window was a square
+    // stuck out past the curve of the window
+    private static void CornerRect(UIDrawList list, UIRect area, float radius, Vector4 fill)
+    {
+        Vector2 bend = new(area.Max.X - radius, area.Max.Y - radius);
+        list.Rect(new UIRect(area.Min, new Vector2(bend.X, area.Max.Y)), fill);
+        list.Rect(new UIRect(new Vector2(bend.X, area.Min.Y), new Vector2(area.Max.X, bend.Y)), fill);
+
+        list.PushClip(new UIRect(bend, area.Max));
+        list.RoundRect(new UIRect(bend - new Vector2(radius), area.Max), radius, fill);
+        list.PopClip();
     }
 }
 
@@ -72,6 +93,12 @@ public class TitleBar : StackPanel
 
     // A window's pixel in the UI's units, times the scale of the screen it's on when the window follows that
     private float Unit => PixelSized && Module?.Compositor.Scale is > 0.0f and var scale ? 1.0f / scale : 1.0f;
+
+    /// <summary>
+    /// How round the window's top right corner is, in the window's pixels, for the close button in it to be the same shape
+    /// under the pointer. Windows 11 rounds a window by 8 pixels, nothing else rounds one the UI hasn't drawn round.
+    /// </summary>
+    public float WindowCorner { get; set; } = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? 8.0f : 0.0f;
 
     private float BarHeight => Height * Unit;
     private float ButtonWidth => BUTTON_WIDTH * Unit;
@@ -177,7 +204,7 @@ public class TitleBar : StackPanel
                 UIRect area = ButtonBounds(i);
                 bool over = IsHovered && area.Contains(pointer);
                 string icon = i switch { 0 => "chrome-minimize", 1 => Maximized ? "chrome-restore" : "chrome-maximize", _ => "chrome-close" };
-                UIWindowButtons.Paint(list, area, icon, over, over && down, i == 2, skin.TextColor);
+                UIWindowButtons.Paint(list, area, icon, over, over && down, i == 2, skin.TextColor, i == 2 && !Maximized ? WindowCorner * Unit : 0.0f);
             }
         }
 

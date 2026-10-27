@@ -23,6 +23,9 @@ public partial class WindowPanel : Panel
     private const float GRIP = 14.0f;
     private const float CLOSE_WIDTH = 30.0f;
 
+    // How wide the close button is, wider with a taller title bar so it stays a square-ish button and not a sliver
+    private float CloseWidth => MathF.Max(CLOSE_WIDTH, MathF.Round(TitleHeight * 1.15f));
+
     private enum Drag { None, Move, Resize, Close, Action }
     private Drag drag;
     private Vector2 dragFrom;
@@ -107,7 +110,7 @@ public partial class WindowPanel : Panel
 
     /// <summary>The x that closes it, empty when it has none.</summary>
     public UIRect CloseBounds => Closable
-        ? new UIRect(new Vector2(Bounds.Max.X - CLOSE_WIDTH, Bounds.Max.Y - TitleHeight), Bounds.Max)
+        ? new UIRect(new Vector2(Bounds.Max.X - CloseWidth, Bounds.Max.Y - TitleHeight), Bounds.Max)
         : default;
 
     /// <summary>The grip in the bottom right corner, empty when it has none.</summary>
@@ -151,7 +154,7 @@ public partial class WindowPanel : Panel
         float x = bar.Min.X + MathF.Max(10.0f, corner * 0.75f);
         if (Icon.Length > 0)
         {
-            float side = MathF.Round(TitleHeight * 0.55f);
+            float side = MathF.Round(TitleHeight * 0.6f);
             list.Symbol(Icon, new UIRect(new Vector2(x, bar.Center.Y - side * 0.5f), new Vector2(x + side, bar.Center.Y + side * 0.5f)), skin.DimTextColor);
             x += side + 6.0f;
         }
@@ -160,7 +163,7 @@ public partial class WindowPanel : Panel
         string title = Resolve(Title);
         float scale = ScaleOf(skin);
         float tall = list.Font.Measure(title, scale, false).Y;
-        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f) - ActionsWidth, bar.Max.Y)));
+        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CloseWidth : 0.0f) - ActionsWidth, bar.Max.Y)));
         list.Text(title, new Vector2(x, bar.Center.Y + tall * 0.5f), scale, skin.TextColor, false, UITextStyle.Bold, default);
         list.PopClip();
 
@@ -169,7 +172,7 @@ public partial class WindowPanel : Panel
         {
             UIRect close = CloseBounds;
             bool over = IsHovered && close.Contains(pointer);
-            UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor);
+            UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor, corner);
         }
 
         PaintTitleActions(list, pointer);

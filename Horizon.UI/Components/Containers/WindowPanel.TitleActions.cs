@@ -10,6 +10,9 @@ public partial class WindowPanel
 {
     private const float ACTION_WIDTH = 28.0f;
 
+    // How wide each of them is, as wide as the title bar is tall once that's taller than usual
+    private float ActionWidth => MathF.Max(ACTION_WIDTH, MathF.Round(TitleHeight * 1.05f));
+
     private readonly List<(string Icon, string Tooltip, Action Pressed)> titleActions = [];
 
     // Which one the pointer went down on, while it's held
@@ -34,7 +37,7 @@ public partial class WindowPanel
     public string TitleActionIcon(int index) => titleActions[index].Icon;
 
     // How much of the title bar the buttons take, right of the title
-    private float ActionsWidth => titleActions.Count * ACTION_WIDTH;
+    private float ActionsWidth => titleActions.Count * ActionWidth;
 
     /// <summary>Where a button of the title bar is, in the module's units, empty for an index it hasn't got.</summary>
     public UIRect TitleActionBounds(int index)
@@ -42,8 +45,8 @@ public partial class WindowPanel
         if (index < 0 || index >= titleActions.Count)
             return default;
 
-        float right = Bounds.Max.X - (Closable ? CLOSE_WIDTH : 0.0f) - (titleActions.Count - 1 - index) * ACTION_WIDTH;
-        return new UIRect(new Vector2(right - ACTION_WIDTH, Bounds.Max.Y - TitleHeight), new Vector2(right, Bounds.Max.Y));
+        float right = Bounds.Max.X - (Closable ? CloseWidth : 0.0f) - (titleActions.Count - 1 - index) * ActionWidth;
+        return new UIRect(new Vector2(right - ActionWidth, Bounds.Max.Y - TitleHeight), new Vector2(right, Bounds.Max.Y));
     }
 
     // The button a point is on, -1 for none

@@ -76,7 +76,8 @@ public sealed class SettingsWindow
             MinSize = new Vector2(640.0f, 420.0f),
             Lift = 28.0f,
             OnClosed = close,
-            Ticked = KeepRowKey
+            Ticked = KeepRowKey,
+            Zoom = () => Page.ZoomNow
         };
         Window.Add(Page);
 
@@ -209,9 +210,21 @@ public sealed class SettingsWindow
         // Called every update, for the window to keep what it goes by
         public Action? Ticked { get; init; }
 
+        // The zoom the page is drawn at, which the title bar goes with
+        public Func<float>? Zoom { get; init; }
+
+        // How tall the title bar is at a zoom of 1, and how much bigger its words are than a window's usual ones. It was a
+        // little window's 26 with its icon a speck in the corner of a window that fills most of the screen
+        private const float TITLE = 36.0f, TITLE_TEXT = 1.1f;
+
         protected override void Update(float dt)
         {
             Ticked?.Invoke();
+
+            float zoom = Zoom?.Invoke() ?? 1.0f;
+            TitleHeight = MathF.Round(TITLE * zoom);
+            if (Module?.Compositor.Skin is { } skin)
+                TextScale = skin.TextScale * TITLE_TEXT * zoom;
             if (!sized && Parent is { Bounds.IsEmpty: false } parent)
             {
                 sized = true;
