@@ -406,6 +406,17 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public UICodeHint? LineNote { get; set; }
 
+    /// <summary>
+    /// How long the caret stays on a line before its note fades in, in seconds. Arrowing down through the code had a
+    /// note flash up on every line it went past.
+    /// </summary>
+    public float LineNoteDelay { get; set; } = 0.5f;
+
+    // How long the note takes to fade in once it's due, and the line the caret's been on and how long for
+    private const float LINE_NOTE_FADE = 0.2f;
+    private int lineNoteFor = -1;
+    private float lineNoteAge;
+
     /// <summary>Called when the swatch of a colour written in the code is clicked, to pick another (see <see cref="HidlSwatch"/>).</summary>
     public Action<HidlSwatch>? OnSwatchPressed { get; set; }
 
@@ -1045,6 +1056,11 @@ public partial class CodeEditor : UIComponent
         // The hover at the caret goes once the caret or the text moves on, or something else took it down
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
             TakeHoverDown();
+
+        // How long the caret's been on the line the note is about, from nothing again every time it goes to another line
+        int noted = LineNote is { } note && note.Line == document.Caret.Line ? note.Line : -1;
+        lineNoteAge = noted == lineNoteFor ? lineNoteAge + dt : 0.0f;
+        lineNoteFor = noted;
 
         // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
         // in the background isn't painted again twice a second for a caret nobody's typing at
@@ -2403,7 +2419,8 @@ public partial class CodeEditor : UIComponent
         PaintLenses(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // The caret line's note, after its hint if it has one, fainter still, and only while the caret is on its line
-        if (LineNote is { } note && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
+        float noteShown = Math.Clamp((lineNoteAge - LineNoteDelay) / LINE_NOTE_FADE, 0.0f, 1.0f);
+        if (noteShown > 0.0f && LineNote is { } note && note.Line == lineNoteFor && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
         {
             int length = document.LineAt(note.Line).Length;
             float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + 4) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
@@ -2413,7 +2430,7 @@ public partial class CodeEditor : UIComponent
                     x += FontOf(skin).Measure(inlineHints[i].Text, scale, markup: false).X + digit * 2;
             }
 
-            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.55f }, markup: false);
+            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.55f * noteShown }, markup: false);
         }
 
         // What is wrong, a line under it
