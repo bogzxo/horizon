@@ -685,6 +685,27 @@ public partial class CodeEditor : UIComponent
     public IReadOnlyList<UITextPosition> Occurrences => occurrences;
 
     /// <summary>
+    /// Whether the other places of the word under the caret are lit. Off for text that's only shown, where the caret sits
+    /// at the start and the first word was lit all down it (every "tick" of a loop's printing in a notebook).
+    /// </summary>
+    public bool LightOccurrences
+    {
+        get => lightOccurrences;
+        set
+        {
+            if (lightOccurrences == value)
+                return;
+
+            lightOccurrences = value;
+            occurrences.Clear();
+            occurrenceLength = 0;
+            occurrencesFor = (-1, default);
+        }
+    }
+
+    private bool lightOccurrences = true;
+
+    /// <summary>
     /// Called with the notches of the wheel turned while control is held, to zoom the code (away from the user is in).
     /// Null, the wheel scrolls whatever is held.
     /// </summary>
@@ -1493,7 +1514,7 @@ public partial class CodeEditor : UIComponent
         occurrences.Clear();
         occurrenceLength = 0;
 
-        if (document.HasSelection || !Highlight)
+        if (document.HasSelection || !Highlight || !lightOccurrences)
             return;
 
         UITextPosition caret = document.Caret;
@@ -2365,7 +2386,10 @@ public partial class CodeEditor : UIComponent
         Vector4 selection = skin.Palette.Selection;
         Vector4 band = skin.HoverColor with { W = skin.HoverColor.W * 0.35f };
 
-        list.PushClip(area);
+        // An editor grown to its code has no rows above or below to hide, and clipped at its padding the tall letters of
+        // its first and last rows (p, d, brackets) were cut a little differently every tick it moved. A cut letter can't
+        // be blended with the last tick's, so while a notebook scrolled they jumped ahead of the rest of their line
+        list.PushClip(AllInSight ? new UIRect(new Vector2(area.Min.X, area.Min.Y - lineHeight), new Vector2(area.Max.X, area.Max.Y + lineHeight)) : area);
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
         var extras = document.ExtraCarets;
@@ -2492,7 +2516,12 @@ public partial class CodeEditor : UIComponent
                     if (to <= from)
                         continue;
 
-                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, from - at), x, top, default, left, origin, colors, draw: false);
+                    // The gap before it is spaces in code a grammar coloured, stepped over. Text a terminal coloured
+                    // has words in its gaps, the plain ones between two coloured, and a traceback's code went missing
+                    // round its keywords
+                    ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
+                    bool blank = gap.IsWhiteSpace();
+                    x = DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, blank ? default : colors.Of(SyntaxKind.Name), left, origin, colors, draw: !blank);
                     Vector4 colour = ColourOf(colors, span);
                     float started = x;
                     x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);

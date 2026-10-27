@@ -18,6 +18,9 @@ public sealed class UITableColumn
     /// <summary>What its header says under the pointer.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
+    /// <summary>Where its text sits across a cell and its header, 0 at the left, 0.5 in the middle and 1 at the right.</summary>
+    public float Align { get; set; }
+
     /// <summary>Whatever the owner wants to know it by.</summary>
     public object? Tag { get; set; }
 
@@ -210,6 +213,10 @@ public class Table : UIComponent
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
     private float LineHeight(UISkin skin) => RowHeight > 0.0f ? RowHeight : MathF.Round(skin.Font.LineHeight * ScaleOf(skin) + PAD);
+
+    // Helper method for where text that wide starts in a cell, lined up the way its column says, never left of the padding
+    private static float Lined(float left, float right, float wide, float align) =>
+        MathF.Round(left + PAD + MathF.Max(0.0f, right - left - PAD * 2.0f - wide) * Math.Clamp(align, 0.0f, 1.0f));
 
     private float TotalWidth()
     {
@@ -451,7 +458,7 @@ public class Table : UIComponent
                     {
                         list.PushClip(cell.Shrink(new UIEdges(PAD * 0.5f, 0.0f)));
                         Vector2 size = skin.Font.Measure(said, scale, markup: false);
-                        list.Text(said, new Vector2(left + PAD, MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, value.Color ?? text, markup: false);
+                        list.Text(said, new Vector2(Lined(left, right, size.X, Columns[c].Align), MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, value.Color ?? text, markup: false);
                         list.PopClip();
                     }
 
@@ -488,7 +495,7 @@ public class Table : UIComponent
 
                 list.PushClip(cell.Shrink(new UIEdges(PAD * 0.5f, 0.0f)));
                 Vector2 size = skin.Font.Measure(Columns[c].Title, scale, markup: false);
-                list.Text(Columns[c].Title, new Vector2(left + PAD, MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, text, markup: false);
+                list.Text(Columns[c].Title, new Vector2(Lined(left, right, size.X, Columns[c].Align), MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, text, markup: false);
                 list.PopClip();
 
                 if (c == sortColumn)

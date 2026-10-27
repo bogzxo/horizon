@@ -35,11 +35,21 @@ public sealed class DistanceFieldFont
     /// <summary>How far the field reaches either side of an edge, in texels of the field.</summary>
     public const int SPREAD = 6;
 
-    private const int CACHE_VERSION = 1;
+    private const int CACHE_VERSION = 2;
     private const uint CACHE_MAGIC = 0x544E4648; // HFNT
 
-    // The characters a TrueType font is built with unless it is told which, the printable ASCII and the Latin-1 ones
-    private static readonly (int From, int To)[] DefaultRanges = [(32, 126), (160, 255)];
+    // The characters a TrueType font is built with unless it is told which. The printable ASCII and Latin-1, Latin's
+    // accents past those, Greek and Cyrillic, typography's dashes, quotes and bullets, sub and superscripts, the euro,
+    // letterlike symbols, arrows, maths, box drawing and shapes. It was ASCII and Latin-1 alone, and a notebook's Δt, Ω
+    // and ∑ came out as question marks. Whatever a font hasn't got of them it goes without
+    private static readonly (int From, int To)[] DefaultRanges =
+    [
+        (32, 126), (160, 383), (0x370, 0x3FF), (0x400, 0x45F), (0x2010, 0x2027), (0x2030, 0x203A), (0x2070, 0x209C),
+        (0x20AC, 0x20AC), (0x2100, 0x2122), (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2500, 0x25FF)
+    ];
+
+    // Kerning is looked for between letters only, every pair of the symbols too was millions of lookups for nothing
+    private const int KERNED_BELOW = 0x2000;
 
     // Which characters this one is built with, an icon font's are up in the private use area
     private (int From, int To)[] ranges = DefaultRanges;
@@ -149,8 +159,10 @@ public sealed class DistanceFieldFont
             // Kerning, for the pairs the font has
             foreach (var a in pictures)
             {
+                if (a.Id >= KERNED_BELOW) continue;
                 foreach (var b in pictures)
                 {
+                    if (b.Id >= KERNED_BELOW) continue;
                     int kern = StbTrueType.stbtt_GetCodepointKernAdvance(info, a.Id, b.Id);
                     if (kern != 0) Kerning[KerningKey(a.Id, b.Id)] = kern * fieldScale * toEm;
                 }

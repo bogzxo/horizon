@@ -164,6 +164,27 @@ public class TextBox : UIComponent
     /// <summary>A Codicon drawn at its left, before what is typed (search for a box that finds), empty for none.</summary>
     public string LeadIcon { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Whether what's typed is a secret (a password), drawn as a star a letter and never copied out. What it says is still
+    /// <see cref="Text"/> for whoever asked.
+    /// </summary>
+    public bool Secret { get; set; }
+
+    // What's drawn of the text, itself or a star for each letter of a secret, kept while it's as long
+    private string masked = string.Empty;
+
+    private string Shown
+    {
+        get
+        {
+            if (!Secret)
+                return text;
+            if (masked.Length != text.Length)
+                masked = new string('*', text.Length);
+            return masked;
+        }
+    }
+
     /// <summary>Where the button is, as the box was last laid out. Empty for a box without one.</summary>
     public UIRect ButtonBounds
     {
@@ -385,10 +406,10 @@ public class TextBox : UIComponent
                 SelectAll();
                 break;
             case UIKeyboard.COPY:
-                if (HasSelection) UIKeyboard.Copy(Selection);
+                if (HasSelection && !Secret) UIKeyboard.Copy(Selection);
                 break;
             case UIKeyboard.CUT:
-                if (HasSelection) UIKeyboard.Copy(Selection);
+                if (HasSelection && !Secret) UIKeyboard.Copy(Selection);
                 RemoveSelection();
                 break;
 
@@ -442,7 +463,7 @@ public class TextBox : UIComponent
 
         for (int i = 1; i <= text.Length; i++)
         {
-            float after = skin.Font.Measure(text.AsSpan(0, i), textScale, markup: false).X;
+            float after = skin.Font.Measure(Shown.AsSpan(0, i), textScale, markup: false).X;
 
             // Nearer to the gap in front of this character than to the one behind it
             if (wanted < (before + after) * 0.5f)
@@ -603,7 +624,7 @@ public class TextBox : UIComponent
         }
 
         // Text somebody typed is shown as typed, tags and all.
-        float width = empty ? 0.0f : skin.Font.Measure(Text, scale, markup: false).X;
+        float width = empty ? 0.0f : skin.Font.Measure(Shown, scale, markup: false).X;
         float caretX = Offset(caret);
 
         // Text that has outgrown the box is scrolled just far enough to keep the caret, where the typing happens,
@@ -638,7 +659,7 @@ public class TextBox : UIComponent
         if (shown && !empty && !focused && width > content.Width)
             list.Text(Tail(skin, scale, content.Width - 4.0f), content, Origin.Left, scale, ink * tint, markup: false);
         else if (shown && !empty)
-            list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
+            list.Text(Shown, line, Origin.Left, scale, ink * tint, markup: false);
         else if (shown)
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
@@ -654,7 +675,7 @@ public class TextBox : UIComponent
             PaintSelection(list);
 
         // How far into the text a gap between two characters is drawn
-        float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(text.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
+        float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(Shown.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
     }
 
     protected override void DefineScript()
@@ -682,22 +703,22 @@ public class TextBox : UIComponent
 
     private string Tail(UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(tailOf, text) && tailRoom == room)
+        if (ReferenceEquals(tailOf, Shown) && tailRoom == room)
             return tail;
 
         // The fewest letters cut off the front for the rest to fit after the dots
         float dots = skin.Font.Measure(CUT, scale, markup: false).X;
-        int low = 1, high = text.Length;
+        int low = 1, high = Shown.Length;
         while (low < high)
         {
             int middle = (low + high) / 2;
-            if (dots + skin.Font.Measure(text.AsSpan(middle), scale, markup: false).X <= room)
+            if (dots + skin.Font.Measure(Shown.AsSpan(middle), scale, markup: false).X <= room)
                 high = middle;
             else
                 low = middle + 1;
         }
 
-        (tailOf, tailRoom, tail) = (text, room, CUT + text[low..]);
+        (tailOf, tailRoom, tail) = (Shown, room, CUT + Shown[low..]);
         return tail;
     }
 
