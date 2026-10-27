@@ -334,6 +334,11 @@ public class Table : UIComponent
 
         // Shift turns the wheel across, the way every spreadsheet does
         bool across = Horizon.Engine.GameEngine.Instance?.Input.Keyboard.Shift == true;
+
+        // All of it in sight that way, the wheel is for whatever it's in (a table in a notebook's output, say)
+        if (across ? TravelX <= 0.0f : TravelY(skin) <= 0.0f)
+            return false;
+
         float by = delta * LineHeight(skin) * 3.0f;
         if (across)
             scrollX = Math.Clamp(scrollX - by, 0.0f, TravelX);
