@@ -33,8 +33,13 @@ internal sealed class GaussianBlur : IDisposable
     private const float RADIUS_PER_ROUND = 8.0f;
     private const int MAX_ROUNDS = 3;
 
+    // Past this radius in pixels of the picture it's being blurred at, it's halved again first, up to so many times
+    private const float DEEPER_FROM = 12.0f;
+    private const int MOST_DEEPER = 3;
+
     private PostTechnique? copy, blur, downsample;
     private PostTarget? scratch, quarter, quarterScratch;
+    private readonly PostTarget?[] deeper = new PostTarget?[MOST_DEEPER], deeperScratch = new PostTarget?[MOST_DEEPER];
 
     /// <summary>
     /// How much of the blurred picture to show over the sharp one for a radius, from 0 for none of it to 1 for nothing else.
@@ -108,28 +113,60 @@ internal sealed class GaussianBlur : IDisposable
         small.Bind();
         ScreenTriangle.Draw();
 
-        // A pixel here is four of the picture, so a round reaches twice as far as it does at half the size
-        int rounds = Math.Clamp((int)MathF.Ceiling(radius / (RADIUS_PER_ROUND * 2.0f)), 1, MAX_ROUNDS);
-        float step = radius * 0.25f / MathF.Sqrt(rounds) / TAP_REACH;
-        Vector2 sideways = new(step / small.Size.X, 0.0f), upwards = new(0.0f, step / small.Size.Y);
+        // Halved again while the blur is still big at the size it's at. A 4K screen's blur is two or three times the pixels of
+        // the same blur on a small one, and three rounds at a quarter had their reads that far apart that the glass showed
+        // the picture behind it over and over rather than a blur of it
+        copy!.Bind();
+        PostTarget at = small;
+        float factor = 4.0f;
+        int depth = 0;
+        while (depth < MOST_DEEPER && radius / factor > DEEPER_FROM && at.Size.X >= 8.0f && at.Size.Y >= 8.0f)
+        {
+            PostTarget next = Fit(ref deeper[depth], at.Size);
+            at.Texture.Bind(0);
+            next.Bind();
+            ScreenTriangle.Draw();
+            at = next;
+            factor *= 2.0f;
+            depth++;
+        }
+
+        if (depth > 0)
+            other = Fit(ref deeperScratch[depth - 1], at.Size * 2.0f);
+
+        // A pixel here is so many of the picture, so a round reaches that much further than it does at half the size
+        float here = radius / factor;
+        int rounds = Math.Clamp((int)MathF.Ceiling(here / (RADIUS_PER_ROUND * 0.5f)), 1, MAX_ROUNDS);
+        float step = here / MathF.Sqrt(rounds) / TAP_REACH;
+        Vector2 sideways = new(step / at.Size.X, 0.0f), upwards = new(0.0f, step / at.Size.Y);
 
         blur!.Bind();
 
         for (int round = 0; round < rounds; round++)
         {
-            small.Texture.Bind(0);
+            at.Texture.Bind(0);
             blur.SetUniform(UNIFORM_STEP, in sideways);
             other.Bind();
             ScreenTriangle.Draw();
 
             other.Texture.Bind(0);
             blur.SetUniform(UNIFORM_STEP, in upwards);
-            small.Bind();
+            at.Bind();
             ScreenTriangle.Draw();
         }
 
-        // Blown up to half the size, which is what whoever asked reads it at. Smooth already, the GPU blends the rest
+        // Blown back up a size at a time, then to half the size, which is what whoever asked reads it at. A size at a time
+        // the GPU's blending keeps it smooth, a sixteenth stretched to a half in one go would be blocks
         copy!.Bind();
+        for (int level = depth - 1; level >= 0; level--)
+        {
+            PostTarget up = level == 0 ? small : deeper[level - 1]!;
+            at.Texture.Bind(0);
+            up.Bind();
+            ScreenTriangle.Draw();
+            at = up;
+        }
+
         small.Texture.Bind(0);
         result.Bind();
         ScreenTriangle.Draw();
@@ -160,5 +197,11 @@ internal sealed class GaussianBlur : IDisposable
         quarter?.Dispose();
         quarterScratch?.Dispose();
         scratch = quarter = quarterScratch = null;
+        for (int i = 0; i < MOST_DEEPER; i++)
+        {
+            deeper[i]?.Dispose();
+            deeperScratch[i]?.Dispose();
+            deeper[i] = deeperScratch[i] = null;
+        }
     }
 }
