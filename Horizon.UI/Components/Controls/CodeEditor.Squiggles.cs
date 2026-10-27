@@ -23,6 +23,8 @@ public partial class CodeEditor
         if (diagnostic.Line < firstLine || diagnostic.Line > lastLine || diagnostic.Line >= document.LineCount || IsHidden(diagnostic.Line, out _))
             return;
 
+        // A part of its own by where it is, so one coming or going doesn't have every wave after it blended with another's
+        list.BeginPart(HashCode.Combine(PART_SQUIGGLE, diagnostic.Line, diagnostic.Column, diagnostic.Length) & 0x3FFFFFFF);
         var (column, endColumn) = DiagnosticSpan(diagnostic);
         UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
         float to = MathF.Max(piece.Min.X + lineHeight * 0.4f, piece.Max.X);

@@ -121,7 +121,10 @@ public partial class CodeEditor : UIComponent
     private const int PART_BRACKETS = -(1 << 30), PART_RULERS = -(1 << 30) + 1;
 
     // What a row has painted under its text, each a part of the row's own (see RowPart)
-    private const int ROW_BEHIND = 1, ROW_GUIDES = 2, ROW_WHITESPACE = 3;
+    private const int ROW_BEHIND = 1, ROW_GUIDES = 2, ROW_WHITESPACE = 3, ROW_SELECTED = 4;
+
+    // What a squiggle's part is worked out from, with where it is
+    private const int PART_SQUIGGLE = 5;
 
     // How many rows past either edge of what's in sight are painted, out of sight, for the next tick to blend from
     private const int ROWS_AROUND = 3;
@@ -2370,6 +2373,9 @@ public partial class CodeEditor : UIComponent
             if (row.Line == ExecutionLine)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), skin.WarningColor with { W = 0.2f });
 
+            // The selection in a part apart from the line's band, a selection taken away puts the band back and the two were
+            // one quad, the selection stretched out across the line into it
+            list.BeginPart(RowPart(ROW_SELECTED, row));
             if (document.HasSelection)
                 PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, start, end, selection);
 
@@ -2422,9 +2428,12 @@ public partial class CodeEditor : UIComponent
 
         if (focused && bracket is { } one && bracketPair is { } two)
         {
+            // The one further up first, whichever the caret's at. Caret's first, the two swapped over as the caret went from
+            // one end to the other and each box flew across the line to where the other had been
             list.BeginPart(PART_BRACKETS);
-            PaintBracket(list, skin, scale, area, left, lineHeight, one, firstLine, lastLine);
-            PaintBracket(list, skin, scale, area, left, lineHeight, two, firstLine, lastLine);
+            var (earlier, later) = one < two ? (one, two) : (two, one);
+            PaintBracket(list, skin, scale, area, left, lineHeight, earlier, firstLine, lastLine);
+            PaintBracket(list, skin, scale, area, left, lineHeight, later, firstLine, lastLine);
         }
 
         // The code itself, a row at a time, each a part of its own so a row scrolled along is blended with itself. By what
@@ -2545,7 +2554,6 @@ public partial class CodeEditor : UIComponent
         }
 
         // What is wrong, a line under it
-        list.BeginPart(PART_CARET);
         if (SyntaxError is { } error)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, error, firstLine, lastLine);
         for (int i = 0; i < moreErrors.Count; i++)
@@ -2560,6 +2568,7 @@ public partial class CodeEditor : UIComponent
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
         if (focused && blink < BLINK)
         {
+            list.BeginPart(PART_CARET);
             PaintCaret(list, skin, scale, area, left, lineHeight, first, last, document.Caret);
             for (int i = 0; i < extras.Count; i++)
                 PaintCaret(list, skin, scale, area, left, lineHeight, first, last, extras[i].Caret);

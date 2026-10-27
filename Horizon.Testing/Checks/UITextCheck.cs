@@ -296,8 +296,34 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         test.Wait();
         test.Check("code: scrolled a line at once, every quad under the code that's the same one goes up by the line with it", () =>
             ScrolledStraight(unscrolled, scrolledBy, out int matched) && matched > 100);
+        // Typed, selected and taken out again. Nothing that is the same quad in both ticks goes further than the three letters
+        // did, the selection stretched out across the line into the band of the caret's line and the boxes on the brackets
+        // swapped ends of the line
+        List<SpriteItem> selected = [];
         test.Run(() =>
         {
+            _editor.Minimap = true;
+            _editor.Text = string.Join("\n", Enumerable.Range(0, 40).Select(i => new string(' ', 4 * (i % 3)) + "let value" + i + " = other(" + i + ", 2) + 3;"));
+            _editor.ScrollPixels = 0.0f;
+            _editor.Focus();
+            _editor.Document.MoveTo(new UITextPosition(5, 27));
+        });
+        test.WaitFor(() => !_editor.Easing, 3.0f);
+        test.Run(() => Typed("sdf"));
+        test.Settle(1.0f);
+        test.Run(() => Keys(UIKeyboard.SELECT_LEFT, UIKeyboard.SELECT_LEFT, UIKeyboard.SELECT_LEFT));
+        test.Settle(1.0f);
+        test.Run(() =>
+        {
+            selected = [.. _compositor.Drawn.ToArray()];
+            Keys(UIKeyboard.BACKSPACE);
+        });
+        test.Wait();
+        test.Wait();
+        test.Check("code: a selection taken out, nothing under the code flies across the line", () => NoneFurther(selected, _compositor.Skin!.Font.Measure("sdf", 0.25f, markup: false).X + 2.0f));
+        test.Run(() =>
+        {
+            _editor.Minimap = false;
             _editor.RenderWhitespace = UIWhitespace.None;
             _editor.Text = "let a = 1;";
         });
@@ -378,6 +404,33 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         }
 
         return straight;
+    }
+
+    // Whether every quad blended from the list before (the same one, showing the same thing) moved no further than so far
+    private bool NoneFurther(List<SpriteItem> before, float most)
+    {
+        var was = new Dictionary<Vector2, SpriteItem>();
+        foreach (SpriteItem item in before)
+        {
+            if (item.Key.X > 0.0f)
+                was.TryAdd(item.Key, item);
+        }
+
+        bool near = true;
+        foreach (SpriteItem item in _compositor.Drawn)
+        {
+            if (item.Key.X <= 0.0f || !was.TryGetValue(item.Key, out SpriteItem then) || then.TexMin != item.TexMin || then.Flags != item.Flags)
+                continue;
+
+            Vector2 moved = item.Origin - then.Origin;
+            if (moved.Length() > most)
+            {
+                Console.WriteLine($"[check] a quad went {moved}, {item.AxisX.Length():0.0} by {item.AxisY.Length():0.0}, more than {most:0.0}");
+                near = false;
+            }
+        }
+
+        return near;
     }
 
     // The middle of a line of the editor, up and down
