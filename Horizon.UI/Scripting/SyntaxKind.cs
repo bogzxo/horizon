@@ -96,7 +96,13 @@ public enum SyntaxKind
     Parameter,
 
     // Where a goto goes
-    Label
+    Label,
+
+    // The sixteen colours of a terminal, black to white and then the bright half, for text written with ANSI escapes (what
+    // a notebook's code printed, a Python traceback). Drawn in an editor's AnsiColours, the terminal's own, and plain
+    // text anywhere else
+    Ansi0, Ansi1, Ansi2, Ansi3, Ansi4, Ansi5, Ansi6, Ansi7,
+    Ansi8, Ansi9, Ansi10, Ansi11, Ansi12, Ansi13, Ansi14, Ansi15
 }
 
 /// <summary>

@@ -371,6 +371,9 @@ public partial class CodeEditor : UIComponent
     /// Escape with nothing open over the code keeps the keyboard in it, the way every code editor has it. It let go of the
     /// keyboard and what was typed next went nowhere. In a window of its own it's the window's to close.
     /// </summary>
+    /// <summary>Whether the hover asked for at the caret is up, which Escape takes down before anything else.</summary>
+    public bool HoverUp => hoverPinnedFor is not null;
+
     protected internal override bool OnEscape()
     {
         // The hover asked for at the caret comes down first
@@ -1073,7 +1076,7 @@ public partial class CodeEditor : UIComponent
         return new Vector2(x, TopOf(area, line, at.Column, lineHeight) - lineHeight * 0.5f);
     }
 
-    protected override Vector2 Measure(UISkin skin) => new Vector2(480, 320) + Padding.Total;
+    protected override Vector2 Measure(UISkin skin) => FitRows > 0 ? FittedSize(skin) : new Vector2(480, 320) + Padding.Total;
 
     /* Updating */
 
@@ -1300,7 +1303,7 @@ public partial class CodeEditor : UIComponent
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
-        float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * 0.5f);
+        float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * (FitRows > 0 ? 1.0f : 0.5f));
 
         // Past the end because the code got shorter under it (lines taken out, a row of counts gone), eased back rather
         // than put there. Put there, the whole view jumped the next time the caret moved
@@ -2291,6 +2294,10 @@ public partial class CodeEditor : UIComponent
             completionTop = Math.Clamp(completionTop - rows * Math.Sign(delta), 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
             return true;
         }
+
+        // As tall as its code, the wheel is for whatever it's in
+        if (AllInSight)
+            return false;
 
         // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
         scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;

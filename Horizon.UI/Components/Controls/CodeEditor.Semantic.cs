@@ -132,7 +132,17 @@ public partial class CodeEditor
         }
     }
 
+    /// <summary>
+    /// The sixteen colours a terminal draws in, for the Ansi kinds of what the editor's given to show (what a notebook's
+    /// code printed, coloured by its escapes). Null, the usual, draws them as plain text.
+    /// </summary>
+    public Vector4[]? AnsiColours { get; set; }
+
     /// <summary>A span's colour, by its kind and what else it is, in a set of colours.</summary>
-    private static Vector4 ColourOf(UISyntaxColors colors, in SyntaxSpan span) =>
-        span.Modifiers == SyntaxModifiers.None ? colors.Of(span.Kind) : colors.Of(span.Kind, span.Modifiers);
+    private Vector4 ColourOf(UISyntaxColors colors, in SyntaxSpan span)
+    {
+        if (span.Kind >= SyntaxKind.Ansi0)
+            return AnsiColours is { Length: 16 } ansi ? ansi[span.Kind - SyntaxKind.Ansi0] : colors.Of(SyntaxKind.Name);
+        return span.Modifiers == SyntaxModifiers.None ? colors.Of(span.Kind) : colors.Of(span.Kind, span.Modifiers);
+    }
 }
