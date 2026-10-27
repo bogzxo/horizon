@@ -37,12 +37,12 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
     public static UIGlass Frosted => new(Blur: 18.0f, Clarity: 0.35f, Rim: 0.3f, Bend: 6.0f);
 
     /// <summary>
-    /// Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at (its Fluid Glass). Blurred far
-    /// enough that text behind it is colour and not words, a blur of 16 had the code under a palette ghosting through it.
-    /// Half of what's behind comes through. Nearly three quarters of it had a palette over anything bright washed out to
-    /// grey, the glass was all backdrop and its text had nothing to stand on.
+    /// Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at (its Fluid Glass), Apple's Liquid
+    /// Glass as near as it goes. Most of what's behind comes through, blurred only enough that words behind it stop
+    /// being words, and the rim bends it. It was a blur of 24 under nearly half a solid panel, which on a 4K screen is a
+    /// smear fifty pixels wide under a tint, and read as a solid slab with nothing behind it.
     /// </summary>
-    public static UIGlass Clear => new(Blur: 24.0f, Clarity: 0.55f, Rim: 0.5f, Bend: 12.0f);
+    public static UIGlass Clear => new(Blur: 8.0f, Clarity: 0.78f, Rim: 0.6f, Bend: 16.0f);
 
     /// <summary>The glass of popups (dialogs, menus, a palette) out of four sliders, each held to what still looks like glass.</summary>
     public static UIGlass Lens(float blur, float clarity, float rim, float bend) =>
