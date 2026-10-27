@@ -2,6 +2,7 @@ using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.Rendering;
+using Horizon.Rendering.Spriting;
 using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Drawing;
@@ -265,6 +266,42 @@ internal sealed class UITextCheck : Scene, ISelfCheck
 
         test.Run(() => _editor.Unfocus());
 
+        // Scrolled a line without easing (a drag of the bar), with the whitespace drawn, the guides down the indents and
+        // a selection over a few lines. Every quad that's the same one in both ticks has to have gone straight up by the
+        // line, so a frame between the two blends each dot and guide with itself. They were counted down the screen
+        // together, and the blank lines filled up with dots and guides on their way to somewhere else
+        List<SpriteItem> unscrolled = [];
+        float scrolledBy = 0.0f;
+        test.Run(() =>
+        {
+            _editor.RenderWhitespace = UIWhitespace.All;
+            _editor.IndentGuides = true;
+            _editor.Text = string.Join("\n", Enumerable.Range(0, 120).Select(i => i % 5 == 4 ? string.Empty : new string(' ', 4 * (i % 4)) + "x = " + i + ";  "));
+            _editor.Document.MoveTo(new UITextPosition(3, 2));
+            _editor.Document.MoveTo(new UITextPosition(8, 3), selecting: true);
+            _editor.ScrollPixels = 0.0f;
+        });
+
+        // Settled first, a frame of a scroll that's easing is shown in steps and nothing in it is blended at all
+        test.WaitFor(() => !_editor.Easing, 3.0f);
+        test.Wait();
+        test.Wait();
+        test.Run(() =>
+        {
+            unscrolled = [.. _compositor.Drawn.ToArray()];
+            scrolledBy = (_compositor.Skin?.Font.LineHeight ?? 1.0f) * 0.25f;
+            _editor.ScrollPixels = scrolledBy;
+        });
+        test.Wait();
+        test.Wait();
+        test.Check("code: scrolled a line at once, every quad under the code that's the same one goes up by the line with it", () =>
+            ScrolledStraight(unscrolled, scrolledBy, out int matched) && matched > 100);
+        test.Run(() =>
+        {
+            _editor.RenderWhitespace = UIWhitespace.None;
+            _editor.Text = "let a = 1;";
+        });
+
         // Round the box in the corner, more lines for it as the lines next to it are shorter, as before without it
         float flat = 0.0f;
         test.Run(() => flat = _around.DesiredSize.Y);
@@ -296,6 +333,51 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         }
 
         return tabbed is { } a && spaced is { } b && MathF.Abs(a - b) <= 1.5f;
+    }
+
+    // Whether every quad in the middle of the editor's code that was in the list before the scroll as well has moved
+    // straight up the screen by what it was scrolled, how many of them there were said. Away from the edges, where the
+    // clip cuts a row and its quads change size. Up the screen is up the world, the camera's y goes up
+    private bool ScrolledStraight(List<SpriteItem> before, float by, out int matched)
+    {
+        matched = 0;
+        float lineHeight = (_compositor.Skin?.Font.LineHeight ?? 1.0f) * 0.25f;
+        UIRect bounds = _editor.Bounds;
+        Vector2 low = _editor.Module!.ToWorld(new Vector2(bounds.Min.X + 4.0f, bounds.Min.Y + lineHeight * 3.0f));
+        Vector2 high = _editor.Module!.ToWorld(new Vector2(bounds.Min.X + 400.0f, bounds.Max.Y - lineHeight * 3.0f));
+        var min = Vector2.Min(low, high);
+        var max = Vector2.Max(low, high);
+        bool Inside(in SpriteItem item)
+        {
+            Vector2 centre = item.Origin + (item.AxisX + item.AxisY) * 0.5f;
+            return centre.X > min.X && centre.X < max.X && centre.Y > min.Y && centre.Y < max.Y && item.AxisX.Length() < 300.0f && item.AxisY.Length() <= lineHeight * 1.5f;
+        }
+
+        var was = new Dictionary<Vector2, SpriteItem>();
+        foreach (SpriteItem item in before)
+        {
+            if (item.Key.X > 0.0f && Inside(item))
+                was.TryAdd(item.Key, item);
+        }
+
+        float up = _editor.Module!.ToWorld(new Vector2(0.0f, by)).Y - _editor.Module!.ToWorld(Vector2.Zero).Y;
+        bool straight = true;
+        foreach (SpriteItem item in _compositor.Drawn)
+        {
+            if (item.Key.X <= 0.0f || !Inside(item) || !was.TryGetValue(item.Key, out SpriteItem then))
+                continue;
+
+            matched++;
+            Vector2 moved = item.Origin - then.Origin;
+            if (MathF.Abs(moved.X) > 0.5f || MathF.Abs(moved.Y - up) > 0.5f)
+            {
+                if (straight)
+                    Console.WriteLine($"[check] a quad of the code went {moved} rather than (0, {up}), {item.AxisX.Length():0.0} by {item.AxisY.Length():0.0}");
+                straight = false;
+            }
+        }
+
+        return straight;
     }
 
     // The middle of a line of the editor, up and down

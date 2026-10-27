@@ -50,6 +50,7 @@ public partial class CodeEditor
             int rowEnd = Math.Min(row.End, text.Length);
             if (rowEnd <= row.Start)
                 continue;
+            list.BeginPart(RowPart(ROW_WHITESPACE, row));
 
             // Where the line's own text starts and ends, the runs either side of it being the boundary ones
             int lead = 0;

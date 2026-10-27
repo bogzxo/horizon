@@ -117,6 +117,23 @@ public partial class CodeEditor : UIComponent
     // The parts of what is drawn that are counted apart, see UIDrawList.BeginPart. Lines count from 0 on their own
     private const int PART_BACK = -1, PART_OVERLAY = -2, PART_CARET = -3, PART_BAR = -4, PART_SWATCHES = -5, PART_BACKDROP = -6, PART_STICKY = -7, PART_SIGNATURE = -8, PART_ART = -9, PART_GUTTER = 1 << 20;
 
+    // Well clear of the lens rows' parts, which count down from -11 by line
+    private const int PART_BRACKETS = -(1 << 30), PART_RULERS = -(1 << 30) + 1;
+
+    // What a row has painted under its text, each a part of the row's own (see RowPart)
+    private const int ROW_BEHIND = 1, ROW_GUIDES = 2, ROW_WHITESPACE = 3;
+
+    // How many rows past either edge of what's in sight are painted, out of sight, for the next tick to blend from
+    private const int ROWS_AROUND = 3;
+
+    /// <summary>
+    /// Helper method for the part one row paints something in, by what the row is (its line and where it starts) the way
+    /// its text is. The guides and the dots of the whitespace were all one part for every row in sight, counted down the
+    /// screen, so a row scrolled into sight or a selection a row longer had every one after it blended with another's for
+    /// a frame, and the blank lines filled up with dots and guides on their way somewhere else.
+    /// </summary>
+    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens) & 0x3FFFFFFF;
+
     private readonly UITextDocument document = new();
 
     // The colouring of every line, and the colours written in it. Worked out for the whole file, 1.7 ms and a megabyte for
@@ -1261,6 +1278,20 @@ public partial class CodeEditor : UIComponent
         ClampScroll(skin, scale);
     }
 
+    /// <summary>How far down the code is scrolled in pixels, set it goes there at once, the way a drag of the bar does. For the checks.</summary>
+    internal float ScrollPixels
+    {
+        get => scrollY;
+        set
+        {
+            scrollGoal = null;
+            scrollY = MathF.Max(0.0f, value);
+        }
+    }
+
+    /// <summary>Whether it's on its way somewhere the wheel or the caret sent it, painted in steps meanwhile. For the checks.</summary>
+    internal bool Easing => scrollGoal is not null || revealCaret;
+
     private void ClampScroll(UISkin skin, float scale)
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
@@ -2308,6 +2339,11 @@ public partial class CodeEditor : UIComponent
         int last = Math.Min(rows.Count - 1, first + (int)(area.Height / lineHeight) + 1);
         int firstLine = rows.Count > 0 ? rows[first].Line : 0, lastLine = rows.Count > 0 ? rows[last].Line : 0;
 
+        // And a few either side of them painted too, out of sight under the clip, so a row scrolled into sight was there
+        // the tick before to be blended with. With nothing to blend with it was drawn where the newer tick had it while
+        // the row next to it was still on its way, and for a frame the two sat on top of each other
+        int paintFrom = Math.Max(0, first - ROWS_AROUND), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND);
+
         bool focused = IsFocused;
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
         Vector4 selection = skin.Palette.Selection;
@@ -2316,14 +2352,14 @@ public partial class CodeEditor : UIComponent
         list.PushClip(area);
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
-        list.BeginPart(PART_OVERLAY);
         var extras = document.ExtraCarets;
-        for (int index = first; index <= last; index++)
+        for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
             float top = RowTop(area, index, lineHeight);
             if (row.Lens)
                 continue;
+            list.BeginPart(RowPart(ROW_BEHIND, row));
 
             if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
@@ -2345,6 +2381,7 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        list.BeginPart(PART_OVERLAY);
         PaintRanges(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
@@ -2378,12 +2415,14 @@ public partial class CodeEditor : UIComponent
         }
 
         if (IndentGuides)
-            PaintGuides(list, skin, scale, area, left, lineHeight, first, last);
+            PaintGuides(list, skin, scale, area, left, lineHeight, paintFrom, paintTo);
+        list.BeginPart(PART_RULERS);
         PaintRulers(list, skin, area, left, digit);
-        PaintWhitespace(list, skin, scale, left, area, lineHeight, first, last);
+        PaintWhitespace(list, skin, scale, left, area, lineHeight, paintFrom, paintTo);
 
         if (focused && bracket is { } one && bracketPair is { } two)
         {
+            list.BeginPart(PART_BRACKETS);
             PaintBracket(list, skin, scale, area, left, lineHeight, one, firstLine, lastLine);
             PaintBracket(list, skin, scale, area, left, lineHeight, two, firstLine, lastLine);
         }
@@ -2394,7 +2433,7 @@ public partial class CodeEditor : UIComponent
         // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
         float origin = area.Max.Y + scrollY;
         BeginFlow(lineHeight);
-        for (int index = first; index <= last; index++)
+        for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
             if (row.Lens)
@@ -2530,7 +2569,7 @@ public partial class CodeEditor : UIComponent
 
         // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds
         if (LineNumbers)
-            PaintGutter(list, skin, scale, content, area, lineHeight, digit, first, last, origin, colors);
+            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
 
         EndFlow();
 
@@ -3205,6 +3244,7 @@ public partial class CodeEditor : UIComponent
 
         for (int index = first; index <= last; index++)
         {
+            list.BeginPart(RowPart(ROW_GUIDES, rows[index]));
             int line = rows[index].Line;
             int depth = Indentation(line);
             if (depth < 0)
