@@ -448,6 +448,10 @@ public class HidlTests
 
         error = Assert.Throws<ParseException>(() => HIDLRuntime.Parse("\"unterminated"));
         Assert.Equal(1, error.Line);
+
+        // A string never closed is about the whole of what's left of its line, an editor underlines all of it
+        error = Assert.Throws<ParseException>(() => HIDLRuntime.Parse("let y = \"abc\r\nlet z = 1;"));
+        Assert.Equal((1, 9, 4), (error.Line, error.Col, error.Length));
     }
 
     [Fact]

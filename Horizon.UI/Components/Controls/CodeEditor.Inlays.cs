@@ -38,6 +38,9 @@ public partial class CodeEditor
     // The room either side of the words inside the pill, and either side of the pill when it's padded, in digits
     private const float INLAY_INSIDE = 0.3f, INLAY_PAD = 0.5f;
 
+    // The room before a hint after the end of a line, in digits, the room a padded hint has before it twice over
+    private const float INLAY_END_GAP = 1.0f;
+
     /// <summary>The hints written in among the code (see <see cref="UICodeInlay"/>), for the text as it is now. Empty for none.</summary>
     public IReadOnlyList<UICodeInlay> InlayHints
     {
@@ -201,18 +204,31 @@ public partial class CodeEditor
         return x;
     }
 
-    // One hint, a faint pill with the words in it in the colour of a comment
+    // One hint, its pill with the room round it it's padded with
     private float DrawInlay(UIDrawList list, UISkin skin, float scale, UICodeInlay inlay, float x, float top, UISyntaxColors colors)
     {
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
+        DrawPill(list, skin, scale, inlay.Text, x + (inlay.PadLeft ? digit * INLAY_PAD : 0.0f), top, colors);
+        return x + InlayWidth(skin, scale, inlay);
+    }
+
+    /// <summary>
+    /// A faint pill with a hint's words in it in the colour of a comment, from a place along a row. Every hint is drawn
+    /// with it, a parameter's name in among the code and the value a line came to after it. Where the pill ends.
+    /// </summary>
+    private float DrawPill(UIDrawList list, UISkin skin, float scale, string text, float from, float top, UISyntaxColors colors)
+    {
+        float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         float lineHeight = FontOf(skin).LineHeight * scale;
-        float width = InlayWidth(skin, scale, inlay);
-        float from = x + (inlay.PadLeft ? digit * INLAY_PAD : 0.0f);
-        float to = x + width - (inlay.PadRight ? digit * INLAY_PAD : 0.0f);
+        float to = from + FontOf(skin).Measure(text, scale, markup: false).X + digit * INLAY_INSIDE * 2.0f;
 
         var pill = new UIRect(new Vector2(from, top - lineHeight + lineHeight * 0.12f), new Vector2(to, top - lineHeight * 0.12f));
         list.RoundRect(pill, lineHeight * 0.2f, skin.TextColor with { W = 0.07f });
-        list.Text(inlay.Text, new Vector2(from + digit * INLAY_INSIDE, top), scale, colors.Comment with { W = colors.Comment.W * 0.85f }, markup: false);
-        return x + width;
+        list.Text(text, new Vector2(from + digit * INLAY_INSIDE, top), scale, colors.Comment with { W = colors.Comment.W * 0.85f }, markup: false);
+        return to;
     }
+
+    /// <summary>How much room a hint after the end of a line takes, the gap before it and its pill, for what goes after it.</summary>
+    private float EndHintWidth(UISkin skin, float scale, string text, float digit) =>
+        digit * (INLAY_END_GAP + INLAY_INSIDE * 2.0f) + FontOf(skin).Measure(text, scale, markup: false).X;
 }

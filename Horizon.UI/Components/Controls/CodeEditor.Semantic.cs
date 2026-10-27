@@ -112,27 +112,23 @@ public partial class CodeEditor
     }
 
     /// <summary>
-    /// What else a span is drawn with, ReSharper's way. Something obsolete struck through, a local that's written to again
-    /// underlined, both in the colour of its text a little faded.
+    /// What else a span is drawn with, ReSharper's way. Something obsolete struck through the middle of its small letters
+    /// (see StrikeY), a local that's written to again underlined, both a thin line in the colour of its text a little faded.
     /// </summary>
-    private static void DrawModifiers(UIDrawList list, float scale, SyntaxModifiers modifiers, float from, float to, float top, float lineHeight, Vector4 colour)
+    private static void DrawModifiers(UIDrawList list, SyntaxModifiers modifiers, float from, float to, float top, float lineHeight, float strikeY, Vector4 colour)
     {
         if ((modifiers & (SyntaxModifiers.Deprecated | SyntaxModifiers.Mutable)) == 0 || to <= from)
             return;
 
-        float thick = MathF.Max(1.0f, MathF.Round(scale));
         Vector4 faded = colour with { W = colour.W * 0.8f };
         if ((modifiers & SyntaxModifiers.Deprecated) != 0)
-        {
-            float y = MathF.Round(top - lineHeight * 0.45f);
-            list.Rect(new UIRect(new Vector2(from, y), new Vector2(to, y + thick)), faded);
-        }
+            Strike(list, from, to, strikeY, faded);
 
         if ((modifiers & SyntaxModifiers.Mutable) != 0)
         {
             // y goes up the screen, the bottom of the row is a whole line below its top
             float y = MathF.Round(top - lineHeight * 0.88f);
-            list.Rect(new UIRect(new Vector2(from, y), new Vector2(to, y + thick)), faded);
+            list.Rect(new UIRect(new Vector2(from, y), new Vector2(to, y + 1.0f)), faded);
         }
     }
 

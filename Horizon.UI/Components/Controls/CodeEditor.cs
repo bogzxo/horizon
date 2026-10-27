@@ -29,7 +29,8 @@ public readonly record struct UICodeDiagnostic(int Line, int Column, int Length,
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
 /// <param name="Detail">A few words about it, written fainter next to it.</param>
 /// <param name="Insert">What goes in when it is picked, the text itself unless this says otherwise.</param>
-public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "");
+/// <param name="Kind">What kind of thing it is in a language server's words (method, field, keyword), its icon, see UICompletionKinds.</param>
+public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "", string Kind = "");
 
 /// <summary>
 /// What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.
@@ -78,16 +79,20 @@ public readonly record struct UICodeLineChange(int Line, int Count, UILineChange
 /// </summary>
 public partial class CodeEditor : UIComponent
 {
-    // How many characters wide the gap between the line numbers and the code is, and the room either side of the code
-    private const int GUTTER_GAP = 2;
+    // How many characters wide the room between the line numbers and the code is (the chevron and the change's bar go in
+    // it), and the room either side of the code
+    private const float GUTTER_GAP = 2.5f;
     private const float TEXT_PAD = 6.0f;
+
+    // How far up from the bottom edge a row cut off by it fades out over, a share of a line
+    private const float BOTTOM_FADE = 0.5f;
 
     // How long after the last change the code is parsed again, how often the caret blinks, and the double click
     private const float CHECK_DELAY = 0.35f;
     private const float BLINK = 0.53f;
     private const double DOUBLE_CLICK = 0.4;
 
-    private const float BAR_WIDTH = 6.0f;
+    private const float BAR_WIDTH = UIScrollBar.WIDTH;
     private const int WHEEL_LINES = 3;
 
 
@@ -411,6 +416,10 @@ public partial class CodeEditor : UIComponent
     /// note flash up on every line it went past.
     /// </summary>
     public float LineNoteDelay { get; set; } = 0.5f;
+
+    // How many digits after the end of its line the note starts, and how much of a comment's colour it's drawn in. It was
+    // four digits on at half a comment, after a lit bracket it read as more of the code
+    private const float LINE_NOTE_GAP = 6.0f, LINE_NOTE_INK = 0.75f;
 
     // How long the note takes to fade in once it's due, and the line the caret's been on and how long for
     private const float LINE_NOTE_FADE = 0.2f;
@@ -744,7 +753,13 @@ public partial class CodeEditor : UIComponent
 
     protected override bool HitTestVisible => true;
     protected internal override bool Focusable => true;
-    protected internal override bool KeepsTab => true;
+    protected internal override bool KeepsTab => !TabMovesFocus;
+
+    /// <summary>
+    /// Whether Tab goes on to the next thing rather than indenting, VS Code's tab focus mode. For code shown read only
+    /// inside something else (a peek), which Tab got into and never out of again.
+    /// </summary>
+    public bool TabMovesFocus { get; set; }
 
     /* Finding and going places, for the program around it */
 
@@ -808,19 +823,6 @@ public partial class CodeEditor : UIComponent
     /* Measuring */
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
-
-    private float GutterWidth(UISkin skin, float scale)
-    {
-        if (!LineNumbers)
-            return TEXT_PAD;
-
-        // Room for the biggest number there is, every digit of a font is as wide as its zero
-        int count = document.LineCount + FirstLineNumber - 1, digits = 1;
-        while ((count /= 10) > 0) digits++;
-        // And the room of an icon in front of them, for a line with something wrong on it, with a little gap after it. It
-        // touched a number of two digits ("x11")
-        return FontOf(skin).Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(FontOf(skin).LineHeight * scale * 1.15f);
-    }
 
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
     private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
@@ -1167,7 +1169,7 @@ public partial class CodeEditor : UIComponent
         UICodeDiagnostic? error = null;
         var more = new List<UICodeDiagnostic>();
 
-        static UICodeDiagnostic Said(ParseException e) => new(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(1, e.Length), e.Message);
+        static UICodeDiagnostic Said(ParseException e) => new(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(0, e.Length), e.Message);
 
         // The parser goes on after a mistake, so every one of them is underlined and not only the first
         var errors = new List<ParseException>();
@@ -1460,9 +1462,6 @@ public partial class CodeEditor : UIComponent
     }
 
     private static bool IsWordChar(char character) => char.IsLetterOrDigit(character) || character == '_';
-
-    private static bool Covers(in UICodeDiagnostic diagnostic, UITextPosition at) =>
-        at.Line == diagnostic.Line && at.Column >= diagnostic.Column && at.Column <= diagnostic.Column + Math.Max(1, diagnostic.Length);
 
     /* The keyboard */
 
@@ -1800,13 +1799,13 @@ public partial class CodeEditor : UIComponent
         foreach (string keyword in Keywords)
         {
             if (seen.Add(keyword))
-                items.Add(new UICompletion(keyword, "keyword"));
+                items.Add(new UICompletion(keyword, "keyword", Kind: "keyword"));
         }
 
         foreach (Token token in Lexer.Tokenize(editor.Text, lenient: true))
         {
             if (token.Type == TokenType.Identifier && token.Value.Length > 1 && seen.Add(token.Value))
-                items.Add(new UICompletion(token.Value, "in this file"));
+                items.Add(new UICompletion(token.Value, "in this file", Kind: "variable"));
         }
 
         return new UICompletionRequest(start, items);
@@ -1817,6 +1816,21 @@ public partial class CodeEditor : UIComponent
     // room round the rows inside the popup. A line of code to a row was a list too cramped to read, its text against the edge
     private float CompletionRow(UISkin skin) => MathF.Max(FontOf(skin).LineHeight * paintedScale + 8.0f, 22.0f);
     private const float COMPLETION_PAD = 6.0f;
+
+    // The room in front of the completions' words for the icon of their kind (UICompletionKinds), a line's height and a
+    // gap, none when none of the rows in sight says its kind
+    private const float COMPLETION_ICON_GAP = 6.0f;
+    private float CompletionIconRoom(float lineHeight)
+    {
+        int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS + 1);
+        for (int i = Math.Max(0, completionTop - 1); i < last; i++)
+        {
+            if (completions[i].Kind.Length > 0)
+                return MathF.Round(lineHeight * 0.9f) + COMPLETION_ICON_GAP;
+        }
+
+        return 0.0f;
+    }
 
     private UIRect CompletionBounds()
     {
@@ -1842,7 +1856,7 @@ public partial class CodeEditor : UIComponent
             widest = MathF.Max(widest, text + detail);
         }
 
-        float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f;
+        float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f + CompletionIconRoom(lineHeight);
         float height = Math.Clamp(completions.Count, 1, COMPLETION_ROWS) * rowHeight + COMPLETION_PAD * 2.0f;
 
         // Under the line unless that runs off the bottom of the module
@@ -1920,7 +1934,14 @@ public partial class CodeEditor : UIComponent
             // The text in the middle of its row
             float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
-            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD, top), scale, colors.Name, markup: false);
+            float iconRoom = CompletionIconRoom(lineHeight);
+            if (iconRoom > 0.0f && UICompletionKinds.IconOf(item.Kind) is { Length: > 0 } icon)
+            {
+                float side = iconRoom - COMPLETION_ICON_GAP;
+                float middle = MathF.Round(row.Center.Y);
+                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), skin.DimTextColor);
+            }
+            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, colors.Name, markup: false);
 
             if (item.Detail.Length > 0)
             {
@@ -2023,7 +2044,7 @@ public partial class CodeEditor : UIComponent
         UIRect area = TextArea(skin, scale);
         UIRect track = new(new Vector2(area.Max.X + MinimapWidth, area.Min.Y), new Vector2(area.Max.X + MinimapWidth + BAR_WIDTH, area.Max.Y));
         float total = Math.Max(1, rows.Count) * lineHeight;
-        float length = MathF.Max(24.0f, track.Height * area.Height / MathF.Max(1.0f, total));
+        float length = MathF.Max(UIScrollBar.MIN_THUMB, track.Height * area.Height / MathF.Max(1.0f, total));
         float most = MathF.Max(1.0f, total - area.Height * 0.5f);
         float top = track.Max.Y - (track.Height - length) * Math.Clamp(scrollY / most, 0.0f, 1.0f);
         return (track, MathF.Min(length, track.Height), most, top);
@@ -2101,7 +2122,7 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
             // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
-            float strip = Bounds.Shrink(Padding).Min.X + 2.0f + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
+            float strip = Bounds.Shrink(Padding).Min.X + GLYPH_PAD + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
             if (OnGutterPressed is not null && point.X < strip)
             {
                 OnGutterPressed(at.Line);
@@ -2347,7 +2368,6 @@ public partial class CodeEditor : UIComponent
         // it is (its line and where in it it starts), not by its number, which is somebody else's row once the code is
         // wrapped again (round the picture as it scrolls by, a word typed further up), and every letter of it blended
         // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
-        Span<char> number = stackalloc char[12];
         float origin = area.Max.Y + scrollY;
         BeginFlow(lineHeight);
         for (int index = first; index <= last; index++)
@@ -2359,6 +2379,13 @@ public partial class CodeEditor : UIComponent
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
             float x = left + row.Indent;
+
+            // A row cut off by the bottom edge fades out there rather than being sliced in half, the way a scrolled list
+            // does (UIDrawList.PushFade). Only the row that's cut, the letters hanging low in a row all in sight stay whole
+            bool cut = top - lineHeight < area.Min.Y - 0.5f;
+            if (cut)
+                list.PushFade(area, 0.0f, lineHeight * BOTTOM_FADE);
+
             int rowEnd = Math.Min(row.End, written.Length);
 
             // Typed into and not coloured with the rest yet, coloured on its own, or all one colour for a moment when it
@@ -2385,7 +2412,7 @@ public partial class CodeEditor : UIComponent
                     float started = x;
                     x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);
                     if (span.Modifiers != SyntaxModifiers.None)
-                        DrawModifiers(list, scale, span.Modifiers, started, x, top, lineHeight, colour);
+                        DrawModifiers(list, span.Modifiers, started, x, top, lineHeight, StrikeY(skin, scale, top, lineHeight), colour);
                     at = to;
                 }
 
@@ -2400,6 +2427,9 @@ public partial class CodeEditor : UIComponent
             // A folded line says what it folds away after it, the closing line, the way VS Code does
             if (rowEnd == written.Length && folded.Contains(row.Line) && foldable.TryGetValue(row.Line, out int foldEnd))
                 PaintFolded(list, skin, scale, x, top, lineHeight, foldEnd, colors);
+
+            if (cut)
+                list.PopFade();
         }
 
         // The lenses over the lines, on the rows left for them
@@ -2420,7 +2450,8 @@ public partial class CodeEditor : UIComponent
         // The art named in the code, after the swatches
         PaintArt(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
-        // What the program has to say after the end of a line, the value a let came to
+        // What the program has to say after the end of a line, the value a let came to, in the same pill as the hints in
+        // among the code. It was plain grey words two spaces on, and the names in the middle of the line were in pills
         for (int i = 0; i < inlineHints.Count; i++)
         {
             UICodeHint hint = inlineHints[i];
@@ -2428,25 +2459,26 @@ public partial class CodeEditor : UIComponent
                 continue;
 
             int length = document.LineAt(hint.Line).Length;
-            float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2) + ArtWidthOn(hint.Line);
-            list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.8f }, markup: false);
+            float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + INLAY_END_GAP) + ArtWidthOn(hint.Line);
+            DrawPill(list, skin, scale, hint.Text, x, TopOf(area, hint.Line, length, lineHeight), colors);
         }
 
         PaintLenses(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
-        // The caret line's note, after its hint if it has one, fainter still, and only while the caret is on its line
+        // The caret line's note, after its hint if it has one, fainter, and only while the caret is on its line. Well clear
+        // of the code, a bracket lit at the end of the line and the note read as one thing
         float noteShown = Math.Clamp((lineNoteAge - LineNoteDelay) / LINE_NOTE_FADE, 0.0f, 1.0f);
         if (noteShown > 0.0f && LineNote is { } note && note.Line == lineNoteFor && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
         {
             int length = document.LineAt(note.Line).Length;
-            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + 4) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
+            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + LINE_NOTE_GAP) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
             for (int i = 0; i < inlineHints.Count; i++)
             {
                 if (inlineHints[i].Line == note.Line)
-                    x += FontOf(skin).Measure(inlineHints[i].Text, scale, markup: false).X + digit * 2;
+                    x += EndHintWidth(skin, scale, inlineHints[i].Text, digit);
             }
 
-            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.55f * noteShown }, markup: false);
+            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * LINE_NOTE_INK * noteShown }, markup: false);
         }
 
         // What is wrong, a line under it
@@ -2474,73 +2506,7 @@ public partial class CodeEditor : UIComponent
 
         // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds
         if (LineNumbers)
-        {
-            list.PushClip(new UIRect(content.Min, new Vector2(area.Min.X, content.Max.Y)));
-            Vector2 pointerAt = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
-            bool overGutter = IsHovered && pointerAt.X < area.Min.X;
-            float pointerY = pointerAt.Y;
-            for (int index = first; index <= last; index++)
-            {
-                CodeRow row = rows[index];
-                if (row.Lens)
-                    continue;
-
-                // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
-                if ((changedLines.Count > 0 || deletedBefore.Count > 0) && (row.Start == 0 || index == first))
-                    PaintLineChange(list, skin, area, index, origin, lineHeight, digit);
-
-                if (row.Start > 0)
-                    continue;
-
-                int line = row.Line;
-                list.BeginPart(PART_GUTTER + line);
-                float top = FlowTop(line, RowTop(area, index, lineHeight), origin);
-                if (!(line + FirstLineNumber).TryFormat(number, out int length))
-                    continue;
-
-                float right = area.Min.X - digit * GUTTER_GAP;
-                Vector4 shade = line == document.Caret.Line ? colors.Name : colors.LineNumber;
-
-                // What is wrong has its icon at the far side of the gutter, the number lit the same colour. A breakpoint
-                // has that place before it, and the line a debugger stopped on its arrow over that
-                bool breakpoint = Breakpoints?.Contains(line) == true;
-                bool marked = IsMarked(line, out bool warning);
-                if (marked)
-                    shade = warning ? skin.WarningColor : skin.ErrorColor;
-
-                float markSide = MathF.Round(lineHeight * 0.8f);
-                float markMiddle = top - lineHeight * 0.5f;
-                var slot = new UIRect(new Vector2(content.Min.X + 2.0f, markMiddle - markSide * 0.5f), new Vector2(content.Min.X + 2.0f + markSide, markMiddle + markSide * 0.5f));
-                bool pointing = OnGutterPressed is not null && overGutter && pointerY <= top && pointerY > top - lineHeight;
-                if (breakpoint || pointing)
-                {
-                    float dot = MathF.Round(markSide * 0.32f);
-                    var round = new UIRect(slot.Center - new Vector2(dot), slot.Center + new Vector2(dot));
-                    list.RoundRect(round, dot, skin.ErrorColor with { W = breakpoint ? 1.0f : 0.35f });
-                }
-                else if (marked)
-                {
-                    list.Symbol(warning ? "warning" : "error", slot, shade);
-                }
-
-                if (line == ExecutionLine)
-                    list.Symbol("debug-stackframe", slot, skin.WarningColor);
-
-                list.Text(number[..length], new Vector2(right - digit * length, top), scale, shade, markup: false);
-
-                // What can fold has its chevron in the gap after the number, always when it's folded, under the pointer otherwise
-                bool isFolded = folded.Contains(line);
-                if ((isFolded || overGutter) && foldable.ContainsKey(line))
-                {
-                    float side = MathF.Round(lineHeight * 0.7f);
-                    float middle = top - lineHeight * 0.5f;
-                    float from = area.Min.X - digit * GUTTER_GAP + (digit * GUTTER_GAP - side) * 0.5f;
-                    list.Symbol(isFolded ? "chevron-right" : "chevron-down", new UIRect(new Vector2(from, middle - side * 0.5f), new Vector2(from + side, middle + side * 0.5f)),
-                        isFolded ? colors.Name : colors.LineNumber);
-                }
-            }
-            list.PopClip();
-        }
+            PaintGutter(list, skin, scale, content, area, lineHeight, digit, first, last, origin, colors);
 
         EndFlow();
 
@@ -2557,15 +2523,7 @@ public partial class CodeEditor : UIComponent
         list.BeginPart(PART_BAR);
         if (FocusLine && focused)
             list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.55f });
-        float total = rows.Count * lineHeight;
-        if (total > area.Height)
-        {
-            var (track, length, _, topOfThumb) = BarGeometry(skin, paintedScale);
-
-            list.Rect(track, skin.HoverColor with { W = skin.HoverColor.W * 0.5f });
-            UIRect thumb = new(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb));
-            list.RoundRect(thumb.Shrink(new UIEdges(1.0f, 0.0f)), track.Width * 0.5f, skin.TextColor with { W = 0.22f });
-        }
+        PaintBar(list, skin, lineHeight, area);
 
         // The art under the pointer, big, over everything
         if (hoveredArt >= 0 && hoveredArt < art.Count && hoveredArt < artBoxes.Length && artBoxes[hoveredArt].Width > 0.0f)
@@ -2875,7 +2833,7 @@ public partial class CodeEditor : UIComponent
     /// The line's top is where its number goes, the first row's as it flows, and the bar is as tall as every row it
     /// wraps onto. Painted a row at a time a wrapped line's bars flowed apart from each other while the lines moved.
     /// </summary>
-    private void PaintLineChange(UIDrawList list, UISkin skin, UIRect area, int index, float origin, float lineHeight, float digit)
+    private void PaintLineChange(UIDrawList list, UISkin skin, UIRect area, int index, float origin, float lineHeight, float digit, GutterColumns columns)
     {
         int line = rows[index].Line;
         int from = index, to = index;
@@ -2884,8 +2842,8 @@ public partial class CodeEditor : UIComponent
 
         float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
         float bottom = top - (to - from + 1) * lineHeight;
-        float width = MathF.Max(2.0f, MathF.Round(digit * CHANGE_BAR));
-        float right = area.Min.X - MathF.Round(digit * 0.15f);
+        float width = columns.BarRight - columns.BarLeft;
+        float right = columns.BarRight;
 
         // A folded line has the bar of anything changed that's folded away under it, or nobody would know it was there
         bool hiddenChange = false, hiddenDelete = false;
@@ -2943,6 +2901,9 @@ public partial class CodeEditor : UIComponent
         return false;
     }
 
+    /// <summary>The lines held at the top as they were last painted, outermost first, for a test.</summary>
+    public IReadOnlyList<int> StickyShown => sticky;
+
     private void PaintSticky(UIDrawList list, UISkin skin, float scale, UIRect content, UIRect area, float lineHeight, float digit, int firstLine, UISyntaxColors colors)
     {
         List<int> held = StickyLines(firstLine);
@@ -2953,9 +2914,14 @@ public partial class CodeEditor : UIComponent
         UIRect strip = StickyBounds(area, lineHeight, held.Count);
         strip = new UIRect(new Vector2(content.Min.X, strip.Min.Y), strip.Max);
         // Solid whatever the editor's own colour is, a see-through editor (over Hex's picture) had the lines scrolled under
-        // the strip showing through it
-        list.Rect(strip, Color is { W: >= 0.99f } solid ? solid : skin.PanelColor with { W = 1.0f });
-        list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.15f });
+        // the strip showing through it. A soft shadow under it, VS Code's, lifts it off the code going by under it, a
+        // hairline of the text's colour was all there was and it read as one more line of code
+        Vector4 back = Color is { W: >= 0.99f } solid ? solid : skin.PanelColor with { W = 1.0f };
+        float lightness = 0.2126f * back.X + 0.7152f * back.Y + 0.0722f * back.Z;
+        float soft = MathF.Max(3.0f, MathF.Round(lineHeight * 0.3f));
+        list.Shadow(strip, 0.0f, soft, new Vector4(0.0f, 0.0f, 0.0f, lightness > 0.5f ? 0.18f : 0.5f), new Vector2(0.0f, -soft * 0.5f));
+        list.Rect(strip, back);
+        list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.06f });
 
         Span<char> number = stackalloc char[12];
         for (int i = 0; i < held.Count; i++)
@@ -2966,8 +2932,9 @@ public partial class CodeEditor : UIComponent
             float x = area.Min.X + TEXT_PAD;
             int at = 0;
 
-            if (LineNumbers && (line + FirstLineNumber).TryFormat(number, out int length))
-                list.Text(number[..length], new Vector2(area.Min.X - digit * GUTTER_GAP - digit * length, top), scale, colors.LineNumber, markup: false);
+            // The line's number where the gutter has it, a diff's the new version's
+            if (LineNumbers)
+                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, colors.LineNumber);
 
             if (DrawnColours(line, written) is { } colours)
             {
@@ -3272,41 +3239,6 @@ public partial class CodeEditor : UIComponent
             return;
 
         list.Outline(Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + 1), 1.0f, skin.HighlightColor with { W = 0.6f });
-    }
-
-    private void PaintDiagnostic(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, in UICodeDiagnostic diagnostic, int firstLine, int lastLine)
-    {
-        if (diagnostic.Line < firstLine || diagnostic.Line > lastLine || diagnostic.Line >= document.LineCount || IsHidden(diagnostic.Line, out _))
-            return;
-
-        int length = document.LineAt(diagnostic.Line).Length;
-        int column = Math.Min(diagnostic.Column, length);
-        int endColumn = Math.Min(length, column + Math.Max(1, diagnostic.Length));
-
-        UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
-        float to = MathF.Max(piece.Min.X + lineHeight * 0.5f, piece.Max.X);
-        float thickness = MathF.Max(2.0f, MathF.Round(lineHeight * 0.08f));
-
-        // Something obsolete struck through, whatever else it's marked with
-        if (diagnostic.Deprecated)
-        {
-            float middle = MathF.Round((piece.Min.Y + piece.Max.Y) * 0.5f), thin = MathF.Max(1.0f, MathF.Round(scale));
-            list.Rect(new UIRect(new Vector2(piece.Min.X, middle), new Vector2(piece.Max.X, middle + thin)), skin.TextColor with { W = skin.TextColor.W * 0.7f });
-        }
-
-        // A hint is a line of dots in the text's colour, seen through, a warning and an error a line of theirs. Always as
-        // many quads for a diagnostic of a kind, the dots a few of them under the whole of it
-        if (diagnostic.Hint)
-        {
-            Vector4 quiet = skin.TextColor with { W = skin.TextColor.W * 0.45f };
-            float dot = thickness, step = thickness * 2.5f;
-            for (float x = piece.Min.X; x + dot <= to; x += step)
-                list.Rect(new UIRect(new Vector2(x, piece.Min.Y), new Vector2(x + dot, piece.Min.Y + dot)), quiet);
-            return;
-        }
-
-        Vector4 shade = diagnostic.Warning ? skin.WarningColor : skin.ErrorColor;
-        list.Rect(new UIRect(piece.Min, new Vector2(to, piece.Min.Y + thickness)), shade);
     }
 
     /// <summary>

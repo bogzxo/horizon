@@ -13,8 +13,9 @@ namespace Horizon.UI.Components;
 // program with the whole screen has no scrollback and gets no bar, nothing there takes a press.
 public partial class TerminalView
 {
-    // How wide its room is, the thumb thin and lit, the least the thumb is, and its part of the paint
-    private const float BAR_WIDTH = 10.0f, BAR_THIN = 4.0f, BAR_THICK = 8.0f, MIN_THUMB = 20.0f;
+    // How wide its room is (the thumb lit and a little gap), the least the thumb is, and its part of the paint. The thumb is
+    // as thick and as see-through as every other bar's, UIScrollBar's
+    private const float BAR_WIDTH = 10.0f, MIN_THUMB = UIScrollBar.MIN_THUMB;
     private const int PART_BAR = -7;
 
     // How long a press on the track waits before it pages again, and how often it does after that
@@ -46,7 +47,7 @@ public partial class TerminalView
             if (barTrack.Width <= 0.0f)
                 return default;
             var (length, top) = Thumb(barTrack);
-            return new UIRect(new Vector2(barTrack.Min.X, top - length), new Vector2(barTrack.Max.X, top));
+            return new UIRect(new Vector2(barTrack.Max.X - UIScrollBar.Width(UIScrollBar.WIDTH, barLit, BAR_WIDTH), top - length), new Vector2(barTrack.Max.X, top));
         }
     }
 
@@ -56,8 +57,9 @@ public partial class TerminalView
     // A bar only where there's a scrollback to go through
     private bool HasScrollBar => !screen.AlternateScreen && screen.Scrollback.Count > 0;
 
-    // How far in from the pane's right edge its room starts, clear of a round corner
-    private float SideInset => MathF.Max(2.0f, Radius * 0.35f);
+    // How far in from the pane's right edge its room starts, as far in as the text is from the left edge, clear of a round
+    // corner. It sat against the card's edge
+    private float SideInset => MathF.Max(PADDING, Radius * 0.6f);
 
     // What's kept down the right of the cells, the minimap and the bar
     private float SideWidth => SideInset + BAR_WIDTH + MinimapWidth;
@@ -111,18 +113,11 @@ public partial class TerminalView
         if (barTrack.Width <= 0.0f || barTrack.Height <= 0.0f)
             return;
 
+        // Against the right of its room, growing into the gap before it as it lights, in the text's colour like the rest
         var (length, top) = Thumb(barTrack);
-        float width = BAR_THIN + (BAR_THICK - BAR_THIN) * barLit;
-        float middle = barTrack.Center.X;
-
-        // A pill for a skin with round corners, the track there all the time and only seen lit so the quads stay put
-        float round = list.Skin.CornerRadius > 0.0f ? width * 0.5f : 0.0f;
-        Vector4 text = palette.Foreground;
         list.BeginPart(PART_BAR);
-        list.RoundRect(new UIRect(new Vector2(middle - BAR_THICK * 0.5f, barTrack.Min.Y), new Vector2(middle + BAR_THICK * 0.5f, barTrack.Max.Y)), BAR_THICK * 0.5f,
-            text with { W = 0.05f * barLit });
-        list.RoundRect(new UIRect(new Vector2(middle - width * 0.5f, top - length), new Vector2(middle + width * 0.5f, top)), round,
-            text with { W = draggingBar ? 0.5f : 0.2f + 0.12f * barLit });
+        UIScrollBar.Paint(list, barTrack.Max.X, barTrack.Min.Y, barTrack.Max.Y, top, length, UIScrollBar.Width(UIScrollBar.WIDTH, barLit, BAR_WIDTH), barLit, draggingBar,
+            palette.Foreground);
     }
 
     /// <summary>A press on the bar's room, the thumb taken hold of or the track paged. False off it.</summary>

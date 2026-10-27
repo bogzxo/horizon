@@ -197,7 +197,7 @@ public partial class TerminalView
         list.PushFont(font);
         list.BeginPart(-4);
         list.Rect(new UIRect(new Vector2(badge.Min.X + pad, badge.Min.Y), new Vector2(badge.Max.X - pad, badge.Min.Y + 1.0f)), palette.Foreground with { W = 0.08f });
-        Vector4 ink = Vector4.Lerp(palette.Foreground, palette.Background, badgeLit ? 0.15f : 0.45f);
+        Vector4 ink = Vector4.Lerp(palette.Foreground, palette.Background, badgeLit ? 0.1f : 0.3f);
         list.Text(title.AsSpan(), new Vector2(badge.Min.X + pad, MathF.Round(badge.Center.Y + line * 0.5f)), small, ink, false, default, default);
 
         // dragged, the title goes along under the pointer in a pill

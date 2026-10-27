@@ -71,7 +71,7 @@ public sealed class TerminalTab
 /// panel.OnKey = press => press.Control &amp;&amp; press.Shift &amp;&amp; press.Key == Key.T &amp;&amp; panel.NewTab() is not null;
 /// </code>
 /// </summary>
-public class TerminalPanel : UIComponent, IDisposable
+public partial class TerminalPanel : UIComponent, IDisposable
 {
     /// <summary>How long the animations take when nobody says, in seconds.</summary>
     public const float DEFAULT_ANIMATION_TIME = 0.16f;
@@ -80,6 +80,9 @@ public class TerminalPanel : UIComponent, IDisposable
 
     // How much of the background is laid over a pane that hasn't the keyboard, while a tab is split
     private const float UNFOCUSED_DIM = 0.28f;
+
+    // How much of the text colour the hairline round a pane that is a card is
+    private const float PANE_EDGE = 0.08f;
 
     private readonly TabStrip strip;
     private readonly Button add;
@@ -146,6 +149,12 @@ public class TerminalPanel : UIComponent, IDisposable
     }
 
     private float paneRadius;
+
+    /// <summary>
+    /// Whether every pane has its title in a header along its top, one on its own as well, so the text starts in the same
+    /// place split or not. Off, only a tab split into more than one has them.
+    /// </summary>
+    public bool PaneTitlesAlways { get; set; }
 
     /// <summary>The room round the panes inside the panel, under the row of tabs, for panes that float as cards.</summary>
     public UIEdges RoomPadding { get; set; }
@@ -228,6 +237,7 @@ public class TerminalPanel : UIComponent, IDisposable
         strip = Add(new TabStrip());
         // Only its icon until the pointer finds it, a box at the end of the tabs looked like a tab that wasn't one
         add = Add(new Button { Icon = "add", Tooltip = "New terminal", Style = "button_flat" });
+        BuildOverflow();
         room = Add(new Room(this));
 
         strip.OnSelected = index => Select(index);
@@ -476,7 +486,8 @@ public class TerminalPanel : UIComponent, IDisposable
     // A pane's badge let go of over another pane of its tab
     private void PaneDropped(TerminalView view, Vector2 point)
     {
-        if (TabOf(view) is not { } tab)
+        // Nothing to swap with while one pane has the whole tab, the others are out of sight under it
+        if (TabOf(view) is not { Zoomed: null } tab)
             return;
 
         var leaves = tab.Leaves;
@@ -775,6 +786,7 @@ public class TerminalPanel : UIComponent, IDisposable
 
         if (stripDirty)
             RebuildStrip();
+        UpdateOverflow();
 
         ShowBackdrop();
 
@@ -827,7 +839,7 @@ public class TerminalPanel : UIComponent, IDisposable
             if (tab.Tree.EdgeOwner(leaf, SplitDirection.Up) is not null) edges |= UIResize.Top;
             if (tab.Tree.EdgeOwner(leaf, SplitDirection.Down) is not null) edges |= UIResize.Bottom;
             view.Resizable = tab.Zoomed is null ? edges : UIResize.None;
-            view.ShowPaneTitle = leaves.Count > 1 && tab.Zoomed is null;
+            view.ShowPaneTitle = PaneTitlesAlways || (leaves.Count > 1 && tab.Zoomed is null);
             view.MinSize = new Vector2(MinPane, MinPane);
         }
     }
@@ -877,8 +889,11 @@ public class TerminalPanel : UIComponent, IDisposable
     protected override void Arrange(UIRect content)
     {
         float stripHeight = strip.DesiredSize.Y;
-        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight, content.Max.Y));
+        // The chevron that lists the tabs, while they don't all fit, goes between the strip and the plus
+        float listing = TabsOverflow ? stripHeight : 0.0f;
+        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight - listing, content.Max.Y));
         var addArea = new UIRect(new Vector2(content.Max.X - stripHeight, content.Max.Y - stripHeight), content.Max);
+        more?.ArrangeTree(TabsOverflow ? new UIRect(new Vector2(content.Max.X - stripHeight - listing, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight, content.Max.Y)) : default);
         var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f)).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
 
@@ -939,9 +954,23 @@ public class TerminalPanel : UIComponent, IDisposable
     {
         base.PaintChildren(list);
 
+        // Panes that are cards have the same quiet hairline round every one of them, one pane or several, the way Dawn's
+        // cards have their edge. A lone pane had none and split ones had theirs only while they had the keyboard
+        bool split = current is { Focused: { Content.Visible: true }, Tree.Count: > 1, Zoomed: null };
+        if (current is { } shown && paneRadius > 0.0f)
+        {
+            var leaves = shown.Leaves;
+            Vector4 edge = Palette.Foreground with { W = PANE_EDGE };
+            for (int i = 0; i < leaves.Count; i++)
+            {
+                if (leaves[i].Content is { Visible: true } view && (!split || leaves[i] != shown.Focused))
+                    list.RoundOutline(view.Bounds, paneRadius, 1.0f, edge);
+            }
+        }
+
         // Only when there is more than one to tell apart, the panes without the keyboard are dimmed a little, the way
         // iTerm has them, and the one with it gets a hairline of the accent. It was a frame of gold round the whole of it
-        if (current is { Focused: { } leaf, Tree.Count: > 1, Zoomed: null } focusedTab && leaf.Content is { Visible: true })
+        if (split && current is { Focused: { } leaf } focusedTab)
         {
             var leaves = focusedTab.Leaves;
             for (int i = 0; i < leaves.Count; i++)
@@ -950,7 +979,7 @@ public class TerminalPanel : UIComponent, IDisposable
                     list.RoundRect(leaves[i].Bounds, paneRadius, Palette.Background with { W = UNFOCUSED_DIM });
             }
 
-            Vector4 ink = list.Skin.HighlightColor with { W = leaf.Content.IsFocused ? 0.35f : 0.15f };
+            Vector4 ink = list.Skin.HighlightColor with { W = leaf.Content!.IsFocused ? 0.35f : 0.15f };
             list.RoundOutline(leaf.Bounds, paneRadius, 1.0f, ink);
         }
 

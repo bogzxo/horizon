@@ -5,7 +5,7 @@ using Horizon.UI.Drawing;
 namespace Horizon.UI.Components;
 
 // The minimap down the right of a terminal, between its cells and its scroll bar, the code editor's for the scrollback.
-// Every row is a strip a couple of pixels tall with its cells as little bars in the colours they're written in, the rows
+// Every row is a strip a couple of pixels tall with its words as little bars in the colours they start in, the rows
 // in sight under a lighter slider that's dragged to scroll, a click anywhere else brings that row to the middle. The
 // prompts of the commands are marked down its left edge coloured by how they ended, and what a find found down its
 // right. A row's bars are worked out once and kept on the row until it changes, so a terminal printing fast goes through
@@ -89,7 +89,10 @@ public partial class TerminalView
         list.BeginPart(PART_MINIMAP);
         list.BeginSteps();
         list.PushClip(map);
-        list.Rect(map, palette.Foreground with { W = 0.025f });
+        // Shaded only with somewhere to scroll, the code editor's way. An empty terminal had a box of it doing nothing
+        bool scrolls = !screen.AlternateScreen && screen.Scrollback.Count > 0;
+        if (scrolls)
+            list.Rect(map, list.Skin.TextColor with { W = 0.025f });
 
         float left = UIMinimap.OnPixel(module, new Vector2(map.Min.X + 4.0f, 0.0f)).X;
         int most = Math.Min(MINIMAP_COLUMNS, (int)((map.Max.X - left) / character));
@@ -124,11 +127,11 @@ public partial class TerminalView
         }
 
         // The slider over the rows in sight, only with a scrollback to go through
-        if (!screen.AlternateScreen && screen.Scrollback.Count > 0)
+        if (scrolls)
         {
             Vector2 pointer = module is not null ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
             bool lit = draggingMinimap || (IsHovered && map.Contains(pointer));
-            UIMinimap.Slider(list, module, map, map.Max.Y - (top - scrolledRows) * row, screen.Rows * row, palette.Foreground, lit);
+            UIMinimap.Slider(list, module, map, map.Max.Y - (top - scrolledRows) * row, screen.Rows * row, list.Skin.TextColor, lit);
         }
 
         list.PopClip();
@@ -159,9 +162,12 @@ public partial class TerminalView
                 continue;
             }
 
-            // A run of cells in one colour is one bar, a blank cell ends it the way a space ends a word
+            // A word is one bar in the colour it starts in, the way the code editor's minimap has them, a blank cell ends
+            // it. A word of five colours was five bars and a line of output a ragged comb. A run of a background goes on
+            // as long as the background does
+            bool word = IsInk(row.Cells[x]);
             int end = x + 1;
-            while (end < columns && MinimapInk(row.Cells[end], palette, out Vector4 next) && next == ink)
+            while (end < columns && MinimapInk(row.Cells[end], palette, out Vector4 next) && (word ? IsInk(row.Cells[end]) : !IsInk(row.Cells[end]) && next == ink))
                 end++;
 
             if (bars is null || count == bars.Length)
@@ -177,7 +183,7 @@ public partial class TerminalView
     /// <summary>The colour a cell is drawn in the minimap, its text's, or its background's when it's blank on one of its own. False for a blank cell.</summary>
     private bool MinimapInk(in TerminalCell cell, TerminalPalette palette, out Vector4 ink)
     {
-        if ((cell.CodePoint > ' ' || cell.IsContinuation) && !cell.Style.Has(TerminalAttributes.Invisible))
+        if (IsInk(cell))
         {
             ink = ForegroundOf(cell.Style, palette) with { W = MINIMAP_INK };
             return true;
@@ -193,6 +199,9 @@ public partial class TerminalView
         ink = default;
         return false;
     }
+
+    // Whether a cell has something written in it that shows
+    private static bool IsInk(in TerminalCell cell) => (cell.CodePoint > ' ' || cell.IsContinuation) && !cell.Style.Has(TerminalAttributes.Invisible);
 
     /// <summary>
     /// A press on the minimap, the slider taken hold of, or the row pressed brought to the middle and the slider held by

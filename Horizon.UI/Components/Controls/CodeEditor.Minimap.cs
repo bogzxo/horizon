@@ -9,9 +9,10 @@ namespace Horizon.UI.Components;
 // The minimap, the whole of the code drawn small down the right between the text and the scroll bar, VS Code's and
 // Sublime's. Every row is a strip a couple of pixels tall with its words as little bars in their colours, the part in
 // sight under a lighter slider that's dragged to scroll, a click anywhere else goes there. Down its left edge the bars of
-// the lines that changed (LineChanges), and over it what was found and what's wrong, so a long file's busy places show
-// at a glance. Taller than the view, it scrolls along with the code so the slider never leaves it. A file that's all in
-// sight has nothing to scroll, it gets its rows and no slider.
+// the lines that changed (LineChanges) and down its right the TODOs. What was found and what's wrong are ticked on the
+// scroll bar next to it (CodeEditor.Bar), so a long file's busy places show at a glance. Taller than the view, it
+// scrolls along with the code so the slider never leaves it. A file that's all in sight has nothing to scroll, it gets
+// its rows and no slider.
 public partial class CodeEditor
 {
     // How wide it is in the editor's units, a character and a row are UIMinimap's
@@ -286,7 +287,7 @@ public partial class CodeEditor
     }
 
 
-    /// <summary>Helper method for the changes down the left edge, and what was found and what's wrong across the rows.</summary>
+    /// <summary>Helper method for the changes down the left edge, the TODOs down the right and the caret's line across.</summary>
     private void PaintMinimapMarks(UIDrawList list, UISkin skin, UIRect map, float row, int scrolledRows, int first, int last)
     {
         float pixel = 1.0f / PixelsPerUnit;
@@ -310,32 +311,7 @@ public partial class CodeEditor
                 list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
         }
 
-        // What was found, and what's wrong, across the rows they're on
-        if (findQuery.Length > 0)
-        {
-            Vector4 lit = skin.HighlightColor with { W = 0.5f };
-            foreach (UITextMatch match in found)
-                MarkMinimapLine(list, map, row, scrolledRows, first, last, match.Line, lit);
-        }
-
-        foreach (UICodeDiagnostic diagnostic in diagnostics)
-        {
-            if (!diagnostic.Hint)
-                MarkMinimapLine(list, map, row, scrolledRows, first, last, diagnostic.Line, (diagnostic.Warning ? skin.WarningColor : skin.ErrorColor) with { W = 0.6f });
-        }
-    }
-
-    private void MarkMinimapLine(UIDrawList list, UIRect map, float row, int scrolledRows, int first, int last, int line, Vector4 colour)
-    {
-        if (line < 0 || line >= document.LineCount)
-            return;
-
-        int index = RowOf(line, 0);
-        if (index < first || index > last)
-            return;
-
-        float top = map.Max.Y - (index - scrolledRows) * row;
-        list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), colour);
+        // What was found and what's wrong are ticked on the scroll bar's track (PaintTicks), they ran into its thumb here
     }
 
     /// <summary>Helper method for a press on the minimap, the slider taken hold of, or the code gone to there and then held. False off it.</summary>

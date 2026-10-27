@@ -8,8 +8,8 @@ namespace Horizon.UI.Components;
 public partial class ScrollPanel
 {
     // The bar's thickness and its thumb's least length as they come, a bar made thicker has a longer least thumb
-    private const float BAR_WIDTH = 6.0f;
-    private const float MIN_THUMB = 24.0f;
+    private const float BAR_WIDTH = UIScrollBar.WIDTH;
+    private const float MIN_THUMB = UIScrollBar.MIN_THUMB;
 
     private bool draggingBar;
 
@@ -28,7 +28,7 @@ public partial class ScrollPanel
     private float MinThumb => MIN_THUMB * BarWidth / BAR_WIDTH;
 
     // How thick it's drawn under the pointer or held, into the gap before it and never past that
-    private float LitWidth => MathF.Min(BarWidth * 1.5f, BarWidth + BarGap);
+    private float LitWidth => UIScrollBar.Width(BarWidth, 1.0f, BarWidth + BarGap);
 
     // Whether there's a bar at all. None on a panel with nothing to scroll or folded too short for one, its thumb is never
     // shorter than its least and would stick out of it
@@ -86,18 +86,8 @@ public partial class ScrollPanel
         bool lit = draggingBar || overBar;
 
         float width = lit ? LitWidth : BarWidth;
-        UIRect track = new(new Vector2(content.Max.X - width, content.Min.Y), content.Max);
         var (top, length) = Thumb(content);
-
-        // Pills, for a skin that has round corners at all
-        float round = list.Skin.CornerRadius > 0.0f ? width * 0.5f : 0.0f;
-
-        Vector4 text = list.Skin.TextColor;
-        list.RoundRect(track, round, text with { W = lit ? 0.05f : 0.0f });
-        list.RoundRect(
-            new UIRect(new Vector2(track.Min.X, top - length), new Vector2(track.Max.X, top)),
-            round,
-            text with { W = draggingBar ? 0.5f : overBar ? 0.32f : 0.2f });
+        UIScrollBar.Paint(list, content.Max.X, content.Min.Y, content.Max.Y, top, length, width, lit ? 1.0f : 0.0f, draggingBar, list.Skin.TextColor);
     }
 
     protected internal override void OnPointerDown(Vector2 point)

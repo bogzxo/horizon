@@ -75,6 +75,9 @@ public class Table : UIComponent
 {
     private const float PAD = 8.0f, GRAB = 5.0f, BAR = 5.0f, MIN_COLUMN = 40.0f, DOUBLE_CLICK = 0.4f;
 
+    // How far in from the header and the bottom the rows fade while there are more past that edge, as a ScrollPanel's do
+    private const float FADE = 18.0f;
+
     // The rows in the order they are shown, by where they are in Rows
     private readonly List<int> order = [];
     private float scrollX, scrollY, sinceClick = float.MaxValue;
@@ -400,6 +403,10 @@ public class Table : UIComponent
         if (easing)
             list.BeginSteps();
 
+        // Soft under the header and along the bottom while there's more past them, the way every other list scrolls
+        float travel = TravelY(skin), fade = MathF.Min(FADE, (bounds.Height - line) * 0.25f);
+        list.PushFade(new UIRect(bounds.Min, new Vector2(bounds.Max.X, bounds.Max.Y - line)), MathF.Min(fade, scrollY), MathF.Min(fade, travel - scrollY));
+
         // The frozen column last, over what scrolls under it
         int part = 0;
         for (int pass = 0; pass < 2; pass++)
@@ -451,6 +458,7 @@ public class Table : UIComponent
 
         if (easing)
             list.EndSteps();
+        list.PopFade();
 
         // The header over the rows, sticky, sorted by an arrow
         UIRect head = new(new Vector2(bounds.Min.X, bounds.Max.Y - line), bounds.Max);

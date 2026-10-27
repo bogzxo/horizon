@@ -442,14 +442,34 @@ public partial class CodeEditor
         sticky.Clear();
         foreach (var (start, end) in foldable)
         {
-            if (start < firstLine && firstLine <= end)
-                sticky.Add(start);
+            int header = HeaderOf(start);
+            if (header < firstLine && firstLine <= end && !sticky.Contains(header))
+                sticky.Add(header);
         }
 
         sticky.Sort();
         if (sticky.Count > MAX_STICKY)
             sticky.RemoveRange(0, sticky.Count - MAX_STICKY);
         return sticky;
+    }
+
+    // The line that says what a bracket opens, the bracket's own line unless it's on a line of its own (C# the Allman way,
+    // public int Method() and then { under it), where it's the line before it with something on it that isn't a comment
+    // or an attribute. The held lines were a column of lone {s
+    private int HeaderOf(int start)
+    {
+        if (document.LineAt(start).AsSpan().Trim() is not ("{" or "[" or "("))
+            return start;
+
+        for (int line = start - 1; line >= 0 && line > start - 8; line--)
+        {
+            ReadOnlySpan<char> text = document.LineAt(line).AsSpan().Trim();
+            if (text.Length == 0 || text.StartsWith("//") || (text[0] == '[' && text[^1] == ']'))
+                continue;
+            return line;
+        }
+
+        return start;
     }
 
     // Where the lines held at the top are, as many rows as there are of them from the top of the code

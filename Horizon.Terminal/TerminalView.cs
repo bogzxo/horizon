@@ -893,7 +893,8 @@ public partial class TerminalView : UIComponent, IDisposable
             Vector4 ink = palette.Cursor;
             if (!IsFocused)
             {
-                list.Frame(box, 1.0f, ink);
+                // Square, a cell's outline. The skin's corners rounded it, a fat pill in Dusk and a box in Dawn
+                list.RoundOutline(box, 0.0f, 1.0f, ink);
             }
             else if (blink < BLINK || screen.CursorShape is 2 or 4 or 6)
             {

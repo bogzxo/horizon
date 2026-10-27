@@ -226,7 +226,9 @@ public partial class TerminalView
     {
         if (screen.MarksSeen || jumpedTo >= 0)
         {
-            float left = Bounds.Min.X + 1.0f;
+            // In the gutter past the pane's padding, clear of a round corner, as far in on a card as on a square pane. It
+            // was a pixel in from the edge, against the card's border in Dusk
+            float left = Bounds.Min.X + MathF.Max(PADDING, Radius * 0.6f) + 1.0f;
             for (int y = 0; y < rows; y++)
             {
                 int index = offset + y;
