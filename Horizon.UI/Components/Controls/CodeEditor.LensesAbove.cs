@@ -33,21 +33,100 @@ public partial class CodeEditor
         get => lensesAbove;
         set
         {
-            lensesAboveNext.Clear();
+            lensesWanted.Clear();
             if (value is not null)
-                lensesAboveNext.AddRange(value);
-            lensesAboveNext.Sort(ByPlace);
+                lensesWanted.AddRange(value);
+            lensesWanted.Sort(ByPlace);
 
-            // Only lenses on other lines make the rows again, new words on the same ones are only painted
-            if (!SameLines(lensesAbove, lensesAboveNext))
-                lensRowsChanged++;
-            (lensesAbove, lensesAboveNext) = (lensesAboveNext, lensesAbove);
-            lensesAboveNext.Clear();
-            lensAboveBoxes.Clear();
+            // Held only when typing brought it on, the counts a file first gets or new ones for the same text go up at once
+            bool typed = lensesWantedFor >= 0 && document.Version != lensesWantedFor;
+            lensesWantedFor = document.Version;
+            ApplyLensesAbove(typed);
         }
     }
 
     private List<UICodeLensAbove> lensesAbove = [], lensesAboveNext = [];
+
+    // What the program last said, and for which text. The caret's line keeps the row it had (or goes without the one
+    // it's getting) until the caret leaves it, the line held so, -1 for none
+    private readonly List<UICodeLensAbove> lensesWanted = [];
+    private int lensesWantedFor = -1, lensHeldLine = -1;
+
+    /// <summary>
+    /// Helper method to take what the program said as the lenses. Said for text that was typed into, no row goes anywhere
+    /// and none comes on the caret's line until the caret leaves it, the rest as said. A declaration half typed isn't one
+    /// for a moment (sdflet speed), its row went and every line under it jumped up and back down again a moment later,
+    /// and typing a new one had the line pushed down from under the caret.
+    /// </summary>
+    private void ApplyLensesAbove(bool hold)
+    {
+        int caret = document.Caret.Line;
+        bool held = false;
+
+        lensesAboveNext.Clear();
+        foreach (UICodeLensAbove lens in lensesWanted)
+        {
+            // A row new on the caret's line waits
+            if (hold && lens.Line == caret && FirstLensAbove(caret) < 0)
+            {
+                held = true;
+                continue;
+            }
+
+            lensesAboveNext.Add(lens);
+        }
+
+        // A row going stays, with what it said and pressing it does nothing (what it was about is gone from the program's
+        // list), everything empty is the program letting go of the lot (turned off)
+        if (hold && lensesWanted.Count > 0)
+        {
+            foreach (UICodeLensAbove lens in lensesAbove)
+            {
+                if (!WantsLensOn(lens.Line))
+                {
+                    lensesAboveNext.Add(lens with { Id = -1 });
+                    held = true;
+                }
+            }
+        }
+
+        lensHeldLine = held ? caret : -1;
+        lensesAboveNext.Sort(ByPlace);
+
+        // Only lenses on other lines make the rows again, new words on the same ones are only painted
+        if (!SameLines(lensesAbove, lensesAboveNext))
+            lensRowsChanged++;
+        (lensesAbove, lensesAboveNext) = (lensesAboveNext, lensesAbove);
+        lensesAboveNext.Clear();
+        lensAboveBoxes.Clear();
+    }
+
+    // Whether the program said a lens over a line, by halves, what it said is in order
+    private bool WantsLensOn(int line)
+    {
+        int low = 0, high = lensesWanted.Count - 1;
+        while (low <= high)
+        {
+            int middle = (low + high) >> 1;
+            int at = lensesWanted[middle].Line;
+            if (at == line)
+                return true;
+            if (at < line)
+                low = middle + 1;
+            else
+                high = middle - 1;
+        }
+
+        return false;
+    }
+
+    // Every tick, what was held for the caret's line let go of once the caret's gone off it, if the text is still what the
+    // program said it of (typed into since, it says again once the typing stops)
+    private void UpdateLensesHeld()
+    {
+        if (lensHeldLine >= 0 && document.Caret.Line != lensHeldLine && document.Version == lensesWantedFor)
+            ApplyLensesAbove(hold: false);
+    }
 
     // A count of the changes to which lines have lenses, what the rows are made again for
     private int lensRowsChanged;

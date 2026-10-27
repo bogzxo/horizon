@@ -147,6 +147,13 @@ public partial class CodeEditor
     /// </summary>
     private void FindFoldable()
     {
+        foldsWere.Clear();
+        foreach (int start in folded)
+        {
+            if (foldable.TryGetValue(start, out int end))
+                foldsWere[start] = end;
+        }
+
         foldable.Clear();
         var open = new Stack<int>();
         for (int line = 0; line < colouredLines.Length && line < spans.Length; line++)
@@ -171,9 +178,21 @@ public partial class CodeEditor
             }
         }
 
+        // A fold that doesn't open anything now keeps where it ended, the brackets are only out for a moment while
+        // something's half typed (a quote, a brace), and let go of it opened the fold and every line under it jumped
+        // down. It opens the way any fold does, the caret going in
+        foreach (var (start, end) in foldsWere)
+        {
+            if (!foldable.ContainsKey(start) && end > start && end < document.LineCount)
+                foldable[start] = end;
+        }
+
         if (folded.RemoveWhere(start => !foldable.ContainsKey(start)) > 0)
             foldsChanged++;
     }
+
+    // The folds there were before the brackets were found again, by the line each opens on, and where each ended
+    private readonly Dictionary<int, int> foldsWere = [];
 
     // Every tick, the folds moved along with lines put in or taken out above them, and opened when the caret goes inside
     private void UpdateFolds()

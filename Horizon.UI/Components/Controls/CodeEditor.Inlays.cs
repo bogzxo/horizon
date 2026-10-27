@@ -54,6 +54,7 @@ public partial class CodeEditor
         inlayList = given;
         inlays.Clear();
         inlaysText.Clear();
+        inlaysShifted.Clear();
         foreach (UICodeInlay inlay in inlayList)
         {
             if (!inlays.TryGetValue(inlay.Line, out List<UICodeInlay>? on))
@@ -72,14 +73,48 @@ public partial class CodeEditor
         inlaysVersion++;
     }
 
-    /// <summary>The hints of a line, none while its text isn't what it was when they were given.</summary>
+    /// <summary>
+    /// The hints of a line. Typed into since they were given, the ones either side of what changed are moved along with
+    /// the text and only one inside it goes. Every hint of the line went, and the code after them jumped left by the width
+    /// of each and back again once they were worked out anew.
+    /// </summary>
     private List<UICodeInlay>? InlaysOn(int line)
     {
-        if (inlays.Count == 0 || !inlays.TryGetValue(line, out List<UICodeInlay>? on) || line >= document.LineCount)
+        if (inlays.Count == 0 || !inlays.TryGetValue(line, out List<UICodeInlay>? on) || line >= document.LineCount || !inlaysText.TryGetValue(line, out string? was))
             return null;
 
-        return inlaysText.TryGetValue(line, out string? was) && string.Equals(was, document.LineAt(line), StringComparison.Ordinal) ? on : null;
+        string now = document.LineAt(line);
+        if (string.Equals(was, now, StringComparison.Ordinal))
+            return on;
+
+        if (inlaysShifted.TryGetValue(line, out var shifted) && string.Equals(shifted.Text, now, StringComparison.Ordinal))
+            return shifted.On;
+
+        // What the two texts start and end with alike, the change is what's between
+        int same = 0, most = Math.Min(was.Length, now.Length);
+        while (same < most && was[same] == now[same]) same++;
+        int tail = 0;
+        while (tail < most - same && was[^(tail + 1)] == now[^(tail + 1)]) tail++;
+
+        List<UICodeInlay> kept = shifted.On ?? [];
+        kept.Clear();
+        foreach (UICodeInlay inlay in on)
+        {
+            if (inlay.Column < same)
+                kept.Add(inlay);
+            else if (inlay.Column >= was.Length - tail)
+                kept.Add(inlay with { Column = inlay.Column + now.Length - was.Length });
+        }
+
+        inlaysShifted[line] = (now, kept);
+        return kept;
     }
+
+    /// <summary>The hints a line is drawn with now, for the tests.</summary>
+    internal IReadOnlyList<UICodeInlay> InlaysShownOn(int line) => InlaysOn(line) ?? [];
+
+    // The hints of the lines typed into, as moved along for the text each was moved for
+    private readonly Dictionary<int, (string Text, List<UICodeInlay> On)> inlaysShifted = [];
 
     // Lines put in or taken out, the hints below move along with them (the way the diagnostics do), each with the text its
     // line had, so a line that was split or joined goes without

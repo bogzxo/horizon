@@ -1156,6 +1156,7 @@ public partial class CodeEditor : UIComponent
             StartCheck();
 
         UpdateFolds();
+        UpdateLensesHeld();
 
         if (bracketFor != (document.Version, document.Caret))
             FindBracket();
@@ -1300,7 +1301,12 @@ public partial class CodeEditor : UIComponent
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
         float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * 0.5f);
-        scrollY = Math.Clamp(scrollY, 0.0f, most);
+
+        // Past the end because the code got shorter under it (lines taken out, a row of counts gone), eased back rather
+        // than put there. Put there, the whole view jumped the next time the caret moved
+        if (scrollY > most && scrollGoal is null)
+            scrollGoal = most;
+        scrollY = MathF.Max(0.0f, scrollY);
         if (scrollGoal is { } goal) scrollGoal = Math.Clamp(goal, 0.0f, most);
         scrollX = MathF.Max(0.0f, scrollX);
     }

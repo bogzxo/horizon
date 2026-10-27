@@ -84,4 +84,42 @@ public class CodeEditorLensesAboveTests
     {
         Assert.Equal(count, LanguageServer.ReferenceCountOf(title));
     }
+
+    [Fact]
+    public void A_row_going_while_its_line_is_typed_on_stays_until_said_again_for_the_same_text()
+    {
+        CodeEditor editor = EditorWith("let a = 1;\nlet speed = 3;\n", new UICodeLensAbove(0, 4, "a"), new UICodeLensAbove(1, 4, "speed"));
+        editor.Document.MoveTo(new UITextPosition(1, 0));
+        editor.Document.Insert("sdf");
+
+        // sdflet speed declares nothing for a moment, its row stays rather than the lines under it jumping up
+        editor.LensesAbove = [new UICodeLensAbove(0, 4, "a")];
+        Assert.Contains(editor.LensesAbove, lens => lens.Line == 1 && lens.Text == "speed");
+
+        // Said again for the text as it is, it's as said
+        editor.LensesAbove = [new UICodeLensAbove(0, 4, "a")];
+        Assert.DoesNotContain(editor.LensesAbove, lens => lens.Line == 1);
+    }
+
+    [Fact]
+    public void A_row_coming_on_the_line_being_typed_waits()
+    {
+        CodeEditor editor = EditorWith("let a = 1;\n\n", new UICodeLensAbove(0, 4, "a"));
+        editor.Document.MoveTo(new UITextPosition(1, 0));
+        editor.Document.Insert("let b = 2;");
+
+        editor.LensesAbove = [new UICodeLensAbove(0, 4, "a"), new UICodeLensAbove(1, 4, "b")];
+        Assert.DoesNotContain(editor.LensesAbove, lens => lens.Line == 1);
+    }
+
+    [Fact]
+    public void Everything_let_go_of_goes_at_once_typed_into_or_not()
+    {
+        CodeEditor editor = EditorWith("let a = 1;\n", new UICodeLensAbove(0, 4, "a"));
+        editor.Document.MoveTo(new UITextPosition(0, 0));
+        editor.Document.Insert("x");
+
+        editor.LensesAbove = [];
+        Assert.Empty(editor.LensesAbove);
+    }
 }

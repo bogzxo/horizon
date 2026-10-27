@@ -57,12 +57,16 @@ public partial class CodeEditor
     private (int[] Old, int[] New)? diffNumbers;
     private int diffBiggest;
 
-    // How many digits a column of numbers is wide, the biggest number's at the least two
+    // How many digits a column of numbers is wide, the biggest number's at the least four. At the least two, an enter at
+    // line 99 or an undo back past it moved every line of the code a digit right and back again. A diff isn't typed into
+    // and has two columns of them, it keeps to two
+    private const int MIN_DIGITS = 4;
+
     private int NumberDigits()
     {
         int count = diffNumbers is null ? document.LineCount + FirstLineNumber - 1 : diffBiggest, digits = 1;
         while ((count /= 10) > 0) digits++;
-        return Math.Max(2, digits);
+        return Math.Max(diffNumbers is null ? MIN_DIGITS : 2, digits);
     }
 
     private float GutterWidth(UISkin skin, float scale)
