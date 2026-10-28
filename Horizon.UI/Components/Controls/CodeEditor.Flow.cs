@@ -42,12 +42,13 @@ public partial class CodeEditor
     private void BeginFlow(float lineHeight)
     {
         flowPaint++;
-        flowStep = 1.0f - MathF.Exp(-MathF.Max(0.0f, FlowRate) * flowTime);
+        float rate = FlowRate * (Module?.Compositor.AnimationSpeed ?? 1.0f);
+        flowStep = 1.0f - MathF.Exp(-MathF.Max(0.0f, rate) * flowTime);
         flowTime = 0.0f;
         flowFar = lineHeight * FLOW_FAR_LINES;
 
         // Edited since, everything is put where it is, and all of the time when nothing is to flow
-        flowSnap = document.Version != flowVersion || FlowRate <= 0.0f;
+        flowSnap = document.Version != flowVersion || rate <= 0.0f;
         flowVersion = document.Version;
     }
 

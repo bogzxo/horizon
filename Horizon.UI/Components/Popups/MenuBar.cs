@@ -296,6 +296,7 @@ public partial class MenuBar : UIComponent
 
     // The wheel scrolls the list under the pointer, one too tall for the window
     protected internal override bool OnScroll(float delta) => Skin is { } skin && Panel is { } shown && shown.Wheel(skin, Pointer, delta);
+    protected internal override bool UsesScrollSpeed => true;
 
     /// <summary>Where one of the items of the open menu is, counted from the top and with the separators counted too.</summary>
     public UIRect ItemBounds(int index) => Skin is { } skin && Panel is { } shown ? shown.ItemBounds(skin, index) : default;

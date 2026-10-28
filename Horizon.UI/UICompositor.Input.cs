@@ -340,7 +340,7 @@ public partial class UICompositor
 
             // Whatever is in front has the wheel over itself, used or not. Nothing behind it gets it, a window of settings
             // with nothing to scroll where the pointer is doesn't scroll the code under it
-            WheelTakenBy = GiveWheel(over, snapshot[i].Popup, delta);
+            WheelTakenBy = GiveWheel(over, snapshot[i].Popup, delta, ScrollSpeed);
             if (wheel != 0.0f) UIKeyboard.UseScroll();
             return;
         }
@@ -350,11 +350,11 @@ public partial class UICompositor
     /// Helper method to hand a turn of the wheel to the innermost component that has a use for it, starting at what the
     /// pointer is over and going out through what that's inside of. Returns whoever took it, null for nobody.
     /// </summary>
-    internal static UIComponent? GiveWheel(UIComponent over, UIComponent? popup, float delta)
+    internal static UIComponent? GiveWheel(UIComponent over, UIComponent? popup, float delta, float scrollSpeed = 1)
     {
         for (UIComponent? component = over; component is not null; component = component.Parent)
         {
-            if (component.OnScroll(delta))
+            if (component.OnScroll(component.UsesScrollSpeed ? delta * scrollSpeed : delta))
                 return component;
 
             // An open list or menu that can't scroll is still on top of the rest, what it was opened from doesn't get it

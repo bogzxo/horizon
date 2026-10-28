@@ -171,6 +171,19 @@ public partial class TreeView : UIComponent
         }
     }
 
+    /// <summary>Viewport offset for an owner restoring rows after a refresh, without revealing the selection.</summary>
+    public float ScrollOffset
+    {
+        get => scroll;
+        set
+        {
+            ease.Stop();
+            scroll = MathF.Max(0, float.IsFinite(value) ? value : 0);
+            revealSelected = false;
+            revealOnly = null;
+        }
+    }
+
     /// <summary>The colour of the box behind the rows, null for none.</summary>
     public Vector4? Color { get; set; }
 
@@ -484,6 +497,9 @@ public partial class TreeView : UIComponent
             PressedByKey = false;
         }
     }
+
+    protected internal override bool OnEscape() => selected is { } item && OnKey?.Invoke(item, UIKeyboard.ESCAPE) == true;
+    protected internal override bool UsesScrollSpeed => true;
 
     protected override void Update(float dt)
     {

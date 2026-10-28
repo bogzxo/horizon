@@ -96,6 +96,7 @@ public partial class WindowPanel : Panel
     /// window to whatever is behind it.
     /// </summary>
     public UIComponent? WheelTarget { get; set; }
+    protected internal override bool UsesScrollSpeed => WheelTarget?.UsesScrollSpeed == true;
 
     protected internal override bool OnScroll(float delta)
     {

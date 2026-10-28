@@ -6,6 +6,7 @@ using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
+using Horizon.UI.Scripting;
 
 namespace Horizon.UI.Components;
 
@@ -160,6 +161,9 @@ public class TabPanel : UIComponent
 
     /// <summary>How tall the strip of tabs is, 0 for as tall as a line of text needs.</summary>
     public float HeaderHeight { get; set; }
+
+    /// <summary>Where tabs sit across the header; centered by default for existing layouts.</summary>
+    public Origin HeaderAlign { get; set; } = Origin.Center;
 
     /// <summary>The room between two tabs, and between the strip and the page.</summary>
     public float Spacing { get; set; } = 28.0f;
@@ -332,7 +336,8 @@ public class TabPanel : UIComponent
         for (int i = 0; i < ChildSpan.Length; i++)
             total += skin.Font.Measure(TitleOf(i), scale).X + (i > 0 ? Spacing : 0.0f);
 
-        float left = header.Center.X - total * 0.5f;
+        float left = header.Center.X - total * 0.5f
+            + HeaderAlign.ToVector().X * MathF.Max(0.0f, header.Width - total - Spacing * 0.5f);
         for (int i = 0; i < index; i++)
             left += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
 
@@ -426,6 +431,7 @@ public class TabPanel : UIComponent
         Expose("selected", () => selected, value => Select((int)value));
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("header_height", () => HeaderHeight, value => HeaderHeight = MathF.Max(0.0f, value));
+        Expose("header_align", () => UIScript.FromEnum(HeaderAlign), value => HeaderAlign = UIScript.ToEnum<Origin>(value, "header_align"));
         Expose("spacing", () => Spacing, value => Spacing = MathF.Max(0.0f, value));
         Expose("prev_hint", () => PreviousHint, value => PreviousHint = value);
         Expose("next_hint", () => NextHint, value => NextHint = value);

@@ -249,6 +249,8 @@ public partial class ListBox : UIComponent
         return true;
     }
 
+    protected internal override bool UsesScrollSpeed => true;
+
     protected override void Update(float dt)
     {
         base.Update(dt);

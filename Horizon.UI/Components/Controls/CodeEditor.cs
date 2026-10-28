@@ -710,6 +710,7 @@ public partial class CodeEditor : UIComponent
     /// Null, the wheel scrolls whatever is held.
     /// </summary>
     public Action<float>? OnZoom { get; set; }
+    protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
 
     /// <summary>
     /// Called as Tab is pressed with one caret and nothing selected, before it indents. True when it took the key (an

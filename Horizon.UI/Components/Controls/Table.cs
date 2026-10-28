@@ -97,6 +97,9 @@ public class Table : UIComponent
     /// <summary>The rows, a cell for every column each.</summary>
     public List<UITableCell[]> Rows { get; set; } = [];
 
+    /// <summary>Row indices in their current displayed order, including rows outside the viewport.</summary>
+    public IReadOnlyList<int> RowOrder => order;
+
     /// <summary>How tall a row is, 0 for a line of the text and a little.</summary>
     public float RowHeight { get; set; }
 
@@ -144,6 +147,7 @@ public class Table : UIComponent
     }
 
     protected override bool HitTestVisible => true;
+    protected internal override bool UsesScrollSpeed => true;
 
     protected internal override bool Focusable => true;
 
@@ -447,12 +451,10 @@ public class Table : UIComponent
                     UITableCell value = c < Rows[row].Length ? Rows[row][c] : default;
                     if (frozen)
                         list.Rect(cell, header);
-                    if (value.Fill is { } fill)
-                        list.Rect(cell, fill);
-                    if ((row, c) == selected)
-                        list.Rect(cell, lit);
-                    else if (row == hovered.Row)
-                        list.Rect(cell, skin.HoverColor);
+                    // Keep paint slots stable as hover, selection, and cell fills change. Inserting a quad here
+                    // made interpolation pair the highlight with text or rules from the previous tick.
+                    list.Rect(cell, value.Fill ?? Vector4.Zero);
+                    list.Rect(cell, (row, c) == selected ? lit : row == hovered.Row ? skin.HoverColor : skin.HoverColor with { W = 0 });
 
                     if (value.Text is { Length: > 0 } said)
                     {
@@ -491,7 +493,7 @@ public class Table : UIComponent
                 UIRect cell = new(new Vector2(left, head.Min.Y), new Vector2(right, head.Max.Y));
                 list.BeginPart(part++);
                 if (frozen) list.Rect(cell, header);
-                if (hovered == (-1, c)) list.Rect(cell, skin.HoverColor);
+                list.Rect(cell, hovered == (-1, c) ? skin.HoverColor : skin.HoverColor with { W = 0 });
 
                 list.PushClip(cell.Shrink(new UIEdges(PAD * 0.5f, 0.0f)));
                 Vector2 size = skin.Font.Measure(Columns[c].Title, scale, markup: false);

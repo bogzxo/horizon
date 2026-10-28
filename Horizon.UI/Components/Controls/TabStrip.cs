@@ -271,6 +271,7 @@ public class TabStrip : UIComponent
             // was a square of the panel with a stripe of the accent along its top, sharp corners in a window of round ones.
             // Always painted, see-through when not lit, so the quads after it don't shift
             list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Rect(new UIRect(new Vector2(area.Min.X + 8.0f, area.Min.Y + 1.0f), new Vector2(area.Max.X - 8.0f, area.Min.Y + 3.0f)), skin.AccentColor with { W = open ? 1.0f : 0.0f });
 
             // The title in its own colour (git's, say), the dot and the x in the strip's, so a file that's new to git and one
             // with changes not saved can still be told apart. Both were the green of a new file
@@ -348,6 +349,8 @@ public class TabStrip : UIComponent
         ClampScroll();
         return true;
     }
+
+    protected internal override bool UsesScrollSpeed => true;
 
     protected override void DefineScript()
     {

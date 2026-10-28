@@ -21,4 +21,5 @@ public partial class SettingsPage
     }
 
     protected internal override bool OnScroll(float delta) => scroll.Visible && scroll.OnScroll(delta);
+    protected internal override bool UsesScrollSpeed => true;
 }

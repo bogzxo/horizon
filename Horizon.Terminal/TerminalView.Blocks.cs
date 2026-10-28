@@ -108,6 +108,10 @@ public partial class TerminalView
 
     private readonly List<(int Row, int Column, int Length)> matches = [];
     private int matchAt = -1;
+    private int findRow, findRows;
+    private long findScrolled;
+    internal bool FindRunning { get; private set; }
+    internal bool FindLimited { get; private set; }
 
     /// <summary>What was looked for last, empty for nothing.</summary>
     public string Finding { get; private set; } = string.Empty;
@@ -118,32 +122,50 @@ public partial class TerminalView
     /// <summary>Looks for a text in all of it, case aside, every match lit, the nearest above the bottom stepped to. How many there are.</summary>
     public int Find(string text)
     {
+        StartFind(text);
+        AdvanceFind(int.MaxValue, int.MaxValue);
+        return matches.Count;
+    }
+
+    // The inline bar scans bounded batches on the UI thread; the terminal screen is never read concurrently.
+    internal void StartFind(string text)
+    {
         Finding = text;
         matches.Clear();
         matchAt = -1;
-        if (text.Length == 0)
-        {
-            RequestFrame();
-            return 0;
-        }
+        findRow = 0;
+        findRows = screen.TotalRows;
+        findScrolled = screen.RowsScrolledOff;
+        FindRunning = text.Length > 0;
+        FindLimited = false;
+        RequestFrame();
+    }
 
-        for (int row = 0; row < screen.TotalRows; row++)
+    internal void AdvanceFind(int rowBudget, int matchBudget)
+    {
+        if (!FindRunning)
+            return;
+        // Scrollback shifted while searching. Restart against the new row coordinates rather than highlight stale rows.
+        if (findScrolled != screen.RowsScrolledOff)
+            StartFind(Finding);
+        int stop = Math.Min(Math.Min(findRows, screen.TotalRows), findRow + Math.Min(rowBudget, int.MaxValue - findRow));
+        for (; findRow < stop && matches.Count < matchBudget; findRow++)
         {
-            string line = screen.RowAt(row).Text();
-            for (int at = line.IndexOf(text, StringComparison.OrdinalIgnoreCase); at >= 0; at = line.IndexOf(text, at + 1, StringComparison.OrdinalIgnoreCase))
-                matches.Add((row, at, text.Length));
+            string line = screen.RowAt(findRow).Text();
+            for (int at = line.IndexOf(Finding, StringComparison.OrdinalIgnoreCase); at >= 0 && matches.Count < matchBudget; at = line.IndexOf(Finding, at + 1, StringComparison.OrdinalIgnoreCase))
+                matches.Add((findRow, at, Finding.Length));
         }
-
-        if (matches.Count > 0)
+        FindLimited = matches.Count >= matchBudget;
+        FindRunning = !FindLimited && findRow < Math.Min(findRows, screen.TotalRows);
+        if (!FindRunning && matches.Count > 0)
             StepTo(matches.Count - 1);
         RequestFrame();
-        return matches.Count;
     }
 
     /// <summary>The match after (1) or before (-1) the one stepped to, round the ends, false when there are none.</summary>
     public bool FindNext(int direction)
     {
-        if (matches.Count == 0)
+        if (matches.Count == 0 || FindRunning)
             return false;
 
         StepTo(((matchAt < 0 ? 0 : matchAt) + direction + matches.Count) % matches.Count);
@@ -156,6 +178,7 @@ public partial class TerminalView
         Finding = string.Empty;
         matches.Clear();
         matchAt = -1;
+        FindRunning = FindLimited = false;
         RequestFrame();
     }
 
@@ -247,16 +270,29 @@ public partial class TerminalView
             }
         }
 
-        for (int i = 0; i < matches.Count; i++)
+        for (int i = FirstMatchAt(offset); i < matches.Count; i++)
         {
             var (row, column, length) = matches[i];
-            if (row < offset || row >= offset + rows)
-                continue;
+            if (row >= offset + rows)
+                break;
 
             float rowTop = top - (row - offset) * cellHeight;
             Vector4 lit = i == matchAt ? palette.Cursor with { W = 0.45f } : palette.Ansi[3] with { W = 0.28f };
             list.Rect(new UIRect(new Vector2(paintedArea.Min.X + column * cellWidth, rowTop - cellHeight), new Vector2(paintedArea.Min.X + (column + length) * cellWidth, rowTop)), lit);
         }
+    }
+
+    // Results are ordered by row. Painting a viewport must not walk the entire scrollback's matches.
+    private int FirstMatchAt(int row)
+    {
+        int low = 0, high = matches.Count;
+        while (low < high)
+        {
+            int middle = low + (high - low) / 2;
+            if (matches[middle].Row < row) low = middle + 1;
+            else high = middle;
+        }
+        return low;
     }
 
     /// <summary>The block whose prompt is on a row of the whole, null for a row that isn't one's prompt.</summary>

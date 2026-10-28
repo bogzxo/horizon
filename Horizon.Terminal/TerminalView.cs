@@ -516,23 +516,35 @@ public partial class TerminalView : UIComponent, IDisposable
         // A full screen program hears the wheel as arrows, or as the mouse if it asked for that
         if (screen.AlternateScreen)
         {
+            tuiWheel += delta;
+            int turns = (int)tuiWheel;
+            tuiWheel -= turns;
+            if (turns == 0) return true;
+            int count = Math.Min(256, Math.Abs(turns));
             if (screen.MouseMode != TerminalMouseMode.None)
             {
                 var (x, y) = CellAt(lastPointer);
-                Write(TerminalKeys.Mouse(delta > 0.0f ? 64 : 65, x, y, 0, true, false, screen.MouseSgr));
+                for (int i = 0; i < count; i++)
+                    Write(TerminalKeys.Mouse(turns > 0 ? 64 : 65, x, y, 0, true, false, screen.MouseSgr));
             }
             else
             {
-                string arrow = delta > 0.0f ? (screen.ApplicationCursorKeys ? "\u001bOA" : "\u001b[A") : (screen.ApplicationCursorKeys ? "\u001bOB" : "\u001b[B");
-                for (int i = 0; i < 3; i++)
+                string arrow = turns > 0 ? (screen.ApplicationCursorKeys ? "\u001bOA" : "\u001b[A") : (screen.ApplicationCursorKeys ? "\u001bOB" : "\u001b[B");
+                for (int i = 0; i < 3 * count; i++)
                     Write(arrow);
             }
             return true;
         }
 
-        ScrollBy((int)(delta * 3.0f));
+        wheelRows += delta * 3;
+        int rows = (int)wheelRows;
+        wheelRows -= rows;
+        ScrollBy(rows);
         return true;
     }
+
+    private float wheelRows, tuiWheel;
+    protected override bool UsesScrollSpeed => true;
 
     private void ScrollBy(int rows)
     {
@@ -1009,6 +1021,7 @@ public partial class TerminalView : UIComponent, IDisposable
             int plainEnd = at;
             int length = 0;
             while (plainEnd < to && !bold && row.Cells[plainEnd].CodePoint < 0x10000 && row.Cells[plainEnd].Combining is null
+                && TerminalSymbols.IconOf(row.Cells[plainEnd].CodePoint) is null
                 && !row.Cells[plainEnd].Style.Has(TerminalAttributes.Wide | TerminalAttributes.Continuation))
             {
                 runBuffer[length++] = (char)row.Cells[plainEnd].CodePoint;
@@ -1084,6 +1097,13 @@ public partial class TerminalView : UIComponent, IDisposable
     {
         if (cell.IsContinuation || cell.CodePoint <= ' ' && cell.Combining is null)
             return;
+
+        if (TerminalSymbols.IconOf(cell.CodePoint) is { } symbol && UISymbols.TryGet(symbol, out char symbolCode))
+        {
+            float width = cellWidth * (cell.Style.Has(TerminalAttributes.Wide) ? 2 : 1);
+            list.Symbol(symbolCode, new UIRect(corner, corner + new Vector2(width, cellHeight)), cursorInk ? ink : ForegroundOf(cell.Style, palette));
+            return;
+        }
 
         int length = 0;
         if (cell.CodePoint < 0x10000)

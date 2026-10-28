@@ -115,11 +115,11 @@ public partial class TerminalView
         MinimapRowsDrawn = last - first + 1;
 
         // What a find found, down the right edge across the rows it's on
-        for (int i = 0; i < matches.Count; i++)
+        for (int i = FirstMatchAt(start + first); i < matches.Count; i++)
         {
             int index = matches[i].Row - start;
-            if (index < first || index > last)
-                continue;
+            if (index > last)
+                break;
 
             float rowTop = map.Max.Y - (index - scrolledRows) * row;
             Vector4 lit = i == matchAt ? palette.Cursor with { W = 0.8f } : palette.Ansi[3] with { W = 0.6f };

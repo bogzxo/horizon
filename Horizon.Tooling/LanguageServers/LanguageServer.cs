@@ -92,21 +92,11 @@ public sealed partial class LanguageServer : IDisposable
     /// <param name="settings">What it's told to be (see <see cref="Settings"/>), null for whatever it is by itself.</param>
     public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null)
     {
-        var info = new ProcessStartInfo(command)
-        {
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            WorkingDirectory = Directory.Exists(rootDirectory) ? rootDirectory : Environment.CurrentDirectory
-        };
-        foreach (string argument in arguments)
-            info.ArgumentList.Add(argument);
-
         Process? process;
         try
         {
+            var info = LanguageServerProgram.StartInfo(command, arguments);
+            info.WorkingDirectory = Directory.Exists(rootDirectory) ? rootDirectory : Environment.CurrentDirectory;
             process = Process.Start(info);
 
             // Gone with this program however it goes, serve-d and its dcd-server outlived every Hex that was killed

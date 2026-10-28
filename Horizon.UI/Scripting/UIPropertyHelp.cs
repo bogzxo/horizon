@@ -69,6 +69,8 @@ public static class UIPropertyHelp
         ["window.title"] = "what its title bar says",
         ["text_color"] = "the colour of the words on it, the skin's own if it is left at nothing",
         ["icon"] = "one of the icons every skin has, VS Code's Codicons by name (save, folder, git-branch, play), in front of the words or on its own with none. $(name) does the same in any text",
+        ["primary"] = "whether it's the one to press, a dialog's default, filled with the accent where the skin has no art for a button",
+        ["danger"] = "whether what it does can't be taken back (Delete, Don't save), filled with the skin's error red where it has no art for a button, and a dialog never starts the keyboard on it",
 
         // ---- containers ----
 
@@ -108,6 +110,7 @@ public static class UIPropertyHelp
         ["tabs"] = "the names of the tabs, in order, one page for each, the children of the tabs being the pages",
         ["tabs.selected"] = "which page is open, counted from 0",
         ["header_height"] = "how tall the strip of tabs is, 0 for as tall as a line of text needs",
+        ["header_align"] = "where the tabs sit across their strip, left, center or right, in the middle unless it says",
         ["prev_hint"] = "text at the left end of the strip, the button that goes to the tab before (LB)",
         ["next_hint"] = "text at the right end of the strip, the button that goes to the next tab (RB)",
         ["accent"] = "the colour of the open tab's name and the line under it, nothing for the skin's accent",

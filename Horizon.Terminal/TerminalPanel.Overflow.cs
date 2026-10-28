@@ -27,7 +27,7 @@ public partial class TerminalPanel
         if (more is null)
             return;
 
-        float room = Bounds.Width - strip.DesiredSize.Y;
+        float room = Bounds.Width - strip.DesiredSize.Y * (profilePicker.Visible ? 2.0f : 1.0f);
         bool overflowing = tabs.Count > 1 && strip.TabsWidth > room + 0.5f;
         if (overflowing != more.Visible)
         {

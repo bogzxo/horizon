@@ -154,6 +154,7 @@ public sealed class ContextMenu : UIComponent
     }
 
     // The wheel scrolls the list under the pointer, one too tall for the window
+    protected internal override bool UsesScrollSpeed => true;
     protected internal override bool OnScroll(float delta) =>
         Skin is { } skin && Module is { } module && Panel is { } shown && shown.Wheel(skin, module.ToLocal(module.Compositor.Pointer.Position), delta);
 

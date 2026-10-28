@@ -375,10 +375,15 @@ public class Dropdown : UIComponent
             return IsOpen;
 
         // A row per notch, and never less than one for a wheel that turns in smaller steps than that.
-        int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta))) * MathF.Sign(delta);
+        wheelRemainder += delta;
+        int rows = (int)wheelRemainder;
+        wheelRemainder -= rows;
         firstRow = Math.Clamp(firstRow - rows, 0, options.Length - VisibleRows);
         return true;
     }
+
+    private float wheelRemainder;
+    protected internal override bool UsesScrollSpeed => true;
 
     protected override void Update(float dt)
     {

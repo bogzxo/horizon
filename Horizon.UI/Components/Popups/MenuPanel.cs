@@ -392,6 +392,9 @@ internal sealed partial class MenuPanel
 
     public void Paint(UIDrawList list, Vector2 pointer, UIGlass? glass = null)
     {
+        // Open and closing lists can coexist. Each list owns its quads so interpolation never matches
+        // its rows or backdrop to another menu (or renumbers it when the closing list disappears).
+        list.PushOwner(this);
         UISkin skin = list.Skin;
         float scale = ScaleOf(skin);
         ScrollFromStrips(skin, pointer, list.Delta);
@@ -465,6 +468,8 @@ internal sealed partial class MenuPanel
 
         if (entering)
             list.EndEntrance();
+
+        list.PopOwner();
 
         child?.Paint(list, pointer, glass);
     }

@@ -302,6 +302,8 @@ public class Button : UIComponent
         Expose("lbl_scale", () => LabelScale, value => LabelScale = value);
         Expose("style", () => Style, value => Style = value);
         Expose("selected", () => Selected, value => Selected = value);
+        Expose("primary", () => Primary, value => Primary = value);
+        Expose("danger", () => Danger, value => Danger = value);
         Expose("indicator", () => UIScript.FromEnum(Indicator), value => Indicator = UIScript.ToEnum<UIResize>(value, "indicator"));
         Expose("animated", () => Animated, value => Animated = value);
 

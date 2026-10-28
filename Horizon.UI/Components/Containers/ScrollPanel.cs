@@ -166,6 +166,8 @@ public partial class ScrollPanel : Panel
         return true;
     }
 
+    protected internal override bool UsesScrollSpeed => true;
+
     protected override void DefineScript()
     {
         base.DefineScript();

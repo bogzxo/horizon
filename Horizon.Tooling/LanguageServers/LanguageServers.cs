@@ -183,42 +183,7 @@ public static class LanguageServers
     public static IReadOnlyList<LanguageServer> Running => started;
 
     /// <summary>Whether a command can be started, a file that is there or a program on the PATH (with PATHEXT's endings on Windows).</summary>
-    public static bool IsAvailable(string command)
-    {
-        if (command.Length == 0)
-            return false;
-
-        if (command.Contains(Path.DirectorySeparatorChar) || command.Contains(Path.AltDirectorySeparatorChar))
-            return File.Exists(command);
-
-        string[] endings = OperatingSystem.IsWindows()
-            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT;.COM").Split(';', StringSplitOptions.RemoveEmptyEntries)
-            : [];
-
-        foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            string candidate;
-            try
-            {
-                candidate = Path.Combine(folder.Trim('"'), command);
-            }
-            catch (ArgumentException)
-            {
-                continue;
-            }
-
-            if (File.Exists(candidate))
-                return true;
-
-            foreach (string ending in endings)
-            {
-                if (File.Exists(candidate + ending))
-                    return true;
-            }
-        }
-
-        return false;
-    }
+    public static bool IsAvailable(string command) => LanguageServerProgram.Locate(command) is not null;
 
     /// <summary>
     /// Shuts down the servers started in a folder or anywhere in it, off the caller's thread, done when their processes

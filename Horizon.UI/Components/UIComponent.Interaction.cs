@@ -97,6 +97,9 @@ public abstract partial class UIComponent
     /// <param name="delta">How many notches, positive away from the user (up).</param>
     protected internal virtual bool OnScroll(float delta) => false;
 
+    /// <summary>Whether wheel input represents scrolling distance, rather than zooming or editing a value.</summary>
+    protected internal virtual bool UsesScrollSpeed => false;
+
     /// <summary>
     /// What the other button of the pointer (right click) does on this component, or on anything inside it that has
     /// nothing of its own. Called with where the pointer is, in the layout's units. Usually shows a

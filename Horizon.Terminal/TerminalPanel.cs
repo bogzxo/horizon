@@ -86,6 +86,7 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
     private readonly TabStrip strip;
     private readonly Button add;
+    private readonly Button profilePicker;
     private readonly Room room;
     private readonly List<TerminalTab> tabs = [];
     private TerminalTab? current;
@@ -236,7 +237,8 @@ public partial class TerminalPanel : UIComponent, IDisposable
         Size = new Vector2(800, 500);
         strip = Add(new TabStrip());
         // Only its icon until the pointer finds it, a box at the end of the tabs looked like a tab that wasn't one
-        add = Add(new Button { Icon = "add", Tooltip = "New terminal", Style = "button_flat" });
+        add = Add(new Button { Icon = "add", Tooltip = "New terminal with the default profile", Style = "button_flat", Animated = false });
+        profilePicker = Add(new Button { Icon = "chevron-down", Tooltip = "New terminal with profile...", Style = "button_flat", Animated = false, Visible = false, OnPressed = ShowProfiles });
         BuildOverflow();
         room = Add(new Room(this));
 
@@ -259,11 +261,11 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
     private void AddPressed()
     {
-        if (Profiles.Count > 1)
-            ShowProfiles();
-        else
-            NewTab();
+        NewTab();
     }
+
+    /// <summary>The profile dropdown beside New Tab; empty when only one profile is available.</summary>
+    public UIRect ProfilePickerBounds => profilePicker.Visible ? profilePicker.Bounds : default;
 
     /// <summary>The profiles as a menu at the plus, a pick opens a tab of that.</summary>
     public void ShowProfiles()
@@ -281,7 +283,8 @@ public partial class TerminalPanel : UIComponent, IDisposable
             menu.Add(profile.Name, () => NewTab(picked), icon: profile.Icon);
         }
 
-        ContextMenu.Show(module, new Vector2(add.Bounds.Min.X, add.Bounds.Min.Y), menu);
+        Button anchor = profilePicker.Visible ? profilePicker : add;
+        ContextMenu.Show(module, new Vector2(anchor.Bounds.Min.X, anchor.Bounds.Min.Y), menu);
     }
 
     /* Tabs */
@@ -769,6 +772,7 @@ public partial class TerminalPanel : UIComponent, IDisposable
     protected override void Update(float dt)
     {
         base.Update(dt);
+        profilePicker.Visible = Profiles.Count > 1;
 
         // Clicking into a pane gives it the keyboard, the tab's focused pane follows that
         if (current is { } tab && Module?.Compositor.Focus is TerminalView focused && focused != tab.FocusedView && tab.Tree.Find(focused) is { } leaf)
@@ -787,6 +791,7 @@ public partial class TerminalPanel : UIComponent, IDisposable
         if (stripDirty)
             RebuildStrip();
         UpdateOverflow();
+        UpdateFind(dt);
 
         ShowBackdrop();
 
@@ -889,12 +894,17 @@ public partial class TerminalPanel : UIComponent, IDisposable
     protected override void Arrange(UIRect content)
     {
         float stripHeight = strip.DesiredSize.Y;
+        float profileWidth = profilePicker.Visible ? stripHeight : 0.0f;
         // The chevron that lists the tabs, while they don't all fit, goes between the strip and the plus
         float listing = TabsOverflow ? stripHeight : 0.0f;
-        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight - listing, content.Max.Y));
-        var addArea = new UIRect(new Vector2(content.Max.X - stripHeight, content.Max.Y - stripHeight), content.Max);
-        more?.ArrangeTree(TabsOverflow ? new UIRect(new Vector2(content.Max.X - stripHeight - listing, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight, content.Max.Y)) : default);
-        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f)).Shrink(RoomPadding);
+        float controls = content.Max.X - profileWidth;
+        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(controls - stripHeight - listing, content.Max.Y));
+        var addArea = new UIRect(new Vector2(controls - stripHeight, content.Max.Y - stripHeight), new Vector2(controls, content.Max.Y));
+        profilePicker.ArrangeTree(profilePicker.Visible ? new UIRect(new Vector2(controls, content.Max.Y - stripHeight), content.Max).Shrink(new UIEdges(2.0f, 3.0f)) : default);
+        more?.ArrangeTree(TabsOverflow ? new UIRect(new Vector2(controls - stripHeight - listing, content.Max.Y - stripHeight), new Vector2(controls - stripHeight, content.Max.Y)) : default);
+        float paneTop = content.Max.Y - stripHeight - 2.0f;
+        ArrangeFind(content, paneTop);
+        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, paneTop - (Finding ? FIND_HEIGHT : 0.0f))).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
 
         // In from the strip's edges as far as a tab's pill is, so the plus lights the shape the tabs do
