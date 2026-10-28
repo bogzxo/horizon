@@ -141,7 +141,9 @@ public static class ProcessEnvironment
     /// <summary>The PATH a program started now should have, see the class.</summary>
     public static string Path()
     {
-        string own = Environment.GetEnvironmentVariable(PATH) ?? string.Empty;
+        // PATH, which Windows doesn't mind the case of and everyone else does. Asked for as Path it was always empty
+        // on Linux and macOS
+        string own = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         return OperatingSystem.IsWindows() ? PathFrom(own) : own;
     }
 
