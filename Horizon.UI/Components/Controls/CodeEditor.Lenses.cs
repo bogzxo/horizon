@@ -73,6 +73,8 @@ public partial class CodeEditor
     /// <summary>Helper method for a press on a lens, over a line or after it, handed to the program, true when it took the press.</summary>
     private bool PressLens(Vector2 point)
     {
+        if (PressAgentHint(point))
+            return true;
         if (PressLensAbove(point))
             return true;
         if (OnLensPressed is not { } pressed || !LensAt(point, out UICodeLens lens, out int action))

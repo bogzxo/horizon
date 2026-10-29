@@ -1417,6 +1417,7 @@ public partial class CodeEditor : UIComponent
 
         // A piece of art at the end of a line is shown big, and says nothing
         Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+        if (AgentHintTooltip(pointer)) return;
         for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
         {
             if (artBoxes[i].Width > 0.0f && artBoxes[i].Shrink(new UIEdges(-2.0f)).Contains(pointer))
@@ -2603,6 +2604,8 @@ public partial class CodeEditor : UIComponent
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, moreErrors[i], firstLine, lastLine);
         for (int i = 0; i < diagnostics.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], firstLine, lastLine);
+
+        PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // How the call being typed is called, over it
         if (focused && signature is { } said)

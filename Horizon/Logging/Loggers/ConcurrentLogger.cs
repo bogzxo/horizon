@@ -21,6 +21,7 @@ public class ConcurrentLogger : ILoggerDisposable
     private readonly BlockingCollection<LogMessage> messages = new(new ConcurrentQueue<LogMessage>());
     private readonly StreamWriter? writer;
     private readonly Thread worker;
+    private readonly Mutex? fileGate;
     private int disposed;
 
     /// <summary>
@@ -34,10 +35,25 @@ public class ConcurrentLogger : ILoggerDisposable
     public LogLevel MinimumLevel { get; set; } = LogLevel.Info;
 
     /// <param name="logFile">Where the log is written to, an empty string for the console only.</param>
-    public ConcurrentLogger(string logFile)
+    public ConcurrentLogger(string logFile, bool singleFile = false)
     {
+        if (singleFile && logFile.Length > 0)
+        {
+            string path = Path.GetFullPath(logFile);
+            if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
+            string key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(path)))[..24];
+            fileGate = new Mutex(false, "horizon-log-" + key);
+        }
         if (logFile.Length > 0)
-            (writer, File) = Open(logFile);
+        {
+            if (fileGate is null) (writer, File) = Open(logFile);
+            else
+            {
+                EnterFile();
+                try { (writer, File) = Open(logFile, shared: true); }
+                finally { fileGate.ReleaseMutex(); }
+            }
+        }
 
         worker = new Thread(Write)
         {
@@ -52,15 +68,15 @@ public class ConcurrentLogger : ILoggerDisposable
     /// Helper method to open the log file. A second copy of the game in the same folder finds the file taken,
     /// it gets one with its process id in the name instead of falling over.
     /// </summary>
-    private static (StreamWriter?, string) Open(string logFile)
+    private static (StreamWriter?, string) Open(string logFile, bool shared = false)
     {
         string taken = Path.ChangeExtension(logFile, null) + $"-{Environment.ProcessId}" + Path.GetExtension(logFile);
 
-        foreach (string file in (string[])[logFile, taken])
+        foreach (string file in shared ? [logFile] : (string[])[logFile, taken])
         {
             try
             {
-                var stream = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.Read);
+                var stream = new FileStream(file, FileMode.Create, FileAccess.Write, shared ? FileShare.ReadWrite | FileShare.Delete : FileShare.Read);
                 return (new StreamWriter(stream), file);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -101,9 +117,30 @@ public class ConcurrentLogger : ILoggerDisposable
             Console.WriteLine(line);
             Console.ResetColor();
 
-            writer?.WriteLine(line);
-            if (messages.Count == 0) writer?.Flush();
+            if (fileGate is null)
+            {
+                writer?.WriteLine(line);
+                if (messages.Count == 0) writer?.Flush();
+            }
+            else if (writer is not null)
+            {
+                EnterFile();
+                try
+                {
+                    // Another instance may have reset or appended to the same file since this process last wrote.
+                    writer.BaseStream.Seek(0, SeekOrigin.End);
+                    writer.WriteLine(line);
+                    writer.Flush();
+                }
+                finally { fileGate.ReleaseMutex(); }
+            }
         }
+    }
+
+    private void EnterFile()
+    {
+        try { fileGate!.WaitOne(); }
+        catch (AbandonedMutexException) { /* Ownership is granted when the previous writer exited unexpectedly. */ }
     }
 
     private static ConsoleColor ColorOf(LogLevel level) => level switch

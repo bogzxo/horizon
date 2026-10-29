@@ -132,8 +132,22 @@ public class TitleBar : StackPanel
         return new Vector2(inside.X + IconRoom + ButtonsRoom, MathF.Max(inside.Y, BarHeight));
     }
 
-    protected override void Arrange(UIRect content) =>
-        base.Arrange(new UIRect(new Vector2(content.Min.X + IconRoom, content.Min.Y), new Vector2(content.Max.X - ButtonsRoom, content.Max.Y)));
+    protected override void Arrange(UIRect content)
+    {
+        var inside = new UIRect(new Vector2(content.Min.X + IconRoom, content.Min.Y), new Vector2(content.Max.X - ButtonsRoom, content.Max.Y));
+        base.Arrange(inside);
+        // Right-anchored accessories live beside the window controls, independently of the menus on the left.
+        float right = inside.Max.X;
+        float gap = Spacing >= 0 ? Spacing : Module?.Compositor.Skin?.Spacing ?? 0;
+        for (int i = ChildSpan.Length - 1; i >= 0; i--)
+        {
+            var child = ChildSpan[i];
+            if (!child.Visible || child.Anchor.ToVector().X <= 0) continue;
+            var size = child.DesiredSize;
+            child.ArrangeTree(UIRect.FromCenter(new Vector2(right - size.X * 0.5f, inside.Center.Y), size));
+            right -= size.X + gap;
+        }
+    }
 
     /// <summary>Where one of the window's buttons is, in the module's units.</summary>
     public UIRect ButtonBounds(int index)
@@ -184,14 +198,20 @@ public class TitleBar : StackPanel
         {
             Vector2 size = skin.Font.Measure(title, scale, markup: false);
             float contentEnd = Bounds.Min.X + IconRoom;
+            float titleEnd = Bounds.Max.X - ButtonsRoom;
             foreach (UIComponent child in ChildSpan)
             {
                 if (child.Visible)
-                    contentEnd = MathF.Max(contentEnd, child.Bounds.Max.X);
+                {
+                    if (child.Anchor.ToVector().X > 0)
+                        titleEnd = MathF.Min(titleEnd, child.Bounds.Min.X - 16.0f);
+                    else
+                        contentEnd = MathF.Max(contentEnd, child.Bounds.Max.X);
+                }
             }
 
             float left = MathF.Max(Bounds.Center.X - size.X * 0.5f, contentEnd + 16.0f);
-            if (left + size.X < Bounds.Max.X - ButtonsRoom)
+            if (left + size.X < titleEnd)
                 list.Text(title, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
         }
 
