@@ -63,10 +63,14 @@ public partial class CodeEditor
         return false;
     }
 
+    // Where the hints of each line got to as they're painted, kept from one paint to the next so a paint makes nothing
+    private readonly Dictionary<int, float> agentHintEnds = [];
+
     private void PaintAgentHints(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, float digit, int first, int last)
     {
         agentHintBoxes.Clear();
-        var ends = new Dictionary<int, float>();
+        Dictionary<int, float> ends = agentHintEnds;
+        ends.Clear();
         foreach (var hint in AgentHints)
         {
             if (hint.Line < first || hint.Line > last || hint.Line < 0 || hint.Line >= document.LineCount || IsHidden(hint.Line, out _)) continue;

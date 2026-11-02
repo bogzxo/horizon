@@ -28,8 +28,13 @@ internal static class UITooltip
     private static float LongestWord(UISkin skin, string text, float scale)
     {
         float widest = 0.0f;
-        foreach (string word in text.Split([' ', '\n'], StringSplitOptions.RemoveEmptyEntries))
-            widest = MathF.Max(widest, skin.Font.Measure(word, scale, markup: false).X);
+        // By spans, it's asked every frame a tooltip is up and a Split made garbage each time
+        foreach (Range range in text.AsSpan().SplitAny(' ', '\n'))
+        {
+            ReadOnlySpan<char> word = text.AsSpan(range);
+            if (!word.IsEmpty)
+                widest = MathF.Max(widest, skin.Font.Measure(word, scale, markup: false).X);
+        }
         return widest;
     }
 
