@@ -33,6 +33,40 @@ internal static class UITooltip
         return widest;
     }
 
+    // The width a text was last balanced to, so it's worked out once a tooltip and not every frame it's up
+    private static string? balancedText;
+    private static float balancedScale, balancedMost, balancedWidth;
+
+    /// <summary>
+    /// Helper method for the narrowest width a text wraps to in as few lines as it does at its widest, so the lines come
+    /// out about even. A tooltip of two lines had one word left on its own on the second.
+    /// </summary>
+    private static float Balanced(UISkin skin, string text, float scale, float most, List<(int Start, int Length)> lines)
+    {
+        if (text == balancedText && scale == balancedScale && most == balancedMost)
+            return balancedWidth;
+
+        skin.Font.Wrap(text, scale, most, lines, markup: false);
+        int count = lines.Count;
+        float low = LongestWord(skin, text, scale), high = most;
+        if (count > 1)
+        {
+            // Halved a few times, a pixel or two out is nothing anybody sees
+            for (int i = 0; i < 8 && high - low > 2.0f; i++)
+            {
+                float middle = (low + high) * 0.5f;
+                skin.Font.Wrap(text, scale, middle, lines, markup: false);
+                if (lines.Count > count)
+                    low = middle;
+                else
+                    high = middle;
+            }
+        }
+
+        (balancedText, balancedScale, balancedMost, balancedWidth) = (text, scale, most, count > 1 ? high : most);
+        return balancedWidth;
+    }
+
     /// <summary>
     /// Paints a tooltip into a list that has the transform of the module set, see <see cref="UIModule.Paint"/>.
     /// </summary>
@@ -40,7 +74,8 @@ internal static class UITooltip
     /// <param name="lines">Scratch for cutting the text into lines, reused from one frame to the next.</param>
     /// <param name="rich">Where a tooltip that is markdown is laid out, null for one that is plain words.</param>
     /// <param name="openedAt">When it was first painted, for its entrance, less than 0 for not yet.</param>
-    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich, ref float openedAt)
+    /// <returns>The box it was painted in, in the module's units, so the pointer can go over to it and read it.</returns>
+    public static UIRect Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich, ref float openedAt)
     {
         var skin = list.Skin;
 
@@ -59,7 +94,7 @@ internal static class UITooltip
             // As wide as its longest word when that's wider than a tooltip usually is, so a word is never broken in two (a
             // path came out as "RE/ADME.md"), never wider than the frame leaves
             float most = MathF.Max(MAX_WIDTH, MathF.Min(LongestWord(skin, text, scale), module.Frame.Width - MARGIN * 2.0f - PADDING * 2.0f));
-            skin.Font.Wrap(text, scale, most, lines, markup: false);
+            skin.Font.Wrap(text, scale, Balanced(skin, text, scale, most, lines), lines, markup: false);
             size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
         }
 
@@ -88,5 +123,7 @@ internal static class UITooltip
 
         if (entering)
             list.EndEntrance();
+
+        return box;
     }
 }

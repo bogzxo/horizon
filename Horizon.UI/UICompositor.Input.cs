@@ -221,10 +221,11 @@ public partial class UICompositor
     /// </summary>
     private void UpdateTooltip(UIModule[] snapshot, float dt)
     {
-        // One a component put up stays where it was put until it's taken down or the pointer goes somewhere
+        // One a component put up stays where it was put until it's taken down or something is clicked, the pointer can go
+        // wherever it likes meanwhile
         if (pinned is { } pin)
         {
-            if (pin.Owner.Module is { } owner && pin.Owner.Visible && Vector2.Distance(lastPointer, pin.Pointer) <= TOOLTIP_DRIFT * 4.0f)
+            if (pin.Owner.Module is { } owner && pin.Owner.Visible && !Pointer.Down)
             {
                 if (tooltipModule is not null && tooltipModule != owner)
                     tooltipModule.ShowTooltip(null, default);
@@ -272,15 +273,32 @@ public partial class UICompositor
         else if (hushed is not null && (hushed != over || Vector2.Distance(lastPointer, hushedAt) > TOOLTIP_DRIFT * 3.0f))
             hushed = null;
 
+        // The one up already stays while the pointer is on what it's about, over the box itself, or on its way between
+        if (held is { } up)
+        {
+            if (!Pointer.Down && !keyHushed && up.Of != hushed && up.Of.Module is { } owner && owner == tooltipModule && up.Of.Visible)
+            {
+                // Something else with its own say takes it down at once, the way across is over the same thing or nothing
+                UIComponent? saying = SaidBy(over);
+                bool onIt = saying == up.Of && up.Of.Tooltip == up.Text;
+                bool onBox = owner.TooltipBox.Width > 0.0f && owner.TooltipBox.Shrink(new UIEdges(-TOOLTIP_DRIFT * 4.0f)).Contains(owner.ToLocal(lastPointer));
+                heldFor = onIt || onBox ? TOOLTIP_GRACE : saying is not null && saying != up.Of ? 0.0f : heldFor - dt;
+                if (heldFor > 0.0f)
+                {
+                    TooltipOf = up.Of;
+                    owner.ShowTooltip(up.Text, up.At, up.Markdown);
+                    return;
+                }
+            }
+
+            held = null;
+        }
+
         // The component the pointer is over, or the nearest thing around it that has something to say
         UIComponent? showing = null;
         if (still && restingFor >= TOOLTIP_DELAY && over is not null && over != hushed)
         {
-            for (UIComponent? at = over; at is not null && showing is null; at = at.Parent)
-            {
-                if (at.Tooltip.Length > 0)
-                    showing = at;
-            }
+            showing = SaidBy(over);
         }
 
         UIModule? module = showing?.Module;
@@ -289,7 +307,28 @@ public partial class UICompositor
 
         tooltipModule = module;
         TooltipOf = showing;
-        module?.ShowTooltip(showing!.Tooltip, module.ToLocal(lastPointer), showing.TooltipMarkdown);
+        if (module is not null)
+        {
+            held = (showing!, showing.Tooltip, showing.TooltipMarkdown, module.ToLocal(lastPointer));
+            heldFor = TOOLTIP_GRACE;
+            module.ShowTooltip(showing.Tooltip, module.ToLocal(lastPointer), showing.TooltipMarkdown);
+        }
+    }
+
+    // The module whose tooltip is up under a point (in the camera's units), null when none is there
+    private UIModule? TooltipBoxAt(Vector2 point) =>
+        tooltipModule is { TooltipText.Length: > 0 } module && module.TooltipBox.Width > 0.0f && module.TooltipBox.Contains(module.ToLocal(point)) ? module : null;
+
+    // The component the pointer is over, or the nearest thing around it that has something to say
+    private static UIComponent? SaidBy(UIComponent? over)
+    {
+        for (UIComponent? at = over; at is not null; at = at.Parent)
+        {
+            if (at.Tooltip.Length > 0)
+                return at;
+        }
+
+        return null;
     }
 
     /// <summary>The component whose tooltip is up right now, null while none is.</summary>
@@ -388,7 +427,27 @@ public partial class UICompositor
                 over = snapshot[i].HitTest(pointer.Position);
         }
 
-        IsPointerOverUI = over is not null || pressed is not null;
+        // A tooltip is on top of everything, what's under it doesn't get the pointer and a click on it only takes it down.
+        // One went straight through to the code under it and moved the caret somewhere nobody could see
+        if (pressed is null && TooltipBoxAt(pointer.Position) is { } tipModule)
+        {
+            if ((pointer.Down && !pointerWasDown) || (pointer.SecondaryDown && !secondaryWasDown))
+            {
+                (hushed, hushedAt) = (TooltipOf, pointer.Position);
+                held = null;
+                pinned = null;
+                TooltipOf = null;
+                tipModule.ShowTooltip(null, default);
+                tooltipModule = null;
+            }
+
+            over = null;
+            IsPointerOverUI = true;
+        }
+        else
+        {
+            IsPointerOverUI = over is not null || pressed is not null;
+        }
 
         // The other button asks whatever it's over what it has to offer, the innermost component with a handler for
         // it, then whoever listens on the whole compositor (an editor deciding by what was clicked)

@@ -263,6 +263,13 @@ public partial class UICompositor : GameComponent, IDisposable
     private Vector2 restingAt;
     private UIModule? tooltipModule;
 
+    // The tooltip up from the pointer resting, what said it, what it says and where it hangs from. It stays put while the
+    // pointer moves about what it's about or goes over to read it, and for a moment after it wanders off either, so the
+    // way across to it doesn't take it down
+    private (UIComponent Of, string Text, bool Markdown, Vector2 At)? held;
+    private float heldFor;
+    private const float TOOLTIP_GRACE = 0.35f;
+
     // What was last clicked and where, its tooltip kept down until the pointer leaves it
     private UIComponent? hushed;
     private Vector2 hushedAt;
@@ -275,7 +282,7 @@ public partial class UICompositor : GameComponent, IDisposable
     internal List<(int Start, int Length)> TooltipLines { get; } = [];
 
     // A tooltip that is markdown, laid out once for as long as it is the same text
-    internal UIRichText TooltipRich { get; } = new();
+    internal UIRichText TooltipRich { get; } = new() { Snug = true };
 
     private System.Collections.Frozen.FrozenDictionary<string, string>? strings;
 

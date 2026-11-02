@@ -208,6 +208,9 @@ namespace Horizon.UI
         // When the tooltip showing was first painted, by the draw list's clock, for its entrance
         private float tooltipOpenedAt = -1.0f;
 
+        // Where the tooltip was last painted, nothing while none was
+        private UIRect tooltipBox;
+
         public UIModule(UICompositor compositor)
         {
             Compositor = compositor;
@@ -224,11 +227,17 @@ namespace Horizon.UI
         /// <summary>The text of the tooltip the module has up right now, null while none is, for whoever reads the screen as text.</summary>
         public string? TooltipText => tooltip;
 
+        /// <summary>The box the tooltip up right now was painted in, in the module's units, empty before it's painted.</summary>
+        internal UIRect TooltipBox => tooltipBox;
+
         internal void ShowTooltip(string? text, Vector2 point, bool markdown = false)
         {
             // Another tooltip (or none) comes in afresh, the same one stays put
             if (!ReferenceEquals(text, tooltip))
+            {
                 tooltipOpenedAt = -1.0f;
+                tooltipBox = default;
+            }
 
             tooltip = text;
             tooltipAt = point;
@@ -356,7 +365,7 @@ namespace Horizon.UI
 
             // And a tooltip over everything, popups included
             if (tooltip is { Length: > 0 } text)
-                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
+                tooltipBox = UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
         }
 
         internal UIComponent? HitTest(Vector2 point)
