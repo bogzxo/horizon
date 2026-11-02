@@ -72,6 +72,15 @@ public class Label : UIComponent
     /// </summary>
     public string? CodeLanguage { get; set; }
 
+    /// <summary>
+    /// Whether the markdown is laid out as a document to read, room between the lines, rules under the big headings,
+    /// padded code. Off for the compact look the rest of the UI wants. See <see cref="UIRichText.Document"/>.
+    /// </summary>
+    public bool Document { get; set; }
+
+    /// <summary>The font code in the markdown is written in, a monospace one, null for the skin's.</summary>
+    public UIFont? CodeFont { get; set; }
+
     /// <summary>The text as it was laid out with its styles the last time, what a test looks into to see how it came out.</summary>
     public UIRichText RichText => rich;
 
@@ -182,6 +191,8 @@ public class Label : UIComponent
         if (drawnRich)
         {
             rich.CodeLanguage = CodeLanguage;
+            rich.Document = Document;
+            rich.CodeFont = CodeFont;
             rich.Build(text, skin.Font, scale, width, Markdown, shapes != 0 ? roomOf ??= RoomAt : null, shapes);
             wrapped = false;
             return new Vector2(width > 0.0f ? width : rich.Width, rich.Height);

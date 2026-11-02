@@ -46,6 +46,9 @@ public sealed partial class UIRichText
     private int block = -1;
     private int blockLine;
 
+    // Where the back of the block going on starts, for a document's, which has room over its first line
+    private float codeTop;
+
     // What a fence's word turned out to be, kept for the run, the list of languages is made fresh every time it is asked
     private static readonly Dictionary<string, ICodeHighlighter?> languageOf = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lock languageGate = new();
@@ -83,19 +86,29 @@ public sealed partial class UIRichText
     /// <summary>Helper method to open or close a block of code at a fence, the language after an opening one read with the block.</summary>
     private void Fence(int lineEnd, ReadOnlySpan<char> info, ref bool inCode, ref int codeFirstLine, ref float codeIndent, bool first)
     {
+        float em = font.LineHeight * baseScale;
+        float margin = em * (Document ? CODE_MARGIN : 0.3f);
+
         if (inCode)
         {
             CloseCodeBlock(codeFirstLine, codeIndent);
             inCode = false;
             block = -1;
-            pendingGap = font.LineHeight * baseScale * 0.3f;
+            pendingGap = margin;
             return;
         }
 
         inCode = true;
         codeFirstLine = lineCount;
         codeIndent = 0.0f;
-        if (!first) pendingGap = MathF.Max(pendingGap, font.LineHeight * baseScale * 0.3f);
+        if (!first) pendingGap = MathF.Max(pendingGap, margin);
+
+        // A document's block has room over its first line and under its last, inside its back
+        if (Document)
+        {
+            codeTop = cursorY + pendingGap;
+            pendingGap += em * CODE_PAD_Y;
+        }
 
         // The block starts on the line after the fence
         int next = source.IndexOf('\n', lineEnd);
@@ -116,6 +129,12 @@ public sealed partial class UIRichText
 
         float top = lines[firstLine].Top;
         float bottom = lines[^1].Top + lines[^1].Height;
+        if (Document)
+        {
+            top = codeTop;
+            bottom += font.LineHeight * baseScale * CODE_PAD_Y;
+            cursorY = bottom;
+        }
 
         fullWidth.Add(pieces.Count);
         pieces.Add(new Piece
@@ -128,7 +147,8 @@ public sealed partial class UIRichText
             Shade = Shade.Field,
             Alpha = 1.0f,
             Link = -1,
-            Block = -1
+            Block = -1,
+            Radius = Document ? font.LineHeight * baseScale * CODE_BLOCK_RADIUS : 0.0f
         });
     }
 
@@ -139,7 +159,7 @@ public sealed partial class UIRichText
         state.Code = true;
         state.Block = block;
 
-        float pad = font.LineHeight * baseScale * 0.4f;
+        float pad = font.LineHeight * baseScale * (Document ? CODE_PAD_X : 0.4f);
         lineIndent = wrapIndent = penX = pad;
 
         CodeBlock? read = block >= 0 ? blocks[block] : null;
