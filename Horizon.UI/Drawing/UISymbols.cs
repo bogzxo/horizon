@@ -109,11 +109,21 @@ public static class UISymbols
         listed.Sort(StringComparer.Ordinal);
     }
 
-    /// <summary>The character of an icon by its name, false if there is no icon of that name.</summary>
-    public static bool TryGet(ReadOnlySpan<char> name, out char code)
+    /// <summary>The character of an icon by its name, false if there is no icon of that name. A motion after it is left off.</summary>
+    public static bool TryGet(ReadOnlySpan<char> name, out char code) => TryGet(name, out code, out _);
+
+    /// <summary>
+    /// The character of an icon by its name and how it moves, <c>sync~spin</c> (see <see cref="UIAnimatedIcons"/>), one
+    /// of the drawn icons (<c>spinner</c>, <c>dots</c>) among them. False if there is no icon of that name.
+    /// </summary>
+    public static bool TryGet(ReadOnlySpan<char> name, out char code, out UIIconMotion motion)
     {
+        ReadOnlySpan<char> named = UIAnimatedIcons.Split(name, out motion);
+        if (UIAnimatedIcons.TryGetDrawn(named, out code))
+            return true;
+
         code = default;
-        return names.Count > 0 && names.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(name, out code);
+        return names.Count > 0 && names.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(named, out code);
     }
 
     /// <summary>The picture of an icon in the atlas.</summary>
@@ -132,9 +142,14 @@ public static class UISymbols
     /// <param name="lineHeight">How tall the line the icon is in is, in the units the width comes out in.</param>
     /// <param name="length">How many characters it takes up.</param>
     /// <param name="width">How much of the line it takes up, the icon and a little gap either side.</param>
-    internal static bool TryRead(ReadOnlySpan<char> text, float lineHeight, out char code, out int length, out float width)
+    internal static bool TryRead(ReadOnlySpan<char> text, float lineHeight, out char code, out int length, out float width) =>
+        TryRead(text, lineHeight, out code, out length, out width, out _);
+
+    /// <summary>The same with how the icon moves, when it says (<c>$(sync~spin)</c>).</summary>
+    internal static bool TryRead(ReadOnlySpan<char> text, float lineHeight, out char code, out int length, out float width, out UIIconMotion motion)
     {
         code = default;
+        motion = UIIconMotion.None;
         length = 0;
         width = 0.0f;
 
@@ -142,7 +157,7 @@ public static class UISymbols
             return false;
 
         int end = text.IndexOf(')');
-        if (end < 3 || !TryGet(text[2..end], out code))
+        if (end < 3 || !TryGet(text[2..end], out code, out motion))
             return false;
 
         length = end + 1;

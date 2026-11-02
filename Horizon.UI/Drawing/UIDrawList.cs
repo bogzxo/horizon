@@ -166,6 +166,8 @@ public sealed partial class UIDrawList
         time = clock is { } given ? given % TIME_WRAP : (time + dt) % TIME_WRAP;
 
         itemCount = 0;
+        movingAsked = false;
+        UIAnimatedIcons.Advance();
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
@@ -796,10 +798,24 @@ public sealed partial class UIDrawList
     /// Draws an icon of <see cref="UISymbols"/> (Codicons) filling a square, the biggest that fits in the rectangle,
     /// in the middle of it. Nothing if the icons haven't loaded.
     /// </summary>
-    public void Symbol(char code, UIRect rect, Vector4 color)
+    /// <param name="motion">How it moves (see <see cref="UIAnimatedIcons"/>), by the time the UI's been painted for.</param>
+    public void Symbol(char code, UIRect rect, Vector4 color, UIIconMotion motion = UIIconMotion.None)
     {
+        if (UIAnimatedIcons.IsDrawn(code))
+        {
+            UIAnimatedIcons.Draw(this, code, rect, color, Motion);
+            KeepMoving();
+            return;
+        }
+
         if (!UISymbols.TryGetGlyph(code, out var glyph))
             return;
+
+        if (motion != UIIconMotion.None && Motion)
+        {
+            MovingSymbol(glyph, rect, color, motion);
+            return;
+        }
 
         // The em of the font is the square every icon is drawn in, its picture is somewhere inside of that
         float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
@@ -814,11 +830,11 @@ public sealed partial class UIDrawList
             ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
     }
 
-    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, nothing if there is none by it.</summary>
+    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, moving when it says how (<c>sync~spin</c>), nothing if there is none by it.</summary>
     public void Symbol(ReadOnlySpan<char> name, UIRect rect, Vector4 color)
     {
-        if (UISymbols.TryGet(name, out char code))
-            Symbol(code, rect, color);
+        if (UISymbols.TryGet(name, out char code, out UIIconMotion motion))
+            Symbol(code, rect, color, motion);
     }
 
     /// <summary>

@@ -121,7 +121,7 @@ public sealed class UIWorkCards
             if (itemSays != (first, first?.Title, going, percent))
             {
                 itemSays = (first, first?.Title, going, percent);
-                string text = first is null ? $"$(sync) {going} going" : going == 1 ? $"$(sync) {first.Title}" : $"$(sync) {first.Title} and {going - 1} more";
+                string text = first is null ? $"$(sync~spin) {going} going" : going == 1 ? $"$(sync~spin) {first.Title}" : $"$(sync~spin) {first.Title} and {going - 1} more";
                 item.Text = percent >= 0 ? $"{text} {percent}%" : text;
             }
         }

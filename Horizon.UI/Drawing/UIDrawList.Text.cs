@@ -141,9 +141,9 @@ public sealed partial class UIDrawList
             }
 
             // $(name), an icon of UISymbols, as tall as the line wants it
-            if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth))
+            if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth, out UIIconMotion motion))
             {
-                Symbol(symbol, UISymbols.InText(pen, lineHeight), color);
+                Symbol(symbol, UISymbols.InText(pen, lineHeight), color, motion);
                 pen.X += symbolWidth;
                 i += symbolLength - 1;
                 continue;
