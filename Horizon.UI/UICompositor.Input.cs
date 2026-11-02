@@ -352,7 +352,14 @@ public partial class UICompositor
     public bool Pinned(UIComponent owner) => pinned?.Owner == owner;
 
     /// <summary>The component that took the last turn of the wheel, null when nothing had a use for it. For a test.</summary>
-    public UIComponent? WheelTakenBy { get; private set; }
+    public UIComponent? WheelTakenBy
+    {
+        get => wheelTakenBy?.TryGetTarget(out UIComponent? taken) == true ? taken : null;
+        private set => wheelTakenBy = value is null ? null : new WeakReference<UIComponent>(value);
+    }
+
+    // Weak, it's only for a test to look at, and it kept a closed file's whole editor alive until the wheel turned again
+    private WeakReference<UIComponent>? wheelTakenBy;
 
     /// <summary>
     /// Hands the mouse wheel to whatever is under the pointer that has a use for it. The innermost component
