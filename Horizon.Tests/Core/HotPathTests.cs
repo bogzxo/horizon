@@ -9,6 +9,7 @@ using Horizon.Rendering.Spriting;
 using Horizon.Rendering.Tiling;
 using Horizon.Rendering.Voxels;
 using Horizon.UI;
+using Horizon.UI.Diagnostics;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -73,7 +74,10 @@ public class HotPathTests
         { typeof(UICompositor), "DrawList" },
         { typeof(UICompositor), "DrawGlassy" },
         { typeof(UICompositor), "SameBlur" },
-        { typeof(UICompositor), "BlendGlass" },
+        { typeof(UIInBetween), "Quads" },
+        { typeof(UIInBetween), "Glass" },
+        { typeof(UIInBetween), "BlendByKey" },
+        { typeof(UIStatistics), "CountGpu" },
         { typeof(UICompositor), "Seed" },
         { typeof(UICompositor), "Mix" },
         { typeof(Horizon.UI.Drawing.UIRenderer), "Draw" },

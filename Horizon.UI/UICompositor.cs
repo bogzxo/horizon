@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -11,6 +12,7 @@ using Horizon.Rendering;
 using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Components;
+using Horizon.UI.Diagnostics;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -348,10 +350,21 @@ public partial class UICompositor : GameComponent, IDisposable
     private readonly SnapshotBuffer<CapturedList> captured = new(static () => new CapturedList());
 
     // What of the captured lists was uploaded last, which two lists and how far between them, -1 for something else.
-    // And where blended lists are put together
+    // And what puts a frame between two of them together
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
-    private SpriteItem[] blended = [];
+    private readonly UIInBetween inBetween = new();
+
+    /// <summary>What this UI has cost since it was last reset, see <see cref="UIStatistics"/>.</summary>
+    public UIStatistics Statistics { get; } = new();
+
+    // Helper method to count quads that went up to the GPU
+    private void CountUpload(int quads)
+    {
+        Statistics.FramesUploaded++;
+        Statistics.QuadsUploaded += quads;
+        Statistics.BytesUploaded += (long)quads * System.Runtime.CompilerServices.Unsafe.SizeOf<SpriteItem>();
+    }
 
     /// <summary>
     /// Where the pointer comes from. The mouse unless set to something else, which could be a cursor
@@ -637,6 +650,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // One clock for both lists, see UIDrawList.Begin
         paintClock = (paintClock + dt) % 3600.0f;
+        long started = Stopwatch.GetTimestamp();
         back.Begin(skin, paintFrame, dt, paintClock);
         foreach (var module in snapshot)
         {
@@ -684,10 +698,19 @@ public partial class UICompositor : GameComponent, IDisposable
                 back.PopClip();
         }
         back.End();
+        Statistics.PaintMs += UIStatistics.Since(started);
+        Statistics.Ticks++;
+        Statistics.QuadsPainted += back.Items.Length;
+        Statistics.MostQuads = Math.Max(Statistics.MostQuads, back.Items.Length);
 
         // Nothing happened. What was painted is what is on screen already, and nobody needs to hear about it
-        if (paintedFrame > 0 && back.SameAs(front))
+        started = Stopwatch.GetTimestamp();
+        bool same = paintedFrame > 0 && back.SameAs(front);
+        Statistics.CompareMs += UIStatistics.Since(started);
+        if (same)
             return;
+
+        Statistics.TicksChanged++;
 
         // Something did, a window that only draws when something changed has frames to draw (see RunMode.Application)
         GameEngine.Instance?.WindowManager?.NoteChange();
@@ -785,97 +808,23 @@ public partial class UICompositor : GameComponent, IDisposable
 
         if (canBlend && alpha < 1.0f)
         {
-            if (blended.Length < after.Count)
-                blended = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)after.Count)];
-
-            ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-            if (!Blendable(before, after))
-            {
-                BlendByKey(a, b, alpha);
-            }
-            else for (int i = 0; i < b.Length; i++)
-            {
-                // The same quad if it shows the same thing the same way, then only where it is, how big and what colour
-                // moved. One that is suddenly somewhere else entirely (a menu that was folded away off screen and
-                // popped up) is not shown flying over, it was put there, see SpriteItem.CanBlend
-                blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[i], b[i])
-                    ? SpriteItem.Blend(a[i], b[i], alpha)
-                    : b[i];
-            }
-
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases), BlendGlass(before, after, alpha));
+            long started = Stopwatch.GetTimestamp();
+            ReadOnlySpan<SpriteItem> quads = inBetween.Quads(before.Span, CollectionsMarshal.AsSpan(before.Runs), after.Span, CollectionsMarshal.AsSpan(after.Runs), alpha);
+            Statistics.BlendMs += UIStatistics.Since(started);
+            Statistics.FramesBlended++;
+            CountUpload(quads.Length);
+            renderer.Upload(quads, CollectionsMarshal.AsSpan(after.Runs), skin, CollectionsMarshal.AsSpan(after.Atlases),
+                inBetween.Glass(CollectionsMarshal.AsSpan(before.Glass), CollectionsMarshal.AsSpan(after.Glass), alpha));
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Glass));
+            renderer.Upload(shown.Span, CollectionsMarshal.AsSpan(shown.Runs), skin, CollectionsMarshal.AsSpan(shown.Atlases), CollectionsMarshal.AsSpan(shown.Glass));
+            CountUpload(shown.Count);
         }
 
         (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
         pictureCurrent = false;
         refreshedAt = renderedAt;
-        return true;
-    }
-
-    // Where the panes of glass of two lists blended are put together
-    private readonly List<UIGlassPane> blendedGlass = [];
-
-    /// <summary>
-    /// Helper method for the panes of glass of a frame between two ticks. Blended one with the other when the two lists
-    /// have as many, so a dialog that slides in has its glass slide with it, and the newer list's as they are otherwise.
-    /// </summary>
-    private ReadOnlySpan<UIGlassPane> BlendGlass(CapturedList before, CapturedList after, float alpha)
-    {
-        if (before.Glass.Count != after.Glass.Count)
-            return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Glass);
-
-        blendedGlass.Clear();
-        for (int i = 0; i < after.Glass.Count; i++)
-            blendedGlass.Add(UIGlassPane.Blend(before.Glass[i], after.Glass[i], alpha));
-
-        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(blendedGlass);
-    }
-
-    // Where every quad of the older list is, by who painted it as which of its quads, for lists that aren't the same quads
-    private readonly Dictionary<Vector2, int> byKey = [];
-
-    /// <summary>
-    /// Helper method to blend the quads of the newer list with the ones of the older list the same component painted
-    /// as the same one of its quads, wherever the older list has it. What is new is shown as it is.
-    /// </summary>
-    private void BlendByKey(ReadOnlySpan<SpriteItem> a, ReadOnlySpan<SpriteItem> b, float alpha)
-    {
-        byKey.Clear();
-        for (int i = 0; i < a.Length; i++)
-            byKey.TryAdd(a[i].Key, i);
-
-        for (int i = 0; i < b.Length; i++)
-        {
-            blended[i] = byKey.TryGetValue(b[i].Key, out int was) &&
-                a[was].Flags == b[i].Flags && a[was].TexMin == b[i].TexMin && a[was].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[was], b[i])
-                    ? SpriteItem.Blend(a[was], b[i], alpha)
-                    : b[i];
-        }
-    }
-
-    /// <summary>
-    /// Helper method to say whether two lists are the same quads (the same many, in the same runs, every one painted
-    /// by the same component as the same one of its quads) so that they can be blended one quad with the other.
-    /// Blending by place in the list alone was how a hover that put one quad in or took one out had every quad
-    /// after it blended with its neighbour, a button's background halfway to the next one's, a bar across the
-    /// row for a frame. A list that isn't the same quads is shown as it is, the step is a tick long and nobody sees it.
-    /// </summary>
-    private static bool Blendable(CapturedList before, CapturedList after)
-    {
-        if (before.Count != after.Count ||
-            !System.Runtime.InteropServices.CollectionsMarshal.AsSpan(before.Runs).SequenceEqual(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs)))
-            return false;
-
-        ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-        for (int i = 0; i < a.Length; i++)
-        {
-            if (a[i].Key != b[i].Key) return false;
-        }
-
         return true;
     }
 
@@ -928,6 +877,8 @@ public partial class UICompositor : GameComponent, IDisposable
 
         RenderFrame frame = RenderFrame.Active;
         bool due = NoteFrame();
+        Statistics.Frames++;
+        Statistics.CountGpu();
 
         if (frame.IsDecoupled)
         {
@@ -954,6 +905,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 if (front.Skin == skin && !front.Incomplete)
                 {
                     renderer.Upload(front);
+                    CountUpload(front.Items.Length);
                     pictureCurrent = false;
                     refreshedAt = renderedAt;
                 }
@@ -980,7 +932,7 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
-        using var scope = GameEngine.Instance.Graphics.BeginGpuScope("ui");
+        using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
 
         DrawList(dt);
         DrawCursor();
@@ -1150,7 +1102,8 @@ public partial class UICompositor : GameComponent, IDisposable
             }
 
             bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, i);
-            glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
+            using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GLASS_SCOPE))
+                glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
             if (fresh)
             {
                 blurredBy = i;
