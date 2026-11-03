@@ -2346,12 +2346,7 @@ public partial class CodeEditor : UIComponent
         if (easing)
             list.BeginSteps();
         list.PushFont(FontOf(list.Skin));
-
-        // The code moves by the scroll as one, on whole pixels (see UIDrawList.PushFrame), or the boxes behind the words
-        // slid by fractions of a pixel while the words snapped to the pixels, and the two wobbled against each other
-        list.PushFrame(new Vector2(-scrollX, scrollY));
         PaintCode(list);
-        list.PopFrame();
         list.PopFont();
         if (easing)
             list.EndSteps();
@@ -2405,6 +2400,11 @@ public partial class CodeEditor : UIComponent
         // its first and last rows (p, d, brackets) were cut a little differently every tick it moved. A cut letter can't
         // be blended with the last tick's, so while a notebook scrolled they jumped ahead of the rest of their line
         list.PushClip(AllInSight ? new UIRect(new Vector2(area.Min.X, area.Min.Y - lineHeight), new Vector2(area.Max.X, area.Max.Y + lineHeight)) : area);
+
+        // The code moves by the scroll as one, on whole pixels (see UIDrawList.PushFrame), and a frame between two ticks
+        // moves it smoothly while what's in it is the newer tick's. Only the code, the box, the bar and the minimap stay
+        // put. Moved by fractions of a pixel the boxes behind the words slid while the words snapped to the pixels
+        list.PushFrame(new Vector2(-scrollX, scrollY));
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
         var extras = document.ExtraCarets;
@@ -2633,11 +2633,17 @@ public partial class CodeEditor : UIComponent
                 PaintCaret(list, skin, scale, area, left, lineHeight, first, last, extras[i].Caret);
         }
 
+        list.PopFrame();
         list.PopClip();
 
-        // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds
+        // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds. They
+        // go up and down with the code and not across with it
         if (LineNumbers)
+        {
+            list.PushFrame(new Vector2(0.0f, scrollY));
             PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
+            list.PopFrame();
+        }
 
         EndFlow();
 

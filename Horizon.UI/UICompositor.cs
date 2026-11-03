@@ -339,6 +339,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public readonly List<UIDrawList.Run> Runs = [];
         public readonly List<TextureAtlas> Atlases = [];
         public readonly List<UIGlassPane> Glass = [];
+        public readonly UIFrameList Frames = new();
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
@@ -356,11 +357,11 @@ public partial class UICompositor : GameComponent, IDisposable
     private readonly UIInBetween inBetween = new();
 
     /// <summary>
-    /// Whether what's captured for the frames between ticks is what the list's frames resolve to rather than its quads as
-    /// they were painted, <c>HORIZON_UI_FRAMES=1</c>. The two are the same, this is for running the UI on the frames while
-    /// they take over, see notes/ui-interpolation-plan.md.
+    /// Whether the frames between ticks are put together from the ticks' frames (see <see cref="UIInBetween.Frames"/>),
+    /// which is how it's done unless <c>HORIZON_UI_FRAMES=0</c>, which blends quad with quad the way it was done before,
+    /// until that goes (see notes/ui-interpolation-plan.md).
     /// </summary>
-    public static bool UseFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES") == "1";
+    public static bool UseFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES") != "0";
 
     /// <summary>
     /// Whether every tick painted is held up against what its frames resolve to and a difference is logged,
@@ -763,29 +764,26 @@ public partial class UICompositor : GameComponent, IDisposable
             if (into.Painted == paintedFrame && into.Skin == front.Skin)
                 return;
 
+            ReadOnlySpan<SpriteItem> items = front.Items;
+            if (into.Items.Length < items.Length)
+                into.Items = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)items.Length)];
+
+            items.CopyTo(into.Items);
+            into.Count = items.Length;
+
+            into.Runs.Clear();
+            foreach (var run in front.Runs)
+                into.Runs.Add(run);
+
+            into.Glass.Clear();
+            foreach (var pane in front.GlassPanes)
+                into.Glass.Add(pane);
+
+            // And as frames, which the frames between this tick and the next are put together from, see UseFrames
             if (UseFrames)
-            {
-                // What the frames come to, the same as what was painted (see CheckFrames), on the way to frames between
-                // ticks being put together from the frames and not from the quads
-                into.Count = front.Resolve(front.Frames, ref into.Items, into.Runs, into.Glass);
-            }
+                into.Frames.CopyFrom(front.FrameList);
             else
-            {
-                ReadOnlySpan<SpriteItem> items = front.Items;
-                if (into.Items.Length < items.Length)
-                    into.Items = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)items.Length)];
-
-                items.CopyTo(into.Items);
-                into.Count = items.Length;
-
-                into.Runs.Clear();
-                foreach (var run in front.Runs)
-                    into.Runs.Add(run);
-
-                into.Glass.Clear();
-                foreach (var pane in front.GlassPanes)
-                    into.Glass.Add(pane);
-            }
+                into.Frames.Clear();
 
             into.Atlases.Clear();
             foreach (var atlas in front.Atlases)
@@ -839,12 +837,23 @@ public partial class UICompositor : GameComponent, IDisposable
         if (canBlend && alpha < 1.0f)
         {
             long started = Stopwatch.GetTimestamp();
-            ReadOnlySpan<SpriteItem> quads = inBetween.Quads(before.Span, CollectionsMarshal.AsSpan(before.Runs), after.Span, CollectionsMarshal.AsSpan(after.Runs), alpha);
-            Statistics.BlendMs += UIStatistics.Since(started);
-            Statistics.FramesBlended++;
-            CountUpload(quads.Length);
-            renderer.Upload(quads, CollectionsMarshal.AsSpan(after.Runs), skin, CollectionsMarshal.AsSpan(after.Atlases),
-                inBetween.Glass(CollectionsMarshal.AsSpan(before.Glass), CollectionsMarshal.AsSpan(after.Glass), alpha));
+            if (before.Frames.QuadCount > 0 && after.Frames.QuadCount > 0)
+            {
+                inBetween.Frames(before.Frames, after.Frames, alpha);
+                Statistics.BlendMs += UIStatistics.Since(started);
+                Statistics.FramesBlended++;
+                CountUpload(inBetween.FramedQuads.Length);
+                renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan(after.Atlases), inBetween.FramedGlass);
+            }
+            else
+            {
+                ReadOnlySpan<SpriteItem> quads = inBetween.Quads(before.Span, CollectionsMarshal.AsSpan(before.Runs), after.Span, CollectionsMarshal.AsSpan(after.Runs), alpha);
+                Statistics.BlendMs += UIStatistics.Since(started);
+                Statistics.FramesBlended++;
+                CountUpload(quads.Length);
+                renderer.Upload(quads, CollectionsMarshal.AsSpan(after.Runs), skin, CollectionsMarshal.AsSpan(after.Atlases),
+                    inBetween.Glass(CollectionsMarshal.AsSpan(before.Glass), CollectionsMarshal.AsSpan(after.Glass), alpha));
+            }
         }
         else
         {

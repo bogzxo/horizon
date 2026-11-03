@@ -12,13 +12,10 @@ namespace Horizon.Tests.UI;
 /// Where things are on screen halfway between two ticks, what the UI's frames between ticks have to get right. Two
 /// ticks are painted, the frame halfway between them is put together the way the compositor does it, and a quad is
 /// found by the colour it was painted in, so these say what's on screen and not how the quads were told apart. Each
-/// is one of the bugs in notes/ui-interpolation-plan.md, and skipped until the stage of it that fixes it lands.
+/// is one of the bugs in notes/ui-interpolation-plan.md.
 /// </summary>
 public class InBetweenTests
 {
-    private const string STAGE_2 = "Fails until UI frames stage 2, see notes/ui-interpolation-plan.md";
-    private const string STAGE_3 = "Fails until UI frames stage 3, see notes/ui-interpolation-plan.md";
-
     private static readonly UISkin Skin = new(new UIFont(Path.GetTempPath(), "no-font-here.ttf"));
 
     /// <summary>A block of one colour as big as it is put, a picture's worth of texels when it's textured.</summary>
@@ -54,7 +51,15 @@ public class InBetweenTests
     // Helper method for a colour nothing else is painted in, told apart by its red and green
     private static Vector4 Colour(int i) => new((i + 1) / 128.0f, 0.5f, 0.25f, 1.0f);
 
-    private readonly record struct Painted(SpriteItem[] Items, UIDrawList.Run[] Runs, UIGlassPane[] Glass);
+    private readonly record struct Painted(SpriteItem[] Items, UIDrawList.Run[] Runs, UIGlassPane[] Glass, UIFrameList Frames);
+
+    // Helper method to keep what a list painted, its frames as well
+    private static Painted Kept(UIDrawList list)
+    {
+        var frames = new UIFrameList();
+        frames.CopyFrom(list.FrameList);
+        return new Painted(list.Items.ToArray(), list.Runs.ToArray(), list.GlassPanes.ToArray(), frames);
+    }
 
     // Helper method to lay out and paint one tick
     private static Painted Tick(UIComponent root, UIRect screen, int tick)
@@ -65,16 +70,15 @@ public class InBetweenTests
         list.Begin(Skin, tick, 1.0f / 120.0f, tick / 120.0f);
         root.PaintTree(list);
         list.End();
-        return new Painted(list.Items.ToArray(), list.Runs.ToArray(), list.GlassPanes.ToArray());
+        return Kept(list);
     }
 
-    // Helper method for the frame halfway between two ticks
+    // Helper method for the frame halfway between two ticks, the way the compositor puts it together
     private static (SpriteItem[] Items, UIGlassPane[] Glass) Halfway(Painted a, Painted b)
     {
         var between = new UIInBetween();
-        SpriteItem[] items = between.Quads(a.Items, a.Runs, b.Items, b.Runs, 0.5f).ToArray();
-        UIGlassPane[] glass = between.Glass(a.Glass, b.Glass, 0.5f).ToArray();
-        return (items, glass);
+        between.Frames(a.Frames, b.Frames, 0.5f);
+        return (between.FramedQuads.ToArray(), between.FramedGlass.ToArray());
     }
 
     // Helper method for where the quads painted in a colour are on screen, all of them together
@@ -106,7 +110,7 @@ public class InBetweenTests
         return panel;
     }
 
-    [Fact(Skip = STAGE_2)]
+    [Fact]
     public void A_picture_cut_by_the_edge_of_a_scroll_moves_with_the_rest()
     {
         var panel = Rows(textured: true, out UIRect screen);
@@ -120,7 +124,7 @@ public class InBetweenTests
         Assert.Equal(Drawn(a.Items, Colour(0)).Min.Y + 5.0f, Drawn(items, Colour(0)).Min.Y, 0.01f);
     }
 
-    [Fact(Skip = STAGE_2)]
+    [Fact]
     public void A_row_coming_into_sight_comes_in_with_the_rest()
     {
         var panel = Rows(textured: false, out UIRect screen);
@@ -133,7 +137,7 @@ public class InBetweenTests
         Assert.Equal(5.0f, Drawn(items, Colour(5)).Height, 0.01f);
     }
 
-    [Fact(Skip = STAGE_2)]
+    [Fact]
     public void Something_lighting_up_doesnt_move_what_was_already_there()
     {
         var lit = new Lit();
@@ -147,7 +151,7 @@ public class InBetweenTests
             Assert.Equal(Drawn(b.Items, Colour(i)), Drawn(items, Colour(i)));
     }
 
-    [Fact(Skip = STAGE_2)]
+    [Fact]
     public void Glass_coming_in_doesnt_stop_the_glass_already_there_moving()
     {
         var panel = Rows(textured: false, out UIRect screen);
@@ -164,7 +168,7 @@ public class InBetweenTests
         Assert.Contains(glass, pane => MathF.Abs(pane.Min.Y - (was + 5.0f)) < 0.01f);
     }
 
-    [Fact(Skip = STAGE_2)]
+    [Fact]
     public void A_list_gliding_to_a_row_has_its_rows_where_its_frame_is()
     {
         var list = new ListBox { Rows = 10, Items = [.. Enumerable.Range(0, 40).Select(i => $"item {i}")] };
@@ -173,15 +177,19 @@ public class InBetweenTests
         list.Choose(10);
         list.UpdateTree(1.0f / 120.0f);
         Painted a = Tick(list, screen, 1);
-        list.UpdateTree(1.0f / 120.0f);
+        for (int i = 0; i < 20; i++)
+            list.UpdateTree(1.0f / 120.0f);
         Painted b = Tick(list, screen, 2);
         var (items, _) = Halfway(a, b);
-
-        // The picked row comes in at the bottom, its top halfway between where the two ticks had it. Only the rows, the
-        // bar down the right is the text's colour as well
         static SpriteItem[] Rows(SpriteItem[] items) => [.. items.Where(item => item.Origin.X < 150.0f)];
-        float top = (Drawn(Rows(a.Items), picked).Max.Y + Drawn(Rows(b.Items), picked).Max.Y) * 0.5f;
-        Assert.Equal(top, Drawn(Rows(items), picked).Max.Y, 0.01f);
+        Assert.True(Drawn(Rows(b.Items), picked).Max.Y - Drawn(Rows(a.Items), picked).Max.Y > 2.0f, "the list hardly moved");
+
+        // The picked row comes in at the bottom, its top halfway between where the two ticks had it, on a whole pixel
+        // from where the newer one has it. Only the rows, the bar down the right is the text's colour as well
+        float newer = Drawn(Rows(b.Items), picked).Max.Y, drawn = Drawn(Rows(items), picked).Max.Y;
+        float top = (Drawn(Rows(a.Items), picked).Max.Y + newer) * 0.5f;
+        Assert.InRange(drawn, top - 0.5f, top + 0.5f);
+        Assert.Equal(MathF.Round(drawn - newer), drawn - newer, 0.001f);
     }
 
     [Fact]
@@ -197,7 +205,7 @@ public class InBetweenTests
             list.Rect(new UIRect(at, at + new Vector2(40.0f, 20.0f)), Colour(tick));
             list.PopOwner();
             list.End();
-            return new Painted(list.Items.ToArray(), list.Runs.ToArray(), list.GlassPanes.ToArray());
+            return Kept(list);
         }
 
         foreach (var (first, second) in new (object, object)[] { (new Swatch(Colour(0)), new Swatch(Colour(0))), (new string('a', 3), new string('b', 3)) })
@@ -207,7 +215,7 @@ public class InBetweenTests
         }
     }
 
-    [Fact(Skip = STAGE_3)]
+    [Fact]
     public void Something_put_somewhere_else_by_the_layout_is_put_there()
     {
         var swatch = new Swatch(Colour(0));
