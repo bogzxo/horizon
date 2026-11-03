@@ -1276,7 +1276,15 @@ public partial class CodeEditor : UIComponent
         // sight the way the wheel's are, a page or more away is gone to at once. A line at a time it jumped, and the
         // lines smeared across each jump
         float from = scrollGoal ?? scrollY;
-        if (centreOnReveal)
+        if (AllInSight)
+        {
+            // All of it shows once it's grown to fit, and a new line is revealed before it has. Scrolled to it then, the
+            // code stayed a line up and out of the top of a box already as tall as it, nothing clamped it back after
+            centreOnReveal = false;
+            scrollGoal = null;
+            scrollY = 0.0f;
+        }
+        else if (centreOnReveal)
         {
             centreOnReveal = false;
             scrollGoal = null;
