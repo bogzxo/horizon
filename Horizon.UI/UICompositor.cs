@@ -361,9 +361,11 @@ public partial class UICompositor : GameComponent, IDisposable
     private volatile float drawnAlpha = 1.0f;
     private volatile int drawnAfter = -1;
 
-    // The frames of the list painted before the newest, by key, worked out once a tick when a hit test asks
+    // The frames of the list painted before the newest, by key, worked out once that list is painted when a hit test
+    // asks. By how many times it's been painted into and not by the newest's number, a tick that changed nothing paints
+    // into it again and keeps the number, and the frames found were of a list that wasn't there any more
     private readonly Dictionary<Vector2, int> priorFrames = [];
-    private int priorFor = -1;
+    private int priorFor = -1, backPainted;
 
     /// <summary>
     /// How far what a component is inside of is drawn, in the last frame drawn, from where the newest tick laid it out,
@@ -373,19 +375,19 @@ public partial class UICompositor : GameComponent, IDisposable
     internal Vector2 DrawnMove(UIComponent component)
     {
         float alpha = drawnAlpha;
-        if (alpha >= 1.0f || drawnAfter != paintedFrame || !front.HomeOf(component.PaintId, out int at))
+        if (alpha >= 1.0f || drawnAfter != paintedFrame || !front.HomeOf(component.PaintId, out int at) || (uint)at >= (uint)front.FrameList.Frames.Count)
             return Vector2.Zero;
 
         UIFrame latest = front.FrameList.Frames[at];
-        if (priorFor != paintedFrame)
+        if (priorFor != backPainted)
         {
-            priorFor = paintedFrame;
+            priorFor = backPainted;
             priorFrames.Clear();
             for (int i = 0; i < back.FrameList.Frames.Count; i++)
                 priorFrames.TryAdd(back.FrameList.Frames[i].Key, i);
         }
 
-        if (!priorFrames.TryGetValue(latest.Key, out int was))
+        if (!priorFrames.TryGetValue(latest.Key, out int was) || was >= back.FrameList.Frames.Count)
             return Vector2.Zero;
 
         UIFrame shown = UIInBetween.Between(back.FrameList.Frames[was], latest, alpha);
@@ -699,12 +701,15 @@ public partial class UICompositor : GameComponent, IDisposable
         paintClock = (paintClock + dt) % 3600.0f;
         long started = Stopwatch.GetTimestamp();
         back.Begin(skin, paintFrame, dt, paintClock);
+        backPainted++;
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
                 continue;
 
+            long laying = Stopwatch.GetTimestamp();
             module.Layout(screen, skin);
+            Statistics.LayoutMs += UIStatistics.Since(laying);
             module.Paint(back);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
