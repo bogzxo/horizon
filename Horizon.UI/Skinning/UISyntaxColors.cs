@@ -196,6 +196,18 @@ public sealed partial class UISyntaxColors
     }
 
     /// <summary>Writes every colour into another set.</summary>
+    /// <summary>A number that's another whenever any of the colours is, for what's painted with them.</summary>
+    internal int Fingerprint()
+    {
+        var hash = new HashCode();
+        hash.Add(Name); hash.Add(Keyword); hash.Add(Property); hash.Add(Call); hash.Add(Text); hash.Add(Number); hash.Add(Comment);
+        hash.Add(Punctuation); hash.Add(LineNumber); hash.Add(Directive); hash.Add(Declaration); hash.Add(Builtin); hash.Add(Type);
+        hash.Add(Constant); hash.Add(Reference); hash.Add(Escape); hash.Add(Markup); hash.Add(Operator);
+        hash.Add(Bracket1); hash.Add(Bracket2); hash.Add(Bracket3); hash.Add(control);
+        AddSemantic(ref hash);
+        return hash.ToHashCode();
+    }
+
     public void CopyTo(UISyntaxColors other)
     {
         other.Name = Name; other.Keyword = Keyword; other.Property = Property; other.Call = Call; other.Text = Text;

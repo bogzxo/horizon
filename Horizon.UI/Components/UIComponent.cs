@@ -452,9 +452,13 @@ public abstract partial class UIComponent
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
             return;
 
-        // Put aside for after the rest of the module, see ZOffset
+        // Put aside for after the rest of the module, see ZOffset. Whatever it's inside of can't be painted again as it
+        // was without it
         if (ZOffset > 0 && Module is { } owner && owner.Raise(this))
+        {
+            list.Uncacheable();
             return;
+        }
 
         // What the tweens did to it, with the hover on top, see UIComponent.Hover
         Vector2 offset = VisualOffset, scale = VisualScale;
@@ -466,6 +470,21 @@ public abstract partial class UIComponent
         // scrolled away to have it all cut off again, most of a tick for nothing
         if (offset == Vector2.Zero && scale == Vector2.One && list.OutOfSight(Bounds))
             return;
+
+        // Painted the tick before at the same version in the same place, it's taken out of that list as it was, see
+        // PaintVersion. What PaintTree paints of its own (the focus ring, the grips, a lift) goes into the version. Only
+        // a component with nothing in it, the version is its own and not its children's
+        long version = children.Length == 0 ? PaintVersion : -1;
+        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && Glass is null && !FollowsPointer && !list.LayoutMoves;
+        int context = 0;
+        if (recorded)
+        {
+            version = HashCode.Combine(version, IsFocused, IsHovered, EnabledInHierarchy, Module?.Compositor.FocusVisible ?? false, Resizable, Lift);
+            context = list.PaintContext(Bounds);
+            if (list.TryReuse(PaintId, version, context))
+                return;
+            list.BeginRecord();
+        }
 
         // Timed while somebody's finding out what's slow, see UIPaintProfile
         bool timed = Diagnostics.UIPaintProfile.On;
@@ -545,9 +564,21 @@ public abstract partial class UIComponent
 
         list.PopOwner();
 
+        if (recorded)
+            list.EndRecord(PaintId, version, context, this);
+
         if (timed)
             Diagnostics.UIPaintProfile.End(this);
     }
+
+    /// <summary>
+    /// A number that's another whenever what the component paints of itself and what's in it would come out
+    /// differently (its text, its scroll, what's lit), so that painted the tick before at the same version in the same
+    /// place it's taken out of the list painted then and not painted again. Less than 0, the usual, for painting every
+    /// tick, which is always right. Only for what paints a lot out of a lot of state (the code editor), and only
+    /// worth trusting once <c>HORIZON_UI_REUSE_CHECK=1</c> has run it through everything and found nothing.
+    /// </summary>
+    protected virtual long PaintVersion => -1;
 
     /// <summary>
     /// Whether its layout is on its way somewhere (sliding in or out, folding), which moves it and what's round it about

@@ -293,7 +293,11 @@ public sealed partial class UIDrawList
     internal bool HomeOf(float paintId, out int frame) => homes.TryGetValue(paintId, out frame);
 
     // Helper method to say a component starts painting in the frame painting goes into now
-    private void NoteHome(float paintId) => homes.TryAdd(paintId, frameAt);
+    private void NoteHome(float paintId)
+    {
+        if (homes.TryAdd(paintId, frameAt))
+            homeOrder.Add((paintId, frameAt));
+    }
 
     internal UIFrameList FrameList => frameList;
 
@@ -305,6 +309,7 @@ public sealed partial class UIDrawList
         openClips.Clear();
         framesOpened.Clear();
         homes.Clear();
+        BeginRecords();
         shift = laid = Vector2.Zero;
         LayoutMoves = false;
         clipAt = -1;
@@ -374,6 +379,7 @@ public sealed partial class UIDrawList
     /// <param name="pointer">Where the pointer was when this was laid out, in the same units the quads come out in.</param>
     internal void PushFollowFrame(Vector2 pointer)
     {
+        Uncacheable();
         openFrames.Push((frameAt, clipAt, shift));
         OpenFrame();
         frameList.Frames[frameAt] = frameList.Frames[frameAt] with { Follows = true, FollowFrom = pointer };
@@ -388,6 +394,7 @@ public sealed partial class UIDrawList
     /// <summary>What's painted from here on until <see cref="PopLaidFrame"/> is a component laid out at a place, see <see cref="LayoutMoves"/>.</summary>
     internal void PushLaidFrame(Vector2 place)
     {
+        Uncacheable();
         openFrames.Push((frameAt, clipAt, shift));
         openLaid.Push(laid);
         laid = place - shift;

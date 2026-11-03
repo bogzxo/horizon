@@ -268,6 +268,20 @@ public sealed partial class UIPalette
     /// <summary>Whether the palette is a dark one, text lighter than its panel.</summary>
     public bool IsDark => Luminance(Text) > Luminance(Panel);
 
+    /// <summary>
+    /// A number that's another whenever any of the colours is. A theme put on is its colours written into the palette
+    /// the skin has, which is the same palette, so what's painted with it goes by this (see UIDrawList.PaintContext).
+    /// </summary>
+    internal int Fingerprint()
+    {
+        var hash = new HashCode();
+        hash.Add(Text); hash.Add(ControlText); hash.Add(Control); hash.Add(Field); hash.Add(Border); hash.Add(Panel); hash.Add(Track);
+        hash.Add(Hover); hash.Add(Accent); hash.Add(Highlight); hash.Add(DisabledTint); hash.Add(BarText); hash.Add(TextShadow);
+        hash.Add(IconLabel); hash.Add(DimText); hash.Add(Link); hash.Add(Error); hash.Add(Warning); hash.Add(Success); hash.Add(Selection);
+        hash.Add(Syntax.Fingerprint());
+        return hash.ToHashCode();
+    }
+
     /// <summary>A copy, for a UI that wants to change a colour without changing the skin's.</summary>
     public UIPalette Clone()
     {

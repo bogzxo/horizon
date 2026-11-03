@@ -108,4 +108,11 @@ public sealed partial class UISyntaxColors
     }
 
     private void CopySemanticTo(UISyntaxColors other) => Array.Copy(semantic, other.semantic, SEMANTIC);
+
+    // Helper method to put the semantic colours into a fingerprint, see Fingerprint
+    private void AddSemantic(ref HashCode hash)
+    {
+        foreach (var colour in semantic)
+            hash.Add(colour);
+    }
 }

@@ -28,6 +28,7 @@ public sealed partial class UIDrawList
 
         UIAnimatedIcons.Used();
         movingAsked = true;
+        Uncacheable();
         GameEngine.Instance?.WindowManager?.RequestFrames(MOVING_FRAMES);
     }
 

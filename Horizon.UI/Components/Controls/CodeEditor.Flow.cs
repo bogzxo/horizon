@@ -42,6 +42,7 @@ public partial class CodeEditor
     private void BeginFlow(float lineHeight)
     {
         flowPaint++;
+        flowMoving = false;
         float rate = FlowRate * (Module?.Compositor.AnimationSpeed ?? 1.0f);
         flowStep = 1.0f - MathF.Exp(-MathF.Max(0.0f, rate) * flowTime);
         flowTime = 0.0f;
@@ -77,6 +78,8 @@ public partial class CodeEditor
             word.Shown += (wanted - word.Shown) * flowStep;
             if (Vector2.DistanceSquared(word.Shown, wanted) < 0.25f)
                 word.Shown = wanted;
+            else
+                flowMoving = true;
         }
 
         word.Seen = flowPaint;

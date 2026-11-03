@@ -380,6 +380,9 @@ public sealed partial class UIDrawList
         if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f)
             return;
 
+        // What's behind it is what it shows, which is nothing a component can say the version of
+        Uncacheable();
+
         // Kept in its frame even cut away, a frame between two ticks can bring it into sight
         Vector2 drawn = visualScale * scale;
         float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);

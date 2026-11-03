@@ -700,6 +700,7 @@ public partial class UICompositor : GameComponent, IDisposable
         // One clock for both lists, see UIDrawList.Begin
         paintClock = (paintClock + dt) % 3600.0f;
         long started = Stopwatch.GetTimestamp();
+        back.Previous = front;
         back.Begin(skin, paintFrame, dt, paintClock);
         backPainted++;
         foreach (var module in snapshot)
