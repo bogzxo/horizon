@@ -2,7 +2,9 @@
 // item is the same 64 bytes) without what only lit sprites want, flashes, lamps and shadows cast, and with shapes of
 // its own. A rounded box, the edge of one and the soft shadow under one are a quad each here, worked out from how far
 // the pixel is from the shape's edge, where on the sprite renderer a box was seven quads and its edge eight. A shape
-// is clipped here as well, a quad cut down on the CPU would have cut its corners off with it.
+// is clipped here as well, a quad cut down on the CPU would have cut its corners off with it. It passes along no more
+// from a vertex than the sprites do, with a shape field passing it along for every glyph made the GPU's half of the
+// UI four tenths dearer
 
 #include <common/camera.slang>
 #include <common/gbuffer.slang>
@@ -46,27 +48,26 @@ static const uint SOFT_FLAG = 0x1000000u;
 
 // A rounded box, the edge of one or the shadow of one, worked out per pixel. Its ring is the radius of its corners in
 // pixels (for a shadow how far it fades), texMin.x how thick its edge is (0 for a box filled in), texMin.y 1 for a
-// shadow, and padding and texMax the clip, its bottom left and top right corner on the screen. Must match UIDrawList
+// shadow, and padding and texMax the clip, its bottom left and top right corner on the screen. Must match UIDrawList.
+// Clipped by moving its corners in to the clip, the way the CPU trims a quad, while how far a pixel is from its edge
+// is still measured from the middle of the whole of it
 static const uint SHAPE_FLAG = 0x2000000u;
 
 // How far out into the field the edge of a bold glyph is, as a share of the field's value at the edge. Must match
 // UIFont.BOLD_GROWTH, which widens every bold letter by as much as the ink grows
 static const float BOLD_GROWTH = 0.2;
 
+// As much as the sprites pass along and no more, a shape puts its own in what it has no texture for. Its texel is
+// where the pixel is from its middle and its texel size how big half of it is, both in pixels, and shape its edge's
+// thickness and whether it's a shadow
 struct Varyings
 {
     float4 position : SV_Position;
     float2 texel : TEXEL;
-    float2 fragPos : FRAGPOS;
     float4 color : COLOR;
     nointerpolation uint flags : FLAGS;
     nointerpolation float ring : RING;
     nointerpolation float2 texelSize : TEXELSIZE;
-
-    // For a shape, where the pixel is from its middle and how big half of it is, in pixels, and its clip
-    float2 local : LOCAL;
-    nointerpolation float2 half : HALF;
-    nointerpolation float4 clip : CLIP;
     nointerpolation float2 shape : SHAPE;
 };
 
@@ -94,15 +95,21 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
         output.texelSize = 1.0 / float2(max(width, 1u), max(height, 1u));
     }
 
-    float2 size = float2(length(item.axisX), length(item.axisY));
-    output.half = size * 0.5;
-    output.local = (corner - 0.5) * size;
-    output.clip = float4(item.padding, item.texMax);
-    output.shape = item.texMin;
+    float2 at = item.origin + item.axisX * corner.x + item.axisY * corner.y;
+    output.shape = float2(0.0, 0.0);
+    if ((item.flags & SHAPE_FLAG) != 0u)
+    {
+        // Upright always, a shape is never turned. A corner past the clip is moved in to it, all of it out of the
+        // clip comes to nothing
+        float2 middle = item.origin + (item.axisX + item.axisY) * 0.5;
+        at = clamp(at, item.padding, item.texMax);
+        output.texel = at - middle;
+        output.texelSize = float2(length(item.axisX), length(item.axisY)) * 0.5;
+        output.shape = item.texMin;
+    }
 
-    float4 world = mul(float4(item.origin + item.axisX * corner.x + item.axisY * corner.y, item.depth, 1.0), params.uModel);
+    float4 world = mul(float4(at, item.depth, 1.0), params.uModel);
     output.position = toClip(world);
-    output.fragPos = world.xy;
     return output;
 }
 
@@ -155,28 +162,25 @@ GBuffer fsMain(Varyings input)
     float4 tex = float4(1.0, 1.0, 1.0, 1.0);
     if ((input.flags & SHAPE_FLAG) != 0u)
     {
-        // Cut off where its clip is, the way a quad is trimmed on the CPU, by whether the middle of the pixel is in it
-        if (any(input.fragPos < input.clip.xy) || any(input.fragPos > input.clip.zw))
-            discard;
-
+        float2 local = input.texel, half = input.texelSize;
         if (input.shape.y > 0.0)
         {
             // A shadow, solid inside of a box as far in from its edge as it fades and fading out from there, eased so
             // it has no line where it starts. The same as the soft discs and edges it was made of
             float reach = max(input.ring, 0.0001);
-            float2 inner = max(input.half - reach, 0.0);
-            float t = saturate(1.0 - length(max(abs(input.local) - inner, 0.0)) / reach);
+            float2 inner = max(half - reach, 0.0);
+            float t = saturate(1.0 - length(max(abs(local) - inner, 0.0)) / reach);
             tex.a = t * t * (3.0 - 2.0 * t);
         }
         else
         {
             // In the box by half a pixel either side of its edge, and for an edge outside of the box inside of it
-            float outside = roundBox(input.local, input.half, input.ring);
+            float outside = roundBox(local, half, input.ring);
             tex.a = saturate(0.5 - outside);
             float thickness = input.shape.x;
             if (thickness > 0.0)
             {
-                float hole = roundBox(input.local, max(input.half - thickness, 0.0), max(input.ring - thickness, 0.0));
+                float hole = roundBox(local, max(half - thickness, 0.0), max(input.ring - thickness, 0.0));
                 tex.a *= saturate(0.5 + hole);
             }
         }

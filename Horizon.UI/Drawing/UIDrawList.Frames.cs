@@ -173,6 +173,24 @@ internal sealed class UIFrameList
             if (visible.IsEmpty)
                 continue;
 
+            if (count == into.Length)
+                Array.Resize(ref into, Math.Max(512, into.Length * 2));
+
+            // A shape goes whole with its clip, the shader cuts it, see UIDrawList.Shape
+            if ((quad.Flags & SpriteItem.ShapeFlag) != 0)
+            {
+                uint faded = quad.Color;
+                float fadedBy = frame.Opacity * quad.Fade;
+                if (fadedBy < 1.0f)
+                {
+                    uint alpha = (uint)((faded >> 24) * fadedBy + 0.5f);
+                    faded = (faded & 0x00FFFFFF) | alpha << 24;
+                }
+
+                into[count++] = UIDrawList.ScreenShape(rect, cut, quad.TexMin, quad.Ring, faded, frame.VisualScale, frame.VisualOffset, frame.Scale, frame.Origin);
+                continue;
+            }
+
             // Trimmed and placed the way Quad does it, see there
             Vector2 texTopLeft = quad.TexMin, texBottomRight = quad.TexMax;
             if (visible != rect)
@@ -183,9 +201,6 @@ internal sealed class UIFrameList
                 texTopLeft += trimmedTopLeft * texelsPerUnit;
                 texBottomRight -= trimmedBottomRight * texelsPerUnit;
             }
-
-            if (count == into.Length)
-                Array.Resize(ref into, Math.Max(512, into.Length * 2));
 
             Vector2 min = frame.ToScreen(visible.Min), max = frame.ToScreen(visible.Max);
             ref SpriteItem item = ref into[count++];

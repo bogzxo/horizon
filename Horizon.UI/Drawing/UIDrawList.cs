@@ -143,7 +143,6 @@ public sealed partial class UIDrawList
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
 
-
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
     internal ReadOnlySpan<TextureAtlas> Atlases => CollectionsMarshal.AsSpan(atlases);
@@ -553,22 +552,67 @@ public sealed partial class UIDrawList
         if (inMax.X < inMin.X) inMin.X = inMax.X = (min.X + max.X) * 0.5f;
         if (inMax.Y < inMin.Y) inMin.Y = inMax.Y = (min.Y + max.Y) * 0.5f;
 
-        uint packed = SpriteItem.PackColor(color);
-        uint soft = SpriteItem.NoTexture | SpriteItem.CornerFlag | SpriteItem.SoftFlag;
+        // One shape, solid inside of the box the fade reaches in to and fading out from there, see Shape. It was nine
+        // quads, a solid middle, four edges and four soft corners
+        Shape(new UIRect(min, max), SpriteItem.PackColor(color), reach, 0.0f, shadow: true);
+    }
 
-        Quad(new UIRect(inMin, inMax), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+    // What a shape's clip comes to where there's none, as far out as a float goes without being infinite
+    private const float NO_CLIP = 1.0e30f;
 
-        // The edges fade one way, a disc's distance along one axis only
-        Quad(new UIRect(new Vector2(inMin.X, inMax.Y), new Vector2(inMax.X, max.Y)), Vector2.UnitY, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMin.X, min.Y), new Vector2(inMax.X, inMin.Y)), Vector2.Zero, Vector2.UnitY, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(min.X, inMin.Y), new Vector2(inMin.X, inMax.Y)), Vector2.UnitX, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMax.X, inMin.Y), new Vector2(max.X, inMax.Y)), Vector2.Zero, Vector2.UnitX, packed, soft, 1.0f);
+    /// <summary>
+    /// Helper method for a shape the UI's shader works out per pixel (see <see cref="SpriteItem.ShapeFlag"/>), a quad
+    /// as big as the whole of it whatever the clip is, which goes with it to be clipped there. Trimmed here the way a
+    /// flat quad is, a rounded box would have had its corners cut off with it.
+    /// </summary>
+    /// <param name="radius">How round its corners are, for a shadow how far it fades out.</param>
+    /// <param name="thickness">How thick its edge is, 0 for the whole box filled in.</param>
+    private void Shape(UIRect rect, uint color, float radius, float thickness, bool shadow)
+    {
+        const uint flags = SpriteItem.NoTexture | SpriteItem.ShapeFlag;
+        var form = new Vector2(thickness, shadow ? 1.0f : 0.0f);
+        UIRect visible = rect.Intersect(clip);
+        if (visible.IsEmpty)
+        {
+            KeepFrameQuad(rect, form, Vector2.Zero, color, flags, radius, 0.0f, 0.0f);
+            ownerPainted++;
+            return;
+        }
 
-        // The corners every way, the same as a rounded box's
-        Quad(new UIRect(new Vector2(min.X, inMax.Y), new Vector2(inMin.X, max.Y)), Vector2.One, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(inMax, max), Vector2.UnitY, Vector2.UnitX, packed, soft, 1.0f);
-        Quad(new UIRect(min, inMin), Vector2.UnitX, Vector2.UnitY, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMax.X, min.Y), new Vector2(max.X, inMin.Y)), Vector2.Zero, Vector2.One, packed, soft, 1.0f);
+        if (itemCount == items.Length)
+            Array.Resize(ref items, items.Length * 2);
+
+        // Faded the way Quad fades, see there
+        uint asked = color;
+        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
+        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        if (shown < 1.0f)
+        {
+            uint alpha = (uint)((color >> 24) * shown + 0.5f);
+            color = (color & 0x00FFFFFF) | alpha << 24;
+        }
+
+        ref SpriteItem item = ref items[itemCount++];
+        item = ScreenShape(rect, clip, form, radius, color, visualScale, visualOffset, scale, origin);
+        KeepFrameQuad(rect, form, Vector2.Zero, asked, flags, radius, 0.0f, 0.0f, fade);
+        ownerPainted++;
+    }
+
+    /// <summary>
+    /// A shape as the UI's shader takes it (see <see cref="SpriteItem.ShapeFlag"/>), on screen through a transform,
+    /// its sizes in pixels and its clip in the Key and TexMax. For both the list and its frames, so the two agree.
+    /// </summary>
+    internal static SpriteItem ScreenShape(UIRect rect, UIRect cut, Vector2 form, float radius, uint color, Vector2 visualScale, Vector2 visualOffset, Vector2 scale, Vector2 origin)
+    {
+        Vector2 ToScreen(Vector2 at) => (at * visualScale + visualOffset) * scale + origin;
+        float pixels = MathF.Abs((visualScale * scale).X);
+
+        Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? ToScreen(cut.Min) : new Vector2(-NO_CLIP);
+        Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? ToScreen(cut.Max) : new Vector2(NO_CLIP);
+        SpriteItem item = SpriteItem.Rectangle(ToScreen(rect.Min), ToScreen(rect.Max), new Vector2(form.X * pixels, form.Y), clipMax, color, SpriteItem.NoTexture | SpriteItem.ShapeFlag);
+        item.Ring = radius * pixels;
+        item.Key = clipMin;
+        return item;
     }
 
     /// <summary>Fills a rectangle with a colour.</summary>
@@ -602,14 +646,9 @@ public sealed partial class UIDrawList
         }
 
         uint packed = SpriteItem.PackColor(color);
-        var (min, max) = rect;
 
-        // A column down the middle and a strip either side of it between the corners
-        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + radius, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(max.X - radius, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-
-        Corners(rect, radius, 1.0f, packed);
+        // One shape the shader works out, see Shape. It was seven quads, a column, two strips and four corners
+        Shape(rect, packed, radius, 0.0f, shadow: false);
     }
 
     /// <summary>Draws the edge of a rectangle with rounded corners, on the inside. See <see cref="RoundRect"/>.</summary>
@@ -625,14 +664,9 @@ public sealed partial class UIDrawList
         thickness = MathF.Min(thickness, radius);
 
         uint packed = SpriteItem.PackColor(color);
-        var (min, max) = rect;
 
-        Quad(new UIRect(new Vector2(min.X + radius, max.Y - thickness), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, min.Y + thickness)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + thickness, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(max.X - thickness, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-
-        Corners(rect, radius, thickness / radius, packed);
+        // One shape, see Shape. It was eight quads, four strips and four rings
+        Shape(rect, packed, radius, thickness, shadow: false);
     }
 
     /// <summary>
@@ -643,24 +677,6 @@ public sealed partial class UIDrawList
 
     /// <summary>Draws the edge of what <see cref="Box"/> fills.</summary>
     public void Frame(UIRect rect, float thickness, Vector4 color) => RoundOutline(rect, Skin.CornerRadius, thickness, color);
-
-    /// <summary>
-    /// Helper method to draw the four corners of a rounded rectangle, each a quarter of a disc with its middle
-    /// at the corner of the quad that points into the rectangle.
-    /// </summary>
-    /// <param name="ring">How much of the discs is filled from their edge inwards, see <see cref="SpriteItem.Ring"/>.</param>
-    private void Corners(UIRect rect, float radius, float ring, uint color)
-    {
-        var (min, max) = rect;
-        Vector2 size = new(radius);
-        uint flags = SpriteItem.NoTexture | SpriteItem.CornerFlag;
-
-        // What the top left and the bottom right of each quad are told is how far they are from the middle of their disc
-        Quad(new UIRect(new Vector2(min.X, max.Y - radius), new Vector2(min.X + radius, max.Y)), Vector2.One, Vector2.Zero, color, flags, ring);
-        Quad(new UIRect(max - size, max), Vector2.UnitY, Vector2.UnitX, color, flags, ring);
-        Quad(new UIRect(min, min + size), Vector2.UnitX, Vector2.UnitY, color, flags, ring);
-        Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, color, flags, ring);
-    }
 
     /// <summary>Draws a region of the skin stretched over a rectangle.</summary>
     public void Region(in UIRegion region, UIRect rect, Vector4 tint) =>
