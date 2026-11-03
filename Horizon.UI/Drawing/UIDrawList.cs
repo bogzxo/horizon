@@ -792,7 +792,7 @@ public sealed partial class UIDrawList
     /// <param name="texTopLeft">The top left corner of the part, in pixels from the top left of the texture.</param>
     /// <param name="texBottomRight">Its bottom right corner.</param>
     public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint) =>
-        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture));
+        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture), 0.0f, 0.0f, 0.0f, pixelArt: !texture.Definition.Smooth);
 
     /// <summary>
     /// Draws an icon of <see cref="UISymbols"/> (Codicons) filling a square, the biggest that fits in the rectangle,
@@ -880,7 +880,7 @@ public sealed partial class UIDrawList
     /// above <paramref name="upright"/> (and its bottom the other way below it), which is an italic letter leaning
     /// over the line it stands on. It is clipped as the upright rectangle it was before it leant.
     /// </summary>
-    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright)
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, bool pixelArt = true)
     {
         UIRect visible = rect.Intersect(clip);
         if (visible.IsEmpty)
@@ -920,9 +920,10 @@ public sealed partial class UIDrawList
 
         // Art that is drawn at a size it wasn't made for has its texels blended at the edges, or pixel art
         // would shimmer its way through an animation and come out uneven in a UI that is scaled to its window.
-        // Text has a filter of its own.
+        // Text has a filter of its own, and a texture made smooth is read through its own sampler (its mip levels when
+        // it's drawn smaller), the pixel art filter only ever reads the top level and dropped texels of a picture halved.
         Vector2 drawn = visualScale * scale;
-        bool whole = drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
+        bool whole = !pixelArt || drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
         // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
         // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
         // texture it hasn't got. The shader knew better, but it was still bollocks

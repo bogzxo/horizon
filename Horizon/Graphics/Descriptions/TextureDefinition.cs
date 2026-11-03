@@ -15,6 +15,13 @@ public readonly record struct TextureDefinition(
     /// <summary>Colours, blended between the texels when drawn bigger or smaller than they are.</summary>
     public static TextureDefinition RgbaUnsignedByte { get; } = new(PixelFormat.Rgba8, Smooth: true);
 
+    /// <summary>
+    /// Colours, blended between the texels and read from mip levels when drawn smaller. For a picture made bigger than
+    /// it's shown (a figure or a formula drawn at twice its size for a sharp screen), on a plain one it's halved
+    /// properly rather than every other texel dropped.
+    /// </summary>
+    public static TextureDefinition RgbaUnsignedBytePicture { get; } = new(PixelFormat.Rgba8, Smooth: true, Mipmaps: true);
+
     /// <summary>Colours, every screen pixel takes the nearest texel. Pixel art.</summary>
     public static TextureDefinition RgbaUnsignedByteNearest { get; } = new(PixelFormat.Rgba8, Smooth: false);
 
