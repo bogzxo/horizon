@@ -355,6 +355,42 @@ public partial class UICompositor : GameComponent, IDisposable
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
     private Vector2? shownPointer;
+
+    // How far between two ticks the last frame was drawn, and the newer of the two, for hit testing where things are
+    // drawn (see DrawnMove). Written by the render thread, read by the simulation's
+    private volatile float drawnAlpha = 1.0f;
+    private volatile int drawnAfter = -1;
+
+    // The frames of the list painted before the newest, by key, worked out once a tick when a hit test asks
+    private readonly Dictionary<Vector2, int> priorFrames = [];
+    private int priorFor = -1;
+
+    /// <summary>
+    /// How far what a component is inside of is drawn, in the last frame drawn, from where the newest tick laid it out,
+    /// in the units of the layout. Only the moves of scrolls and of the layout moving things about, nothing for a
+    /// component painted in no frame that moved. Simulation thread.
+    /// </summary>
+    internal Vector2 DrawnMove(UIComponent component)
+    {
+        float alpha = drawnAlpha;
+        if (alpha >= 1.0f || drawnAfter != paintedFrame || !front.HomeOf(component.PaintId, out int at))
+            return Vector2.Zero;
+
+        UIFrame latest = front.FrameList.Frames[at];
+        if (priorFor != paintedFrame)
+        {
+            priorFor = paintedFrame;
+            priorFrames.Clear();
+            for (int i = 0; i < back.FrameList.Frames.Count; i++)
+                priorFrames.TryAdd(back.FrameList.Frames[i].Key, i);
+        }
+
+        if (!priorFrames.TryGetValue(latest.Key, out int was))
+            return Vector2.Zero;
+
+        UIFrame shown = UIInBetween.Between(back.FrameList.Frames[was], latest, alpha);
+        return shown.Shift - latest.Shift + (shown.Laid - latest.Laid);
+    }
     private readonly UIInBetween inBetween = new();
 
     /// <summary>
@@ -849,6 +885,8 @@ public partial class UICompositor : GameComponent, IDisposable
         }
 
         (shownBefore, shownAfter, shownAlpha, shownPointer) = (from, shown.Painted, alpha, pointer);
+        drawnAfter = after.Painted;
+        drawnAlpha = canBlend ? alpha : 1.0f;
         pictureCurrent = false;
         refreshedAt = renderedAt;
         return true;

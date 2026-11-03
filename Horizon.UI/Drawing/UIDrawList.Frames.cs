@@ -27,6 +27,12 @@ internal readonly record struct UIFrame(Vector2 Key, int Parent, Vector2 Shift, 
     /// </summary>
     public Vector2 Laid { get; init; }
 
+    /// <summary>
+    /// How far it's faded in, the animations it's in all together. Its quads keep their colours as they were asked for
+    /// and are faded by this when they're resolved, so a fade between two ticks fades smoothly too.
+    /// </summary>
+    public float Opacity { get; init; } = 1.0f;
+
     /// <summary>Where a point of the layout is on screen, worked out the way a quad always was so the two agree to the bit.</summary>
     public Vector2 ToScreen(Vector2 layout) => (layout * VisualScale + VisualOffset) * Scale + Origin;
 }
@@ -49,6 +55,9 @@ internal struct UIFrameQuad
     public Vector2 TexMin, TexMax;
     public uint Color, Flags;
     public float Ring, Slant, Upright;
+
+    // How far it's faded by the edges it's near (see UIDrawList.PushFade), as it was painted, 1 for not at all
+    public float Fade;
     public Vector2 Key;
     public int Frame, Clip;
 
@@ -58,7 +67,7 @@ internal struct UIFrameQuad
 }
 
 /// <summary>A pane of glass as it was put down, before the quad it goes under (by its place among the frame quads).</summary>
-internal readonly record struct UIFrameGlass(int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Opacity, float Bend);
+internal readonly record struct UIFrameGlass(int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Bend);
 
 /// <summary>Where a run of quads that show the same images ended, by its place among the frame quads.</summary>
 internal readonly record struct UIFrameRun(int End, Texture? Image0, Texture? Image1);
@@ -180,7 +189,16 @@ internal sealed class UIFrameList
 
             Vector2 min = frame.ToScreen(visible.Min), max = frame.ToScreen(visible.Max);
             ref SpriteItem item = ref into[count++];
-            item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, quad.Color, quad.Flags);
+            // Faded the way Quad fades it, by its frame and the edges it was near
+            uint color = quad.Color;
+            float shown = frame.Opacity * quad.Fade;
+            if (shown < 1.0f)
+            {
+                uint alpha = (uint)((color >> 24) * shown + 0.5f);
+                color = (color & 0x00FFFFFF) | alpha << 24;
+            }
+
+            item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, quad.Flags);
             item.Ring = quad.Ring;
 
             if (quad.Slant != 0.0f)
@@ -217,7 +235,7 @@ internal sealed class UIFrameList
 
         Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? frame.ToScreen(cut.Min) : new Vector2(float.NegativeInfinity);
         Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? frame.ToScreen(cut.Max) : new Vector2(float.PositiveInfinity);
-        into.Add(new UIGlassPane(start, frame.ToScreen(rect.Min), frame.ToScreen(rect.Max), clipMin, clipMax, pane.Radius, pane.Blur, pane.Opacity, pane.Bend));
+        into.Add(new UIGlassPane(start, frame.ToScreen(rect.Min), frame.ToScreen(rect.Max), clipMin, clipMax, pane.Radius, pane.Blur, MathF.Min(1.0f, frame.Opacity * UIDrawList.GLASS_LEAD), pane.Bend));
     }
 
     // Helper method for how far a frame's content has moved from where it was painted, nothing for the frames as painted
@@ -253,6 +271,15 @@ public sealed partial class UIDrawList
     // How many frames every owner has opened so far this paint, which is what a frame is named by after its owner
     private readonly Dictionary<float, int> framesOpened = [];
 
+    // The frame every component was painted in, by its name, for finding where it's drawn, see HomeOf
+    private readonly Dictionary<float, int> homes = [];
+
+    /// <summary>The frame a component was painted in (the frame it was in when it started painting), false if it wasn't.</summary>
+    internal bool HomeOf(float paintId, out int frame) => homes.TryGetValue(paintId, out frame);
+
+    // Helper method to say a component starts painting in the frame painting goes into now
+    private void NoteHome(float paintId) => homes.TryAdd(paintId, frameAt);
+
     internal UIFrameList FrameList => frameList;
 
     // Helper method to start the frames over with the list, the first one the whole of it unmoved
@@ -262,6 +289,7 @@ public sealed partial class UIDrawList
         openFrames.Clear();
         openClips.Clear();
         framesOpened.Clear();
+        homes.Clear();
         shift = laid = Vector2.Zero;
         LayoutMoves = false;
         clipAt = -1;
@@ -310,7 +338,7 @@ public sealed partial class UIDrawList
         // painted before a list's rows would have had its rows' frame taken for another
         int opened = framesOpened.GetValueOrDefault(owner);
         framesOpened[owner] = opened + 1;
-        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid });
+        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity });
         frameAt = frameList.Frames.Count - 1;
     }
 
@@ -374,7 +402,7 @@ public sealed partial class UIDrawList
     private void PopFrameClip() => clipAt = openClips.Pop();
 
     // Helper method to keep a quad as it was asked for, see Quad
-    private void KeepFrameQuad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright)
+    private void KeepFrameQuad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, float fade = 1.0f)
     {
         frameList.Add() = new UIFrameQuad
         {
@@ -384,6 +412,7 @@ public sealed partial class UIDrawList
             Color = color,
             Flags = flags,
             Ring = ring,
+            Fade = fade,
             Slant = slant,
             Upright = upright,
             Key = new Vector2(owner, ownerPainted),
@@ -400,8 +429,8 @@ public sealed partial class UIDrawList
         quad.Pivot = pivot;
     }
 
-    private void KeepFrameGlass(UIRect rect, float radius, float blur, float frosted, float bend) =>
-        frameList.Glass.Add(new UIFrameGlass(frameList.QuadCount, rect, frameAt, clipAt, radius, blur, frosted, bend));
+    private void KeepFrameGlass(UIRect rect, float radius, float blur, float bend) =>
+        frameList.Glass.Add(new UIFrameGlass(frameList.QuadCount, rect, frameAt, clipAt, radius, blur, bend));
 
     private void KeepFrameRun(Texture? image0, Texture? image1) => frameList.Runs.Add(new UIFrameRun(frameList.QuadCount, image0, image1));
 

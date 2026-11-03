@@ -75,6 +75,8 @@ public class FramesTests
                 swatch.VisualOffset = new Vector2(7.0f, -3.0f);
             if (i == 5)
                 swatch.VisualScale = new Vector2(0.9f);
+            if (i == 6)
+                swatch.Opacity = 0.4f;
         }
 
         var screen = new UIRect(Vector2.Zero, new Vector2(200.0f, 110.0f));

@@ -258,4 +258,19 @@ public class InBetweenTests
         Assert.Equal(new Vector2(120.0f, 85.0f), Drawn(items, Colour(0)).Min);
         Assert.Equal(Vector2.Zero, Drawn(items, Colour(1)).Min);
     }
+
+    [Fact]
+    public void Something_fading_in_is_half_there_halfway()
+    {
+        var swatch = new Swatch(Colour(0)) { Opacity = 0.2f };
+        var screen = new UIRect(Vector2.Zero, new Vector2(20.0f));
+        Painted a = Tick(swatch, screen, 1);
+        swatch.Opacity = 0.6f;
+        Painted b = Tick(swatch, screen, 2);
+        var (items, _) = Halfway(a, b);
+
+        uint wanted = SpriteItem.PackColor(Colour(0)) & 0x00FFFFFF;
+        SpriteItem drawn = items.Single(item => (item.Color & 0x00FFFFFF) == wanted);
+        Assert.InRange((drawn.Color >> 24) / 255.0f, 0.39f, 0.41f);
+    }
 }

@@ -208,6 +208,8 @@ public sealed partial class UIDrawList
         // hash, cut to what a float holds exactly, which stays the same for as long as the object lives. Hashes of
         // components came out the same now and then, and two quads of strangers blended into each other
         owner = painter is Components.UIComponent component ? component.PaintId : (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
+        if (painter is Components.UIComponent)
+            NoteHome(owner);
         ownerPainted = 0;
         inParts = false;
     }
@@ -367,7 +369,7 @@ public sealed partial class UIDrawList
         // Kept in its frame even cut away, a frame between two ticks can bring it into sight
         Vector2 drawn = visualScale * scale;
         float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
-        KeepFrameGlass(rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X));
+        KeepFrameGlass(rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), bend * MathF.Abs(drawn.X));
         if (rect.Intersect(clip).IsEmpty)
             return;
 
@@ -385,7 +387,7 @@ public sealed partial class UIDrawList
     }
 
     // How many times quicker a pane of glass comes in than what's painted over it, see Glass
-    private const float GLASS_LEAD = 3.0f;
+    internal const float GLASS_LEAD = 3.0f;
 
     /// <summary>
     /// The silver lining of a pane of glass, a thin lit edge round a rounded rectangle, brightest along the top and the
@@ -928,8 +930,10 @@ public sealed partial class UIDrawList
         if (itemCount == items.Length)
             Array.Resize(ref items, items.Length * 2);
 
-        // Faded by the animation it's in and the edges it's near, see PushFade
-        float shown = fades.Count > 0 ? opacity * FadeOf(visible) : opacity;
+        // Faded by the animation it's in and the edges it's near, see PushFade. Kept as it was asked for, its frame fades it
+        uint asked = color;
+        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
+        float shown = fades.Count > 0 ? opacity * fade : opacity;
         if (shown < 1.0f)
         {
             // Alpha is the top byte, see SpriteItem.PackColor.
@@ -963,7 +967,7 @@ public sealed partial class UIDrawList
             item.Origin.X += slant * (min.Y - pivot);
             item.AxisY.X = slant * (max.Y - min.Y);
         }
-        KeepFrameQuad(rect, texAskedMin, texAskedMax, color, flags, ring, slant, upright);
+        KeepFrameQuad(rect, texAskedMin, texAskedMax, asked, flags, ring, slant, upright, fade);
         item.Key = new Vector2(owner, ownerPainted++);
     }
 

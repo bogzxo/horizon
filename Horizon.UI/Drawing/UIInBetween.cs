@@ -66,9 +66,10 @@ internal sealed class UIInBetween
     /// between the pixels every frame, and a scroll shimmered. One that jumped further than <see cref="JUMP"/> is where
     /// the newer tick put it.
     /// </summary>
-    private static UIFrame Between(in UIFrame a, in UIFrame b, float t)
+    internal static UIFrame Between(in UIFrame a, in UIFrame b, float t)
     {
         Vector2 across = b.VisualScale * b.Scale;
+        float opacity = a.Opacity + (b.Opacity - a.Opacity) * t;
         if (a.VisualScale == b.VisualScale && a.Scale == b.Scale && across.X != 0.0f && across.Y != 0.0f)
         {
             Vector2 shifted = (b.Shift - a.Shift) * across, offset = (b.VisualOffset - a.VisualOffset) * b.Scale, moved = b.Origin - a.Origin;
@@ -80,6 +81,7 @@ internal sealed class UIInBetween
             {
                 Shift = b.Shift - Vector2.Round(shifted * (1.0f - t)) / across,
                 Laid = b.Laid - Vector2.Round(relaid * (1.0f - t)) / across,
+                Opacity = opacity,
                 VisualOffset = b.VisualOffset - Vector2.Round(offset * (1.0f - t)) / b.Scale,
                 Origin = b.Origin - Vector2.Round(moved * (1.0f - t))
             };
@@ -89,6 +91,7 @@ internal sealed class UIInBetween
         {
             Shift = Vector2.Lerp(a.Shift, b.Shift, t),
             Laid = Vector2.Lerp(a.Laid, b.Laid, t),
+            Opacity = opacity,
             VisualOffset = Vector2.Lerp(a.VisualOffset, b.VisualOffset, t),
             VisualScale = Vector2.Lerp(a.VisualScale, b.VisualScale, t),
             Scale = Vector2.Lerp(a.Scale, b.Scale, t),

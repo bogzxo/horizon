@@ -39,10 +39,16 @@ public abstract partial class UIComponent
     protected internal virtual bool ShowsChild(UIComponent child) => true;
 
     /// <summary>The topmost component under a point, searching this component and everything inside it.</summary>
-    internal UIComponent? HitTest(Vector2 point)
+    /// <param name="moved">How far what this is inside of is drawn from where the layout has it, taken off the point already.</param>
+    internal UIComponent? HitTest(Vector2 point, Vector2 moved = default)
     {
         if (!Visible || IsOnHiddenLayer)
             return null;
+
+        // The pointer is where things are drawn, which between two ticks of a scroll or a slide is a little way from
+        // where the newest tick laid them out. Hit there, a scroll easing had the hover on a row the pointer wasn't over
+        Vector2 drawn = Module?.Compositor.DrawnMove(this) ?? Vector2.Zero;
+        point -= drawn - moved;
 
         // The pointer is where things are drawn, which for a component that is being animated isn't where
         // the layout has them.
@@ -65,7 +71,7 @@ public abstract partial class UIComponent
         var snapshot = children;
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
-            if (ShowsChild(snapshot[i]) && snapshot[i].HitTest(point) is { } hit)
+            if (ShowsChild(snapshot[i]) && snapshot[i].HitTest(point, drawn) is { } hit)
                 return hit;
         }
 
