@@ -66,7 +66,7 @@ public static class UIAnimatedIcons
 
     private static readonly TweenContext tweens = new();
     private static bool started;
-    private static long lastTick, lastUsed;
+    private static long lastTick = long.MinValue, lastUsed;
 
     /// <summary>
     /// The motions' tweens made and played, once. Each loops for good, the values they write go round and round, and
@@ -129,19 +129,22 @@ public static class UIAnimatedIcons
     }
 
     /// <summary>
-    /// The motions moved on by the real time since the last paint, at the start of every paint of every list, but only
-    /// while a moving icon was drawn a moment ago, so a UI that has none ticks nothing. Every list goes by the same real
-    /// time, two windows painting don't move them twice as fast.
+    /// The motions moved on by a tick, at the start of every paint of every list, but only while a moving icon was drawn
+    /// a moment ago, so a UI that has none ticks nothing. Once a tick however many lists paint in it, two windows
+    /// painting don't move them twice as fast. By the real time since the last paint they jittered with whenever the
+    /// tick happened to be painted, and the frames between two ticks blended that jitter in.
     /// </summary>
-    internal static void Advance()
+    /// <param name="tick">Which tick of the simulation this is, a list painted outside of one (a test) moves them every time.</param>
+    internal static void Advance(float dt, long tick)
     {
-        long now = Stopwatch.GetTimestamp();
-        double since = (now - lastTick) / (double)Stopwatch.Frequency;
-        lastTick = now;
-        if (!started || since <= 0.0 || (now - lastUsed) / (double)Stopwatch.Frequency > IDLE_AFTER)
+        if (tick == lastTick && tick != 0)
             return;
 
-        tweens.Tick((float)Math.Min(since, 0.1));
+        lastTick = tick;
+        if (!started || dt <= 0.0f || (Stopwatch.GetTimestamp() - lastUsed) / (double)Stopwatch.Frequency > IDLE_AFTER)
+            return;
+
+        tweens.Tick(MathF.Min(dt, 0.1f));
     }
 
     /// <summary>Says a moving icon was drawn, which keeps the motions going for a while, made the first time.</summary>

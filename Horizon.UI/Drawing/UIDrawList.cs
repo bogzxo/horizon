@@ -167,7 +167,7 @@ public sealed partial class UIDrawList
 
         itemCount = 0;
         movingAsked = false;
-        UIAnimatedIcons.Advance();
+        UIAnimatedIcons.Advance(dt, Horizon.Engine.GameEngine.Instance?.WindowManager?.Tick ?? 0);
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
