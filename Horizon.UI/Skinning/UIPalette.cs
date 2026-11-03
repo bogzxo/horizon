@@ -255,13 +255,13 @@ public sealed partial class UIPalette
 
     /// <summary>
     /// What selected text is painted under, in code and the terminal. The accent seen through unless the theme says,
-    /// which suits a blue accent and was a swamp under Horizon's gold, so Horizon gives one of its own.
+    /// which suits a blue accent and was a swamp under Horizon's sunset, so Horizon gives one of its own.
     /// </summary>
     public Vector4 Selection { get; set; } = new(0.38f, 0.62f, 1.0f, 0.32f);
 
     /// <summary>
     /// The text that reads on the accent, whichever of the text and the bar's text stands out on it more. Dark on Horizon's
-    /// gold, white on a blue.
+    /// sunset, white on a blue.
     /// </summary>
     public Vector4 OnAccent => Contrast(BarText, Accent with { W = 1.0f }) >= Contrast(Text, Accent with { W = 1.0f }) ? BarText : Text;
 
