@@ -13,7 +13,23 @@ namespace Horizon.UI.Diagnostics;
 public sealed class UIStatistics
 {
     /// <summary>The names the UI's stretches of a frame go by in <see cref="GraphicsDevice.GpuScopes"/>.</summary>
-    public const string GPU_SCOPE = "ui", GLASS_SCOPE = "ui glass";
+    public const string GPU_SCOPE = "ui", GLASS_SCOPE = "ui glass", REPLAY_SCOPE = "ui replay", QUADS_SCOPE = "ui quads", LAYER_SCOPE = "ui layer";
+
+    /// <summary>Milliseconds the GPU spent on whole frames, everything in them and not only the UI.</summary>
+    public double GpuFrameMs;
+
+    // Every timed stretch of the frames by its name, all of them added up, for finding where the GPU's time went
+    private readonly Dictionary<string, double> byScope = [];
+
+    /// <summary>The stretches of the frames that took the most of the GPU's time, the most first, as a line.</summary>
+    public string GpuBreakdown(int most = 8)
+    {
+        lock (byScope)
+        {
+            double frames = Math.Max(1, Frames);
+            return string.Join(", ", byScope.OrderByDescending(scope => scope.Value).Take(most).Select(scope => $"{scope.Key} {scope.Value / frames:0.000}"));
+        }
+    }
 
     /// <summary>Ticks painted, and how many of them painted something other than the tick before.</summary>
     public long Ticks, TicksChanged;
@@ -49,7 +65,9 @@ public sealed class UIStatistics
         Ticks = TicksChanged = QuadsPainted = Frames = FramesBlended = FramesUploaded = QuadsUploaded = BytesUploaded = 0;
         FramesBroken = FramesAtNewer = 0;
         MostQuads = 0;
-        PaintMs = CompareMs = BlendMs = DrawMs = GpuMs = GlassGpuMs = 0.0;
+        PaintMs = CompareMs = BlendMs = DrawMs = GpuMs = GlassGpuMs = GpuFrameMs = 0.0;
+        lock (byScope)
+            byScope.Clear();
     }
 
     /// <summary>One line of all of it, averaged where an average says more than a sum.</summary>
@@ -60,7 +78,7 @@ public sealed class UIStatistics
             $"{QuadsPainted / ticks:0} quads a tick (most {MostQuads}), {Frames} frames ({FramesBlended} blended, {FramesUploaded} uploaded, " +
             $"{FramesBroken} broken, {FramesAtNewer} at the newer tick), " +
             $"blend {BlendMs / frames:0.000} ms, draw {DrawMs / frames:0.000} ms, {QuadsUploaded} quads and {BytesUploaded / 1024.0:0} KB up, " +
-            $"GPU {GpuMs / frames:0.000} ms a frame (glass {GlassGpuMs / frames:0.000})";
+            $"GPU {GpuMs / frames:0.000} ms a frame (glass {GlassGpuMs / frames:0.000}) of {GpuFrameMs / frames:0.000} for the whole frame";
     }
 
     internal static double Since(long started) => Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -71,10 +89,15 @@ public sealed class UIStatistics
         if (!GraphicsDevice.IsAvailable || GraphicsDevice.Current is not { } device)
             return;
 
-        foreach (GpuScope scope in device.GpuScopes)
+        GpuFrameMs += device.GpuFrameMilliseconds;
+        lock (byScope)
         {
-            if (ReferenceEquals(scope.Name, GPU_SCOPE)) GpuMs += scope.Milliseconds;
-            else if (ReferenceEquals(scope.Name, GLASS_SCOPE)) GlassGpuMs += scope.Milliseconds;
+            foreach (GpuScope scope in device.GpuScopes)
+            {
+                if (ReferenceEquals(scope.Name, GPU_SCOPE)) GpuMs += scope.Milliseconds;
+                else if (ReferenceEquals(scope.Name, GLASS_SCOPE)) GlassGpuMs += scope.Milliseconds;
+                byScope[scope.Name] = byScope.GetValueOrDefault(scope.Name) + scope.Milliseconds;
+            }
         }
     }
 }

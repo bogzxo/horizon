@@ -1083,8 +1083,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
-        if (Retained && pictureCurrent && layer.Replay(dt))
-            return;
+        if (Retained && pictureCurrent)
+        {
+            using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.REPLAY_SCOPE))
+            {
+                if (layer.Replay(dt))
+                    return;
+            }
+        }
 
         // Onto its own layer, through its effects if it has any that are on, and kept there to be laid over
         // again. Straight over the scene where there is no layer to be had (inside of a renderer that lights
@@ -1092,16 +1098,22 @@ public partial class UICompositor : GameComponent, IDisposable
         Renderer2D? output = Renderer2D.Current;
         bool layered = layer.Begin(Retained);
 
-        if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+        using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.QUADS_SCOPE))
         {
-            renderer.Draw(viewportCamera);
-            GlassDrawn = default;
+            if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+            {
+                renderer.Draw(viewportCamera);
+                GlassDrawn = default;
+            }
+            else
+                DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
         }
-        else
-            DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
 
         if (layered)
+        {
+            using var laid = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.LAYER_SCOPE);
             layer.End(dt);
+        }
 
         // Only a picture that made it onto the layer is there to be shown again. One with glass in it shows what was
         // behind the glass, which a scene that moves under it doesn't keep still for, see GlassKeepsPicture
