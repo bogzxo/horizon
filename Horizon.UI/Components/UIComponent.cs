@@ -320,6 +320,17 @@ public abstract partial class UIComponent
 
     internal Vector2 MeasureTree(UISkin skin)
     {
+        bool timed = Diagnostics.UIPaintProfile.On;
+        if (timed)
+            Diagnostics.UIPaintProfile.Begin();
+        Vector2 measured = MeasureTreeUntimed(skin);
+        if (timed)
+            Diagnostics.UIPaintProfile.End(this, measuring: true);
+        return measured;
+    }
+
+    private Vector2 MeasureTreeUntimed(UISkin skin)
+    {
         if (LaysOutMoving && Visible)
             Module?.NoteLayoutMoving();
 
@@ -450,6 +461,17 @@ public abstract partial class UIComponent
         if (hoverness > 0.0f)
             ApplyHover(ref offset, ref scale);
 
+        // Out of sight under a clip, further than a frame between two ticks could bring it in from, it has nothing to
+        // paint. A settings page painted every one of its rows every tick, and laid out every word of every row
+        // scrolled away to have it all cut off again, most of a tick for nothing
+        if (offset == Vector2.Zero && scale == Vector2.One && list.OutOfSight(Bounds))
+            return;
+
+        // Timed while somebody's finding out what's slow, see UIPaintProfile
+        bool timed = Diagnostics.UIPaintProfile.On;
+        if (timed)
+            Diagnostics.UIPaintProfile.Begin();
+
         // Every quad is ours by name, see UIDrawList.PushOwner. The animation's frame is named after us too
         list.PushOwner(this);
 
@@ -522,6 +544,9 @@ public abstract partial class UIComponent
             list.PopLaidFrame();
 
         list.PopOwner();
+
+        if (timed)
+            Diagnostics.UIPaintProfile.End(this);
     }
 
     /// <summary>

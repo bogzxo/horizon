@@ -34,8 +34,8 @@ public sealed class UIStatistics
     /// <summary>Ticks painted, and how many of them painted something other than the tick before.</summary>
     public long Ticks, TicksChanged;
 
-    /// <summary>Milliseconds laying out and painting, and looking at whether the list changed.</summary>
-    public double PaintMs, CompareMs;
+    /// <summary>Milliseconds laying out and painting, of that the laying out, and looking at whether the list changed.</summary>
+    public double PaintMs, LayoutMs, CompareMs;
 
     /// <summary>Quads painted, all ticks together, and the most one tick painted.</summary>
     public long QuadsPainted;
@@ -65,7 +65,7 @@ public sealed class UIStatistics
         Ticks = TicksChanged = QuadsPainted = Frames = FramesBlended = FramesUploaded = QuadsUploaded = BytesUploaded = 0;
         FramesBroken = FramesAtNewer = 0;
         MostQuads = 0;
-        PaintMs = CompareMs = BlendMs = DrawMs = GpuMs = GlassGpuMs = GpuFrameMs = 0.0;
+        PaintMs = LayoutMs = CompareMs = BlendMs = DrawMs = GpuMs = GlassGpuMs = GpuFrameMs = 0.0;
         lock (byScope)
             byScope.Clear();
     }
@@ -74,7 +74,7 @@ public sealed class UIStatistics
     public override string ToString()
     {
         double ticks = Math.Max(1, Ticks), frames = Math.Max(1, Frames);
-        return $"{Ticks} ticks ({TicksChanged} changed), paint {PaintMs / ticks:0.000} ms, compare {CompareMs / ticks:0.000} ms, " +
+        return $"{Ticks} ticks ({TicksChanged} changed), paint {PaintMs / ticks:0.000} ms (layout {LayoutMs / ticks:0.000}), compare {CompareMs / ticks:0.000} ms, " +
             $"{QuadsPainted / ticks:0} quads a tick (most {MostQuads}), {Frames} frames ({FramesBlended} blended, {FramesUploaded} uploaded, " +
             $"{FramesBroken} broken, {FramesAtNewer} at the newer tick), " +
             $"blend {BlendMs / frames:0.000} ms, draw {DrawMs / frames:0.000} ms, {QuadsUploaded} quads and {BytesUploaded / 1024.0:0} KB up, " +

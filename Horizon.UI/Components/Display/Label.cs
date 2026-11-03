@@ -119,6 +119,13 @@ public class Label : UIComponent
     private string? wrappedText;
     private float wrappedScale, wrappedWidth;
 
+    // How big a text that doesn't wrap came out, measured again only once the text, its size or the font is another
+    private string? measuredText;
+    private float measuredScale;
+    private UIFont? measuredFont;
+    private bool measuredBold;
+    private Vector2 measuredSize;
+
     // Whether the lines are what the text is drawn as right now
     private bool wrapped;
 
@@ -199,10 +206,20 @@ public class Label : UIComponent
         }
 
         wrapped = width > 0.0f;
-        if (!wrapped && Bold && !text.Contains('\n'))
-            return new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
         if (!wrapped)
-            return skin.Font.Measure(text, scale);
+        {
+            // Measured every tick it was a walk along every letter of every label for the size it was the tick before
+            bool bold = Bold && !text.Contains('\n');
+            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || measuredFont != skin.Font || measuredBold != bold)
+            {
+                measuredSize = bold
+                    ? new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale)
+                    : skin.Font.Measure(text, scale);
+                (measuredText, measuredScale, measuredFont, measuredBold) = (text, scale, skin.Font, bold);
+            }
+
+            return measuredSize;
+        }
 
         // Only cut again when the text, its size or the room has changed. The text is a string, the same one is the same text
         if (!ReferenceEquals(wrappedText, text) || wrappedScale != scale || wrappedWidth != width)

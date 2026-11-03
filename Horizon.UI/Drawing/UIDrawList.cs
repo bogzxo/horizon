@@ -347,6 +347,21 @@ public sealed partial class UIDrawList
         PushFrameClip(rect);
     }
 
+    /// <summary>
+    /// Whether a rectangle is out of sight under the clip, further from it than <see cref="UIInBetween.JUMP"/> pixels,
+    /// the furthest a frame between two ticks moves anything smoothly. Never for a list with no clip.
+    /// </summary>
+    internal bool OutOfSight(UIRect rect)
+    {
+        if (!float.IsFinite(clip.Min.X) || !float.IsFinite(clip.Max.Y) || !float.IsFinite(clip.Max.X) || !float.IsFinite(clip.Min.Y))
+            return false;
+
+        Vector2 across = Vector2.Abs(visualScale * scale);
+        float margin = UIInBetween.JUMP / MathF.Max(0.01f, MathF.Min(across.X, across.Y));
+        var near = new UIRect(clip.Min - new Vector2(margin), clip.Max + new Vector2(margin));
+        return rect.Intersect(near).IsEmpty;
+    }
+
     public void PopClip()
     {
         clip = clips.Pop();
