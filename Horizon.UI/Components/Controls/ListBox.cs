@@ -351,14 +351,8 @@ public partial class ListBox : UIComponent
         float rowTop = Bounds.Max.Y - headingHeight + (shown - from) * rowHeight;
         list.PushClip(new UIRect(Bounds.Min, new Vector2(Bounds.Max.X, Bounds.Max.Y - headingHeight)));
 
-        // Gliding, a frame between two ticks shows the rows where the newer tick has them. Blended, a row coming in at
-        // the bottom had no place the tick before and sat where it was while the one over it slid down onto it
-        bool gliding = shown != top;
-
         // The rows move by the glide as one, on whole pixels, see UIDrawList.PushFrame
         list.PushFrame(new Vector2(0.0f, shown * rowHeight));
-        if (gliding)
-            list.BeginSteps();
         for (int i = from; i < last; i++)
         {
             // By the item, not by where in the box it is, or every scroll had the letters of one item blended with another's
@@ -399,8 +393,6 @@ public partial class ListBox : UIComponent
                 list.Rect(new UIRect(new Vector2(row.Min.X + ROW_PADDING, row.Min.Y), new Vector2(row.Max.X - ROW_PADDING, row.Min.Y + 1.0f)), skin.BorderColor * tint);
         }
 
-        if (gliding)
-            list.EndSteps();
         list.PopFrame();
         list.PopClip();
 

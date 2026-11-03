@@ -94,6 +94,8 @@ public class TabPanel : UIComponent
     /// <summary>Whether it's on its way up or down.</summary>
     public bool IsFolding => foldProgress != (folded ? 1.0f : 0.0f);
 
+    protected internal override bool LaysOutMoving => base.LaysOutMoving || IsFolding;
+
     /// <summary>
     /// Folds it down to its strip or opens it up again, eased the way <see cref="Folded"/> says, or at once when it's
     /// told to be instant (a program putting itself back the way it was left) or the UI isn't to move.

@@ -87,7 +87,6 @@ public partial class TerminalView
 
         // Its rows are other rows from one tick to the next as it scrolls, nothing of it is blended between ticks
         list.BeginPart(PART_MINIMAP);
-        list.BeginSteps();
         list.PushClip(map);
         // Shaded only with somewhere to scroll, the code editor's way. An empty terminal had a box of it doing nothing
         bool scrolls = !screen.AlternateScreen && screen.Scrollback.Count > 0;
@@ -135,7 +134,6 @@ public partial class TerminalView
         }
 
         list.PopClip();
-        list.EndSteps();
     }
 
     /// <summary>

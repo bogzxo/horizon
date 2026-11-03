@@ -296,15 +296,12 @@ public class Dropdown : UIComponent
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
         // From where the glide has got to, the row half out at the top cut off at the list's edge and one more at the
-        // bottom, in steps while it glides (see UIScrollEase)
+        // bottom
         int from = (int)MathF.Floor(shownRow);
         float slide = (shownRow - from) * Bounds.Height;
-        bool gliding = shownRow != firstRow;
         list.PushClip(bounds.Shrink(new UIEdges(LIST_BORDER)));
         // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
         list.PushFrame(new Vector2(0.0f, shownRow * Bounds.Height));
-        if (gliding)
-            list.BeginSteps();
         for (int row = 0; row <= VisibleRows && from + row < options.Length; row++)
         {
             int option = from + row;
@@ -324,8 +321,6 @@ public class Dropdown : UIComponent
                 markup: false);
         }
 
-        if (gliding)
-            list.EndSteps();
         list.PopFrame();
         list.PopClip();
         list.EndParts();

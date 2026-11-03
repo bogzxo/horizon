@@ -416,10 +416,6 @@ public class Table : UIComponent
 
         // The cells move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
         list.PushFrame(new Vector2(0.0f, scrollY));
-        // Easing, the cells as the newer tick has them (see UIScrollEase)
-        bool easing = ease.Goal is not null;
-        if (easing)
-            list.BeginSteps();
 
         // Soft under the header and along the bottom while there's more past them, the way every other list scrolls
         float travel = TravelY(skin), fade = MathF.Min(FADE, (bounds.Height - line) * 0.25f);
@@ -472,8 +468,6 @@ public class Table : UIComponent
             }
         }
 
-        if (easing)
-            list.EndSteps();
         list.PopFrame();
         list.PopFade();
 

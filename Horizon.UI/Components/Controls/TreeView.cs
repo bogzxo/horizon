@@ -579,12 +579,8 @@ public partial class TreeView : UIComponent
         int first = (int)(scroll / line);
         int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
 
-        // Easing, the rows as the newer tick has them (see UIScrollEase)
-        bool easing = ease.Goal is not null;
         // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
         list.PushFrame(new Vector2(0.0f, scroll));
-        if (easing)
-            list.BeginSteps();
         for (int i = first; i <= last; i++)
         {
             var (item, depth) = rows[i];
@@ -704,8 +700,6 @@ public partial class TreeView : UIComponent
             PaintActions(list, item, row, badge, icon, text);
         }
 
-        if (easing)
-            list.EndSteps();
         list.PopFrame();
         list.EndParts();
         list.PopFade();

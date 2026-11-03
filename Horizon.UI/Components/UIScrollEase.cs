@@ -5,8 +5,8 @@ namespace Horizon.UI.Components;
 /// three lines in one tick had the frames between two ticks blend the rows that were in sight both times, while the rows
 /// that came into sight sat at their new place over the ones still sliding past, so the text flickered as it scrolled.
 /// The tree, the table and the scroll panel go by it, the code editor, a list, a dropdown and the completions do the
-/// same by hand. While it eases a component paints its rows in steps (UIDrawList.BeginSteps), so a frame between two
-/// ticks has them where the newer tick put them and a row coming into sight never sits over one sliding out.
+/// same by hand. What scrolls is painted in a frame of its own (UIDrawList.PushFrame), which a frame between two ticks
+/// moves smoothly while the rows in it are the newer tick's.
 /// </summary>
 internal struct UIScrollEase
 {

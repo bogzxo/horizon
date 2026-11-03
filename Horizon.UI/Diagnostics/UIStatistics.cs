@@ -28,6 +28,12 @@ public sealed class UIStatistics
     /// <summary>Frames drawn, how many of them put a frame between two ticks together, and how many uploaded quads.</summary>
     public long Frames, FramesBlended, FramesUploaded;
 
+    /// <summary>
+    /// Frames drawn from two ticks that weren't put together between them, and why. The two ticks weren't one after the
+    /// other (something broke the snapshots between them), or the frame was all the way at the newer one already.
+    /// </summary>
+    public long FramesBroken, FramesAtNewer;
+
     /// <summary>Milliseconds putting frames between two ticks together.</summary>
     public double BlendMs;
 
@@ -41,6 +47,7 @@ public sealed class UIStatistics
     public void Reset()
     {
         Ticks = TicksChanged = QuadsPainted = Frames = FramesBlended = FramesUploaded = QuadsUploaded = BytesUploaded = 0;
+        FramesBroken = FramesAtNewer = 0;
         MostQuads = 0;
         PaintMs = CompareMs = BlendMs = GpuMs = GlassGpuMs = 0.0;
     }
@@ -50,7 +57,8 @@ public sealed class UIStatistics
     {
         double ticks = Math.Max(1, Ticks), frames = Math.Max(1, Frames);
         return $"{Ticks} ticks ({TicksChanged} changed), paint {PaintMs / ticks:0.000} ms, compare {CompareMs / ticks:0.000} ms, " +
-            $"{QuadsPainted / ticks:0} quads a tick (most {MostQuads}), {Frames} frames ({FramesBlended} blended, {FramesUploaded} uploaded), " +
+            $"{QuadsPainted / ticks:0} quads a tick (most {MostQuads}), {Frames} frames ({FramesBlended} blended, {FramesUploaded} uploaded, " +
+            $"{FramesBroken} broken, {FramesAtNewer} at the newer tick), " +
             $"blend {BlendMs / frames:0.000} ms, {QuadsUploaded} quads and {BytesUploaded / 1024.0:0} KB up, " +
             $"GPU {GpuMs / frames:0.000} ms a frame (glass {GlassGpuMs / frames:0.000})";
     }

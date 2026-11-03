@@ -320,6 +320,9 @@ public abstract partial class UIComponent
 
     internal Vector2 MeasureTree(UISkin skin)
     {
+        if (LaysOutMoving && Visible)
+            Module?.NoteLayoutMoving();
+
         foreach (var child in children)
             child.MeasureTree(skin);
 
@@ -450,9 +453,19 @@ public abstract partial class UIComponent
         // Every quad is ours by name, see UIDrawList.PushOwner. The animation's frame is named after us too
         list.PushOwner(this);
 
+        // Where the layout put us, while it's moving things about, see UIDrawList.LayoutMoves
+        bool laidOut = list.LayoutMoves;
+        if (laidOut)
+            list.PushLaidFrame(Bounds.Min);
+
         bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
         if (animated)
             list.PushVisual(offset, scale, Bounds.Center, Opacity);
+
+        // Going where the pointer goes, see FollowsPointer
+        bool follows = FollowsPointer && Module is not null;
+        if (follows)
+            list.PushFollowFrame(Module!.Compositor.Pointer.Position);
 
         // What's in it is laid out whole while it slides, the part that's gone is cut off at its edge
         bool sliding = slideWanted is not null;
@@ -499,11 +512,30 @@ public abstract partial class UIComponent
         if (Resizable != UIResize.None)
             PaintGrips(list);
 
+        if (follows)
+            list.PopFollowFrame();
+
         if (animated)
             list.PopVisual();
 
+        if (laidOut)
+            list.PopLaidFrame();
+
         list.PopOwner();
     }
+
+    /// <summary>
+    /// Whether its layout is on its way somewhere (sliding in or out, folding), which moves it and what's round it about
+    /// a little every tick, see <see cref="UIDrawList.LayoutMoves"/>.
+    /// </summary>
+    protected internal virtual bool LaysOutMoving => slideWanted is not null;
+
+    /// <summary>
+    /// Whether it's being moved by the pointer right now, a window dragged by its title bar. Drawn, it goes where the
+    /// pointer is as every frame is drawn rather than where the pointer was when the tick laid it out, see
+    /// <see cref="UIDrawList.PushFollowFrame"/>. Only what moves by exactly as much as the pointer does says so.
+    /// </summary>
+    protected internal virtual bool FollowsPointer => false;
 
     /// <summary>
     /// Draws the children, on top of the component and in their order. A component that wants something

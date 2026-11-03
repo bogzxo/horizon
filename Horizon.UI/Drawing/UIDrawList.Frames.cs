@@ -12,6 +12,21 @@ namespace Horizon.UI.Drawing;
 /// </summary>
 internal readonly record struct UIFrame(Vector2 Key, int Parent, Vector2 Shift, Vector2 VisualScale, Vector2 VisualOffset, Vector2 Scale, Vector2 Origin)
 {
+    /// <summary>
+    /// Whether it goes where the pointer goes (a window being dragged), moved on every frame drawn by however far the
+    /// pointer is from where it was when this was painted, <see cref="FollowFrom"/>, on the screen.
+    /// </summary>
+    public bool Follows { get; init; }
+
+    public Vector2 FollowFrom { get; init; }
+
+    /// <summary>
+    /// Where the layout put the component it's the frame of, less what it's scrolled by (see <see cref="Shift"/>), while
+    /// the layout is moving things about (something sliding or folding, see <see cref="UIDrawList.LayoutMoves"/>). A
+    /// frame inside it has the same. Moved between two ticks, what's in the frame moves with it.
+    /// </summary>
+    public Vector2 Laid { get; init; }
+
     /// <summary>Where a point of the layout is on screen, worked out the way a quad always was so the two agree to the bit.</summary>
     public Vector2 ToScreen(Vector2 layout) => (layout * VisualScale + VisualOffset) * Scale + Origin;
 }
@@ -64,6 +79,9 @@ internal sealed class UIFrameList
     public UIFrameQuad[] Quads = new UIFrameQuad[512];
     public int QuadCount;
 
+    /// <summary>Whether any of its frames goes where the pointer goes, see <see cref="UIFrame.Follows"/>.</summary>
+    public bool Follows;
+
     public ReadOnlySpan<UIFrame> Span => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Frames);
 
     public void Clear()
@@ -73,6 +91,7 @@ internal sealed class UIFrameList
         Glass.Clear();
         Runs.Clear();
         QuadCount = 0;
+        Follows = false;
     }
 
     /// <summary>Takes a copy of another list's frames, for a tick captured.</summary>
@@ -87,6 +106,7 @@ internal sealed class UIFrameList
             Quads = new UIFrameQuad[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)other.QuadCount)];
         other.Quads.AsSpan(0, other.QuadCount).CopyTo(Quads);
         QuadCount = other.QuadCount;
+        Follows = other.Follows;
     }
 
     public ref UIFrameQuad Add()
@@ -201,7 +221,7 @@ internal sealed class UIFrameList
     }
 
     // Helper method for how far a frame's content has moved from where it was painted, nothing for the frames as painted
-    private Vector2 Moved(ReadOnlySpan<UIFrame> at, int frame) => at[frame].Shift - Frames[frame].Shift;
+    private Vector2 Moved(ReadOnlySpan<UIFrame> at, int frame) => at[frame].Shift - Frames[frame].Shift + (at[frame].Laid - Frames[frame].Laid);
 
     private static UIRect Shifted(UIRect rect, Vector2 by) =>
         by == Vector2.Zero || !float.IsFinite(rect.Min.X) ? rect : new UIRect(rect.Min + by, rect.Max + by);
@@ -220,7 +240,15 @@ public sealed partial class UIDrawList
     private readonly Stack<int> openClips = new();
     private int frameAt;
     private int clipAt = -1;
-    private Vector2 shift;
+    private Vector2 shift, laid;
+
+    /// <summary>
+    /// Whether the layout is moving things about this tick or did the last (a drawer sliding, a panel folding, and so
+    /// everything round it laid out somewhere else every tick), so every component is painted in a frame of its own
+    /// that knows where it was laid out (see <see cref="UIFrame.Laid"/>), and a frame between two ticks moves them all
+    /// smoothly. Otherwise something the layout put somewhere else is put there, not slid over from where it was.
+    /// </summary>
+    internal bool LayoutMoves { get; set; }
 
     // How many frames every owner has opened so far this paint, which is what a frame is named by after its owner
     private readonly Dictionary<float, int> framesOpened = [];
@@ -234,7 +262,8 @@ public sealed partial class UIDrawList
         openFrames.Clear();
         openClips.Clear();
         framesOpened.Clear();
-        shift = Vector2.Zero;
+        shift = laid = Vector2.Zero;
+        LayoutMoves = false;
         clipAt = -1;
         frameAt = -1;
         OpenFrame();
@@ -281,7 +310,7 @@ public sealed partial class UIDrawList
         // painted before a list's rows would have had its rows' frame taken for another
         int opened = framesOpened.GetValueOrDefault(owner);
         framesOpened[owner] = opened + 1;
-        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin));
+        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid });
         frameAt = frameList.Frames.Count - 1;
     }
 
@@ -293,6 +322,40 @@ public sealed partial class UIDrawList
     }
 
     private void PopVisualFrame() => (frameAt, _, _) = openFrames.Pop();
+
+    /// <summary>
+    /// What's painted from here on until <see cref="PopFollowFrame"/> goes where the pointer goes once it's on screen,
+    /// see <see cref="UIFrame.Follows"/>. A window being dragged, which painted at the pointer of its tick was always
+    /// a tick or more behind it, and a lot more behind when ticks came slowly.
+    /// </summary>
+    /// <param name="pointer">Where the pointer was when this was laid out, in the same units the quads come out in.</param>
+    internal void PushFollowFrame(Vector2 pointer)
+    {
+        openFrames.Push((frameAt, clipAt, shift));
+        OpenFrame();
+        frameList.Frames[frameAt] = frameList.Frames[frameAt] with { Follows = true, FollowFrom = pointer };
+        frameList.Follows = true;
+    }
+
+    internal void PopFollowFrame() => (frameAt, _, _) = openFrames.Pop();
+
+    // What a component painted in a frame of where it was laid out goes back to, see PushLaidFrame
+    private readonly Stack<Vector2> openLaid = new();
+
+    /// <summary>What's painted from here on until <see cref="PopLaidFrame"/> is a component laid out at a place, see <see cref="LayoutMoves"/>.</summary>
+    internal void PushLaidFrame(Vector2 place)
+    {
+        openFrames.Push((frameAt, clipAt, shift));
+        openLaid.Push(laid);
+        laid = place - shift;
+        OpenFrame();
+    }
+
+    internal void PopLaidFrame()
+    {
+        (frameAt, _, _) = openFrames.Pop();
+        laid = openLaid.Pop();
+    }
 
     // Helper method for a module moved and scaled, a frame of its own at the top
     private void TransformFrame()
@@ -323,7 +386,7 @@ public sealed partial class UIDrawList
             Ring = ring,
             Slant = slant,
             Upright = upright,
-            Key = new Vector2(stepped ? -owner : owner, ownerPainted),
+            Key = new Vector2(owner, ownerPainted),
             Frame = frameAt,
             Clip = clipAt
         };

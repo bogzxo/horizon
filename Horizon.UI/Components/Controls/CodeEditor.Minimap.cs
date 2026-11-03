@@ -121,7 +121,6 @@ public partial class CodeEditor
 
         // Its rows stand for other lines from one tick to the next as it scrolls, nothing of it is blended between ticks
         list.BeginPart(PART_MINIMAP);
-        list.BeginSteps();
         list.PushClip(map);
         if (!fits)
             list.Rect(map, skin.TextColor with { W = 0.025f });
@@ -178,7 +177,6 @@ public partial class CodeEditor
         }
 
         list.PopClip();
-        list.EndSteps();
     }
 
 

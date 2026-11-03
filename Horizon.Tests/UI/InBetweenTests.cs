@@ -61,13 +61,14 @@ public class InBetweenTests
         return new Painted(list.Items.ToArray(), list.Runs.ToArray(), list.GlassPanes.ToArray(), frames);
     }
 
-    // Helper method to lay out and paint one tick
-    private static Painted Tick(UIComponent root, UIRect screen, int tick)
+    // Helper method to lay out and paint one tick, while the layout is moving things about or not
+    private static Painted Tick(UIComponent root, UIRect screen, int tick, bool layoutMoves = false)
     {
         var list = new UIDrawList();
         root.MeasureTree(Skin);
         root.ArrangeTree(screen);
         list.Begin(Skin, tick, 1.0f / 120.0f, tick / 120.0f);
+        list.LayoutMoves = layoutMoves;
         root.PaintTree(list);
         list.End();
         return Kept(list);
@@ -224,5 +225,37 @@ public class InBetweenTests
         var (items, _) = Halfway(a, b);
 
         Assert.Equal(100.0f, Drawn(items, Colour(0)).Min.X, 0.01f);
+    }
+
+    [Fact]
+    public void What_the_layout_moves_while_something_slides_moves_smoothly()
+    {
+        // Pushed along by a drawer coming out next to it, twenty to the right in a tick
+        var swatch = new Swatch(Colour(0));
+        Painted a = Tick(swatch, new UIRect(Vector2.Zero, new Vector2(20.0f)), 1, layoutMoves: true);
+        Painted b = Tick(swatch, new UIRect(new Vector2(20.0f, 0.0f), new Vector2(40.0f, 20.0f)), 2, layoutMoves: true);
+        var (items, _) = Halfway(a, b);
+
+        Assert.Equal(10.0f, Drawn(items, Colour(0)).Min.X, 0.01f);
+    }
+
+    [Fact]
+    public void A_window_being_dragged_is_where_the_pointer_is_now()
+    {
+        // Painted where the pointer was as the tick laid it out, drawn where the pointer has got to since
+        var list = new UIDrawList();
+        list.Begin(Skin, 1, 1.0f / 120.0f, 1.0f / 120.0f);
+        list.PushFollowFrame(new Vector2(100.0f, 100.0f));
+        list.Rect(new UIRect(new Vector2(90.0f), new Vector2(110.0f)), Colour(0));
+        list.PopFollowFrame();
+        list.Rect(new UIRect(Vector2.Zero, new Vector2(10.0f)), Colour(1));
+        list.End();
+        Painted painted = Kept(list);
+
+        var between = new UIInBetween();
+        between.Frames(painted.Frames, painted.Frames, 1.0f, new Vector2(130.4f, 95.0f));
+        SpriteItem[] items = between.FramedQuads.ToArray();
+        Assert.Equal(new Vector2(120.0f, 85.0f), Drawn(items, Colour(0)).Min);
+        Assert.Equal(Vector2.Zero, Drawn(items, Colour(1)).Min);
     }
 }

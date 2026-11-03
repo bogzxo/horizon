@@ -354,14 +354,8 @@ public partial class UICompositor : GameComponent, IDisposable
     // And what puts a frame between two of them together
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
+    private Vector2? shownPointer;
     private readonly UIInBetween inBetween = new();
-
-    /// <summary>
-    /// Whether the frames between ticks are put together from the ticks' frames (see <see cref="UIInBetween.Frames"/>),
-    /// which is how it's done unless <c>HORIZON_UI_FRAMES=0</c>, which blends quad with quad the way it was done before,
-    /// until that goes (see notes/ui-interpolation-plan.md).
-    /// </summary>
-    public static bool UseFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES") != "0";
 
     /// <summary>
     /// Whether every tick painted is held up against what its frames resolve to and a difference is logged,
@@ -779,11 +773,8 @@ public partial class UICompositor : GameComponent, IDisposable
             foreach (var pane in front.GlassPanes)
                 into.Glass.Add(pane);
 
-            // And as frames, which the frames between this tick and the next are put together from, see UseFrames
-            if (UseFrames)
-                into.Frames.CopyFrom(front.FrameList);
-            else
-                into.Frames.Clear();
+            // And as frames, which the frames between this tick and the next are put together from
+            into.Frames.CopyFrom(front.FrameList);
 
             into.Atlases.Clear();
             foreach (var atlas in front.Atlases)
@@ -813,19 +804,26 @@ public partial class UICompositor : GameComponent, IDisposable
             return true;
         }
 
-        // Two lists of the same quads are blended one with the other as they come. Two that aren't (a number in a
-        // corner changed, something lit up under the pointer) are blended quad by quad wherever the newer one has
-        // a quad the older one had, by who painted it, and the rest of it is shown as it is now. Not blending such
-        // lists at all was how one clock in a HUD had the whole UI drawn in steps a tick apart
+        // Two ticks that painted something different are put together between them from their frames, see
+        // UIInBetween.Frames. Not doing it whenever anything changed was how one clock in a HUD had the whole UI drawn
+        // in steps a tick apart
         bool sameList = before.Painted == after.Painted;
         bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete;
 
         // A list that changed in steps is shown as it was until the moment is all the way at the newer one
         CapturedList shown = sameList || canBlend || frame.Alpha >= 1.0f || before.Skin != skin || before.Incomplete ? after : before;
         float alpha = canBlend ? frame.Alpha : 1.0f;
+        if (!sameList && !continuous)
+            Statistics.FramesBroken++;
+        else if (canBlend && frame.Alpha >= 1.0f)
+            Statistics.FramesAtNewer++;
+
+        // Where the pointer is right now, for a window that's being dragged (see UIComponent.FollowsPointer). Only the
+        // mouse, a pointer of somebody else's (a recording, a test) is theirs to read on their own thread
+        Vector2? pointer = after.Frames.Follows && PointerSource is null ? viewportCamera.ScreenToWorld(GameEngine.Instance.Input.Mouse.LivePosition) : null;
 
         int from = canBlend ? before.Painted : shown.Painted;
-        if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha)
+        if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha && pointer == shownPointer)
             return true;
 
         // Not yet, see FrameRateLimit. What is up there already is shown once more and this is asked again the
@@ -834,26 +832,15 @@ public partial class UICompositor : GameComponent, IDisposable
         if (!due)
             return true;
 
-        if (canBlend && alpha < 1.0f)
+        if (canBlend && alpha < 1.0f || pointer is not null)
         {
             long started = Stopwatch.GetTimestamp();
-            if (before.Frames.QuadCount > 0 && after.Frames.QuadCount > 0)
-            {
-                inBetween.Frames(before.Frames, after.Frames, alpha);
-                Statistics.BlendMs += UIStatistics.Since(started);
-                Statistics.FramesBlended++;
-                CountUpload(inBetween.FramedQuads.Length);
-                renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan(after.Atlases), inBetween.FramedGlass);
-            }
-            else
-            {
-                ReadOnlySpan<SpriteItem> quads = inBetween.Quads(before.Span, CollectionsMarshal.AsSpan(before.Runs), after.Span, CollectionsMarshal.AsSpan(after.Runs), alpha);
-                Statistics.BlendMs += UIStatistics.Since(started);
-                Statistics.FramesBlended++;
-                CountUpload(quads.Length);
-                renderer.Upload(quads, CollectionsMarshal.AsSpan(after.Runs), skin, CollectionsMarshal.AsSpan(after.Atlases),
-                    inBetween.Glass(CollectionsMarshal.AsSpan(before.Glass), CollectionsMarshal.AsSpan(after.Glass), alpha));
-            }
+            bool between = canBlend && alpha < 1.0f;
+            inBetween.Frames(between ? before.Frames : shown.Frames, between ? after.Frames : shown.Frames, between ? alpha : 1.0f, pointer);
+            Statistics.BlendMs += UIStatistics.Since(started);
+            Statistics.FramesBlended++;
+            CountUpload(inBetween.FramedQuads.Length);
+            renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan((between ? after : shown).Atlases), inBetween.FramedGlass);
         }
         else
         {
@@ -861,7 +848,7 @@ public partial class UICompositor : GameComponent, IDisposable
             CountUpload(shown.Count);
         }
 
-        (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
+        (shownBefore, shownAfter, shownAlpha, shownPointer) = (from, shown.Painted, alpha, pointer);
         pictureCurrent = false;
         refreshedAt = renderedAt;
         return true;

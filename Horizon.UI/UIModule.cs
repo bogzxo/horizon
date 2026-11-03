@@ -307,8 +307,16 @@ namespace Horizon.UI
             UnitScale = MathF.Max(0.01f, fit * Compositor.Scale);
         }
 
+        // Whether something in it laid itself out on the way somewhere this tick and the last, see UIDrawList.LayoutMoves
+        private bool layoutMoving, layoutMoved;
+
+        /// <summary>Says something in it is sliding or folding, see <see cref="UIComponent.LaysOutMoving"/>.</summary>
+        internal void NoteLayoutMoving() => layoutMoving = true;
+
         internal void Layout(UIRect screen, UISkin skin)
         {
+            layoutMoved = layoutMoving;
+            layoutMoving = false;
             Root.MeasureTree(skin);
 
             // The screen as the module sees it once its own scale and that of the whole UI are taken out,
@@ -333,8 +341,11 @@ namespace Horizon.UI
             if (Clip is { } clip)
                 list.PushClip(clip);
 
+            // The tick a slide stops is laid out in frames as well, the frame between it and the one before moves too
+            list.LayoutMoves = layoutMoving || layoutMoved;
             Root.PaintTree(list);
             PaintRaised(list);
+            list.LayoutMoves = false;
 
             // The edges of the layout, for whoever is editing it
             // and of the screen it's being shown on, fainter, when that's another shape than what it's made for

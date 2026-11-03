@@ -1326,7 +1326,7 @@ public partial class CodeEditor : UIComponent
         }
     }
 
-    /// <summary>Whether it's on its way somewhere the wheel or the caret sent it, painted in steps meanwhile. For the checks.</summary>
+    /// <summary>Whether it's on its way somewhere the wheel or the caret sent it. For the checks.</summary>
     internal bool Easing => scrollGoal is not null || revealCaret;
 
     private void ClampScroll(UISkin skin, float scale)
@@ -2016,10 +2016,6 @@ public partial class CodeEditor : UIComponent
         int last = Math.Min(completions.Count, first + COMPLETION_ROWS + 1);
         list.PushClip(new UIRect(new Vector2(bounds.Min.X, bounds.Min.Y + COMPLETION_PAD), new Vector2(bounds.Max.X, bounds.Max.Y - COMPLETION_PAD)));
 
-        // Gliding, the rows as the newer tick has them, see ListBox
-        bool gliding = completionShown != completionTop;
-        if (gliding)
-            list.BeginSteps();
         for (int i = first; i < last; i++)
         {
             list.BeginPart(i);
@@ -2049,8 +2045,6 @@ public partial class CodeEditor : UIComponent
             }
         }
 
-        if (gliding)
-            list.EndSteps();
         list.PopClip();
         list.EndParts();
         PaintCompletionDocs(list, skin, scale, bounds, colors);
@@ -2340,16 +2334,9 @@ public partial class CodeEditor : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
-        // Easing, the lines as the newer tick has them (see UIScrollEase), a line coming into sight sat over the one
-        // sliding out of it for a frame between two ticks
-        bool easing = scrollGoal is not null;
-        if (easing)
-            list.BeginSteps();
         list.PushFont(FontOf(list.Skin));
         PaintCode(list);
         list.PopFont();
-        if (easing)
-            list.EndSteps();
     }
 
     private void PaintCode(UIDrawList list)

@@ -210,6 +210,9 @@ public partial class WindowPanel : Panel
         list.EndParts();
     }
 
+    // Dragged by its title bar it goes by exactly as much as the pointer does
+    protected internal override bool FollowsPointer => drag == Drag.Move && Movable;
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         // In front of the others in the same parent, the way a window is when it is clicked
