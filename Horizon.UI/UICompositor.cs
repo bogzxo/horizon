@@ -998,8 +998,10 @@ public partial class UICompositor : GameComponent, IDisposable
     {
         using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
 
+        long started = Stopwatch.GetTimestamp();
         DrawList(dt);
         DrawCursor();
+        Statistics.DrawMs += UIStatistics.Since(started);
     }
 
     /// <summary>

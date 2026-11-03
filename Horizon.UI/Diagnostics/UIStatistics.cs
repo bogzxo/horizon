@@ -34,8 +34,8 @@ public sealed class UIStatistics
     /// </summary>
     public long FramesBroken, FramesAtNewer;
 
-    /// <summary>Milliseconds putting frames between two ticks together.</summary>
-    public double BlendMs;
+    /// <summary>Milliseconds putting frames between two ticks together, and drawing the UI on the render thread (handing the quads to the GPU and the draws).</summary>
+    public double BlendMs, DrawMs;
 
     /// <summary>Quads and bytes uploaded for the UI.</summary>
     public long QuadsUploaded, BytesUploaded;
@@ -49,7 +49,7 @@ public sealed class UIStatistics
         Ticks = TicksChanged = QuadsPainted = Frames = FramesBlended = FramesUploaded = QuadsUploaded = BytesUploaded = 0;
         FramesBroken = FramesAtNewer = 0;
         MostQuads = 0;
-        PaintMs = CompareMs = BlendMs = GpuMs = GlassGpuMs = 0.0;
+        PaintMs = CompareMs = BlendMs = DrawMs = GpuMs = GlassGpuMs = 0.0;
     }
 
     /// <summary>One line of all of it, averaged where an average says more than a sum.</summary>
@@ -59,7 +59,7 @@ public sealed class UIStatistics
         return $"{Ticks} ticks ({TicksChanged} changed), paint {PaintMs / ticks:0.000} ms, compare {CompareMs / ticks:0.000} ms, " +
             $"{QuadsPainted / ticks:0} quads a tick (most {MostQuads}), {Frames} frames ({FramesBlended} blended, {FramesUploaded} uploaded, " +
             $"{FramesBroken} broken, {FramesAtNewer} at the newer tick), " +
-            $"blend {BlendMs / frames:0.000} ms, {QuadsUploaded} quads and {BytesUploaded / 1024.0:0} KB up, " +
+            $"blend {BlendMs / frames:0.000} ms, draw {DrawMs / frames:0.000} ms, {QuadsUploaded} quads and {BytesUploaded / 1024.0:0} KB up, " +
             $"GPU {GpuMs / frames:0.000} ms a frame (glass {GlassGpuMs / frames:0.000})";
     }
 
