@@ -301,6 +301,8 @@ public class Dropdown : UIComponent
         float slide = (shownRow - from) * Bounds.Height;
         bool gliding = shownRow != firstRow;
         list.PushClip(bounds.Shrink(new UIEdges(LIST_BORDER)));
+        // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        list.PushFrame(new Vector2(0.0f, shownRow * Bounds.Height));
         if (gliding)
             list.BeginSteps();
         for (int row = 0; row <= VisibleRows && from + row < options.Length; row++)
@@ -324,6 +326,7 @@ public class Dropdown : UIComponent
 
         if (gliding)
             list.EndSteps();
+        list.PopFrame();
         list.PopClip();
         list.EndParts();
 

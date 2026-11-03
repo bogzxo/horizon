@@ -40,7 +40,7 @@ internal sealed class UIInBetween
             // moved. One that is suddenly somewhere else entirely (a menu that was folded away off screen and
             // popped up) is not shown flying over, it was put there, see SpriteItem.CanBlend
             blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[i], b[i])
-                ? SpriteItem.Blend(a[i], b[i], alpha)
+                ? OnPixels(a[i], b[i], alpha)
                 : b[i];
         }
 
@@ -59,9 +59,33 @@ internal sealed class UIInBetween
 
         blendedGlass.Clear();
         for (int i = 0; i < b.Length; i++)
-            blendedGlass.Add(UIGlassPane.Blend(a[i], b[i], alpha));
+        {
+            // Moved by whole pixels like the quads over it, see OnPixels
+            UIGlassPane pane = UIGlassPane.Blend(a[i], b[i], alpha);
+            if (a[i].Max - a[i].Min == b[i].Max - b[i].Min)
+            {
+                Vector2 moved = Vector2.Round(pane.Min - b[i].Min);
+                pane = pane with { Min = b[i].Min + moved, Max = b[i].Max + moved };
+            }
+            blendedGlass.Add(pane);
+        }
 
         return CollectionsMarshal.AsSpan(blendedGlass);
+    }
+
+    /// <summary>
+    /// Helper method for a quad between two ticks. One that only moved is moved from where the newer tick has it by a
+    /// whole number of pixels (a screen unit is a pixel, the way the text and the minimap go by too), so it keeps its
+    /// place between the pixels and everything that moved with it stays where it was against it. Moved by the fraction
+    /// of the way between the ticks it came out on another place between the pixels every frame, and a scroll
+    /// shimmered and wobbled. One that grew or turned on the way is blended as it is.
+    /// </summary>
+    private static SpriteItem OnPixels(in SpriteItem a, in SpriteItem b, float alpha)
+    {
+        SpriteItem between = SpriteItem.Blend(a, b, alpha);
+        if (a.AxisX == b.AxisX && a.AxisY == b.AxisY)
+            between.Origin = b.Origin + Vector2.Round(between.Origin - b.Origin);
+        return between;
     }
 
     /// <summary>
@@ -78,7 +102,7 @@ internal sealed class UIInBetween
         {
             blended[i] = byKey.TryGetValue(b[i].Key, out int was) &&
                 a[was].Flags == b[i].Flags && a[was].TexMin == b[i].TexMin && a[was].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[was], b[i])
-                    ? SpriteItem.Blend(a[was], b[i], alpha)
+                    ? OnPixels(a[was], b[i], alpha)
                     : b[i];
         }
     }

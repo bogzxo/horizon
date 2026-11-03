@@ -184,6 +184,29 @@ public class InBetweenTests
         Assert.Equal(top, Drawn(Rows(items), picked).Max.Y, 0.01f);
     }
 
+    [Fact]
+    public void Another_popup_or_tooltip_comes_in_rather_than_the_last_one_sliding_over()
+    {
+        // Two lists dropped down by two components, then a tooltip of one text and then of another, each pair one
+        // tick after the other in the same corner of the screen
+        Painted Box(object owner, Vector2 at, int tick)
+        {
+            var list = new UIDrawList();
+            list.Begin(Skin, tick, 1.0f / 120.0f, tick / 120.0f);
+            list.PushOwner(owner);
+            list.Rect(new UIRect(at, at + new Vector2(40.0f, 20.0f)), Colour(tick));
+            list.PopOwner();
+            list.End();
+            return new Painted(list.Items.ToArray(), list.Runs.ToArray(), list.GlassPanes.ToArray());
+        }
+
+        foreach (var (first, second) in new (object, object)[] { (new Swatch(Colour(0)), new Swatch(Colour(0))), (new string('a', 3), new string('b', 3)) })
+        {
+            var (items, _) = Halfway(Box(first, Vector2.Zero, 1), Box(second, new Vector2(60.0f, 0.0f), 2));
+            Assert.Equal(new Vector2(60.0f, 0.0f), Drawn(items, Colour(2)).Min);
+        }
+    }
+
     [Fact(Skip = STAGE_3)]
     public void Something_put_somewhere_else_by_the_layout_is_put_there()
     {

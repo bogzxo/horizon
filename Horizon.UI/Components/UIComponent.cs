@@ -65,6 +65,16 @@ public abstract partial class UIComponent
 
     public UIComponent? Parent { get; private set; }
 
+    // The last name handed out, see PaintId
+    private static int lastPaintId;
+
+    /// <summary>
+    /// The component's own name for what it paints, from a count of the components made, so no two alive at once have the
+    /// same one. Cut to what a float holds exactly, the way a quad's key carries it (see <see cref="SpriteItem.Key"/>),
+    /// which wraps after sixteen million components and never comes out as 0, the name of nobody.
+    /// </summary>
+    internal float PaintId { get; } = (int)((uint)Interlocked.Increment(ref lastPaintId) % 0xFFFFFFu) + 1;
+
     /// <summary>The components inside this one, drawn in order so the last is on top.</summary>
     public IReadOnlyList<UIComponent> Children => children;
 
@@ -437,12 +447,12 @@ public abstract partial class UIComponent
         if (hoverness > 0.0f)
             ApplyHover(ref offset, ref scale);
 
+        // Every quad is ours by name, see UIDrawList.PushOwner. The animation's frame is named after us too
+        list.PushOwner(this);
+
         bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
         if (animated)
             list.PushVisual(offset, scale, Bounds.Center, Opacity);
-
-        // Every quad is ours by name, see UIDrawList.PushOwner
-        list.PushOwner(this);
 
         // What's in it is laid out whole while it slides, the part that's gone is cut off at its edge
         bool sliding = slideWanted is not null;
@@ -489,10 +499,10 @@ public abstract partial class UIComponent
         if (Resizable != UIResize.None)
             PaintGrips(list);
 
-        list.PopOwner();
-
         if (animated)
             list.PopVisual();
+
+        list.PopOwner();
     }
 
     /// <summary>

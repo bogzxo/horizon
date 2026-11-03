@@ -354,6 +354,9 @@ public partial class ListBox : UIComponent
         // Gliding, a frame between two ticks shows the rows where the newer tick has them. Blended, a row coming in at
         // the bottom had no place the tick before and sat where it was while the one over it slid down onto it
         bool gliding = shown != top;
+
+        // The rows move by the glide as one, on whole pixels, see UIDrawList.PushFrame
+        list.PushFrame(new Vector2(0.0f, shown * rowHeight));
         if (gliding)
             list.BeginSteps();
         for (int i = from; i < last; i++)
@@ -398,6 +401,7 @@ public partial class ListBox : UIComponent
 
         if (gliding)
             list.EndSteps();
+        list.PopFrame();
         list.PopClip();
 
         // What it says under the rows while there's room for it, in the middle of that room

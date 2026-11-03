@@ -355,6 +355,22 @@ public partial class UICompositor : GameComponent, IDisposable
     private float shownAlpha = float.NaN;
     private readonly UIInBetween inBetween = new();
 
+    /// <summary>
+    /// Whether what's captured for the frames between ticks is what the list's frames resolve to rather than its quads as
+    /// they were painted, <c>HORIZON_UI_FRAMES=1</c>. The two are the same, this is for running the UI on the frames while
+    /// they take over, see notes/ui-interpolation-plan.md.
+    /// </summary>
+    public static bool UseFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES") == "1";
+
+    /// <summary>
+    /// Whether every tick painted is held up against what its frames resolve to and a difference is logged,
+    /// <c>HORIZON_UI_FRAMES_CHECK=1</c>. Costs a second list's worth of work a tick, for a test run.
+    /// </summary>
+    public static bool CheckFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES_CHECK") == "1";
+
+    // The last difference logged, so one that stays isn't logged every tick
+    private string? framesDiffered;
+
     /// <summary>What this UI has cost since it was last reset, see <see cref="UIStatistics"/>.</summary>
     public UIStatistics Statistics { get; } = new();
 
@@ -699,6 +715,11 @@ public partial class UICompositor : GameComponent, IDisposable
         }
         back.End();
         Statistics.PaintMs += UIStatistics.Since(started);
+        if (CheckFrames && back.FramesDiffer() is { } differs && differs != framesDiffered)
+        {
+            framesDiffered = differs;
+            Horizon.Logging.Log.Warning($"[UI frames] what the frames resolve to isn't what was painted, {differs}");
+        }
         Statistics.Ticks++;
         Statistics.QuadsPainted += back.Items.Length;
         Statistics.MostQuads = Math.Max(Statistics.MostQuads, back.Items.Length);
@@ -742,24 +763,33 @@ public partial class UICompositor : GameComponent, IDisposable
             if (into.Painted == paintedFrame && into.Skin == front.Skin)
                 return;
 
-            ReadOnlySpan<SpriteItem> items = front.Items;
-            if (into.Items.Length < items.Length)
-                into.Items = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)items.Length)];
+            if (UseFrames)
+            {
+                // What the frames come to, the same as what was painted (see CheckFrames), on the way to frames between
+                // ticks being put together from the frames and not from the quads
+                into.Count = front.Resolve(front.Frames, ref into.Items, into.Runs, into.Glass);
+            }
+            else
+            {
+                ReadOnlySpan<SpriteItem> items = front.Items;
+                if (into.Items.Length < items.Length)
+                    into.Items = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)items.Length)];
 
-            items.CopyTo(into.Items);
-            into.Count = items.Length;
+                items.CopyTo(into.Items);
+                into.Count = items.Length;
 
-            into.Runs.Clear();
-            foreach (var run in front.Runs)
-                into.Runs.Add(run);
+                into.Runs.Clear();
+                foreach (var run in front.Runs)
+                    into.Runs.Add(run);
+
+                into.Glass.Clear();
+                foreach (var pane in front.GlassPanes)
+                    into.Glass.Add(pane);
+            }
 
             into.Atlases.Clear();
             foreach (var atlas in front.Atlases)
                 into.Atlases.Add(atlas);
-
-            into.Glass.Clear();
-            foreach (var pane in front.GlassPanes)
-                into.Glass.Add(pane);
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;

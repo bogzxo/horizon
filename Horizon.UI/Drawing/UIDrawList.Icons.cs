@@ -55,6 +55,8 @@ public sealed partial class UIDrawList
         Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color with { W = color.W * alpha }),
             ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
 
+        if (turn != 0.0f)
+            TurnFrameQuad(turn, middle);
         if (turn != 0.0f && whole && itemCount > before)
         {
             // Turned about the middle of the icon's square rather than its picture's, so a lopsided glyph goes round in place

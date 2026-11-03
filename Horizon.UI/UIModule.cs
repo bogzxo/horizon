@@ -350,22 +350,37 @@ namespace Horizon.UI
             if (Clip is not null)
                 list.PopClip();
 
-            // What was open going away, under whatever is open now
-            if (closingPopup is { } going && !(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
-                closingPopup = null;
+            // What was open going away, under whatever is open now. Each as painted by its own component, so a list
+            // that drops down and the one going away under it never have their rows blended into each other's
+            if (closingPopup is { } going)
+            {
+                list.PushOwner(going);
+                if (!(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
+                    closingPopup = null;
+                list.PopOwner();
+            }
 
             // Whatever is open goes on top of the lot, and isn't cut off by what its owner is inside of.
             if (Popup is { } open)
             {
                 if (open.Module == this && open.Visible)
+                {
+                    list.PushOwner(open);
                     open.PaintPopup(list);
+                    list.PopOwner();
+                }
                 else
                     Popup = null;
             }
 
-            // And a tooltip over everything, popups included
+            // And a tooltip over everything, popups included, as painted by its text. Another tooltip is another
+            // text, which comes in afresh instead of the last one's box sliding over to it
             if (tooltip is { Length: > 0 } text)
+            {
+                list.PushOwner(text);
                 tooltipBox = UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
+                list.PopOwner();
+            }
         }
 
         internal UIComponent? HitTest(Vector2 point)

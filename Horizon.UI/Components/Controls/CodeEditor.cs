@@ -2346,7 +2346,12 @@ public partial class CodeEditor : UIComponent
         if (easing)
             list.BeginSteps();
         list.PushFont(FontOf(list.Skin));
+
+        // The code moves by the scroll as one, on whole pixels (see UIDrawList.PushFrame), or the boxes behind the words
+        // slid by fractions of a pixel while the words snapped to the pixels, and the two wobbled against each other
+        list.PushFrame(new Vector2(-scrollX, scrollY));
         PaintCode(list);
+        list.PopFrame();
         list.PopFont();
         if (easing)
             list.EndSteps();

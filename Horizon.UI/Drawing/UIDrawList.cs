@@ -193,6 +193,7 @@ public sealed partial class UIDrawList
         owner = 0.0f;
         ownerPainted = 0;
         stepped = false;
+        BeginFrames();
     }
 
     // Whether what is painted now is shown in steps, see BeginSteps
@@ -219,9 +220,10 @@ public sealed partial class UIDrawList
     {
         owners.Push((owner, ownerPainted));
 
-        // The hash of the object, cut to what a float holds exactly, is as good a name as any and stays the same
-        // for as long as the object lives
-        owner = (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
+        // A component goes by its own name, one nothing else alive has. Anything else (a tooltip by its text) by its
+        // hash, cut to what a float holds exactly, which stays the same for as long as the object lives. Hashes of
+        // components came out the same now and then, and two quads of strangers blended into each other
+        owner = painter is Components.UIComponent component ? component.PaintId : (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
         ownerPainted = 0;
         inParts = false;
     }
@@ -316,9 +318,28 @@ public sealed partial class UIDrawList
         visualOffset += (pivot * (Vector2.One - scale) + offset) * visualScale;
         visualScale *= scale;
         this.opacity *= Math.Clamp(opacity, 0.0f, 1.0f);
+        PushVisualFrame();
     }
 
-    internal void PopVisual() => (visualOffset, visualScale, opacity) = visuals.Pop();
+    internal void PopVisual()
+    {
+        (visualOffset, visualScale, opacity) = visuals.Pop();
+        PopVisualFrame();
+    }
+
+    /// <summary>
+    /// A place of the layout moved onto the nearest corner of the screen's pixels, through the animations and the module
+    /// it's painted in.
+    /// </summary>
+    internal Vector2 OnScreenPixel(Vector2 layout)
+    {
+        Vector2 across = visualScale * scale;
+        if (across.X == 0.0f || across.Y == 0.0f)
+            return Vector2.Round(layout);
+
+        Vector2 screen = (layout * visualScale + visualOffset) * scale + origin;
+        return ((Vector2.Round(screen) - origin) / scale - visualOffset) / visualScale;
+    }
 
     /// <summary>
     /// Everything painted from here on is scaled and then moved, which is how a module places itself.
@@ -327,6 +348,7 @@ public sealed partial class UIDrawList
     {
         this.origin = origin;
         this.scale = scale;
+        TransformFrame();
     }
 
     /// <summary>
@@ -336,9 +358,14 @@ public sealed partial class UIDrawList
     {
         clips.Push(clip);
         clip = clip.Intersect(rect);
+        PushFrameClip(rect);
     }
 
-    public void PopClip() => clip = clips.Pop();
+    public void PopClip()
+    {
+        clip = clips.Pop();
+        PopFrameClip();
+    }
 
     /// <summary>
     /// Puts a pane of frosted glass down, a blur of whatever is drawn before it (the scene and everything painted so
@@ -350,11 +377,17 @@ public sealed partial class UIDrawList
     /// <param name="bend">How far what is behind is bent in at its edge, in the UI's pixels, see <see cref="UIGlass.Bend"/>.</param>
     public void Glass(UIRect rect, float radius, float blur, float bend = 0.0f)
     {
-        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f || rect.Intersect(clip).IsEmpty)
+        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f)
+            return;
+
+        // Kept in its frame even cut away, a frame between two ticks can bring it into sight
+        Vector2 drawn = visualScale * scale;
+        float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
+        KeepFrameGlass(rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X));
+        if (rect.Intersect(clip).IsEmpty)
             return;
 
         // Where the quads go, see Quad
-        Vector2 drawn = visualScale * scale;
         Vector2 min = (rect.Min * visualScale + visualOffset) * scale + origin;
         Vector2 max = (rect.Max * visualScale + visualOffset) * scale + origin;
 
@@ -362,9 +395,8 @@ public sealed partial class UIDrawList
         Vector2 clipMin = float.IsFinite(clip.Min.X) && float.IsFinite(clip.Min.Y) ? (clip.Min * visualScale + visualOffset) * scale + origin : new Vector2(float.NegativeInfinity);
         Vector2 clipMax = float.IsFinite(clip.Max.X) && float.IsFinite(clip.Max.Y) ? (clip.Max * visualScale + visualOffset) * scale + origin : new Vector2(float.PositiveInfinity);
 
-        // Frosted well ahead of the rest fading in. Faded along with it, a menu coming in had the code behind it sharp
-        // through its half there text, the two sets of words on top of each other for the first few frames
-        float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
+        // Frosted well ahead of the rest fading in (see frosted above). Faded along with it, a menu coming in had the code
+        // behind it sharp through its half there text, the two sets of words on top of each other for the first few frames
         glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X)));
     }
 
@@ -883,8 +915,11 @@ public sealed partial class UIDrawList
     private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, bool pixelArt = true)
     {
         UIRect visible = rect.Intersect(clip);
+        Vector2 texAskedMin = texTopLeft, texAskedMax = texBottomRight;
         if (visible.IsEmpty)
         {
+            KeepFrameQuad(rect, texTopLeft, texBottomRight, color, flags, ring, slant, upright);
+
             // Cut away altogether, but it still counts as one of its owner's quads. A quad is told apart from
             // one tick to the next by who painted it and as which of theirs, and if the ones that are out of
             // sight weren't counted, every quad after one that slides out under a clip would be taken for the
@@ -944,11 +979,13 @@ public sealed partial class UIDrawList
             item.Origin.X += slant * (min.Y - pivot);
             item.AxisY.X = slant * (max.Y - min.Y);
         }
+        KeepFrameQuad(rect, texAskedMin, texAskedMax, color, flags, ring, slant, upright);
         item.Key = new Vector2(stepped ? -owner : owner, ownerPainted++);
     }
 
     private void CloseRun()
     {
+        KeepFrameRun(runImage0, runImage1);
         int count = itemCount - runStart;
         if (count > 0)
             runs.Add(new Run(runStart, count, runImage0, runImage1));

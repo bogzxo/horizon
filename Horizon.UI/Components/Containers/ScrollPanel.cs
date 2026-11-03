@@ -150,7 +150,11 @@ public partial class ScrollPanel : Panel
         float fade = MathF.Min(Fade, content.Height * 0.25f);
         list.PushClip(content);
         list.PushFade(content, MathF.Min(fade, offset), MathF.Min(fade, MaxOffset - offset));
+
+        // What's in it moves by the offset as one, the clip and the bar stay put
+        list.PushFrame(new Vector2(0.0f, offset));
         base.PaintChildren(list);
+        list.PopFrame();
         list.PopFade();
         list.PopClip();
 
