@@ -147,6 +147,9 @@ public partial class ListBox : UIComponent
     /// <summary>Called with the chosen item when it is confirmed, by a click on it or the confirm button of a navigator.</summary>
     public Action<string>? OnActivated { get; set; }
 
+    /// <summary>Whether one click both selects and confirms a row, for quick pickers.</summary>
+    public bool ActivateOnClick { get; set; }
+
     public ListBox()
     { }
 
@@ -345,7 +348,12 @@ public partial class ListBox : UIComponent
             return;
 
         // A click on the chosen row is a confirmation, on another row a choice
-        if (row == index)
+        if (ActivateOnClick)
+        {
+            Choose(row);
+            OnActivate();
+        }
+        else if (row == index)
             OnActivate();
         else
             Choose(row);
@@ -433,6 +441,9 @@ public partial class ListBox : UIComponent
             UIRect slip = row.Shrink(new UIEdges(ROW_INSET, 1.0f));
             list.Box(slip, chosen ? skin.TextColor with { W = PICKED } * tint
                 : IsHovered && enabled && Hovering(row) ? skin.HoverColor with { W = skin.HoverColor.W * 0.6f } : skin.HoverColor with { W = 0.0f });
+            // Keep the keyboard selection identifiable while the pointer rests over another command.
+            list.RoundRect(new UIRect(new Vector2(slip.Min.X + 3, slip.Min.Y + 5), new Vector2(slip.Min.X + 5, slip.Max.Y - 5)), 1,
+                skin.AccentColor with { W = chosen ? skin.AccentColor.W : 0.0f });
 
             Vector4 ink = skin.TextColor;
             float size = scale;

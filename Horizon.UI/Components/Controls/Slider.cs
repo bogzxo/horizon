@@ -52,7 +52,23 @@ public class Slider : ProgressBar
 
     protected internal override bool Navigable => true;
 
+    private float wheelRemainder;
+
+    protected internal override bool OnScroll(float delta)
+    {
+        if (!EnabledInHierarchy || Max == Min) return false;
+        // Keep trackpad fractions; adjustment never inherits the scroll-view speed multiplier.
+        wheelRemainder += delta;
+        int steps = (int)wheelRemainder;
+        wheelRemainder -= steps;
+        if (steps != 0) AdjustBy(steps);
+        return true;
+    }
+
     protected internal override bool OnAdjust(int step)
+        => AdjustBy(Math.Sign(step));
+
+    private bool AdjustBy(int step)
     {
         if (!EnabledInHierarchy || Max == Min)
             return false;
@@ -60,7 +76,7 @@ public class Slider : ProgressBar
         // A step of its own if it has them, otherwise a twentieth of the way
         float previous = Value;
         float by = Step > 0.0f ? Step : (Max - Min) / 20.0f;
-        Value = Math.Clamp(previous + Math.Sign(step) * by, MathF.Min(Min, Max), MathF.Max(Min, Max));
+        Value = Math.Clamp(previous + step * by, MathF.Min(Min, Max), MathF.Max(Min, Max));
 
         if (Value != previous)
         {

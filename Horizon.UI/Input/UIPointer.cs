@@ -9,4 +9,5 @@ namespace Horizon.UI;
 /// <param name="Position">Where it points, in the world space of the compositor's camera.</param>
 /// <param name="Down">Whether its primary button is held.</param>
 /// <param name="SecondaryDown">Whether the other button (the right one of a mouse) is held, which is what opens context menus.</param>
-public readonly record struct UIPointer(Vector2 Position, bool Down, bool SecondaryDown = false);
+/// <param name="MiddleDown">Whether the middle mouse button is held.</param>
+public readonly record struct UIPointer(Vector2 Position, bool Down, bool SecondaryDown = false, bool MiddleDown = false);

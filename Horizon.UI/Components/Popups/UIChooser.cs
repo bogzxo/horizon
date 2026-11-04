@@ -7,7 +7,7 @@ namespace Horizon.UI.Components;
 
 /// <summary>
 /// One of a list picked in a palette, narrowed down by what is typed (a piece of it, or the letters starting its words),
-/// enter or a click on the chosen row picks and escape goes. A command palette and every chooser of a program, Hex's quick
+/// Enter or one click on a row picks; Escape or an outside press cancels. A command palette and every chooser of a program, Hex's quick
 /// open with its prefixes (> for commands, @ for something in the file) among them. It's a card hanging under the top of
 /// the window, Spotlight's, a box to type in with the title written in it until something is, the list under a hairline,
 /// and the line about what can be typed quietly at the bottom. A choice written <c>"Menu: What it does   (Ctrl+K)"</c> is shown
@@ -130,7 +130,7 @@ public static partial class UIChooser
             LeadIcon = "search"
         });
         Panel divider = picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
-        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Choice = id => byText.GetValueOrDefault(id) });
+        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, ActivateOnClick = true, Choice = id => byText.GetValueOrDefault(id) });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
         // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
         // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
@@ -188,6 +188,8 @@ public static partial class UIChooser
         };
         box.OnSubmitted = _ =>
         {
+            if (!shown.IsOpen || list.Index < 0 || list.Index >= list.Items.Length)
+                return;
             shown.Close();
             PickChosen();
         };
@@ -215,6 +217,8 @@ public static partial class UIChooser
         };
         list.OnActivated = _ =>
         {
+            if (!shown.IsOpen) return;
+            module.Compositor.FinishChooserClick(list);
             shown.Close();
             PickChosen();
         };

@@ -1203,6 +1203,7 @@ public partial class CodeEditor : UIComponent
             Reveal(skin);
 
         UpdateTooltip();
+        UpdateMiddleScroll(dt);
     }
 
     /// <summary>Parses the code now, on the editor's thread, and underlines what the parser didn't like.</summary>
@@ -1261,6 +1262,13 @@ public partial class CodeEditor : UIComponent
         OnChecked?.Invoke(done.Error);
     }
 
+    /// <summary>Reveal the current caret after its host changes the available editing area.</summary>
+    public void RevealCaret(bool center = false)
+    {
+        revealCaret = true;
+        centreOnReveal = center;
+    }
+
     /// <summary>Helper method to scroll just far enough for the caret to be in sight.</summary>
     private void Reveal(UISkin skin)
     {
@@ -1276,6 +1284,10 @@ public partial class CodeEditor : UIComponent
         EnsureRows(skin, scale);
         float top = RowOf(caret.Line, caret.Column) * lineHeight;
         float lensTop = top - LensRoomAbove(caret.Line, caret.Column, lineHeight);
+        // Pinned scopes cover the top of the text area. Leave one extra row for their
+        // rounded-to-row bottom edge, including when a compact find bar shrinks the view.
+        int pinned = StickyLines(caret.Line).Count;
+        float covered = pinned == 0 ? 0 : MathF.Min(MathF.Max(0, area.Height - lineHeight), (pinned + 1) * lineHeight);
 
         // The caret has the say, wherever the wheel was taking it. A line or a few it went off the edge are eased into
         // sight the way the wheel's are, a page or more away is gone to at once. A line at a time it jumped, and the
@@ -1293,9 +1305,9 @@ public partial class CodeEditor : UIComponent
         {
             centreOnReveal = false;
             scrollGoal = null;
-            scrollY = top - area.Height * 0.4f;
+            scrollY = top - covered - (area.Height - covered - lineHeight) * 0.4f;
         }
-        else if ((lensTop < from ? lensTop : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
+        else if ((lensTop < from + covered ? lensTop - covered : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
         {
             if (MathF.Abs(wanted - scrollY) > area.Height)
             {
@@ -1570,6 +1582,7 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void OnTextInput(char character)
     {
+        middleScroll.Cancel();
         blink = 0.0f;
         revealCaret = true;
 
@@ -2320,6 +2333,7 @@ public partial class CodeEditor : UIComponent
 
     protected internal override bool OnScroll(float delta)
     {
+        middleScroll.Cancel();
         if (OnZoom is { } zoom && GameEngine.Instance?.Input.Keyboard.Control == true)
         {
             zoom(delta);
@@ -2676,6 +2690,7 @@ public partial class CodeEditor : UIComponent
         if (FocusLine && focused)
             list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.55f });
         PaintBar(list, skin, lineHeight, area);
+        PaintMiddleScroll(list);
 
         // The art under the pointer, big, over everything
         if (hoveredArt >= 0 && hoveredArt < art.Count && hoveredArt < artBoxes.Length && artBoxes[hoveredArt].Width > 0.0f)
@@ -3075,6 +3090,7 @@ public partial class CodeEditor : UIComponent
         list.Rect(strip, back);
         list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.06f });
 
+        list.PushClip(strip);
         Span<char> number = stackalloc char[12];
         for (int i = 0; i < held.Count; i++)
         {
@@ -3104,6 +3120,7 @@ public partial class CodeEditor : UIComponent
                 Draw(list, skin, scale, written, x, top, colors.Of(SyntaxKind.Name));
             }
         }
+        list.PopClip();
     }
 
     // How many swatches a line has at its end, for what's written after them

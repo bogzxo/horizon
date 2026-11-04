@@ -28,6 +28,7 @@ public sealed class Mouse
 
     // Written by the thread of the window. A vector is two floats, which is read in one piece through this
     private long _latest;
+    private int _liveButtons;
     private float _scrolled;
     private readonly Lock _scrollLock = new();
 
@@ -120,6 +121,9 @@ public sealed class Mouse
 
     public bool WasReleased(MouseButton button) => Known(button) && _released[(int)button];
 
+    /// <summary>Whether the window currently reports a held button, without waiting for the next input update.</summary>
+    public bool IsLiveDown(MouseButton button) => Known(button) && (Volatile.Read(ref _liveButtons) & (1 << (int)button)) != 0;
+
     private static bool Known(MouseButton button) => (uint)button < BUTTONS;
 
     /// <param name="toPixels">Turns where the system says the pointer is into the pixel that is under it, see <see cref="Core.WindowManager.PointerToPixels"/>.</param>
@@ -135,8 +139,8 @@ public sealed class Mouse
             Place(toPixels?.Invoke(mouse.Position) ?? mouse.Position);
 
             mouse.MouseMove += (_, position) => Place(toPixels?.Invoke(position) ?? position);
-            mouse.MouseDown += (_, button) => _heard.Enqueue((button, true));
-            mouse.MouseUp += (_, button) => _heard.Enqueue((button, false));
+            mouse.MouseDown += (_, button) => HearButton(button, true);
+            mouse.MouseUp += (_, button) => HearButton(button, false);
             mouse.Scroll += (_, wheel) =>
             {
                 lock (_scrollLock) _scrolled += wheel.Y;
@@ -160,7 +164,16 @@ public sealed class Mouse
         }
     }
 
-    private void Place(Vector2 position)
+    internal void HearButton(MouseButton button, bool down)
+    {
+        if (!Known(button)) return;
+        int bit = 1 << (int)button;
+        if (down) Interlocked.Or(ref _liveButtons, bit);
+        else Interlocked.And(ref _liveButtons, ~bit);
+        _heard.Enqueue((button, down));
+    }
+
+    internal void Place(Vector2 position)
     {
         long packed = ((long)BitConverter.SingleToInt32Bits(position.X) << 32) | (uint)BitConverter.SingleToInt32Bits(position.Y);
         Interlocked.Exchange(ref _latest, packed);

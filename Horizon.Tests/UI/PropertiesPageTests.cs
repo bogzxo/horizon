@@ -10,11 +10,12 @@ namespace Horizon.Tests.UI;
 /// </summary>
 public class PropertiesPageTests
 {
-    private static SettingsPage Made(Dictionary<string, IRuntimeValue> values)
+    private static SettingsPage Made(Dictionary<string, IRuntimeValue> values, bool compact = false)
     {
         var page = new SettingsPage
         {
             ShowNav = false,
+            CompactRows = compact,
             CollapsibleSections = true,
             CopyValues = true,
             Settings =
@@ -31,10 +32,12 @@ public class PropertiesPageTests
         return page;
     }
 
-    [Fact]
-    public void A_section_folds_under_its_heading_and_a_search_still_looks_in_it()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_section_folds_under_its_heading_and_a_search_still_looks_in_it(bool compact)
     {
-        var page = Made(new() { ["path"] = new StringValue("C:\\a.txt"), ["size"] = new StringValue("1 byte"), ["copy"] = new StringValue("Never") });
+        var page = Made(new() { ["path"] = new StringValue("C:\\a.txt"), ["size"] = new StringValue("1 byte"), ["copy"] = new StringValue("Never") }, compact);
         Assert.Equal(3, page.RowsShown);
 
         page.ToggleSection("File");
@@ -50,10 +53,12 @@ public class PropertiesPageTests
         Assert.Equal(3, page.RowsShown);
     }
 
-    [Fact]
-    public void A_rows_right_click_copies_its_value_as_it_reads()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_rows_right_click_copies_its_value_as_it_reads(bool compact)
     {
-        var page = Made(new() { ["path"] = new StringValue("C:\\a.txt"), ["copy"] = new StringValue("PreserveNewest") });
+        var page = Made(new() { ["path"] = new StringValue("C:\\a.txt"), ["copy"] = new StringValue("PreserveNewest") }, compact);
 
         Menu menu = page.MenuOf("copy")!;
         Assert.Contains(menu.Items, item => item.Label == "Copy value");

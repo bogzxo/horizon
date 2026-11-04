@@ -193,6 +193,48 @@ public class InBetweenTests
         Assert.Equal(MathF.Round(drawn - newer), drawn - newer, 0.001f);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_file_list_stays_continuous_as_edge_bounce_starts_and_settles(bool bottom)
+    {
+        var list = new ListBox
+        {
+            Rows = 10,
+            Headings = ["Name", "Size", "Modified"],
+            Items = [.. Enumerable.Range(0, 40).Select(i => $"file-{i}.cs")]
+        };
+        var screen = new UIRect(Vector2.Zero, new Vector2(300, 440));
+        if (bottom)
+        {
+            list.Choose(39);
+            for (int i = 0; i < 120; i++) list.UpdateTree(1.0f / 120.0f);
+        }
+        // Track a selected row away from either clip edge, excluding the scrollbar's matching ink.
+        list.Choose(bottom ? 35 : 4);
+        static SpriteItem[] Rows(SpriteItem[] items) => [.. items.Where(item => item.Origin.X < 250)];
+        Painted before = Tick(list, screen, 1);
+        float original = Drawn(Rows(before.Items), Skin.TextColor).Max.Y;
+        Assert.True(list.OnScroll(bottom ? -1 : 1));
+        bool moved = false;
+        for (int tick = 2; tick <= 180; tick++)
+        {
+            list.UpdateTree(1.0f / 120.0f);
+            Painted after = Tick(list, screen, tick);
+            float was = Drawn(Rows(before.Items), Skin.TextColor).Max.Y;
+            float now = Drawn(Rows(after.Items), Skin.TextColor).Max.Y;
+            moved |= MathF.Abs(now - original) > 1;
+            var (items, _) = Halfway(before, after);
+            float drawn = Drawn(Rows(items), Skin.TextColor).Max.Y;
+            float expected = (was + now) * 0.5f;
+            Assert.True(MathF.Abs(drawn - expected) <= 0.51f,
+                $"tick {tick}: row jumped to {drawn}, expected {expected} between {was} and {now}");
+            before = after;
+        }
+        Assert.True(moved, "the edge bounce was never exercised");
+        Assert.Equal(original, Drawn(Rows(before.Items), Skin.TextColor).Max.Y, 0.001f);
+    }
+
     [Fact]
     public void Another_popup_or_tooltip_comes_in_rather_than_the_last_one_sliding_over()
     {
@@ -257,6 +299,36 @@ public class InBetweenTests
         SpriteItem[] items = between.FramedQuads.ToArray();
         Assert.Equal(new Vector2(120.0f, 85.0f), Drawn(items, Colour(0)).Min);
         Assert.Equal(Vector2.Zero, Drawn(items, Colour(1)).Min);
+    }
+
+    [Fact]
+    public void A_stale_drag_frame_does_not_follow_motion_after_release_before_the_next_tick()
+    {
+        var mouse = new Horizon.Input.Mouse();
+        mouse.Place(new Vector2(100));
+        mouse.HearButton(Silk.NET.Input.MouseButton.Left, true);
+        mouse.Update();
+        var list = new UIDrawList();
+        list.Begin(Skin, 1, 1.0f / 120, 1.0f / 120);
+        list.PushFollowFrame(new Vector2(100));
+        list.Rect(new UIRect(new Vector2(90), new Vector2(110)), Colour(0));
+        list.PopFollowFrame();
+        list.End();
+        Painted painted = Kept(list);
+        var between = new UIInBetween();
+
+        mouse.Place(new Vector2(130, 95));
+        between.Frames(painted.Frames, painted.Frames, 1, UICompositor.LiveDragPointer(mouse));
+        Assert.Equal(new Vector2(120, 85), Drawn(between.FramedQuads.ToArray(), Colour(0)).Min);
+
+        mouse.HearButton(Silk.NET.Input.MouseButton.Left, false);
+        mouse.Place(new Vector2(500, 700));
+        Assert.True(mouse.IsDown(Silk.NET.Input.MouseButton.Left)); // Simulation has not heard release yet.
+        Assert.Null(UICompositor.LiveDragPointer(mouse));
+        between.Frames(painted.Frames, painted.Frames, 1, UICompositor.LiveDragPointer(mouse));
+        Assert.Equal(new Vector2(90), Drawn(between.FramedQuads.ToArray(), Colour(0)).Min);
+        mouse.Update();
+        Assert.False(mouse.IsDown(Silk.NET.Input.MouseButton.Left));
     }
 
     [Fact]

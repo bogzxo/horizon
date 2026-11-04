@@ -70,6 +70,27 @@ public class TitleBar : StackPanel
 
     /// <summary>What it says, the window's own title when it is left empty.</summary>
     public string Title { get; set; } = string.Empty;
+    private (string Text, UIFont? Font, float Scale, float Room) titleFitFor;
+    private string fittedTitle = string.Empty;
+
+    private string FitTitle(string title, UIFont font, float scale, float room)
+    {
+        var key = (title, font, scale, room);
+        if (titleFitFor == key)
+            return fittedTitle;
+        titleFitFor = key;
+        if (font.Measure(title, scale, markup: false).X <= room)
+            return fittedTitle = title;
+        float dots = font.Measure("…", scale, markup: false).X;
+        if (room <= dots)
+            return fittedTitle = string.Empty;
+        int length = title.Length;
+        while (length > 0 && font.Measure(title.AsSpan(0, length), scale, markup: false).X > room - dots)
+            length--;
+        if (length > 0 && char.IsHighSurrogate(title[length - 1]))
+            length--;
+        return fittedTitle = title[..length] + "…";
+    }
 
     /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) at the left end, empty for none.</summary>
     public string Icon { get; set; } = string.Empty;
@@ -204,15 +225,18 @@ public class TitleBar : StackPanel
                 if (child.Visible)
                 {
                     if (child.Anchor.ToVector().X > 0)
-                        titleEnd = MathF.Min(titleEnd, child.Bounds.Min.X - 16.0f);
+                        titleEnd = MathF.Min(titleEnd, child.Bounds.Min.X - 16.0f * Unit);
                     else
                         contentEnd = MathF.Max(contentEnd, child.Bounds.Max.X);
                 }
             }
 
-            float left = MathF.Max(Bounds.Center.X - size.X * 0.5f, contentEnd + 16.0f);
-            if (left + size.X < titleEnd)
-                list.Text(title, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
+            float start = contentEnd + 16.0f * Unit;
+            string shown = FitTitle(title, skin.Font, scale, MathF.Max(0, titleEnd - start));
+            size = skin.Font.Measure(shown, scale, markup: false);
+            float left = MathF.Max(start, MathF.Min(Bounds.Center.X - size.X * 0.5f, titleEnd - size.X));
+            if (shown.Length > 0)
+                list.Text(shown, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
         }
 
         if (WindowButtons)

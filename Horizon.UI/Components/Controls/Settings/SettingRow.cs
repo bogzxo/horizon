@@ -21,7 +21,7 @@ internal sealed partial class SettingRow : StackPanel
 
     // The column down the right what sets it goes in, the gap before it and the most the sentence on the left runs to.
     // Across the whole of a wide row a sentence was too long a line to read
-    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 720.0f;
+    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 560.0f;
 
     // The least the left column can be before the row gives up on two columns and puts what sets it under the sentence
     private const float LEAST_TEXT = 300.0f;
@@ -35,10 +35,10 @@ internal sealed partial class SettingRow : StackPanel
 
     // Those as big as the page is zoomed, a page made bigger on a big screen has its columns grow with its text
     private float ButtonColumn => BUTTON_COLUMN * page.ZoomNow;
-    private float ControlColumn => CONTROL_COLUMN * page.ZoomNow;
-    private float ColumnGap => COLUMN_GAP * page.ZoomNow;
+    private float ControlColumn => page.CompactRows ? MathF.Min(220.0f * page.ZoomNow, (Size.X - Padding.Total.X) * 0.58f) : CONTROL_COLUMN * page.ZoomNow;
+    private float ColumnGap => (page.CompactRows ? 12.0f : COLUMN_GAP) * page.ZoomNow;
     private float HelpMost => HELP_MOST * page.ZoomNow;
-    private float LeastText => LEAST_TEXT * page.ZoomNow;
+    private float LeastText => (page.CompactRows ? 100.0f : LEAST_TEXT) * page.ZoomNow;
     private float NumberWidth => NUMBER_WIDTH * page.ZoomNow;
 
     // How faint its key is after its name
@@ -109,7 +109,9 @@ internal sealed partial class SettingRow : StackPanel
         // As wide as it was given whatever is in it, so nothing it shows or hides moves it about
         Size = new Vector2(width, 0.0f);
         indent = setting.DependsOn.Length > 0 ? INDENT : 0.0f;
-        Padding = new UIEdges(PAD + 4.0f + indent, PAD, PAD, PAD);
+        Padding = new UIEdges(PAD + 4.0f + indent, page.CompactRows ? 6.0f : PAD, PAD, page.CompactRows ? 6.0f : PAD);
+        if (page.CompactRows)
+            Tooltip = setting.Help;
         float full = width - PAD * 2.0f - 4.0f;
         float inner = full - indent;
 
@@ -140,10 +142,10 @@ internal sealed partial class SettingRow : StackPanel
         // a search leaves). The key's always there, even when it reads the same as the name, it's what the file has
         var top = text.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 8.0f, Anchor = Origin.Left, Pivot = Origin.Left });
         float side = MathF.Max(26.0f, page.RowTitleScale + 10.0f);
-        float keyRoom = MathF.Min(textWidth * 0.4f, Room(setting.Key));
+        float keyRoom = page.CompactRows ? 0.0f : MathF.Min(textWidth * 0.4f, Room(setting.Key));
         nameRoom = textWidth - side - 8.0f - keyRoom - 8.0f;
         name = top.Add(new RowTitle(nameRoom) { Text = $"[b]{UIRichText.Literal(setting.Title)}[/b]", TextScale = page.RowTitleScale, Align = Origin.Left, Size = new Vector2(0.0f, page.RowControlHeight) });
-        key = top.Add(new RowTitle(keyRoom) { Text = UIRichText.Literal(setting.Key), TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Opacity = KEY_FAINT, Size = new Vector2(0.0f, page.RowControlHeight) });
+        key = top.Add(new RowTitle(keyRoom) { Text = UIRichText.Literal(setting.Key), Visible = !page.CompactRows, TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Opacity = KEY_FAINT, Size = new Vector2(0.0f, page.RowControlHeight) });
         foundBy = top.Add(new RowPill(textWidth * 0.3f, accent: false) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
         note = top.Add(new RowPill(textWidth * 0.3f, accent: true) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
 
@@ -159,7 +161,7 @@ internal sealed partial class SettingRow : StackPanel
             OnPressed = () => page.ResetPressed(setting.Key)
         });
 
-        if (setting.Help.Length > 0)
+        if (setting.Help.Length > 0 && !page.CompactRows)
         {
             help = text.Add(new Label { Text = UIRichText.Literal(setting.Help), Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
             faded.Add(help);

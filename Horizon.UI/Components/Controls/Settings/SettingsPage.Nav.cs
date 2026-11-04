@@ -338,6 +338,7 @@ public partial class SettingsPage
     /// <summary>A section's name down the left, a click scrolls to it.</summary>
     private sealed class SectionLink : Label
     {
+        protected override UIRect TextBounds => Bounds.Shrink(Padding);
         private readonly SettingsPage page;
         private readonly string name;
         private int count;
@@ -437,7 +438,7 @@ public partial class SettingsPage
 
             // The open one has a bar of the text's colour down its left as well, the activity bar's, so it can't be taken
             // for the one the pointer happens to be on. The two pills alone were two rows lit near enough the same
-            Vector4 bar = list.Skin.TextColor with { W = current ? 0.85f : 0.0f };
+            Vector4 bar = list.Skin.AccentColor with { W = current ? 0.85f : 0.0f };
             list.Rect(new UIRect(new Vector2(pill.Min.X, pill.Min.Y + 4.0f), new Vector2(pill.Min.X + 2.0f, pill.Max.Y - 4.0f)), bar);
 
             // The ring of the keyboard round the pill, inside it so the sidebar's edge doesn't cut it off, there and

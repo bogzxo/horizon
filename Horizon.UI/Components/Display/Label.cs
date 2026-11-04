@@ -286,6 +286,9 @@ public class Label : UIComponent
         right = to - shapedBounds.Min.X;
     }
 
+    /// <summary>The text's area, overridable by labels that reserve space for disclosure or selection marks.</summary>
+    protected virtual UIRect TextBounds => Bounds;
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -294,22 +297,22 @@ public class Label : UIComponent
 
         if (drawnRich)
         {
-            rich.Paint(list, Bounds, paintedAlign, color);
+            rich.Paint(list, TextBounds, paintedAlign, color);
             return;
         }
 
         if (wrapped)
-            list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), Bounds, Align, ScaleOf(skin), color);
+            list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), TextBounds, Align, ScaleOf(skin), color);
         else if (Bold && !text.Contains('\n'))
         {
             // Placed the way a plain line is in its box, by its bold width
             float scale = ScaleOf(skin);
             var size = new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
-            Vector2 center = Bounds.PointAt(Align) - Align.ToVector() * size;
+            Vector2 center = TextBounds.PointAt(Align) - Align.ToVector() * size;
             list.Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, true, UITextStyle.Bold, default);
         }
         else
-            list.Text(text, Bounds, Align, ScaleOf(skin), color);
+            list.Text(text, TextBounds, Align, ScaleOf(skin), color);
     }
 
     protected override void DefineScript()

@@ -10,7 +10,8 @@ namespace Horizon.Graphics.Vulkan;
 /// The loader puts every implicit layer installed on the machine into every Vulkan program, the overlays and recorders
 /// of whatever's installed (Overwolf, Steam, an FPS counter), each a DLL loaded and hooked into making the instance and
 /// the device, and a good part of what starting took. They're left out (VK_LOADER_LAYERS_DISABLE), all but the GPU
-/// makers' own (VK_LOADER_LAYERS_ALLOW), unless
+/// makers' own (VK_LOADER_LAYERS_ALLOW). Applications only retain GPU-selection layers, so gaming presentation and
+/// vendor overlays are not accidentally allowed back in by a vendor wildcard. This default is bypassed when
 /// HORIZON_VULKAN_LAYERS=all says otherwise, or RenderDoc started the game to capture it, or somebody set the variable
 /// themselves. Layers asked for by name (validation) are a different thing and aren't touched.
 /// </para>
@@ -29,6 +30,8 @@ internal static class VulkanLoader
     // The GPU makers' own layers, which are in the driver that's loaded anyway and do what the card needs (NVIDIA's
     // windowed presenting and G-SYNC, which GPU a laptop with two draws on), let back in past the filter
     private const string VENDOR_LAYERS = "*_NV_*,*_AMD_*,*_INTEL_*,*_MESA_*";
+    // Desktop tools need device selection, not gaming presentation, frame generation or vendor overlays.
+    private const string APPLICATION_LAYERS = "VK_LAYER_NV_optimus,VK_LAYER_AMD_switchable_graphics*,VK_LAYER_MESA_device_select";
     private const string LAYERS_SETTING = "HORIZON_VULKAN_LAYERS", DRIVER_SETTING = "HORIZON_VULKAN_DRIVER";
     private const string RENDERDOC = "ENABLE_VULKAN_RENDERDOC_CAPTURE";
     private const string DRIVER_FILE = "vulkan_driver.txt";
@@ -40,7 +43,7 @@ internal static class VulkanLoader
     private static string? selected;
 
     /// <summary>Tells the loader the above, once, before the first thing of Vulkan or the window. Any thread.</summary>
-    public static void Configure()
+    public static void Configure(bool application = false)
     {
         lock (gate)
         {
@@ -52,7 +55,7 @@ internal static class VulkanLoader
             {
                 Environment.SetEnvironmentVariable(LAYERS_DISABLE, "~implicit~");
                 if (Environment.GetEnvironmentVariable(LAYERS_ALLOW) is null)
-                    Environment.SetEnvironmentVariable(LAYERS_ALLOW, VENDOR_LAYERS);
+                    Environment.SetEnvironmentVariable(LAYERS_ALLOW, application ? APPLICATION_LAYERS : VENDOR_LAYERS);
                 Log.Info($"[Vulkan] Implicit layers (overlays and the like) are left out, {LAYERS_SETTING}=all keeps them.");
             }
 

@@ -11,6 +11,21 @@ public sealed class ScrollBarInteractionTests
 {
     private static readonly UISkin Skin = new(new UIFont(Path.GetTempPath(), "no-font-here.ttf"));
 
+    [Fact]
+    public void Wheel_over_a_scrollbar_scrolls_the_view_without_adjusting_its_slider()
+    {
+        var scroll = new ScrollPanel();
+        var content = scroll.Add(new StackPanel { Size = new Vector2(240, 600) });
+        var slider = content.Add(new Slider { Size = new Vector2(220, 30), Value = 0.5f });
+        Paint(scroll, UIRect.FromCenter(Vector2.Zero, new Vector2(260, 120)));
+        var target = scroll.HitTest(scroll.TrackBounds.Center);
+        Assert.Same(scroll, target);
+        Assert.Same(scroll, UICompositor.GiveWheel(target!, null, -1));
+        scroll.UpdateTree(0.1f);
+        Assert.True(scroll.Offset > 0);
+        Assert.Equal(0.5f, slider.Value);
+    }
+
     private static void Paint(UIComponent component, UIRect bounds)
     {
         component.MeasureTree(Skin);

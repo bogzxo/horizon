@@ -372,7 +372,7 @@ public partial class WindowManager : GameComponent, IDisposable
         framePeriod = PeriodOf(Display.FramesPerSecond);
 
         // What the Vulkan loader is told goes in before GLFW or the device ask it anything, see VulkanLoader
-        Horizon.Graphics.Vulkan.VulkanLoader.Configure();
+        Horizon.Graphics.Vulkan.VulkanLoader.Configure(application: Mode == RunMode.Application);
 
         // The GPU gets going now, while the game makes its scene and the window is made, see WindowManager.Device
         StartDeviceAhead();

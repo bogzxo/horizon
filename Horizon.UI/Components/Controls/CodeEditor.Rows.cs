@@ -523,8 +523,14 @@ public partial class CodeEditor
     }
 
     // Where the lines held at the top are, as many rows as there are of them from the top of the code
-    private UIRect StickyBounds(UIRect area, float lineHeight, int count) =>
-        new(new Vector2(area.Min.X, area.Max.Y - count * lineHeight), area.Max);
+    private UIRect StickyBounds(UIRect area, float lineHeight, int count)
+    {
+        // End at a body-row boundary: a half-visible row under the pinned scopes reads as stray glyphs.
+        float bottom = area.Max.Y - count * lineHeight;
+        float firstWholeRow = MathF.Ceiling((area.Max.Y + scrollY - bottom) / lineHeight);
+        bottom = area.Max.Y + scrollY - firstWholeRow * lineHeight;
+        return new UIRect(new Vector2(area.Min.X, bottom), area.Max);
+    }
 
     /// <summary>A press on the lines held at the top goes to the one pressed, true when it was on them.</summary>
     private bool PressSticky(Vector2 point)

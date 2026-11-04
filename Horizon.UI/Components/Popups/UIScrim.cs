@@ -9,8 +9,8 @@ namespace Horizon.UI.Components;
 /// </summary>
 public sealed class UIScrim : Panel
 {
-    /// <summary>The shade, a third of the way to black, what's behind still readable under it.</summary>
-    public static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.32f);
+    /// <summary>The shade behind a modal, keeping its content visually separate from the workspace.</summary>
+    public static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.46f);
 
     // The window it's behind, gone with it
     private readonly WindowPanel? owner;

@@ -57,7 +57,7 @@ public static class UIMinimap
     {
         to = Math.Min(to, most);
         if (to > from)
-            list.Rect(new UIRect(new Vector2(left + from * character, rowTop - row + gap), new Vector2(left + to * character, rowTop)), colour);
+            list.Rect(new UIRect(new Vector2(left + from * character, rowTop - row + gap), new Vector2(left + to * character, rowTop)), colour with { W = colour.W * 0.42f });
     }
 
     /// <summary>The bars of a row, the columns past the most left out.</summary>
@@ -80,7 +80,7 @@ public static class UIMinimap
         float pixels = PixelsPerUnit(module);
         float sliderTop = OnPixel(module, new Vector2(0.0f, top)).Y;
         var slider = new UIRect(new Vector2(map.Min.X, sliderTop - MathF.Round(height * pixels) / pixels), new Vector2(map.Max.X, sliderTop));
-        list.Rect(slider, text with { W = lit ? SLIDER_LIT : SLIDER });
+        list.RoundRect(slider, MathF.Min(4.0f, slider.Width * 0.5f), text with { W = lit ? SLIDER_LIT : SLIDER });
         return sliderTop;
     }
 }

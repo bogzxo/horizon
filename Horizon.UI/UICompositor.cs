@@ -835,6 +835,14 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     /// <param name="due">Whether the UI may be drawn anew this frame, see <see cref="FrameRateLimit"/>.</param>
     /// <returns>False if nothing was captured yet, the UI is drawn from its newest list then.</returns>
+    // A captured frame may still say "dragging" after the window has heard release.
+    // Read position first, then the live button, so post-release motion cannot move it.
+    internal static Vector2? LiveDragPointer(Mouse mouse)
+    {
+        Vector2 position = mouse.LivePosition;
+        return mouse.IsLiveDown(Silk.NET.Input.MouseButton.Left) ? position : null;
+    }
+
     private bool UploadCaptured(in RenderFrame frame, UISkin skin, bool due)
     {
         if (!captured.TryGet(frame, out CapturedList before, out CapturedList after, out bool continuous))
@@ -863,7 +871,8 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Where the pointer is right now, for a window that's being dragged (see UIComponent.FollowsPointer). Only the
         // mouse, a pointer of somebody else's (a recording, a test) is theirs to read on their own thread
-        Vector2? pointer = after.Frames.Follows && PointerSource is null ? viewportCamera.ScreenToWorld(GameEngine.Instance.Input.Mouse.LivePosition) : null;
+        Vector2? pointer = after.Frames.Follows && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
+            ? viewportCamera.ScreenToWorld(dragPointer) : null;
 
         int from = canBlend ? before.Painted : shown.Painted;
         if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha && pointer == shownPointer)

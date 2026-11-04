@@ -37,6 +37,29 @@ public class ScrollSpeedTests
     }
 
     [Fact]
+    public void Hovered_slider_adjusts_without_scrolling_its_parent_and_respects_steps_and_limits()
+    {
+        var scroll = new WheelProbe(true);
+        var slider = scroll.Add(new Slider { Min = 0, Max = 1, Step = 0.1f, Value = 0.5f });
+        int changes = 0;
+        slider.OnChanged = _ => changes++;
+        Assert.Same(slider, UICompositor.GiveWheel(slider, null, 0.5f, 5));
+        Assert.Equal(0.5f, slider.Value);
+        UICompositor.GiveWheel(slider, null, 0.5f, 5);
+        Assert.Equal(0.6f, slider.Value, 4);
+        Assert.Equal(0, scroll.Heard);
+        UICompositor.GiveWheel(slider, null, 50, 5);
+        Assert.Equal(1, slider.Value);
+        UICompositor.GiveWheel(slider, null, 1, 5);
+        Assert.Equal(2, changes);
+        Assert.Equal(0, scroll.Heard);
+        // Over the surrounding scroll view, the slider is not in the event route.
+        Assert.Same(scroll, UICompositor.GiveWheel(scroll, null, -1, 2));
+        Assert.Equal(-2, scroll.Heard);
+        Assert.Equal(1, slider.Value);
+    }
+
+    [Fact]
     public void Fractional_terminal_scroll_accumulates_and_tui_events_stay_valid()
     {
         using var terminal = new TerminalView();

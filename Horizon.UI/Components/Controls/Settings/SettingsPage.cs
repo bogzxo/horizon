@@ -142,6 +142,9 @@ public partial class SettingsPage : UIComponent
     /// <summary>Whether a click on a section's heading folds its rows away and opens them again, the properties panel's way.</summary>
     public bool CollapsibleSections { get; set; }
 
+    /// <summary>Condensed label/value rows for an inspector. Keys and descriptions remain available in row menus and tooltips.</summary>
+    public bool CompactRows { get; set; }
+
     /// <summary>
     /// Whether a right click on a row copies its value rather than its key and its line of the file, for a page of what
     /// something is (a file's properties) rather than of settings with keys.
@@ -694,6 +697,8 @@ public partial class SettingsPage : UIComponent
             headingSize *= zoom;
             nameSize *= zoom;
             sentenceSize *= zoom;
+            if (CompactRows)
+                headingSize = nameSize;
         }
 
         title.TextScale = titleSize;
@@ -726,7 +731,7 @@ public partial class SettingsPage : UIComponent
 
             // The section big and the part it's of quietly in front of it
             string heading = dot < 0 ? $"[b]{named}[/b]" : $"[color:dim]{top} ·[/color] [b]{under}[/b]";
-            var header = headerOf[group] = rows.Add(new SectionHeading(this, group) { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, 44.0f * zoom) });
+            var header = headerOf[group] = rows.Add(new SectionHeading(this, group) { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, (CompactRows ? 32.0f : 44.0f) * zoom) });
             var section = new BuiltSection(group, header);
             built.Add(section);
 

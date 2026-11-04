@@ -51,6 +51,9 @@ public sealed class UIDialog : Panel
         set => Color = value ? UIScrim.Shade : Vector4.Zero;
     }
 
+    /// <summary>Whether a press outside the card cancels, for palettes and transient previews.</summary>
+    public bool DismissOnOutsidePress { get; set; }
+
     // Whether it's shown as a palette, see ShowPalette
     private bool palette;
 
@@ -79,6 +82,11 @@ public sealed class UIDialog : Panel
 
     protected override bool HitTestVisible => !closing && base.HitTestVisible;
 
+    // The exit animation remains visible, but neither the card nor any of its
+    // children may take another press or steal the restored keyboard focus.
+    internal override UIComponent? HitTest(Vector2 point, Vector2 moved = default) =>
+        closing ? null : base.HitTest(point, moved);
+
     /// <summary>The buttons, one per choice in the order they were given. For tests that want to click one.</summary>
     public IReadOnlyList<Button> Buttons { get; }
 
@@ -102,6 +110,9 @@ public sealed class UIDialog : Panel
         Color = UIScrim.Shade;
         Intro = UIIntro.Fade;
         IntroTime = 0.16f;
+        // A background right-click is also dismissal for a palette, never a context
+        // menu in the workspace behind a dialog.
+        OnContextMenu = DismissOutside;
 
         card = Add(new StackPanel
         {
@@ -156,7 +167,7 @@ public sealed class UIDialog : Panel
         // Only one at a time
         foreach (var other in module.Root.Children)
         {
-            if (other is UIDialog open)
+            if (other is UIDialog { IsOpen: true } open)
             {
                 open.Close();
                 break;
@@ -202,12 +213,13 @@ public sealed class UIDialog : Panel
     /// Shows a dialog as a palette, Spotlight's and VS Code's, a card hanging under the top of the module with nothing on it
     /// but what is put in its <see cref="Body"/> (a box to type in and a list), no heading, no line and no buttons, over a
     /// shade that hardly darkens what's behind. The choices are still there for whatever presses them, and escape is the
-    /// last of them as ever.
+    /// last of them as ever. Pressing outside the card also cancels and consumes that press.
     /// </summary>
     public static UIDialog ShowPalette(UIModule module, string title, params DialogChoice[] choices)
     {
         UIDialog dialog = Show(module, title, string.Empty, choices);
         dialog.palette = true;
+        dialog.DismissOnOutsidePress = true;
         dialog.Color = PaletteShade;
         dialog.title.Visible = false;
         dialog.buttons.Visible = false;
@@ -223,6 +235,14 @@ public sealed class UIDialog : Panel
     /// <summary>Whether it's shown as a palette (<see cref="ShowPalette"/>).</summary>
     public bool IsPalette => palette;
 
+    protected internal override void OnPointerDown(Vector2 point) => DismissOutside(point);
+
+    private void DismissOutside(Vector2 point)
+    {
+        if (DismissOnOutsidePress && !card.Bounds.Contains(point))
+            Cancel();
+    }
+
     /// <summary>Closes the dialog as if its last choice had been picked, which is what escape does.</summary>
     public void Cancel() => Pick(choices.Length - 1);
 
@@ -234,6 +254,7 @@ public sealed class UIDialog : Panel
 
         if (Module is { } module)
         {
+            module.Compositor.CancelPointerWithin(this);
             var navigation = module.Navigation;
             if (navigation.Scope == this)
             {

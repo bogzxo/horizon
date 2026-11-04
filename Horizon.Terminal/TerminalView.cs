@@ -825,7 +825,7 @@ public partial class TerminalView : UIComponent, IDisposable
         cellHeight = font.LineHeight * scale;
         // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it. A pane with round corners
         // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
-        float pad = MathF.Max(PADDING, Radius * 0.6f);
+        float pad = MathF.Max(PADDING, Radius * 0.85f);
         float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
         paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad));
         PlaceSide();

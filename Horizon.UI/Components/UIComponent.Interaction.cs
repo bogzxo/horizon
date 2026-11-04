@@ -40,7 +40,7 @@ public abstract partial class UIComponent
 
     /// <summary>The topmost component under a point, searching this component and everything inside it.</summary>
     /// <param name="moved">How far what this is inside of is drawn from where the layout has it, taken off the point already.</param>
-    internal UIComponent? HitTest(Vector2 point, Vector2 moved = default)
+    internal virtual UIComponent? HitTest(Vector2 point, Vector2 moved = default)
     {
         if (!Visible || IsOnHiddenLayer)
             return null;

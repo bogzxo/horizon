@@ -14,6 +14,7 @@ internal sealed class SectionHeading(SettingsPage page, string group) : Label
     private static char right, down;
 
     public string Group { get; } = group;
+    protected override UIRect TextBounds => Bounds.Shrink(Padding);
 
     protected override bool HitTestVisible => page.CollapsibleSections;
 

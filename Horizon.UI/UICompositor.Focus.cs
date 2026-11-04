@@ -117,10 +117,20 @@ public partial class UICompositor
     /// What a press on a component gives the keyboard to. One that takes it, or failing that the window it's in, so a
     /// click on a window's title bar or a button in it leaves Escape closing it. Anywhere else the keyboard is let go of.
     /// </summary>
-    private static UIComponent? FocusForPress(UIComponent over)
+    internal UIComponent? FocusForPress(UIComponent over)
     {
         if (over.Focusable && over.EnabledInHierarchy)
             return over;
+
+        // Decorative padding, separators and empty-result messages in a dialog
+        // must not take the keyboard away from its input.
+        for (UIComponent? parent = over; parent is not null; parent = parent.Parent)
+        {
+            if (parent is not UIDialog) continue;
+            for (UIComponent? current = Focus; current is not null; current = current.Parent)
+                if (current == parent) return Focus;
+            break;
+        }
 
         return WindowOf(over) is { } window && window.IsShownInHierarchy ? window : null;
     }

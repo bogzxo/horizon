@@ -122,6 +122,9 @@ namespace Horizon.UI
         /// </summary>
         public Vector4? FrameColor { get; set; }
 
+        /// <summary>An optional backing surface for a designer artboard; content paints above it.</summary>
+        public Vector4? FrameBackground { get; set; }
+
         /// <summary>
         /// The screen the module is laid out against, in its own space. Left unset that is whatever the camera
         /// sees. Set, the module is laid out as if that were the screen whatever the real one is, which is how
@@ -253,7 +256,7 @@ namespace Horizon.UI
         /// <summary>Helper method to list what Tab stops on in a component and everything in it, in the order it's laid out in.</summary>
         internal static void CollectFocusable(UIComponent component, List<UIComponent> into)
         {
-            if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled)
+            if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled || component is UIDialog { IsOpen: false })
                 return;
 
             if (component.TabStop)
@@ -343,6 +346,8 @@ namespace Horizon.UI
 
             // The tick a slide stops is laid out in frames as well, the frame between it and the one before moves too
             list.LayoutMoves = layoutMoving || layoutMoved;
+            if (FrameBackground is { } backing)
+                list.Rect(Viewport ?? Frame, backing);
             Root.PaintTree(list);
             PaintRaised(list);
             list.LayoutMoves = false;

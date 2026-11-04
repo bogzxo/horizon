@@ -17,12 +17,12 @@ internal static class UITooltip
     // How wide a tooltip is at most before its text wraps, and the room around the text
     private const float MAX_WIDTH = 320.0f;
     private const float MAX_RICH_WIDTH = 520.0f;
-    private const float PADDING = 10.0f;
+    private const float PADDING = 12.0f;
 
     // How far from the pointer the box sits, so the pointer doesn't cover its first word, how far over the pointer its
     // bottom is when it goes over it, and how far in from the edges of the window it stays
     private static readonly Vector2 Offset = new(14.0f, -22.0f);
-    private const float ABOVE = 24.0f, MARGIN = 8.0f;
+    private const float ABOVE = 24.0f, MARGIN = 16.0f;
 
     // How wide the widest word of a text is
     private static float LongestWord(UISkin skin, string text, float scale)

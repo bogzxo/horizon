@@ -94,13 +94,14 @@ internal struct UIOverscroll
 
     /// <summary>
     /// Moves what's painted until <see cref="End"/> by the stretch, inside of the clip and around the scroll's own frame,
-    /// so the content goes past the end and the clip, the fades and the bar stay put. False when there's no stretch to
-    /// draw, and nothing to end.
+    /// so the content goes past the end and the clip, the fades and the bar stay put. Keeps an identity frame at rest
+    /// too, so the content's frame has the same identity when the spring starts and settles. Always paired with End.
     /// </summary>
     public readonly bool Begin(Drawing.UIDrawList list, UIRect area)
     {
-        if (Stretch == 0.0f)
-            return false;
+        // Frames are identified by their owner's opening order. Omitting this frame at rest made the scroll frame
+        // inherit the spring frame's identity when it settled, and start without a matching previous frame on a push.
+        // The rows then snapped instead of interpolating, especially at the bottom of a long file list.
 
         // A clip moves with what's moved under it, so the one around the scroll came along and the code went out over the
         // tabs. Cut again where the area really is, which inside of the move is the area moved back the other way

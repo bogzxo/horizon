@@ -48,7 +48,8 @@ public partial class UICompositor
         return new UIPointer(
             viewportCamera.ScreenToWorld(mouse.Position),
             mouse.IsDown(MouseButton.Left) || mouse.WasPressed(MouseButton.Left),
-            mouse.IsDown(MouseButton.Right) || mouse.WasPressed(MouseButton.Right));
+            mouse.IsDown(MouseButton.Right) || mouse.WasPressed(MouseButton.Right),
+            mouse.IsDown(MouseButton.Middle) || mouse.WasPressed(MouseButton.Middle));
     }
 
     private void RouteKeyboard(UIModule[] snapshot)
@@ -411,11 +412,60 @@ public partial class UICompositor
         return null;
     }
 
+    // Closing a dialog invalidates a press begun inside it, even while its children
+    // remain attached for the exit animation. Cancellation must never become a release.
+    internal void CancelPointerWithin(UIComponent owner)
+    {
+        for (UIComponent? at = pressed; at is not null; at = at.Parent)
+        {
+            if (at != owner) continue;
+            var cancelled = pressed!;
+            pressed = null;
+            cancelled.IsPressed = false;
+            if (cancelled.IsResizing) cancelled.EndResize();
+            if (gripped == cancelled) gripped = null;
+            return;
+        }
+    }
+
+    private UIComponent? releasing;
+    private long chooserClickAt;
+    private Vector2 chooserClickPosition;
+    private bool chooserClickPending, swallowingChooserClick;
+
+    // A one-click choice can replace its card with another picker. The second
+    // half of a double click belongs to that choice, not the new card or editor.
+    internal void FinishChooserClick(UIComponent list)
+    {
+        if (releasing != list) return; // Keyboard activation needs no pointer guard.
+        chooserClickAt = Environment.TickCount64;
+        chooserClickPosition = Pointer.Position;
+        chooserClickPending = true;
+    }
+
     private void RoutePointer(UIModule[] snapshot)
     {
         UIPointer pointer = PointerSource?.Invoke() ?? ReadMouse();
         lastPointer = pointer.Position;
         Pointer = pointer;
+
+        if (chooserClickPending && (Environment.TickCount64 - chooserClickAt > 500 ||
+            Vector2.DistanceSquared(pointer.Position, chooserClickPosition) > 16))
+            chooserClickPending = false;
+        if (chooserClickPending && pointer.Down && !pointerWasDown)
+        {
+            chooserClickPending = false;
+            swallowingChooserClick = true;
+        }
+        if (swallowingChooserClick)
+        {
+            // Consume the entire press/release, including a drag after the second press.
+            IsPointerOverUI = true;
+            pointerWasDown = pointer.Down;
+            secondaryWasDown = pointer.SecondaryDown;
+            if (!pointer.Down) swallowingChooserClick = false;
+            return;
+        }
 
         RouteScroll(snapshot, pointer.Position);
 
@@ -432,6 +482,21 @@ public partial class UICompositor
         {
             if (snapshot[i].Enabled)
                 over = snapshot[i].HitTest(pointer.Position);
+        }
+
+        // A plain control hint is not interactive. Once the pointer leaves its owner,
+        // remove it before hit testing the tooltip box, or it can swallow the first
+        // click on a neighboring control. Rich documentation and pinned tips keep
+        // their reading/explicit-dismissal behavior.
+        if (pinned is null && held is { Markdown: false } hint &&
+            (SaidBy(over) != hint.Of || pointer.Down || pointer.SecondaryDown))
+        {
+            held = null;
+            TooltipOf = null;
+            tooltipModule?.ShowTooltip(null, default);
+            tooltipModule = null;
+            restingAt = pointer.Position;
+            restingFor = 0;
         }
 
         // A tooltip is on top of everything, what's under it doesn't get the pointer and a click on it only takes it down.
@@ -508,7 +573,8 @@ public partial class UICompositor
         }
 
         // An edge of a window without the system's frame, dragged by the window itself, nothing in the UI gets the press
-        if (pointer.Down && !pointerWasDown && WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
+        if (pointer.Down && !pointerWasDown && !snapshot.Any(module => module.Dialog is { IsOpen: true }) &&
+            WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
         {
             GameEngine.Instance.WindowManager.BeginResize(windowEdges);
         }
@@ -568,7 +634,9 @@ public partial class UICompositor
             }
             else if (released.Module is { } releasedIn)
             {
-                released.OnPointerUp(releasedIn.ToLocal(pointer.Position));
+                releasing = released;
+                try { released.OnPointerUp(releasedIn.ToLocal(pointer.Position)); }
+                finally { releasing = null; }
 
                 if (released == over)
                     released.OnClick();
