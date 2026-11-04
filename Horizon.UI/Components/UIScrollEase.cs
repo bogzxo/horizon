@@ -16,14 +16,31 @@ internal struct UIScrollEase
     /// <summary>Where it's going, null while it's where it's wanted.</summary>
     public float? Goal;
 
-    /// <summary>A turn of the wheel, from where it was going if it hadn't got there yet, so quick turns add up.</summary>
-    public void Wheel(float now, float by, float most) => Goal = Math.Clamp((Goal ?? now) + by, 0.0f, MathF.Max(0.0f, most));
+    /// <summary>The give past either end, see <see cref="UIOverscroll"/>, drawn by whoever scrolls with <see cref="UIOverscroll.Shift"/>.</summary>
+    public UIOverscroll Over;
+
+    /// <summary>
+    /// A turn of the wheel, from where it was going if it hadn't got there yet, so quick turns add up. Whatever of it
+    /// would go past an end is thrown into <see cref="Over"/> instead, as hard as the UI's <paramref name="speed"/> lets it.
+    /// </summary>
+    public void Wheel(float now, float by, float most, float speed = 1.0f)
+    {
+        most = MathF.Max(0.0f, most);
+        float wanted = (Goal ?? now) + by;
+        Goal = Math.Clamp(wanted, 0.0f, most);
+        if (most > 0.0f)
+            Over.Push(wanted - Goal.Value, speed);
+    }
 
     /// <summary>Eases to a place of its own, a row the keys moved to brought into sight.</summary>
     public void To(float goal, float most) => Goal = Math.Clamp(goal, 0.0f, MathF.Max(0.0f, most));
 
     /// <summary>Somebody else has said where it is (a drag of the bar, a row being shown), the wheel's say is over.</summary>
-    public void Stop() => Goal = null;
+    public void Stop()
+    {
+        Goal = null;
+        Over.Stop();
+    }
 
     /// <summary>Kept inside of how far it can go, for content that got shorter on the way.</summary>
     public void Clamp(float most)

@@ -97,6 +97,7 @@ public partial class ScrollPanel : Panel
         ease.Clamp(MaxOffset);
         if (ease.Goal is not null)
             offset = Math.Clamp(ease.Step(offset, dt), 0.0f, MaxOffset);
+        ease.Over.Step(dt, MotionSpeed);
     }
 
     protected override bool HitTestVisible => true;
@@ -152,9 +153,12 @@ public partial class ScrollPanel : Panel
         list.PushFade(content, MathF.Min(fade, offset), MathF.Min(fade, MaxOffset - offset));
 
         // What's in it moves by the offset as one, the clip and the bar stay put
+        bool stretched = ease.Over.Begin(list, content);
         list.PushFrame(new Vector2(0.0f, offset));
         base.PaintChildren(list);
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopFade();
         list.PopClip();
 
@@ -166,7 +170,7 @@ public partial class ScrollPanel : Panel
         if (MaxOffset <= 0.0f)
             return false;
 
-        ease.Wheel(offset, -delta * WheelStep, MaxOffset);
+        ease.Wheel(offset, -delta * WheelStep, MaxOffset, MotionSpeed);
         return true;
     }
 

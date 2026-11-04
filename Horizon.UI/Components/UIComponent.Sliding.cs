@@ -36,6 +36,9 @@ public abstract partial class UIComponent
 {
     public const float DEFAULT_SLIDE_TIME = 0.16f;
 
+    // How see-through a drawer is when it is all the way shut, it fades up from this as it slides out
+    private const float SLIDE_FADE = 0.35f;
+
     // How far out it is, 0 put away and 1 all of it, at a steady rate (eased where it's used), and where it's going while
     // it moves, null when it isn't moving and Visible is all there is to it
     private float slideProgress = 1.0f;
@@ -94,6 +97,9 @@ public abstract partial class UIComponent
         float speed = Module?.Compositor.AnimationSpeed ?? 1.0f;
         return speed > 0.0f ? seconds / speed : 0.0f;
     }
+
+    /// <summary>How quickly the UI it's in moves, the compositor's <see cref="UICompositor.AnimationSpeed"/>, 1 outside of one.</summary>
+    protected internal float MotionSpeed => Module?.Compositor.AnimationSpeed ?? 1.0f;
 
     /// <summary>Shows it if it's put away, puts it away if it's shown, see <see cref="Show"/>.</summary>
     public void ToggleShown() => Show(!Shown);

@@ -85,7 +85,7 @@ public partial class WindowPanel : Panel
         Title = title;
     }
 
-    protected override bool HitTestVisible => true;
+    protected override bool HitTestVisible => !leaving;
 
     // Tab goes round what's in it, never out to what's behind
     protected internal override bool HoldsTab => true;
@@ -270,11 +270,21 @@ public partial class WindowPanel : Panel
         pressedAction = -1;
     }
 
-    /// <summary>Hides it and says so, what its x does.</summary>
+    /// <summary>
+    /// Hides it and says so, what its x does. It sinks away first when the UI moves (see WindowPanel.Motion), the keyboard
+    /// given back at once and <see cref="OnClosed"/> called once it has gone.
+    /// </summary>
     public void Close()
     {
-        Visible = false;
+        if (leaving)
+            return;
+
         GiveKeyboardBack();
+        if (Leave())
+            return;
+
+        Visible = false;
+        wasUp = false;
         OnClosed?.Invoke();
     }
 
@@ -320,7 +330,7 @@ public partial class WindowPanel : Panel
         if (BeforeEscape?.Invoke() == true)
             return true;
 
-        if (!Closable || !Visible)
+        if (!Closable || !Visible || leaving)
             return false;
 
         Close();
@@ -330,6 +340,8 @@ public partial class WindowPanel : Panel
     /// <summary>Puts it after the others in its parent, which is in front of them.</summary>
     public void BringToFront()
     {
+        StopLeaving();
+
         if (Parent is { } parent && parent.Children.Count > 1 && parent.Children[^1] != this)
             parent.MoveChild(this, parent.Children.Count);
     }

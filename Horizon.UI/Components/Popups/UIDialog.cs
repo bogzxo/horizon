@@ -39,7 +39,7 @@ public sealed class UIDialog : Panel
     // pointer). Its card hangs this far under the top of the module rather than in the middle. A question has the soft
     // dim of every modal thing (UIScrim), it was nearly black
     private static readonly Vector4 PaletteShade = Vector4.Zero;
-    private const float PALETTE_DROP = 88.0f;
+    internal const float PaletteDrop = 88.0f;
 
     /// <summary>
     /// Whether what's behind it is dimmed, true as it comes. Peek is shown over the code it's about and dims nothing,
@@ -215,7 +215,7 @@ public sealed class UIDialog : Panel
         dialog.card.Spacing = 0.0f;
         dialog.card.Anchor = Origin.Top;
         dialog.card.Pivot = Origin.Top;
-        dialog.card.Position = new Vector2(0.0f, -PALETTE_DROP);
+        dialog.card.Position = new Vector2(0.0f, -PaletteDrop);
         dialog.card.IntroTime = 0.16f;
         return dialog;
     }
@@ -237,24 +237,26 @@ public sealed class UIDialog : Panel
             var navigation = module.Navigation;
             if (navigation.Scope == this)
             {
-                navigation.Scope = scopeBefore;
-                navigation.Select(selectedBefore);
+                navigation.Scope = CanRestore(scopeBefore, module) ? scopeBefore : null;
+                navigation.Select(CanRestore(selectedBefore, module) ? selectedBefore : null);
             }
         }
 
         // The keyboard let go of at once, a box of it typed into while it fades was typing into nothing, and back to what
         // had it before the dialog came up when that's still there
-        if (Module?.Compositor is { } compositor && (compositor.Focus is null || Contains(compositor.Focus)))
-            compositor.Focus = focusBefore is { Module: not null } before && !Contains(before) ? before : null;
+        if (Module is { } ownerModule && (ownerModule.Compositor.Focus is null || Contains(ownerModule.Compositor.Focus)))
+            ownerModule.Compositor.Focus = CanRestore(focusBefore, ownerModule) && !Contains(focusBefore!) ? focusBefore : null;
 
         closing = true;
         Closed?.Invoke();
 
         // Faded out and shrunk a touch the way it came, then gone, or gone at once with less motion
-        if (UIDrawList.Motion && Module is not null)
+        float time = MotionTime(CLOSE_TIME);
+        if (UIDrawList.Motion && Module is not null && time > 0.0f)
         {
-            card.TweenScale(0.97f, CLOSE_TIME);
-            this.FadeOut(CLOSE_TIME, easing: Horizon.Core.Tweening.Easing.OutCubic).OnComplete(() => Parent?.Remove(this));
+            card.TweenScale(0.97f, time).SetEasing(Horizon.Core.Tweening.Easing.InCubic);
+            card.TweenOffset(new Vector2(0.0f, -6.0f), time).SetEasing(Horizon.Core.Tweening.Easing.InCubic);
+            this.FadeOut(time, easing: Horizon.Core.Tweening.Easing.OutCubic).OnComplete(() => Parent?.Remove(this));
         }
         else
         {
@@ -273,6 +275,9 @@ public sealed class UIDialog : Panel
 
         return false;
     }
+
+    private static bool CanRestore(UIComponent? component, UIModule module) =>
+        component is not null && component.Module == module && component.IsShownInHierarchy && component.EnabledInHierarchy;
 
     private void Pick(int index)
     {

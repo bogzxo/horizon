@@ -701,6 +701,7 @@ public partial class UICompositor : GameComponent, IDisposable
         paintClock = (paintClock + dt) % 3600.0f;
         long started = Stopwatch.GetTimestamp();
         back.Previous = front;
+        back.MotionSpeed = AnimationSpeed;
         back.Begin(skin, paintFrame, dt, paintClock);
         backPainted++;
         foreach (var module in snapshot)

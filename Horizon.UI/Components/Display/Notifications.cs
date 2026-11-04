@@ -63,6 +63,9 @@ public sealed class UINotification
     // How long it has been up, how much of it is still there, and its text cut into lines for the width it was cut for
     internal float Age;
     internal float Alpha = 1.0f;
+
+    // How far in it has come since it was shown, 0 to 1, at a steady rate (eased where it's used)
+    internal float In;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
 }
@@ -81,7 +84,7 @@ public class Notifications : UIComponent
     // How far a card slides in from, in the UI's pixels
     private const float SLIDE = 36.0f;
 
-    private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ACTION_HEIGHT = 24.0f;
+    private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ARRIVE = 0.24f, ACTION_HEIGHT = 24.0f;
 
     // The bar of work going on, how thick, how wide the sweep of one that can't say how far, and how long a sweep takes
     private const float BAR = 4.0f, SWEEP = 0.3f, SWEEP_SECONDS = 1.4f;
@@ -167,7 +170,15 @@ public class Notifications : UIComponent
             if (!held && card.Seconds > 0.0f)
                 card.Age += dt;
 
-            card.Alpha = card.Closed ? card.Alpha - dt / FADE : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
+            // In from nothing as it arrives, as quick as the compositor's AnimationSpeed says, there at once with none
+            float arrive = MotionTime(ARRIVE);
+            card.In = arrive > 0.0f ? MathF.Min(1.0f, card.In + dt / arrive) : 1.0f;
+
+            float fade = MotionTime(FADE);
+            float going = card.Closed
+                ? fade > 0.0f ? card.Alpha - dt / fade : 0.0f
+                : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
+            card.Alpha = card.Closed ? going : MathF.Min(going, 1.0f - (1.0f - card.In) * (1.0f - card.In) * (1.0f - card.In));
             if (card.Alpha <= 0.0f)
                 shown.RemoveAt(i);
         }

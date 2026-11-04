@@ -75,6 +75,7 @@ public partial class WindowPanel
     protected override void Update(float dt)
     {
         base.Update(dt);
+        KeepMotion();
         KeepScrim();
         if (titleActions.Count == 0)
             return;

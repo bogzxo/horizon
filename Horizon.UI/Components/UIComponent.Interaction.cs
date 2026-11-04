@@ -271,21 +271,33 @@ public abstract partial class UIComponent
     /// <param name="delay">Seconds to wait on top of each component's own delay and the delays of whatever it is inside of.</param>
     public void PlayIntro(float delay = 0.0f)
     {
-        float wait = IntroDelay + delay;
+        // As quick as the compositor's AnimationSpeed says, and none at all when it says 0, a UI told to keep still is
+        // simply there. The delays go with it, a staggered list waiting on nothing would sit there blank for no reason
+        float time = MotionTime(IntroTime);
+        float speed = IntroTime > 0.0f && time > 0.0f ? time / IntroTime : 1.0f;
+        float wait = (IntroDelay + delay) * speed;
+        bool still = Intro != UIIntro.None && time <= 0.0f && IntroTime > 0.0f;
 
-        switch (Intro)
+        switch (still ? UIIntro.None : Intro)
         {
             case UIIntro.Pop:
-                this.PopIn(IntroTime, wait, IntroEasing ?? Easing.OutBack);
+                this.PopIn(time, wait, IntroEasing ?? Easing.OutBack);
                 break;
 
             case UIIntro.Fade:
-                this.FadeIn(IntroTime, wait, IntroEasing ?? Easing.OutCubic);
+                this.FadeIn(time, wait, IntroEasing ?? Easing.OutCubic);
                 break;
 
             case UIIntro.Slide:
-                this.SlideIn(IntroOffset, IntroTime, wait, IntroEasing ?? Easing.OutCubic);
+                this.SlideIn(IntroOffset, time, wait, IntroEasing ?? Easing.OutCubic);
                 break;
+        }
+
+        if (still)
+        {
+            VisualOffset = Vector2.Zero;
+            VisualScale = Vector2.One;
+            Opacity = 1.0f;
         }
 
         // What is inside waits as long as this does, its delay is theirs as well. A child that made its entrance
@@ -296,7 +308,7 @@ public abstract partial class UIComponent
         var snapshot = children;
 
         for (int i = 0; i < snapshot.Length; i++)
-            snapshot[i].PlayIntro(wait + i * step);
+            snapshot[i].PlayIntro((IntroDelay + delay) + i * step);
     }
 
     /// <summary>

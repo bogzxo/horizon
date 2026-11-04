@@ -267,6 +267,7 @@ public abstract partial class UIComponent
             children = [.. children, child];
 
         child.Parent = this;
+        child.OnParentChanged();
         return child;
     }
 
@@ -313,8 +314,13 @@ public abstract partial class UIComponent
         }
 
         child.Parent = null;
+        child.OnParentChanged();
         return true;
     }
+
+    /// <summary>Called once it was put inside something, or taken out of where it was (<see cref="Parent"/> is null then).</summary>
+    protected virtual void OnParentChanged()
+    { }
 
     /* Layout. Sizes are worked out from the leaves up, then places are handed out from the root down */
 
@@ -475,7 +481,7 @@ public abstract partial class UIComponent
         // PaintVersion. What PaintTree paints of its own (the focus ring, the grips, a lift) goes into the version. Only
         // a component with nothing in it, the version is its own and not its children's
         long version = children.Length == 0 ? PaintVersion : -1;
-        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && Glass is null && !FollowsPointer && !list.LayoutMoves;
+        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && Glass is null && !FollowsPointer && !list.LayoutMoves;
         int context = 0;
         if (recorded)
         {
@@ -499,9 +505,11 @@ public abstract partial class UIComponent
         if (laidOut)
             list.PushLaidFrame(Bounds.Min);
 
-        bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
+        // A drawer on its way in or out fades a little with it as well, so it eases into view rather than wiping across
+        float opacity = slideWanted is null ? Opacity : Opacity * (SLIDE_FADE + (1.0f - SLIDE_FADE) * SlideAmount);
+        bool animated = offset != Vector2.Zero || scale != Vector2.One || opacity < 1.0f;
         if (animated)
-            list.PushVisual(offset, scale, Bounds.Center, Opacity);
+            list.PushVisual(offset, scale, Bounds.Center, opacity);
 
         // Going where the pointer goes, see FollowsPointer
         bool follows = FollowsPointer && Module is not null;

@@ -967,13 +967,20 @@ public sealed partial class UIFileBrowser
         previousBackward = [.. backward];
 
         // The keyboard back to whoever had it, unless it was taken somewhere else while the window was up
+        UICompositor? compositor = Window.Module?.Compositor;
         bool hadIt = false;
-        for (UIComponent? at = Window.Module?.Compositor.Focus; at is not null; at = at.Parent)
+        for (UIComponent? at = compositor?.Focus; at is not null; at = at.Parent)
             hadIt |= at == Window;
 
         Window.OnClosed = null;
         Window.Parent?.Remove(Window);
-        if (hadIt && focusBefore is { Module: not null } before)
-            before.Focus();
+        if (hadIt)
+            compositor!.Focus = CanRestore(focusBefore, compositor) ? focusBefore : null;
+        else if (compositor is not null && compositor.Focus == focusBefore && !CanRestore(focusBefore, compositor))
+            compositor.Focus = null;
     }
+
+    private static bool CanRestore(UIComponent? component, UICompositor? compositor) =>
+        compositor is not null && component is not null && component.Module?.Compositor == compositor
+        && component.IsShownInHierarchy && component.EnabledInHierarchy;
 }

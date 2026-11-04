@@ -29,10 +29,16 @@ public partial class ListBox : UIComponent
     private IRuntimeValue? changedHandler, activatedHandler;
     private string[] items = [];
     private int index, top;
+    private bool draggingBar;
+    private float barGrab;
+    private UIRect scrollBarTrack, scrollBarThumb;
 
     // The first row as it's drawn, gliding to top a fraction of a row at a time. The list jumped a whole row a press or
     // a notch of the wheel, and the rows' letters smeared across the jump between ticks
     private float shown;
+
+    // The give past either end of the list, see UIOverscroll
+    private UIOverscroll over;
 
     /// <summary>The first row as it's drawn this moment, part way to <see cref="Top"/> while the rows glide.</summary>
     internal float Shown => shown;
@@ -185,6 +191,15 @@ public partial class ListBox : UIComponent
     /// <summary>The first row that is in sight, for a list longer than the box.</summary>
     public int Top => top;
 
+    /// <summary>The track as it was last painted, empty when the list fits.</summary>
+    public UIRect ScrollBarTrack => scrollBarTrack;
+
+    /// <summary>The thumb as it was last painted, empty when the list fits.</summary>
+    public UIRect ScrollBarThumb => scrollBarThumb;
+
+    /// <summary>Whether the scrollbar thumb is being dragged right now.</summary>
+    public bool IsDraggingBar => draggingBar;
+
     private float RowHeight(UISkin skin) => MathF.Max(skin.RowHeight, skin.Font.LineHeight * (TextScale > 0.0f ? TextScale : skin.TextScale) + ROW_PADDING);
 
     /// <summary>
@@ -245,15 +260,55 @@ public partial class ListBox : UIComponent
             return false;
 
         int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
-        top = Math.Clamp(top - rows * Math.Sign(delta), 0, items.Length - Rows);
+        int wanted = top - rows * Math.Sign(delta);
+        top = Math.Clamp(wanted, 0, items.Length - Rows);
+        over.Push((wanted - top) * rowHeightSeen, MotionSpeed);
         return true;
     }
 
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override void OnPointerDown(Vector2 point)
+    {
+        draggingBar = false;
+        if (items.Length > Rows && ScrollBarGrabZone.Contains(point))
+        {
+            draggingBar = true;
+            float topOfThumb = scrollBarThumb.Max.Y;
+            float thumbLength = scrollBarThumb.Height;
+            barGrab = point.Y <= topOfThumb && point.Y >= topOfThumb - thumbLength
+                ? topOfThumb - point.Y
+                : thumbLength * 0.5f;
+            DragScrollBar(point);
+        }
+    }
+
+    protected internal override void OnPointerDrag(Vector2 point) => DragScrollBar(point);
+
+    private void DragScrollBar(Vector2 point)
+    {
+        if (!draggingBar || scrollBarTrack.IsEmpty || scrollBarThumb.IsEmpty)
+            return;
+
+        float travel = scrollBarTrack.Height - scrollBarThumb.Height;
+        float rows = items.Length - Rows;
+        if (travel <= 0.0f || rows <= 0.0f)
+            return;
+
+        float thumbTop = point.Y + barGrab;
+        float at = Math.Clamp((scrollBarTrack.Max.Y - thumbTop) / travel, 0.0f, 1.0f) * rows;
+        top = Math.Clamp((int)MathF.Round(at), 0, items.Length - Rows);
+        shown = top;
+    }
+
+    private UIRect ScrollBarGrabZone => scrollBarTrack.IsEmpty
+        ? default
+        : new UIRect(new Vector2(Bounds.Max.X - BAR_WIDTH * 2.0f, scrollBarTrack.Min.Y), new Vector2(Bounds.Max.X, scrollBarTrack.Max.Y));
+
     protected override void Update(float dt)
     {
         base.Update(dt);
+        over.Step(dt, MotionSpeed);
         if (shown == top)
             return;
 
@@ -264,6 +319,12 @@ public partial class ListBox : UIComponent
 
     protected internal override void OnPointerUp(Vector2 point)
     {
+        if (draggingBar)
+        {
+            draggingBar = false;
+            return;
+        }
+
         if (!Bounds.Contains(point) || !EnabledInHierarchy)
             return;
 
@@ -346,12 +407,14 @@ public partial class ListBox : UIComponent
 
         // The rows from where the glide has got to, the one half out at the top a fraction of its height over the
         // headings' line and cut off there, and one more under the rest for the bit coming in at the bottom
-        int from = Math.Clamp((int)MathF.Floor(shown), 0, Math.Max(0, items.Length - 1));
-        int last = Math.Min(items.Length, from + Rows + 1);
+        int beyond = over.Stretch == 0.0f || rowHeight <= 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / rowHeight) + 1;
+        int from = Math.Clamp((int)MathF.Floor(shown) - beyond, 0, Math.Max(0, items.Length - 1));
+        int last = Math.Min(items.Length, (int)MathF.Floor(shown) + Rows + 1 + beyond);
         float rowTop = Bounds.Max.Y - headingHeight + (shown - from) * rowHeight;
         list.PushClip(new UIRect(Bounds.Min, new Vector2(Bounds.Max.X, Bounds.Max.Y - headingHeight)));
 
         // The rows move by the glide as one, on whole pixels, see UIDrawList.PushFrame
+        bool stretched = over.Begin(list, new UIRect(Bounds.Min, new Vector2(Bounds.Max.X, Bounds.Max.Y - headingHeight)));
         list.PushFrame(new Vector2(0.0f, shown * rowHeight));
         for (int i = from; i < last; i++)
         {
@@ -394,6 +457,8 @@ public partial class ListBox : UIComponent
         }
 
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopClip();
 
         // What it says under the rows while there's room for it, in the middle of that room
@@ -410,12 +475,21 @@ public partial class ListBox : UIComponent
         // A thin bar along the right says how much of the list is in sight, and where, under the headings
         if (scrolls)
         {
-            float height = Bounds.Height - headingHeight;
+            float height = MathF.Max(0.0f, Bounds.Height - headingHeight);
             float share = Rows / (float)items.Length;
-            float travel = height * (1.0f - share);
+            float thumbLength = MathF.Min(height, MathF.Max(UIScrollBar.MIN_THUMB, height * share));
+            float travel = height - thumbLength;
             float barTop = Bounds.Max.Y - headingHeight - travel * (shown / (items.Length - Rows));
-            UIScrollBar.Paint(list, Bounds.Max.X - BAR_WIDTH * 0.5f, Bounds.Min.Y, Bounds.Max.Y - headingHeight, barTop, height * share, BAR_WIDTH, 0.0f, false, skin.TextColor);
+            float barRight = Bounds.Max.X - BAR_WIDTH * 0.5f;
+            scrollBarTrack = new UIRect(new Vector2(barRight - BAR_WIDTH, Bounds.Min.Y), new Vector2(barRight, Bounds.Max.Y - headingHeight));
+            scrollBarThumb = new UIRect(new Vector2(barRight - BAR_WIDTH, barTop - thumbLength), new Vector2(barRight, barTop));
+            Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
+            bool barLit = draggingBar || (IsHovered && ScrollBarGrabZone.Contains(pointer));
+            UIScrollBar.Paint(list, barRight, Bounds.Min.Y, Bounds.Max.Y - headingHeight, barTop, thumbLength,
+                UIScrollBar.Width(BAR_WIDTH, barLit ? 1.0f : 0.0f), barLit ? 1.0f : 0.0f, draggingBar, skin.TextColor);
         }
+        else
+            scrollBarTrack = scrollBarThumb = default;
 
         if (skin.BorderColor.W > 0.0f && !Plain)
             list.Frame(Bounds, 1.0f, skin.BorderColor * tint);

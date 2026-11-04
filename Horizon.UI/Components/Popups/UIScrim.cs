@@ -45,6 +45,12 @@ public sealed class UIScrim : Panel
             return;
         }
 
+        // Fading out with the window as it goes, and back if it's brought back
+        if (owner.Leaving)
+            Opacity = MathF.Min(Opacity, owner.Opacity);
+        else if (Opacity < 1.0f && Tweens.Count == 0)
+            Opacity = 1.0f;
+
         if (Module?.Compositor.Focus is { } focus && Inside(focus, owner))
             keyboard = focus;
     }

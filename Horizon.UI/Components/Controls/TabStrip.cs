@@ -58,6 +58,8 @@ public class TabStrip : UIComponent
     private const float WHEEL_STEP = 60.0f;
 
     private float scroll;
+    private int revealedSelection = -1;
+    private float revealedWidth;
     private int pressedTab = -1;
     private bool pressedClose;
 
@@ -120,12 +122,19 @@ public class TabStrip : UIComponent
     /// </summary>
     public float MaxTabWidth { get; set; }
 
+    /// <summary>Omit partially visible inactive tabs, including their pointer targets, at the strip edges.</summary>
+    public bool HideClippedTabs { get; set; }
+
+    private bool HiddenAtEdge(int index, UIRect area) => HideClippedTabs && index != Selected
+        && (area.Min.X < Bounds.Min.X - 0.5f || area.Max.X > Bounds.Max.X + 0.5f);
+
     private float WidthOf(UISkin skin, StripTab tab)
     {
         float line = Line(skin);
         float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
         float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
-        return MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
+        width = MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
+        return HideClippedTabs && Bounds.Width > 0 ? MathF.Min(width, Bounds.Width) : width;
     }
 
     // The dots a title cut short has in its middle
@@ -195,7 +204,8 @@ public class TabStrip : UIComponent
 
         for (int i = 0; i < Tabs.Count; i++)
         {
-            if (TabBounds(i).Contains(point))
+            UIRect area = TabBounds(i);
+            if (!HiddenAtEdge(i, area) && area.Contains(point))
                 return i;
         }
 
@@ -221,7 +231,8 @@ public class TabStrip : UIComponent
 
         // The one that is open is brought into sight, whichever way it is off. One wider than the strip is shown from its
         // start, it was shown its end one tick and its start the next and the title shook like a shitting dog
-        if (Selected >= 0 && Selected < Tabs.Count && !IsPressed)
+        if (Selected >= 0 && Selected < Tabs.Count && !IsPressed
+            && (!HideClippedTabs || revealedSelection != Selected || revealedWidth != Bounds.Width))
         {
             UIRect open = TabBounds(Selected);
             if (open.Min.X < Bounds.Min.X || open.Width > Bounds.Width)
@@ -230,6 +241,8 @@ public class TabStrip : UIComponent
                 scroll += open.Max.X - Bounds.Max.X;
         }
 
+        revealedSelection = Selected;
+        revealedWidth = Bounds.Width;
         ClampScroll();
     }
 
@@ -244,6 +257,15 @@ public class TabStrip : UIComponent
 
         TabsWidth = total;
         scroll = Math.Clamp(scroll, 0.0f, MathF.Max(0.0f, total - Bounds.Width));
+        if (HideClippedTabs)
+        {
+            // Start with a whole tab at the left edge, rather than reserving a blank fragment
+            // for the preceding tab. A short final page is preferable to a broken filename.
+            float start = 0;
+            for (int i = 0; i < Tabs.Count - 1 && start < scroll - 0.5f; i++)
+                start += WidthOf(skin, Tabs[i]);
+            scroll = start;
+        }
     }
 
     /// <summary>How wide the tabs are all together, as of the last tick, more than the strip is wide when they don't all fit.</summary>
@@ -265,6 +287,8 @@ public class TabStrip : UIComponent
             StripTab tab = Tabs[i];
             UIRect area = TabBounds(i);
             bool open = i == Selected;
+            if (HiddenAtEdge(i, area))
+                continue;
             bool over = IsHovered && area.Contains(pointer);
 
             // A pill under the open one, the one pick there is in lists and menus, and a fainter one under the pointer. It
@@ -345,8 +369,22 @@ public class TabStrip : UIComponent
 
     protected internal override bool OnScroll(float delta)
     {
-        scroll -= delta * WHEEL_STEP;
-        ClampScroll();
+        if (HideClippedTabs && Module?.Compositor.Skin is { } skin)
+        {
+            float start = 0;
+            int first = 0;
+            while (first < Tabs.Count - 1 && start < scroll - 0.5f)
+                start += WidthOf(skin, Tabs[first++]);
+            int next = Math.Clamp(first + (delta > 0 ? -1 : 1), 0, Math.Max(0, Tabs.Count - 1));
+            scroll = 0;
+            for (int i = 0; i < next; i++) scroll += WidthOf(skin, Tabs[i]);
+            ClampScroll();
+        }
+        else
+        {
+            scroll -= delta * WHEEL_STEP;
+            ClampScroll();
+        }
         return true;
     }
 

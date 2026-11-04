@@ -233,9 +233,28 @@ public class TabPanel : UIComponent
         if (wanted == selected)
             return;
 
+        int was = selected;
         selected = wanted;
+        ArrivePage(wanted > was ? 1.0f : -1.0f);
         OnChanged?.Invoke(selected);
         InvokeScript(changedHandler, new NumberValue(selected));
+    }
+
+    // How long a page opened takes to settle in, and how far it comes from, the way of the tab clicked
+    private const float PAGE_TIME = 0.16f, PAGE_SHIFT = 10.0f;
+
+    /// <summary>
+    /// Helper method to bring the page just opened in from a little to the side it was picked on, faded up, as quick
+    /// as the compositor's AnimationSpeed says. Only once it's on screen, a layout picking its first page moves nothing.
+    /// </summary>
+    private void ArrivePage(float side)
+    {
+        if (Module is null || !IsShownInHierarchy || ChildSpan.Length <= selected)
+            return;
+
+        float time = MotionTime(PAGE_TIME);
+        if (time > 0.0f)
+            ChildSpan[selected].SlideIn(new Vector2(side * PAGE_SHIFT, 0.0f), time);
     }
 
     /// <summary>Opens the next page, back to the first after the last.</summary>

@@ -211,6 +211,9 @@ public partial class CodeEditor : UIComponent
     // A few pixels a tick nothing comes in over anything
     private float? scrollGoal;
 
+    // The give past the top and the bottom of the code, see UIOverscroll
+    private UIOverscroll over;
+
     // How quickly the view gets to where the wheel wants it, a share of the way left every second (most of it in a tenth)
     private const float SCROLL_EASE = 22.0f;
     private float blink;
@@ -1132,6 +1135,8 @@ public partial class CodeEditor : UIComponent
             if (MathF.Abs(completionTop - completionShown) < 0.01f)
                 completionShown = completionTop;
         }
+
+        over.Step(dt, MotionSpeed);
 
         // On the way to where the wheel wants it
         if (scrollGoal is { } goal)
@@ -2142,9 +2147,15 @@ public partial class CodeEditor : UIComponent
         return (track, MathF.Min(length, track.Height), most, top);
     }
 
+    // Whether the press was taken by something on the code rather than by the text (a lens, a swatch, the lines held at
+    // the top, a chevron), so dragging off it selects nothing. A reference count clicked selected from the caret to it
+    // the moment the pointer shook on the way up
+    private bool pressTaken;
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         blink = 0.0f;
+        pressTaken = true;
 
         // A swatch of a colour written in the code, to pick another
         if (OnSwatchPressed is { } swatched && paintedSkin is { } swatchSkin)
@@ -2203,6 +2214,10 @@ public partial class CodeEditor : UIComponent
         if (PressLens(point))
             return;
 
+        // A press on a lens row that isn't on a lens is between two of them, never the line under it
+        if (OverLensRow(point))
+            return;
+
         // A change's bar is the program's to say what to do with (show what changed), ahead of the chevron it's next to
         if (PressLineChange(point, at))
             return;
@@ -2210,6 +2225,8 @@ public partial class CodeEditor : UIComponent
         // In the gutter a press on a chevron folds, anywhere else in it is the whole line
         if (PressFold(point, at))
             return;
+
+        pressTaken = false;
 
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
@@ -2259,7 +2276,7 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void OnPointerDrag(Vector2 point)
     {
-        if (changePressed)
+        if (changePressed || pressTaken && !draggingBar && !draggingMinimap)
             return;
 
         if (draggingMinimap)
@@ -2296,6 +2313,7 @@ public partial class CodeEditor : UIComponent
         draggingBar = false;
         draggingMinimap = false;
         changePressed = false;
+        pressTaken = false;
         wordDrag = null;
         columnFrom = null;
     }
@@ -2324,9 +2342,12 @@ public partial class CodeEditor : UIComponent
         if (AllInSight)
             return false;
 
-        // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
-        scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
+        // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up.
+        // Whatever of it goes past the top or the bottom stretches the code out past it and springs back
+        float wanted = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
+        scrollGoal = wanted;
         ClampScroll(skin, paintedScale);
+        over.Push(wanted - (scrollGoal ?? scrollY), MotionSpeed);
         return true;
     }
 
@@ -2376,7 +2397,8 @@ public partial class CodeEditor : UIComponent
         // And a few either side of them painted too, out of sight under the clip, so a row scrolled into sight was there
         // the tick before to be blended with. With nothing to blend with it was drawn where the newer tick had it while
         // the row next to it was still on its way, and for a frame the two sat on top of each other
-        int paintFrom = Math.Max(0, first - ROWS_AROUND), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND);
+        int beyond = over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / lineHeight) + 1;
+        int paintFrom = Math.Max(0, first - ROWS_AROUND - beyond), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND + beyond);
 
         bool focused = IsFocused;
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
@@ -2391,6 +2413,7 @@ public partial class CodeEditor : UIComponent
         // The code moves by the scroll as one, on whole pixels (see UIDrawList.PushFrame), and a frame between two ticks
         // moves it smoothly while what's in it is the newer tick's. Only the code, the box, the bar and the minimap stay
         // put. Moved by fractions of a pixel the boxes behind the words slid while the words snapped to the pixels
+        bool stretched = over.Begin(list, area);
         list.PushFrame(new Vector2(-scrollX, scrollY));
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
@@ -2621,15 +2644,20 @@ public partial class CodeEditor : UIComponent
         }
 
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopClip();
 
         // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds. They
         // go up and down with the code and not across with it
         if (LineNumbers)
         {
+            bool gutterStretched = over.Begin(list, new UIRect(new Vector2(content.Min.X, area.Min.Y), area.Max));
             list.PushFrame(new Vector2(0.0f, scrollY));
             PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
             list.PopFrame();
+            if (gutterStretched)
+                UIOverscroll.End(list);
         }
 
         EndFlow();

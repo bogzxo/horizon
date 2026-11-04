@@ -354,7 +354,7 @@ public class Table : UIComponent
         if (across)
             scrollX = Math.Clamp(scrollX - by, 0.0f, TravelX);
         else
-            ease.Wheel(scrollY, -by, TravelY(skin));
+            ease.Wheel(scrollY, -by, TravelY(skin), MotionSpeed);
         return true;
     }
 
@@ -385,6 +385,7 @@ public class Table : UIComponent
     {
         sinceClick += dt;
         scrollY = ease.Step(scrollY, dt);
+        ease.Over.Step(dt, MotionSpeed);
 
         hovered = Module is { } module && IsHovered && CellAt(module.ToLocal(module.Compositor.Pointer.Position)) is var (row, column) ? (row, column) : (-1, -1);
         Tooltip = hovered.Row >= 0 && hovered.Column >= 0 && hovered.Column < Rows[hovered.Row].Length ? Rows[hovered.Row][hovered.Column].Tooltip ?? string.Empty
@@ -411,10 +412,13 @@ public class Table : UIComponent
         Vector4 lit = text with { W = ListBox.PICKED };
         Vector4 header = (skin.PanelColor with { W = 1.0f }) * new Vector4(0.85f, 0.85f, 0.85f, 1.0f);
 
-        int first = (int)(scrollY / line);
-        int last = Math.Min(order.Count - 1, first + (int)(bounds.Height / line) + 1);
+        // Stretched past an end it shows more of what's next to the rows in sight, see UIOverscroll
+        int beyond = ease.Over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(ease.Over.Stretch) / line) + 1;
+        int first = Math.Max(0, (int)(scrollY / line) - beyond);
+        int last = Math.Min(order.Count - 1, (int)(scrollY / line) + (int)(bounds.Height / line) + 1 + beyond);
 
         // The cells move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        bool stretched = ease.Over.Begin(list, bounds);
         list.PushFrame(new Vector2(0.0f, scrollY));
 
         // Soft under the header and along the bottom while there's more past them, the way every other list scrolls
@@ -469,6 +473,8 @@ public class Table : UIComponent
         }
 
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopFade();
 
         // The header over the rows, sticky, sorted by an arrow

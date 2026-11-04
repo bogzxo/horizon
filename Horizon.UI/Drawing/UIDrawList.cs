@@ -83,6 +83,12 @@ public sealed partial class UIDrawList
     public static bool Motion { get; set; } = true;
 
     /// <summary>
+    /// How quickly the popups come and go, the compositor's <see cref="UICompositor.AnimationSpeed"/> handed over every
+    /// paint, 0 for not at all.
+    /// </summary>
+    internal float MotionSpeed { get; set; } = 1.0f;
+
+    /// <summary>
     /// Starts the entrance of something that pops up (a menu, a list that drops down, a tooltip) when it's painted for the
     /// first time: grown from a little smaller than it is and faded in, slid in a few pixels from where it came from,
     /// eased out over <see cref="ENTRANCE_TIME"/>. Everything painted until <see cref="EndEntrance"/> goes with it, a pane
@@ -97,10 +103,10 @@ public sealed partial class UIDrawList
         if (started < 0.0f)
             started = time;
 
-        float t = (time - started) / ENTRANCE_TIME;
+        float t = (time - started) / ENTRANCE_TIME * MotionSpeed;
 
         // The clock starts over now and then, a popup open across that is simply there
-        if (!Motion || t >= 1.0f || t < 0.0f)
+        if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
         float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
@@ -125,8 +131,8 @@ public sealed partial class UIDrawList
         if (started < 0.0f)
             started = time;
 
-        float t = (time - started) / EXIT_TIME;
-        if (!Motion || t >= 1.0f || t < 0.0f)
+        float t = (time - started) / EXIT_TIME * MotionSpeed;
+        if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
         float eased = t * t;
@@ -860,26 +866,27 @@ public sealed partial class UIDrawList
             return;
         }
 
-        if (!UISymbols.TryGetGlyph(code, out var glyph))
+        if (!UISymbols.TryGetGlyph(code, out var symbol))
             return;
 
         if (motion != UIIconMotion.None && Motion)
         {
-            MovingSymbol(glyph, rect, color, motion);
+            MovingSymbol(symbol, rect, color, motion);
             return;
         }
 
         // The em of the font is the square every icon is drawn in, its picture is somewhere inside of that
         float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
-        float scale = side / UISymbols.Em;
+        float scale = side / symbol.Em;
         Vector2 corner = Vector2.Round(rect.Center - new Vector2(side * 0.5f, -side * 0.5f));
 
+        var glyph = symbol.Definition;
         Vector2 topLeft = new(corner.X + glyph.Offset.X * scale, corner.Y - glyph.Offset.Y * scale);
         Vector2 size = glyph.Size * scale;
         var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - size.Y), new Vector2(topLeft.X + size.X, topLeft.Y));
 
         Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color),
-            ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
+            ImageSlot(symbol.Texture) | SpriteItem.FieldFlag, symbol.FieldSlope);
     }
 
     /// <summary>Draws an icon of <see cref="UISymbols"/> by name, moving when it says how (<c>sync~spin</c>), nothing if there is none by it.</summary>

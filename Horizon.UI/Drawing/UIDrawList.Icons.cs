@@ -37,13 +37,14 @@ public sealed partial class UIDrawList
     /// turning the two sides of its quad (a quad of the sprite batch is a parallelogram, an origin and two axes, which is
     /// how italics lean). One that a clip cuts is drawn as it is, unturned, a turned quad can't be trimmed square.
     /// </summary>
-    private void MovingSymbol(in CharDefinition glyph, UIRect rect, Vector4 color, UIIconMotion motion)
+    private void MovingSymbol(in UISymbolGlyph symbol, UIRect rect, Vector4 color, UIIconMotion motion)
     {
+        CharDefinition glyph = symbol.Definition;
         float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
         var (turn, grown, moved, alpha) = UIAnimatedIcons.Now(motion, side);
 
         float scaled = side * grown;
-        float scale = scaled / UISymbols.Em;
+        float scale = scaled / symbol.Em;
         Vector2 middle = rect.Center + moved;
         Vector2 corner = middle - new Vector2(scaled * 0.5f, -scaled * 0.5f);
 
@@ -54,7 +55,7 @@ public sealed partial class UIDrawList
         int before = itemCount;
         bool whole = box.Intersect(clip) == box;
         Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color with { W = color.W * alpha }),
-            ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
+            ImageSlot(symbol.Texture) | SpriteItem.FieldFlag, symbol.FieldSlope);
 
         if (turn != 0.0f)
             TurnFrameQuad(turn, middle);

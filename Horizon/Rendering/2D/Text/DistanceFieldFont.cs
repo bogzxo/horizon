@@ -53,6 +53,7 @@ public sealed class DistanceFieldFont
 
     // Which characters this one is built with, an icon font's are up in the private use area
     private (int From, int To)[] ranges = DefaultRanges;
+    private bool rasterizeTrueTypeForDistanceField;
 
     public Texture Texture { get; private set; } = Texture.Invalid;
     public Dictionary<char, CharDefinition> Glyphs { get; } = [];
@@ -81,10 +82,22 @@ public sealed class DistanceFieldFont
     /// an icon font (Codicons, see <see cref="Horizon.UI.Drawing.UISymbols"/>) has its pictures in the private use area.
     /// They have to be in the Basic Multilingual Plane, a glyph is known by its char.
     /// </param>
-    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM, (int From, int To)[]? characters = null)
+    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM, (int From, int To)[]? characters = null) =>
+        Load(directory, file, emSize, characters, rasterizeTrueTypeForDistanceField: false);
+
+    /// <summary>
+    /// Loads a font with an optional coverage-based distance transform. This avoids the outline SDF solver's stack
+    /// limits for complex icon fonts. The usual overload keeps the original outline rendering path.
+    /// </summary>
+    public static DistanceFieldFont Load(string directory, string file, int emSize, (int From, int To)[]? characters, bool rasterizeTrueTypeForDistanceField)
     {
         string path = Path.Combine(directory, file);
-        var font = new DistanceFieldFont { EmSize = Math.Max(8, emSize), ranges = characters ?? DefaultRanges };
+        var font = new DistanceFieldFont
+        {
+            EmSize = Math.Max(8, emSize),
+            ranges = characters ?? DefaultRanges,
+            rasterizeTrueTypeForDistanceField = rasterizeTrueTypeForDistanceField
+        };
 
         try
         {
@@ -143,13 +156,36 @@ public sealed class DistanceFieldFont
                     StbTrueType.stbtt_GetCodepointHMetrics(info, codepoint, &advance, &bearing);
 
                     int width = 0, height = 0, xOff = 0, yOff = 0;
-                    byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
                     byte[]? field = null;
-                    if (sdf != null && width > 0 && height > 0)
+                    if (rasterizeTrueTypeForDistanceField)
                     {
-                        field = new byte[width * height];
-                        new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
-                        StbTrueType.stbtt_FreeSDF(sdf, null);
+                        byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(info, fieldScale, fieldScale, codepoint, &width, &height, &xOff, &yOff);
+                        if (bitmap != null && width > 0 && height > 0)
+                        {
+                            int paddedWidth = width + SPREAD * 2, paddedHeight = height + SPREAD * 2;
+                            var inside = new bool[paddedWidth * paddedHeight];
+                            for (int y = 0; y < height; y++)
+                            {
+                                for (int x = 0; x < width; x++)
+                                    inside[(y + SPREAD) * paddedWidth + x + SPREAD] = bitmap[y * width + x] > 127;
+                            }
+                            field = SignedField(inside, paddedWidth, paddedHeight, SPREAD);
+                            width = paddedWidth;
+                            height = paddedHeight;
+                            xOff -= SPREAD;
+                            yOff -= SPREAD;
+                            StbTrueType.stbtt_FreeBitmap(bitmap, null);
+                        }
+                    }
+                    else
+                    {
+                        byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
+                        if (sdf != null && width > 0 && height > 0)
+                        {
+                            field = new byte[width * height];
+                            new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
+                            StbTrueType.stbtt_FreeSDF(sdf, null);
+                        }
                     }
 
                     pictures.Add(((char)codepoint, width, height, xOff, yOff, advance * fieldScale, field));
@@ -387,10 +423,17 @@ public sealed class DistanceFieldFont
 
         var hash = SHA256.HashData(File.ReadAllBytes(path));
         string key = Convert.ToHexString(hash)[..24] + "_" + emSize + "_" + CACHE_VERSION;
+        if (rasterizeTrueTypeForDistanceField) key += "_bitmap";
 
         // Built with other characters it is another font as far as the cache goes
         if (ranges != DefaultRanges)
-            key += "_" + string.Join("-", ranges.Select(range => $"{range.From:x}{range.To:x}"));
+        {
+            string characters = string.Join("-", ranges.Select(range => $"{range.From:x}{range.To:x}"));
+            // Sparse icon catalogs can have hundreds of ranges. Keep the filename within filesystem limits.
+            if (characters.Length > 96)
+                characters = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(characters)))[..24];
+            key += "_" + characters;
+        }
         return Path.Combine(Path.GetDirectoryName(shaders) ?? shaders, "Fonts", key + ".hfont");
     }
 

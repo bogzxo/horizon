@@ -143,6 +143,10 @@ public partial class TreeView : UIComponent
     private float scroll, sinceClick = float.MaxValue;
     private UIScrollEase ease;
     private bool revealSelected;
+    private bool draggingBar;
+    private float barGrab;
+    private float scrollBarMax;
+    private UIRect scrollBarTrack, scrollBarThumb;
 
     // The icons the tree draws itself, looked up once
     private char chevronRight, chevronDown;
@@ -183,6 +187,15 @@ public partial class TreeView : UIComponent
             revealOnly = null;
         }
     }
+
+    /// <summary>The track as it was last painted, empty when the tree fits.</summary>
+    public UIRect ScrollBarTrack => scrollBarTrack;
+
+    /// <summary>The thumb as it was last painted, empty when the tree fits.</summary>
+    public UIRect ScrollBarThumb => scrollBarThumb;
+
+    /// <summary>Whether the scrollbar thumb is being dragged right now.</summary>
+    public bool IsDraggingBar => draggingBar;
 
     /// <summary>The colour of the box behind the rows, null for none.</summary>
     public Vector4? Color { get; set; }
@@ -410,6 +423,20 @@ public partial class TreeView : UIComponent
 
     protected internal override void OnPointerDown(Vector2 point)
     {
+        if (scrollBarTrack.IsEmpty || !ScrollBarGrabZone.Contains(point))
+        {
+            draggingBar = false;
+        }
+        else
+        {
+            float top = scrollBarThumb.Max.Y;
+            float length = scrollBarThumb.Height;
+            draggingBar = true;
+            barGrab = point.Y <= top && point.Y >= top - length ? top - point.Y : length * 0.5f;
+            DragScrollBar(point);
+            return;
+        }
+
         // A title of a table pressed sorts by its column, the owner does the sorting
         if (PressHeader(point))
             return;
@@ -444,12 +471,38 @@ public partial class TreeView : UIComponent
             Toggle(at);
     }
 
+    protected internal override void OnPointerDrag(Vector2 point) => DragScrollBar(point);
+
+    protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;
+
+    private UIRect ScrollBarGrabZone => scrollBarTrack.IsEmpty
+        ? default
+        : new UIRect(new Vector2(scrollBarTrack.Min.X - BAR_WIDTH * 0.5f, scrollBarTrack.Min.Y),
+            new Vector2(Bounds.Max.X, scrollBarTrack.Max.Y));
+
+    private void DragScrollBar(Vector2 point)
+    {
+        if (!draggingBar || scrollBarTrack.IsEmpty || scrollBarThumb.IsEmpty)
+            return;
+
+        float travel = scrollBarTrack.Height - scrollBarThumb.Height;
+        if (travel <= 0.0f)
+            return;
+
+        float thumbTop = point.Y + barGrab;
+        float share = Math.Clamp((scrollBarTrack.Max.Y - thumbTop) / travel, 0.0f, 1.0f);
+        ease.Stop();
+        scroll = share * scrollBarMax;
+        revealSelected = false;
+        revealOnly = null;
+    }
+
     protected internal override bool OnScroll(float delta)
     {
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
-        ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin));
+        ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin), MotionSpeed);
         return true;
     }
 
@@ -506,6 +559,7 @@ public partial class TreeView : UIComponent
         RewrapNotes();
         sinceClick += dt;
         scroll = ease.Step(scroll, dt);
+        ease.Over.Step(dt, MotionSpeed);
 
         // The tooltip is the one of the row under the pointer, a string the item has, nothing made
         Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
@@ -576,10 +630,13 @@ public partial class TreeView : UIComponent
         float fade = MathF.Min(FADE, bounds.Height * 0.25f);
         list.PushFade(bounds, MathF.Min(fade, scroll), MathF.Min(fade, travel - scroll));
 
-        int first = (int)(scroll / line);
-        int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
+        // Stretched past an end it shows more of what's next to the rows in sight, see UIOverscroll
+        int beyond = ease.Over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(ease.Over.Stretch) / line) + 1;
+        int first = Math.Max(0, (int)(scroll / line) - beyond);
+        int last = Math.Min(rows.Count - 1, (int)(scroll / line) + (int)(bounds.Height / line) + 1 + beyond);
 
         // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        bool stretched = ease.Over.Begin(list, bounds);
         list.PushFrame(new Vector2(0.0f, scroll));
         for (int i = first; i <= last; i++)
         {
@@ -701,6 +758,8 @@ public partial class TreeView : UIComponent
         }
 
         list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.EndParts();
         list.PopFade();
         list.PopClip();
@@ -714,9 +773,23 @@ public partial class TreeView : UIComponent
         // A thin bar along the right says how much of the tree is in sight, and where
         if (scrolls)
         {
-            float share = bounds.Height / (bounds.Height + travel);
-            float barTop = bounds.Max.Y - (bounds.Height * (1.0f - share)) * (scroll / travel);
-            UIScrollBar.Paint(list, bounds.Max.X - BAR_WIDTH * 0.5f, bounds.Min.Y, bounds.Max.Y, barTop, bounds.Height * share, BAR_WIDTH, 0.0f, false, skin.TextColor);
+            float proportionalThumb = bounds.Height * bounds.Height / (bounds.Height + travel);
+            float thumbLength = MathF.Min(bounds.Height, MathF.Max(UIScrollBar.MIN_THUMB, proportionalThumb));
+            float thumbTravel = bounds.Height - thumbLength;
+            scrollBarMax = travel;
+            float barTop = bounds.Max.Y - thumbTravel * (scroll / travel);
+            float barRight = bounds.Max.X - BAR_WIDTH * 0.5f;
+            scrollBarTrack = new UIRect(new Vector2(barRight - BAR_WIDTH, bounds.Min.Y), new Vector2(barRight, bounds.Max.Y));
+            scrollBarThumb = new UIRect(new Vector2(barRight - BAR_WIDTH, barTop - thumbLength), new Vector2(barRight, barTop));
+            Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
+            bool barLit = draggingBar || (IsHovered && ScrollBarGrabZone.Contains(pointer));
+            UIScrollBar.Paint(list, barRight, bounds.Min.Y, bounds.Max.Y, barTop, thumbLength,
+                UIScrollBar.Width(BAR_WIDTH, barLit ? 1.0f : 0.0f), barLit ? 1.0f : 0.0f, draggingBar, skin.TextColor);
+        }
+        else
+        {
+            scrollBarMax = 0.0f;
+            scrollBarTrack = scrollBarThumb = default;
         }
     }
 

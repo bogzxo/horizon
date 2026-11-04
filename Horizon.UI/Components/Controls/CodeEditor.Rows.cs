@@ -281,6 +281,26 @@ public partial class CodeEditor
         shapedLeft = area.Min.X + TEXT_PAD;
         shapedLineHeight = lineHeight;
 
+        // Rows of lenses coming or going above what's in sight would push it about, so the line at the top of the view keeps
+        // its place. Gone to a reference, the counts came a moment after and the line went to was pushed off the bottom
+        (int Line, int Row)? anchor = null;
+        if (rowsFor.Lenses != lensRowsChanged && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        {
+            int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
+            while (top < rows.Count - 1 && rows[top].Lens)
+                top++;
+            int line = rows[top].Line;
+
+            // The caret's line when it's in sight, the one somebody went to and is looking at, so the rows of the lines
+            // between the top and it don't push it down either
+            int caret = document.Caret.Line;
+            if (caret < lineRow.Length && lineRow[caret] >= top && lineRow[caret] < top + (int)(area.Height / lineHeight))
+                line = caret;
+
+            if (line < lineRow.Length)
+                anchor = (line, lineRow[line]);
+        }
+
         rowsFor = wanted;
         rows.Clear();
         int count = document.LineCount;
@@ -312,6 +332,17 @@ public partial class CodeEditor
                 for (int hidden = line + 1; hidden <= end && hidden < count; hidden++)
                     lineRow[hidden] = into;
                 line = Math.Min(end, count - 1);
+            }
+        }
+
+        if (anchor is { } kept && kept.Line < count)
+        {
+            float moved = (lineRow[kept.Line] - kept.Row) * lineHeight;
+            if (moved != 0.0f)
+            {
+                scrollY = MathF.Max(0.0f, scrollY + moved);
+                if (scrollGoal is { } goal)
+                    scrollGoal = MathF.Max(0.0f, goal + moved);
             }
         }
     }

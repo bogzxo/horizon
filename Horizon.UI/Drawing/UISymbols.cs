@@ -25,6 +25,9 @@ public static class UISymbols
     private const string DIRECTORY = "Assets/fonts/codicons/";
     private const string FONT_FILE = "codicon.ttf";
     private const string NAMES_FILE = "codicons.hor";
+    private const string FILE_KIND_DIRECTORY = "Assets/fonts/devicon/";
+    private const string FILE_KIND_FONT = "devicon.ttf";
+    private const string FILE_KIND_NAMES = "devicons.hor";
 
     // Where the pictures are in the font, all of them
     private static readonly (int From, int To)[] Characters = [(0xE000, 0xF8FF)];
@@ -40,6 +43,9 @@ public static class UISymbols
     // Both spellings of every name, the one with dashes the way VS Code writes them and the one with underscores
     private static readonly Dictionary<string, char> names = new(StringComparer.Ordinal);
     private static readonly List<string> listed = [];
+    private static readonly Dictionary<char, char> fileKindGlyphs = [];
+    private static DistanceFieldFont? fileKindFont;
+    private static float fileKindFieldSlope;
 
     /// <summary>Whether the icons have loaded. They load with the first skin.</summary>
     public static bool IsLoaded => font is { Texture.Handle: not 0 };
@@ -76,6 +82,8 @@ public static class UISymbols
             }
 
             ReadNames();
+            ReadFileKindNames();
+            listed.Sort(StringComparer.Ordinal);
         }
     }
 
@@ -109,6 +117,72 @@ public static class UISymbols
         listed.Sort(StringComparer.Ordinal);
     }
 
+    private static void ReadFileKindNames()
+    {
+        string path = Path.Combine(FILE_KIND_DIRECTORY, FILE_KIND_NAMES);
+        if (!File.Exists(path))
+        {
+            Log.Error($"[UISymbols] There are no file-kind icon names at '{path}'.");
+            return;
+        }
+
+        var runtime = new HIDLRuntime();
+        var (success, _) = runtime.Evaluate(File.ReadAllText(path));
+        if (!success || runtime.UserScope.Lookup("icons") is not ObjectValue { Properties: { } icons })
+        {
+            Log.Error($"[UISymbols] '{path}' didn't come out as an object of file-kind icons.");
+            return;
+        }
+
+        var codepoints = icons
+            .Where(entry => entry.Value is NumberValue)
+            .Select(entry => (Name: entry.Key, Codepoint: (int)((NumberValue)entry.Value).Value))
+            .Where(entry => entry.Codepoint is >= 0xE000 and <= 0xF8FF)
+            .OrderBy(entry => entry.Name, StringComparer.Ordinal)
+            .ToArray();
+        if (codepoints.Length == 0)
+            return;
+
+        var ranges = codepoints.Select(entry => (entry.Codepoint, entry.Codepoint)).ToArray();
+        var loaded = DistanceFieldFont.Load(FILE_KIND_DIRECTORY, FILE_KIND_FONT, DistanceFieldFont.DEFAULT_EM, ranges, rasterizeTrueTypeForDistanceField: true);
+        if (loaded.Texture.Handle == 0)
+        {
+            Log.Error($"[UISymbols] The file-kind icon font at '{FILE_KIND_DIRECTORY}{FILE_KIND_FONT}' didn't load.");
+            return;
+        }
+
+        fileKindFont = loaded;
+        foreach (var glyph in fileKindFont.Glyphs.Values)
+        {
+            if (glyph.Size.X <= 0.0f || glyph.TexelSize.X <= 0.0f) continue;
+            float spreadTexels = fileKindFont.Spread * glyph.TexelSize.X / glyph.Size.X;
+            if (spreadTexels > 0.0f) fileKindFieldSlope = 0.5f / spreadTexels;
+            break;
+        }
+
+        // The public icon APIs pass a char. Reserve unused Basic Multilingual Plane keys, outside both fonts' PUA
+        // glyphs, as private handles into the second atlas.
+        char key = '\u0100';
+        foreach (var (name, codepoint) in codepoints)
+        {
+            if (!fileKindFont.Glyphs.ContainsKey((char)codepoint))
+                continue;
+            while (key <= '\uD7FF' && (names.ContainsValue(key) || UIAnimatedIcons.IsDrawn(key))) key++;
+            if (key > '\uD7FF')
+            {
+                Log.Error("[UISymbols] There are too many file-kind icons to assign symbol keys.");
+                return;
+            }
+
+            string named = "filetype_" + name;
+            names[named] = key;
+            names[named.Replace('_', '-')] = key;
+            fileKindGlyphs[key] = (char)codepoint;
+            listed.Add(named);
+            key++;
+        }
+    }
+
     /// <summary>The character of an icon by its name, false if there is no icon of that name. A motion after it is left off.</summary>
     public static bool TryGet(ReadOnlySpan<char> name, out char code) => TryGet(name, out code, out _);
 
@@ -127,10 +201,23 @@ public static class UISymbols
     }
 
     /// <summary>The picture of an icon in the atlas.</summary>
-    internal static bool TryGetGlyph(char code, out CharDefinition glyph)
+    internal static bool TryGetGlyph(char code, out UISymbolGlyph glyph)
     {
+        if (fileKindFont is { } fileFont && fileKindGlyphs.TryGetValue(code, out char fileCode)
+            && fileFont.Glyphs.TryGetValue(fileCode, out var fileGlyph) && fileGlyph.Size.X > 0.0f)
+        {
+            glyph = new UISymbolGlyph(fileGlyph, fileFont.Texture, fileFont.EmSize, fileKindFieldSlope);
+            return true;
+        }
+
+        if (font is { } codiconFont && codiconFont.Glyphs.TryGetValue(code, out var codiconGlyph) && codiconGlyph.Size.X > 0.0f)
+        {
+            glyph = new UISymbolGlyph(codiconGlyph, codiconFont.Texture, codiconFont.EmSize, fieldSlope);
+            return true;
+        }
+
         glyph = default;
-        return font is not null && font.Glyphs.TryGetValue(code, out glyph) && glyph.Size.X > 0.0f;
+        return false;
     }
 
     /// <summary>The em of the font, which is the square every icon is drawn in.</summary>
@@ -174,3 +261,5 @@ public static class UISymbols
         return new UIRect(corner, corner + new Vector2(side));
     }
 }
+
+internal readonly record struct UISymbolGlyph(CharDefinition Definition, Texture Texture, float Em, float FieldSlope);

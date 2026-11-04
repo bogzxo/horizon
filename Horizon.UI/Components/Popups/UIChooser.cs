@@ -20,7 +20,7 @@ namespace Horizon.UI.Components;
 /// </summary>
 public static partial class UIChooser
 {
-    private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.13f;
+    private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.14f;
 
     // How far in from the card's edge the line along the bottom is written, where the rows' text starts
     private const float HINT_INSET = 12.0f;
@@ -118,7 +118,7 @@ public static partial class UIChooser
         // The title is what the box says until something's typed, the line about it goes quietly along the bottom
         UIDialog shown = UIDialog.ShowPalette(module, title, new DialogChoice("Go", PickChosen), new DialogChoice("Cancel"));
         Vector4 edge = module.Compositor.Skin?.BorderColor ?? new Vector4(1.0f, 1.0f, 1.0f, 0.1f);
-        var picking = shown.Body.Add(new StackPanel { Spacing = 6.0f });
+        var picking = shown.Body.Add(new ChooserPanel { Spacing = 6.0f });
         TextBox box = picking.Add(new TextBox
         {
             Size = new Vector2(WIDTH, BOX_HEIGHT),
@@ -129,19 +129,53 @@ public static partial class UIChooser
             Bare = true,
             LeadIcon = "search"
         });
-        picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
+        Panel divider = picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
         list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Choice = id => byText.GetValueOrDefault(id) });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
         // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
         // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
+        Panel? foot = null;
+        Label? hint = null;
         if (message.Length > 0)
         {
-            Panel foot = picking.Add(new Panel { Size = new Vector2(WIDTH, 0.0f), Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
-            foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
+            foot = picking.Add(new Panel { Size = new Vector2(WIDTH, 0.0f), Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
+            hint = foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
         }
+
+        // Work in module units, so the same chooser also fits an enlarged UI or a narrow editor.
+        // Keep the list scrollable instead of shrinking text or letting the card leave the window.
+        float fittedWidth = -1.0f;
+        void Fit()
+        {
+            float width = MathF.Min(WIDTH, MathF.Max(1.0f, module.Frame.Width - 48.0f));
+            if (width != fittedWidth)
+            {
+                fittedWidth = width;
+                box.Size = new Vector2(width, BOX_HEIGHT);
+                divider.Size = new Vector2(width, 1.0f);
+                list.Size = new Vector2(width, 0.0f);
+                nothing.Size = new Vector2(width, 64.0f);
+                if (foot is not null && hint is not null)
+                {
+                    foot.Size = new Vector2(width, 0.0f);
+                    hint.Size = new Vector2(MathF.Max(1.0f, width - HINT_INSET * 2.0f), 0.0f);
+                }
+            }
+            float rowHeight = MathF.Max(1.0f, list.RowHeightSeen > 0.0f ? list.RowHeightSeen : 32.0f);
+            float footerHeight = foot is not null ? MathF.Max(32.0f, foot.DesiredSize.Y) : 0.0f;
+            int rows = Math.Max(1, (int)((module.Frame.Height - UIDialog.PaletteDrop - 24.0f - BOX_HEIGHT - 26.0f - footerHeight) / rowHeight));
+            int fittedRows = Math.Clamp(list.Items.Length, 1, Math.Min(ROWS, rows));
+            if (list.Rows != fittedRows)
+            {
+                list.Rows = fittedRows;
+                list.Index = list.Index; // Keep the selection visible when fewer rows fit.
+            }
+        }
+        picking.OnFit = Fit;
 
         Use('\0', choices);
         Narrow(string.Empty);
+        Fit();
 
         box.OnChanged = typed =>
         {
@@ -150,6 +184,7 @@ public static partial class UIChooser
                 Use(prefix, prefix == '\0' ? choices : prefixed!(prefix)!);
 
             Narrow(prefix == '\0' ? typed : typed[1..]);
+            Fit();
         };
         box.OnSubmitted = _ =>
         {
@@ -186,6 +221,17 @@ public static partial class UIChooser
 
         box.Focus();
         return shown;
+    }
+
+    private sealed class ChooserPanel : StackPanel
+    {
+        internal Action? OnFit;
+
+        protected override void Update(float dt)
+        {
+            base.Update(dt);
+            OnFit?.Invoke();
+        }
     }
 
     /// <summary>

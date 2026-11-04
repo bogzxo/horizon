@@ -15,7 +15,7 @@ public partial class CodeEditor
     {
         get
         {
-            if (scrollGoal is not null || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar)
+            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar)
                 return -1;
             if (caretSeen && CaretGlide > 0.0f && glideTime < CaretGlide)
                 return -1;
