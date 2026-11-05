@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Core.Tweening;
@@ -142,7 +143,7 @@ public sealed class TileMapRooms : GameObject
     private TileMapRoom Load(string path, Vector2 origin)
     {
         path = Tidy(path);
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
             throw new FileNotFoundException($"A door leads to '{path}', which isn't there.");
 
         var room = new TileMapRoom(this, TileMap.Load(path, origin: origin));

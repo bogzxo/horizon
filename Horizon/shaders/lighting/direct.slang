@@ -257,6 +257,10 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     }
     float furthest = max(wallsReach, spritesReach);
 
+    // A solid face with interior shadows disabled needs no march out of its own wall.
+    bool inWall = wallsDistance(from, field) < 0.0;
+    if (inWall && !field.insideShadows) return 1.0;
+
     // A point inside something solid is lit as the face of it the light sees, the way out is walked first and the
     // march starts clear of the surface
     float t = 0.0;
@@ -268,9 +272,6 @@ float shadow(float2 from, float2 to, float size, Field field, float spriteShadow
     // The body of something solid (the ground under a fighter) is lit as its face and, unless asked, takes no
     // shadows at all, the floor stops every shadow at its edge rather than showing it running on down through it.
     // Asked, it takes the shadows of the walls its face does and still none of the sprites
-    bool inWall = wallsDistance(from, field) < 0.0;
-    if (inWall && !field.insideShadows) return 1.0;
-
     float visible = 1.0;
     float through = 1.0;
     float previous = 1e9;

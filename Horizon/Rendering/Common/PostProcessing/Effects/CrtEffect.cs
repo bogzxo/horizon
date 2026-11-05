@@ -35,7 +35,8 @@ public sealed class CrtEffect : PostEffect
     private PostTechnique shrink = null!, tube = null!;
     private PostTarget? small;
 
-    /// <summary>How many pixels of the picture make one dot of the tube, each way. Not used while <see cref="Resolution"/> is set.</summary>
+    /// <summary>How many logical pixels of the picture make one dot of the tube, each way, before render scaling.
+    /// Account for the camera's magnification here. Not used while <see cref="Resolution"/> is set.</summary>
     public float PixelSize { get; set; } = 1.0f;
 
     /// <summary>How many dots a scan line has and how many lines there are, for a tube of a fixed size whatever the picture is. Null to go by <see cref="PixelSize"/>.</summary>
@@ -67,9 +68,8 @@ public sealed class CrtEffect : PostEffect
 
     protected override void Render(PostContext context)
     {
-        Vector2 resolution = Resolution ?? context.SourceSize / MathF.Max(1.0f, PixelSize);
-        uint width = (uint)MathF.Max(1.0f, MathF.Round(resolution.X)), height = (uint)MathF.Max(1.0f, MathF.Round(resolution.Y));
-        resolution = new Vector2(width, height);
+        Vector2 resolution = ResolveResolution(context.LogicalSize);
+        uint width = (uint)resolution.X, height = (uint)resolution.Y;
 
         if (small is null || !small.Fits(width, height))
         {
@@ -115,6 +115,12 @@ public sealed class CrtEffect : PostEffect
 
     // How far from the middle of a dot the reads of the shrinking pass are, in pixels of the picture
     private static float SpreadOf(float ratio) => ratio <= 2.0f ? MathF.Max(0.0f, ratio - 1.0f) * 0.5f : ratio * 0.25f;
+
+    internal Vector2 ResolveResolution(Vector2 logicalSize)
+    {
+        Vector2 resolution = Resolution ?? logicalSize / MathF.Max(1.0f, PixelSize);
+        return new Vector2(MathF.Max(1.0f, MathF.Round(resolution.X)), MathF.Max(1.0f, MathF.Round(resolution.Y)));
+    }
 
     public override void Dispose()
     {

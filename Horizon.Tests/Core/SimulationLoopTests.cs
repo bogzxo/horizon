@@ -6,6 +6,27 @@ namespace Horizon.Tests;
 
 public class SimulationLoopTests
 {
+    [Fact]
+    public void Idle_deadlines_choose_the_earliest_change_and_expire_after_a_tick()
+    {
+        long now = Seconds(1);
+        using var loop = new SimulationLoop(120, 120, new Recorder(), () => now) { IdlePeriod = 0.25 };
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(0.53);
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(0.04);
+        loop.RequestTickIn(0.12);
+        now += Seconds(0.01);
+        Assert.Equal(0.03, loop.IdleWaitSeconds, 6);
+        now += Seconds(0.04);
+        Assert.Equal(0, loop.IdleWaitSeconds);
+        loop.Step();
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(double.NaN);
+        loop.RequestTickIn(-1);
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+    }
+
     private sealed class Recorder : ISimulationHost
     {
         public readonly List<string> Calls = [];
@@ -257,6 +278,23 @@ public class SimulationLoopTests
 
 public class SimulationContextTests
 {
+    [Fact]
+    public void Posting_work_wakes_a_sleeping_application_without_waiting_for_its_idle_period()
+    {
+        using var sleeping = new ManualResetEventSlim();
+        using var completed = new ManualResetEventSlim();
+        using var loop = new SimulationLoop("Idle wake test", 120, 120, new Idle())
+        {
+            IdlePeriod = 10,
+            IsIdle = () => { sleeping.Set(); return true; }
+        };
+        loop.Start();
+        Assert.True(sleeping.Wait(TimeSpan.FromSeconds(2)));
+        loop.Context.Post(_ => completed.Set(), null);
+        Assert.True(completed.Wait(TimeSpan.FromSeconds(1)), "Posted work waited for the ten-second idle timeout.");
+        loop.Stop();
+    }
+
     private sealed class Idle : ISimulationHost
     {
         public void BeginTick() { }

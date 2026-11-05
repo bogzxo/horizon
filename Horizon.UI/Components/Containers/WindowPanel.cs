@@ -213,6 +213,10 @@ public partial class WindowPanel : Panel
     // Dragged by its title bar it goes by exactly as much as the pointer does
     protected internal override bool FollowsPointer => drag == Drag.Move && Movable;
 
+    // A finger on the title bar or the corner moves or sizes the window, not whatever it scrolls
+    protected internal override bool KeepsTouchDrag(Vector2 point) =>
+        GripBounds.Contains(point) || (Movable && TitleBounds.Contains(point)) || base.KeepsTouchDrag(point);
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         // In front of the others in the same parent, the way a window is when it is clicked

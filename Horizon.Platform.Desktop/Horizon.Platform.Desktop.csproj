@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The engine on a desktop. The window (GLFW on Windows, SDL on a Mac and Linux), its frame, corners, drop down and
+    keys for everywhere, the keyboard, the mouse and the controllers through Silk, SDL's audio, and MoltenVK for a Mac.
+    It references the engine and the engine never names it, a program installs it in its Main (DesktopPlatform.Install).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <RootNamespace>Horizon.Platform.Desktop</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <Platforms>AnyCPU;x64</Platforms>
+    <IsPublishable>false</IsPublishable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugSymbols>false</DebugSymbols>
+    <DebugType>None</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Extensions" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Input.Sdl" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.SDL" Version="2.23.0" />
+    <!-- A Mac's Vulkan, so nobody has to install the SDK to play. Nothing on the other platforms -->
+    <PackageReference Include="Silk.NET.MoltenVK.Native" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing.Sdl" Version="2.23.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Horizon.Tests" />
+  </ItemGroup>
+
+</Project>

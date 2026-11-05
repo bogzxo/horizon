@@ -8,7 +8,6 @@ using Horizon.Rendering.PostProcessing;
 using Horizon.UI.Components;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
-using Silk.NET.Input;
 
 namespace Horizon.UI;
 
@@ -36,17 +35,14 @@ public partial class UICompositor
             return WindowEdges.None;
 
         // As wide as the system's own on a scaled screen, an edge of a few pixels on a 4K one is a needle to thread
-        var size = window.Window.Size;
-        return WindowManager.EdgesAt(GameEngine.Instance.Input.Mouse.WindowPosition, new Vector2(size.X, size.Y), window.ScalesToDisplay ? window.WindowUnitScale : 1.0f);
+        return WindowManager.EdgesAt(GameEngine.Instance.Input.Mouse.WindowPosition, window.PointSize, window.ScalesToDisplay ? window.WindowUnitScale : 1.0f);
     }
 
-    private UIPointer ReadMouse()
+    private UIPointer ReadMouse(Mouse mouse)
     {
-        var mouse = GameEngine.Instance.Input.Mouse;
-
         // A click that was over before this update even started still counts as one
         return new UIPointer(
-            viewportCamera.ScreenToWorld(mouse.Position),
+            ToWorld(mouse.Position),
             mouse.IsDown(MouseButton.Left) || mouse.WasPressed(MouseButton.Left),
             mouse.IsDown(MouseButton.Right) || mouse.WasPressed(MouseButton.Right),
             mouse.IsDown(MouseButton.Middle) || mouse.WasPressed(MouseButton.Middle));
@@ -57,7 +53,10 @@ public partial class UICompositor
         // A component that left the UI takes the focus with it, unless it went with a window, which gives it back
         KeepKeyboardSomewhere();
 
-        var keyboard = GameEngine.Instance.Input.Keyboard;
+        if (InputOf is not { } input)
+            return;
+
+        var keyboard = input.Keyboard;
         if (KeysMoved(keyboard))
             FocusVisible = true;
 
@@ -243,7 +242,7 @@ public partial class UICompositor
 
         // A key pressed takes the tooltip down until the pointer moves on, the one of the button it rests on stayed up
         // over whatever was typed after
-        if (GameEngine.Instance?.Input.Keyboard is { AnyPressed: true })
+        if (InputOf?.Keyboard is { AnyPressed: true })
         {
             keyHushedAt = lastPointer;
             keyHushed = true;
@@ -443,9 +442,9 @@ public partial class UICompositor
         chooserClickPending = true;
     }
 
-    private void RoutePointer(UIModule[] snapshot)
+    private void RoutePointer(UIModule[] snapshot, float dt)
     {
-        UIPointer pointer = PointerSource?.Invoke() ?? ReadMouse();
+        UIPointer pointer = PointerSource?.Invoke() ?? ReadPointer();
         lastPointer = pointer.Position;
         Pointer = pointer;
 
@@ -467,13 +466,28 @@ public partial class UICompositor
             return;
         }
 
+        // The system took the finger away (its own gesture, the app losing focus). Whatever it held is let go of
+        // without a click, and nothing of the gesture carries on
+        if (pointer.Cancelled)
+        {
+            CancelTouch();
+            SetHovered(null);
+            IsPointerOverUI = false;
+            pointerWasDown = false;
+            secondaryWasDown = false;
+            return;
+        }
+
         RouteScroll(snapshot, pointer.Position);
+        if (!pointer.Down)
+            StepFling(dt);
 
         // A component that left the UI while it was held is forgotten.
         if (pressed is not null && pressed.Module is not { Enabled: true })
         {
             pressed.IsPressed = false;
             pressed = null;
+            touchDeferred = false;
         }
 
         // Modules are drawn in order, so the last one is on top and gets the first look.
@@ -501,7 +515,7 @@ public partial class UICompositor
 
         // A tooltip is on top of everything, what's under it doesn't get the pointer and a click on it only takes it down.
         // One went straight through to the code under it and moved the caret somewhere nobody could see
-        if (pressed is null && TooltipBoxAt(pointer.Position) is { } tipModule)
+        if (pressed is null && !touchPanning && TooltipBoxAt(pointer.Position) is { } tipModule)
         {
             if ((pointer.Down && !pointerWasDown) || (pointer.SecondaryDown && !secondaryWasDown))
             {
@@ -518,7 +532,7 @@ public partial class UICompositor
         }
         else
         {
-            IsPointerOverUI = over is not null || pressed is not null;
+            IsPointerOverUI = over is not null || pressed is not null || touchPanning;
         }
 
         // The other button asks whatever it's over what it has to offer, the innermost component with a handler for
@@ -526,27 +540,14 @@ public partial class UICompositor
         if (pointer.SecondaryDown && !secondaryWasDown)
         {
             FocusVisible = false;
-            foreach (var module in snapshot)
-                module.Popup = null;
-
-            bool handled = false;
-            for (UIComponent? at = over; at is not null && !handled; at = at.Parent)
-            {
-                if (at.OnContextMenu is { } handler && at.EnabledInHierarchy && at.Module is { } menuModule)
-                {
-                    handler(menuModule.ToLocal(pointer.Position));
-                    handled = true;
-                }
-            }
-
-            if (!handled)
-                ContextRequested?.Invoke(over, pointer.Position);
+            OpenContext(snapshot, over, pointer.Position);
         }
         secondaryWasDown = pointer.SecondaryDown;
 
         // The edge of something that can be dragged bigger lights up under the pointer, and stays lit while it is held. What
-        // was under the pointer can have left its module this very update (a window closed by escape), and has no edges then
-        UIResize grip = over is { Module: { } overModule } && pressed is null ? over.GripAt(overModule.ToLocal(pointer.Position)) : UIResize.None;
+        // was under the pointer can have left its module this very update (a window closed by escape), and has no edges then.
+        // A finger has nothing hovering to light up
+        UIResize grip = !pointer.IsTouch && over is { Module: { } overModule } && pressed is null ? over.GripAt(overModule.ToLocal(pointer.Position)) : UIResize.None;
         UIComponent? gripOwner = grip != UIResize.None ? over : null;
         if (!ReferenceEquals(gripped, gripOwner) || (gripOwner is not null && gripOwner.ActiveGrip != grip))
         {
@@ -560,20 +561,26 @@ public partial class UICompositor
                 gripped = gripOwner;
         }
 
-        // While something is held nothing else reacts to the pointer passing over it.
-        UIComponent? hover = pressed is null || pressed == over ? over : null;
-        if (hover != hovered)
+        // A component that takes its drags by finger, or the scroll a finger's drag turns into, gets them before anything
+        // below hears of the pointer
+        bool touchTook = pointer.IsTouch && pointer.Down && pointerWasDown && TouchHeld(snapshot, pointer, over, dt);
+
+        // While something is held nothing else reacts to the pointer passing over it. A finger is only over anything
+        // while it's down, and not while it's scrolling, or the last thing tapped stays lit forever
+        bool hovers = !pointer.IsTouch || (pointer.Down && !touchPanning && !touchConsumed);
+        SetHovered(hovers && (pressed is null || pressed == over) ? over : null);
+
+        if (touchTook)
         {
-            if (hovered is not null)
-                hovered.IsHovered = false;
-            if (hover is not null)
-                hover.IsHovered = true;
-
-            hovered = hover;
+            // The finger's, scrolling or held for a menu
         }
-
+        else if (pointer.IsTouch && touchPanning && !pointer.Down)
+        {
+            // Let go of mid scroll, it carries on by itself and slows down. Not a click on anything
+            touchPanning = false;
+        }
         // An edge of a window without the system's frame, dragged by the window itself, nothing in the UI gets the press
-        if (pointer.Down && !pointerWasDown && !snapshot.Any(module => module.Dialog is { IsOpen: true }) &&
+        else if (!pointer.IsTouch && pointer.Down && !pointerWasDown && !snapshot.Any(module => module.Dialog is { IsOpen: true }) &&
             WindowEdgeAt() is var windowEdges && windowEdges != WindowEdges.None)
         {
             GameEngine.Instance.WindowManager.BeginResize(windowEdges);
@@ -588,22 +595,30 @@ public partial class UICompositor
             }
 
             // Pressing on something that isn't part of the UI at all leaves the focus where it is,
-            // or a click meant for the game would stop the typing. So does a menu, which has nothing to type into
+            // or a click meant for the game would stop the typing. So does a menu, which has nothing to type into.
+            // A finger moves the focus when it's let go of as a tap, a finger that scrolls past a box doesn't type in it
             FocusVisible = false;
+            if (pointer.IsTouch)
+                BeginTouch(pointer, over);
             if (over is not null && !over.LeavesFocus)
-                Focus = FocusForPress(over);
+            {
+                if (pointer.IsTouch)
+                    touchFocus = over;
+                else
+                    Focus = FocusForPress(over);
+            }
 
             if (over is { Module: { } pressedIn } && over.EnabledInHierarchy)
             {
                 pressed = over;
                 pressed.IsPressed = true;
 
-                // On an edge that can be dragged the press is the start of that, and none of the component's business
+                // On an edge that can be dragged the press is the start of that, and none of the component's business.
+                // Inside something a finger scrolls the component hears of the press once it's clear it's no scroll
                 Vector2 at = pressedIn.ToLocal(pointer.Position);
-                if (pressed.GripAt(at) is var edges && edges != UIResize.None)
-                    pressed.BeginResize(edges, at);
-                else
-                    pressed.OnPointerDown(at);
+                touchDeferred = pointer.IsTouch && !pressed.KeepsTouchDrag(at) && Pans(pressed);
+                if (!touchDeferred)
+                    PressAt(pressed, at);
             }
         }
         else if (pointer.Down && pressed is not null)
@@ -614,6 +629,10 @@ public partial class UICompositor
                 pressed.IsPressed = false;
                 pressed = null;
             }
+            else if (touchDeferred)
+            {
+                // Not the component's yet, see BeginTouch
+            }
             else if (pressed.IsResizing)
                 pressed.DragResize(heldIn.ToLocal(pointer.Position));
             else
@@ -621,28 +640,87 @@ public partial class UICompositor
         }
         else if (!pointer.Down && pressed is not null)
         {
+            // A tap. What it's on hears of the press now, then has the focus, then is let go of and clicked as the mouse's would be
+            if (pointer.IsTouch)
+            {
+                ApplyTouchFocus();
+                if (touchDeferred)
+                    DeliverDeferredPress();
+            }
+
             var released = pressed;
             pressed = null;
 
-            released.IsPressed = false;
-
-            if (released.IsResizing)
+            if (released is not null)
             {
-                // Letting go of an edge is not a click on whatever the edge belongs to
-                released.EndResize();
-                if (ReferenceEquals(gripped, released)) gripped = null;
+                released.IsPressed = false;
+
+                if (released.IsResizing)
+                {
+                    // Letting go of an edge is not a click on whatever the edge belongs to
+                    released.EndResize();
+                    if (ReferenceEquals(gripped, released)) gripped = null;
+                }
+                else if (released.Module is { } releasedIn)
+                {
+                    releasing = released;
+                    try { released.OnPointerUp(releasedIn.ToLocal(pointer.Position)); }
+                    finally { releasing = null; }
+
+                    if (released == over)
+                        released.OnClick();
+                }
             }
-            else if (released.Module is { } releasedIn)
-            {
-                releasing = released;
-                try { released.OnPointerUp(releasedIn.ToLocal(pointer.Position)); }
-                finally { releasing = null; }
+        }
+        else if (pointer.IsTouch && !pointer.Down && pointerWasDown)
+        {
+            // A tap on nothing the UI has, a box focused by it still gets the focus
+            ApplyTouchFocus();
+        }
 
-                if (released == over)
-                    released.OnClick();
+        if (pointer.IsTouch && !pointer.Down && pointerWasDown)
+            EndTouch();
+
+        pointerWasDown = pointer.Down;
+    }
+
+    // Lights up whatever the pointer is over, and puts out what it was over before
+    private void SetHovered(UIComponent? hover)
+    {
+        if (hover == hovered)
+            return;
+
+        if (hovered is not null)
+            hovered.IsHovered = false;
+        if (hover is not null)
+            hover.IsHovered = true;
+
+        hovered = hover;
+    }
+
+    /// <summary>
+    /// Helper method to ask whatever is under a point what it has to offer, the innermost component with a handler for it,
+    /// then whoever listens on the whole compositor. True when somebody had something, for a finger held still that
+    /// shouldn't click as well when it does.
+    /// </summary>
+    private bool OpenContext(UIModule[] snapshot, UIComponent? over, Vector2 position)
+    {
+        foreach (var module in snapshot)
+            module.Popup = null;
+
+        for (UIComponent? at = over; at is not null; at = at.Parent)
+        {
+            if (at.OnContextMenu is { } handler && at.EnabledInHierarchy && at.Module is { } menuModule)
+            {
+                handler(menuModule.ToLocal(position));
+                return true;
             }
         }
 
-        pointerWasDown = pointer.Down;
+        if (ContextRequested is not { } requested)
+            return false;
+
+        requested(over, position);
+        return true;
     }
 }

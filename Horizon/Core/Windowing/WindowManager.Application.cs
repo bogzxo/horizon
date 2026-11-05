@@ -1,14 +1,12 @@
 using System.Diagnostics;
 
-using Silk.NET.GLFW;
-using Silk.NET.Input;
-
 namespace Horizon.Core;
 
 // A window run as an application (RunMode.Application) rather than a game, an editor that sits there doing nothing
 // most of the time. It draws a frame only when something wants one, ticks a few times a second while nothing is
 // happening, and its thread waits for the system instead of asking it a thousand times a second, see
 // ApplicationBehaviour. A game has none of it unless it asks, every frame the screen shows, every tick at the rate.
+// How the platform's thread waits is the host's, what it waits for and when frames and ticks are due is decided here.
 public partial class WindowManager
 {
     // How long after the last input a window counts as idle, and how many ticks without a UI changing
@@ -21,14 +19,10 @@ public partial class WindowManager
     // The frame drawn a second however still everything is, so nothing anybody forgot to ask for stays stale for long
     private const int HEARTBEAT_MS = 1000;
 
-    // How long the window's thread waits for the system while idle, the longest it takes to notice a closing flag
-    private const double EVENT_WAIT = 0.1;
 
-    // How long the simulation sleeps between idle ticks, in the window that has the keyboard, in one that hasn't (the
-    // caret blinks a touch less evenly, nobody's looking at it), and minimised, where nothing's seen at all. That one
-    // is as long as an idle tick can stretch (SimulationLoop.MAX_STRETCH), so whatever counts its time in ticks
-    // (an auto save, a poll) still keeps time
-    private const double IDLE_FOCUSED = 0.05, IDLE_UNFOCUSED = 0.1, IDLE_MINIMISED = 0.25;
+    // Quiet windows sleep up to the longest an idle tick can stretch (SimulationLoop.MAX_STRETCH), so timers
+    // still keep time. Carets request an earlier tick for their next blink; input and queued work wake immediately.
+    private const double IDLE_PERIOD = 0.25;
 
     // How long frames are still drawn after the window is minimised, enough for the one that sizes everything down
     private const double FRAMES_MINIMISED = 0.25;
@@ -40,6 +34,9 @@ public partial class WindowManager
     /// <summary>Whether the window has the keyboard, for whatever only moves for somebody looking (a caret's blink). From any thread.</summary>
     public bool IsFocused => windowFocused;
 
+    /// <summary>Whether the window is down to the taskbar, or the app is in the background on a phone. A fight pauses on it. From any thread.</summary>
+    public bool IsMinimized => windowMinimised;
+
     /// <summary>What the window is run for, see <see cref="WindowManagerConfiguration.Mode"/>.</summary>
     public RunMode Mode { get; }
 
@@ -50,8 +47,6 @@ public partial class WindowManager
     private long lastInput, lastChangeTick, drawUntil;
     private readonly AutoResetEvent frameWanted = new(false);
 
-    // GLFW, to wait for its events and to wake the wait from another thread. Null on a Mac, whose window is SDL's
-    private Glfw? glfw;
 
     /// <summary>
     /// Asks for frames to be drawn for a while, for a window that only draws when something wants it to
@@ -87,7 +82,7 @@ public partial class WindowManager
     /// <summary>
     /// Wakes an application that went quiet, from any thread, for work that finished somewhere else (a search, a file
     /// read, a program run off the simulation's thread) and is waiting to be taken in on the next tick. Without it the
-    /// result waited for the next slow tick of an idle simulation, a twentieth of a second.
+    /// result would wait for the next slow tick of an idle simulation.
     /// </summary>
     public void Wake()
     {
@@ -95,9 +90,20 @@ public partial class WindowManager
         RequestFrames();
     }
 
+    /// <summary>Schedules the next timed UI change without requesting unchanged frames. Simulation thread only.</summary>
+    public void RequestTickIn(double seconds)
+    {
+        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
+            simulation?.RequestTickIn(seconds);
+    }
+
     /// <summary>Helper method for input of any kind, which wakes everything up. Thread of the window.</summary>
     private void NoteInput()
     {
+        // A game was never told about input this way, it has nothing to wake
+        if (Behaviour == ApplicationBehaviour.None)
+            return;
+
         Volatile.Write(ref lastInput, Stopwatch.GetTimestamp());
         simulation?.Wake();
         RequestFrames();
@@ -109,56 +115,61 @@ public partial class WindowManager
     private bool IdleNow() =>
         !InputLately && Tick - Volatile.Read(ref lastChangeTick) > IDLE_TICKS && !exclusiveRequested && !EntityLifecycle.HasWork;
 
-    /// <summary>Helper method to listen to every way input comes in, for an application. Thread of the window, once.</summary>
-    private void ListenForInput()
+    /// <summary>
+    /// Helper method to take in what the window was like as it came up. Creation can finish without a focus transition
+    /// (Windows refusing to activate a new background window, say), so the cached state starts from what the native
+    /// window said rather than relying on later events. An application only, a game was never told. Platform thread, once.
+    /// </summary>
+    private void TakeState(Horizon.Platform.PlatformState state)
+    {
+        platformDisplay = state.Display;
+        display = new DisplayState(state.Display.ViewportSize, state.Display.WindowSize, state.Display.ScreenSize);
+
+        if (Behaviour == ApplicationBehaviour.None)
+            return;
+
+        windowFocused = state.Focused;
+        windowMinimised = state.Minimized;
+    }
+
+    /// <summary>Helper method for the window getting the keyboard or losing it. A game ignores it. Platform thread.</summary>
+    private void OnFocus(bool focused)
     {
         if (Behaviour == ApplicationBehaviour.None)
             return;
 
-        foreach (IMouse mouse in _input.Mice)
-        {
-            mouse.MouseMove += OnMouseMove;
-            mouse.MouseDown += OnMouseButton;
-            mouse.MouseUp += OnMouseButton;
-            mouse.Scroll += OnScroll;
-        }
-
-        foreach (IKeyboard keyboard in _input.Keyboards)
-        {
-            keyboard.KeyDown += OnKey;
-            keyboard.KeyUp += OnKey;
-            keyboard.KeyChar += OnChar;
-        }
-
-        _window.FocusChanged += OnFocus;
-        _window.StateChanged += OnState;
-    }
-
-    // Methods rather than lambdas, handed over once, a frame allocates nothing
-    private void OnMouseMove(IMouse mouse, System.Numerics.Vector2 at) => NoteInput();
-    private void OnMouseButton(IMouse mouse, Silk.NET.Input.MouseButton button) => NoteInput();
-    private void OnScroll(IMouse mouse, ScrollWheel wheel) => NoteInput();
-    private void OnKey(IKeyboard keyboard, Silk.NET.Input.Key key, int code) => NoteInput();
-    private void OnChar(IKeyboard keyboard, char character) => NoteInput();
-    private void OnFocus(bool focused)
-    {
         windowFocused = focused;
         UpdateIdlePeriod();
         NoteInput();
     }
 
-    private void OnState(Silk.NET.Windowing.WindowState state)
+    /// <summary>
+    /// Helper method for the window going down to the taskbar or coming back, or the app going to the back on a phone.
+    /// The state is kept whatever the behaviour (a game pauses its fight on IsMinimized), only an application holds its
+    /// frames on it. Platform thread.
+    /// </summary>
+    private void OnMinimized(bool minimised)
     {
-        bool minimised = state == Silk.NET.Windowing.WindowState.Minimized;
         if (minimised && !windowMinimised)
             Volatile.Write(ref minimisedAt, Stopwatch.GetTimestamp());
         windowMinimised = minimised;
+        if (Behaviour == ApplicationBehaviour.None)
+            return;
+
         UpdateIdlePeriod();
         NoteInput();
     }
 
     /// <summary>
-    /// Helper method to have the simulation sleep longer between idle ticks while nobody's looking, see IDLE_FOCUSED.
+    /// Whether nothing is going on that the platform's thread has to look out for, so it may wait for the system to have
+    /// something to say rather than look a thousand times a second. Whether it can wait at all, and whether it's in the
+    /// middle of something of its own (a drag, a slide), is the host's to know.
+    /// </summary>
+    private bool MayWaitForEvents => (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && !InputLately;
+
+    /// <summary>
+    /// Sets the maximum idle sleep.    /// <summary>
+    /// Sets the maximum idle sleep. Timed UI changes can request an earlier tick.
     /// An application only, a self test run as a game keeps its pace. Any thread.
     /// </summary>
     private void UpdateIdlePeriod()
@@ -166,7 +177,7 @@ public partial class WindowManager
         if (simulation is not { } loop || Mode != RunMode.Application)
             return;
 
-        loop.IdlePeriod = windowMinimised ? IDLE_MINIMISED : windowFocused ? IDLE_FOCUSED : IDLE_UNFOCUSED;
+        loop.IdlePeriod = IDLE_PERIOD;
     }
 
     /// <summary>
@@ -194,59 +205,6 @@ public partial class WindowManager
 
             if (!frameWanted.WaitOne(HEARTBEAT_MS) && !hidden)
                 return;
-        }
-    }
-
-    /// <summary>
-    /// Helper method for the window's thread to wait between two looks at the system. A moment, woken early by whoever
-    /// wants something done on it, or while nothing is happening as long as the system has nothing to say.
-    /// </summary>
-    private void WaitForEvents()
-    {
-        bool idle = (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding && !InputLately && !closing;
-        if (!idle)
-        {
-            windowWake.WaitOne(EVENT_POLL);
-            return;
-        }
-
-        if (sdlWaiting)
-            WaitForSdl((int)(EVENT_WAIT * 1000.0));
-        else
-            glfw!.WaitEventsTimeout(EVENT_WAIT);
-    }
-
-    /// <summary>Wakes the window's thread, whichever way it is waiting. From any thread.</summary>
-    private void WakeWindow()
-    {
-        windowWake.Set();
-        if (glfw is not null && (Behaviour & ApplicationBehaviour.WaitForEvents) != 0)
-            glfw.PostEmptyEvent();
-        else if (sdlWaiting)
-            WakeSdl();
-    }
-
-    /// <summary>Helper method to get hold of GLFW for waiting on its events, where the window is GLFW's. Thread of the window.</summary>
-    private void SetUpWaiting()
-    {
-        if ((Behaviour & ApplicationBehaviour.WaitForEvents) == 0)
-            return;
-
-        // SDL's window waits on SDL, which a Mac's had nothing to wait on and asked the system every millisecond
-        if (UsesSdl)
-        {
-            sdlWaiting = true;
-            return;
-        }
-
-        try
-        {
-            glfw = Glfw.GetApi();
-        }
-        catch (Exception)
-        {
-            // No GLFW to wait on, the window asks the system every millisecond the way a game's does
-            glfw = null;
         }
     }
 }

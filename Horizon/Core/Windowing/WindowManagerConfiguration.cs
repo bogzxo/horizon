@@ -73,6 +73,16 @@ public readonly struct WindowManagerConfiguration
     public readonly bool ScaleToDisplay { get; init; }
 
     /// <summary>
+    /// How big the scene is drawn for the size of the window, and what blows it back up, see
+    /// <see cref="Horizon.Rendering.Scaling.RenderScaleSettings"/>. Null for the platform's own idea, which is native
+    /// on a desktop and picked from the screen's pixels and density on a phone. Separate from
+    /// <see cref="ScaleToDisplay"/>, which is how big the UI is, this is how many pixels the scene has. The
+    /// HORIZON_RENDER_SCALE, HORIZON_UPSCALER, HORIZON_UPSCALER_SHARPNESS and HORIZON_RENDER_COMPOSITION settings win
+    /// over it, and <c>WindowManager.Scaling.Settings</c> changes it while running.
+    /// </summary>
+    public readonly Horizon.Rendering.Scaling.RenderScaleSettings? RenderScale { get; init; }
+
+    /// <summary>
     /// A picture for the window's corner and the taskbar, a .png (anything ImageSharp reads, which isn't an .ico), from
     /// the exe's folder unless the path says where. Null for the system's own. A Mac takes its Dock icon from the app
     /// bundle and ignores this.

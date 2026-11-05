@@ -178,7 +178,8 @@ public sealed class PostLayer : IDisposable
                 picture,
                 Nothing,
                 bindOutput,
-                size);
+                size,
+                target?.LogicalSize ?? GameEngine.Instance.WindowManager.ViewportSize);
         }
         else
         {

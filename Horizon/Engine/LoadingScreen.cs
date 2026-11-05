@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Graphics;
@@ -154,7 +155,7 @@ public sealed class LoadingScreen
     /// </summary>
     private static Texture? Read(string path, bool smooth)
     {
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
         {
             // The engine's own going missing is a game that didn't copy it, which is its business
             if (path != DEFAULT_IMAGE)

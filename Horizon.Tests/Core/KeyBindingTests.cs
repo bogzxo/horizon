@@ -1,7 +1,6 @@
 using Horizon.HIDL.Runtime;
 using Horizon.Input;
 
-using Silk.NET.Input;
 
 namespace Horizon.Tests.Core;
 

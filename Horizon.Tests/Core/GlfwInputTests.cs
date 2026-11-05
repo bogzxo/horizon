@@ -1,7 +1,7 @@
-using Horizon.Input;
+using Horizon.Platform.Desktop;
 
 using Silk.NET.GLFW;
-using Silk.NET.Input;
+using Key = Silk.NET.Input.Key;
 
 namespace Horizon.Tests.Core;
 

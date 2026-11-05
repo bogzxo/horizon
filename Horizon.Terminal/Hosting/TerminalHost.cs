@@ -3,7 +3,7 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 
 namespace Horizon.UI.Components;
 

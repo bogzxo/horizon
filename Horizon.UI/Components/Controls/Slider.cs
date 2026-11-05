@@ -166,6 +166,9 @@ public class Slider : ProgressBar
         return new UIRect(new Vector2(Bounds.Min.X + knob * 0.5f, Bounds.Min.Y), new Vector2(Bounds.Max.X - knob * 0.5f, Bounds.Max.Y));
     }
 
+    // Dragged by a finger it slides, even inside of something that scrolls
+    protected internal override bool KeepsTouchDrag(Vector2 point) => true;
+
     protected internal override void OnPointerDown(Vector2 point) => MoveTo(point);
 
     protected internal override void OnPointerDrag(Vector2 point) => MoveTo(point);

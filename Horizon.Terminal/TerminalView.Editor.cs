@@ -6,7 +6,7 @@ using Horizon.UI.Drawing;
 using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 

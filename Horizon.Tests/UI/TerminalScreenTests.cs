@@ -198,18 +198,18 @@ public class TerminalScreenTests
     [Fact]
     public void The_keys_come_out_as_a_terminal_sends_them()
     {
-        Assert.Equal("\u001b[A", TerminalKeys.Key(Silk.NET.Input.Key.Up, TerminalKeys.Modifiers.None, false, 0));
-        Assert.Equal("\u001bOA", TerminalKeys.Key(Silk.NET.Input.Key.Up, TerminalKeys.Modifiers.None, true, 0));
-        Assert.Equal("\u001b[1;5C", TerminalKeys.Key(Silk.NET.Input.Key.Right, TerminalKeys.Modifiers.Control, false, 0));
-        Assert.Equal("\u0003", TerminalKeys.Key(Silk.NET.Input.Key.C, TerminalKeys.Modifiers.Control, false, 0));
-        Assert.Equal("\u001b\u0003", TerminalKeys.Key(Silk.NET.Input.Key.C, TerminalKeys.Modifiers.Control | TerminalKeys.Modifiers.Alt, false, 0));
-        Assert.Equal("\u001b[15~", TerminalKeys.Key(Silk.NET.Input.Key.F5, TerminalKeys.Modifiers.None, false, 0));
-        Assert.Equal("\u001b[Z", TerminalKeys.Key(Silk.NET.Input.Key.Tab, TerminalKeys.Modifiers.Shift, false, 0));
-        Assert.Null(TerminalKeys.Key(Silk.NET.Input.Key.A, TerminalKeys.Modifiers.None, false, 0));
+        Assert.Equal("\u001b[A", TerminalKeys.Key(Horizon.Input.Key.Up, TerminalKeys.Modifiers.None, false, 0));
+        Assert.Equal("\u001bOA", TerminalKeys.Key(Horizon.Input.Key.Up, TerminalKeys.Modifiers.None, true, 0));
+        Assert.Equal("\u001b[1;5C", TerminalKeys.Key(Horizon.Input.Key.Right, TerminalKeys.Modifiers.Control, false, 0));
+        Assert.Equal("\u0003", TerminalKeys.Key(Horizon.Input.Key.C, TerminalKeys.Modifiers.Control, false, 0));
+        Assert.Equal("\u001b\u0003", TerminalKeys.Key(Horizon.Input.Key.C, TerminalKeys.Modifiers.Control | TerminalKeys.Modifiers.Alt, false, 0));
+        Assert.Equal("\u001b[15~", TerminalKeys.Key(Horizon.Input.Key.F5, TerminalKeys.Modifiers.None, false, 0));
+        Assert.Equal("\u001b[Z", TerminalKeys.Key(Horizon.Input.Key.Tab, TerminalKeys.Modifiers.Shift, false, 0));
+        Assert.Null(TerminalKeys.Key(Horizon.Input.Key.A, TerminalKeys.Modifiers.None, false, 0));
 
         // The kitty protocol tells escape and control with a letter apart
-        Assert.Equal("\u001b[27;5u", TerminalKeys.Key(Silk.NET.Input.Key.Escape, TerminalKeys.Modifiers.Control, false, 1));
-        Assert.Equal("\u001b", TerminalKeys.Key(Silk.NET.Input.Key.Escape, TerminalKeys.Modifiers.None, false, 1));
+        Assert.Equal("\u001b[27;5u", TerminalKeys.Key(Horizon.Input.Key.Escape, TerminalKeys.Modifiers.Control, false, 1));
+        Assert.Equal("\u001b", TerminalKeys.Key(Horizon.Input.Key.Escape, TerminalKeys.Modifiers.None, false, 1));
         Assert.Equal("\u001b[105;5u", TerminalKeys.Character("i", TerminalKeys.Modifiers.Control, 1));
         Assert.Equal("\u001bx", TerminalKeys.Character("x", TerminalKeys.Modifiers.Alt, 0));
 

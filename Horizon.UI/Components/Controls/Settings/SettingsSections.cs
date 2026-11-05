@@ -1,5 +1,6 @@
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
+using Horizon.Platform;
 
 namespace Horizon.UI.Components;
 
@@ -26,11 +27,11 @@ public static class SettingsSections
     public static Dictionary<string, IRuntimeValue>? TryRead(string? path, out string? error)
     {
         error = null;
-        if (path is null || !File.Exists(path))
+        if (path is null || !PlatformStorage.Exists(path))
             return null;
         try
         {
-            return ReadText(File.ReadAllText(path));
+            return ReadText(PlatformStorage.ReadAllText(path));
         }
         catch (Exception e)
         {

@@ -104,7 +104,7 @@ internal sealed class UISkinsCheck : Scene, ISelfCheck
         test.Check("skins: there is more than the one games always had, and the setting starts on that one", () =>
             skins.Count >= 5 && UISkins.Current.Name == UISkins.DEFAULT && UISkins.Find("no_such_skin") is null);
         test.Check("skins: every one of them says what it is called and which theme is its usual one", () =>
-            skins.All(skin => skin.Title.Length > 0 && File.Exists(skin.Directory + skin.File) && (skin.Themes.Count == 0 || skin.Has(skin.UsualTheme))));
+            skins.All(skin => skin.Title.Length > 0 && Horizon.Content.ContentFiles.Exists(skin.Directory + skin.File) && (skin.Themes.Count == 0 || skin.Has(skin.UsualTheme))));
         test.Check("skins: a UI made without a skin follows the setting, one made with its own doesn't", () =>
             _compositor.FollowsSkins && _themed.FollowsSkins && !_own.FollowsSkins);
 
@@ -191,21 +191,22 @@ internal sealed class UISkinsCheck : Scene, ISelfCheck
             firstTheme is not null && UISkins.Current.Has(firstTheme) && UISkins.Theme == firstTheme);
 
         // Kept in a file, and read back out of it
-        string kept = Path.Combine(Path.GetTempPath(), $"horizon_skin_check_{Environment.ProcessId}.txt");
+        // In the platform's own cache folder, LocalAppData or ~/.cache on a desktop and the app's cache on a phone
+        string kept = Path.Combine(Horizon.Platform.PlatformStorage.Cache(Path.Combine("Horizon", "Horizon.Testing")), $"skin_check_{Environment.ProcessId}.txt");
         test.Run(() =>
         {
-            File.Delete(kept);
+            Horizon.Platform.PlatformStorage.Current.Delete(kept);
             UISkins.Remember(kept);
             UISkins.Use("retro_windows", "desert");
         });
         test.Check("setting: with a file to keep it in, a change is written to it", () =>
-            File.Exists(kept) && File.ReadAllText(kept) == "retro_windows:desert");
+            Horizon.Platform.PlatformStorage.Exists(kept) && Horizon.Platform.PlatformStorage.ReadAllText(kept) == "retro_windows:desert");
         test.Run(() =>
         {
             UISkins.Remember(null);
             UISkins.Use(UISkins.DEFAULT);
         });
-        test.Check("setting: told to stop it leaves the file alone", () => File.ReadAllText(kept) == "retro_windows:desert");
+        test.Check("setting: told to stop it leaves the file alone", () => Horizon.Platform.PlatformStorage.ReadAllText(kept) == "retro_windows:desert");
         test.Run(() => UISkins.Remember(kept));
         test.Check("setting: and the file is what it comes back up in", () =>
             UISkins.Current.Name == "retro_windows" && UISkins.Theme == "desert");
@@ -222,7 +223,7 @@ internal sealed class UISkinsCheck : Scene, ISelfCheck
         {
             UISkins.Remember(null);
             UISkins.Use(UISkins.DEFAULT);
-            File.Delete(kept);
+            Horizon.Platform.PlatformStorage.Current.Delete(kept);
             _name.Text = "done";
         });
         test.WaitFor(() => _compositor.Skin is { } worn && Matches(worn, UISkins.Current, null), 3.0f);

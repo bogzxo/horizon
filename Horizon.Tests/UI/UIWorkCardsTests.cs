@@ -1,4 +1,7 @@
+using System.Numerics;
 using Horizon.Core.Threading;
+using Horizon.Engine;
+using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Drawing;
 
@@ -74,6 +77,83 @@ public class UIWorkCardsTests
 
         Assert.NotNull(told);
         Assert.Contains("didn't work, no network", told);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unlisted_work_stays_off_the_status_bar_and_still_delivers_its_result(bool fail)
+    {
+        using var compositor = new UICompositor(new Camera2D(new Vector2(600, 400)));
+        var scheduler = new WorkScheduler();
+        var cards = new UIWorkCards(scheduler, new Notifications()) { Listed = work => work.Key != "quiet" };
+        StatusItem status = cards.AddTo(new StatusBar(), compositor.CreateModule());
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorkItem? delivered = null;
+        int ended = 0;
+        scheduler.Ended += _ => ended++;
+        WorkItem quiet = scheduler.Start("quiet", "Discovering repositories", async _ =>
+        {
+            await release.Task;
+            if (fail) throw new InvalidOperationException("discovery failed");
+        }, work => delivered = work);
+
+        try
+        {
+            cards.Update();
+            Assert.Equal(1, scheduler.Active);
+            Assert.Equal(0, scheduler.CountActive(cards.Listed));
+            Assert.False(status.IsVisible!());
+            Assert.Equal(string.Empty, status.Text);
+            Assert.Single(cards.Menu().Items);
+            Assert.Equal("Nothing going", cards.Menu().Items[0].Label);
+            Assert.Null(delivered);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await quiet.Completion.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        cards.Update();
+        Assert.Same(quiet, delivered);
+        Assert.Equal(1, ended);
+        Assert.Equal(fail ? WorkState.Failed : WorkState.Succeeded, delivered!.State);
+        Assert.Equal(fail ? "discovery failed" : null, delivered.Error);
+        Assert.False(status.IsVisible!());
+    }
+
+    [Fact]
+    public async Task The_status_count_and_menu_include_visible_waiting_work_and_exclude_quiet_work()
+    {
+        using var compositor = new UICompositor(new Camera2D(new Vector2(600, 400)));
+        var scheduler = new WorkScheduler(mostAtOnce: 1);
+        var cards = new UIWorkCards(scheduler, new Notifications()) { Listed = work => work.Key != "quiet" };
+        StatusItem status = cards.AddTo(new StatusBar(), compositor.CreateModule());
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorkItem build = scheduler.Start("build", "Building", _ => release.Task);
+        WorkItem quiet = scheduler.Start("quiet", "Discovering repositories", _ => release.Task);
+        WorkItem install = scheduler.Start("install", "Installing", _ => release.Task);
+
+        try
+        {
+            cards.Update();
+            Assert.Equal(3, scheduler.Active);
+            Assert.Equal(2, scheduler.CountActive(cards.Listed));
+            Assert.Equal(WorkState.Waiting, install.State);
+            Assert.True(status.IsVisible!());
+            Assert.Equal("$(sync~spin) Installing and 1 more", status.Text);
+            Assert.Equal(2, cards.Menu().Items.Count);
+            Assert.DoesNotContain(cards.Menu().Items, item => item.Label.Contains("Discovering"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(build.Completion, quiet.Completion, install.Completion).WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        cards.Update();
+        Assert.False(status.IsVisible!());
     }
 
     [Fact]

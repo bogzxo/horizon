@@ -9,7 +9,6 @@ using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
 
 namespace Horizon.Testing.Examples.FirstSteps;
 

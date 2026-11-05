@@ -4,7 +4,7 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Input;
 

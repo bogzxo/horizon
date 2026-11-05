@@ -1,11 +1,7 @@
-using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 
-using Horizon.Graphics.Vulkan;
+using Horizon.Content;
 using Horizon.Logging;
-
-using Slangc.NET;
 
 namespace Horizon.Graphics;
 
@@ -37,76 +33,71 @@ public sealed class CompiledShader
 /// <para>
 /// Set <c>HORIZON_SHADER_CACHE=off</c> to compile every time, or to a folder to keep the cache there.
 /// </para>
+/// <para>
+/// A platform with no Slang (a phone) loads the same modules out of a shader pack in content instead, see
+/// <see cref="ShaderPack"/>. <c>HORIZON_SHADERS=packed</c> makes a desktop run do that too and nothing else, no
+/// cache and no compiler, so a pack can be proven without a phone. <c>HORIZON_SHADERS=compile</c> never looks at a
+/// pack. Unset, the compiler is used and the pack only once Slang turns out not to be there.
+/// <c>HORIZON_SHADER_MANIFEST=&lt;file&gt;</c> writes down every program asked for, cache hits too, which is what
+/// <c>Horizon.Shaders.Build</c> makes a pack out of.
+/// </para>
 /// </summary>
-public static class ShaderCompiler
+public static partial class ShaderCompiler
 {
-    private const string CACHE_VARIABLE = "HORIZON_SHADER_CACHE";
+    private const string SOURCING_VARIABLE = "HORIZON_SHADERS";
 
-    private static readonly string[] SlangArguments = ["-target", "spirv", "-profile", "spirv_1_6", "-matrix-layout-row-major", "-fvk-use-entrypoint-name"];
-
-    // What an HLSL file calls its entry points, and the stage each one is
-    private static readonly (string Name, ShaderStage Stage)[] HlslEntryPoints =
-    [
-        ("vsMain", ShaderStage.Vertex),
-        ("fsMain", ShaderStage.Fragment),
-        ("psMain", ShaderStage.Fragment),
-        ("csMain", ShaderStage.Compute),
-        ("gsMain", ShaderStage.Geometry)
-    ];
-
-    private static readonly Lock slangLock = new();
-    private static bool helpersLoaded;
-
-    /// <summary>
-    /// Helper method to load the library Slang's optimizer lives in by its full path, once. Slang asks for it by name
-    /// and the loader only looks next to the exe, which is not where the package puts it.
-    /// </summary>
-    private static void LoadHelpers()
-    {
-        if (helpersLoaded) return;
-        helpersLoaded = true;
-
-        string rid = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
-        rid += System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "-arm64" : "-x64";
-        // On Linux and macOS the package names it with Slang's version (libslang-glslang-2026.19.so), on Windows it doesn't
-        string pattern = OperatingSystem.IsWindows() ? "slang-glslang*.dll" : OperatingSystem.IsMacOS() ? "libslang-glslang*.dylib" : "libslang-glslang*.so";
-
-        foreach (string folder in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native") })
-        {
-            string? candidate = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, pattern).Order(StringComparer.Ordinal).LastOrDefault() : null;
-            if (candidate is null) continue;
-            try
-            {
-                System.Runtime.InteropServices.NativeLibrary.Load(candidate);
-                return;
-            }
-            catch (Exception)
-            {
-                // Without it Slang still compiles, it only can't optimise
-            }
-        }
-    }
-
-    private static string? cacheDirectory;
-    private static bool checkedCacheDirectory;
+    private static ShaderOptions? defaults;
 
     /// <summary>The language a file is in, by its extension.</summary>
     public static ShaderLanguage LanguageOf(string? path) =>
         Path.GetExtension(path ?? string.Empty).Equals(".hlsl", StringComparison.OrdinalIgnoreCase) ? ShaderLanguage.Hlsl : ShaderLanguage.Slang;
 
+    /// <summary>What the environment asks for, read once.</summary>
+    // Programs compile on several threads at once and only one recorder may own the manifest file
+    internal static ShaderOptions Defaults => LazyInitializer.EnsureInitialized(ref defaults, DefaultsFromEnvironment);
+
+    private static ShaderOptions DefaultsFromEnvironment()
+    {
+        ShaderSourcing sourcing = SourcingFrom(Environment.GetEnvironmentVariable(SOURCING_VARIABLE));
+        if (sourcing == ShaderSourcing.Packed)
+            Log.Info("[ShaderCompiler] HORIZON_SHADERS=packed, every shader comes out of the shader pack and nothing is compiled or cached.");
+
+        return new ShaderOptions
+        {
+            Sourcing = sourcing,
+            // A packed run never reads the cache, an old module there would hide a pack that's missing it
+            CacheFolder = sourcing == ShaderSourcing.Packed ? null : CacheDirectory(),
+            Recorder = ShaderManifestRecorder.FromEnvironment()
+        };
+    }
+
+    internal static ShaderSourcing SourcingFrom(string? setting) => setting?.Trim().ToLowerInvariant() switch
+    {
+        "packed" or "pack" => ShaderSourcing.Packed,
+        "compile" or "compiler" => ShaderSourcing.Compile,
+        _ => ShaderSourcing.Automatic
+    };
+
     /// <summary>
     /// Compiles every stage of a description. Null, with what went wrong in <paramref name="error"/>, if any of it didn't compile.
     /// </summary>
-    public static CompiledShader? Compile(in ShaderDescription description, string name, out string error)
+    public static CompiledShader? Compile(in ShaderDescription description, string name, out string error) =>
+        Compile(description, name, Defaults, out error);
+
+    /// <summary>The same with the options said rather than read from the environment, what the tests and the pack builder use.</summary>
+    internal static CompiledShader? Compile(in ShaderDescription description, string name, ShaderOptions options, out string error)
     {
         var result = new CompiledShader();
         var errors = new StringBuilder();
+
+        // One content source for the whole program, the installed one can be swapped while it compiles
+        IContentFiles content = options.Content ?? ContentFiles.Source;
 
         // The files of a program compile side by side, it is the one thing about shaders that takes a while
         var definitions = description.Definitions;
         var outcomes = new (CompiledStage[] Stages, UniformBlockLayout? Params, string Error)[definitions.Length];
 
-        Parallel.For(0, definitions.Length, i => outcomes[i] = CompileDefinition(definitions[i], name));
+        Parallel.For(0, definitions.Length, i => outcomes[i] = CompileDefinition(definitions[i], name, options, content));
 
         foreach (var (stages, parameters, said) in outcomes)
         {
@@ -140,7 +131,7 @@ public static class ShaderCompiler
         return result;
     }
 
-    private static (CompiledStage[], UniformBlockLayout?, string) CompileDefinition(in ShaderDefinition definition, string name)
+    private static (CompiledStage[], UniformBlockLayout?, string) CompileDefinition(in ShaderDefinition definition, string name, ShaderOptions options, IContentFiles content)
     {
         ShaderLanguage language = LanguageOf(definition.File);
         string fileName = definition.File ?? $"{name}.{definition.Stage}";
@@ -148,332 +139,109 @@ public static class ShaderCompiler
         string source;
         try
         {
-            using var preprocessor = new ShaderPreprocessor();
+            using var preprocessor = new ShaderPreprocessor(content, options.BindlessCapacity);
             source = definition.File is null
-                ? preprocessor.ProcessSource(string.Empty, definition.Source.Split('\n').Select(line => line.TrimEnd('\r')))
+                ? preprocessor.ProcessSource(string.Empty, ShaderLines.Split(definition.Source))
                 : preprocessor.ProcessFile(definition.File);
+
+            // Before anything is looked up, so a program that comes out of the cache or the pack is written down too
+            options.Recorder?.Record(definition, name, language, preprocessor, source, content);
         }
         catch (Exception e)
         {
             return ([], null, $"{fileName}, {e.Message}");
         }
 
-        return language == ShaderLanguage.Hlsl ? CompileHlsl(source, fileName) : CompileSlang(source, fileName);
-    }
+        var units = UnitsOf(source, language);
+        if (units.Length == 0) return ([], null, $"{fileName} has none of vsMain, fsMain, psMain, csMain or gsMain in it.");
 
-    private static (CompiledStage[], UniformBlockLayout?, string) CompileSlang(string source, string fileName)
-    {
-        string key = KeyFor(source, "slang", string.Empty);
-        if (TryLoadCached(key, out var kept)) return (kept.Stages, kept.Params, string.Empty);
-
-        try
-        {
-            SlangReflection reflection;
-            byte[] spirv;
-            lock (slangLock)
-            {
-                LoadHelpers();
-                spirv = SlangCompiler.CompileWithReflection(source, SlangArguments, out reflection);
-            }
-
-            var stages = new List<CompiledStage>();
-            foreach (var entry in reflection.EntryPoints)
-            {
-                ShaderStage? stage = entry.Stage switch
-                {
-                    SlangStage.Vertex => ShaderStage.Vertex,
-                    SlangStage.Fragment => ShaderStage.Fragment,
-                    SlangStage.Compute => ShaderStage.Compute,
-                    SlangStage.Geometry => ShaderStage.Geometry,
-                    _ => null
-                };
-
-                if (stage is null)
-                {
-                    Log.Warning($"[ShaderCompiler] {fileName} has a {entry.Stage} entry point, which the engine has no use for.");
-                    continue;
-                }
-
-                stages.Add(new CompiledStage(stage.Value, entry.Name, spirv, entry.ThreadGroupSize ?? []));
-            }
-
-            var parameters = ParamsOf(reflection);
-            KeepCached(key, stages, parameters);
-            return ([.. stages], parameters, string.Empty);
-        }
-        catch (Exception e)
-        {
-            return ([], null, $"{fileName}\n{e.Message.Trim()}");
-        }
-    }
-
-    private static (CompiledStage[], UniformBlockLayout?, string) CompileHlsl(string source, string fileName)
-    {
         var stages = new List<CompiledStage>();
         UniformBlockLayout? parameters = null;
-
-        foreach (var (entryName, stage) in HlslEntryPoints)
+        foreach (var unit in units)
         {
-            if (!source.Contains(entryName + "(", StringComparison.Ordinal)) continue;
-
-            string key = KeyFor(source, "hlsl", entryName);
-            if (TryLoadCached(key, out var kept))
-            {
-                stages.AddRange(kept.Stages);
-                parameters ??= kept.Params;
-                continue;
-            }
-
-            string[] arguments = [.. SlangArguments, "-lang", "hlsl", "-entry", entryName, "-stage", StageName(stage)];
+            ShaderModule module;
             try
             {
-                SlangReflection reflection;
-                byte[] spirv;
-                lock (slangLock)
-                {
-                    LoadHelpers();
-                    spirv = SlangCompiler.CompileWithReflection(source, arguments, out reflection);
-                }
-
-                uint[] groups = reflection.EntryPoints.FirstOrDefault()?.ThreadGroupSize ?? [];
-                var made = new CompiledStage(stage, entryName, spirv, groups);
-                var found = ParamsOf(reflection);
-
-                KeepCached(key, [made], found);
-                stages.Add(made);
-                parameters ??= found;
+                module = Resolve(unit, fileName, options, content);
+            }
+            catch (ShaderUnavailableException e)
+            {
+                return ([], null, e.Message);
             }
             catch (Exception e)
             {
-                return ([], null, $"{fileName} ({entryName})\n{e.Message.Trim()}");
+                return ([], null, $"{unit.Label(fileName)}\n{e.Message.Trim()}");
             }
+
+            stages.AddRange(module.Stages);
+            parameters ??= module.Params;
         }
 
-        if (stages.Count == 0) return ([], null, $"{fileName} has none of vsMain, fsMain, psMain, csMain or gsMain in it.");
         return ([.. stages], parameters, string.Empty);
     }
 
-    private static string StageName(ShaderStage stage) => stage switch
-    {
-        ShaderStage.Vertex => "vertex",
-        ShaderStage.Fragment => "fragment",
-        ShaderStage.Compute => "compute",
-        _ => "geometry"
-    };
-
-    /// <summary>Helper method to find the Params block among what Slang reflected, the constant buffer on binding 1 of set 0.</summary>
-    private static UniformBlockLayout ParamsOf(SlangReflection reflection)
-    {
-        foreach (var parameter in reflection.Parameters)
-        {
-            if (parameter.Type.Kind != SlangTypeKind.ConstantBuffer) continue;
-
-            bool onParams = parameter.Bindings.Any(binding => binding.Kind == SlangParameterCategory.DescriptorTableSlot && binding.Space == 0 && binding.Index == DescriptorLayouts.PARAMS_BINDING);
-            if (!onParams) continue;
-
-            var element = parameter.Type.ConstantBuffer!.ElementType;
-            if (element.Kind != SlangTypeKind.Struct) continue;
-
-            var members = new List<UniformBlockLayout.Member>();
-            foreach (var field in element.Struct!.Fields)
-            {
-                var binding = field.Bindings.FirstOrDefault(b => b.Kind == SlangParameterCategory.Uniform);
-                if (binding is null) continue;
-
-                int count = field.Type.Kind == SlangTypeKind.Array ? (int)field.Type.Array!.ElementCount : 0;
-                int stride = count > 0 ? (int)field.Type.Array!.UniformStride : 0;
-                int size = count > 0 ? stride : (int)binding.Size;
-                members.Add(new UniformBlockLayout.Member(field.Name, TypeName(field.Type), (int)binding.Offset, size, count, stride));
-            }
-
-            return UniformBlockLayout.FromMembers(members);
-        }
-
-        return UniformBlockLayout.Empty;
-    }
-
-    private static string TypeName(SlangType type) => type.Kind switch
-    {
-        SlangTypeKind.Scalar => type.Scalar!.ScalarType.ToString().ToLowerInvariant(),
-        SlangTypeKind.Vector => $"float{type.Vector!.ElementCount}",
-        SlangTypeKind.Matrix => $"float{type.Matrix!.RowCount}x{type.Matrix.ColumnCount}",
-        SlangTypeKind.Array => "array",
-        _ => type.Kind.ToString().ToLowerInvariant()
-    };
-
-    // Goes up when what is kept beside a module changes, so a cache written the old way is compiled again
-    private const int CACHE_FORMAT = 2;
-
-    // Days a compiled shader nobody has loaded stays on disk, every edit of a shader leaves the old one behind
-    private const int CACHE_DAYS = 30;
-
     /// <summary>
-    /// What the SPIR-V depends on besides the source, the compiler's version and what it's told. A Slang that was
-    /// updated or a flag that changed compiles everything again rather than loading what the old one made.
+    /// Helper method to get one module from wherever the options say. The pack alone when it's asked for, which
+    /// never falls back to the cache or the compiler, otherwise the cache, then Slang, then the pack if Slang isn't there.
     /// </summary>
-    internal static string CompilerFingerprint { get; } = string.Join('|',
-        CACHE_FORMAT,
-        typeof(SlangCompiler).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? typeof(SlangCompiler).Assembly.GetName().Version?.ToString() ?? "slang",
-        string.Join(' ', SlangArguments));
-
-    internal static string KeyFor(string source, string language, string entry) => KeyFor(source, language, entry, CompilerFingerprint);
-
-    internal static string KeyFor(string source, string language, string entry, string fingerprint)
+    private static ShaderModule Resolve(in ShaderUnit unit, string fileName, ShaderOptions options, IContentFiles content)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData(Encoding.UTF8.GetBytes(fingerprint));
-        hash.AppendData(Encoding.UTF8.GetBytes(language));
-        hash.AppendData(Encoding.UTF8.GetBytes(entry));
-        hash.AppendData(Encoding.UTF8.GetBytes(source));
-        return Convert.ToHexString(hash.GetHashAndReset());
-    }
+        if (options.Sourcing == ShaderSourcing.Packed || (options.Sourcing == ShaderSourcing.Automatic && slangMissing))
+            return FromPack(unit, fileName, options, content);
 
-    /* The cache on disk. The module, and a small text file beside it saying where its entry points are and how its Params are laid out */
+        if (options.CacheFolder is { } folder && TryLoadCached(folder, unit.Key, out var kept))
+            return kept;
 
-    /// <summary>Where compiled shaders (and the driver's pipeline cache) are kept, null if they aren't.</summary>
-    public static string? CacheDirectory()
-    {
-        if (checkedCacheDirectory) return cacheDirectory;
-        checkedCacheDirectory = true;
-
-        string? setting = Environment.GetEnvironmentVariable(CACHE_VARIABLE);
-        if (string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase)) return cacheDirectory = null;
-
-        // By the game rather than the process, which is "dotnet" for a game that is started through it. LocalAppData on
-        // Windows, ~/Library/Caches on macOS, ~/.cache on Linux, or the cache folder next to a game that keeps its files there
-        string game = Assembly.GetEntryAssembly()?.GetName().Name ?? "Horizon";
-        cacheDirectory = string.IsNullOrWhiteSpace(setting)
-            ? Path.Combine(Horizon.Core.Platform.PlatformPaths.Cache(Path.Combine("Horizon", game)), "Shaders")
-            : setting;
-
-        Log.Info($"[ShaderCompiler] Compiled shaders are kept in '{cacheDirectory}'.");
-        string folder = cacheDirectory;
-        Task.Run(() => Prune(folder));
-        return cacheDirectory;
-    }
-
-    /// <summary>
-    /// Helper method to throw away what hasn't been loaded for a month, off whatever thread asked first. A shader is
-    /// kept by a hash of its source, so every edit of one leaves the old one behind for good otherwise.
-    /// </summary>
-    private static void Prune(string folder)
-    {
+        ShaderModule made;
         try
         {
-            if (!Directory.Exists(folder)) return;
-
-            DateTime before = DateTime.UtcNow.AddDays(-CACHE_DAYS);
-            foreach (string file in Directory.EnumerateFiles(folder))
-            {
-                string extension = Path.GetExtension(file);
-                if (extension is not (".spv" or ".notes" or ".partial")) continue;
-                if (File.GetLastWriteTimeUtc(file) >= before) continue;
-
-                try
-                {
-                    File.Delete(file);
-                }
-                catch (Exception)
-                {
-                    // Another instance has it open, it goes next time
-                }
-            }
+            made = CompileFresh(unit, fileName);
         }
-        catch (Exception)
+        catch (Exception e) when (options.Sourcing == ShaderSourcing.Automatic && IsSlangMissing(e))
         {
-            // A cache that can't be tidied is a cache that's a bit bigger
+            if (!slangMissing) Log.Info("[ShaderCompiler] Slang isn't here, shaders come out of the shader pack from now on.");
+            slangMissing = true;
+            return FromPack(unit, fileName, options, content);
         }
-    }
 
-    /// <summary>Helper method to say a kept file was used, so the pruning leaves it alone. Once a day is plenty.</summary>
-    private static void Touch(string file)
-    {
-        try
-        {
-            DateTime now = DateTime.UtcNow;
-            if (now - File.GetLastWriteTimeUtc(file) > TimeSpan.FromDays(1))
-                File.SetLastWriteTimeUtc(file, now);
-        }
-        catch (Exception)
-        {
-            // Read only, or somebody else is touching it, either way it was loaded
-        }
-    }
-
-    private static bool TryLoadCached(string key, out (CompiledStage[] Stages, UniformBlockLayout Params) kept)
-    {
-        kept = default;
-        string? folder = CacheDirectory();
-        if (folder is null) return false;
-
-        string spirvPath = Path.Combine(folder, key + ".spv"), notesPath = Path.Combine(folder, key + ".notes");
-        if (!File.Exists(spirvPath) || !File.Exists(notesPath)) return false;
-
-        try
-        {
-            byte[] spirv = File.ReadAllBytes(spirvPath);
-            var stages = new List<CompiledStage>();
-            var members = new List<UniformBlockLayout.Member>();
-
-            foreach (string line in File.ReadAllLines(notesPath))
-            {
-                string[] parts = line.Split('\t');
-                if (parts.Length == 0) continue;
-
-                switch (parts[0])
-                {
-                    case "entry" when parts.Length >= 6:
-                        stages.Add(new CompiledStage(Enum.Parse<ShaderStage>(parts[1]), parts[2], spirv, [uint.Parse(parts[3]), uint.Parse(parts[4]), uint.Parse(parts[5])]));
-                        break;
-                    case "member" when parts.Length >= 7:
-                        members.Add(new UniformBlockLayout.Member(parts[1], parts[2], int.Parse(parts[3]), int.Parse(parts[4]), int.Parse(parts[5]), int.Parse(parts[6])));
-                        break;
-                }
-            }
-
-            if (stages.Count == 0) return false;
-            kept = ([.. stages], UniformBlockLayout.FromMembers(members));
-            Touch(spirvPath);
-            Touch(notesPath);
-            return true;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
-
-    private static void KeepCached(string key, IReadOnlyList<CompiledStage> stages, UniformBlockLayout parameters)
-    {
-        string? folder = CacheDirectory();
-        if (folder is null || stages.Count == 0) return;
-
-        try
-        {
-            Directory.CreateDirectory(folder);
-
-            var notes = new StringBuilder();
-            foreach (var stage in stages)
-            {
-                uint[] groups = stage.ThreadGroupSize.Length == 3 ? stage.ThreadGroupSize : [0, 0, 0];
-                notes.Append("entry\t").Append(stage.Stage).Append('\t').Append(stage.EntryPoint).Append('\t').Append(groups[0]).Append('\t').Append(groups[1]).Append('\t').Append(groups[2]).Append('\n');
-            }
-
-            foreach (var member in parameters.Members)
-                notes.Append("member\t").Append(member.Name).Append('\t').Append(member.Type).Append('\t').Append(member.Offset).Append('\t').Append(member.Size).Append('\t').Append(member.ArrayLength).Append('\t').Append(member.ArrayStride).Append('\n');
-
-            // Written next to where they go and moved there whole, so a game that is closed halfway leaves no half a shader
-            string spirvPath = Path.Combine(folder, key + ".spv"), notesPath = Path.Combine(folder, key + ".notes");
-            string partial = "." + Environment.CurrentManagedThreadId + ".partial";
-            File.WriteAllBytes(spirvPath + partial, stages[0].Spirv);
-            File.WriteAllText(notesPath + partial, notes.ToString());
-            File.Move(spirvPath + partial, spirvPath, overwrite: true);
-            File.Move(notesPath + partial, notesPath, overwrite: true);
-        }
-        catch (Exception)
-        {
-            // Not kept, compiled again next time
-        }
+        if (options.CacheFolder is { } keepIn) KeepCached(keepIn, unit.Key, made);
+        return made;
     }
 }
+
+/// <summary>Where compiled programs come from.</summary>
+internal enum ShaderSourcing
+{
+    /// <summary>The cache and the compiler, and the pack once Slang turns out not to be there.</summary>
+    Automatic,
+
+    /// <summary>The cache and the compiler, never a pack.</summary>
+    Compile,
+
+    /// <summary>The pack and nothing else.</summary>
+    Packed
+}
+
+/// <summary>How <see cref="ShaderCompiler"/> goes about it. Null members mean what a running game would use.</summary>
+internal sealed record ShaderOptions
+{
+    public ShaderSourcing Sourcing { get; init; }
+
+    /// <summary>The disk cache, null for none.</summary>
+    public string? CacheFolder { get; init; }
+
+    /// <summary>Writes down every program asked for, null when nobody asked.</summary>
+    public ShaderManifestRecorder? Recorder { get; init; }
+
+    /// <summary>The bindless table compiled for, the device's when null.</summary>
+    public uint? BindlessCapacity { get; init; }
+
+    /// <summary>Where sources and packs are read from, the installed content when null.</summary>
+    public IContentFiles? Content { get; init; }
+
+    /// <summary>The packs to look in, the ones in the content when null.</summary>
+    public ShaderPackSet? Packs { get; init; }
+}
+
+/// <summary>A program that can't be had, with a message that already says which and why.</summary>
+internal sealed class ShaderUnavailableException(string message) : Exception(message);

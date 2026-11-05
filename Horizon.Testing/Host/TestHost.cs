@@ -5,7 +5,8 @@ using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
+using Horizon.Rendering.Scaling;
 
 using Button = Horizon.UI.Components.Button;
 
@@ -34,6 +35,8 @@ internal sealed class TestHost : GameObject
         new("PgUp  PgDn", "previous and next example"),
         new("F1", "fold this away"),
         new("F3", "more of the performance numbers, or none"),
+        new("F4", "the next render scale, Auto, Native, 75% and 50%"),
+        new("F5", "the render scale picker, upscaler and all"),
         new("F6  F7", "the next UI skin, the next theme of it"),
         new("F10", "the Skyline debugger, in a debug build"),
     ];
@@ -44,6 +47,13 @@ internal sealed class TestHost : GameObject
 
     // The card of keys, what to press in one column and what it does in the other
     private readonly StackPanel keys, inputs, actions;
+
+    // The render scale picker over a running example, what the scale was before anything kept was put back, where it's
+    // kept, and what it was before a run of the checks put the default back for them
+    private readonly StackPanel scaleCard;
+    private readonly RenderScaleSettings defaultScale;
+    private string? renderScaleFile;
+    private RenderScaleSettings? beforeChecks;
 
     // What to switch to at the start of the next frame, a TestDefinition or the selector. Gets written from any
     // thread (a button press comes in on the simulation thread, the command line on the main one) and taken
@@ -57,12 +67,23 @@ internal sealed class TestHost : GameObject
     // Running every check one after the other and leaving, see RunChecks
     private Queue<TestDefinition>? checksLeft;
     private Scene? judged;
-    private int checksMade, checksFailed;
+    private CheckReport? report;
+    private long checkStarted;
+    private bool exitThisRun;
 
     public TestSelectorScene Selector { get; }
 
     /// <summary>The example on screen, null while the selector is.</summary>
     public TestDefinition? Running { get; private set; }
+
+    /// <summary>Whether a run of every check closes the engine once it's done. A phone left on its own may want the menu back.</summary>
+    public bool ExitAfterChecks { get; set; } = true;
+
+    /// <summary>How long a check scene gets in a run of every check before it counts as hung and failed. Null waits for ever, the desktop's way.</summary>
+    public TimeSpan? CheckTimeout { get; set; }
+
+    /// <summary>Called on the simulation thread with how every check went, once the last one is judged.</summary>
+    public event Action<CheckReport>? ChecksDone;
 
     public TestHost(IReadOnlyList<TestDefinition> tests)
     {
@@ -103,6 +124,7 @@ internal sealed class TestHost : GameObject
         Small("<", 38, () => Step(-1), "The example before this one (Page Up)");
         Small("Menu", 86, ShowSelector, "Back to the list (Esc)");
         Small(">", 38, () => Step(1), "The example after this one (Page Down)");
+        Small("Scale", 86, () => scaleCard!.Visible = !scaleCard.Visible, "The render scale (F5, F4 steps it)");
 
         strip.Add(new Spacer { Space = 2 });
         number = strip.Add(new Label { TextScale = 0.3f, Color = HostStyle.Accent });
@@ -133,6 +155,22 @@ internal sealed class TestHost : GameObject
 
         ShowKeys(true);
 
+        /* The render scale, over the top middle, hidden until asked for */
+
+        scaleCard = overlay.AddComponent(new StackPanel
+        {
+            Anchor = Origin.Top,
+            Position = new Vector2(0, -16),
+            Color = HostStyle.Card,
+            Radius = HostStyle.RADIUS,
+            Padding = new UIEdges(16, 12),
+            Spacing = 8,
+            Visible = false
+        });
+        scaleCard.Add(new Label("Render scale") { Anchor = Origin.Left, TextScale = 0.26f, Color = HostStyle.Accent });
+        scaleCard.Add(new RenderScalePicker { TextScale = 0.22f, OnPicked = KeepRenderScale });
+        defaultScale = Engine.WindowManager.Scaling.Settings;
+
         Selector = new TestSelectorScene(this, tests);
     }
 
@@ -146,6 +184,78 @@ internal sealed class TestHost : GameObject
         Engine.WindowManager.RequestExclusive();
     }
 
+    /// <summary>
+    /// Has the render scale the examples are drawn at kept in a file, put back from it now and written whenever it's
+    /// picked (the selector, F4, F5's picker). Settings in the environment (HORIZON_RENDER_SCALE and friends) win and
+    /// the file is then neither read nor written. A run of the checks draws at the default and puts this back after.
+    /// </summary>
+    public void RememberRenderScale(string path)
+    {
+        if (RenderScaleEnvironment.InEnvironment)
+            return;
+
+        renderScaleFile = path;
+        try
+        {
+            if (!Horizon.Platform.PlatformStorage.Exists(path))
+                return;
+
+            var problems = new List<string>();
+            var scaling = Engine.WindowManager.Scaling;
+            scaling.Settings = RenderScaleEnvironment.Parse(scaling.Settings, Horizon.Platform.PlatformStorage.ReadAllText(path), problems);
+            foreach (string problem in problems)
+                Horizon.Logging.Log.Warning($"[TestHost] {path}, {problem}");
+        }
+        catch (Exception e)
+        {
+            Horizon.Logging.Log.Warning($"[TestHost] The render scale in '{path}' can't be read, {e.Message}");
+        }
+    }
+
+    /// <summary>Keeps a render scale somebody picked, see <see cref="RememberRenderScale"/>. From any thread.</summary>
+    public void KeepRenderScale(RenderScaleSettings settings)
+    {
+        Horizon.Logging.Log.Info($"[TestHost] Render scale picked, {RenderScaleEnvironment.Format(settings).Replace('\n', ' ').Trim()}");
+        if (renderScaleFile is not { } path || checksLeft is not null)
+            return;
+
+        try
+        {
+            Horizon.Platform.PlatformStorage.WriteAllText(path, RenderScaleEnvironment.Format(settings));
+        }
+        catch (Exception e)
+        {
+            Horizon.Logging.Log.Warning($"[TestHost] The render scale couldn't be kept in '{path}', {e.Message}");
+        }
+    }
+
+    // What F4 steps through
+    private static readonly RenderScaleSettings[] Steps =
+    [
+        RenderScaleSettings.Auto,
+        RenderScaleSettings.Native,
+        RenderScaleSettings.At(0.75f),
+        RenderScaleSettings.At(0.5f)
+    ];
+
+    /// <summary>Helper method to go to the next of the scales F4 steps through, keeping the upscaler and the rest.</summary>
+    private void StepRenderScale()
+    {
+        var scaling = Engine.WindowManager.Scaling;
+        RenderScaleSettings now = scaling.Settings.Sanitized();
+        int at = -1;
+        for (int i = 0; i < Steps.Length; i++)
+        {
+            if (Steps[i].Policy == now.Policy && (now.Policy != RenderScalePolicy.Manual || MathF.Abs(Steps[i].Scale - now.Scale) < 0.001f))
+                at = i;
+        }
+
+        RenderScaleSettings next = Steps[(at + 1) % Steps.Length];
+        now = now with { Policy = next.Policy, Scale = next.Scale };
+        scaling.Settings = now;
+        KeepRenderScale(now);
+    }
+
     /// <summary>Asks for the selector to be shown. Happens at the start of the next frame, safe from any thread.</summary>
     public void ShowSelector()
     {
@@ -157,9 +267,21 @@ internal sealed class TestHost : GameObject
     /// Runs every check there is, one after the other, prints how each went and closes the window, with the number
     /// that failed as what the process leaves with. For a build machine, or for you after mucking about in UIX.
     /// </summary>
-    public void RunChecks()
+    /// <param name="exit">Whether to close once done, <see cref="ExitAfterChecks"/> when not said. The selector's button comes back to it.</param>
+    public void RunChecks(bool? exit = null)
     {
-        checksLeft = new Queue<TestDefinition>(tests.Where(test => test.Level == TestLevel.Checks));
+        exitThisRun = exit ?? ExitAfterChecks;
+
+        // The checks draw at what the platform and the environment say, not at what somebody picked to look at
+        beforeChecks = Engine.WindowManager.Scaling.Settings;
+        Engine.WindowManager.Scaling.Settings = defaultScale;
+        checksLeft = new Queue<TestDefinition>(tests.Where(test => test.Level == TestLevel.Checks && test.Unsupported is null));
+        report = new CheckReport(TestPlatform.NAME);
+        CheckLog.Take();
+
+        // One that can't run here is in the report with why, so the totals never quietly leave it out
+        foreach (var unsupported in tests.Where(test => test.Level == TestLevel.Checks && test.Unsupported is not null))
+            report.Add(new CheckOutcome(unsupported.Id, 0, 0, 0, 0.0, [], [], $"unsupported here, {unsupported.Unsupported}"));
         if (checksLeft.TryDequeue(out var first))
             Start(first);
     }
@@ -209,6 +331,12 @@ internal sealed class TestHost : GameObject
 
         // The skin every example's UI is drawn in, which is the game's one setting for it (UISkins). The strip
         // and the selector are in a skin of their own and stay as they are
+        // The render scale, stepped or picked, kept for the next run
+        if (keyboard.WasPressed(Key.F4))
+            StepRenderScale();
+        if (keyboard.WasPressed(Key.F5))
+            scaleCard.Visible = !scaleCard.Visible;
+
         if (keyboard.WasPressed(Key.F6))
         {
             var skin = Horizon.UI.Skinning.UISkins.Step(1);
@@ -248,13 +376,32 @@ internal sealed class TestHost : GameObject
     /// <summary>Helper method to see whether the running check has finished, and move on to the next or leave if it has.</summary>
     private void JudgeCheck()
     {
-        if (scene is not ISelfCheck check || !check.Finished || ReferenceEquals(scene, judged))
+        if (scene is null || ReferenceEquals(scene, judged))
+            return;
+
+        // A check that hangs would hold the whole run up for ever, so with a time limit it's judged when that runs out
+        double seconds = System.Diagnostics.Stopwatch.GetElapsedTime(Interlocked.Read(ref checkStarted)).TotalSeconds;
+        var check = scene as ISelfCheck;
+        bool finished = check is { Finished: true };
+        bool timedOut = !finished && CheckTimeout is { } limit && seconds > limit.TotalSeconds;
+        if (!finished && !timedOut)
             return;
 
         judged = scene;
-        checksMade += check.Count;
-        checksFailed += check.Failed;
-        Console.WriteLine($"[Checks] {Running!.Id}, {check.Count - check.Failed} of {check.Count} held.");
+        var (failures, skips) = CheckLog.Take();
+        int count = check?.Count ?? 0, failed = check?.Failed ?? 0, skipped = check?.Skipped ?? 0;
+        string? note = null;
+        if (timedOut)
+        {
+            // What it made so far counts, and never finishing is one more that didn't hold
+            note = $"never finished within {CheckTimeout!.Value.TotalSeconds:0} s";
+            count++;
+            failed++;
+            failures = [.. failures, $"{Running!.Id}: {note}"];
+        }
+
+        report!.Add(new CheckOutcome(Running!.Id, count, failed, skipped, seconds, failures, skips, note));
+        Console.WriteLine($"[Checks] {Running.Id}, {count - failed} of {count} held{(skipped > 0 ? $", {skipped} skipped" : "")}{(note is null ? "" : $", {note}")}.");
 
         if (checksLeft!.TryDequeue(out var next))
         {
@@ -262,9 +409,28 @@ internal sealed class TestHost : GameObject
             return;
         }
 
-        Console.WriteLine($"[Checks] {checksMade - checksFailed} of {checksMade} checks passed.");
-        Environment.ExitCode = checksFailed;
-        Engine.Exit();
+        Console.WriteLine($"[Checks] {report.Passed} of {report.Count} checks passed.");
+        Environment.ExitCode = report.Failed;
+        checksLeft = null;
+
+        // What was picked comes back once they're done
+        if (beforeChecks is { } picked)
+            Engine.WindowManager.Scaling.Settings = picked;
+        beforeChecks = null;
+
+        try
+        {
+            ChecksDone?.Invoke(report);
+        }
+        catch (Exception e)
+        {
+            Horizon.Logging.Log.Error($"[TestHost] Handing the report over threw. {e}");
+        }
+
+        if (exitThisRun)
+            Engine.Exit();
+        else
+            ShowSelector();
     }
 
     /// <summary>
@@ -294,6 +460,7 @@ internal sealed class TestHost : GameObject
 
             Console.WriteLine($"Running '{test.Name}'.");
             assetsBeforeTest = Engine.ObjectManager.Snapshot();
+            Interlocked.Exchange(ref checkStarted, System.Diagnostics.Stopwatch.GetTimestamp());
             Engine.SetScene(scene = test.Create());
 
             // One that reacts to nothing still gets the host's keys listed

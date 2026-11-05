@@ -102,7 +102,7 @@ public class GameEngine : Entity
     public string ScreenshotDirectory { get; set; } = "screenshots";
 
     /// <summary>The key that saves a screenshot of the window, null for none.</summary>
-    public Silk.NET.Input.Key? ScreenshotKey { get; set; } = Silk.NET.Input.Key.F12;
+    public Horizon.Input.Key? ScreenshotKey { get; set; } = Horizon.Input.Key.F12;
 
     /// <summary>
     /// How long (in milliseconds) the GPU spent on the last frame it finished, as measured by a timer query around
@@ -183,8 +183,12 @@ public class GameEngine : Entity
         // In the order they get their turns. The input comes before anything that reads it
         EventManager = AddComponent<EngineEventHandler>();
         ObjectManager = AddComponent<ObjectManager>();
+        // The platform first, a host of its own for this engine, which the audio is asked of and the window runs on
+        var request = new Horizon.Platform.PlatformHostRequest(Configuration.WindowConfiguration, WindowManager.BehaviourOf(Configuration.WindowConfiguration), Configuration.Gamepads);
+        var host = Horizon.Platform.PlatformInstallation.CreateHost(Horizon.Platform.PlatformInstallation.Resolve(Configuration.Platform), request);
+
         Input = AddComponent<InputManager>(new() { ReadsGamepads = Configuration.Gamepads });
-        Audio = new Horizon.Audio.AudioDevice(open: Configuration.WindowConfiguration.Mode != RunMode.Application);
+        Audio = Horizon.Audio.AudioDevice.For(open: Configuration.WindowConfiguration.Mode != RunMode.Application, host);
 
 #if DEBUG
         // Before the scenes, so it has had its say about the mouse and the keys by the time a scene reads them
@@ -195,9 +199,8 @@ public class GameEngine : Entity
         SceneManager = AddEntity<SceneManager>();
 
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
-        WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration));
+        WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration, host));
         WindowManager.DeviceReady = ShowLoadingScreen;
-        WindowManager.ReadsGamepads = Configuration.Gamepads;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
@@ -253,6 +256,7 @@ public class GameEngine : Entity
             return;
 
         var pixels = new byte[width * height * 4];
+        WindowManager.Scaling.FinishScene();
         Graphics.BindWindow();
         Graphics.ReadPixels(0, 0, width, height, pixels);
 
@@ -283,6 +287,7 @@ public class GameEngine : Entity
         if (width == 0 || height == 0) return;
 
         var pixels = new byte[width * height * 4];
+        WindowManager.Scaling.FinishScene();
         Graphics.BindWindow();
         Graphics.ReadPixels(0, 0, width, height, pixels);
 
@@ -386,18 +391,19 @@ public class GameEngine : Entity
         EventManager.PreRender?.Invoke(dt);
 
         var graphics = Graphics;
-        graphics.SetViewport(0, 0, (uint)WindowManager.ViewportSize.X, (uint)WindowManager.ViewportSize.Y);
+        Vector2 drawn = WindowManager.Scaling.TargetSize;
+        graphics.SetViewport(0, 0, (uint)drawn.X, (uint)drawn.Y);
         graphics.Clear(Horizon.Graphics.ClearTargets.All);
 
         // The camera every shader draws through, bound for the frame. Whoever draws says which camera, see CameraBlock.Use
-        Horizon.Rendering.CameraBlock.BeginFrame(WindowManager.ViewportSize, dt);
+        Horizon.Rendering.CameraBlock.BeginFrame(drawn, dt);
 
         // Still under everything until the first scene draws. The frame a scene is set up on and the ones before
         // it has had a tick have nothing of it in them, and would be a blink of black between the two
         if (LoadingScreen.IsUp)
         {
             if (SceneManager.IsStarting)
-                LoadingScreen.Draw(WindowManager.ViewportSize);
+                LoadingScreen.Draw(drawn);
             else
                 LoadingScreen.IsUp = false;
         }
@@ -468,6 +474,22 @@ public class GameEngine : Entity
     /// Opens the window with a new scene of a kind on screen and runs the game until it is closed.
     /// </summary>
     public void Run<TScene>() where TScene : Scene, new() => Run(new TScene());
+
+    /// <summary>
+    /// Gets the game going on a platform that's called back by its system (an Android activity) and returns, the
+    /// calling thread being the platform's. <see cref="StopAsync"/> stops it again, see <see cref="WindowManager.Start"/>.
+    /// </summary>
+    public void Start(Scene scene, SceneTransition? transition = null)
+    {
+        SceneManager.SetScene(scene, transition ?? SceneManager.Transition);
+        WindowManager.Start();
+    }
+
+    /// <summary>
+    /// Stops the frames and the simulation without blocking whoever asks, see <see cref="WindowManager.StopAsync"/>. The
+    /// engine is disposed on the platform's thread once it is done.
+    /// </summary>
+    public Task StopAsync() => WindowManager.StopAsync();
 
     /// <summary>
     /// Closes the window, which is the end of <see cref="Run()"/>. From any thread.

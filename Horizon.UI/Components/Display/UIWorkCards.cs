@@ -35,7 +35,7 @@ public sealed class UIWorkCards
     /// <summary>Called with what a card of work that went wrong says, for a program that keeps a log of its own.</summary>
     public Action<string>? Failed { get; set; }
 
-    /// <summary>Which work the status bar and the menu are about, all of it unless it says (Hex leaves out its own quick ones).</summary>
+    /// <summary>Which work the status bar and the menu are about, all of it unless it says (Hex leaves out automatic quiet work).</summary>
     public Func<WorkItem, bool>? Listed { get; set; }
 
     /// <summary>The cards of the work going that has one, for a test to look at.</summary>
@@ -55,7 +55,7 @@ public sealed class UIWorkCards
     public StatusItem AddTo(StatusBar bar, UIModule menus, string tooltip = "")
     {
         item = bar.Add(string.Empty, right: true, pressed: () => ContextMenu.ShowAt(menus, menus.Compositor.Pointer.Position, Menu()), tooltip: tooltip);
-        item.IsVisible = () => Work.Active > 0;
+        item.IsVisible = () => Work.CountActive(Listed) > 0;
         return item;
     }
 
@@ -112,7 +112,7 @@ public sealed class UIWorkCards
     {
         Work.Pump();
 
-        int going = Work.Active;
+        int going = Work.CountActive(Listed);
         if (going > 0 && item is not null)
         {
             // Written again only when what it says changes, the work, how many, or its progress by the percent

@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+
+using Horizon.Content;
 
 namespace Horizon.Audio;
 
@@ -35,9 +38,23 @@ public sealed class OggStream : IAudioStream
 
     public OggStream(string path)
     {
-        reader = new NVorbis.VorbisReader(path);
+        reader = OpenReader(path);
         channels = Math.Max(1, reader.Channels);
         Name = path;
+    }
+
+    internal static NVorbis.VorbisReader OpenReader(string path)
+    {
+        Stream stream = ContentFiles.OpenSeekable(path);
+        try
+        {
+            return new NVorbis.VorbisReader(stream, closeOnDispose: true);
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
     }
 
     public int Read(Span<float> frames)

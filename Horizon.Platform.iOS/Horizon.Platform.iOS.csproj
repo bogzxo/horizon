@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>16.1</SupportedOSPlatformVersion>
+    <RootNamespace>Horizon.Platform.iOS</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <IsPublishable>false</IsPublishable>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Horizon/Horizon.csproj" />
+    <PackageReference Include="Silk.NET.MoltenVK.Native" Version="2.23.0" />
+  </ItemGroup>
+</Project>

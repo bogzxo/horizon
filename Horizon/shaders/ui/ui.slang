@@ -149,19 +149,10 @@ float roundBox(float2 p, float2 half, float radius)
 [shader("fragment")]
 GBuffer fsMain(Varyings input)
 {
-    uint texture = input.flags & TEXTURE_MASK;
-
-    // Worked out up front, outside of any branch, so the derivatives are always well defined (see sprites.slang)
-    float2 box = clamp(fwidth(input.texel), float2(0.00001, 0.00001), float2(1.0, 1.0));
-    float fromMiddle = length(input.texel);
-    float cornerPixel = max(fwidth(fromMiddle), 0.00001);
-    float2 uv = input.texel * input.texelSize;
-    float2 uvAcross = ddx(uv), uvDown = ddy(uv);
-    float texelsAPixel = max(length(ddx(input.texel)), length(ddy(input.texel)));
-
-    float4 tex = float4(1.0, 1.0, 1.0, 1.0);
+    // Shapes need no texture or text derivatives, which otherwise run across their whole screen-sized quads.
     if ((input.flags & SHAPE_FLAG) != 0u)
     {
+        float4 tex = float4(1.0, 1.0, 1.0, 1.0);
         float2 local = input.texel, half = input.texelSize;
         if (input.shape.y > 0.0)
         {
@@ -184,8 +175,32 @@ GBuffer fsMain(Varyings input)
                 tex.a *= saturate(0.5 + hole);
             }
         }
+        float4 result = tex * input.color;
+        if (result.a <= 0.0) discard;
+        return writeFlat(result, 0.0);
     }
-    else if (texture != NO_TEXTURE)
+
+    uint texture = input.flags & TEXTURE_MASK;
+
+    // A plain fill needs neither the shape math nor any texture derivatives.
+    if (texture == NO_TEXTURE && (input.flags & (FIELD_FLAG | CORNER_FLAG)) == 0u)
+    {
+        if (input.color.a <= 0.0) discard;
+        return writeFlat(input.color, 0.0);
+    }
+
+    // Worked out up front, outside of any branch, so the derivatives are always well defined (see sprites.slang)
+    float2 box = clamp(fwidth(input.texel), float2(0.00001, 0.00001), float2(1.0, 1.0));
+    float fromMiddle = length(input.texel);
+    float cornerPixel = max(fwidth(fromMiddle), 0.00001);
+    float2 uv = input.texel * input.texelSize;
+    float2 uvAcross = ddx(uv), uvDown = ddy(uv);
+    float texelsAPixel = max(length(ddx(input.texel)), length(ddy(input.texel)));
+
+    float4 tex = float4(1.0, 1.0, 1.0, 1.0);
+    // A field with its slope supplied only uses the four samples below. Sampling the colour here makes a fifth
+    // texture read whose value is thrown away, including the expensive gradient path on mobile GPUs.
+    if (texture != NO_TEXTURE && ((input.flags & FIELD_FLAG) == 0u || input.ring <= 0.0))
     {
         tex = (input.flags & SMOOTH_FLAG) != 0u && (input.flags & FIELD_FLAG) == 0u
             ? smoothTexel(uTextures[NonUniformResourceIndex(texture)], input.texel, box)

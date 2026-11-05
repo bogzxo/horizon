@@ -271,6 +271,11 @@ public partial class ListBox : UIComponent
 
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override bool HasOverscroll => over.Active;
+
+    // A finger on the bar drags the bar, anywhere else it scrolls the rows
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (items.Length > Rows && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         draggingBar = false;

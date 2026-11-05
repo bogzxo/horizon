@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <ApplicationId>dev.horizon.androidprobe</ApplicationId>
+    <ApplicationTitle>Horizon Android probe</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Silk.NET.Vulkan" Version="2.23.0" />
+  </ItemGroup>
+</Project>

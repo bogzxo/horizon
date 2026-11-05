@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 using Horizon.Engine;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI;
 
@@ -159,7 +159,7 @@ public static class UIKeyboard
     private static UIKeyPress heldRaw;
     private static long rawRepeatDue;
     private static volatile bool altHeld;
-    private static bool hooked;
+    private static Horizon.Core.WindowManager? clipboardWindow;
 
     // The texts that were pasted, one for every PASTE in the queue of characters and in the same order
     private static readonly ConcurrentQueue<string> pasted = new();
@@ -201,49 +201,56 @@ public static class UIKeyboard
 
     // What is waiting to be put on the clipboard, which only the thread of the window may touch
     private static string? clipboardPending;
-    private static IKeyboard? clipboardOwner;
+    private static InputManager? clipboardOwner;
 
     // The tick whose turn of the mouse wheel somebody already used, -1 for none
     private static long scrollUsedOn = -1;
 
     /// <summary>
-    /// Starts listening to the keyboards. Only the first call does anything, and it has to be made once
-    /// the window exists.
+    /// Starts listening to the engine's input events. Repeated calls on the same engine do nothing.
     /// </summary>
     public static void Hook()
     {
-        if (hooked || GameEngine.Instance.Input.Native is not { } input)
-            return;
+        if (GameEngine.Instance is not { } engine || ReferenceEquals(clipboardOwner, engine.Input)) return;
+        Hook(engine.Input);
+        clipboardWindow = engine.WindowManager;
+        clipboardWindow.EventsProcessed += FlushClipboard;
+    }
 
-        hooked = true;
+    internal static void Hook(InputManager input)
+    {
+        if (ReferenceEquals(clipboardOwner, input)) return;
+        if (clipboardOwner is not null) clipboardOwner.EventReceived -= OnInput;
+        if (clipboardWindow is not null) clipboardWindow.EventsProcessed -= FlushClipboard;
+        clipboardWindow = null;
+        clipboardOwner = input;
+        input.EventReceived += OnInput;
+        Volatile.Write(ref heldCode, 0);
+        heldRaw = default;
+        altHeld = false;
+    }
 
-        // The clipboard is the window's, it is only ever touched on its thread
-        GameEngine.Instance.WindowManager.EventsProcessed += FlushClipboard;
-
-        foreach (var keyboard in input.Keyboards)
+    private static void OnInput(InputEvent input)
+    {
+        if (input.Kind == InputEventKind.Text && input.Text is { } text)
         {
-            clipboardOwner ??= keyboard;
-
-            keyboard.KeyChar += (_, character) => Push(character);
-            keyboard.KeyDown += (pressed, key, _) => OnKeyDown(pressed, key);
-            keyboard.KeyUp += (_, key, _) =>
-            {
-                if (key == heldKey)
-                    Volatile.Write(ref heldCode, 0);
-                if (key == heldRaw.Key)
-                    heldRaw = default;
-                if (key is Key.AltLeft or Key.AltRight)
-                    altHeld = false;
-            };
+            foreach (char character in text) Push(character);
+        }
+        else if (input.Kind == InputEventKind.KeyDown) OnKeyDown(input.Key, input.Modifiers, input.ClipboardText);
+        else if (input.Kind == InputEventKind.KeyUp)
+        {
+            if (input.Key == heldKey) Volatile.Write(ref heldCode, 0);
+            if (input.Key == heldRaw.Key) heldRaw = default;
+            altHeld = (input.Modifiers & KeyModifiers.Alt) != 0;
         }
     }
 
-    private static void OnKeyDown(IKeyboard keyboard, Key key)
+    private static void OnKeyDown(Key key, KeyModifiers modifiers, string? clipboardText)
     {
-        bool control = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
-        bool shift = keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight);
-        bool alt = keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight);
-        bool super = keyboard.IsKeyPressed(Key.SuperLeft) || keyboard.IsKeyPressed(Key.SuperRight);
+        bool control = (modifiers & KeyModifiers.Control) != 0;
+        bool shift = (modifiers & KeyModifiers.Shift) != 0;
+        bool alt = (modifiers & KeyModifiers.Alt) != 0;
+        bool super = (modifiers & KeyModifiers.Super) != 0;
         if (key is Key.AltLeft or Key.AltRight)
             altHeld = true;
 
@@ -258,7 +265,7 @@ public static class UIKeyboard
         {
             if (key == Key.V && primary)
             {
-                Paste(keyboard);
+                PasteEvent(clipboardText);
                 return;
             }
 
@@ -278,7 +285,7 @@ public static class UIKeyboard
 
         if (key == Key.V && primary)
         {
-            Paste(keyboard);
+            PasteEvent(clipboardText);
             return;
         }
 
@@ -357,7 +364,7 @@ public static class UIKeyboard
     /// Helper to queue what is on the clipboard, as one paste. Whoever has the focus takes what it can use of it.
     /// We are on the thread of the window here, which is the one that may ask for it.
     /// </summary>
-    private static void Paste(IKeyboard keyboard)
+    private static void Paste(InputManager keyboard)
     {
         string text;
         try
@@ -370,6 +377,17 @@ public static class UIKeyboard
             return;
         }
 
+        EnqueuePaste(text);
+    }
+
+    private static void PasteEvent(string? text)
+    {
+        if (text is null) RequestPaste();
+        else EnqueuePaste(text);
+    }
+
+    private static void EnqueuePaste(string text)
+    {
         if (text.Length == 0 || typed.Count >= MAX_PENDING)
             return;
 
@@ -498,17 +516,23 @@ public static class UIKeyboard
     /// did with sod all. Simulation thread.
     /// </summary>
     public static float PeekScroll() =>
-        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.Scroll;
+        GameEngine.Instance is not { } engine ? clipboardOwner?.Mouse.Scroll ?? 0.0f
+        : Volatile.Read(ref scrollUsedOn) == engine.WindowManager.Tick ? 0.0f : engine.Input.Mouse.Scroll;
 
     /// <summary>
     /// The same, as the window heard it, whether the wheel is being withheld from the game or not. For the UI that
     /// is doing the withholding (the Skyline debugger), which would otherwise withhold the wheel from itself.
     /// </summary>
     internal static float PeekWindowScroll() =>
-        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.WindowScroll;
+        GameEngine.Instance is not { } engine ? clipboardOwner?.Mouse.WindowScroll ?? 0.0f
+        : Volatile.Read(ref scrollUsedOn) == engine.WindowManager.Tick ? 0.0f : engine.Input.Mouse.WindowScroll;
 
     /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
-    public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
+    public static void UseScroll()
+    {
+        // Without an engine (a test driving a UI from its own input) there is one UI and nobody to keep it from
+        if (GameEngine.Instance is { } engine) Volatile.Write(ref scrollUsedOn, engine.WindowManager.Tick);
+    }
 
     /* Typing without a keyboard, for a program driven by something other than a person (Hex's tools for agents) */
 

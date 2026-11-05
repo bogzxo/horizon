@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.HIDL;
@@ -30,6 +31,8 @@ public readonly record struct SpriteSource(
     string Path, int X, int Y, int Width, int Height, Vector4 Border, Vector4 Content, int Frames, float FrameTime,
     (int X, int Y) Step = default, (int X, int Y)[]? FramePositions = null, string? Layer = null, float Scale = 0.0f, Vector4 TextColor = default)
 {
+    internal FoundContent? File { get; init; }
+
     /// <summary>
     /// The pixels of one frame, RGBA from the top left, for whoever wants to look at the art itself (tracing boxes
     /// off it, say). Null if the image can't be read, which has been logged. Read off disk the first time, so not
@@ -38,7 +41,7 @@ public readonly record struct SpriteSource(
     public SpritePixels? ReadFrame(int frame)
     {
         (int x, int y) = FrameAt(Math.Clamp(frame, 0, Math.Max(Frames - 1, 0)));
-        return SpriteImages.Read(Path, x, y, Width, Height, Layer);
+        return SpriteImages.Read(File ?? ContentFiles.Find(Path), x, y, Width, Height, Layer);
     }
 
     /// <summary>
@@ -80,6 +83,7 @@ public sealed class SpriteSheetDefinition
     private sealed class ImageDefinition
     {
         public string Path = string.Empty;
+        public FoundContent File;
         public (int X, int Y) Block;                            // How far one copy of the art is from the next, zero for images with one copy
         public Dictionary<string, int> Themes = [];             // Which copy every theme starts at
         public string Fallback = string.Empty;                  // The theme to show for themes the image doesn't have
@@ -134,7 +138,7 @@ public sealed class SpriteSheetDefinition
         if (AsepriteDocument.IsAseprite(path))
             return FromAseprite(AsepriteDocument.Open(path));
 
-        if (Directory.Exists(path))
+        if (ContentFiles.DirectoryExists(path))
             return Load(path, DEFAULT_FILE);
 
         return Load(System.IO.Path.GetDirectoryName(path) ?? string.Empty, System.IO.Path.GetFileName(path));
@@ -148,7 +152,7 @@ public sealed class SpriteSheetDefinition
     public static SpriteSheetDefinition FromAseprite(AsepriteDocument document)
     {
         var definition = new SpriteSheetDefinition(document.Path);
-        var image = new ImageDefinition { Path = document.Path, Size = new Vector2(document.Width, document.Height) };
+        var image = new ImageDefinition { Path = document.Path, File = document.ContentFile, Size = new Vector2(document.Width, document.Height) };
 
         foreach (var tag in document.Tags)
         {
@@ -229,7 +233,7 @@ public sealed class SpriteSheetDefinition
             Shift(sprite.FramePositions, block * image.Block.X, block * image.Block.Y),
             layer,
             image.Scale,
-            sprite.TextColor);
+            sprite.TextColor) { File = image.File };
 
         if (frame < 0)
         {
@@ -260,11 +264,11 @@ public sealed class SpriteSheetDefinition
     public static SpriteSheetDefinition Load(string directory, string file)
     {
         string path = System.IO.Path.Combine(directory, file);
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
             throw new FileNotFoundException($"The sprite definition '{path}' doesn't exist.");
 
-        HIDLRuntime runtime = new() { BaseDirectory = directory, Output = null };
-        var (success, message) = runtime.Evaluate(File.ReadAllText(path));
+        HIDLRuntime runtime = new HIDLRuntime { BaseDirectory = directory, Output = null }.ReadingContent();
+        var (success, message) = runtime.Evaluate(ContentFiles.ReadAllText(path));
         if (!success)
             throw new Exception($"'{path}': {message}");
 
@@ -301,7 +305,7 @@ public sealed class SpriteSheetDefinition
                 throw new Exception($"'{path}': inherit has to be the path of another sheet, from this one's folder, or {{ sheet, scale }}.");
 
             string from = System.IO.Path.Combine(directory, other.Value);
-            if (System.IO.Path.GetFullPath(from) == System.IO.Path.GetFullPath(path))
+            if (ContentFiles.ResolvePath(from) == ContentFiles.ResolvePath(path))
                 throw new Exception($"'{path}' inherits from itself.");
 
             var below = Load(System.IO.Path.GetDirectoryName(from) ?? string.Empty, System.IO.Path.GetFileName(from));
@@ -321,7 +325,8 @@ public sealed class SpriteSheetDefinition
         if (!properties.TryGetValue("file", out var file) || file is not StringValue fileName)
             throw new Exception($"Image '{name}' has to name its file.");
 
-        var image = new ImageDefinition { Path = System.IO.Path.Combine(directory, fileName.Value) };
+        string imagePath = System.IO.Path.Combine(directory, fileName.Value);
+        var image = new ImageDefinition { Path = imagePath, File = ContentFiles.Find(imagePath) };
 
         // How far the next copy of the art is. A number is so many pixels to the right, a vector goes any way
         if (properties.TryGetValue("block", out var block))
@@ -343,7 +348,7 @@ public sealed class SpriteSheetDefinition
             AsepriteDocument document;
             try
             {
-                document = AsepriteDocument.Open(image.Path);
+                document = AsepriteDocument.Open(image.File);
             }
             catch (Exception e)
             {

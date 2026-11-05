@@ -6,7 +6,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Drawing;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Testing.Examples.Internals;
 

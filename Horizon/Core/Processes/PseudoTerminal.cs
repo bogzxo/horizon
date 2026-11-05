@@ -113,6 +113,14 @@ public abstract class PseudoTerminal : IDisposable
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
             return new UnixPseudoTerminal(commandLine, workingDirectory, columns, rows, environment);
 
+        // Android is Linux underneath and bionic has every call the Unix pty makes, posix_spawn since API 28 and
+        // posix_spawn_file_actions_addchdir_np (the working directory) only since 34. Older than that is said here,
+        // before a pty is opened or anything allocated, rather than dying on a missing symbol halfway through
+        if (OperatingSystem.IsAndroidVersionAtLeast(34))
+            return new UnixPseudoTerminal(commandLine, workingDirectory, columns, rows, environment);
+        if (OperatingSystem.IsAndroid())
+            throw new PlatformNotSupportedException("A terminal needs Android 14 (API 34) or newer, older Androids have no posix_spawn_file_actions_addchdir_np to start a shell in a folder with.");
+
         throw new PlatformNotSupportedException("There is no pseudo terminal on this platform.");
     }
 
@@ -128,7 +136,7 @@ public abstract class PseudoTerminal : IDisposable
         Microsoft.Win32.SafeHandles.SafeFileHandle server, Microsoft.Win32.SafeHandles.SafeFileHandle client, string command) =>
         new HandedOverPseudoTerminal(input, output, signal, reference, server, client, command);
 
-    /// <summary>The shell this machine comes with, PowerShell (pwsh if it is there), bash, zsh, whatever $SHELL says.</summary>
+    /// <summary>The shell this machine comes with, PowerShell (pwsh if it is there), bash, zsh, whatever $SHELL says, /system/bin/sh on Android.</summary>
     public static string DefaultShell()
     {
         if (OperatingSystem.IsWindows())
@@ -142,7 +150,8 @@ public abstract class PseudoTerminal : IDisposable
             return "powershell.exe -NoLogo";
         }
 
-        return Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell ? shell : "/bin/sh";
+        // Android has no /bin, its shell is the system's own
+        return Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell ? shell : OperatingSystem.IsAndroid() ? "/system/bin/sh" : "/bin/sh";
     }
 
     /// <summary>Writes bytes to the process's input, what a key or a paste types. Any thread.</summary>

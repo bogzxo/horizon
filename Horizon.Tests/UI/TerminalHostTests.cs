@@ -2,7 +2,7 @@ using Horizon.HIDL.Runtime;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 
 namespace Horizon.Tests.UI;
 
@@ -197,6 +197,70 @@ public class TerminalHostTests
         var tabs = Assert.IsType<ListValue>(session!.Value.Properties["tabs"]);
         Assert.Single(tabs.Items);
         Assert.Null(TerminalSessions.Read("broken {{"));
+    }
+
+    [Fact]
+    public void Session_snapshot_matches_every_persisted_tab_and_pane_field()
+    {
+        using var panel = new TerminalPanel { AnimationTime = 0 };
+        var shell = new TerminalProfile("Shell", string.Empty, id: "shell") { Kind = TerminalProfileKind.Embedded };
+        var other = new TerminalProfile("Other", string.Empty, id: "other") { Kind = TerminalProfileKind.Embedded };
+        panel.OnStartProfile = (_, _) => true;
+        string folder = Path.GetTempPath();
+        TerminalTab first = panel.NewTab(shell, folder);
+        TerminalSessions.Snapshot saved = TerminalSessions.Capture(panel);
+
+        Assert.True(TerminalSessions.Matches(panel, saved));
+        first.Renamed = "renamed";
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        first.Renamed = null;
+        saved = TerminalSessions.Capture(panel);
+
+        TerminalView firstPane = first.FocusedView!;
+        firstPane.PaneName = "named";
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        firstPane.PaneName = null;
+        firstPane.Profile = other;
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        firstPane.Profile = shell;
+        firstPane.Screen.Feed("\u001b]7;file:///tmp/session-folder\u0007");
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        saved = TerminalSessions.Capture(panel);
+
+        _ = panel.Split(SplitOrientation.Horizontal, shell)!;
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        saved = TerminalSessions.Capture(panel);
+        first.Tree.Root!.Ratio = 0.5004f;
+        Assert.True(TerminalSessions.Matches(panel, saved)); // the writer rounds ratios to three decimals
+        first.Tree.Root.Ratio = 0.501f;
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        first.Tree.Root.Ratio = 0.5f;
+        saved = TerminalSessions.Capture(panel);
+
+        panel.NewTab(other, folder);
+        Assert.False(TerminalSessions.Matches(panel, saved));
+        saved = TerminalSessions.Capture(panel);
+        panel.Select(0);
+        Assert.False(TerminalSessions.Matches(panel, saved)); // the selected tab persists
+    }
+
+    [Fact]
+    public void An_unchanged_session_comparison_allocates_nothing()
+    {
+        using var panel = new TerminalPanel { AnimationTime = 0 };
+        var profile = new TerminalProfile("Embedded", string.Empty, id: "embedded") { Kind = TerminalProfileKind.Embedded };
+        panel.OnStartProfile = (_, _) => true;
+        panel.NewTab(profile);
+        TerminalSessions.Snapshot saved = TerminalSessions.Capture(panel);
+        bool matched = false;
+        for (int i = 0; i < 10; i++) matched = TerminalSessions.Matches(panel, saved);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 100; i++) matched = TerminalSessions.Matches(panel, saved);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.True(matched);
+        Assert.Equal(0, allocated);
     }
 
     [Fact]

@@ -96,6 +96,14 @@ public sealed class LoopStatistics
     /// </summary>
     public double AllocatedPerSecond => AllocatedPerTurn * Rate;
 
+    private long totalTurns, totalAllocatedBytes;
+
+    /// <summary>Exact cumulative counters. Subtract two samples to measure an interval without startup or smoothing.</summary>
+    public (long Turns, long Bytes) AllocationTotals
+    {
+        get { lock (gate) return (totalTurns, totalAllocatedBytes); }
+    }
+
     private double period;
 
     public LoopStatistics(string name, double targetRate)
@@ -117,6 +125,8 @@ public sealed class LoopStatistics
     {
         lock (gate)
         {
+            totalTurns += Math.Max(1, turns);
+            totalAllocatedBytes += allocatedBytes;
             AllocatedPerTurn += (allocatedBytes / (double)Math.Max(1, turns) - AllocatedPerTurn) * SMOOTHING;
 
             double workMs = workSeconds * 1000.0 / Math.Max(1, turns);

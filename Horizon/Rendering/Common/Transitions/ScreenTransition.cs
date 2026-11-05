@@ -21,8 +21,8 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
     private bool initialized;
     private PostTarget? frame;
 
-    /// <summary>The size of the window, in pixels.</summary>
-    protected static Vector2 ScreenSize => GameEngine.Instance.WindowManager.ViewportSize;
+    /// <summary>The size of what the window is drawn into right now, in pixels, the scene's while it's drawn small.</summary>
+    protected static Vector2 ScreenSize => GameEngine.Instance.WindowManager.Scaling.TargetSize;
 
     /// <summary>Render thread, once, before the transition first draws. Where its shaders are made.</summary>
     protected virtual void Initialize()

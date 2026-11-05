@@ -159,6 +159,9 @@ public class DrawingPanel : UIComponent
 
     /* The pointer and the keys */
 
+    // Whatever is drawn with a finger is drawn, not scrolled
+    protected internal override bool KeepsTouchDrag(Vector2 point) => true;
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         pointerDown = true;
@@ -195,7 +198,7 @@ public class DrawingPanel : UIComponent
 
         // The middle or the right button drags the drawing about
         var mouse = Horizon.Engine.GameEngine.Instance?.Input.Mouse;
-        bool panHeld = mouse is not null && (mouse.IsDown(Silk.NET.Input.MouseButton.Middle) || mouse.IsDown(Silk.NET.Input.MouseButton.Right));
+        bool panHeld = mouse is not null && (mouse.IsDown(Horizon.Input.MouseButton.Middle) || mouse.IsDown(Horizon.Input.MouseButton.Right));
         if (Pannable && panHeld && (panning || (IsHovered && Bounds.Contains(pointer))))
         {
             if (!panning)

@@ -21,6 +21,9 @@ public sealed unsafe partial class GraphicsDevice
     private RenderTarget? boundTarget;
     private bool targetIsWindow = true;
 
+    // Whether what is bound is the window as whoever bound it sees it, which is the scene's target while it stands in for it
+    private bool boundIsWindow = true;
+
     internal Technique? BoundTechnique;
 
     private readonly Texture?[] boundTextures = new Texture?[ShaderPreprocessor.TEXTURE_BINDINGS];
@@ -262,11 +265,18 @@ public sealed unsafe partial class GraphicsDevice
     /// <summary>Makes the window what is drawn into, with the viewport over all of it.</summary>
     public void BindWindow() => BindRenderTarget(null);
 
-    /// <summary>Makes a render target what is drawn into (the window for null), with the viewport over all of it.</summary>
+    /// <summary>
+    /// Makes a render target what is drawn into (the window for null), with the viewport over all of it. While the
+    /// frame's scene is drawn at another size (see <see cref="Horizon.Rendering.Scaling.FrameScaler"/>) the window is
+    /// the scene's target, which nobody outside of the device has to know.
+    /// </summary>
     public void BindRenderTarget(RenderTarget? target)
     {
+        bool logicalWindow = target is null;
+        target ??= sceneTarget;
+
         bool window = target is null;
-        if (window == targetIsWindow && ReferenceEquals(target, boundTarget))
+        if (window == targetIsWindow && ReferenceEquals(target, boundTarget) && logicalWindow == boundIsWindow)
             return;
 
         // A target that was cleared and then never drawn into still has to come out cleared
@@ -275,6 +285,7 @@ public sealed unsafe partial class GraphicsDevice
 
         boundTarget = target;
         targetIsWindow = window;
+        boundIsWindow = logicalWindow;
         Statistics.Counting.RenderTargetBinds++;
 
         if (window) SetViewport(0, 0, swapchain.Width, swapchain.Height);
@@ -282,7 +293,7 @@ public sealed unsafe partial class GraphicsDevice
     }
 
     /// <summary>The render target that is drawn into, null for the window.</summary>
-    public RenderTarget? BoundRenderTarget => targetIsWindow ? null : boundTarget;
+    public RenderTarget? BoundRenderTarget => targetIsWindow || boundIsWindow ? null : boundTarget;
 
     /// <summary>Sets what of the bound target is drawn to, in pixels from its top left.</summary>
     public void SetViewport(int x, int y, uint width, uint height)
@@ -625,7 +636,11 @@ public sealed unsafe partial class GraphicsDevice
             if (renderingActive && ReferenceEquals(renderingTarget, resource)) EndRendering();
             boundTarget = null;
             targetIsWindow = true;
+            boundIsWindow = true;
         }
+
+        if (ReferenceEquals(sceneTarget, resource))
+            sceneTarget = null;
     }
 
     private ulong WindowFormatKey => 0x57494E444F570000UL ^ (ulong)swapchain.Format;

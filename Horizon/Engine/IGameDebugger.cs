@@ -1,5 +1,5 @@
 #if DEBUG
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Engine;
 

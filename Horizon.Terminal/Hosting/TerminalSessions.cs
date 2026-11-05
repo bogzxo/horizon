@@ -15,6 +15,105 @@ namespace Horizon.UI.Components;
 /// </summary>
 public static class TerminalSessions
 {
+    /// <summary>A structural copy of the fields written by <see cref="Write"/>.</summary>
+    public sealed class Snapshot
+    {
+        internal Snapshot(int current, TabSnapshot[] tabs) => (Current, Tabs) = (current, tabs);
+        internal int Current { get; }
+        internal TabSnapshot[] Tabs { get; }
+    }
+
+    internal sealed class TabSnapshot(string title, NodeSnapshot tree)
+    {
+        internal string Title { get; } = title;
+        internal NodeSnapshot Tree { get; } = tree;
+    }
+
+    internal sealed class NodeSnapshot(string? split, float ratio, string? profile, string? folder, string? name, NodeSnapshot? first, NodeSnapshot? second)
+    {
+        internal string? Split { get; } = split;
+        internal float Ratio { get; } = ratio;
+        internal string? Profile { get; } = profile;
+        internal string? Folder { get; } = folder;
+        internal string? Name { get; } = name;
+        internal NodeSnapshot? First { get; } = first;
+        internal NodeSnapshot? Second { get; } = second;
+    }
+
+    /// <summary>Copies the persisted fields once, after a change.</summary>
+    public static Snapshot Capture(TerminalPanel panel)
+    {
+        var tabs = new List<TabSnapshot>(panel.Tabs.Count);
+        foreach (TerminalTab tab in panel.Tabs)
+            if (tab.Tree.Root is { } root)
+                tabs.Add(new TabSnapshot(tab.Renamed ?? string.Empty, Capture(root)));
+        return new Snapshot(Math.Max(0, panel.CurrentIndex), tabs.ToArray());
+    }
+
+    /// <summary>Compares exactly the fields the session writer persists, without allocating.</summary>
+    public static bool Matches(TerminalPanel panel, Snapshot snapshot)
+    {
+        if (Math.Max(0, panel.CurrentIndex) != snapshot.Current)
+            return false;
+        int at = 0;
+        for (int i = 0; i < panel.Tabs.Count; i++)
+        {
+            TerminalTab tab = panel.Tabs[i];
+            if (tab.Tree.Root is not { } root)
+                continue;
+            if (at >= snapshot.Tabs.Length)
+                return false;
+            TabSnapshot saved = snapshot.Tabs[at++];
+            if (!string.Equals(tab.Renamed ?? string.Empty, saved.Title, StringComparison.Ordinal) || !Matches(root, saved.Tree))
+                return false;
+        }
+        return at == snapshot.Tabs.Length;
+    }
+
+    private static NodeSnapshot Capture(SplitNode<TerminalView> node)
+    {
+        if (node.IsLeaf)
+        {
+            TerminalView view = node.Content!;
+            return new NodeSnapshot(null, 0, view.Profile?.Id ?? string.Empty,
+                NormalizeFolder(view.WorkingDirectory), view.PaneName, null, null);
+        }
+        return new NodeSnapshot(node.Orientation == SplitOrientation.Horizontal ? "right" : "down",
+            MathF.Round(node.Ratio, 3), null, null, null, Capture(node.First!), Capture(node.Second!));
+    }
+
+    private static bool Matches(SplitNode<TerminalView> node, NodeSnapshot saved)
+    {
+        if (node.IsLeaf)
+        {
+            if (saved.Split is not null || node.Content is not { } view)
+                return false;
+            return string.Equals(view.Profile?.Id ?? string.Empty, saved.Profile, StringComparison.Ordinal)
+                && FolderMatches(view.WorkingDirectory, saved.Folder)
+                && string.Equals(view.PaneName, saved.Name, StringComparison.Ordinal);
+        }
+        return saved.Split is not null
+            && string.Equals(node.Orientation == SplitOrientation.Horizontal ? "right" : "down", saved.Split, StringComparison.Ordinal)
+            && MathF.Round(node.Ratio, 3) == saved.Ratio
+            && saved.First is not null && Matches(node.First!, saved.First)
+            && saved.Second is not null && Matches(node.Second!, saved.Second);
+    }
+
+    private static string NormalizeFolder(string? folder) => (folder ?? string.Empty).Replace('\\', '/');
+
+    private static bool FolderMatches(string? folder, string? saved)
+    {
+        ReadOnlySpan<char> value = folder.AsSpan();
+        if (value.Length == 0)
+            return saved is { Length: 0 };
+        if (saved is null || value.Length != saved.Length)
+            return false;
+        for (int i = 0; i < value.Length; i++)
+            if ((value[i] == '\\' ? '/' : value[i]) != saved[i])
+                return false;
+        return true;
+    }
+
     /// <summary>The session of a panel as the object a file declares, for whoever puts it in a file of their own.</summary>
     public static string Object(TerminalPanel panel) => HIDLWriter.Write(Value(panel));
 

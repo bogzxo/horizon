@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Logging;
@@ -191,7 +192,7 @@ public sealed class TileMap : GameObject
         Name = "Tile Map";
         Data = data;
         Path = path;
-        directory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(path)) ?? string.Empty;
+        directory = System.IO.Path.GetDirectoryName(ContentFiles.ResolvePath(path)) ?? string.Empty;
 
         TileSize = new Vector2(data.TileWidth, data.TileHeight);
         Properties = new TileMapProperties(data.Properties, directory);
@@ -206,7 +207,7 @@ public sealed class TileMap : GameObject
         {
             // The images of a tile set in a file of its own are named from where that file is
             string setDirectory = set.Source.HasValue
-                ? System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, set.Source.Value))) ?? directory
+                ? System.IO.Path.GetDirectoryName(ContentFiles.ResolvePath(System.IO.Path.Combine(directory, set.Source.Value))) ?? directory
                 : directory;
 
             tilesets.Add((set.FirstGID.GetValueOr(1u), set, setDirectory, set.Tiles.ToDictionary(tile => tile.ID)));
@@ -233,13 +234,15 @@ public sealed class TileMap : GameObject
     /// <exception cref="Exception">The file isn't there, isn't an orthogonal map, or names a file that isn't there.</exception>
     public static TileMap Load(string path, Action<TileMapObjectDispatcher>? objects = null, Vector2 origin = default)
     {
-        if (!File.Exists(path))
+        FoundContent found = ContentFiles.Find(path);
+        if (!found.Exists)
             throw new FileNotFoundException($"The map '{path}' doesn't exist.");
 
         Map data;
         try
         {
-            data = Loader.Default().LoadMap(path);
+            // Its tile sets and templates come out of the same source as the map, by paths relative to it
+            data = Loader.DefaultWith(resourceReader: new TileMapContentReader(found.Source)).LoadMap(path);
         }
         catch (Exception e)
         {
@@ -544,7 +547,7 @@ public sealed class TileMap : GameObject
                 ? (int)set.Columns
                 : Math.Max(1, (imageWidth - (int)set.Margin * 2 + (int)set.Spacing) / Math.Max(1, (int)(set.TileWidth + set.Spacing)));
 
-            image = System.IO.Path.GetFullPath(System.IO.Path.Combine(found.Directory, set.Image.Value.Source.Value));
+            image = ContentFiles.ResolvePath(System.IO.Path.Combine(found.Directory, set.Image.Value.Source.Value));
             width = set.TileWidth;
             height = set.TileHeight;
             x = set.Margin + id % columns * (set.TileWidth + set.Spacing);
@@ -555,7 +558,7 @@ public sealed class TileMap : GameObject
             // A collection of images, the tile is the whole of its own, or the part of it the set says
             Image own = definition.Image.Value;
 
-            image = System.IO.Path.GetFullPath(System.IO.Path.Combine(found.Directory, own.Source.Value));
+            image = ContentFiles.ResolvePath(System.IO.Path.Combine(found.Directory, own.Source.Value));
             x = definition.X;
             y = definition.Y;
             width = definition.Width > 0 ? definition.Width : own.Width.GetValueOr((int)set.TileWidth);
@@ -920,7 +923,7 @@ public sealed class TileMap : GameObject
         long signature = HashCode.Combine(perTile, layersSignature);
         if (casterTexels is { } known && casterTexelsFor == signature) return known;
 
-        var key = (System.IO.Path.GetFullPath(Path), WrittenAt(), perTile, layersSignature);
+        var key = (ContentFiles.CacheKey(Path), WrittenAt(), perTile, layersSignature);
         if (!sharedTexels.TryGetValue(key, out var texels))
         {
             texels = [.. ShadowCasterTexels(perTile)];
@@ -938,7 +941,7 @@ public sealed class TileMap : GameObject
     {
         try
         {
-            return System.IO.File.GetLastWriteTimeUtc(Path).Ticks;
+            return ContentFiles.GetLastWriteTimeUtc(Path).Ticks;
         }
         catch (System.IO.IOException)
         {
@@ -1306,7 +1309,7 @@ public sealed class TileMap : GameObject
             case TileMapLayerKind.Image:
                 // One batch that is filled in when it is drawn, there may be any number of the image in view
                 if (layer.Source is ImageLayer { Image.HasValue: true } image && image.Image.Value.Source.HasValue)
-                    layer.Batches.Add(new TileMapBatch(System.IO.Path.GetFullPath(System.IO.Path.Combine(directory, image.Image.Value.Source.Value))));
+                    layer.Batches.Add(new TileMapBatch(ContentFiles.ResolvePath(System.IO.Path.Combine(directory, image.Image.Value.Source.Value))));
                 break;
         }
     }

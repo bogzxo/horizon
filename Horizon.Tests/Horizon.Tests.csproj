@@ -7,6 +7,7 @@
     <LangVersion>preview</LangVersion>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.Platform.Desktop\Horizon.Platform.Desktop.csproj" />
     <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
     <ProjectReference Include="..\Horizon.Tooling\Horizon.Tooling.csproj" />
     <ProjectReference Include="..\Horizon.Terminal\Horizon.Terminal.csproj" />

@@ -82,6 +82,13 @@ public sealed class PostContext
     public Vector2 SourceSize { get; internal set; }
 
     /// <summary>
+    /// The picture's size before render scaling. For a renderer following the window this is the native window
+    /// size; a renderer with a fixed resolution keeps that resolution. It stays the same throughout the effect
+    /// chain, so artwork-sized patterns need not change when intermediate textures or output sizes change.
+    /// </summary>
+    public Vector2 LogicalSize { get; internal set; }
+
+    /// <summary>
     /// The size of what <see cref="Draw()"/> draws into. For the last effect that is whatever the renderer is shown
     /// on (the window, say), which need not be the size it was drawn at.
     /// </summary>

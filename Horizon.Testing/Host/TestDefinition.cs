@@ -48,6 +48,12 @@ internal sealed record TestDefinition(string Id, TestLevel Level, string Name, s
 
     /// <summary>The other names it answers to on the command line, the ids the examples it replaced went by.</summary>
     public string[] Aliases { get; init; } = [];
+
+    /// <summary>
+    /// Why it can't run on the platform this is built for, null when it can. Its row still shows in the selector and
+    /// starting it puts up a screen that says why, so nothing quietly goes missing from the list.
+    /// </summary>
+    public string? Unsupported { get; init; }
 }
 
 /// <summary>
@@ -64,4 +70,7 @@ internal interface ISelfCheck
 
     /// <summary>How many it made.</summary>
     int Count { get; }
+
+    /// <summary>How many it left out because the platform can't do what they check, never part of <see cref="Count"/>.</summary>
+    int Skipped => 0;
 }

@@ -2,7 +2,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Scripting;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 
 namespace Horizon.Tests.UI;
 

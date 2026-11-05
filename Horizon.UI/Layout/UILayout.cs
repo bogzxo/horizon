@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
@@ -305,21 +306,22 @@ public sealed class UILayout
     /// Has a layout's file read again the next time it's loaded, for a program that has just written it (an editor saving
     /// one) and can't wait the second it would otherwise be taken to be what it was.
     /// </summary>
-    public static void Forget(string path) => programs.TryRemove(System.IO.Path.GetFullPath(path), out _);
+    public static void Forget(string path) => programs.TryRemove(ContentFiles.CacheKey(path), out _);
 
     private static ProgramStatement Compile(string path)
     {
-        string key = System.IO.Path.GetFullPath(path);
+        FoundContent found = ContentFiles.Find(path);
+        string key = found.Key;
         long now = System.Environment.TickCount64;
         bool known = programs.TryGetValue(key, out var cached);
         if (known && now - cached.CheckedAt < RECHECK_MS)
             return cached.Program;
 
-        if (!File.Exists(path))
+        if (!found.Exists)
             throw new FileNotFoundException($"The layout '{path}' doesn't exist.");
 
         // Read again if the file was changed since, which is what lets an editor be used next to a running program.
-        DateTime written = File.GetLastWriteTimeUtc(path);
+        DateTime written = found.LastWriteTimeUtc;
         if (known && cached.Written == written)
         {
             programs[key] = cached with { CheckedAt = now };
@@ -328,7 +330,7 @@ public sealed class UILayout
 
         try
         {
-            var program = new Parser().ProduceSyntaxTree(Lexer.Tokenize(File.ReadAllText(path)));
+            var program = new Parser().ProduceSyntaxTree(Lexer.Tokenize(ContentFiles.ReadAllText(found.Source, found.Path)));
             programs[key] = (written, now, program);
             return program;
         }

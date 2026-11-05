@@ -27,6 +27,13 @@ public readonly struct GameEngineConfiguration
     /// </summary>
     public bool FilesBesideProgram { get; init; }
 
+    /// <summary>
+    /// The platform the engine runs on, null for the one the program installed (see
+    /// <see cref="Horizon.Platform.PlatformInstallation"/>). An Android activity or a test hands its own in here, and
+    /// the engine asks it for a fresh host of its own.
+    /// </summary>
+    public Horizon.Platform.IPlatform? Platform { get; init; }
+
     public static GameEngineConfiguration Default { get; } =
         new GameEngineConfiguration
         {

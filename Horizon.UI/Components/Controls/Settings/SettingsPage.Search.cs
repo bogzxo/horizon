@@ -2,7 +2,7 @@ using System.Numerics;
 
 using Horizon.UI.Drawing;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 

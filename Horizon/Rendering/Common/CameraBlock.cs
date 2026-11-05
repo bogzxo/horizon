@@ -77,6 +77,23 @@ public static class CameraBlock
         heldCamera = null;
     }
 
+    /// <summary>
+    /// What is drawn into changed size in the middle of the frame, the scene drawn small blown up and the overlay
+    /// drawn at the window's size from there on (see <see cref="Scaling.FrameScaler"/>). The block is written again at
+    /// the next draw.
+    /// </summary>
+    internal static void ChangeViewport(Vector2 viewport)
+    {
+        if (viewport == viewportSize)
+            return;
+
+        viewportSize = viewport;
+        held.ViewportSize = viewport;
+        held.ViewportTexel = new Vector2(viewport.X > 0 ? 1.0f / viewport.X : 0.0f, viewport.Y > 0 ? 1.0f / viewport.Y : 0.0f);
+        dirty = true;
+        heldCamera = null;
+    }
+
     /// <summary>The frame is drawn. The engine calls it.</summary>
     internal static void EndFrame()
     { }

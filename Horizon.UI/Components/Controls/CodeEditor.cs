@@ -285,6 +285,9 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
 
+    // A soft keyboard comes up for an editor a finger focused, unless nothing can be typed into it
+    protected internal override bool WantsTextInput => !ReadOnly;
+
     /// <summary>Whether the code is parsed after every change and what the parser doesn't like is underlined.</summary>
     public bool CheckSyntax { get; set; } = true;
 
@@ -715,6 +718,11 @@ public partial class CodeEditor : UIComponent
     public Action<float>? OnZoom { get; set; }
     protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
 
+    protected internal override bool HasOverscroll => over.Active;
+
+    // A finger on the bar or the minimap drags that, anywhere else it scrolls the code
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X) || base.KeepsTouchDrag(point);
+
     /// <summary>
     /// Called as Tab is pressed with one caret and nothing selected, before it indents. True when it took the key (an
     /// abbreviation before the caret written out) and nothing is indented. Null, Tab only ever indents.
@@ -1123,6 +1131,8 @@ public partial class CodeEditor : UIComponent
         // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
         // in the background isn't painted again twice a second for a caret nobody's typing at
         blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
         if (waiting.Length > 0)
             waitedFor += dt;

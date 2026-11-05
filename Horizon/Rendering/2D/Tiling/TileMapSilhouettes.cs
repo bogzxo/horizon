@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Graphics;
 
 
@@ -33,7 +34,7 @@ internal sealed class TileMapSilhouettes
 
     private static Mask? Read(string path)
     {
-        if (!File.Exists(path)) return null;
+        if (!ContentFiles.Exists(path)) return null;
 
         try
         {

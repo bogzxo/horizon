@@ -1,3 +1,4 @@
+using Horizon.Content;
 namespace Horizon.Graphics;
 
 /// <summary>A picture as its pixels, four bytes a pixel (red, green, blue, alpha), the top row first.</summary>
@@ -14,13 +15,28 @@ public static class ImageFile
     /// <summary>A picture's pixels, whatever it was saved as. Throws when the file isn't a picture it can read.</summary>
     public static ImagePixels Load(string path)
     {
-        using FileStream stream = File.OpenRead(path);
+        using Stream stream = ContentFiles.OpenRead(path);
         return Load(stream);
     }
 
-    /// <summary>A picture's pixels out of a stream.</summary>
+    /// <summary>A picture's pixels out of a file of whichever content source found it.</summary>
+    public static ImagePixels Load(in FoundContent file)
+    {
+        using Stream stream = file.OpenRead();
+        return Load(stream);
+    }
+
+    /// <summary>A picture's pixels out of a stream. One that can't seek (a packed file) is read whole first, stb skips about.</summary>
     public static ImagePixels Load(Stream stream)
     {
+        if (!stream.CanSeek)
+        {
+            using var copy = new MemoryStream();
+            stream.CopyTo(copy);
+            copy.Position = 0;
+            return Load(copy);
+        }
+
         var read = StbImageSharp.ImageResult.FromStream(stream, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
         return new ImagePixels(read.Width, read.Height, read.Data);
     }

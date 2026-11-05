@@ -176,6 +176,28 @@ public partial class ScrollPanel : Panel
 
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
+    // Dragged by a finger the content goes along with it, to the pixel, and at an end the rest goes to whatever this is in
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        float max = MaxOffset;
+        if (max <= 0.0f || delta.Y == 0.0f)
+            return false;
+
+        float wanted = offset + delta.Y;
+        if ((delta.Y < 0.0f && offset <= 0.0f) || (delta.Y > 0.0f && offset >= max))
+            return false;
+
+        ease.Stop();
+        offset = Math.Clamp(wanted, 0.0f, max);
+        return true;
+    }
+
+    // A finger on the bar drags the bar, anywhere else it drags what's in the panel
+    protected internal override bool KeepsTouchDrag(Vector2 point) =>
+        (MaxOffset > 0.0f && TrackBounds.Shrink(new UIEdges(-BarWidth)).Contains(point)) || base.KeepsTouchDrag(point);
+
     protected override void DefineScript()
     {
         base.DefineScript();

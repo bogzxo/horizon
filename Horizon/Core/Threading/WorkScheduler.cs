@@ -79,6 +79,24 @@ public sealed class WorkScheduler
         }
     }
 
+    /// <summary>How many are waiting or going that a test lets through, all of them without one. Does not make a copy.</summary>
+    public int CountActive(Func<WorkItem, bool>? listed = null)
+    {
+        lock (gate)
+        {
+            if (listed is null)
+                return byKey.Count;
+
+            int count = 0;
+            foreach (WorkItem item in byKey.Values)
+            {
+                if (listed(item))
+                    count++;
+            }
+            return count;
+        }
+    }
+
     /// <summary>The work of a key that's waiting or going, null when there's none.</summary>
     public WorkItem? Find(string key)
     {
