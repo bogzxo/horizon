@@ -659,7 +659,11 @@ public partial class WindowManager : GameComponent, IDisposable
             frameWanted.Set();
 
             if (renderThread is null)
+            {
                 framesStopped.TrySetResult();
+                if (simulation is null)
+                    return stopped = framesStopped.Task;
+            }
 
             stopped = framesStopped.Task.ContinueWith(static (frames, state) =>
             {
