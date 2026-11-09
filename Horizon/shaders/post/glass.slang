@@ -66,13 +66,13 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     }
     else
     {
-        // Liquid. How far into the rim this is, 0 on the flat of the slab and 1 at its very edge, the rim three bends wide
+        // Liquid. How far into the rim  this is, 0 on the flat of the slab and 1 at its very edge, the rim three bends wide
         float rim = max(params.uBend * 3.0, 6.0);
         float t = saturate(1.0 + outside / rim);
 
         // The rim is the round of a quarter circle, its slope steepening to the edge, and what's behind is taken from as
         // far further out as the slope is steep. Held short of straight up at the very edge or it reads from the moon
-        float slope = min(t / sqrt(max(1.0 - t * t, 0.0625)), 4.0);
+        float slope = min(t * rsqrt(max(1.0 - t * t, 0.0625)), 4.0);
         float2 bend = outward * params.uBend * slope * params.uTexel;
 
         // Split, the red bent the least and the blue the most, only where it bends at all

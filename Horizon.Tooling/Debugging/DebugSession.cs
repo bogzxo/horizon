@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 
@@ -85,6 +85,8 @@ public sealed partial class DebugSession : IDisposable
     private readonly Process? adapter;
     /// <summary>Whether ending this session also ends its program. False for an externally started process.</summary>
     public bool TerminatesDebuggeeOnStop { get; }
+    /// <summary>Native user-code filtering, applied when the session launches or attaches.</summary>
+    public bool JustMyCode { get; set; } = true;
     private readonly object stoppingLock = new();
     private Task? stopping;
     private readonly ConcurrentQueue<DebugEvent> happened = new();
@@ -187,7 +189,7 @@ public sealed partial class DebugSession : IDisposable
                     ["cwd"] = workingDirectory,
                     ["stopAtEntry"] = false,
                     ["console"] = "internalConsole",
-                    ["justMyCode"] = true
+                    ["justMyCode"] = JustMyCode
                 }
                 : new JsonObject
                 {
@@ -270,7 +272,7 @@ public sealed partial class DebugSession : IDisposable
                 ["type"] = kind,
                 ["request"] = "attach",
                 ["processId"] = processId,
-                ["justMyCode"] = true
+                ["justMyCode"] = JustMyCode
             }), breakpointsByFile).ConfigureAwait(false);
             return true;
         }
@@ -543,7 +545,7 @@ public sealed partial class DebugSession : IDisposable
                 Interlocked.Increment(ref threadEpoch);
                 stoppedThread = JsonNumbers.Int(body?["threadId"], stoppedThread);
                 // lldb-dap says what an exception was in the description and leaves the text out
-                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>() ?? body?["description"]?.GetValue<string>(), HitFunctionBreakpoint(body) || HitDataBreakpoint(body) || HitInstructionBreakpoint(body));
+                _ = Stopped(body?["reason"]?.GetValue<string>() ?? "stopped", body?["text"]?.GetValue<string>() ?? body?["description"]?.GetValue<string>(), HitFunctionBreakpoint(body) || HitDataBreakpoint(body) || HitInstructionBreakpoint(body) || HitSourceReferenceBreakpoint(body));
                 break;
 
             case "continued":
@@ -577,6 +579,7 @@ public sealed partial class DebugSession : IDisposable
                 FunctionMoved(body?["breakpoint"]);
                 DataBreakpointMoved(body?["breakpoint"]);
                 InstructionBreakpointMoved(body?["breakpoint"]);
+                SourceReferenceBreakpointMoved(body?["breakpoint"], Text(body?["reason"]));
                 Moved(body?["breakpoint"]);
                 break;
         }
@@ -713,6 +716,7 @@ public sealed partial class DebugSession : IDisposable
         Interlocked.Increment(ref threadEpoch);
         state = DebugState.Ended;
         ClearModules();
+        ClearSourceReferenceBreakpoints();
         initialized.TrySetResult();
         threadBaseline?.TrySetResult();
         happened.Enqueue(new DebugEvent(DebugEventKind.Ended, why, [], ExitCodeOf(exitCode)));
