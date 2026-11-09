@@ -178,6 +178,8 @@ public partial class ScrollPanel : Panel
 
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
     // Dragged by a finger the content goes along with it, to the pixel, and at an end the rest goes to whatever this is in
     protected internal override bool OnPan(Vector2 delta)
     {

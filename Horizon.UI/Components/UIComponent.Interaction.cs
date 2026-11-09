@@ -106,6 +106,9 @@ public abstract partial class UIComponent
     /// <summary>Whether wheel input represents scrolling distance, rather than zooming or editing a value.</summary>
     protected internal virtual bool UsesScrollSpeed => false;
 
+    /// <summary>Whether an end spring has taken over from scrolling, so a released finger must stop pushing it.</summary>
+    protected internal virtual bool HasOverscroll => false;
+
     // What a finger dragged that didn't add up to a whole notch yet, see OnPan
     private float panCarry;
 

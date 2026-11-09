@@ -558,6 +558,8 @@ public partial class TreeView : UIComponent
     protected internal override bool OnEscape() => selected is { } item && OnKey?.Invoke(item, UIKeyboard.ESCAPE) == true;
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
     // A finger on the bar drags the bar, anywhere else it scrolls the rows
     protected internal override bool KeepsTouchDrag(Vector2 point) => (!scrollBarTrack.IsEmpty && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
 

@@ -130,17 +130,18 @@ public class UnixPseudoTerminalTests
             return;
 
         using var run = new Run("/bin/sh", 60, 10);
-        run.Terminal.Write("echo ready\n");
-        Assert.True(WaitFor(() => run.Shows("ready")), run.Said);
+        run.Terminal.Write("printf 'shell-%s\\n' ready\n");
+        Assert.True(WaitFor(() => run.Shows("shell-ready")), run.Said);
 
-        // Job control is on in an interactive shell with a controlling terminal, sleep gets the terminal to itself
-        run.Terminal.Write("sleep 30\n");
-        Assert.True(WaitFor(() => run.Terminal.RunsAProgram, 5000), $"the shell never had a program in front: [{run.Said}]");
+        // A foreground group exists before its child has finished starting. Wait for the child's signal handler,
+        // not the echoed command or the gap where it still inherits the shell's ignored interrupt
+        run.Terminal.Write("sh -c 'trap \"exit 130\" INT; printf \"child-%s\\n\" ready; while :; do :; done'\n");
+        Assert.True(WaitFor(() => run.Terminal.RunsAProgram && run.Shows("child-ready"), 5000), $"the foreground program never became ready: [{run.Said}]");
 
         run.Terminal.Write("\u0003");
-        Assert.True(WaitFor(() => !run.Terminal.RunsAProgram, 5000), "Ctrl+C didn't stop sleep, the terminal isn't sleep's controlling one");
+        Assert.True(WaitFor(() => !run.Terminal.RunsAProgram, 5000), $"Ctrl+C didn't stop the foreground program: [{run.Said}]");
 
-        run.Terminal.Write("echo still-here\n");
+        run.Terminal.Write("printf 'still-%s\\n' here\n");
         Assert.True(WaitFor(() => run.Shows("still-here")), $"the shell went with it: [{run.Said}]");
         Assert.True(run.Terminal.IsRunning);
     }

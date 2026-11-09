@@ -79,6 +79,13 @@ float ambientOcclusion(float2 position, Field field, float radius, int samples, 
     float share = 1.0;
 
     float d = wallsDistance(at, field);
+
+    // A distance field bounds every direction at once. Leave a two-texel margin for the
+    // sampled field, then empty space needs no rays or trigonometry at all.
+    float margin = 2.0 * max(max(field.cellSize.x, field.cellSize.y), field.spritePixelWorld);
+    if (d > radius + margin && (!sprites || spritesDistance(at, field, false) > radius + margin))
+        return 1.0;
+
     if (d < texel)
     {
         if (-d >= radius) return 1.0;

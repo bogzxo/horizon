@@ -785,6 +785,8 @@ public partial class CodeEditor : UIComponent
     public Action<float>? OnZoom { get; set; }
     protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
 
+    protected internal override bool HasOverscroll => over.Active;
+
     // A finger on the bar or the minimap drags that, anywhere else it scrolls the code
     protected internal override bool KeepsTouchDrag(Vector2 point) => (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X) || base.KeepsTouchDrag(point);
 

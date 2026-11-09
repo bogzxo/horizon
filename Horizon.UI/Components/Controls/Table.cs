@@ -150,6 +150,8 @@ public class Table : UIComponent
     protected override bool HitTestVisible => true;
     protected internal override bool UsesScrollSpeed => true;
 
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
     protected internal override bool Focusable => true;
 
     /// <summary>
