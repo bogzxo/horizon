@@ -138,6 +138,25 @@ public static class UIKeyboard
     public const char MOVE_LINES_UP = '\uE010';
     public const char MOVE_LINES_DOWN = '\uE011';
 
+    /// <summary>
+    /// Shift, alt and an arrow with Visual Studio's keys, the box selection grown a line or a column that way, a caret
+    /// on every line of it (see <see cref="VisualStudioKeys"/>).
+    /// </summary>
+    public const char BOX_UP = '\uE01E';
+    public const char BOX_DOWN = '\uE01F';
+    public const char BOX_LEFT = '\uE020';
+    public const char BOX_RIGHT = '\uE021';
+
+    /// <summary>Control, shift and space, how the call the caret is in is called said again, after escape took it away.</summary>
+    public const char PARAMETER_INFO = '\uE022';
+
+    /// <summary>
+    /// Whether the editing keys are Visual Studio's where the two differ. Control with D duplicates the line rather than
+    /// adding the next occurrence, shift and alt with an arrow grows a box selection rather than copying the lines, and
+    /// shift and alt with a full stop (or a semicolon) adds the next occurrence (or every one). Off for VS Code's.
+    /// </summary>
+    public static bool VisualStudioKeys { get; set; }
+
     // What a key that types nothing at all comes to, never put in the queue
     private const char NOTHING = '\0';
 
@@ -281,7 +300,7 @@ public static class UIKeyboard
         }
 
         // What the key means, and whether holding it does it over and over
-        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac);
+        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
 
         if (key == Key.V && primary)
         {
@@ -305,9 +324,27 @@ public static class UIKeyboard
 
     /// <summary>
     /// What a key pressed comes to in the queue, and whether holding it does it over and over, nothing (0) for a key that
-    /// types nothing. Primary is control, command on a Mac. On its own so the keys can be tested without a keyboard.
+    /// types nothing. Primary is control, command on a Mac, and visualStudio is Visual Studio's keys where they differ
+    /// (see <see cref="VisualStudioKeys"/>). On its own so the keys can be tested without a keyboard.
     /// </summary>
-    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac) => key switch
+    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac, bool visualStudio = false) =>
+        visualStudio && VisualStudioMeaning(key, primary, shift, alt) is { } theirs ? theirs : CodeMeaning(key, primary, shift, alt, mac);
+
+    // The keys Visual Studio has for something else, null for one that's the same in both
+    private static (char Code, bool Repeats)? VisualStudioMeaning(Key key, bool primary, bool shift, bool alt) => key switch
+    {
+        Key.Up when alt && shift && !primary => (BOX_UP, true),
+        Key.Down when alt && shift && !primary => (BOX_DOWN, true),
+        Key.Left when alt && shift && !primary => (BOX_LEFT, true),
+        Key.Right when alt && shift && !primary => (BOX_RIGHT, true),
+        Key.D when primary && !shift && !alt => (DUPLICATE, false),
+        Key.Period when alt && shift && !primary => (NEXT_OCCURRENCE, false),
+        Key.Semicolon when alt && shift && !primary => (SELECT_ALL_OCCURRENCES, false),
+        _ => null
+    };
+
+    // VS Code's keys, which are Hex's own
+    private static (char Code, bool Repeats) CodeMeaning(Key key, bool primary, bool shift, bool alt, bool mac) => key switch
     {
         // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
         Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
@@ -353,6 +390,7 @@ public static class UIKeyboard
         Key.A when alt && shift && !primary => (TOGGLE_BLOCK_COMMENT, false),
         Key.LeftBracket when primary && shift => (FOLD, false),
         Key.RightBracket when primary && shift => (UNFOLD, false),
+        Key.Space when primary && shift => (PARAMETER_INFO, false),
         Key.Space when primary => (COMPLETE, false),
         Key.A when primary => (SELECT_ALL, false),
         Key.C when primary => (COPY, false),
@@ -580,7 +618,7 @@ public static class UIKeyboard
             return;
         }
 
-        (char code, _) = Meaning(key, primary, shift, alt, mac);
+        (char code, _) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
         if (code != NOTHING)
             Push(code);
         else if (!control && !alt && !super && CharacterOf(key, shift) is { } character)

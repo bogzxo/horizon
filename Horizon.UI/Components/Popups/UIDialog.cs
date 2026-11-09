@@ -235,6 +235,37 @@ public sealed class UIDialog : Panel
     /// <summary>Whether it's shown as a palette (<see cref="ShowPalette"/>).</summary>
     public bool IsPalette => palette;
 
+    // Where a palette was put by something rather than hanging from the top, and how tall the line it's under is
+    private Vector2? placedAt;
+    private float placedLine;
+
+    /// <summary>
+    /// A palette put by a place in its module rather than hanging from the top, its top left corner there, the way
+    /// Visual Studio's list of fixes opens by the caret. With no room under the place its bottom goes on the line above
+    /// it, a line's height up, and it's kept inside the module either way.
+    /// </summary>
+    public void PlaceAt(Vector2 point, float lineHeight)
+    {
+        placedAt = point;
+        placedLine = lineHeight;
+        card.Anchor = Origin.TopLeft;
+        card.Pivot = Origin.TopLeft;
+    }
+
+    protected override void Arrange(UIRect content)
+    {
+        if (placedAt is { } at)
+        {
+            Vector2 size = card.DesiredSize;
+            float x = Math.Clamp(at.X, content.Min.X, MathF.Max(content.Min.X, content.Max.X - size.X));
+            float top = at.Y - size.Y >= content.Min.Y ? at.Y : at.Y + placedLine + size.Y;
+            top = Math.Clamp(top, MathF.Min(content.Max.Y, content.Min.Y + size.Y), content.Max.Y);
+            card.Position = new Vector2(x - content.Min.X, top - content.Max.Y);
+        }
+
+        base.Arrange(content);
+    }
+
     protected internal override void OnPointerDown(Vector2 point) => DismissOutside(point);
 
     private void DismissOutside(Vector2 point)

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json.Nodes;
 
 namespace Horizon.UI.Scripting;
@@ -100,9 +100,18 @@ public sealed partial class LanguageServer
     // the edits it asks for queued for the editor, null for anything else
     private JsonNode? Answered(string method, JsonNode? parameters)
     {
-        if (method == "workspace/applyEdit")
-            return ApplyAsked(parameters);
-
+        if (method == "workspace/codeLens/refresh")
+        {
+            Interlocked.Increment(ref codeLensRefreshes);
+            Woken?.Invoke();
+            return null;
+        }
+        if (method == "workspace/inlayHint/refresh")
+        {
+            Interlocked.Increment(ref inlayRefreshes);
+            Woken?.Invoke();
+            return null;
+        }
         if (method == "workspace/semanticTokens/refresh")
         {
             SemanticsRefreshed();
@@ -139,6 +148,9 @@ public sealed partial class LanguageServer
     // any other request, which is answered on the spot
     private Task<JsonNode?>? Asked(string method, JsonNode? parameters)
     {
+        if (method == "workspace/applyEdit")
+            return ApplyAsked(parameters);
+
         if (method != "window/showMessageRequest" || parameters is not JsonObject asked)
             return null;
 

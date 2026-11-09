@@ -1,4 +1,4 @@
-using System.IO.Pipes;
+﻿using System.IO.Pipes;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -30,6 +30,7 @@ public class SemanticTokensServerTests
         Assert.Contains("relative", semantic["formats"]!.AsArray().Select(format => format!.GetValue<string>()));
         Assert.Contains("extensionMethod", semantic["tokenTypes"]!.AsArray().Select(type => type!.GetValue<string>()));
         Assert.True(capabilities["workspace"]!["semanticTokens"]!["refreshSupport"]!.GetValue<bool>());
+        Assert.True(capabilities["workspace"]!["inlayHint"]!["refreshSupport"]!.GetValue<bool>());
 
         var legend = new JsonObject
         {
@@ -76,6 +77,26 @@ public class SemanticTokensServerTests
         JsonObject answer = ReadMessage(toServerRead);
         Assert.Equal("r1", answer["id"]!.GetValue<string>());
         Assert.Equal(1, server.SemanticRefreshes);
+        Assert.Equal(0, server.InlayRefreshes);
+        Write(toClient, """{"jsonrpc":"2.0","id":"inlays1","method":"workspace/inlayHint/refresh"}""");
+        JsonObject inlaysAnswer = ReadMessage(toServerRead);
+        Assert.Equal("inlays1", inlaysAnswer["id"]!.GetValue<string>());
+        Assert.False(inlaysAnswer.ContainsKey("error"));
+        Assert.Equal(1, server.InlayRefreshes);
+        Assert.Equal(1, server.SemanticRefreshes);
+        Assert.True(initialize["params"]!["capabilities"]!["workspace"]!["codeLens"]!["refreshSupport"]!.GetValue<bool>());
+        Assert.Equal(0, server.CodeLensRefreshes);
+        for (int i = 1; i <= 2; i++)
+        {
+            Write(toClient, """{"jsonrpc":"2.0","id":"lenses","method":"workspace/codeLens/refresh"}""");
+            JsonObject lensesAnswer = ReadMessage(toServerRead);
+            Assert.Equal("lenses", lensesAnswer["id"]!.GetValue<string>());
+            Assert.False(lensesAnswer.ContainsKey("error"));
+            Assert.Equal(i, server.CodeLensRefreshes);
+        }
+        Assert.Equal(1, server.InlayRefreshes);
+        Assert.Equal(1, server.SemanticRefreshes);
+
     }
 
     [Fact]

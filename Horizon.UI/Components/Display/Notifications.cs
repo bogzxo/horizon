@@ -213,6 +213,18 @@ public class Notifications : UIComponent
         return default;
     }
 
+    /// <summary>
+    /// Where a card that's up is, empty for one that's gone or going, for what lists what's on screen to point at it
+    /// (Hex's agents found nothing that said Use Visual Studio Keys on its card).
+    /// </summary>
+    public UIRect CardBoundsOf(UINotification card) =>
+        shown.IndexOf(card) is var index and >= 0 && !card.Closed && Module?.Compositor.Skin is { } skin ? CardBounds(index, skin) : default;
+
+    /// <summary>Where a button of a card that's up is, empty for one that's gone or a button it hasn't got. See <see cref="CardBoundsOf"/>.</summary>
+    public UIRect ActionBoundsOf(UINotification card, int action) =>
+        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds && Module?.Compositor.Skin is { } skin
+            ? ActionBounds(bounds, card, action, skin) : default;
+
     protected internal override void OnPointerUp(Vector2 point)
     {
         if (Module?.Compositor.Skin is not { } skin)

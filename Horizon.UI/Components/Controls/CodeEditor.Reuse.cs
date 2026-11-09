@@ -113,11 +113,14 @@ public partial class CodeEditor
             hash.Add(hoverText);
             hash.Add(signature);
             hash.Add(signatureAt);
+            hash.Add(overloadStep);
+            hash.Add(signatureHidden);
             hash.Add(LineNote);
             hash.Add(lineNoteFor);
             hash.Add(ExecutionLine);
             hash.Add(Breakpoints);
             hash.Add(Breakpoints?.Count ?? 0);
+            hash.Add(BreakpointMarksVersion);
             hash.Add(Rulers);
             hash.Add(FirstLineNumber);
 

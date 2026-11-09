@@ -11,8 +11,8 @@ namespace Horizon.UI.Scripting;
 /// <see cref="SyntaxScopes"/>, and the brackets of the code, in whatever language, are coloured by how deep they are,
 /// the way VS Code's bracket pairs are, which is also what the editor folds and indents by.
 /// <para>
-/// A grammar isn't safe to use from two threads at once, so one of these takes a lock round every line it reads, and
-/// an editor that colours on a thread of the pool while another does the same waits its turn, a few milliseconds.
+/// A grammar isn't safe to use from two threads at once, so background reads take a lock round every line.
+/// Paint-time reads skip a busy grammar and retry later, keeping the editor responsive while a file is coloured.
 /// </para>
 /// </summary>
 public sealed class TextMateHighlighter : ICodeHighlighter
@@ -42,20 +42,20 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         IStateStack? state = null;
         int depth = 0, at = 0;
 
-        lock (grammar)
+        // The lock is taken a line at a time, a big file read on the pool held it for seconds and a line typed on the
+        // editor's thread meanwhile waited for all of it
+        for (int line = 0; line < spans.Length; line++)
         {
-            for (int line = 0; line < spans.Length; line++)
-            {
-                int end = at < code.Length ? code.IndexOf('\n', at) : -1;
-                if (end < 0)
-                    end = Math.Max(at, code.Length);
+            int end = at < code.Length ? code.IndexOf('\n', at) : -1;
+            if (end < 0)
+                end = Math.Max(at, code.Length);
 
-                if (starts is not null && line < starts.Length)
-                    starts[line] = new CodeLineStart(depth, state);
+            if (starts is not null && line < starts.Length)
+                starts[line] = new CodeLineStart(depth, state);
 
+            lock (grammar)
                 spans[line] = ReadLine(code.AsMemory(at, end - at), ref state, ref depth);
-                at = end + 1;
-            }
+            at = end + 1;
         }
 
         return spans;
@@ -111,29 +111,41 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         IStateStack? state = start.State as IStateStack;
         int depth = start.Depth, shift = lines.Length - last.Lines.Length;
 
-        lock (grammar)
+        for (int line = from; line < spans.Length; line++)
         {
-            for (int line = from; line < spans.Length; line++)
+            int old = line - shift;
+            if (line >= sameFrom && old >= 0 && old < last.Starts.Length && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
             {
-                int old = line - shift;
-                if (line >= sameFrom && old >= 0 && old < last.Starts.Length && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
+                for (; line < spans.Length; line++)
                 {
-                    for (; line < spans.Length; line++)
-                    {
-                        spans[line] = Kept(last.Spans[line - shift], copyKept);
-                        starts[line] = last.Starts[line - shift];
-                    }
-
-                    return;
+                    spans[line] = Kept(last.Spans[line - shift], copyKept);
+                    starts[line] = last.Starts[line - shift];
                 }
 
-                starts[line] = new CodeLineStart(depth, state);
-                spans[line] = ReadLine((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth);
+                return;
             }
+
+            starts[line] = new CodeLineStart(depth, state);
+            lock (grammar)
+                spans[line] = ReadLine((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth);
         }
     }
 
     private static List<SyntaxSpan> Kept(List<SyntaxSpan> spans, bool copy) => copy ? [.. spans] : spans;
+
+    public bool TryReadLine(string line, in CodeLineStart start, out List<SyntaxSpan>? spans)
+    {
+        spans = null;
+        if (!Monitor.TryEnter(grammar)) return false;
+        try
+        {
+            IStateStack? state = start.State as IStateStack;
+            int depth = start.Depth;
+            spans = ReadLine(line.AsMemory(), ref state, ref depth);
+            return true;
+        }
+        finally { Monitor.Exit(grammar); }
+    }
 
     public List<SyntaxSpan> ReadLine(string line, in CodeLineStart start)
     {

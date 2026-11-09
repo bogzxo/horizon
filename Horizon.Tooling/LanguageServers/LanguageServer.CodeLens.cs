@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace Horizon.UI.Scripting;
@@ -14,6 +14,9 @@ public sealed record LanguageServerLens(int Line, int Character, string Title, J
 // count only when it's asked for that one.
 public sealed partial class LanguageServer
 {
+    private int codeLensRefreshes;
+    public int CodeLensRefreshes => Volatile.Read(ref codeLensRefreshes);
+
     /// <summary>The lenses of a file, most of them still to be resolved. Null for a server that doesn't do them.</summary>
     public async Task<IReadOnlyList<LanguageServerLens>?> CodeLenses(string path)
     {

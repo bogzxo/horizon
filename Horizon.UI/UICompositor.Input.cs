@@ -72,7 +72,7 @@ public partial class UICompositor
         if (RouteToPopup(snapshot, keyboard))
             return;
 
-        if (keyboard.WasPressed(Key.Escape) && !UIKeyboard.RawKeys)
+        if (keyboard.WasPressed(Key.Escape) && !UIKeyboard.RawKeys && !middleConsumedEscape)
             Escape(snapshot);
 
         // Tab walks the focus along the components that take it, back with shift. Only the UI that has it
@@ -415,6 +415,8 @@ public partial class UICompositor
     // remain attached for the exit animation. Cancellation must never become a release.
     internal void CancelPointerWithin(UIComponent owner)
     {
+        for (UIComponent? at = middleScrollTarget; at is not null; at = at.Parent)
+            if (at == owner) { middleScroll.Cancel(); middleScrollTarget = null; break; }
         for (UIComponent? at = pressed; at is not null; at = at.Parent)
         {
             if (at != owner) continue;
@@ -447,6 +449,7 @@ public partial class UICompositor
         UIPointer pointer = PointerSource?.Invoke() ?? ReadPointer();
         lastPointer = pointer.Position;
         Pointer = pointer;
+        RouteMiddleScroll(snapshot, pointer, dt);
 
         if (chooserClickPending && (Environment.TickCount64 - chooserClickAt > 500 ||
             Vector2.DistanceSquared(pointer.Position, chooserClickPosition) > 16))

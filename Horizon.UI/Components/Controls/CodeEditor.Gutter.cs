@@ -16,6 +16,34 @@ public partial class CodeEditor
     // How far in from the left the column of marks starts, and the gap after it, a share of a digit
     private const float GLYPH_PAD = 2.0f, GLYPH_GAP = 0.6f;
 
+    // The codicon a breakpoint that isn't plain is drawn with, VS Code's, the outline of one for one that's off
+    private static string MarkSymbol(CodeBreakpointMark mark)
+    {
+        bool off = (mark & CodeBreakpointMark.Disabled) != 0;
+        if ((mark & CodeBreakpointMark.Log) != 0)
+            return off ? "debug-breakpoint-log-unverified" : "debug-breakpoint-log";
+        if ((mark & CodeBreakpointMark.Conditional) != 0)
+            return off ? "debug-breakpoint-conditional-unverified" : "debug-breakpoint-conditional";
+        return off ? "circle" : "circle-filled";
+    }
+
+    // Where the strip of the marks ends on the left of the gutter, as wide as one of them
+    private float BreakpointStripRight(UISkin painted) =>
+        Bounds.Shrink(Padding).Min.X + GLYPH_PAD + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
+
+    /// <summary>
+    /// The line whose breakpoint strip in the gutter a point is over, -1 for anywhere else, so a right click there can be
+    /// the breakpoint's own menu rather than the code's.
+    /// </summary>
+    public int BreakpointLineAt(Vector2 point)
+    {
+        if (OnGutterPressed is null || paintedSkin is not { } painted || point.X >= BreakpointStripRight(painted) || point.X < Bounds.Min.X)
+            return -1;
+        if (OverLensRow(point))
+            return -1;
+        return PositionAt(point).Line;
+    }
+
     /// <summary>Where the columns of the gutter are, across from the left of the editor's content and the left of the code.</summary>
     private readonly record struct GutterColumns(float GlyphLeft, float GlyphSide, float NumbersRight, float FoldLeft, float FoldSide, float BarLeft, float BarRight);
 
@@ -132,7 +160,12 @@ public partial class CodeEditor
             float middle = top - lineHeight * 0.5f;
             var slot = new UIRect(new Vector2(columns.GlyphLeft, middle - columns.GlyphSide * 0.5f), new Vector2(columns.GlyphLeft + columns.GlyphSide, middle + columns.GlyphSide * 0.5f));
             bool pointing = OnGutterPressed is not null && overGutter && pointerY <= top && pointerY > top - lineHeight;
-            if (breakpoint || pointing)
+            CodeBreakpointMark mark = breakpoint && BreakpointMarks is { } marks && marks.TryGetValue(line, out CodeBreakpointMark said) ? said : CodeBreakpointMark.Plain;
+            if (breakpoint && mark != CodeBreakpointMark.Plain)
+            {
+                list.Symbol(MarkSymbol(mark), slot, skin.ErrorColor);
+            }
+            else if (breakpoint || pointing)
             {
                 float dot = MathF.Round(columns.GlyphSide * 0.32f);
                 var round = new UIRect(slot.Center - new Vector2(dot), slot.Center + new Vector2(dot));

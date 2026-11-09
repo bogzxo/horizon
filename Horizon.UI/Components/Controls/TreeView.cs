@@ -40,6 +40,9 @@ public sealed partial class UITreeItem
     /// <summary>The colour of the text, null for the skin's.</summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>Whether the text is bold, Solution Explorer's startup project say.</summary>
+    public bool Bold { get; set; }
+
     /// <summary>What it says under the pointer, nothing for nothing.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
@@ -502,6 +505,7 @@ public partial class TreeView : UIComponent
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
+        BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
         ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin), MotionSpeed);
         return true;
     }
@@ -563,8 +567,9 @@ public partial class TreeView : UIComponent
     {
         RewrapNotes();
         sinceClick += dt;
-        scroll = ease.Step(scroll, dt);
-        ease.Over.Step(dt, MotionSpeed);
+        float scrollDt = ScrollMotionDelta(dt);
+        scroll = ease.Step(scroll, scrollDt);
+        ease.Over.Step(scrollDt, MotionSpeed);
 
         // The tooltip is the one of the row under the pointer, a string the item has, nothing made
         Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
@@ -717,7 +722,9 @@ public partial class TreeView : UIComponent
             if (noteWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth + noteWidth > room)
                 noteWidth = 0.0f;
             string rowText = Fitted(item, skin, scale, room - detailWidth);
-            Vector2 size = skin.Font.Measure(rowText, scale, markup: false);
+            Vector2 size = item.Bold
+                ? new Vector2(skin.Font.MeasureLine(rowText, scale, UITextStyle.Bold, default), skin.Font.Measure(rowText, scale, markup: false).Y)
+                : skin.Font.Measure(rowText, scale, markup: false);
             float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
 
             // Cut off rather than fitted again, so the row's letters stay the same ones as the pointer comes and goes
@@ -736,6 +743,8 @@ public partial class TreeView : UIComponent
 
             if (item.Lit is { Count: > 0 } pieces)
                 PaintLit(list, rowText, pieces, new Vector2(x, baseline), scale, item.Color ?? text, item.LitColor ?? skin.AccentColor);
+            else if (item.Bold)
+                list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, false, UITextStyle.Bold, default);
             else
                 list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
 

@@ -348,15 +348,6 @@ public partial class UICompositor
         if (flingVelocity == Vector2.Zero || dt <= 0.0f)
             return;
 
-        // Once the content is past an end, its spring owns the return. Wheel-like flings used to
-        // keep kicking that spring in discrete notches after the finger had already let go.
-        for (UIComponent? at = panFrom; at is not null; at = at.Parent)
-        {
-            if (!at.HasOverscroll) continue;
-            flingVelocity = Vector2.Zero;
-            return;
-        }
-
         float perPixel = WorldPerPixel > 0.0f ? WorldPerPixel : 1.0f;
         if (flingVelocity.Length() < 40.0f * perPixel || PanBy(flingVelocity * dt) is null)
         {

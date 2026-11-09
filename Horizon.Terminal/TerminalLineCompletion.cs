@@ -49,8 +49,14 @@ public sealed class TerminalShellCompletion : ITerminalCompleter
     public IReadOnlyList<TerminalLineCompletion> Complete(string typed, string? folder, out int wordStart)
     {
         wordStart = typed.Length;
-        if (typed.Length == 0 || char.IsWhiteSpace(typed[^1]))
+        if (typed.Length == 0)
             return [];
+        if (char.IsWhiteSpace(typed[^1]))
+        {
+            var words = CommandWords(typed, typed.Length);
+            return words.Count > 0 && TerminalToolHelp.ToolName(words[0]) == "dotnet"
+                ? (tools?.Complete(words, "", folder) ?? []).Take(MOST).ToArray() : [];
+        }
 
         // The word being typed, back to a space or an operator
         int start = typed.Length;
@@ -106,14 +112,10 @@ public sealed class TerminalShellCompletion : ITerminalCompleter
     /// </summary>
     public static List<string> CommandWords(string typed, int end)
     {
-        int from = end;
-        while (from > 0 && typed[from - 1] is not ('|' or '&' or ';' or '('))
-            from--;
-
         var words = new List<string>();
         var word = new System.Text.StringBuilder();
         char quote = '\0';
-        for (int i = from; i < end; i++)
+        for (int i = 0; i < end; i++)
         {
             char c = typed[i];
             if (quote != '\0')
@@ -123,6 +125,12 @@ public sealed class TerminalShellCompletion : ITerminalCompleter
             else if (c is '"' or '\'')
             {
                 quote = c;
+            }
+            else if (c is '|' or '&' or ';' or '(')
+            {
+                // Operators start a new command only outside quoted arguments.
+                words.Clear();
+                word.Clear();
             }
             else if (char.IsWhiteSpace(c))
             {

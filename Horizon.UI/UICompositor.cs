@@ -537,6 +537,31 @@ public partial class UICompositor : GameComponent, IDisposable
         return module;
     }
 
+    /// <summary>Replaces a registered module in place, preserving its order and disabling the retired module.</summary>
+    public bool ReplaceModule(UIModule current, UIModule replacement)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (current.Compositor != this || replacement.Compositor != this)
+            throw new ArgumentException("Both modules must belong to this compositor.");
+        lock (modulesLock)
+        {
+            int index = Array.IndexOf(modules, current);
+            if (index < 0)
+                return false;
+            if (ReferenceEquals(current, replacement))
+                return true;
+            if (Array.IndexOf(modules, replacement) >= 0)
+                throw new ArgumentException("The replacement module is already registered.");
+            var next = (UIModule[])modules.Clone();
+            next[index] = replacement;
+            current.Enabled = false;
+            modules = next;
+            if (Focus?.Module == current)
+                Focus = null;
+            return true;
+        }
+    }
+
     public bool RemoveModule(UIModule module)
     {
         lock (modulesLock)
@@ -732,6 +757,7 @@ public partial class UICompositor : GameComponent, IDisposable
             module.Layout(screen, skin);
             Statistics.LayoutMs += UIStatistics.Since(laying);
             module.Paint(back);
+            PaintMiddleScroll(back, module);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
             // the boxes of the layout debugger and the mark round what is picked were not, they ran on out of the

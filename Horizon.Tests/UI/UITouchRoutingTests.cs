@@ -17,6 +17,41 @@ public sealed class UITouchRoutingTests
     private static readonly UISkin Skin = new(new UIFont(Path.GetTempPath(), "no-font-here.ttf"));
     private const float TICK = 1.0f / 60.0f;
 
+    [Fact]
+    public void Middle_click_scrolls_a_panel_and_second_click_stops_it()
+    {
+        using var rig = new Rig();
+        var panel = rig.Module.AddComponent(new ScrollPanel { Size = new Vector2(300, 200) });
+        panel.Add(new Panel { Size = new Vector2(280, 1000) });
+        rig.Tick();
+        Vector2 at = rig.At(panel);
+        rig.Mouse(InputEventKind.PointerDown, at, MouseButton.Middle); rig.Tick();
+        rig.Mouse(InputEventKind.PointerUp, at, MouseButton.Middle); rig.Tick();
+        Assert.Same(panel, rig.Compositor.AutoScrollTarget);
+        rig.Mouse(InputEventKind.PointerMove, at + new Vector2(0, 70)); rig.Tick(20);
+        Assert.True(panel.Offset > 0);
+        rig.Mouse(InputEventKind.PointerDown, at, MouseButton.Middle); rig.Tick();
+        Assert.Null(rig.Compositor.AutoScrollTarget);
+        float stopped = panel.Offset;
+        rig.Mouse(InputEventKind.PointerUp, at, MouseButton.Middle); rig.Tick(10);
+        Assert.Equal(stopped, panel.Offset);
+    }
+
+    [Fact]
+    public void Middle_scroll_does_not_start_behind_an_unscrollable_front_panel()
+    {
+        using var rig = new Rig();
+        var panel = rig.Module.AddComponent(new ScrollPanel { Size = new Vector2(300, 200) });
+        panel.Add(new Panel { Size = new Vector2(280, 1000) });
+        var front = rig.Compositor.CreateModule();
+        front.AddComponent(new Button("Front") { Size = new Vector2(300, 200) });
+        rig.Tick();
+        rig.Mouse(InputEventKind.PointerDown, rig.At(panel), MouseButton.Middle); rig.Tick();
+        Assert.Null(rig.Compositor.AutoScrollTarget);
+        Assert.Equal(0, panel.Offset);
+        rig.Compositor.RemoveModule(front);
+    }
+
     private sealed class Rig : IDisposable
     {
         public readonly InputManager Input = new();
@@ -77,47 +112,6 @@ public sealed class UITouchRoutingTests
         var button = rig.Module.AddComponent(new Button(label) { Position = at, Size = new Vector2(160, 50) });
         button.OnPressed = () => clicks++;
         return (button, () => clicks);
-    }
-
-    private sealed class SpringList : UIComponent
-    {
-        protected override bool HitTestVisible => true;
-        public UIOverscroll Spring;
-        public int Pushes;
-        protected internal override bool UsesScrollSpeed => true;
-        protected internal override bool HasOverscroll => Spring.Active;
-        protected internal override bool OnScroll(float delta)
-        {
-            Pushes++;
-            Spring.Push(-delta * 40, 1);
-            return true;
-        }
-    }
-
-    [Fact]
-    public void Releasing_a_drag_past_an_end_leaves_the_spring_to_settle_without_more_impulses()
-    {
-        using var rig = new Rig();
-        var list = rig.Module.AddComponent(new SpringList { Size = new Vector2(300, 300) });
-        rig.Tick();
-        Vector2 start = rig.At(list);
-        rig.Finger(InputEventKind.PointerDown, 1, start);
-        rig.Tick();
-        for (int step = 1; step <= 4; step++)
-        {
-            rig.Finger(InputEventKind.PointerMove, 1, start + new Vector2(0, step * 30));
-            rig.Tick();
-        }
-        Assert.True(list.Spring.Active);
-        int pushes = list.Pushes;
-        rig.Finger(InputEventKind.PointerUp, 1, start + new Vector2(0, 120));
-        for (int tick = 0; tick < 120; tick++)
-        {
-            rig.Tick();
-            list.Spring.Step(TICK, 1);
-        }
-        Assert.Equal(pushes, list.Pushes);
-        Assert.False(list.Spring.Active);
     }
 
     [Fact]

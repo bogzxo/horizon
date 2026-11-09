@@ -31,6 +31,13 @@ public interface ICodeHighlighter
     /// </summary>
     List<SyntaxSpan> ReadLine(string line, in CodeLineStart start);
 
+    /// <summary>Try to colour a painted line without waiting for background highlighting.</summary>
+    bool TryReadLine(string line, in CodeLineStart start, out List<SyntaxSpan>? spans)
+    {
+        spans = ReadLine(line, start);
+        return true;
+    }
+
     /// <summary>
     /// Colours code again after it was edited, given the last colouring of it. What comes out is what <see cref="Read"/>
     /// would make, one that can do better reads from the first line that changed and stops once a line after the edit

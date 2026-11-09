@@ -36,8 +36,13 @@ public sealed partial class LanguageServer
     /// </summary>
     public bool Offers(string provider) => serverCapabilities?[provider] is { } offered && !(offered is JsonValue value && value.TryGetValue(out bool on) && !on);
 
+    /// <summary>Whether the server asks for completion when this character is typed.</summary>
+    public bool TriggersCompletion(char character) => serverCapabilities?["completionProvider"] is JsonObject provider
+        && provider["triggerCharacters"] is JsonArray triggers
+        && triggers.Any(node => node is JsonValue value && value.TryGetValue<string>(out string? text) && text is { Length: 1 } && text[0] == character);
+
     // Helper method for the place in a file a question is about
-    private static JsonObject At(string path, int line, int character) => new()
+    private JsonObject At(string path, int line, int character) => new()
     {
         ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
         ["position"] = new JsonObject { ["line"] = line, ["character"] = character }
@@ -90,12 +95,20 @@ public sealed partial class LanguageServer
     }
 
     /// <summary>
-    /// The text of a place that isn't a file on the disk, a name of the framework's source as csharp-ls decompiles it
-    /// (csharp/metadata). Null for a server that has none.
+    /// Where the type of the symbol is defined, including server-owned metadata locations.
     /// </summary>
+    public async Task<IReadOnlyList<LanguageServerPlace>> TypeDefinition(string path, int line, int character)
+    {
+        if (!Offers("typeDefinitionProvider")) return [];
+        return Places(await Ask("textDocument/typeDefinition", At(path, line, character)).ConfigureAwait(false), anywhere: true);
+    }
+
+    /// <summary>The text of a server-owned metadata location, or null when unavailable.</summary>
     public async Task<string?> Source(string uri)
     {
-        JsonNode? answered = await Ask("csharp/metadata", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }).ConfigureAwait(false);
+        if (LanguageId != "csharp" || !Uri.TryCreate(uri, UriKind.Absolute, out var parsed) || parsed.Scheme != "csharp") return null;
+        string requested = parsed.AbsoluteUri;
+        JsonNode? answered = await Ask("csharp/metadata", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = requested } }).ConfigureAwait(false);
         return answered?["source"]?.GetValue<string>();
     }
 
@@ -234,37 +247,81 @@ public sealed partial class LanguageServer
     /// What the call at a place takes, its signature with the argument being typed picked out, null for no call there or
     /// a server that can't say. Its documentation goes under it when the server has some.
     /// </summary>
-    public async Task<UISignature?> Signature(string path, int line, int character)
+    public async Task<UISignature?> Signature(string path, int line, int character, int fallbackArgument = 0)
     {
         if (!Offers("signatureHelpProvider"))
             return null;
 
-        if (await Ask("textDocument/signatureHelp", At(path, line, character)).ConfigureAwait(false) is not JsonObject help
-            || help["signatures"] is not JsonArray signatures || signatures.Count == 0)
+        return SignatureOf(await Ask("textDocument/signatureHelp", At(path, line, character)).ConfigureAwait(false), fallbackArgument);
+    }
+
+    /// <summary>
+    /// What a signatureHelp answer comes to, the signature the server picked with every overload alongside it (each
+    /// with the argument being typed picked out), null for one that says nothing.
+    /// </summary>
+    public static UISignature? SignatureOf(JsonNode? answer, int fallbackArgument = 0)
+    {
+        if (answer is not JsonObject help || help["signatures"] is not JsonArray signatures || signatures.Count == 0)
             return null;
 
-        int which = Math.Clamp(JsonNumbers.Int(help["activeSignature"], 0), 0, signatures.Count - 1);
-        if (signatures[which] is not JsonObject signature || signature["label"]?.GetValue<string>() is not { Length: > 0 } label)
+        var overloads = new List<UISignature>(signatures.Count);
+        int which = Math.Clamp(JsonNumbers.Int(help["activeSignature"], 0), 0, signatures.Count - 1), active = 0;
+        for (int i = 0; i < signatures.Count; i++)
+        {
+            if (signatures[i] is JsonObject signature && OverloadOf(signature, help, fallbackArgument) is { } read)
+            {
+                if (i == which)
+                    active = overloads.Count;
+                overloads.Add(read);
+            }
+            else if (i == which)
+            {
+                return null;
+            }
+        }
+
+        return overloads[active] with { Overloads = overloads.Count > 1 ? overloads : null, Active = active };
+    }
+
+    // One signature of an answer, null for one with no label
+    private static UISignature? OverloadOf(JsonObject signature, JsonObject help, int fallbackArgument)
+    {
+        if (signature["label"]?.GetValue<string>() is not { Length: > 0 } label)
             return null;
 
         // The argument from the signature when it says, the help otherwise, and where its name is in the label, by the
         // offsets a server gives or by finding its name
-        int argument = JsonNumbers.Int(signature["activeParameter"] ?? help["activeParameter"], 0);
+        int argument = JsonNumbers.Int(signature["activeParameter"] ?? help["activeParameter"], fallbackArgument);
         int start = 0, length = 0;
-        if (signature["parameters"] is JsonArray parameters && argument >= 0 && argument < parameters.Count && parameters[argument]?["label"] is { } named)
+        string parameterDocumentation = string.Empty;
+        if (signature["parameters"] is JsonArray parameters && argument >= 0 && argument < parameters.Count)
         {
-            if (named is JsonArray offsets && offsets.Count == 2)
+            parameterDocumentation = PlainDocs(Markdown(parameters[argument]?["documentation"]));
+            int searchFrom = label.IndexOf('(') + 1;
+            for (int i = 0; i <= argument; i++)
             {
-                start = Math.Clamp(JsonNumbers.Int(offsets[0], 0), 0, label.Length);
-                length = Math.Clamp(JsonNumbers.Int(offsets[1], 0) - start, 0, label.Length - start);
-            }
-            else if (named.GetValue<string>() is { Length: > 0 } text && label.IndexOf(text, label.IndexOf('(') + 1, StringComparison.Ordinal) is var found and >= 0)
-            {
-                (start, length) = (found, text.Length);
+                JsonNode? named = parameters[i]?["label"];
+                int at = 0, count = 0;
+                if (named is JsonArray offsets && offsets.Count == 2)
+                {
+                    at = Math.Clamp(JsonNumbers.Int(offsets[0], 0), 0, label.Length);
+                    count = Math.Clamp(JsonNumbers.Int(offsets[1], 0) - at, 0, label.Length - at);
+                }
+                else if (named is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrEmpty(text)
+                    && label.IndexOf(text, searchFrom, StringComparison.Ordinal) is var found and >= 0)
+                    (at, count) = (found, text.Length);
+
+                // Repeated labels belong to successive parameters, including after an offset-labelled parameter.
+                if (count > 0) searchFrom = Math.Max(searchFrom, at + count);
+                if (i == argument) (start, length) = (at, count);
             }
         }
 
-        return new UISignature(label, start, length);
+        return new UISignature(label, start, length)
+        {
+            Documentation = PlainDocs(Markdown(signature["documentation"])),
+            ParameterDocumentation = parameterDocumentation
+        };
     }
 
     /// <summary>
@@ -312,4 +369,7 @@ public sealed partial class LanguageServer
 
         return found;
     }
+
+    private int inlayRefreshes;
+    public int InlayRefreshes => Volatile.Read(ref inlayRefreshes);
 }

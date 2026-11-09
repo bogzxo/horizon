@@ -84,7 +84,8 @@ public class Table : UIComponent
     // The rows in the order they are shown, by where they are in Rows
     private readonly List<int> order = [];
     private float scrollX, scrollY, sinceClick = float.MaxValue;
-    private UIScrollEase ease;
+    private UIScrollEase ease, easeX;
+    internal float HorizontalScroll => scrollX;
     private (int Row, int Column) selected = (-1, -1), hovered = (-1, -1), lastClicked = (-1, -1);
     private int sortColumn = -1;
     private bool sortDown;
@@ -347,16 +348,26 @@ public class Table : UIComponent
 
         // Shift turns the wheel across, the way every spreadsheet does
         bool across = Horizon.Engine.GameEngine.Instance?.Input.Keyboard.Shift == true;
+        return ScrollWheel(delta, skin, across);
+    }
 
+    internal bool ScrollWheel(float delta, UISkin skin, bool across)
+    {
         // All of it in sight that way, the wheel is for whatever it's in (a table in a notebook's output, say)
         if (across ? TravelX <= 0.0f : TravelY(skin) <= 0.0f)
             return false;
 
         float by = delta * LineHeight(skin) * 3.0f;
         if (across)
-            scrollX = Math.Clamp(scrollX - by, 0.0f, TravelX);
+        {
+            BeginScrollMotion(easeX.Goal is not null);
+            easeX.To((easeX.Goal ?? scrollX) - by, TravelX);
+        }
         else
+        {
+            BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
             ease.Wheel(scrollY, -by, TravelY(skin), MotionSpeed);
+        }
         return true;
     }
 
@@ -386,8 +397,11 @@ public class Table : UIComponent
     protected override void Update(float dt)
     {
         sinceClick += dt;
-        scrollY = ease.Step(scrollY, dt);
-        ease.Over.Step(dt, MotionSpeed);
+        float scrollDt = ScrollMotionDelta(dt);
+        easeX.Clamp(TravelX);
+        scrollX = Math.Clamp(easeX.Step(scrollX, scrollDt), 0.0f, TravelX);
+        scrollY = ease.Step(scrollY, scrollDt);
+        ease.Over.Step(scrollDt, MotionSpeed);
 
         hovered = Module is { } module && IsHovered && CellAt(module.ToLocal(module.Compositor.Pointer.Position)) is var (row, column) ? (row, column) : (-1, -1);
         Tooltip = hovered.Row >= 0 && hovered.Column >= 0 && hovered.Column < Rows[hovered.Row].Length ? Rows[hovered.Row][hovered.Column].Tooltip ?? string.Empty
@@ -404,6 +418,7 @@ public class Table : UIComponent
 
         scrollX = Math.Clamp(scrollX, 0.0f, TravelX);
         scrollY = Math.Clamp(scrollY, 0.0f, TravelY(skin));
+        easeX.Clamp(TravelX);
         ease.Clamp(TravelY(skin));
 
         list.Box(bounds, Color ?? skin.FieldColor);

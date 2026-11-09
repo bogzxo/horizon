@@ -10,6 +10,7 @@ public partial class CodeEditor
     private readonly MiddleScrollGesture middleScroll = new();
     /// <summary>Whether middle-mouse autoscroll is active.</summary>
     public bool AutoScrolling => middleScroll.Active;
+    internal bool HasInternalAutoScroll => !AllInSight;
 
     private void UpdateMiddleScroll(float dt)
     {

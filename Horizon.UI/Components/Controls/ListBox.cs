@@ -263,6 +263,7 @@ public partial class ListBox : UIComponent
             return false;
 
         int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
+        BeginScrollMotion(shown != top || over.Active);
         int wanted = top - rows * Math.Sign(delta);
         top = Math.Clamp(wanted, 0, items.Length - Rows);
         over.Push((wanted - top) * rowHeightSeen, MotionSpeed);
@@ -316,11 +317,12 @@ public partial class ListBox : UIComponent
     protected override void Update(float dt)
     {
         base.Update(dt);
-        over.Step(dt, MotionSpeed);
+        float scrollDt = ScrollMotionDelta(dt);
+        over.Step(scrollDt, MotionSpeed);
         if (shown == top)
             return;
 
-        shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(top - shown) < 0.01f)
             shown = top;
     }

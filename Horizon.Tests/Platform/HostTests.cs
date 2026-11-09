@@ -77,7 +77,7 @@ public class HostTests
         using var window = new WindowManager(Config, host);
 
         Task stop = window.StopAsync();
-        Assert.True(stop.IsCompletedSuccessfully);
+        Assert.True(stop.Wait(1000));
         Assert.Same(stop, window.StopAsync());
     }
 

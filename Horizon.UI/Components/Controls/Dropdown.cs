@@ -373,6 +373,7 @@ public class Dropdown : UIComponent
             return IsOpen;
 
         // A row per notch, and never less than one for a wheel that turns in smaller steps than that.
+        BeginScrollMotion(shownRow != firstRow);
         wheelRemainder += delta;
         int rows = (int)wheelRemainder;
         wheelRemainder -= rows;
@@ -389,7 +390,8 @@ public class Dropdown : UIComponent
         if (shownRow == firstRow)
             return;
 
-        shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        float scrollDt = ScrollMotionDelta(dt);
+        shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(firstRow - shownRow) < 0.01f)
             shownRow = firstRow;
     }

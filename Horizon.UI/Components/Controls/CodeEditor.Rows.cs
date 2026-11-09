@@ -48,7 +48,7 @@ public partial class CodeEditor
 
     // The lines held at the top, and what they were worked out for
     private readonly List<int> sticky = [];
-    private (int Line, int Coloured, int Folds) stickyFor = (-1, -1, -1);
+    private (int Line, int Version, int Coloured, int Folds) stickyFor = (-1, -1, -1, -1);
 
     /// <summary>Whether long lines are wrapped at the edge (Alt+Z in Hex), off they run off it and the view scrolls along.</summary>
     public bool WordWrap
@@ -79,12 +79,12 @@ public partial class CodeEditor
     public IReadOnlyCollection<int> FoldedLines => folded;
 
     /// <summary>Whether a line opens a bracket that closes further down, and so can be folded.</summary>
-    public bool CanFold(int line) => foldable.ContainsKey(line);
+    public bool CanFold(int line) => line >= 0 && line < document.LineCount && foldable.ContainsKey(line);
 
     /// <summary>A line folded or opened again, a line that can't be folded is left alone.</summary>
     public void ToggleFold(int line)
     {
-        if (folded.Remove(line) || (foldable.ContainsKey(line) && folded.Add(line)))
+        if (folded.Remove(line) || (CanFold(line) && folded.Add(line)))
             foldsChanged++;
     }
 
@@ -122,10 +122,14 @@ public partial class CodeEditor
     /// </summary>
     public void FoldAll(int level = 1)
     {
-        foreach (int start in foldable.Keys)
+        var ends = new Stack<int>();
+        foreach (int start in foldable.Keys.Order())
         {
-            if (DepthAt(start) >= level - 1)
+            while (ends.Count > 0 && ends.Peek() < start) ends.Pop();
+            int depth = nativeFoldingRanges is null ? DepthAt(start) : ends.Count;
+            if (depth >= level - 1)
                 folded.Add(start);
+            ends.Push(foldable[start]);
         }
 
         foldsChanged++;
@@ -156,7 +160,7 @@ public partial class CodeEditor
 
         foldable.Clear();
         var open = new Stack<int>();
-        for (int line = 0; line < colouredLines.Length && line < spans.Length; line++)
+        for (int line = 0; (nativeFoldingRanges is null || !completeNativeFolding) && line < colouredLines.Length && line < spans.Length; line++)
         {
             string text = colouredLines[line];
             foreach (SyntaxSpan span in spans[line])
@@ -178,12 +182,15 @@ public partial class CodeEditor
             }
         }
 
+        if (nativeFoldingRanges is {} native)
+            foreach (var range in native.OrderBy(range => range.End)) foldable[range.Start] = range.End;
+
         // A fold that doesn't open anything now keeps where it ended, the brackets are only out for a moment while
         // something's half typed (a quote, a brace), and let go of it opened the fold and every line under it jumped
         // down. It opens the way any fold does, the caret going in
         foreach (var (start, end) in foldsWere)
         {
-            if (!foldable.ContainsKey(start) && end > start && end < document.LineCount)
+            if (nativeFoldingRanges is null && !foldable.ContainsKey(start) && end > start && end < document.LineCount)
                 foldable[start] = end;
         }
 
@@ -484,7 +491,7 @@ public partial class CodeEditor
             return sticky;
         }
 
-        var wanted = (firstLine, coloured, foldsChanged);
+        var wanted = (firstLine, document.Version, coloured, foldsChanged);
         if (stickyFor == wanted)
             return sticky;
 
@@ -492,6 +499,7 @@ public partial class CodeEditor
         sticky.Clear();
         foreach (var (start, end) in foldable)
         {
+            if (start < 0 || start >= document.LineCount) continue;
             int header = HeaderOf(start);
             if (header < firstLine && firstLine <= end && !sticky.Contains(header))
                 sticky.Add(header);

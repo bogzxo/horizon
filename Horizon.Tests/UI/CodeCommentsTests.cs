@@ -77,6 +77,30 @@ public class CodeCommentsTests
     }
 
     [Fact]
+    public void Visual_studios_comment_and_uncomment_go_one_way_each()
+    {
+        // Ctrl+K Ctrl+C comments every line, one that's a comment already one deeper, Ctrl+K Ctrl+U takes one off the
+        // lines that have one and leaves the rest
+        var cs = Doc("// a();\nb();", CodeComments.For("source.cs"));
+        cs.SelectAll();
+        cs.CommentSelection();
+        Assert.Equal("// // a();\n// b();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("// a();\nb();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("a();\nb();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("a();\nb();", cs.Text);
+
+        var html = Doc("<p>hi</p>", CodeComments.For("text.html.basic"));
+        html.CommentSelection();
+        html.CommentSelection();
+        Assert.Equal("<!-- <p>hi</p> -->", html.Text);
+        html.UncommentSelection();
+        Assert.Equal("<p>hi</p>", html.Text);
+    }
+
+    [Fact]
     public void Ctrl_slash_wraps_the_lines_in_a_block_when_there_is_no_line_comment()
     {
         var html = Doc("  <p>hi</p>\n  <b>yo</b>", CodeComments.For("text.html.basic"), 0, 4);

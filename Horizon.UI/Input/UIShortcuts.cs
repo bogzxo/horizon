@@ -77,6 +77,15 @@ public sealed class UIShortcuts
     /// <summary>The first key of a chord while the second is waited for, null while nothing is.</summary>
     public string? Pending => pending?.ToString();
 
+    /// <summary>Abandons a partial chord when another keyboard scope takes over, without consuming its input.</summary>
+    public void CancelChord()
+    {
+        if (pending is null)
+            return;
+        pending = null;
+        OnChordEnded?.Invoke();
+    }
+
     /// <summary>Whether the last update's press was a key of a chord, taken by it and nothing else's.</summary>
     public bool Swallowed { get; private set; }
 
@@ -136,7 +145,8 @@ public sealed class UIShortcuts
     /// <summary>
     /// Takes a key away, every shortcut on it (one that doesn't care about shift among them), for a key that was rebound
     /// in a file of keys. Null if nothing was on it, otherwise whether what was on it went off while typing. The chords
-    /// that start with the key stay, see the other Remove.
+    /// that start with the key stay, see the other Remove. Taking a key with shift leaves one that doesn't care about
+    /// shift on the key without it.
     /// </summary>
     public bool? Remove(Key key, bool control, bool shift, bool alt) => Remove(new UIKeyStroke(key, control, shift, alt), null);
 
@@ -146,6 +156,14 @@ public sealed class UIShortcuts
         bool? whileTyping = null;
         for (int i = shortcuts.Count - 1; i >= 0; i--)
         {
+            // One that goes off with shift or without loses just the shift. Taking Ctrl+Shift+. for Visual Studio's zoom
+            // took Ctrl+. off Quick Fix with it, and Ctrl+. did nothing at all with Visual Studio's keys on
+            if (then is null && first.Shift && shortcuts[i] is { Shift: null, Then: null } either && On(either, first, null))
+            {
+                either.Shift = false;
+                continue;
+            }
+
             if (On(shortcuts[i], first, then))
             {
                 whileTyping = shortcuts[i].WhileTyping || (whileTyping ?? false);
