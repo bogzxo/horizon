@@ -11,18 +11,11 @@ namespace Horizon.UI.Components;
 /// it is, and can be dragged.
 /// It has to be given a height, a scroll panel that is as tall as its content has nothing to scroll.
 /// </summary>
-public class ScrollPanel : Panel
+public partial class ScrollPanel : Panel
 {
-    private const float BAR_WIDTH = 6.0f;
-    private const float MIN_THUMB = 24.0f;
-
     private float offset;
     private float contentHeight;
-    private bool draggingBar;
     private UIScrollEase ease;
-
-    // Where on the thumb it was taken hold of, from its top
-    private float barGrab;
 
     /// <summary>How far down the content is scrolled, 0 being the top.</summary>
     public float Offset
@@ -101,9 +94,11 @@ public class ScrollPanel : Panel
     protected override void Update(float dt)
     {
         base.Update(dt);
+        float scrollDt = ScrollMotionDelta(dt);
         ease.Clamp(MaxOffset);
         if (ease.Goal is not null)
-            offset = Math.Clamp(ease.Step(offset, dt), 0.0f, MaxOffset);
+            offset = Math.Clamp(ease.Step(offset, scrollDt), 0.0f, MaxOffset);
+        ease.Over.Step(scrollDt, MotionSpeed);
     }
 
     protected override bool HitTestVisible => true;
@@ -120,7 +115,7 @@ public class ScrollPanel : Panel
                 width = MathF.Max(width, child.DesiredSize.X);
         }
 
-        return new Vector2(width + BAR_WIDTH + BarGap, 0.0f) + Padding.Total;
+        return new Vector2(width + BarWidth + BarGap, 0.0f) + Padding.Total;
     }
 
     protected override void Arrange(UIRect content)
@@ -138,7 +133,7 @@ public class ScrollPanel : Panel
         offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
         laidMax = max;
 
-        float width = MathF.Max(0.0f, content.Width - BAR_WIDTH - BarGap);
+        float width = MathF.Max(0.0f, content.Width - BarWidth - BarGap);
         foreach (var child in ChildSpan)
         {
             // Every child gets the whole width and its own height, starting at the top less the offset.
@@ -157,35 +152,18 @@ public class ScrollPanel : Panel
         float fade = MathF.Min(Fade, content.Height * 0.25f);
         list.PushClip(content);
         list.PushFade(content, MathF.Min(fade, offset), MathF.Min(fade, MaxOffset - offset));
+
+        // What's in it moves by the offset as one, the clip and the bar stay put
+        bool stretched = ease.Over.Begin(list, content);
+        list.PushFrame(new Vector2(0.0f, offset));
         base.PaintChildren(list);
+        list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopFade();
         list.PopClip();
 
-        // No bar on a panel folded too short for one, its thumb is never shorter than its least and stuck out of it
-        if (MaxOffset <= 0.0f || content.Height < MIN_THUMB * 1.5f)
-            return;
-
-        // The bar is as long compared to its track as the panel is compared to its content.
-        UIRect track = new(new Vector2(content.Max.X - BAR_WIDTH, content.Min.Y), content.Max);
-        float length = MathF.Max(MIN_THUMB, track.Height * content.Height / contentHeight);
-        float top = track.Max.Y - (track.Height - length) * (offset / MaxOffset);
-
-        // Pills, for a skin that has round corners at all
-        float round = list.Skin.CornerRadius > 0.0f ? BAR_WIDTH * 0.5f : 0.0f;
-
-        // No track to speak of and a thumb in the text's colour seen through, brighter with the pointer on the bar and
-        // while it's dragged. The thumb was the accent, a bar of gold down the side of every list that meant nothing, and
-        // the track is painted see-through rather than left out so the quads don't shift as it lights. It lit for the
-        // pointer anywhere on the panel that wasn't on a row of it, so a pointer going down a list had it blinking
-        Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
-        bool overBar = pointer.X >= track.Min.X - BAR_WIDTH && pointer.X <= Bounds.Max.X && pointer.Y >= content.Min.Y && pointer.Y <= content.Max.Y
-            && PointerWithin();
-        Vector4 text = list.Skin.TextColor;
-        list.RoundRect(track, round, text with { W = draggingBar || overBar ? 0.05f : 0.0f });
-        list.RoundRect(
-            new UIRect(new Vector2(track.Min.X, top - length), new Vector2(track.Max.X, top)),
-            round,
-            text with { W = draggingBar ? 0.5f : overBar ? 0.32f : 0.2f });
+        PaintBar(list, content);
     }
 
     protected internal override bool OnScroll(float delta)
@@ -193,40 +171,34 @@ public class ScrollPanel : Panel
         if (MaxOffset <= 0.0f)
             return false;
 
-        ease.Wheel(offset, -delta * WheelStep, MaxOffset);
+        BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
+        ease.Wheel(offset, -delta * WheelStep, MaxOffset, MotionSpeed);
         return true;
     }
 
-    protected internal override void OnPointerDown(Vector2 point)
-    {
-        UIRect content = Bounds.Shrink(Padding);
-        draggingBar = MaxOffset > 0.0f && point.X >= content.Max.X - BAR_WIDTH * 2.0f;
+    protected internal override bool UsesScrollSpeed => true;
 
-        if (draggingBar)
-        {
-            // Taken by the thumb it keeps where it was taken, anywhere else on the track its middle goes to the pointer
-            float length = MathF.Max(MIN_THUMB, content.Height * content.Height / contentHeight);
-            float top = content.Max.Y - (content.Height - length) * (offset / MaxOffset);
-            barGrab = point.Y <= top && point.Y >= top - length ? top - point.Y : length * 0.5f;
-            OnPointerDrag(point);
-        }
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
+    // Dragged by a finger the content goes along with it, to the pixel, and at an end the rest goes to whatever this is in
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        float max = MaxOffset;
+        if (max <= 0.0f || delta.Y == 0.0f)
+            return false;
+
+        float wanted = offset + delta.Y;
+        if ((delta.Y < 0.0f && offset <= 0.0f) || (delta.Y > 0.0f && offset >= max))
+            return false;
+
+        ease.Stop();
+        offset = Math.Clamp(wanted, 0.0f, max);
+        return true;
     }
 
-    protected internal override void OnPointerDrag(Vector2 point)
-    {
-        if (!draggingBar)
-            return;
-
-        // The thumb follows the pointer along the track, held where it was taken hold of
-        UIRect content = Bounds.Shrink(Padding);
-        float length = MathF.Max(MIN_THUMB, content.Height * content.Height / contentHeight);
-        float travel = content.Height - length;
-
-        if (travel > 0.0f)
-            Offset = (content.Max.Y - (point.Y + barGrab)) / travel * MaxOffset;
-    }
-
-    protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;
+    // A finger on the bar drags the bar, anywhere else it drags what's in the panel
+    protected internal override bool KeepsTouchDrag(Vector2 point) =>
+        (MaxOffset > 0.0f && TrackBounds.Shrink(new UIEdges(-BarWidth)).Contains(point)) || base.KeepsTouchDrag(point);
 
     protected override void DefineScript()
     {
@@ -234,6 +206,7 @@ public class ScrollPanel : Panel
 
         Expose("offset", () => Offset, value => Offset = value);
         Expose("wheel_step", () => WheelStep, value => WheelStep = value);
+        Expose("bar_width", () => BarWidth, value => BarWidth = MathF.Max(1.0f, value));
         Expose("bar_gap", () => BarGap, value => BarGap = value);
         Expose("fade", () => Fade, value => Fade = MathF.Max(0.0f, value));
     }

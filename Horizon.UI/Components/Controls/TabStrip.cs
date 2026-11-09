@@ -18,6 +18,12 @@ public sealed class StripTab
     /// <summary>The colour of the icon, null for the colour of the title.</summary>
     public Vector4? IconColor { get; set; }
 
+    /// <summary>
+    /// The colour of the title, null for the skin's (bright on the open one, dim on the rest). For saying something about
+    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter.
+    /// </summary>
+    public Vector4? TitleColor { get; set; }
+
     /// <summary>What comes up when the pointer rests on it, the whole path of the file say.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
@@ -26,6 +32,11 @@ public sealed class StripTab
 
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
+
+    // The title cut short to the room it had last, kept until the title or the room changes
+    internal string? fittedOf;
+    internal float fittedRoom;
+    internal string fitted = string.Empty;
 }
 
 /// <summary>
@@ -47,6 +58,8 @@ public class TabStrip : UIComponent
     private const float WHEEL_STEP = 60.0f;
 
     private float scroll;
+    private int revealedSelection = -1;
+    private float revealedWidth;
     private int pressedTab = -1;
     private bool pressedClose;
 
@@ -103,11 +116,59 @@ public class TabStrip : UIComponent
 
     protected override Vector2 Measure(UISkin skin) => new(0.0f, MathF.Round(Line(skin) + TAB_PADDING * 1.6f));
 
+    /// <summary>
+    /// The most a tab is wide, its title cut short in the middle with dots past that so the start and the end of it (the
+    /// extension) still show. 0 for as wide as its title. One long name took most of the strip and pushed the rest off it.
+    /// </summary>
+    public float MaxTabWidth { get; set; }
+
+    /// <summary>Omit partially visible inactive tabs, including their pointer targets, at the strip edges.</summary>
+    public bool HideClippedTabs { get; set; }
+
+    private bool HiddenAtEdge(int index, UIRect area) => HideClippedTabs && index != Selected
+        && (area.Min.X < Bounds.Min.X - 0.5f || area.Max.X > Bounds.Max.X + 0.5f);
+
     private float WidthOf(UISkin skin, StripTab tab)
     {
         float line = Line(skin);
         float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
-        return MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        width = MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
+        return HideClippedTabs && Bounds.Width > 0 ? MathF.Min(width, Bounds.Width) : width;
+    }
+
+    // The dots a title cut short has in its middle
+    private const string CUT = "...";
+
+    /// <summary>Helper method for a tab's title in so much room, cut in the middle with dots, kept on the tab until either changes.</summary>
+    private static string Fitted(StripTab tab, UISkin skin, float scale, float room)
+    {
+        if (ReferenceEquals(tab.fittedOf, tab.Title) && tab.fittedRoom == room)
+            return tab.fitted;
+
+        string title = tab.Title, shown = title;
+        if (skin.Font.Measure(title, scale, markup: false).X > room)
+        {
+            // As many characters of the end as of the start, a few more of the start when it's odd, the most that fit
+            float dots = skin.Font.Measure(CUT, scale, markup: false).X;
+            int low = 0, high = title.Length;
+            while (low < high)
+            {
+                int keep = (low + high + 1) / 2;
+                int head = (keep + 1) / 2, tail = keep - head;
+                float wide = skin.Font.Measure(title.AsSpan(0, head), scale, markup: false).X + dots + skin.Font.Measure(title.AsSpan(title.Length - tail), scale, markup: false).X;
+                if (wide <= room)
+                    low = keep;
+                else
+                    high = keep - 1;
+            }
+
+            int start = (low + 1) / 2, end = low - start;
+            shown = title[..start] + CUT + title[(title.Length - end)..];
+        }
+
+        (tab.fittedOf, tab.fittedRoom, tab.fitted) = (title, room, shown);
+        return shown;
     }
 
     /// <summary>Where a tab is, in the module's units, scrolled along. Partly or wholly out of sight past the ends of a strip that is too short.</summary>
@@ -143,7 +204,8 @@ public class TabStrip : UIComponent
 
         for (int i = 0; i < Tabs.Count; i++)
         {
-            if (TabBounds(i).Contains(point))
+            UIRect area = TabBounds(i);
+            if (!HiddenAtEdge(i, area) && area.Contains(point))
                 return i;
         }
 
@@ -158,7 +220,7 @@ public class TabStrip : UIComponent
         Tooltip = over >= 0 ? Tabs[over].Tooltip : string.Empty;
 
         var mouse = Horizon.Engine.GameEngine.Instance?.Input.Mouse;
-        bool middle = mouse is not null && mouse.IsDown(Silk.NET.Input.MouseButton.Middle);
+        bool middle = mouse is not null && mouse.IsDown(Horizon.Input.MouseButton.Middle);
         if (middle && !middleWas)
             middleTab = over;
         else if (!middle && middleWas && middleTab >= 0 && middleTab == over)
@@ -169,7 +231,8 @@ public class TabStrip : UIComponent
 
         // The one that is open is brought into sight, whichever way it is off. One wider than the strip is shown from its
         // start, it was shown its end one tick and its start the next and the title shook like a shitting dog
-        if (Selected >= 0 && Selected < Tabs.Count && !IsPressed)
+        if (Selected >= 0 && Selected < Tabs.Count && !IsPressed
+            && (!HideClippedTabs || revealedSelection != Selected || revealedWidth != Bounds.Width))
         {
             UIRect open = TabBounds(Selected);
             if (open.Min.X < Bounds.Min.X || open.Width > Bounds.Width)
@@ -178,6 +241,8 @@ public class TabStrip : UIComponent
                 scroll += open.Max.X - Bounds.Max.X;
         }
 
+        revealedSelection = Selected;
+        revealedWidth = Bounds.Width;
         ClampScroll();
     }
 
@@ -190,8 +255,21 @@ public class TabStrip : UIComponent
         foreach (StripTab tab in Tabs)
             total += WidthOf(skin, tab);
 
+        TabsWidth = total;
         scroll = Math.Clamp(scroll, 0.0f, MathF.Max(0.0f, total - Bounds.Width));
+        if (HideClippedTabs)
+        {
+            // Start with a whole tab at the left edge, rather than reserving a blank fragment
+            // for the preceding tab. A short final page is preferable to a broken filename.
+            float start = 0;
+            for (int i = 0; i < Tabs.Count - 1 && start < scroll - 0.5f; i++)
+                start += WidthOf(skin, Tabs[i]);
+            scroll = start;
+        }
     }
+
+    /// <summary>How wide the tabs are all together, as of the last tick, more than the strip is wide when they don't all fit.</summary>
+    public float TabsWidth { get; private set; }
 
     protected override void Paint(UIDrawList list)
     {
@@ -209,14 +287,20 @@ public class TabStrip : UIComponent
             StripTab tab = Tabs[i];
             UIRect area = TabBounds(i);
             bool open = i == Selected;
+            if (HiddenAtEdge(i, area))
+                continue;
             bool over = IsHovered && area.Contains(pointer);
 
             // A pill under the open one, the one pick there is in lists and menus, and a fainter one under the pointer. It
             // was a square of the panel with a stripe of the accent along its top, sharp corners in a window of round ones.
             // Always painted, see-through when not lit, so the quads after it don't shift
             list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Rect(new UIRect(new Vector2(area.Min.X + 8.0f, area.Min.Y + 1.0f), new Vector2(area.Max.X - 8.0f, area.Min.Y + 3.0f)), skin.AccentColor with { W = open ? 1.0f : 0.0f });
 
-            Vector4 text = open ? skin.TextColor : dim;
+            // The title in its own colour (git's, say), the dot and the x in the strip's, so a file that's new to git and one
+            // with changes not saved can still be told apart. Both were the green of a new file
+            Vector4 plain = open ? skin.TextColor : dim;
+            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : plain;
             float x = area.Min.X + TAB_PADDING;
             float side = MathF.Round(line);
 
@@ -226,18 +310,20 @@ public class TabStrip : UIComponent
                 x += side + GAP;
             }
 
-            list.Text(tab.Title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
+            // Up to the x, cut in the middle with dots once the tab is at its most
+            UIRect close = CloseBounds(i);
+            string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
+            list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
 
             // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise
-            UIRect close = CloseBounds(i);
             bool onClose = over && close.Contains(pointer);
             if (onClose)
                 list.Box(close, skin.HoverColor);
 
             if (open || over)
-                list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), text);
+                list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), plain);
             else if (tab.Modified)
-                list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), text);
+                list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), plain);
         }
 
         list.EndParts();
@@ -283,15 +369,32 @@ public class TabStrip : UIComponent
 
     protected internal override bool OnScroll(float delta)
     {
-        scroll -= delta * WHEEL_STEP;
-        ClampScroll();
+        if (HideClippedTabs && Module?.Compositor.Skin is { } skin)
+        {
+            float start = 0;
+            int first = 0;
+            while (first < Tabs.Count - 1 && start < scroll - 0.5f)
+                start += WidthOf(skin, Tabs[first++]);
+            int next = Math.Clamp(first + (delta > 0 ? -1 : 1), 0, Math.Max(0, Tabs.Count - 1));
+            scroll = 0;
+            for (int i = 0; i < next; i++) scroll += WidthOf(skin, Tabs[i]);
+            ClampScroll();
+        }
+        else
+        {
+            scroll -= delta * WHEEL_STEP;
+            ClampScroll();
+        }
         return true;
     }
+
+    protected internal override bool UsesScrollSpeed => true;
 
     protected override void DefineScript()
     {
         base.DefineScript();
 
         Expose("text_scale", () => TextScale, value => TextScale = value);
+        Expose("max_tab_width", () => MaxTabWidth, value => MaxTabWidth = MathF.Max(0.0f, value));
     }
 }

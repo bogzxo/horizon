@@ -44,12 +44,13 @@ public readonly record struct UITextSelection(UITextPosition Caret, UITextPositi
 /// selection made by a program) lets go of the others.
 /// </para>
 /// </summary>
-public sealed class UITextDocument
+public sealed partial class UITextDocument
 {
     // What one step of the undo history comes back to. The lines and not the text joined up, a line is a string nobody
     // changes, so a step shares every line it has with the text and the steps either side of it and costs a reference a
     // line. The joined text was 120 KB a step in a 2000 line file, three hundred of them kept
-    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor);
+    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor, List<LineMovement> Movements);
+    private sealed record LineMovement(UITextPosition At, int By, bool MoveAt, UITextPosition ReverseAt, bool ReverseMoveAt, int Last = -1);
 
     // How a step was made, a run of the same kind of edit going in as one step
     private enum EditKind
@@ -94,8 +95,11 @@ public sealed class UITextDocument
     /// <summary>What one level of indentation is.</summary>
     public string Indent { get; set; } = "    ";
 
-    /// <summary>What a line comment starts with, for <see cref="ToggleComment"/>.</summary>
+    /// <summary>What a line comment starts with, for <see cref="ToggleComment"/>. Empty for a language without one, CSS or HTML.</summary>
     public string LineComment { get; set; } = "//";
+
+    /// <summary>What a block comment goes between, for <see cref="ToggleBlockComment"/>. Both empty for a language without one.</summary>
+    public (string Start, string End) BlockComment { get; set; } = ("/*", "*/");
 
     /// <summary>Whether brackets and quotes close themselves as they are typed.</summary>
     public bool ClosePairs { get; set; } = true;
@@ -118,6 +122,17 @@ public sealed class UITextDocument
     /// code editor's diagnostics until they're said again.
     /// </summary>
     public event Action<UITextPosition, int>? LinesMoved;
+
+    /// <summary>Line movement including whether an insertion moves the statement at its starting line.
+    /// Replayed in reverse on Undo and forward on Redo, including each edit of a grouped operation.</summary>
+    public event Action<UITextPosition, int, bool>? LinesShifted;
+
+    /// <summary>A range of whole lines, inclusive, swapped with its neighbor in direction -1 or 1.
+    /// Undo and Redo publish the inverse and original permutation respectively.</summary>
+    public event Action<int, int, int>? LinesReordered;
+
+    /// <summary>A line edit or its history replay, carrying the identity needed to restore collapsed anchors.</summary>
+    public event Action<UITextLineChange>? LineChanged;
 
     public int LineCount => lines.Count;
 
@@ -146,6 +161,38 @@ public sealed class UITextDocument
             lastKind = EditKind.Other;
             Touched();
         }
+    }
+
+    /// <summary>
+    /// Whether the whole text is the one given, its lines ended with '\n' the way <see cref="Text"/> has them, without
+    /// putting the lines together to ask. Asked on every key whether a file still is what was saved, the joined text was
+    /// most of what a key in a big file allocated, near a megabyte in one of twenty thousand lines.
+    /// </summary>
+    public bool TextEquals(string text)
+    {
+        if (joined is not null)
+            return string.Equals(joined, text, StringComparison.Ordinal);
+
+        // The length first, which tells them apart after almost any edit without looking at a character
+        long length = lines.Count - 1;
+        for (int i = 0; i < lines.Count; i++)
+            length += lines[i].Length;
+        if (length != text.Length)
+            return false;
+
+        int at = 0;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (!text.AsSpan(at, line.Length).SequenceEqual(line))
+                return false;
+
+            at += line.Length;
+            if (i < lines.Count - 1 && text[at++] != '\n')
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>Replaces the whole text as one step that can be undone, keeping the caret where it can.</summary>
@@ -671,62 +718,6 @@ public sealed class UITextDocument
         Touched();
     }
 
-    /// <summary>
-    /// The lines of the selection (or the caret's) made comments, or made code again if every one of them is a comment
-    /// already. The comment goes in at the indentation of the least indented of them.
-    /// </summary>
-    public void ToggleComment()
-    {
-        if (AtEveryCaret(ToggleComment, EditKind.Other))
-            return;
-
-        Record(EditKind.Other);
-        var (first, last) = SelectedLines();
-        string mark = LineComment + " ";
-
-        bool allComments = true;
-        int indent = int.MaxValue;
-        for (int line = first; line <= last; line++)
-        {
-            string text = lines[line];
-            if (text.Trim().Length == 0) continue;
-            indent = Math.Min(indent, text.Length - text.TrimStart().Length);
-            if (!text.TrimStart().StartsWith(LineComment)) allComments = false;
-        }
-
-        if (indent == int.MaxValue)
-            return;
-
-        int caretShift = 0, anchorShift = 0;
-        for (int line = first; line <= last; line++)
-        {
-            string text = lines[line];
-            if (text.Trim().Length == 0) continue;
-
-            int shift;
-            if (allComments)
-            {
-                int at = text.IndexOf(LineComment, StringComparison.Ordinal);
-                int length = text.AsSpan(at).StartsWith(mark) ? mark.Length : LineComment.Length;
-                lines[line] = text.Remove(at, length);
-                shift = -length;
-            }
-            else
-            {
-                lines[line] = text.Insert(indent, mark);
-                shift = mark.Length;
-            }
-
-            if (line == Caret.Line) caretShift = shift;
-            if (line == Anchor.Line) anchorShift = shift;
-        }
-
-        Caret = Clamp(Caret with { Column = Math.Max(0, Caret.Column + caretShift) });
-        Anchor = Clamp(Anchor with { Column = Math.Max(0, Anchor.Column + anchorShift) });
-        preferredColumn = Caret.Column;
-        Touched();
-    }
-
     /// <summary>The selection once more after itself, or the caret's line once more under itself.</summary>
     public void Duplicate()
     {
@@ -745,6 +736,8 @@ public sealed class UITextDocument
         else
         {
             lines.Insert(Caret.Line + 1, lines[Caret.Line]);
+            NoteLineMovement(new(Caret.Line, lines[Caret.Line].Length), 1, false,
+                new(Caret.Line + 1, lines[Caret.Line].Length), false);
             Caret = Anchor = Caret with { Line = Caret.Line + 1 };
         }
 
@@ -754,6 +747,8 @@ public sealed class UITextDocument
     /// <summary>The lines of the selection (or the caret's) swapped with the line above or below them.</summary>
     public void MoveLines(int direction)
     {
+        direction = Math.Sign(direction);
+        if (direction == 0) return;
         // Lines are moved for the one caret, the others let go of
         extras.Clear();
         var (first, last) = SelectedLines();
@@ -777,6 +772,9 @@ public sealed class UITextDocument
 
         Caret = Caret with { Line = Caret.Line + direction };
         Anchor = Anchor with { Line = Anchor.Line + direction };
+        var movement = new LineMovement(new(first, 0), direction, false, new(first + direction, 0), false, last);
+        undo[^1].Movements.Add(movement);
+        PublishHistoryMovement(movement, reverse: false);
         Touched();
     }
 
@@ -1069,8 +1067,9 @@ public sealed class UITextDocument
         if (undo.Count == 0)
             return;
 
-        redo.Add(Current());
-        Restore(undo[^1]);
+        Snapshot step = undo[^1];
+        redo.Add(Current() with { Movements = step.Movements });
+        Restore(step, reverse: true);
         undo.RemoveAt(undo.Count - 1);
     }
 
@@ -1080,14 +1079,15 @@ public sealed class UITextDocument
         if (redo.Count == 0)
             return;
 
-        undo.Add(Current());
-        Restore(redo[^1]);
+        Snapshot step = redo[^1];
+        undo.Add(Current() with { Movements = step.Movements });
+        Restore(step, reverse: false);
         redo.RemoveAt(redo.Count - 1);
     }
 
-    private Snapshot Current() => new([.. lines], Caret, Anchor);
+    private Snapshot Current() => new([.. lines], Caret, Anchor, []);
 
-    private void Restore(Snapshot snapshot)
+    private void Restore(Snapshot snapshot, bool reverse)
     {
         joined = null;
         lines.Clear();
@@ -1096,7 +1096,45 @@ public sealed class UITextDocument
         Anchor = Clamp(snapshot.Anchor);
         preferredColumn = Caret.Column;
         lastKind = EditKind.Other;
+        if (reverse)
+        {
+            for (int i = snapshot.Movements.Count - 1; i >= 0; i--)
+            {
+                var movement = snapshot.Movements[i];
+                PublishHistoryMovement(movement, reverse: true);
+            }
+        }
+        else
+            foreach (var movement in snapshot.Movements)
+                PublishHistoryMovement(movement, reverse: false);
         Touched();
+    }
+
+    private void PublishHistoryMovement(LineMovement movement, bool reverse)
+    {
+        var change = new UITextLineChange(movement, reverse, reverse ? movement.ReverseAt : movement.At,
+            reverse ? -movement.By : movement.By, reverse ? movement.ReverseMoveAt : movement.MoveAt,
+            movement.Last < 0 ? -1 : movement.Last + (reverse ? movement.By : 0));
+        if (movement.Last >= 0)
+            LinesReordered?.Invoke(change.At.Line, change.Last, change.By);
+        else if (reverse)
+            PublishLineMovement(movement.ReverseAt, -movement.By, movement.ReverseMoveAt);
+        else
+            PublishLineMovement(movement.At, movement.By, movement.MoveAt);
+        LineChanged?.Invoke(change);
+    }
+
+    private void NoteLineMovement(UITextPosition at, int by, bool moveAt, UITextPosition reverseAt, bool reverseMoveAt)
+    {
+        var movement = new LineMovement(at, by, moveAt, reverseAt, reverseMoveAt);
+        if (undo.Count > 0) undo[^1].Movements.Add(movement);
+        PublishHistoryMovement(movement, reverse: false);
+    }
+
+    private void PublishLineMovement(UITextPosition at, int by, bool moveAt)
+    {
+        LinesMoved?.Invoke(at, by);
+        LinesShifted?.Invoke(at, by, moveAt);
     }
 
     /// <summary>
@@ -1150,7 +1188,7 @@ public sealed class UITextDocument
         int last = at.Line + pieces.Length - 1;
         int column = lines[last].Length;
         lines[last] += after;
-        LinesMoved?.Invoke(at, pieces.Length - 1);
+        NoteLineMovement(at, pieces.Length - 1, string.IsNullOrWhiteSpace(before), new(last, column), false);
         return new UITextPosition(last, column);
     }
 
@@ -1168,7 +1206,7 @@ public sealed class UITextDocument
 
         lines[from.Line] = lines[from.Line][..from.Column] + lines[to.Line][to.Column..];
         lines.RemoveRange(from.Line + 1, to.Line - from.Line);
-        LinesMoved?.Invoke(to, from.Line - to.Line);
+        NoteLineMovement(to, from.Line - to.Line, false, from, string.IsNullOrWhiteSpace(lines[from.Line][..from.Column]));
     }
 
     private bool DeleteSelectionRaw()
@@ -1513,10 +1551,39 @@ public sealed class UITextDocument
     /// Alt, shift and a drag, a column, a caret on every line between two places selecting from the one's column to the
     /// other's (short lines as far as they go).
     /// </summary>
-    public void SelectColumn(UITextPosition from, UITextPosition to)
+    public void SelectColumn(UITextPosition from, UITextPosition to) => Box(Clamp(from), Clamp(to));
+
+    // Where the box being grown from the keyboard started and where its far corner is, its column kept past the end of a
+    // short line, and the caret and how many there were once it was made, so anything else that moved them starts a new one
+    private UITextPosition boxFrom, boxTo;
+    private (UITextPosition Caret, int Count)? boxMade;
+
+    /// <summary>
+    /// Shift, alt and an arrow with Visual Studio's keys, the box selection grown (or shrunk) by some lines down and some
+    /// columns across, from where the caret is when it starts. Its far corner keeps its column going over a short line,
+    /// and goes no further right than the longest line of it.
+    /// </summary>
+    public void ExtendBox(int down, int across)
     {
-        from = Clamp(from);
-        to = Clamp(to);
+        if (boxMade != (Caret, extras.Count))
+        {
+            boxFrom = Anchor;
+            boxTo = Caret;
+        }
+
+        int line = Math.Clamp(boxTo.Line + down, 0, lines.Count - 1);
+        int longest = 0;
+        for (int at = Math.Min(boxFrom.Line, line); at <= Math.Max(boxFrom.Line, line); at++)
+            longest = Math.Max(longest, lines[at].Length);
+
+        boxTo = new UITextPosition(line, Math.Clamp(boxTo.Column + across, 0, Math.Max(longest, boxFrom.Column)));
+        Box(boxFrom, boxTo);
+        boxMade = (Caret, extras.Count);
+    }
+
+    // A caret on every line between two places, each selecting from the one's column to the other's
+    private void Box(UITextPosition from, UITextPosition to)
+    {
         extras.Clear();
 
         int step = to.Line >= from.Line ? 1 : -1;

@@ -11,13 +11,25 @@ namespace Horizon.UI.Components;
 /// One row of a <see cref="TreeView"/> and the rows under it. What a tree shows is a tree of these, handed over and
 /// changed by whoever owns it, then <see cref="TreeView.Refresh"/> to have the tree show the change.
 /// </summary>
-public sealed class UITreeItem
+public sealed partial class UITreeItem
 {
     /// <summary>What the row says, plain text.</summary>
     public string Text { get; set; } = string.Empty;
 
     /// <summary>A few words after the text, in the dim colour, how many there are of something or what it is.</summary>
     public string Detail { get; set; } = string.Empty;
+
+    /// <summary>Whether the detail has icons in it to draw, <c>$(arrow-down)</c> and <c>[icon:name]</c>, off for details that hold a name somebody gave something.</summary>
+    public bool DetailMarkup { get; set; }
+
+    /// <summary>The colour of the detail, null for the dim one. A key in a list of keys, which is what the row is about.</summary>
+    public Vector4? DetailColor { get; set; }
+
+    /// <summary>
+    /// A word or two between the text and the detail, always in the dim colour, when something holds for the row (where a
+    /// key in a list of keys goes off). The first thing left out when the row is short. Nothing for none.
+    /// </summary>
+    public string Note { get; set; } = string.Empty;
 
     /// <summary>The icon in front of the text, a name of <see cref="UISymbols"/>, nothing for none.</summary>
     public string Icon { get; set; } = string.Empty;
@@ -28,6 +40,9 @@ public sealed class UITreeItem
     /// <summary>The colour of the text, null for the skin's.</summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>Whether the text is bold, Solution Explorer's startup project say.</summary>
+    public bool Bold { get; set; }
+
     /// <summary>What it says under the pointer, nothing for nothing.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
@@ -36,6 +51,24 @@ public sealed class UITreeItem
     /// A length of 0 for none.
     /// </summary>
     public (int Start, int Length) Mark { get; set; }
+
+    /// <summary>
+    /// Pieces of the text written in the accent (or <see cref="LitColor"/>), from which character for how many. The
+    /// words a filter found, lit the way the settings page lights them. Null for none.
+    /// </summary>
+    public IReadOnlyList<(int Start, int Length)>? Lit { get; set; }
+
+    /// <summary>The colour of the <see cref="Lit"/> pieces, null for the skin's accent.</summary>
+    public Vector4? LitColor { get; set; }
+
+    /// <summary>A line down the row's left edge in this colour, the bar a changed setting has. Null for none.</summary>
+    public Vector4? Edge { get; set; }
+
+    /// <summary>
+    /// Whether the row is drawn as a button, a box with an edge round it that lights under the pointer, so a row that
+    /// does something reads as one (Source Control's Commit under a repository's heading).
+    /// </summary>
+    public bool Button { get; set; }
 
     // The text cut short with dots to the room it had last, kept until the text or the room changes, and the detail's
     internal string? fittedOf;
@@ -94,13 +127,13 @@ public sealed class UITreeItem
 /// </code>
 /// The rows are the program's to hand over, <see cref="Items"/>, and to change and <see cref="Refresh"/>.
 /// </summary>
-public class TreeView : UIComponent
+public partial class TreeView : UIComponent
 {
     // How thick the line along the top is while it has the keyboard
     private const float FOCUS_LINE = 2.0f;
 
     private const float DEFAULT_WIDTH = 260.0f, DEFAULT_ROWS = 10.0f;
-    private const float ROW_PADDING = 8.0f, BAR_WIDTH = 5.0f, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
+    private const float ROW_PADDING = 8.0f, BAR_WIDTH = UIScrollBar.WIDTH, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
 
     // How far in from its top and bottom the rows fade while there are more past that edge, see ScrollPanel.Fade
@@ -113,6 +146,10 @@ public class TreeView : UIComponent
     private float scroll, sinceClick = float.MaxValue;
     private UIScrollEase ease;
     private bool revealSelected;
+    private bool draggingBar;
+    private float barGrab;
+    private float scrollBarMax;
+    private UIRect scrollBarTrack, scrollBarThumb;
 
     // The icons the tree draws itself, looked up once
     private char chevronRight, chevronDown;
@@ -134,10 +171,34 @@ public class TreeView : UIComponent
         get => selected;
         set
         {
+            if (value != selected)
+                alsoSelected.Clear();
             selected = value;
             revealSelected = value is not null;
         }
     }
+
+    /// <summary>Viewport offset for an owner restoring rows after a refresh, without revealing the selection.</summary>
+    public float ScrollOffset
+    {
+        get => scroll;
+        set
+        {
+            ease.Stop();
+            scroll = MathF.Max(0, float.IsFinite(value) ? value : 0);
+            revealSelected = false;
+            revealOnly = null;
+        }
+    }
+
+    /// <summary>The track as it was last painted, empty when the tree fits.</summary>
+    public UIRect ScrollBarTrack => scrollBarTrack;
+
+    /// <summary>The thumb as it was last painted, empty when the tree fits.</summary>
+    public UIRect ScrollBarThumb => scrollBarThumb;
+
+    /// <summary>Whether the scrollbar thumb is being dragged right now.</summary>
+    public bool IsDraggingBar => draggingBar;
 
     /// <summary>The colour of the box behind the rows, null for none.</summary>
     public Vector4? Color { get; set; }
@@ -169,8 +230,18 @@ public class TreeView : UIComponent
     /// </summary>
     public bool FocusLine { get; set; }
 
-    /// <summary>A click on a row (or the keys selecting one).</summary>
+    /// <summary>A click on a row (or the keys selecting one, unless <see cref="ArrowsPress"/> says not).</summary>
     public Action<UITreeItem>? OnPressed { get; set; }
+
+    /// <summary>
+    /// Whether the arrows moving the selection press the row they land on, as a click would. No for a tree whose press
+    /// does something big (opens a file, goes into a folder), where the arrows only move along and Space presses the row
+    /// with the keyboard staying in the tree, VS Code's explorer. Enter is <see cref="OnActivated"/> either way.
+    /// </summary>
+    public bool ArrowsPress { get; set; } = true;
+
+    /// <summary>Whether the press going on right now came off the keyboard rather than the pointer, for an owner that keeps the keys in the tree then.</summary>
+    public bool PressedByKey { get; private set; }
 
     /// <summary>A double click on a row, or enter on the selected one.</summary>
     public Action<UITreeItem>? OnActivated { get; set; }
@@ -184,6 +255,9 @@ public class TreeView : UIComponent
     /// <summary>A right click on a row, with where the pointer is.</summary>
     public Action<UITreeItem, Vector2>? OnItemContextMenu { get; set; }
 
+    /// <summary>A right click under the rows, on no row at all, with where the pointer is. The explorer's New File and Refresh.</summary>
+    public Action<Vector2>? OnEmptyContextMenu { get; set; }
+
     /// <summary>
     /// Where a row is on screen right now (in the module's units, like <see cref="UIComponent.Bounds"/>), null if it isn't
     /// showing or is scrolled out of sight. For a test pointing at a row, or something laid over one.
@@ -194,8 +268,9 @@ public class TreeView : UIComponent
             return null;
 
         float line = LineHeight(skin);
-        float rowTop = Bounds.Max.Y - IndexOf(item) * line + scroll;
-        if (rowTop - line < Bounds.Min.Y - 0.5f || rowTop > Bounds.Max.Y + 0.5f)
+        UIRect area = RowsArea(skin);
+        float rowTop = area.Max.Y - IndexOf(item) * line + scroll;
+        if (rowTop - line < area.Min.Y - 0.5f || rowTop > area.Max.Y + 0.5f)
             return null;
 
         return new UIRect(new Vector2(Bounds.Min.X, rowTop - line), new Vector2(Bounds.Max.X, rowTop));
@@ -222,9 +297,22 @@ public class TreeView : UIComponent
         OnContextMenu = point =>
         {
             if (RowAt(point) is not { } at)
+            {
+                OnEmptyContextMenu?.Invoke(point);
                 return;
+            }
 
+            // One of several selected keeps them all, the menu is for all of them
+            if (!IsSelected(at))
+                alsoSelected.Clear();
+            else if (at != selected && selected is not null)
+                alsoSelected.Add(selected);
             Select(at, notify: false);
+
+            // The keyboard comes with it, so the keys after the menu go to the tree the menu was for. The explorer's row
+            // left them in the code and Source Control's took them, depending on the menu
+            if (TakesKeys)
+                Focus();
             OnItemContextMenu?.Invoke(at, point);
         };
     }
@@ -239,17 +327,25 @@ public class TreeView : UIComponent
     public void Refresh()
     {
         rows.Clear();
+        hasWraps = false;
         foreach (UITreeItem item in items)
             Flatten(item, null, 0);
 
         // The selected row went away, or into a row that closed
         if (selected is not null && rows.FindIndex(row => row.Item == selected) < 0)
             selected = null;
+        ForgetHidden();
     }
 
     private void Flatten(UITreeItem item, UITreeItem? parent, int depth)
     {
         item.Parent = parent;
+        if (item.Wraps)
+        {
+            FlattenNote(item, parent, depth);
+            return;
+        }
+
         rows.Add((item, depth));
         if (!item.Expanded || item.Children is null)
             return;
@@ -293,14 +389,19 @@ public class TreeView : UIComponent
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
-    private float Travel(UISkin skin) => MathF.Max(0.0f, rows.Count * LineHeight(skin) - Bounds.Height);
+    private float Travel(UISkin skin) => MathF.Max(0.0f, rows.Count * LineHeight(skin) - RowsArea(skin).Height);
 
     private UITreeItem? RowAt(Vector2 point)
     {
-        if (Module?.Compositor.Skin is not { } skin || !Bounds.Contains(point))
+        if (Module?.Compositor.Skin is not { } skin)
             return null;
 
-        int row = (int)((Bounds.Max.Y - point.Y + scroll) / LineHeight(skin));
+        // Under the titles of a table, they aren't a row
+        UIRect area = RowsArea(skin);
+        if (!area.Contains(point))
+            return null;
+
+        int row = (int)((area.Max.Y - point.Y + scroll) / LineHeight(skin));
         return row >= 0 && row < rows.Count ? rows[row].Item : null;
     }
 
@@ -325,7 +426,29 @@ public class TreeView : UIComponent
 
     protected internal override void OnPointerDown(Vector2 point)
     {
+        if (scrollBarTrack.IsEmpty || !ScrollBarGrabZone.Contains(point))
+        {
+            draggingBar = false;
+        }
+        else
+        {
+            float top = scrollBarThumb.Max.Y;
+            float length = scrollBarThumb.Height;
+            draggingBar = true;
+            barGrab = point.Y <= top && point.Y >= top - length ? top - point.Y : length * 0.5f;
+            DragScrollBar(point);
+            return;
+        }
+
+        // A title of a table pressed sorts by its column, the owner does the sorting
+        if (PressHeader(point))
+            return;
+
         if (RowAt(point) is not { } at || Module?.Compositor.Skin is not { } skin)
+            return;
+
+        // A button on the row does what it does and leaves the row as it was, the way VS Code's stage button does
+        if (PressAction(at, point))
             return;
 
         int depth = rows[IndexOf(at)].Depth;
@@ -343,9 +466,38 @@ public class TreeView : UIComponent
             return;
         }
 
+        if (PickMany(at))
+            return;
+
         Select(at, notify: true);
         if (at.HasChildren && (onChevron || ToggleOnClick))
             Toggle(at);
+    }
+
+    protected internal override void OnPointerDrag(Vector2 point) => DragScrollBar(point);
+
+    protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;
+
+    private UIRect ScrollBarGrabZone => scrollBarTrack.IsEmpty
+        ? default
+        : new UIRect(new Vector2(scrollBarTrack.Min.X - BAR_WIDTH * 0.5f, scrollBarTrack.Min.Y),
+            new Vector2(Bounds.Max.X, scrollBarTrack.Max.Y));
+
+    private void DragScrollBar(Vector2 point)
+    {
+        if (!draggingBar || scrollBarTrack.IsEmpty || scrollBarThumb.IsEmpty)
+            return;
+
+        float travel = scrollBarTrack.Height - scrollBarThumb.Height;
+        if (travel <= 0.0f)
+            return;
+
+        float thumbTop = point.Y + barGrab;
+        float share = Math.Clamp((scrollBarTrack.Max.Y - thumbTop) / travel, 0.0f, 1.0f);
+        ease.Stop();
+        scroll = share * scrollBarMax;
+        revealSelected = false;
+        revealOnly = null;
     }
 
     protected internal override bool OnScroll(float delta)
@@ -353,47 +505,78 @@ public class TreeView : UIComponent
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
-        ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin));
+        BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
+        ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin), MotionSpeed);
         return true;
     }
 
     protected internal override void OnTextInput(char character)
     {
+        // The owner has first go at a key, a row of its own can mean something by it
+        if (selected is { } picked && OnKey?.Invoke(picked, character) == true)
+            return;
+
         int at = IndexOf(selected);
-        switch (character)
+        PressedByKey = true;
+        try
         {
-            case UIKeyboard.UP when rows.Count > 0:
-                Select(rows[Math.Max(0, at - 1)].Item, notify: true);
-                break;
+            switch (character)
+            {
+                case UIKeyboard.UP when rows.Count > 0:
+                    Select(rows[Math.Max(0, at - 1)].Item, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.DOWN when rows.Count > 0:
-                Select(rows[Math.Min(rows.Count - 1, at + 1)].Item, notify: true);
-                break;
+                case UIKeyboard.DOWN when rows.Count > 0:
+                    Select(rows[Math.Min(rows.Count - 1, at + 1)].Item, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.LEFT when selected is { } item:
-                if (item.Expanded && item.HasChildren) Toggle(item);
-                else if (item.Parent is { } parent) Select(parent, notify: true);
-                break;
+                case UIKeyboard.LEFT when selected is { } item:
+                    if (item.Expanded && item.HasChildren) Toggle(item);
+                    else if (item.Parent is { } parent) Select(parent, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.RIGHT when selected is { } item:
-                if (item.HasChildren && !item.Expanded) Toggle(item);
-                else if (item.Expanded && item.Children is [var first, ..]) Select(first, notify: true);
-                break;
+                case UIKeyboard.RIGHT when selected is { } item:
+                    if (item.HasChildren && !item.Expanded) Toggle(item);
+                    else if (item.Expanded && item.Children is [var first, ..]) Select(first, notify: ArrowsPress);
+                    break;
 
-            case UIKeyboard.ENTER when selected is { } item:
-                OnActivated?.Invoke(item);
-                break;
+                case ' ' when selected is { } item && !ArrowsPress:
+                    OnPressed?.Invoke(item);
+                    break;
+
+                case UIKeyboard.ENTER when selected is { } item:
+                    OnActivated?.Invoke(item);
+                    break;
+            }
+        }
+        finally
+        {
+            PressedByKey = false;
         }
     }
 
+    protected internal override bool OnEscape() => selected is { } item && OnKey?.Invoke(item, UIKeyboard.ESCAPE) == true;
+    protected internal override bool UsesScrollSpeed => true;
+
+    protected internal override bool HasOverscroll => ease.Over.Active;
+
+    // A finger on the bar drags the bar, anywhere else it scrolls the rows
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (!scrollBarTrack.IsEmpty && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
+
     protected override void Update(float dt)
     {
+        RewrapNotes();
         sinceClick += dt;
-        scroll = ease.Step(scroll, dt);
+        float scrollDt = ScrollMotionDelta(dt);
+        scroll = ease.Step(scroll, scrollDt);
+        ease.Over.Step(scrollDt, MotionSpeed);
 
         // The tooltip is the one of the row under the pointer, a string the item has, nothing made
-        hovered = Module is { } module && IsHovered ? RowAt(module.ToLocal(module.Compositor.Pointer.Position)) : null;
+        Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : default;
+        hovered = Module is not null && IsHovered ? RowAt(pointer) : null;
         Tooltip = hovered?.Tooltip ?? string.Empty;
+        UpdateActions(pointer);
+        UpdateHeader(pointer);
     }
 
     protected override Vector2 Measure(UISkin skin) => new(DEFAULT_WIDTH, LineHeight(skin) * DEFAULT_ROWS);
@@ -402,7 +585,9 @@ public class TreeView : UIComponent
     {
         UISkin skin = list.Skin;
         float line = LineHeight(skin), scale = ScaleOf(skin);
-        UIRect bounds = Bounds;
+
+        // The rows go under the titles of a table, all of it otherwise
+        UIRect whole = Bounds, bounds = RowsArea(skin);
 
         if (chevronRight == default)
         {
@@ -443,24 +628,26 @@ public class TreeView : UIComponent
         Vector4 guide = text with { W = text.W * 0.12f };
         Vector4 lit = text with { W = ListBox.PICKED };
         bool keyed = IsFocused && TakesKeys;
+        bool ringed = Module?.Compositor.FocusVisible == true;
 
         if (Color is { } behind)
         {
-            if (Radius > 0.0f) list.RoundRect(bounds, Radius, behind);
-            else list.Box(bounds, behind);
+            if (Radius > 0.0f) list.RoundRect(whole, Radius, behind);
+            else list.Box(whole, behind);
         }
 
         list.PushClip(bounds);
         float fade = MathF.Min(FADE, bounds.Height * 0.25f);
         list.PushFade(bounds, MathF.Min(fade, scroll), MathF.Min(fade, travel - scroll));
 
-        int first = (int)(scroll / line);
-        int last = Math.Min(rows.Count - 1, first + (int)(bounds.Height / line) + 1);
+        // Stretched past an end it shows more of what's next to the rows in sight, see UIOverscroll
+        int beyond = ease.Over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(ease.Over.Stretch) / line) + 1;
+        int first = Math.Max(0, (int)(scroll / line) - beyond);
+        int last = Math.Min(rows.Count - 1, (int)(scroll / line) + (int)(bounds.Height / line) + 1 + beyond);
 
-        // Easing, the rows as the newer tick has them (see UIScrollEase)
-        bool easing = ease.Goal is not null;
-        if (easing)
-            list.BeginSteps();
+        // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        bool stretched = ease.Over.Begin(list, bounds);
+        list.PushFrame(new Vector2(0.0f, scroll));
         for (int i = first; i <= last; i++)
         {
             var (item, depth) = rows[i];
@@ -474,11 +661,20 @@ public class TreeView : UIComponent
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
             UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
-            list.Box(pill, item == selected ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(pill, IsSelected(item) ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+
+            // A row that's a button has a box of its own over that. A row is one or it isn't for as long as it's there, so
+            // its quads don't come and go under the pointer
+            if (item.Button)
+            {
+                list.RoundRect(pill, skin.CornerRadius, skin.HoverColor);
+                list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.BorderColor);
+            }
 
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
-            // Tab into the keys window's list had nothing on screen change. Always painted, see-through when not wanted
-            list.RoundOutline(pill, skin.CornerRadius, 1.0f, skin.Palette.Highlight with { W = item == selected && keyed ? 0.8f : 0.0f });
+            // Tab into the keys window's list had nothing on screen change. Only once the keys moved about, the click on
+            // the explorer's icon that gave it the keyboard rang its first row. Always painted, see-through when not wanted
+            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, skin.Palette.Highlight with { W = item == selected && keyed && ringed ? 1.0f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -502,17 +698,39 @@ public class TreeView : UIComponent
                 x += icon + ICON_GAP;
             }
 
+            // A table's row, each text in its column (TreeView.Columns), the buttons over its right end
+            if (HasColumns)
+            {
+                PaintCells(list, item, row, x, scale, text, dim);
+                PaintActions(list, item, row, 0.0f, icon, text);
+                continue;
+            }
+
             // As much of the text as there's room for with its detail after it, cut short with dots rather than off at the
             // edge of the tree, a long line found by Find in Files ran under the side's edge
             // The text comes first, a detail that won't fit beside all of it gets at most a third of the row, cut short
             // itself. A variable's value was cut off to leave its whole type there, "box = geomet...  geometry.shapes.Rect"
-            float room = right - x - LEFT_PAD;
-            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, markup: false).X + DETAIL_GAP : 0.0f;
+            // The badge has its own room at the right end, and the buttons sit over the end of the text while they show
+            float badge = BadgeWidth(item, skin, scale);
+            float room = right - x - LEFT_PAD - badge;
+            float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, item.DetailMarkup).X + DETAIL_GAP : 0.0f;
             if (detailWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth > room)
                 detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
+
+            // The note goes between them while all of the text fits beside it, and is the first thing given up when it doesn't
+            float noteWidth = item.Note.Length > 0 ? skin.Font.Measure(item.Note, scale, markup: false).X + DETAIL_GAP : 0.0f;
+            if (noteWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth + noteWidth > room)
+                noteWidth = 0.0f;
             string rowText = Fitted(item, skin, scale, room - detailWidth);
-            Vector2 size = skin.Font.Measure(rowText, scale, markup: false);
+            Vector2 size = item.Bold
+                ? new Vector2(skin.Font.MeasureLine(rowText, scale, UITextStyle.Bold, default), skin.Font.Measure(rowText, scale, markup: false).Y)
+                : skin.Font.Measure(rowText, scale, markup: false);
             float baseline = MathF.Round(row.Center.Y + size.Y * 0.5f);
+
+            // Cut off rather than fitted again, so the row's letters stay the same ones as the pointer comes and goes
+            bool actions = ShowsActions(item);
+            if (actions)
+                list.PushClip(new UIRect(row.Min, new Vector2(ActionsLeft(item, row, badge), row.Max.Y)));
 
             // What was found lit behind it, the colour of a selection, where it still is after any cut
             if (item.Mark.Length > 0 && item.Mark.Start >= 0 && item.Mark.Start + item.Mark.Length <= rowText.Length)
@@ -523,32 +741,99 @@ public class TreeView : UIComponent
                 list.RoundRect(found, 3.0f, skin.Palette.Selection);
             }
 
-            list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
+            if (item.Lit is { Count: > 0 } pieces)
+                PaintLit(list, rowText, pieces, new Vector2(x, baseline), scale, item.Color ?? text, item.LitColor ?? skin.AccentColor);
+            else if (item.Bold)
+                list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, false, UITextStyle.Bold, default);
+            else
+                list.Text(rowText, new Vector2(x, baseline), scale, item.Color ?? text, markup: false);
 
-            if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - (x + size.X + DETAIL_GAP)) is { Length: > 0 } said)
+            // A changed one's bar down the left edge, the way a changed setting's row has it
+            if (item.Edge is { } edge)
+                list.Rect(new UIRect(new Vector2(bounds.Min.X + 1.0f, row.Min.Y + 1.0f), new Vector2(bounds.Min.X + 4.0f, row.Max.Y - 1.0f)), edge);
+
+            if (noteWidth > 0.0f)
             {
-                Vector2 detail = skin.Font.Measure(said, scale, markup: false);
-                list.Text(said, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, dim, markup: false);
+                Vector2 note = skin.Font.Measure(item.Note, scale, markup: false);
+                list.Text(item.Note, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + note.Y * 0.5f)), scale, dim, markup: false);
             }
+
+            if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - badge - (x + size.X + noteWidth + DETAIL_GAP)) is { Length: > 0 } said)
+            {
+                Vector2 detail = skin.Font.Measure(said, scale, item.DetailMarkup);
+                list.Text(said, new Vector2(x + size.X + noteWidth + DETAIL_GAP, MathF.Round(row.Center.Y + detail.Y * 0.5f)), scale, item.DetailColor ?? dim, item.DetailMarkup);
+            }
+
+            if (actions)
+                list.PopClip();
+
+            PaintBadge(list, item, row, scale, dim);
+            PaintActions(list, item, row, badge, icon, text);
         }
 
-        if (easing)
-            list.EndSteps();
+        list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.EndParts();
         list.PopFade();
         list.PopClip();
 
+        PaintHeader(list, skin, right, icon, scale);
+
         // The keyboard's in it, in the colour the keyboard is everywhere, the accent's for what's picked
         if (FocusLine && IsFocused)
-            list.Rect(new UIRect(new Vector2(bounds.Min.X, bounds.Max.Y - 1.0f), bounds.Max), skin.Palette.Highlight with { W = 0.55f });
+            list.Rect(new UIRect(new Vector2(whole.Min.X, whole.Max.Y - 1.0f), whole.Max), skin.Palette.Highlight with { W = 0.55f });
 
         // A thin bar along the right says how much of the tree is in sight, and where
         if (scrolls)
         {
-            float share = bounds.Height / (bounds.Height + travel);
-            float barTop = bounds.Max.Y - (bounds.Height * (1.0f - share)) * (scroll / travel);
-            float barX = bounds.Max.X - BAR_WIDTH * 1.5f;
-            list.Rect(new UIRect(new Vector2(barX, barTop - bounds.Height * share), new Vector2(barX + BAR_WIDTH, barTop)), skin.TextColor with { W = 0.25f });
+            float proportionalThumb = bounds.Height * bounds.Height / (bounds.Height + travel);
+            float thumbLength = MathF.Min(bounds.Height, MathF.Max(UIScrollBar.MIN_THUMB, proportionalThumb));
+            float thumbTravel = bounds.Height - thumbLength;
+            scrollBarMax = travel;
+            float barTop = bounds.Max.Y - thumbTravel * (scroll / travel);
+            float barRight = bounds.Max.X - BAR_WIDTH * 0.5f;
+            scrollBarTrack = new UIRect(new Vector2(barRight - BAR_WIDTH, bounds.Min.Y), new Vector2(barRight, bounds.Max.Y));
+            scrollBarThumb = new UIRect(new Vector2(barRight - BAR_WIDTH, barTop - thumbLength), new Vector2(barRight, barTop));
+            Vector2 pointer = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : new Vector2(float.NaN);
+            bool barLit = draggingBar || (IsHovered && ScrollBarGrabZone.Contains(pointer));
+            UIScrollBar.Paint(list, barRight, bounds.Min.Y, bounds.Max.Y, barTop, thumbLength,
+                UIScrollBar.Width(BAR_WIDTH, barLit ? 1.0f : 0.0f), barLit ? 1.0f : 0.0f, draggingBar, skin.TextColor);
+        }
+        else
+        {
+            scrollBarMax = 0.0f;
+            scrollBarTrack = scrollBarThumb = default;
+        }
+    }
+
+    // A row's text in runs, the lit pieces in their colour and the rest in the text's. Pieces past where the text was cut
+    // short are left out, two that overlap make one run
+    private static void PaintLit(UIDrawList list, string rowText, IReadOnlyList<(int Start, int Length)> pieces, Vector2 at, float scale, Vector4 color, Vector4 litColor)
+    {
+        static bool IsLit(IReadOnlyList<(int Start, int Length)> pieces, int index)
+        {
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                if (index >= pieces[i].Start && index < pieces[i].Start + pieces[i].Length)
+                    return true;
+            }
+
+            return false;
+        }
+
+        UISkin skin = list.Skin;
+        int start = 0;
+        while (start < rowText.Length)
+        {
+            bool lit = IsLit(pieces, start);
+            int end = start + 1;
+            while (end < rowText.Length && IsLit(pieces, end) == lit)
+                end++;
+
+            float from = start == 0 ? 0.0f : skin.Font.Measure(rowText.AsSpan(0, start), scale, markup: false).X;
+            list.Text(rowText.AsSpan(start, end - start), new Vector2(at.X + from, at.Y), scale, lit ? litColor : color, markup: false);
+            start = end;
         }
     }
 
@@ -564,12 +849,38 @@ public class TreeView : UIComponent
         if (ReferenceEquals(item.detailOf, item.Detail) && item.detailRoom == room)
             return item.detailFitted;
 
+        // Icons in it are drawn whole or not at all, one too long for its room is cut short without them rather than in the
+        // middle of a tag
         string shown = item.Detail;
-        if (skin.Font.Measure(shown, scale, markup: false).X > room)
-            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(shown, skin, scale, room);
+        if (skin.Font.Measure(shown, scale, item.DetailMarkup).X > room)
+            shown = skin.Font.Measure(CUT, scale, markup: false).X * 3.0f > room ? string.Empty : Cut(item.DetailMarkup ? WithoutIcons(shown) : shown, skin, scale, room);
 
         (item.detailOf, item.detailRoom, item.detailFitted) = (item.Detail, room, shown);
         return shown;
+    }
+
+    // Some text with its icons taken out, $(name) and [icon:name] both
+    private static string WithoutIcons(string text)
+    {
+        var plain = new System.Text.StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '[' && text.AsSpan(i).StartsWith("[icon:") && text.IndexOf(']', i) is var end and > 0)
+            {
+                i = end;
+                continue;
+            }
+
+            if (text[i] == '$' && text.AsSpan(i).StartsWith("$(") && text.IndexOf(')', i) is var close and > 0)
+            {
+                i = close;
+                continue;
+            }
+
+            plain.Append(text[i]);
+        }
+
+        return plain.ToString();
     }
 
     // As much of some text as fits with dots after it

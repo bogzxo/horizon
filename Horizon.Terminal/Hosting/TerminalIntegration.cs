@@ -89,6 +89,11 @@ public static class TerminalIntegration
     /// <summary>The file a profile's shell writes its commands into, one a profile in the user's folder.</summary>
     public static string CommandsFile(TerminalProfile profile)
     {
+        // Application profiles can encode paths or other session identity in their IDs.
+        // Keep the cache filename bounded even when that identity contains a long path.
+        if (profile.Id.Length > 80)
+            return Path.Combine(TerminalFiles.UserFolder, "cache", "commands-" + Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(profile.Id))) + ".txt");
         var name = new System.Text.StringBuilder("commands-");
         foreach (char c in profile.Id)
             name.Append(char.IsAsciiLetterOrDigit(c) ? c : '_');
@@ -105,7 +110,13 @@ public static class TerminalIntegration
             case "powershell":
             {
                 string script = Path.Combine(scripts, "dusk.ps1");
-                return File.Exists(script) ? $"{command} -NoExit -Command \". '{script.Replace("'", "''")}'\"" : command;
+                if (!File.Exists(script))
+                    return command;
+
+                // a stock Windows install is Restricted and won't dot source the script, Bypass is for this process only
+                // and writes no policy anywhere. One the profile already picks is left alone
+                string policy = HasExecutionPolicy(command) ? string.Empty : " -ExecutionPolicy Bypass";
+                return $"{command}{policy} -NoExit -Command \". '{script.Replace("'", "''")}'\"";
             }
 
             case "bash":
@@ -132,6 +143,10 @@ public static class TerminalIntegration
                 return command;
         }
     }
+
+    // Whether a PowerShell command line gives its own policy, -ExecutionPolicy or how PowerShell lets it be cut short (-ep, -ex, -exec)
+    private static bool HasExecutionPolicy(string command) =>
+        System.Text.RegularExpressions.Regex.IsMatch(command, @"(^|\s)[-/](ep|ex[a-z]*)(\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     // The program a command line starts, its file's name without a folder or .exe, lower case
     private static string ProgramOf(string command)

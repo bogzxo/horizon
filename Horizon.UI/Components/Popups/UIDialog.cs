@@ -35,12 +35,24 @@ public sealed class UIDialog : Panel
     private const float TITLE_SCALE = 1.25f;
     private const float TEXT_SCALE = 0.95f;
 
-    private static readonly Vector4 Shade = new(0.0f, 0.0f, 0.0f, 0.55f);
+    // A palette dims nothing, it's a quick thing and what's behind it is still what's being worked on (it still takes the
+    // pointer). Its card hangs this far under the top of the module rather than in the middle. A question has the soft
+    // dim of every modal thing (UIScrim), it was nearly black
+    private static readonly Vector4 PaletteShade = Vector4.Zero;
+    internal const float PaletteDrop = 88.0f;
 
-    // A palette's shade is a hint of one, it's a quick thing and what's behind it is still what's being worked on, and its
-    // card hangs this far under the top of the module rather than in the middle
-    private static readonly Vector4 PaletteShade = new(0.02f, 0.03f, 0.05f, 0.22f);
-    private const float PALETTE_DROP = 88.0f;
+    /// <summary>
+    /// Whether what's behind it is dimmed, true as it comes. Peek is shown over the code it's about and dims nothing,
+    /// it still takes the pointer.
+    /// </summary>
+    public bool Dims
+    {
+        get => Color is { W: > 0.0f };
+        set => Color = value ? UIScrim.Shade : Vector4.Zero;
+    }
+
+    /// <summary>Whether a press outside the card cancels, for palettes and transient previews.</summary>
+    public bool DismissOnOutsidePress { get; set; }
 
     // Whether it's shown as a palette, see ShowPalette
     private bool palette;
@@ -70,6 +82,11 @@ public sealed class UIDialog : Panel
 
     protected override bool HitTestVisible => !closing && base.HitTestVisible;
 
+    // The exit animation remains visible, but neither the card nor any of its
+    // children may take another press or steal the restored keyboard focus.
+    internal override UIComponent? HitTest(Vector2 point, Vector2 moved = default) =>
+        closing ? null : base.HitTest(point, moved);
+
     /// <summary>The buttons, one per choice in the order they were given. For tests that want to click one.</summary>
     public IReadOnlyList<Button> Buttons { get; }
 
@@ -90,9 +107,12 @@ public sealed class UIDialog : Panel
         // The shade over everything, which also stops the pointer getting through, eased in with the card rather than
         // slammed on under it
         Fill = UIFill.Both;
-        Color = Shade;
+        Color = UIScrim.Shade;
         Intro = UIIntro.Fade;
         IntroTime = 0.16f;
+        // A background right-click is also dismissal for a palette, never a context
+        // menu in the workspace behind a dialog.
+        OnContextMenu = DismissOutside;
 
         card = Add(new StackPanel
         {
@@ -119,21 +139,19 @@ public sealed class UIDialog : Panel
             made[i] = new Button(choices[i].Label) { OnPressed = () => Pick(index) };
         }
 
-        // The first is the one to press when there's a choice, the last is what Escape picks. A risky first one isn't
-        // pressed by a key, the last is the one to press then
-        int primary = made.Length > 1 ? (choices[0].Risky ? made.Length - 1 : 0) : -1;
+        // The first is the one to press when there's a choice, in the accent, the last is what Escape picks. A risky one is
+        // in the skin's red and never the one the keyboard starts on, a risky first one leaves the keyboard on the last
+        // (Cancel, plain) and nothing in the accent. Reset all had Cancel in the accent and Reset all plain next to it
+        int primary = made.Length > 1 && !choices[0].Risky ? 0 : -1;
         if (primary >= 0)
             made[primary].Primary = true;
+        for (int i = 0; i < made.Length; i++)
+            made[i].Danger = choices[i].Risky;
 
-        // Along the bottom the rest in the order they were given from the right, and the one to press at the right end,
-        // the way every dialog of the engine's has them (Cancel, Don't save, Save). It was first, at the left
+        // Along the bottom in the order they were given from the right, the first at the right end, the way every dialog
+        // of the engine's has them (Cancel, Don't save, Save) and (Cancel, Reset all)
         for (int i = made.Length - 1; i >= 0; i--)
-        {
-            if (i != primary)
-                buttons.Add(made[i]);
-        }
-        if (primary >= 0)
-            buttons.Add(made[primary]);
+            buttons.Add(made[i]);
 
         Buttons = made;
     }
@@ -149,7 +167,7 @@ public sealed class UIDialog : Panel
         // Only one at a time
         foreach (var other in module.Root.Children)
         {
-            if (other is UIDialog open)
+            if (other is UIDialog { IsOpen: true } open)
             {
                 open.Close();
                 break;
@@ -175,8 +193,9 @@ public sealed class UIDialog : Panel
         dialog.scopeBefore = navigation.Scope;
         dialog.selectedBefore = navigation.Current;
         navigation.Scope = dialog;
-        if (dialog.Buttons.FirstOrDefault(button => button.Primary) is { } primary)
-            navigation.Select(primary);
+        Button? starting = dialog.Buttons.FirstOrDefault(button => button.Primary) ?? dialog.Buttons.LastOrDefault();
+        if (starting is not null)
+            navigation.Select(starting);
         else
             navigation.SelectFirst();
 
@@ -184,7 +203,7 @@ public sealed class UIDialog : Panel
         // went on to what was behind it (Enter added a line to the code under a question), and the Enter that picked
         // Close in the palette pressed Save in the question it asked
         dialog.focusBefore = module.Compositor.Focus;
-        (dialog.Buttons.FirstOrDefault(button => button.Primary) ?? dialog.Buttons.LastOrDefault())?.Focus();
+        starting?.Focus();
 
         dialog.PlayIntro();
         return dialog;
@@ -194,12 +213,13 @@ public sealed class UIDialog : Panel
     /// Shows a dialog as a palette, Spotlight's and VS Code's, a card hanging under the top of the module with nothing on it
     /// but what is put in its <see cref="Body"/> (a box to type in and a list), no heading, no line and no buttons, over a
     /// shade that hardly darkens what's behind. The choices are still there for whatever presses them, and escape is the
-    /// last of them as ever.
+    /// last of them as ever. Pressing outside the card also cancels and consumes that press.
     /// </summary>
     public static UIDialog ShowPalette(UIModule module, string title, params DialogChoice[] choices)
     {
         UIDialog dialog = Show(module, title, string.Empty, choices);
         dialog.palette = true;
+        dialog.DismissOnOutsidePress = true;
         dialog.Color = PaletteShade;
         dialog.title.Visible = false;
         dialog.buttons.Visible = false;
@@ -207,13 +227,52 @@ public sealed class UIDialog : Panel
         dialog.card.Spacing = 0.0f;
         dialog.card.Anchor = Origin.Top;
         dialog.card.Pivot = Origin.Top;
-        dialog.card.Position = new Vector2(0.0f, -PALETTE_DROP);
+        dialog.card.Position = new Vector2(0.0f, -PaletteDrop);
         dialog.card.IntroTime = 0.16f;
         return dialog;
     }
 
     /// <summary>Whether it's shown as a palette (<see cref="ShowPalette"/>).</summary>
     public bool IsPalette => palette;
+
+    // Where a palette was put by something rather than hanging from the top, and how tall the line it's under is
+    private Vector2? placedAt;
+    private float placedLine;
+
+    /// <summary>
+    /// A palette put by a place in its module rather than hanging from the top, its top left corner there, the way
+    /// Visual Studio's list of fixes opens by the caret. With no room under the place its bottom goes on the line above
+    /// it, a line's height up, and it's kept inside the module either way.
+    /// </summary>
+    public void PlaceAt(Vector2 point, float lineHeight)
+    {
+        placedAt = point;
+        placedLine = lineHeight;
+        card.Anchor = Origin.TopLeft;
+        card.Pivot = Origin.TopLeft;
+    }
+
+    protected override void Arrange(UIRect content)
+    {
+        if (placedAt is { } at)
+        {
+            Vector2 size = card.DesiredSize;
+            float x = Math.Clamp(at.X, content.Min.X, MathF.Max(content.Min.X, content.Max.X - size.X));
+            float top = at.Y - size.Y >= content.Min.Y ? at.Y : at.Y + placedLine + size.Y;
+            top = Math.Clamp(top, MathF.Min(content.Max.Y, content.Min.Y + size.Y), content.Max.Y);
+            card.Position = new Vector2(x - content.Min.X, top - content.Max.Y);
+        }
+
+        base.Arrange(content);
+    }
+
+    protected internal override void OnPointerDown(Vector2 point) => DismissOutside(point);
+
+    private void DismissOutside(Vector2 point)
+    {
+        if (DismissOnOutsidePress && !card.Bounds.Contains(point))
+            Cancel();
+    }
 
     /// <summary>Closes the dialog as if its last choice had been picked, which is what escape does.</summary>
     public void Cancel() => Pick(choices.Length - 1);
@@ -226,27 +285,30 @@ public sealed class UIDialog : Panel
 
         if (Module is { } module)
         {
+            module.Compositor.CancelPointerWithin(this);
             var navigation = module.Navigation;
             if (navigation.Scope == this)
             {
-                navigation.Scope = scopeBefore;
-                navigation.Select(selectedBefore);
+                navigation.Scope = CanRestore(scopeBefore, module) ? scopeBefore : null;
+                navigation.Select(CanRestore(selectedBefore, module) ? selectedBefore : null);
             }
         }
 
         // The keyboard let go of at once, a box of it typed into while it fades was typing into nothing, and back to what
         // had it before the dialog came up when that's still there
-        if (Module?.Compositor is { } compositor && (compositor.Focus is null || Contains(compositor.Focus)))
-            compositor.Focus = focusBefore is { Module: not null } before && !Contains(before) ? before : null;
+        if (Module is { } ownerModule && (ownerModule.Compositor.Focus is null || Contains(ownerModule.Compositor.Focus)))
+            ownerModule.Compositor.Focus = CanRestore(focusBefore, ownerModule) && !Contains(focusBefore!) ? focusBefore : null;
 
         closing = true;
         Closed?.Invoke();
 
         // Faded out and shrunk a touch the way it came, then gone, or gone at once with less motion
-        if (UIDrawList.Motion && Module is not null)
+        float time = MotionTime(CLOSE_TIME);
+        if (UIDrawList.Motion && Module is not null && time > 0.0f)
         {
-            card.TweenScale(0.97f, CLOSE_TIME);
-            this.FadeOut(CLOSE_TIME, easing: Horizon.Core.Tweening.Easing.OutCubic).OnComplete(() => Parent?.Remove(this));
+            card.TweenScale(0.97f, time).SetEasing(Horizon.Core.Tweening.Easing.InCubic);
+            card.TweenOffset(new Vector2(0.0f, -6.0f), time).SetEasing(Horizon.Core.Tweening.Easing.InCubic);
+            this.FadeOut(time, easing: Horizon.Core.Tweening.Easing.OutCubic).OnComplete(() => Parent?.Remove(this));
         }
         else
         {
@@ -265,6 +327,9 @@ public sealed class UIDialog : Panel
 
         return false;
     }
+
+    private static bool CanRestore(UIComponent? component, UIModule module) =>
+        component is not null && component.Module == module && component.IsShownInHierarchy && component.EnabledInHierarchy;
 
     private void Pick(int index)
     {

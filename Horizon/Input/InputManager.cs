@@ -2,8 +2,7 @@ using Horizon.Logging;
 
 using Horizon.Core;
 using Horizon.Core.Components;
-
-using Silk.NET.Input;
+using Horizon.Platform;
 
 namespace Horizon.Input;
 
@@ -17,16 +16,19 @@ namespace Horizon.Input;
 /// All of it moves on once an update, before anything else of the game is updated. So everything that reads it in the same
 /// update sees the same thing, and <see cref="Keyboard.WasPressed"/> and its like are true for exactly one of them.
 /// </summary>
-public sealed class InputManager : GameComponent
+public sealed partial class InputManager : GameComponent, IDisposable
 {
     /// <summary>
-    /// The input context of the window underneath, for whoever needs something raw (typed text, the clipboard).
+    /// The platform's input, for whoever needs something of the devices themselves (the clipboard). Null until the
+    /// engine is up, and for a manager that was never handed one.
     /// </summary>
-    public IInputContext? Native { get; private set; }
+    internal IPlatformInput? Platform { get; private set; }
 
     public Keyboard Keyboard { get; } = new();
 
     public Mouse Mouse { get; } = new();
+
+    public Touch Touch { get; } = new();
 
     /// <summary>
     /// Every gamepad that is plugged in, and the bindings each one is played with. It is there from the start, whether
@@ -45,10 +47,13 @@ public sealed class InputManager : GameComponent
     private InputScript? _script;
     private Gamepad? _scriptPad;
     private float _scriptTime;
+    private IPlatformGamepads? _gamepadSource;
+    private WindowManager? _window;
 
     public InputManager()
     {
         Name = "Input Manager";
+        Keyboard.EventSink = Post;
     }
 
     /// <summary>
@@ -56,6 +61,8 @@ public sealed class InputManager : GameComponent
     /// </summary>
     public void Play(InputScript? script)
     {
+        foreach (var key in _scriptKeys) Post(InputEvent.KeyChange(key, false));
+        _scriptKeys.Clear();
         _script = script;
         _scriptTime = 0.0f;
 
@@ -98,30 +105,36 @@ public sealed class InputManager : GameComponent
 
         if (_script.WantsQuit(_scriptTime))
         {
-            _script = null;
-            Parent.GetComponent<WindowManager>()?.Close();
+            Play(null);
+            Parent?.GetComponent<WindowManager>()?.Close();
         }
     }
 
     // The keys the script held on the last update, and the ones it holds on this one
-    private HashSet<Silk.NET.Input.Key> _scriptKeys = [], _scriptKeysNow = [];
+    private HashSet<Key> _scriptKeys = [], _scriptKeysNow = [];
 
     /// <summary>
     /// Helper method to play the keys of the script on the real keyboard, the ones that went down and the ones that came
-    /// up since the last update. They are heard the way the window's keys are, at the next update.
+    /// up since the last update. Modifiers go down first and come up last, so a chord keeps its meaning.
     /// </summary>
     private void PlayScriptKeys()
     {
         _script!.KeysAt(_scriptTime, _scriptKeysNow);
 
-        foreach (var key in _scriptKeysNow)
+        for (int pass = 0; pass < 2; pass++)
         {
-            if (!_scriptKeys.Contains(key)) Keyboard.Hear(key, true);
+            foreach (var key in _scriptKeys)
+            {
+                if (IsModifier(key) == (pass != 0) && !_scriptKeysNow.Contains(key)) Keyboard.Hear(key, false);
+            }
         }
 
-        foreach (var key in _scriptKeys)
+        for (int pass = 0; pass < 2; pass++)
         {
-            if (!_scriptKeysNow.Contains(key)) Keyboard.Hear(key, false);
+            foreach (var key in _scriptKeysNow)
+            {
+                if (IsModifier(key) == (pass == 0) && !_scriptKeys.Contains(key)) Keyboard.Hear(key, true);
+            }
         }
 
         (_scriptKeys, _scriptKeysNow) = (_scriptKeysNow, _scriptKeys);
@@ -131,23 +144,26 @@ public sealed class InputManager : GameComponent
     {
         WindowManager window = Parent.GetComponent<WindowManager>()
             ?? throw new InvalidOperationException("The input manager goes on the entity that has the window manager, which is the engine.");
-        IInputContext context = window.Input;
+        IPlatformInput input = window.Host.Input;
+        _window = window;
 
-        Native = context;
+        Platform = input;
 
-        Keyboard.Attach(context);
-        Mouse.Attach(context, window.PostToWindow, window.PointerToPixels);
+        Mouse.Attach(input, window.PostToWindow);
+        if (_source is null) AttachSource(input);
 
-        // Before the gamepads of the window are let in, so the one of a script is the first there is
+        // Before the gamepads of the platform are let in, so the one of a script is the first there is
         PlayScriptOfEnvironment();
 
-        // Off, the window's devices are left alone entirely, asking the context for its gamepads is what wakes the
-        // controller drivers up and a broken one can stall startup. The manager itself is just a list, so it stays
+        // Off, the platform's devices are left alone entirely, asking it for its gamepads is what wakes the controller
+        // drivers up and a broken one can stall startup. The manager itself is just a list, so it stays
         if (!ReadsGamepads) return;
 
-        // The devices are refreshed on the thread of the window, and looked at there, every time it has heard from the system
-        window.EventsProcessed += Gamepads.SampleDevices;
-        Gamepads.Attach(context);
+        // The devices are refreshed on the platform's thread, and looked at there, every time it has heard from the system
+        _gamepadSource = input.OpenGamepads();
+        if (_gamepadSource is null) return;
+        _gamepadSource.EventReceived += Post;
+        _gamepadSource.Start();
     }
 
     public override void UpdateState(float dt)
@@ -155,11 +171,29 @@ public sealed class InputManager : GameComponent
         // Switched off, nothing is read and whatever was pressed stays where it was (development said "InputManager listens to Enabled", so it bloody well does)
         if (!Enabled) return;
 
+        UpdateScript(dt);
+        DrainEvents();
         Keyboard.Update();
         Mouse.Update();
-        UpdateScript(dt);
 
         // Always, the keyboard, virtual and scripted pads move on here even when no real one is read
         Gamepads.UpdateState(dt);
+    }
+
+    public void Dispose()
+    {
+        // The platform's input is the host's to let go of, a manager only stops listening to it
+        if (_source is not null) _source.EventReceived -= Post;
+        if (_gamepadSource is not null)
+        {
+            _gamepadSource.EventReceived -= Post;
+            _gamepadSource.Dispose();
+        }
+        Gamepads.Dispose();
+        _source = null;
+        _gamepadSource = null;
+        _window = null;
+        Platform = null;
+        EventReceived = null;
     }
 }

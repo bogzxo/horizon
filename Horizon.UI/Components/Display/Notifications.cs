@@ -63,6 +63,9 @@ public sealed class UINotification
     // How long it has been up, how much of it is still there, and its text cut into lines for the width it was cut for
     internal float Age;
     internal float Alpha = 1.0f;
+
+    // How far in it has come since it was shown, 0 to 1, at a steady rate (eased where it's used)
+    internal float In;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
 }
@@ -81,7 +84,7 @@ public class Notifications : UIComponent
     // How far a card slides in from, in the UI's pixels
     private const float SLIDE = 36.0f;
 
-    private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ACTION_HEIGHT = 24.0f;
+    private const float PADDING = 12.0f, GAP = 8.0f, ICON = 16.0f, CLOSE = 14.0f, FADE = 0.4f, ARRIVE = 0.24f, ACTION_HEIGHT = 24.0f;
 
     // The bar of work going on, how thick, how wide the sweep of one that can't say how far, and how long a sweep takes
     private const float BAR = 4.0f, SWEEP = 0.3f, SWEEP_SECONDS = 1.4f;
@@ -167,7 +170,15 @@ public class Notifications : UIComponent
             if (!held && card.Seconds > 0.0f)
                 card.Age += dt;
 
-            card.Alpha = card.Closed ? card.Alpha - dt / FADE : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
+            // In from nothing as it arrives, as quick as the compositor's AnimationSpeed says, there at once with none
+            float arrive = MotionTime(ARRIVE);
+            card.In = arrive > 0.0f ? MathF.Min(1.0f, card.In + dt / arrive) : 1.0f;
+
+            float fade = MotionTime(FADE);
+            float going = card.Closed
+                ? fade > 0.0f ? card.Alpha - dt / fade : 0.0f
+                : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
+            card.Alpha = card.Closed ? going : MathF.Min(going, 1.0f - (1.0f - card.In) * (1.0f - card.In) * (1.0f - card.In));
             if (card.Alpha <= 0.0f)
                 shown.RemoveAt(i);
         }
@@ -186,11 +197,12 @@ public class Notifications : UIComponent
     private static UIRect CloseBounds(UIRect card) =>
         new(new Vector2(card.Max.X - PADDING - CLOSE, card.Max.Y - PADDING - CLOSE), new Vector2(card.Max.X - PADDING, card.Max.Y - PADDING));
 
+    // The first of them at the right end, it's the one to press as a dialog's is, the rest leftwards in the order given
     private UIRect ActionBounds(UIRect card, UINotification notification, int action, UISkin skin)
     {
         float right = card.Max.X - PADDING;
         float scale = ScaleOf(skin);
-        for (int i = notification.Actions.Count - 1; i >= 0; i--)
+        for (int i = 0; i < notification.Actions.Count; i++)
         {
             float width = skin.Font.Measure(notification.Actions[i].Label, scale, markup: false).X + PADDING * 2.0f;
             if (i == action)
@@ -200,6 +212,18 @@ public class Notifications : UIComponent
 
         return default;
     }
+
+    /// <summary>
+    /// Where a card that's up is, empty for one that's gone or going, for what lists what's on screen to point at it
+    /// (Hex's agents found nothing that said Use Visual Studio Keys on its card).
+    /// </summary>
+    public UIRect CardBoundsOf(UINotification card) =>
+        shown.IndexOf(card) is var index and >= 0 && !card.Closed && Module?.Compositor.Skin is { } skin ? CardBounds(index, skin) : default;
+
+    /// <summary>Where a button of a card that's up is, empty for one that's gone or a button it hasn't got. See <see cref="CardBoundsOf"/>.</summary>
+    public UIRect ActionBoundsOf(UINotification card, int action) =>
+        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds && Module?.Compositor.Skin is { } skin
+            ? ActionBounds(bounds, card, action, skin) : default;
 
     protected internal override void OnPointerUp(Vector2 point)
     {
@@ -296,8 +320,19 @@ public class Notifications : UIComponent
             {
                 UIRect button = ActionBounds(bounds, card, action, skin);
                 bool lit = button.Contains(pointer);
-                list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
-                list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+
+                // Only the first in the accent, the rest a quiet fill of the text's colour. Three gold buttons had none of
+                // them the one to press
+                if (action == 0)
+                {
+                    list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
+                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+                }
+                else
+                {
+                    list.RoundRect(button, skin.CornerRadius, skin.TextColor with { W = (lit ? 0.18f : 0.1f) * card.Alpha });
+                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
+                }
             }
 
             list.PopVisual();

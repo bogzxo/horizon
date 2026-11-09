@@ -44,6 +44,49 @@ public class HidlHighlighterTests
     }
 
     [Fact]
+    public void An_arrows_parameters_and_the_names_a_let_takes_apart_are_declarations()
+    {
+        const string code = "let f = (a, b = 2) => a + b;\nlet g = x => x;\nlet { left, right } = sides;";
+        var spans = Hidl.Read(code, 3);
+
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 9));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 12));
+        Assert.Equal(SyntaxKind.Number, KindAt(spans, 0, 16));
+        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 0, 19));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 0, 22));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 1, 8));
+        Assert.Equal(SyntaxKind.Keyword, KindAt(spans, 1, 10));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 1, 13));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 2, 6));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 2, 12));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 2, 22));
+    }
+
+    [Fact]
+    public void A_default_is_a_use_and_the_names_after_it_are_still_parameters()
+    {
+        const string code = "func box(at, size = vec(at, 2), colour) { }\nfor (key, value in things) { }\nfor (let item in list) { }";
+        var spans = Hidl.Read(code, 3);
+
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 9));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 13));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 0, 24));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 0, 32));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 1, 5));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 1, 10));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 1, 19));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(spans, 2, 9));
+
+        // The grammar on its own, what VS Code sees, has the names of a for as declared too
+        var grammar = Hidl.Grammar.Read(code, 3, null);
+        Assert.Equal(SyntaxKind.Control, KindAt(grammar, 1, 0));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(grammar, 1, 5));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(grammar, 1, 10));
+        Assert.Equal(SyntaxKind.Control, KindAt(grammar, 1, 16));
+        Assert.Equal(SyntaxKind.Declaration, KindAt(grammar, 2, 9));
+    }
+
+    [Fact]
     public void The_kind_after_compositor_is_a_type_and_constants_are_constants()
     {
         const string code = "let b = compositor.button({ visible: true, tooltip: null });";

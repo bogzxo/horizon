@@ -2,8 +2,8 @@ using System.Numerics;
 
 using Horizon.Graphics.Vulkan;
 using Horizon.Logging;
+using Horizon.Platform;
 
-using Silk.NET.Core.Contexts;
 using Silk.NET.Vulkan;
 
 using PipelineCache = Horizon.Graphics.Vulkan.PipelineCache;
@@ -63,11 +63,15 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     private ulong completed;
 
     private CommandBuffer cmd;
+
+    // Whether the swapchain wants making anew at the start of the next frame, out of date, suboptimal or the window changed
     private bool swapchainStale;
     private bool vsync;
     private Vector4 clearColor;
 
     private QueryPool timestamps;
+    // Keep whole-frame timing while allowing a measurement of the cost of per-pass timestamps
+    private readonly bool gpuScopeTiming = !string.Equals(Environment.GetEnvironmentVariable("HORIZON_GPU_SCOPES"), "off", StringComparison.OrdinalIgnoreCase);
     private readonly double[] frameGpuMs = new double[FRAMES_IN_FLIGHT];
 
     // The scopes of every frame in flight, named as they are opened and read back when the frame is done. Two
@@ -150,19 +154,26 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     private FrameResources Frame => frames[frameIndex];
 
     /// <summary>
-    /// Makes the device for a window's surface. The window has to have been made for Vulkan.
+    /// Makes the device for a platform's surface, a window's or a phone's, see <see cref="IPlatformSurface"/>.
     /// </summary>
-    public GraphicsDevice(IVkSurface surface, uint width, uint height, bool vsync)
+    public GraphicsDevice(IPlatformSurface surface, uint width, uint height, bool vsync)
+        : this(new VulkanContext(surface), surface, width, height, vsync) { }
+
+    /// <summary>
+    /// A device on a context that has its surface by now, one made along with it or one made ahead of the window and
+    /// given its surface after, see <see cref="VulkanContext.Prepare"/>.
+    /// </summary>
+    internal GraphicsDevice(VulkanContext context, IPlatformSurface surface, uint width, uint height, bool vsync)
     {
-        Context = new VulkanContext(surface);
+        Context = context;
+        surfaceSource = surface;
         Memory = new VulkanMemory(Context);
         Bindless = new BindlessTextures(Context);
         Layouts = new DescriptorLayouts(Context, Bindless);
         Pipelines = new PipelineCache(Context, Layouts);
 
         this.vsync = vsync;
-        swapchain = new Swapchain(Context, Math.Max(1, width), Math.Max(1, height), vsync);
-        (askedWidth, askedHeight) = (Math.Max(1, width), Math.Max(1, height));
+        swapchain = new Swapchain(Context);
 
         var timelineType = new SemaphoreTypeCreateInfo
         {
@@ -175,6 +186,12 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         for (int i = 0; i < FRAMES_IN_FLIGHT; i++)
             frames[i] = new FrameResources(Context, Memory, i);
+
+        // The swapchain once the timeline is there, a surface that turns out gone at once is let go of through it
+        if (!Context.HasSurface)
+            surfaceLife.Detached();
+        else
+            MakeSwapchain(Math.Max(1, width), Math.Max(1, height));
 
         if (Context.TimestampsSupported)
         {
@@ -263,13 +280,18 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
     /// </summary>
     public void BeginFrame(uint width, uint height)
     {
+        surfaceLife.EnterFrame();
         FrameNumber++;
+        Frame.HasImage = false;
 
-        if (width == 0 || height == 0)
-        {
-            Frame.HasImage = false;
+        // A surface the driver said is gone is made again from the same platform surface every so often
+        if (surfaceLife.ShouldRecover())
+            RecoverSurface();
+
+        // Nothing to show in, and nothing is taken off a swapchain that isn't there. The frame goes on all the same,
+        // so whatever is drawn into render targets is drawn
+        if (surfaceLife.State != SurfaceState.Attached || width == 0 || height == 0)
             return;
-        }
 
         if (surfaceChanged)
         {
@@ -282,28 +304,36 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         if (resized)
             unfitSwapchains = 0;
 
-        if (resized || (swapchainStale && unfitSwapchains < MOST_UNFIT_SWAPCHAINS))
+        if (!swapchain.IsLive || resized || (swapchainStale && unfitSwapchains < MOST_UNFIT_SWAPCHAINS))
         {
-            if (!resized)
+            if (!resized && swapchain.IsLive)
                 unfitSwapchains++;
-            Context.WaitIdle();
-            swapchain.Recreate(width, height, vsync);
-            (askedWidth, askedHeight) = (width, height);
-            swapchainStale = false;
+            if (!MakeSwapchain(width, height))
+                return;
         }
 
-        if (!swapchain.Acquire(Frame.ImageAvailable, out bool suboptimal))
+        SwapchainStatus status = swapchain.Acquire(Frame.ImageAvailable);
+        if (status == SwapchainStatus.OutOfDate)
         {
             // Out of date, so it is made anew and tried once more
-            Context.WaitIdle();
-            swapchain.Recreate(width, height, vsync);
-            if (!swapchain.Acquire(Frame.ImageAvailable, out suboptimal))
-            {
-                Frame.HasImage = false;
+            if (!MakeSwapchain(width, height))
                 return;
-            }
+            status = swapchain.Acquire(Frame.ImageAvailable);
         }
 
+        switch (status)
+        {
+            case SwapchainStatus.SurfaceLost:
+                LoseSurface();
+                return;
+            case SwapchainStatus.OutOfDate:
+                swapchainStale = true;
+                return;
+            case not (SwapchainStatus.Ready or SwapchainStatus.Suboptimal):
+                return;
+        }
+
+        bool suboptimal = status == SwapchainStatus.Suboptimal;
         swapchainStale = suboptimal;
         if (!suboptimal)
             unfitSwapchains = 0;
@@ -345,8 +375,18 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         Submit(final: true);
 
-        if (frame.HasImage && !swapchain.Present(frame.RenderFinished))
-            swapchainStale = true;
+        if (frame.HasImage)
+        {
+            switch (swapchain.Present())
+            {
+                case SwapchainStatus.OutOfDate or SwapchainStatus.Suboptimal:
+                    swapchainStale = true;
+                    break;
+                case SwapchainStatus.SurfaceLost:
+                    LoseSurface();
+                    break;
+            }
+        }
 
         Statistics.Pipelines = Pipelines.Count;
         Statistics.MemoryInUse = (long)Memory.InUse;
@@ -357,6 +397,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
 
         frameIndex = (frameIndex + 1) % FRAMES_IN_FLIGHT;
         OpenFrame();
+        surfaceLife.LeaveFrame();
     }
 
     /// <summary>
@@ -424,7 +465,7 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
         if (!IsAvailable) return default;
 
         // A scope is also what the debugger folds the frame up by, which goes on past the timed ones
-        bool timed = timestamps.Handle != 0 && scopeCounts[frameIndex] < MAX_SCOPES;
+        bool timed = timestamps.Handle != 0 && gpuScopeTiming && scopeCounts[frameIndex] < MAX_SCOPES;
         if (!timed && !Context.LabelsEnabled) return default;
 
         Context.BeginLabel(cmd, name);
@@ -497,12 +538,13 @@ public sealed unsafe partial class GraphicsDevice : IDisposable
             StageMask = PipelineStageFlags2.AllCommandsBit
         };
         uint signalCount = 1;
-        if (final && frame.HasImage)
+        // The acquired picture's own semaphore, see Swapchain.RenderFinished
+        if (final && frame.HasImage && swapchain.Current >= 0)
         {
             signals[1] = new SemaphoreSubmitInfo
             {
                 SType = StructureType.SemaphoreSubmitInfo,
-                Semaphore = frame.RenderFinished,
+                Semaphore = swapchain.RenderFinished,
                 StageMask = PipelineStageFlags2.AllCommandsBit
             };
             signalCount = 2;

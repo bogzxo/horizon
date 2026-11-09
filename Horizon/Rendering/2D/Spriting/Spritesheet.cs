@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Logging;
 using System.Numerics;
 
@@ -39,14 +40,14 @@ public class SpriteSheet
 
     public static (bool success, SpriteSheet result, SpriteSheetAnimationManager manager) LoadSpriteSheetFromDirectory(in string dir, in string defFileName = "definition.hor")
     {
-        if (!Directory.Exists(dir))
+        if (!ContentFiles.DirectoryExists(dir))
         {
             Log.Error($"Failed to find directory '{dir}' to load sprite!");
             return (false, null!, null!);
         }
 
-        HIDLRuntime runtime = new();
-        var (success, msg) = runtime.Evaluate(File.ReadAllText(dir + "/" + defFileName));
+        HIDLRuntime runtime = new HIDLRuntime().ReadingContent();
+        var (success, msg) = runtime.Evaluate(ContentFiles.ReadAllText(dir + "/" + defFileName));
         if (!success)
         {
             Log.Error($"Malformed sprite definition!\n{msg}");
@@ -60,7 +61,7 @@ public class SpriteSheet
         {
             if (def.Properties.ContainsKey("sprite_file") && def.Properties["sprite_file"] is StringValue sprite_file)
             {
-                if (!File.Exists(dir + "/" + sprite_file.Value))
+                if (!ContentFiles.Exists(dir + "/" + sprite_file.Value))
                 {
                     Log.Error("Failed to load spritesheet or definition!");
                     return (false, null!, null!);

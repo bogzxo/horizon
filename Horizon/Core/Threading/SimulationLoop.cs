@@ -79,8 +79,29 @@ public sealed class SimulationLoop : IDisposable
     /// </summary>
     public Func<bool>? IsIdle { get; set; }
 
+    /// <summary>
+    /// Whether a loop that falls behind makes a single tick as long as the time that went by instead of ticks one after
+    /// another to catch up, for a program that isn't a game (an editor), where what moves keeps to real time and the
+    /// physics, stepped by its own clock, is nothing to keep in step. Off, a game catches up the way it always did.
+    /// </summary>
+    public bool StretchWhenBehind { get; set; }
+
+    /// <summary>Spins for the end of each timed wait for game pacing. Applications use the timer alone.</summary>
+    public bool PrecisePacing { get; set; } = true;
+
     /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
     public double IdlePeriod { get; set; } = 0.05;
+
+    private double idleDeadline = double.PositiveInfinity;
+
+    /// <summary>Requests an idle tick for a timed UI change. Simulation thread; renewed by each tick that needs it.</summary>
+    public void RequestTickIn(double seconds)
+    {
+        if (double.IsFinite(seconds) && seconds >= 0)
+            idleDeadline = Math.Min(idleDeadline, clock() / frequency + seconds);
+    }
+
+    internal double IdleWaitSeconds => Math.Max(0, Math.Min(IdlePeriod, idleDeadline - clock() / frequency));
 
     /// <summary>
     /// Wakes the loop out of an idle sleep for a tick at once, something happened (the mouse moved). From any thread, and
@@ -117,7 +138,7 @@ public sealed class SimulationLoop : IDisposable
     /// Where whatever is to run on the simulation thread goes, at the start of the next tick. What an <c>await</c> on
     /// that thread carries on with, and whatever anybody else hands it (see <see cref="SimulationContext"/>).
     /// </summary>
-    public SimulationContext Context { get; } = new();
+    public SimulationContext Context { get; }
 
     /// <summary>How the logic, the physics and the ticks as a whole have been doing lately.</summary>
     public LoopStatistics Logic { get; }
@@ -149,6 +170,7 @@ public sealed class SimulationLoop : IDisposable
     {
         this.host = host;
         this.clock = clock;
+        Context = new SimulationContext(Wake);
 
         LogicRate = Math.Max(1.0, logicRate);
         PhysicsRate = Math.Max(1.0, physicsRate);
@@ -207,13 +229,13 @@ public sealed class SimulationLoop : IDisposable
                     // Nothing happening, it sleeps for a while or until it is woken, and the next tick is from then
                     if (IsIdle?.Invoke() == true)
                     {
-                        wake.WaitOne(TimeSpan.FromSeconds(IdlePeriod));
+                        wake.WaitOne(TimeSpan.FromSeconds(IdleWaitSeconds));
                         stretch = Math.Clamp((clock() - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
                         next = double.NaN;
                     }
                     else
                     {
-                        LoopTiming.WaitUntil(next / frequency);
+                        LoopTiming.WaitUntil(next / frequency, spin: PrecisePacing);
                     }
                 }
 
@@ -240,6 +262,23 @@ public sealed class SimulationLoop : IDisposable
             next = now;
 
         double behind = now - next;
+
+        // A loop that fell a tick or more behind (a tick that took longer than a tick) makes one tick of all the time that
+        // went by, when it's told to. Caught up a tick at a time, every one of them did the whole of a tick's work again
+        // for a frame nobody saw, and whatever moves only moved a tick's worth for each, so a menu coming in while ticks took
+        // twice as long as they should came in at half the speed, in slow motion
+        if (StretchWhenBehind && behind >= period && lastStamp != 0)
+        {
+            stretch = Math.Clamp((now - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
+            next = now;
+            MakeTick(now);
+
+            // Unless it was held up on purpose at the end of it, the next one is a tick from now
+            if (!double.IsNaN(next))
+                next = now + period;
+            return;
+        }
+
         int due = 1 + (int)Math.Clamp(Math.Floor(behind / period), 0, MAX_CATCH_UP - 1);
 
         if (behind > period * MAX_CATCH_UP)
@@ -270,6 +309,7 @@ public sealed class SimulationLoop : IDisposable
     /// </summary>
     private void MakeTick(long stamp)
     {
+        idleDeadline = double.PositiveInfinity;
         long started = clock();
         long allocated = GC.GetAllocatedBytesForCurrentThread();
 

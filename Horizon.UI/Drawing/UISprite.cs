@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.HIDL.Library;
@@ -19,7 +20,7 @@ public sealed class UISprite : IHostValue
     // Big enough for a character's every frame, trimmed to what is drawn on each
     private const int ATLAS_WIDTH = 2048, ATLAS_HEIGHT = 2048;
 
-    private static readonly Dictionary<string, UISprite> opened = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, UISprite> opened = new(StringComparer.Ordinal);
     private static readonly Lock opening = new();
 
     private readonly Dictionary<string, string[]> keys = [];
@@ -52,16 +53,16 @@ public sealed class UISprite : IHostValue
     /// <summary>The picture at a path, read the first time and kept. Throws with what went wrong.</summary>
     public static UISprite Open(string path)
     {
-        string full = System.IO.Path.GetFullPath(path);
+        FoundContent found = ContentFiles.Find(path);
         lock (opening)
         {
-            if (opened.TryGetValue(full, out UISprite? known))
+            if (opened.TryGetValue(found.Key, out UISprite? known))
                 return known;
 
-            if (!File.Exists(full))
+            if (!found.Exists)
                 throw new HidlRuntimeException($"There is no '{path}' to draw.");
 
-            return opened[full] = new UISprite(full, SpriteSheetDefinition.Open(full));
+            return opened[found.Key] = new UISprite(found.Path, SpriteSheetDefinition.Open(found.Path));
         }
     }
 

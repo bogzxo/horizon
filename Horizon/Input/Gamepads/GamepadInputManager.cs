@@ -2,7 +2,8 @@ using System.Collections.Concurrent;
 using Horizon.Core;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
-using Silk.NET.Input;
+using Horizon.Logging;
+using Horizon.Platform;
 
 namespace Horizon.Input;
 
@@ -35,7 +36,8 @@ public class GamepadInputManager : Entity
     private const string KEY_BINDINGS = "bindings";
     private const string SLOT_PREFIX = "pad";
 
-    private IInputContext? _inputContext;
+    private Horizon.Platform.IPlatformGamepads? _source;
+    private WindowManager? _window;
     private readonly List<Gamepad> _gamepads = [];
 
     // The keyboards that are read as gamepads, moved on at the start of every update
@@ -43,13 +45,7 @@ public class GamepadInputManager : Entity
     private readonly List<string> _actionScratch = [];
 
     // Devices come and go on the thread of the window, the gamepads are only ever touched during an update.
-    private readonly ConcurrentQueue<(IGamepad Device, bool Connected)> _connectionChanges = new();
-
-    // The gamepads that have a device, for the thread of the window to sample. Replaced whole whenever one comes or goes
-    private volatile Gamepad[] _sampled = [];
-
-    // Whether anybody samples the devices (the engine does, on the thread of the window). If not, they are read in the update
-    private volatile bool _sampling;
+    private readonly ConcurrentQueue<InputEvent> _events = new();
 
     /// <summary>
     /// Every gamepad there has been a use for so far, by slot. The ones plugged in, the ones that were, and the
@@ -79,6 +75,13 @@ public class GamepadInputManager : Entity
     public GamepadBindings DefaultBindings { get; } = new();
 
     private Gamepad? _lastUsed;
+
+    // HORIZON_INPUT_LOG=gamepads (or on) writes every press and release on every pad to the log, so a run on a phone
+    // shows what a pad did and which one. Capped, a stuck pad would fill the file otherwise
+    private static readonly bool LogsInputs = System.Environment.GetEnvironmentVariable("HORIZON_INPUT_LOG") is { } wanted
+        && (wanted.Equals("gamepads", StringComparison.OrdinalIgnoreCase) || wanted.Equals("on", StringComparison.OrdinalIgnoreCase) || wanted == "1");
+    private const int LOG_LINES_AT_MOST = 600;
+    private int _logged;
 
     /// <summary>
     /// The gamepad something was pressed on last, or the first one there is if nothing has been yet.
@@ -122,13 +125,18 @@ public class GamepadInputManager : Entity
         base.Initialize();
 
         // The one of the engine is handed its window. One that somebody made themselves finds it above where it was added
-        if (_inputContext is not null) return;
+        if (_source is not null) return;
 
         for (Entity? at = Parent; at is not null; at = at.Parent)
         {
-            if (at.GetComponent<WindowManager>() is not { Input: { } context }) continue;
+            if (at.GetComponent<WindowManager>() is not { } window) continue;
+            _window = window;
 
-            Attach(context);
+            // Sampled by the platform on its thread from the start on, every time it has heard from the system
+            _source = window.Host.Input.OpenGamepads();
+            if (_source is null) return;
+            _source.EventReceived += Hear;
+            _source.Start();
             return;
         }
 
@@ -136,44 +144,48 @@ public class GamepadInputManager : Entity
     }
 
     /// <summary>
-    /// Helper method to start listening to the gamepads of a window. Once is enough.
+    /// Queues one host event for the next simulation update.
     /// </summary>
-    internal void Attach(IInputContext context)
-    {
-        if (_inputContext is not null) return;
-
-        _inputContext = context;
-        _inputContext.ConnectionChanged += OnConnectionChanged;
-
-        // The ones that were plugged in before we got here
-        foreach (var gamepad in _inputContext.Gamepads)
-        {
-            if (gamepad.IsConnected)
-                _connectionChanges.Enqueue((gamepad, true));
-        }
-    }
+    internal void Hear(InputEvent input) => _events.Enqueue(input);
 
     public override void UpdateState(float dt)
     {
-        while (_connectionChanges.TryDequeue(out var change))
+        while (_events.TryDequeue(out var input))
         {
-            if (change.Connected)
-                Attach(change.Device);
-            else
-                Detach(change.Device);
+            if (input.Gamepad is not { } device) continue;
+            switch (input.Kind)
+            {
+                case InputEventKind.GamepadConnected:
+                    Attach(device);
+                    break;
+                case InputEventKind.GamepadDisconnected:
+                    Detach(device);
+                    break;
+                case InputEventKind.GamepadState:
+                    foreach (var gamepad in _gamepads)
+                    {
+                        if (ReferenceEquals(gamepad.Device, device))
+                        {
+                            gamepad.Sample(input.GamepadState);
+                            break;
+                        }
+                    }
+                    break;
+            }
         }
 
-        bool sampling = _sampling;
         foreach (var gamepad in _gamepads)
         {
             // Virtual gamepads are moved on by whoever drives them.
             if (!gamepad.IsVirtual)
-                gamepad.Poll(sampling);
+                gamepad.Poll();
         }
 
         // Which for the keyboard is us, off the keys as the update before this one left them
         foreach (KeyboardGamepad keyboard in _keyboards)
             keyboard.Update();
+
+        if (LogsInputs) LogChanges();
 
         foreach (var gamepad in _gamepads)
         {
@@ -187,32 +199,33 @@ public class GamepadInputManager : Entity
         base.UpdateState(dt);
     }
 
-    /// <summary>
-    /// Looks at every device and keeps what it is doing for the next update. On the thread of the window, every time it
-    /// has heard what the system had to say, which is when the devices are refreshed. The engine does this, a manager
-    /// that nobody samples reads its devices in its update instead.
-    /// </summary>
-    public void SampleDevices()
+    // What went down and what came up this update on every pad, with where the sticks and the triggers are, one line
+    // each. A virtual pad (a script's) and the keyboard say so, so a run can tell a script's presses from a real pad's
+    private void LogChanges()
     {
-        _sampling = true;
-
-        foreach (Gamepad gamepad in _sampled)
-            gamepad.Sample();
-    }
-
-    /// <summary>
-    /// Helper method to make a new list of the gamepads that have a device, for <see cref="SampleDevices"/>.
-    /// </summary>
-    private void RefreshSampled()
-    {
-        var withDevices = new List<Gamepad>(_gamepads.Count);
-        foreach (Gamepad gamepad in _gamepads)
+        foreach (var gamepad in _gamepads)
         {
-            if (!gamepad.IsVirtual && gamepad.Device is not null)
-                withDevices.Add(gamepad);
-        }
+            if (!gamepad.IsConnected) continue;
+            uint changed = gamepad.HeldMask ^ gamepad.HeldBeforeMask;
+            if (changed == 0) continue;
 
-        _sampled = [.. withDevices];
+            if (_logged >= LOG_LINES_AT_MOST)
+            {
+                if (_logged == LOG_LINES_AT_MOST) Log.Info($"[Gamepads] {LOG_LINES_AT_MOST} changes logged, no more of these this run.");
+                _logged++;
+                return;
+            }
+
+            for (int bit = 0; bit < 32 && changed != 0; bit++, changed >>= 1)
+            {
+                if ((changed & 1) == 0) continue;
+                var input = (GamepadInput)bit;
+                string what = gamepad.IsDown(input) ? "down" : "up";
+                string virtually = gamepad.Kind == GamepadKind.Keyboard ? " (keyboard)" : gamepad.IsVirtual ? " (virtual)" : string.Empty;
+                Log.Info($"[Gamepads] slot {gamepad.Slot} '{gamepad.Name}'{virtually} {input} {what}, left stick {gamepad.LeftStick.X:0.00},{gamepad.LeftStick.Y:0.00}, right {gamepad.RightStick.X:0.00},{gamepad.RightStick.Y:0.00}, triggers {gamepad.LeftTrigger:0.00}/{gamepad.RightTrigger:0.00}");
+                _logged++;
+            }
+        }
     }
 
     /// <summary>The gamepad in a slot, if there is one.</summary>
@@ -305,7 +318,7 @@ public class GamepadInputManager : Entity
     /// <param name="bindings">What the actions are on for the keyboard, keys straight (<see cref="GamepadBindings.BindKeys"/>),
     /// for a keyboard nobody has bound yet. The keyboard of a file saved before there were keys gets these too. Null for
     /// <see cref="DefaultBindings"/>, the actions then only go by the inputs the keys stand in for.</param>
-    public Gamepad AddKeyboardGamepad(Keyboard keyboard, IReadOnlyList<(Silk.NET.Input.Key Key, GamepadInput Input)>? keys = null, string name = "Keyboard", GamepadBindings? bindings = null)
+    public Gamepad AddKeyboardGamepad(Keyboard keyboard, IReadOnlyList<(Key Key, GamepadInput Input)>? keys = null, string name = "Keyboard", GamepadBindings? bindings = null)
     {
         name = Sanitize(name);
 
@@ -407,8 +420,8 @@ public class GamepadInputManager : Entity
     /// <summary>Everything there is to save as the text of a HIDL file, see <see cref="ToValue"/>.</summary>
     public string ToText() => HIDLWriter.WriteDeclaration(FILE_VARIABLE, ToValue()) + System.Environment.NewLine;
 
-    /// <summary>Saves the bindings of every gamepad to a HIDL file.</summary>
-    public void Save(string path) => File.WriteAllText(path, ToText());
+    /// <summary>Saves the bindings of every gamepad to a HIDL file in platform storage, the old one stays if the write fails.</summary>
+    public void Save(string path) => PlatformStorage.WriteAllText(path, ToText());
 
     /// <summary>
     /// Loads what <see cref="Save"/> wrote, or a file somebody wrote by hand. Nothing changes if the file
@@ -418,13 +431,13 @@ public class GamepadInputManager : Entity
     /// <returns>Whether the file was there and declared the gamepads.</returns>
     public bool Load(string path, out List<string> problems)
     {
-        if (!File.Exists(path))
+        if (!PlatformStorage.Exists(path))
         {
             problems = [$"There is no file at '{path}'."];
             return false;
         }
 
-        return LoadText(File.ReadAllText(path), out problems);
+        return LoadText(PlatformStorage.ReadAllText(path), out problems);
     }
 
     /// <summary>Loads the bindings of every gamepad from the text of a HIDL file, see <see cref="Load"/>.</summary>
@@ -452,13 +465,7 @@ public class GamepadInputManager : Entity
         return true;
     }
 
-    private void OnConnectionChanged(IInputDevice device, bool isConnected)
-    {
-        if (device is IGamepad gamepad)
-            _connectionChanges.Enqueue((gamepad, isConnected));
-    }
-
-    private void Attach(IGamepad device)
+    private void Attach(GamepadDevice device)
     {
         foreach (var known in _gamepads)
         {
@@ -472,12 +479,12 @@ public class GamepadInputManager : Entity
         gamepad.Device = device;
         gamepad.Name = name;
         gamepad.ResetDevice();
-        RefreshSampled();
+        Log.Info($"[Gamepads] '{name}' is in slot {gamepad.Slot} ({gamepad.Kind}).");
 
         OnGamepadConnected?.Invoke(gamepad);
     }
 
-    private void Detach(IGamepad device)
+    private void Detach(GamepadDevice device)
     {
         foreach (var gamepad in _gamepads)
         {
@@ -486,7 +493,8 @@ public class GamepadInputManager : Entity
 
             // The slot stays, and reads as nothing held from the next update on.
             gamepad.Device = null;
-            RefreshSampled();
+            gamepad.ResetDevice();
+            Log.Info($"[Gamepads] '{gamepad.Name}' left slot {gamepad.Slot}, which holds nothing now and waits for it.");
             OnGamepadDisconnected?.Invoke(gamepad);
             return;
         }
@@ -543,10 +551,11 @@ public class GamepadInputManager : Entity
 
     protected override void DisposeOther()
     {
-        if (_inputContext != null)
-        {
-            _inputContext.ConnectionChanged -= OnConnectionChanged;
-        }
+        if (_source is not null) _source.EventReceived -= Hear;
+        _source?.Dispose();
+        _source = null;
+        _window = null;
+        _events.Clear();
 
         foreach (var gamepad in _gamepads)
             gamepad.Device = null;

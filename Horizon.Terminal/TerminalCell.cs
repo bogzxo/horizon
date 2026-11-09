@@ -102,6 +102,12 @@ public sealed class TerminalRow
     /// <summary>What the shell integration marks said of the row, see <see cref="TerminalRowMark"/>.</summary>
     public TerminalRowMark Mark;
 
+    // What a view's minimap made of the row, its runs of ink, kept until the row changes so a minimap of thousands of
+    // rows goes through the cells of the few that did (TerminalView.Minimap)
+    internal Horizon.UI.Drawing.UIMinimapBar[]? MinimapBars;
+    internal int MinimapBarCount;
+    internal long MinimapStamp = -1;
+
     public TerminalRow(int columns)
     {
         Cells = new TerminalCell[columns];
@@ -176,7 +182,8 @@ public sealed class TerminalPalette
     /// The colours a skin's theme gives a terminal. The panel is the background and the text the foreground, the
     /// accent the cursor and (faded) the selection, and the sixteen are worked out of the colours the palette has
     /// names for, the errors red, the successes green, the warnings yellow, the links blue, the keywords magenta and
-    /// the types cyan, the bright eight a step towards the text. A light theme comes out with dark ink on a light
+    /// the types cyan, the bright eight a step towards the text, and any of them the theme writes out under terminal is
+    /// taken as written. A light theme comes out with dark ink on a light
     /// ground, the way its panel reads, see <see cref="Skinning.UIPalette.IsDark"/>.
     /// </summary>
     public static TerminalPalette FromPalette(Skinning.UIPalette palette)
@@ -205,6 +212,16 @@ public sealed class TerminalPalette
         {
             made.Ansi[i] = colours[i];
             made.Ansi[i + 8] = i == 0 ? Opaque(palette.DimText) : i == 7 ? ink : Bright(colours[i]);
+        }
+
+        // The ones the theme wrote out itself go over what was worked out (Visual Studio's has Campbell's)
+        if (palette.Terminal is { } given)
+        {
+            for (int i = 0; i < made.Ansi.Length && i < given.Length; i++)
+            {
+                if (given[i] is { } own)
+                    made.Ansi[i] = Opaque(own);
+            }
         }
 
         return made;

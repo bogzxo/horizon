@@ -1,0 +1,192 @@
+// The tasks of the engine's repository, each a command line Hex runs in a terminal tab of its own. Ctrl+Shift+B builds
+// the solution and then the shader pack builder, which isn't in the solution, F5 on a file that isn't HIDL runs the
+// examples. What a compiler says in one goes in the Problems panel.
+//
+// The automations are the shader pack's, Automation and the title in the command palette. Record the manifest with a
+// run of every check and example (and a Fighter2D match when the game is checked out next to the engine), then build
+// the pack out of it, which builds twice to see it's the same and checks it against a fresh compile.
+
+// Where the manifest and the pack live. The manifest is next to the shaders folder and not in it, so nothing copies it
+// into a game. The pack is in it, so every game has it in its content at shaders/packed
+const MANIFEST = "Horizon/shaders.manifest"
+const PACK = "Horizon/shaders/packed/horizon.hzshaders"
+
+// What the pack is built from, a bin folder with every engine and example shader at its content paths
+const TESTING = "Horizon.Testing/Horizon.Testing.csproj"
+const CONTENT = "Horizon.Testing/bin/Debug/net11.0"
+const BUILDER_PROJECT = "Horizon.Shaders.Build/Horizon.Shaders.Build.csproj"
+const BUILDER = "Horizon.Shaders.Build/bin/Debug/net11.0/Horizon.Shaders.Build.dll"
+
+// Every example of Horizon.Testing (Host/TestCatalog.cs), the checks run as one with --checks
+const EXAMPLES = ["quickstart", "sprites", "shapes", "input", "gamepads", "camera", "entities", "tweens", "transitions",
+    "tilemap", "particles", "meshes", "fluid", "ui", "ui-layouts", "ui-controls", "ui-skin", "lighting", "pathtraced",
+    "post", "town", "dungeon", "village", "pacing", "terminal"]
+
+// The recording in Git Bash, every run with HORIZON_SHADER_MANIFEST set for that run alone. A check failing or an
+// example being stopped doesn't stop the rest, what it asked for is written down either way. Paths go to the programs
+// as Windows writes them (pwd -W), Git Bash would hand a /c/ path over as it is
+const RECORD = [
+    "ROOT=\"$(pwd -W 2>/dev/null || pwd)\"",
+    "export HORIZON_AUDIO=off HORIZON_SHADER_MANIFEST=\"$ROOT/" + MANIFEST + "\"",
+    "dotnet build " + TESTING + " || exit 1",
+    "cd " + CONTENT,
+    "BIN=\"$(pwd -W 2>/dev/null || pwd)\"",
+    "echo '== checks'",
+    "dotnet Horizon.Testing.dll --checks || true",
+    "echo '6 quit' > shader-record.txt",
+    "for id in " + EXAMPLES.join(" ") + "; do echo \"== $id\"; HORIZON_INPUT_SCRIPT=\"$BIN/shader-record.txt\" dotnet Horizon.Testing.dll $id || true; done",
+    "rm -f shader-record.txt",
+    "GAME=\"$ROOT/../Fighter2D\"",
+    "if [ -f \"$GAME/Fighter2D.csproj\" ]; then echo '== Fighter2D japan'; dotnet build \"$GAME/Fighter2D.csproj\" -p:Platform=x64 && cd \"$GAME/bin/x64/Debug/net11.0\" && echo '12 tap key:Escape' > shader-record.txt && echo '17 tap key:Escape' >> shader-record.txt && echo '24 quit' >> shader-record.txt && HORIZON_INPUT_SCRIPT=\"$(pwd -W 2>/dev/null || pwd)/shader-record.txt\" dotnet Fighter2D.dll --map japan --windowed; rm -f shader-record.txt; else echo 'Fighter2D is not next to the engine, its match is left out'; fi",
+    "cd \"$ROOT\"",
+    "dotnet build " + BUILDER_PROJECT + " && dotnet " + BUILDER + " check --manifest " + MANIFEST + " --content " + CONTENT
+]
+
+// Horizon.Testing's checks with every shader out of the pack, no cache and no Slang, the way a phone has them
+const PACKED_CHECKS = [
+    "dotnet build " + TESTING,
+    "cd " + CONTENT,
+    "HORIZON_AUDIO=off HORIZON_SHADERS=packed HORIZON_SHADER_CACHE=off dotnet Horizon.Testing.dll --checks"
+]
+
+let tasks = {
+    build: {
+        // The command line, run by the usual shell.
+        command: "dotnet build " + BUILDER_PROJECT,
+        // Where it runs, from the workspace's folder. The folder itself when it doesn't say.
+        folder: ".",
+        // build, test or run. Ctrl+Shift+B runs the build one, F5 on a file that isn't HIDL the run one.
+        group: "build",
+        // Whether it is the one of its group run without asking, the first of a group is when none says.
+        default: true,
+        // Another task of this file run first, this one only once that worked. The run task names the build one.
+        depends_on: "build_solution",
+        // Where it runs, "panel" for a terminal tab under the editor, "dusk" for a Dusk window of its own.
+        terminal: "panel",
+    },
+    build_solution: {
+        // Everything in Horizon.sln, the engine, the UI, the terminal, the examples and the tests.
+        command: "dotnet build Horizon.sln",
+        folder: ".",
+        group: "build",
+        default: false,
+        depends_on: "",
+        terminal: "panel",
+    },
+    test: {
+        // Every engine test.
+        command: "dotnet test Horizon.Tests/Horizon.Tests.csproj",
+        folder: ".",
+        group: "test",
+        default: true,
+        depends_on: "",
+        terminal: "panel",
+    },
+    test_shaders: {
+        // The shader pack's tests alone, the builder's compile with Slang for real.
+        command: "dotnet test Horizon.Tests/Horizon.Tests.csproj --filter \"FullyQualifiedName~Horizon.Tests.Shaders\"",
+        folder: ".",
+        group: "test",
+        default: false,
+        depends_on: "",
+        terminal: "panel",
+    },
+    checks: {
+        // Every self check of Horizon.Testing, one after the other, out with how many failed.
+        command: "dotnet run --project " + TESTING + " --no-build -- --checks",
+        folder: ".",
+        group: "test",
+        default: false,
+        depends_on: "build",
+        terminal: "panel",
+    },
+    run: {
+        // The examples, picked from their menu.
+        command: "dotnet run --project " + TESTING + " --no-build",
+        folder: ".",
+        group: "run",
+        default: true,
+        depends_on: "build",
+        terminal: "panel",
+    },
+};
+
+let automations = {
+    record_shader_manifest: {
+        // Every check and example run with HORIZON_SHADER_MANIFEST, and a Fighter2D match, then the manifest checked
+        title: "Record shader manifest",
+        command: RECORD.join("; "),
+        shell: "bash",
+    },
+    build_shader_pack: {
+        // The pack built out of the manifest twice, the two compared, and the pack checked against a fresh compile
+        title: "Build shader pack",
+        run: hex => build_pack(hex),
+    },
+    check_shader_manifest: {
+        // Whether the manifest is behind the shaders, which file moved when it is
+        title: "Check shader manifest",
+        command: "dotnet build " + BUILDER_PROJECT + " && dotnet build " + TESTING + " && dotnet " + BUILDER + " check --manifest " + MANIFEST + " --content " + CONTENT,
+        shell: "bash",
+    },
+    refresh_shader_manifest: {
+        // The shaders taken into the manifest as they are now, for a change that was meant and needs no new run
+        title: "Refresh shader manifest",
+        command: "dotnet build " + BUILDER_PROJECT + " && dotnet build " + TESTING + " && dotnet " + BUILDER + " refresh --manifest " + MANIFEST + " --content " + CONTENT,
+        shell: "bash",
+    },
+    packed_checks: {
+        // The checks with HORIZON_SHADERS=packed, which never falls back on the cache or the compiler
+        title: "Checks with packed shaders",
+        command: PACKED_CHECKS.join(" && "),
+        shell: "bash",
+    },
+};
+
+// The pack builder and the examples built, the manifest checked against the shaders, the pack built where the engine
+// ships it and again beside the builder, the two compared to the byte, and the pack checked against a fresh compile.
+// A pack that isn't the same twice, or isn't what the shaders compile to, stops it with what was wrong
+func build_pack(hex) {
+    hex.progress(0, "building the pack builder")
+    dotnet(hex, ["build", BUILDER_PROJECT], "the pack builder didn't build")
+    hex.progress(0.15, "building the examples")
+    dotnet(hex, ["build", TESTING], "Horizon.Testing didn't build")
+
+    if (!hex.exists(MANIFEST)) error("There's no " + MANIFEST + " yet, run Record shader manifest first")
+
+    hex.progress(0.3, "checking the manifest")
+    dotnet(hex, [BUILDER, "check", "--manifest", MANIFEST, "--content", CONTENT], "The manifest is behind the shaders, record it again or refresh it")
+
+    hex.progress(0.4, "building the pack")
+    dotnet(hex, [BUILDER, "build", "--manifest", MANIFEST, "--content", CONTENT, "--out", PACK], "The pack didn't build")
+
+    hex.progress(0.6, "building it again")
+    let again = "Horizon.Shaders.Build/obj/again.hzshaders"
+    dotnet(hex, [BUILDER, "build", "--manifest", MANIFEST, "--content", CONTENT, "--out", again], "The pack didn't build the second time")
+    let first = hash(hex, PACK)
+    let second = hash(hex, again)
+    if (first != second) error("Two builds of one manifest made different packs (" + first + " and " + second + ")")
+    hex.print("Built twice, the same to the byte (" + first + ")")
+
+    hex.progress(0.75, "checking it against a fresh compile")
+    dotnet(hex, [BUILDER, "verify", "--manifest", MANIFEST, "--content", CONTENT, "--pack", PACK], "The pack isn't what the shaders compile to")
+
+    hex.progress(1, "done")
+    let done = "Shader pack built and verified, " + PACK + ". Build again for the games to have it."
+    hex.print(done)
+    hex.say(done)
+}
+
+// dotnet with some arguments from the engine's folder, or the automation stopped with what it said when it failed
+func dotnet(hex, args, failed) {
+    let ran = hex.run("dotnet", args, ".", { timeout: 1800 })
+    if (ran.exit != 0) error(failed + "\n" + ran.output)
+    return ran.output
+}
+
+// What git calls a file's bytes, the same file the same hash on every machine
+func hash(hex, file) {
+    let ran = hex.run("git", ["hash-object", "--no-filters", file], ".", { quiet: true })
+    if (ran.exit != 0) error("git couldn't hash " + file + "\n" + ran.output)
+    return ran.output.trim()
+}

@@ -64,6 +64,25 @@ public readonly struct WindowManagerConfiguration
     public readonly bool CustomFrame { get; init; }
 
     /// <summary>
+    /// Whether the window follows the scale the system has for the screen it's on (150% on a 4K screen, say), the way
+    /// any other program does. Its <see cref="WindowSize"/> is then in the system's units, the pixels of a screen at 100%,
+    /// it's resized by the scale of whatever screen it is dragged onto, and every UI in it that isn't fitted to a design
+    /// size of its own is drawn that much bigger. Off, the window and its UI are a unit per pixel wherever they are,
+    /// which is what a game that fits itself to the screen wants.
+    /// </summary>
+    public readonly bool ScaleToDisplay { get; init; }
+
+    /// <summary>
+    /// How big the scene is drawn for the size of the window, and what blows it back up, see
+    /// <see cref="Horizon.Rendering.Scaling.RenderScaleSettings"/>. Null for the platform's own idea, which is native
+    /// on a desktop and picked from the screen's pixels and density on a phone. Separate from
+    /// <see cref="ScaleToDisplay"/>, which is how big the UI is, this is how many pixels the scene has. The
+    /// HORIZON_RENDER_SCALE, HORIZON_UPSCALER, HORIZON_UPSCALER_SHARPNESS and HORIZON_RENDER_COMPOSITION settings win
+    /// over it, and <c>WindowManager.Scaling.Settings</c> changes it while running.
+    /// </summary>
+    public readonly Horizon.Rendering.Scaling.RenderScaleSettings? RenderScale { get; init; }
+
+    /// <summary>
     /// A picture for the window's corner and the taskbar, a .png (anything ImageSharp reads, which isn't an .ico), from
     /// the exe's folder unless the path says where. Null for the system's own. A Mac takes its Dock icon from the app
     /// bundle and ignores this.

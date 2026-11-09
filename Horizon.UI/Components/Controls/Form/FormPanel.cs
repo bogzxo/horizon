@@ -15,8 +15,8 @@ namespace Horizon.UI.Components;
 ///     { key: "level", kind: "choice", choices: ["mid", "low", "overhead"], default: "mid", group: "hit" }
 /// ] });
 /// form.values = { damage: 6 };
-/// form.on_changed = func(key, value) { print(key, value); };
-/// form.on_cleared = func(key) { print("no more", key); };
+/// form.on_changed = (key, value) => print(key, value);
+/// form.on_cleared = key => print("no more", key);
 /// </code>
 /// The rows are in FormPanel.Rows.
 /// </summary>

@@ -1,4 +1,5 @@
-﻿using System.Collections.Concurrent;
+using Horizon.Content;
+using System.Collections.Concurrent;
 using System.Numerics;
 
 using Horizon.Logging;
@@ -296,7 +297,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         if (name.Length == 0 || Describe(name) is not { } art)
             return false;
 
-        Atlas.Request(art.Key, art.Source.Path, art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height, art.Source.Layer);
+        Atlas.Request(art.Key, art.Source.File ?? ContentFiles.Find(art.Source.Path), art.Source.X, art.Source.Y, art.Source.Width, art.Source.Height, art.Source.Layer);
         if (!Atlas.TryGet(art.Key, out var placed))
             return false;
 
@@ -322,9 +323,10 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     {
         try
         {
-            using var file = File.OpenRead(path);
+            using var file = ContentFiles.OpenRead(path);
+            // A packed file may hand the header over in pieces, so read until it's all there or the file ends
             Span<byte> header = stackalloc byte[24];
-            if (file.Read(header) < header.Length)
+            if (file.ReadAtLeast(header, header.Length, throwOnEndOfStream: false) < header.Length)
                 return Vector2.Zero;
 
             // Width and height are the first thing in a PNG after its signature and the header's length and name
@@ -560,7 +562,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
             scale,
             tint,
             // The same pixels asked for under two names are only stitched in once.
-            TextureAtlas.KeyFor(source.Path, source.X, source.Y, source.Width, source.Height, source.Layer),
+            TextureAtlas.KeyFor(source.File?.Key ?? ContentFiles.CacheKey(source.Path), source.X, source.Y, source.Width, source.Height, source.Layer),
             textColor.W > 0.0f ? textColor : source.TextColor);
     }
 
@@ -574,7 +576,7 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     /// </summary>
     public static UISkin? Shared(string directory, string file, string? theme = null)
     {
-        var key = (Path.GetFullPath(Path.Combine(directory, file)), theme);
+        var key = (ContentFiles.CacheKey(Path.Combine(directory, file)), theme);
         if (shared.TryGetValue(key, out UISkin? known))
             return known;
 

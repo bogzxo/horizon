@@ -83,6 +83,12 @@ public sealed partial class UIDrawList
     public static bool Motion { get; set; } = true;
 
     /// <summary>
+    /// How quickly the popups come and go, the compositor's <see cref="UICompositor.AnimationSpeed"/> handed over every
+    /// paint, 0 for not at all.
+    /// </summary>
+    internal float MotionSpeed { get; set; } = 1.0f;
+
+    /// <summary>
     /// Starts the entrance of something that pops up (a menu, a list that drops down, a tooltip) when it's painted for the
     /// first time: grown from a little smaller than it is and faded in, slid in a few pixels from where it came from,
     /// eased out over <see cref="ENTRANCE_TIME"/>. Everything painted until <see cref="EndEntrance"/> goes with it, a pane
@@ -97,10 +103,10 @@ public sealed partial class UIDrawList
         if (started < 0.0f)
             started = time;
 
-        float t = (time - started) / ENTRANCE_TIME;
+        float t = (time - started) / ENTRANCE_TIME * MotionSpeed;
 
         // The clock starts over now and then, a popup open across that is simply there
-        if (!Motion || t >= 1.0f || t < 0.0f)
+        if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
         float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
@@ -125,8 +131,8 @@ public sealed partial class UIDrawList
         if (started < 0.0f)
             started = time;
 
-        float t = (time - started) / EXIT_TIME;
-        if (!Motion || t >= 1.0f || t < 0.0f)
+        float t = (time - started) / EXIT_TIME * MotionSpeed;
+        if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
         float eased = t * t;
@@ -142,7 +148,6 @@ public sealed partial class UIDrawList
 
     /// <summary>The skin the frame is painted with.</summary>
     public UISkin Skin { get; private set; } = null!;
-
 
     internal ReadOnlySpan<SpriteItem> Items => items.AsSpan(0, itemCount);
     internal ReadOnlySpan<Run> Runs => CollectionsMarshal.AsSpan(runs);
@@ -166,6 +171,8 @@ public sealed partial class UIDrawList
         time = clock is { } given ? given % TIME_WRAP : (time + dt) % TIME_WRAP;
 
         itemCount = 0;
+        movingAsked = false;
+        UIAnimatedIcons.Advance(dt, Horizon.Engine.GameEngine.Instance?.WindowManager?.Tick ?? 0);
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
@@ -190,23 +197,8 @@ public sealed partial class UIDrawList
         owners.Clear();
         owner = 0.0f;
         ownerPainted = 0;
-        stepped = false;
+        BeginFrames();
     }
-
-    // Whether what is painted now is shown in steps, see BeginSteps
-    private bool stepped;
-
-    /// <summary>
-    /// Says that what is painted from here on until <see cref="EndSteps"/> goes from one look to the next in steps, so
-    /// a frame between two ticks shows it as the newer tick has it rather than halfway between the two. For something
-    /// whose quads stand for a different thing every tick, the cells of a terminal, whose rows hold another line of a
-    /// file every tick a program scrolls it. Blended, a letter slid between two rows and a background stretched
-    /// from one line's colour to the next.
-    /// </summary>
-    public void BeginSteps() => stepped = true;
-
-    /// <summary>Goes back to what is painted being blended from one tick to the next, see <see cref="BeginSteps"/>.</summary>
-    public void EndSteps() => stepped = false;
 
     /// <summary>
     /// Everything painted until <see cref="PopOwner"/> is keyed as painted by this object, the component that is
@@ -217,9 +209,12 @@ public sealed partial class UIDrawList
     {
         owners.Push((owner, ownerPainted));
 
-        // The hash of the object, cut to what a float holds exactly, is as good a name as any and stays the same
-        // for as long as the object lives
-        owner = (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
+        // A component goes by its own name, one nothing else alive has. Anything else (a tooltip by its text) by its
+        // hash, cut to what a float holds exactly, which stays the same for as long as the object lives. Hashes of
+        // components came out the same now and then, and two quads of strangers blended into each other
+        owner = painter is Components.UIComponent component ? component.PaintId : (RuntimeHelpers.GetHashCode(painter) & 0xFFFFFF) + 1;
+        if (painter is Components.UIComponent)
+            NoteHome(owner);
         ownerPainted = 0;
         inParts = false;
     }
@@ -314,9 +309,28 @@ public sealed partial class UIDrawList
         visualOffset += (pivot * (Vector2.One - scale) + offset) * visualScale;
         visualScale *= scale;
         this.opacity *= Math.Clamp(opacity, 0.0f, 1.0f);
+        PushVisualFrame();
     }
 
-    internal void PopVisual() => (visualOffset, visualScale, opacity) = visuals.Pop();
+    internal void PopVisual()
+    {
+        (visualOffset, visualScale, opacity) = visuals.Pop();
+        PopVisualFrame();
+    }
+
+    /// <summary>
+    /// A place of the layout moved onto the nearest corner of the screen's pixels, through the animations and the module
+    /// it's painted in.
+    /// </summary>
+    internal Vector2 OnScreenPixel(Vector2 layout)
+    {
+        Vector2 across = visualScale * scale;
+        if (across.X == 0.0f || across.Y == 0.0f)
+            return Vector2.Round(layout);
+
+        Vector2 screen = (layout * visualScale + visualOffset) * scale + origin;
+        return ((Vector2.Round(screen) - origin) / scale - visualOffset) / visualScale;
+    }
 
     /// <summary>
     /// Everything painted from here on is scaled and then moved, which is how a module places itself.
@@ -325,6 +339,7 @@ public sealed partial class UIDrawList
     {
         this.origin = origin;
         this.scale = scale;
+        TransformFrame();
     }
 
     /// <summary>
@@ -334,9 +349,29 @@ public sealed partial class UIDrawList
     {
         clips.Push(clip);
         clip = clip.Intersect(rect);
+        PushFrameClip(rect);
     }
 
-    public void PopClip() => clip = clips.Pop();
+    /// <summary>
+    /// Whether a rectangle is out of sight under the clip, further from it than <see cref="UIInBetween.JUMP"/> pixels,
+    /// the furthest a frame between two ticks moves anything smoothly. Never for a list with no clip.
+    /// </summary>
+    internal bool OutOfSight(UIRect rect)
+    {
+        if (!float.IsFinite(clip.Min.X) || !float.IsFinite(clip.Max.Y) || !float.IsFinite(clip.Max.X) || !float.IsFinite(clip.Min.Y))
+            return false;
+
+        Vector2 across = Vector2.Abs(visualScale * scale);
+        float margin = UIInBetween.JUMP / MathF.Max(0.01f, MathF.Min(across.X, across.Y));
+        var near = new UIRect(clip.Min - new Vector2(margin), clip.Max + new Vector2(margin));
+        return rect.Intersect(near).IsEmpty;
+    }
+
+    public void PopClip()
+    {
+        clip = clips.Pop();
+        PopFrameClip();
+    }
 
     /// <summary>
     /// Puts a pane of frosted glass down, a blur of whatever is drawn before it (the scene and everything painted so
@@ -348,11 +383,20 @@ public sealed partial class UIDrawList
     /// <param name="bend">How far what is behind is bent in at its edge, in the UI's pixels, see <see cref="UIGlass.Bend"/>.</param>
     public void Glass(UIRect rect, float radius, float blur, float bend = 0.0f)
     {
-        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f || rect.Intersect(clip).IsEmpty)
+        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f)
+            return;
+
+        // What's behind it is what it shows, which is nothing a component can say the version of
+        Uncacheable();
+
+        // Kept in its frame even cut away, a frame between two ticks can bring it into sight
+        Vector2 drawn = visualScale * scale;
+        float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
+        KeepFrameGlass(rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), bend * MathF.Abs(drawn.X));
+        if (rect.Intersect(clip).IsEmpty)
             return;
 
         // Where the quads go, see Quad
-        Vector2 drawn = visualScale * scale;
         Vector2 min = (rect.Min * visualScale + visualOffset) * scale + origin;
         Vector2 max = (rect.Max * visualScale + visualOffset) * scale + origin;
 
@@ -360,8 +404,13 @@ public sealed partial class UIDrawList
         Vector2 clipMin = float.IsFinite(clip.Min.X) && float.IsFinite(clip.Min.Y) ? (clip.Min * visualScale + visualOffset) * scale + origin : new Vector2(float.NegativeInfinity);
         Vector2 clipMax = float.IsFinite(clip.Max.X) && float.IsFinite(clip.Max.Y) ? (clip.Max * visualScale + visualOffset) * scale + origin : new Vector2(float.PositiveInfinity);
 
-        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), opacity, bend * MathF.Abs(drawn.X)));
+        // Frosted well ahead of the rest fading in (see frosted above). Faded along with it, a menu coming in had the code
+        // behind it sharp through its half there text, the two sets of words on top of each other for the first few frames
+        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X)));
     }
+
+    // How many times quicker a pane of glass comes in than what's painted over it, see Glass
+    internal const float GLASS_LEAD = 3.0f;
 
     /// <summary>
     /// The silver lining of a pane of glass, a thin lit edge round a rounded rectangle, brightest along the top and the
@@ -512,22 +561,67 @@ public sealed partial class UIDrawList
         if (inMax.X < inMin.X) inMin.X = inMax.X = (min.X + max.X) * 0.5f;
         if (inMax.Y < inMin.Y) inMin.Y = inMax.Y = (min.Y + max.Y) * 0.5f;
 
-        uint packed = SpriteItem.PackColor(color);
-        uint soft = SpriteItem.NoTexture | SpriteItem.CornerFlag | SpriteItem.SoftFlag;
+        // One shape, solid inside of the box the fade reaches in to and fading out from there, see Shape. It was nine
+        // quads, a solid middle, four edges and four soft corners
+        Shape(new UIRect(min, max), SpriteItem.PackColor(color), reach, 0.0f, shadow: true);
+    }
 
-        Quad(new UIRect(inMin, inMax), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
+    // What a shape's clip comes to where there's none, as far out as a float goes without being infinite
+    private const float NO_CLIP = 1.0e30f;
 
-        // The edges fade one way, a disc's distance along one axis only
-        Quad(new UIRect(new Vector2(inMin.X, inMax.Y), new Vector2(inMax.X, max.Y)), Vector2.UnitY, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMin.X, min.Y), new Vector2(inMax.X, inMin.Y)), Vector2.Zero, Vector2.UnitY, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(min.X, inMin.Y), new Vector2(inMin.X, inMax.Y)), Vector2.UnitX, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMax.X, inMin.Y), new Vector2(max.X, inMax.Y)), Vector2.Zero, Vector2.UnitX, packed, soft, 1.0f);
+    /// <summary>
+    /// Helper method for a shape the UI's shader works out per pixel (see <see cref="SpriteItem.ShapeFlag"/>), a quad
+    /// as big as the whole of it whatever the clip is, which goes with it to be clipped there. Trimmed here the way a
+    /// flat quad is, a rounded box would have had its corners cut off with it.
+    /// </summary>
+    /// <param name="radius">How round its corners are, for a shadow how far it fades out.</param>
+    /// <param name="thickness">How thick its edge is, 0 for the whole box filled in.</param>
+    private void Shape(UIRect rect, uint color, float radius, float thickness, bool shadow)
+    {
+        const uint flags = SpriteItem.NoTexture | SpriteItem.ShapeFlag;
+        var form = new Vector2(thickness, shadow ? 1.0f : 0.0f);
+        UIRect visible = rect.Intersect(clip);
+        if (visible.IsEmpty)
+        {
+            KeepFrameQuad(rect, form, Vector2.Zero, color, flags, radius, 0.0f, 0.0f);
+            ownerPainted++;
+            return;
+        }
 
-        // The corners every way, the same as a rounded box's
-        Quad(new UIRect(new Vector2(min.X, inMax.Y), new Vector2(inMin.X, max.Y)), Vector2.One, Vector2.Zero, packed, soft, 1.0f);
-        Quad(new UIRect(inMax, max), Vector2.UnitY, Vector2.UnitX, packed, soft, 1.0f);
-        Quad(new UIRect(min, inMin), Vector2.UnitX, Vector2.UnitY, packed, soft, 1.0f);
-        Quad(new UIRect(new Vector2(inMax.X, min.Y), new Vector2(max.X, inMin.Y)), Vector2.Zero, Vector2.One, packed, soft, 1.0f);
+        if (itemCount == items.Length)
+            Array.Resize(ref items, items.Length * 2);
+
+        // Faded the way Quad fades, see there
+        uint asked = color;
+        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
+        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        if (shown < 1.0f)
+        {
+            uint alpha = (uint)((color >> 24) * shown + 0.5f);
+            color = (color & 0x00FFFFFF) | alpha << 24;
+        }
+
+        ref SpriteItem item = ref items[itemCount++];
+        item = ScreenShape(rect, clip, form, radius, color, visualScale, visualOffset, scale, origin);
+        KeepFrameQuad(rect, form, Vector2.Zero, asked, flags, radius, 0.0f, 0.0f, fade);
+        ownerPainted++;
+    }
+
+    /// <summary>
+    /// A shape as the UI's shader takes it (see <see cref="SpriteItem.ShapeFlag"/>), on screen through a transform,
+    /// its sizes in pixels and its clip in the Key and TexMax. For both the list and its frames, so the two agree.
+    /// </summary>
+    internal static SpriteItem ScreenShape(UIRect rect, UIRect cut, Vector2 form, float radius, uint color, Vector2 visualScale, Vector2 visualOffset, Vector2 scale, Vector2 origin)
+    {
+        Vector2 ToScreen(Vector2 at) => (at * visualScale + visualOffset) * scale + origin;
+        float pixels = MathF.Abs((visualScale * scale).X);
+
+        Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? ToScreen(cut.Min) : new Vector2(-NO_CLIP);
+        Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? ToScreen(cut.Max) : new Vector2(NO_CLIP);
+        SpriteItem item = SpriteItem.Rectangle(ToScreen(rect.Min), ToScreen(rect.Max), new Vector2(form.X * pixels, form.Y), clipMax, color, SpriteItem.NoTexture | SpriteItem.ShapeFlag);
+        item.Ring = radius * pixels;
+        item.Key = clipMin;
+        return item;
     }
 
     /// <summary>Fills a rectangle with a colour.</summary>
@@ -561,14 +655,9 @@ public sealed partial class UIDrawList
         }
 
         uint packed = SpriteItem.PackColor(color);
-        var (min, max) = rect;
 
-        // A column down the middle and a strip either side of it between the corners
-        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + radius, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(max.X - radius, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-
-        Corners(rect, radius, 1.0f, packed);
+        // One shape the shader works out, see Shape. It was seven quads, a column, two strips and four corners
+        Shape(rect, packed, radius, 0.0f, shadow: false);
     }
 
     /// <summary>Draws the edge of a rectangle with rounded corners, on the inside. See <see cref="RoundRect"/>.</summary>
@@ -584,14 +673,9 @@ public sealed partial class UIDrawList
         thickness = MathF.Min(thickness, radius);
 
         uint packed = SpriteItem.PackColor(color);
-        var (min, max) = rect;
 
-        Quad(new UIRect(new Vector2(min.X + radius, max.Y - thickness), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, min.Y + thickness)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + thickness, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(max.X - thickness, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, packed, SpriteItem.NoTexture);
-
-        Corners(rect, radius, thickness / radius, packed);
+        // One shape, see Shape. It was eight quads, four strips and four rings
+        Shape(rect, packed, radius, thickness, shadow: false);
     }
 
     /// <summary>
@@ -602,24 +686,6 @@ public sealed partial class UIDrawList
 
     /// <summary>Draws the edge of what <see cref="Box"/> fills.</summary>
     public void Frame(UIRect rect, float thickness, Vector4 color) => RoundOutline(rect, Skin.CornerRadius, thickness, color);
-
-    /// <summary>
-    /// Helper method to draw the four corners of a rounded rectangle, each a quarter of a disc with its middle
-    /// at the corner of the quad that points into the rectangle.
-    /// </summary>
-    /// <param name="ring">How much of the discs is filled from their edge inwards, see <see cref="SpriteItem.Ring"/>.</param>
-    private void Corners(UIRect rect, float radius, float ring, uint color)
-    {
-        var (min, max) = rect;
-        Vector2 size = new(radius);
-        uint flags = SpriteItem.NoTexture | SpriteItem.CornerFlag;
-
-        // What the top left and the bottom right of each quad are told is how far they are from the middle of their disc
-        Quad(new UIRect(new Vector2(min.X, max.Y - radius), new Vector2(min.X + radius, max.Y)), Vector2.One, Vector2.Zero, color, flags, ring);
-        Quad(new UIRect(max - size, max), Vector2.UnitY, Vector2.UnitX, color, flags, ring);
-        Quad(new UIRect(min, min + size), Vector2.UnitX, Vector2.UnitY, color, flags, ring);
-        Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, color, flags, ring);
-    }
 
     /// <summary>Draws a region of the skin stretched over a rectangle.</summary>
     public void Region(in UIRegion region, UIRect rect, Vector4 tint) =>
@@ -784,35 +850,50 @@ public sealed partial class UIDrawList
     /// <param name="texTopLeft">The top left corner of the part, in pixels from the top left of the texture.</param>
     /// <param name="texBottomRight">Its bottom right corner.</param>
     public void Image(Texture texture, UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, Vector4 tint) =>
-        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture));
+        Quad(rect, texTopLeft, texBottomRight, SpriteItem.PackColor(tint), ImageSlot(texture), 0.0f, 0.0f, 0.0f, pixelArt: !texture.Definition.Smooth);
 
     /// <summary>
     /// Draws an icon of <see cref="UISymbols"/> (Codicons) filling a square, the biggest that fits in the rectangle,
     /// in the middle of it. Nothing if the icons haven't loaded.
     /// </summary>
-    public void Symbol(char code, UIRect rect, Vector4 color)
+    /// <param name="motion">How it moves (see <see cref="UIAnimatedIcons"/>), by the time the UI's been painted for.</param>
+    public void Symbol(char code, UIRect rect, Vector4 color, UIIconMotion motion = UIIconMotion.None)
     {
-        if (!UISymbols.TryGetGlyph(code, out var glyph))
+        if (UIAnimatedIcons.IsDrawn(code))
+        {
+            UIAnimatedIcons.Draw(this, code, rect, color, Motion);
+            KeepMoving();
             return;
+        }
+
+        if (!UISymbols.TryGetGlyph(code, out var symbol))
+            return;
+
+        if (motion != UIIconMotion.None && Motion)
+        {
+            MovingSymbol(symbol, rect, color, motion);
+            return;
+        }
 
         // The em of the font is the square every icon is drawn in, its picture is somewhere inside of that
         float side = MathF.Round(MathF.Min(rect.Width, rect.Height));
-        float scale = side / UISymbols.Em;
+        float scale = side / symbol.Em;
         Vector2 corner = Vector2.Round(rect.Center - new Vector2(side * 0.5f, -side * 0.5f));
 
+        var glyph = symbol.Definition;
         Vector2 topLeft = new(corner.X + glyph.Offset.X * scale, corner.Y - glyph.Offset.Y * scale);
         Vector2 size = glyph.Size * scale;
         var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - size.Y), new Vector2(topLeft.X + size.X, topLeft.Y));
 
         Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color),
-            ImageSlot(UISymbols.Texture) | SpriteItem.FieldFlag, UISymbols.FieldSlope);
+            ImageSlot(symbol.Texture) | SpriteItem.FieldFlag, symbol.FieldSlope);
     }
 
-    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, nothing if there is none by it.</summary>
+    /// <summary>Draws an icon of <see cref="UISymbols"/> by name, moving when it says how (<c>sync~spin</c>), nothing if there is none by it.</summary>
     public void Symbol(ReadOnlySpan<char> name, UIRect rect, Vector4 color)
     {
-        if (UISymbols.TryGet(name, out char code))
-            Symbol(code, rect, color);
+        if (UISymbols.TryGet(name, out char code, out UIIconMotion motion))
+            Symbol(code, rect, color, motion);
     }
 
     /// <summary>
@@ -858,11 +939,14 @@ public sealed partial class UIDrawList
     /// above <paramref name="upright"/> (and its bottom the other way below it), which is an italic letter leaning
     /// over the line it stands on. It is clipped as the upright rectangle it was before it leant.
     /// </summary>
-    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright)
+    private void Quad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, bool pixelArt = true)
     {
         UIRect visible = rect.Intersect(clip);
+        Vector2 texAskedMin = texTopLeft, texAskedMax = texBottomRight;
         if (visible.IsEmpty)
         {
+            KeepFrameQuad(rect, texTopLeft, texBottomRight, color, flags, ring, slant, upright);
+
             // Cut away altogether, but it still counts as one of its owner's quads. A quad is told apart from
             // one tick to the next by who painted it and as which of theirs, and if the ones that are out of
             // sight weren't counted, every quad after one that slides out under a clip would be taken for the
@@ -887,8 +971,10 @@ public sealed partial class UIDrawList
         if (itemCount == items.Length)
             Array.Resize(ref items, items.Length * 2);
 
-        // Faded by the animation it's in and the edges it's near, see PushFade
-        float shown = fades.Count > 0 ? opacity * FadeOf(visible) : opacity;
+        // Faded by the animation it's in and the edges it's near, see PushFade. Kept as it was asked for, its frame fades it
+        uint asked = color;
+        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
+        float shown = fades.Count > 0 ? opacity * fade : opacity;
         if (shown < 1.0f)
         {
             // Alpha is the top byte, see SpriteItem.PackColor.
@@ -898,9 +984,10 @@ public sealed partial class UIDrawList
 
         // Art that is drawn at a size it wasn't made for has its texels blended at the edges, or pixel art
         // would shimmer its way through an animation and come out uneven in a UI that is scaled to its window.
-        // Text has a filter of its own.
+        // Text has a filter of its own, and a texture made smooth is read through its own sampler (its mip levels when
+        // it's drawn smaller), the pixel art filter only ever reads the top level and dropped texels of a picture halved.
         Vector2 drawn = visualScale * scale;
-        bool whole = drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
+        bool whole = !pixelArt || drawn.X == MathF.Round(drawn.X) && drawn.Y == MathF.Round(drawn.Y);
         // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
         // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
         // texture it hasn't got. The shader knew better, but it was still bollocks
@@ -921,11 +1008,13 @@ public sealed partial class UIDrawList
             item.Origin.X += slant * (min.Y - pivot);
             item.AxisY.X = slant * (max.Y - min.Y);
         }
-        item.Key = new Vector2(stepped ? -owner : owner, ownerPainted++);
+        KeepFrameQuad(rect, texAskedMin, texAskedMax, asked, flags, ring, slant, upright, fade);
+        item.Key = new Vector2(owner, ownerPainted++);
     }
 
     private void CloseRun()
     {
+        KeepFrameRun(runImage0, runImage1);
         int count = itemCount - runStart;
         if (count > 0)
             runs.Add(new Run(runStart, count, runImage0, runImage1));

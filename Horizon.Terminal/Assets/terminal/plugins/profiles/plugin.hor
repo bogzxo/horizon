@@ -12,9 +12,9 @@ let plugin = {
 
 for (let id in terminal.profiles()) {
     let name = terminal.profile_name(id);
-    terminal.command(`new_tab_{id}`, `New tab: {name}`, func(terminal) { terminal.new_tab(id); }, "");
-    terminal.command(`split_right_{id}`, `Split right: {name}`, func(terminal) { terminal.split("right", id); }, "");
-    terminal.command(`default_{id}`, `Usual shell: {name}`, func(terminal) {
+    terminal.command(`new_tab_{id}`, `New tab: {name}`, terminal => terminal.new_tab(id), "");
+    terminal.command(`split_right_{id}`, `Split right: {name}`, terminal => terminal.split("right", id), "");
+    terminal.command(`default_{id}`, `Usual shell: {name}`, terminal => {
         terminal.default_profile(id);
         terminal.say(`new tabs open {name}`);
     }, "");

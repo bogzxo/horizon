@@ -5,7 +5,6 @@ using Horizon.Input;
 using Horizon.Rendering.Lighting;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
 
 namespace Horizon.Testing.Examples.FirstSteps;
 

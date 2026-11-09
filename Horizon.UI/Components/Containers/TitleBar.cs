@@ -15,15 +15,36 @@ internal static class UIWindowButtons
 {
     public static readonly Vector4 CloseRed = new(0.9f, 0.17f, 0.2f, 1.0f);
 
-    public static void Paint(UIDrawList list, UIRect area, string icon, bool hovered, bool pressed, bool close, Vector4 color)
+    /// <param name="corner">How round its top right corner is, the window's own corner when it's the close button in it, 0 for square.</param>
+    public static void Paint(UIDrawList list, UIRect area, string icon, bool hovered, bool pressed, bool close, Vector4 color, float corner = 0.0f)
     {
         UISkin skin = list.Skin;
         if (hovered)
-            list.Rect(area, close ? CloseRed with { W = pressed ? 0.75f : 1.0f } : pressed ? skin.HoverColor * 1.6f : skin.HoverColor);
+        {
+            Vector4 fill = close ? CloseRed with { W = pressed ? 0.75f : 1.0f } : pressed ? skin.HoverColor * 1.6f : skin.HoverColor;
+            if (corner <= 0.0f)
+                list.Rect(area, fill);
+            else
+                CornerRect(list, area, MathF.Min(corner, MathF.Min(area.Width, area.Height) * 0.5f), fill);
+        }
 
         float side = MathF.Round(MathF.Min(area.Height, area.Width) * 0.42f);
         Vector2 middle = Vector2.Round(area.Center);
         list.Symbol(icon, new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f)), hovered && close ? Vector4.One : color);
+    }
+
+    // A box with only its top right corner rounded, in three pieces that don't overlap, so one that's partly see through
+    // (a close button held down) has no darker seams. The red of a close in the corner of a round window was a square
+    // stuck out past the curve of the window
+    private static void CornerRect(UIDrawList list, UIRect area, float radius, Vector4 fill)
+    {
+        Vector2 bend = new(area.Max.X - radius, area.Max.Y - radius);
+        list.Rect(new UIRect(area.Min, new Vector2(bend.X, area.Max.Y)), fill);
+        list.Rect(new UIRect(new Vector2(bend.X, area.Min.Y), new Vector2(area.Max.X, bend.Y)), fill);
+
+        list.PushClip(new UIRect(bend, area.Max));
+        list.RoundRect(new UIRect(bend - new Vector2(radius), area.Max), radius, fill);
+        list.PopClip();
     }
 }
 
@@ -49,6 +70,27 @@ public class TitleBar : StackPanel
 
     /// <summary>What it says, the window's own title when it is left empty.</summary>
     public string Title { get; set; } = string.Empty;
+    private (string Text, UIFont? Font, float Scale, float Room) titleFitFor;
+    private string fittedTitle = string.Empty;
+
+    private string FitTitle(string title, UIFont font, float scale, float room)
+    {
+        var key = (title, font, scale, room);
+        if (titleFitFor == key)
+            return fittedTitle;
+        titleFitFor = key;
+        if (font.Measure(title, scale, markup: false).X <= room)
+            return fittedTitle = title;
+        float dots = font.Measure("…", scale, markup: false).X;
+        if (room <= dots)
+            return fittedTitle = string.Empty;
+        int length = title.Length;
+        while (length > 0 && font.Measure(title.AsSpan(0, length), scale, markup: false).X > room - dots)
+            length--;
+        if (length > 0 && char.IsHighSurrogate(title[length - 1]))
+            length--;
+        return fittedTitle = title[..length] + "…";
+    }
 
     /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) at the left end, empty for none.</summary>
     public string Icon { get; set; } = string.Empty;
@@ -59,18 +101,30 @@ public class TitleBar : StackPanel
     /// <summary>Whether it has the window's minimise, maximise and close at the right end.</summary>
     public bool WindowButtons { get; set; } = true;
 
+    // Only where there's a window to minimise and maximise, a phone's bar has no business pretending. Without an engine
+    // (a test laying the bar out) it's what it was told
+    private bool ShowsWindowButtons => WindowButtons &&
+        (GameEngine.Instance?.WindowManager is not { } window || (window.Features & Horizon.Platform.PlatformFeatures.Window) != 0);
+
     /// <summary>How tall it is when nothing in it is taller, in the window's pixels (see <see cref="PixelSized"/>).</summary>
     public float Height { get; set; } = 32.0f;
 
     /// <summary>
     /// Whether its height, its title and its buttons are in the window's pixels rather than the UI's units, so a UI that
     /// is drawn bigger (a bigger screen, <see cref="UICompositor.Scale"/>) doesn't have a title bar that grows with it, the
-    /// system's never does. What is put in it is the program's to size.
+    /// system's never does. On a screen the system scales (<see cref="UICompositor.DisplayScale"/>) they're that much
+    /// bigger, the same as the system's own title bars there. What is put in it is the program's to size.
     /// </summary>
     public bool PixelSized { get; set; } = true;
 
-    // A window's pixel in the UI's units
+    // A window's pixel in the UI's units, times the scale of the screen it's on when the window follows that
     private float Unit => PixelSized && Module?.Compositor.Scale is > 0.0f and var scale ? 1.0f / scale : 1.0f;
+
+    /// <summary>
+    /// How round the window's top right corner is, in the window's pixels, for the close button in it to be the same shape
+    /// under the pointer. Windows 11 rounds a window by 8 pixels, nothing else rounds one the UI hasn't drawn round.
+    /// </summary>
+    public float WindowCorner { get; set; } = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? 8.0f : 0.0f;
 
     private float BarHeight => Height * Unit;
     private float ButtonWidth => BUTTON_WIDTH * Unit;
@@ -96,7 +150,7 @@ public class TitleBar : StackPanel
 
     // The room at the left for the icon, and at the right for the buttons
     private float IconRoom => Icon.Length > 0 ? BarHeight : 0.0f;
-    private float ButtonsRoom => WindowButtons ? ButtonWidth * 3.0f : 0.0f;
+    private float ButtonsRoom => ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f;
 
     protected override Vector2 Measure(UISkin skin)
     {
@@ -104,8 +158,22 @@ public class TitleBar : StackPanel
         return new Vector2(inside.X + IconRoom + ButtonsRoom, MathF.Max(inside.Y, BarHeight));
     }
 
-    protected override void Arrange(UIRect content) =>
-        base.Arrange(new UIRect(new Vector2(content.Min.X + IconRoom, content.Min.Y), new Vector2(content.Max.X - ButtonsRoom, content.Max.Y)));
+    protected override void Arrange(UIRect content)
+    {
+        var inside = new UIRect(new Vector2(content.Min.X + IconRoom, content.Min.Y), new Vector2(content.Max.X - ButtonsRoom, content.Max.Y));
+        base.Arrange(inside);
+        // Right-anchored accessories live beside the window controls, independently of the menus on the left.
+        float right = inside.Max.X;
+        float gap = Spacing >= 0 ? Spacing : Module?.Compositor.Skin?.Spacing ?? 0;
+        for (int i = ChildSpan.Length - 1; i >= 0; i--)
+        {
+            var child = ChildSpan[i];
+            if (!child.Visible || child.Anchor.ToVector().X <= 0) continue;
+            var size = child.DesiredSize;
+            child.ArrangeTree(UIRect.FromCenter(new Vector2(right - size.X * 0.5f, inside.Center.Y), size));
+            right -= size.X + gap;
+        }
+    }
 
     /// <summary>Where one of the window's buttons is, in the module's units.</summary>
     public UIRect ButtonBounds(int index)
@@ -119,7 +187,7 @@ public class TitleBar : StackPanel
         if (!Bounds.Contains(point))
             return Part.None;
 
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             if (ButtonBounds(0).Contains(point)) return Part.Minimize;
             if (ButtonBounds(1).Contains(point)) return Part.Maximize;
@@ -156,18 +224,27 @@ public class TitleBar : StackPanel
         {
             Vector2 size = skin.Font.Measure(title, scale, markup: false);
             float contentEnd = Bounds.Min.X + IconRoom;
+            float titleEnd = Bounds.Max.X - ButtonsRoom;
             foreach (UIComponent child in ChildSpan)
             {
                 if (child.Visible)
-                    contentEnd = MathF.Max(contentEnd, child.Bounds.Max.X);
+                {
+                    if (child.Anchor.ToVector().X > 0)
+                        titleEnd = MathF.Min(titleEnd, child.Bounds.Min.X - 16.0f * Unit);
+                    else
+                        contentEnd = MathF.Max(contentEnd, child.Bounds.Max.X);
+                }
             }
 
-            float left = MathF.Max(Bounds.Center.X - size.X * 0.5f, contentEnd + 16.0f);
-            if (left + size.X < Bounds.Max.X - ButtonsRoom)
-                list.Text(title, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
+            float start = contentEnd + 16.0f * Unit;
+            string shown = FitTitle(title, skin.Font, scale, MathF.Max(0, titleEnd - start));
+            size = skin.Font.Measure(shown, scale, markup: false);
+            float left = MathF.Max(start, MathF.Min(Bounds.Center.X - size.X * 0.5f, titleEnd - size.X));
+            if (shown.Length > 0)
+                list.Text(shown, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
         }
 
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             bool down = IsPressed;
             for (int i = 0; i < 3; i++)
@@ -176,7 +253,7 @@ public class TitleBar : StackPanel
                 UIRect area = ButtonBounds(i);
                 bool over = IsHovered && area.Contains(pointer);
                 string icon = i switch { 0 => "chrome-minimize", 1 => Maximized ? "chrome-restore" : "chrome-maximize", _ => "chrome-close" };
-                UIWindowButtons.Paint(list, area, icon, over, over && down, i == 2, skin.TextColor);
+                UIWindowButtons.Paint(list, area, icon, over, over && down, i == 2, skin.TextColor, i == 2 && !Maximized ? WindowCorner * Unit : 0.0f);
             }
         }
 
@@ -184,8 +261,8 @@ public class TitleBar : StackPanel
         // bar is and what on it isn't, for the desktop to move the window by it (SDL's, see WindowManager.HitTest)
         if (GameEngine.Instance?.WindowManager is { CustomFrame: true } window && Module is { } module)
         {
-            window.MaximizeButton = WindowButtons ? InWindow(module, ButtonBounds(1)) : default;
-            if (Core.WindowManager.UsesSdl)
+            window.MaximizeButton = ShowsWindowButtons ? InWindow(module, ButtonBounds(1)) : default;
+            if ((window.Features & Horizon.Platform.PlatformFeatures.DragArea) != 0)
                 window.SetDragArea(Visible ? InWindow(module, Bounds) : default, Holes(module));
         }
 
@@ -199,7 +276,7 @@ public class TitleBar : StackPanel
     private ReadOnlySpan<System.Drawing.RectangleF> Holes(UIModule module)
     {
         holes.Clear();
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             for (int i = 0; i < 3; i++)
                 holes.Add(InWindow(module, ButtonBounds(i)));

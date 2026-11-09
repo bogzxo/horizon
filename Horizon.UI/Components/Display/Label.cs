@@ -38,6 +38,13 @@ public class Label : UIComponent
     /// <summary>The colour of the text, or null to use the skin's.</summary>
     public Vector4? Color { get; set; }
 
+    /// <summary>
+    /// Whether the text is in the skin's dim colour when it has no colour of its own, the one every quiet line of a theme
+    /// is in (a heading of a side bar, a caption, a note). A layout says <c>dim: true</c> rather than a colour of its own
+    /// that stays the same whatever the theme.
+    /// </summary>
+    public bool Dim { get; set; }
+
     /// <summary>Where the text goes when the label is bigger than it.</summary>
     public Origin Align { get; set; } = Origin.Center;
 
@@ -58,6 +65,24 @@ public class Label : UIComponent
     /// Off unless asked, a * or a # in plain text is just that. The tags in square brackets work either way.
     /// </summary>
     public bool Markdown { get; set; }
+
+    /// <summary>
+    /// What a block of code in the markdown is coloured as when its fence doesn't say, "hidl" or "cs" the way a fence
+    /// would put it, null for code in one colour. A fence that names a language always wins.
+    /// </summary>
+    public string? CodeLanguage { get; set; }
+
+    /// <summary>
+    /// Whether the markdown is laid out as a document to read, room between the lines, rules under the big headings,
+    /// padded code. Off for the compact look the rest of the UI wants. See <see cref="UIRichText.Document"/>.
+    /// </summary>
+    public bool Document { get; set; }
+
+    /// <summary>The font code in the markdown is written in, a monospace one, null for the skin's.</summary>
+    public UIFont? CodeFont { get; set; }
+
+    /// <summary>The text as it was laid out with its styles the last time, what a test looks into to see how it came out.</summary>
+    public UIRichText RichText => rich;
 
     /// <summary>Called with where a link of the markdown goes when it is clicked, <c>[the words](where)</c>.</summary>
     public Action<string>? OnLink { get; set; }
@@ -93,6 +118,13 @@ public class Label : UIComponent
     private readonly List<(int Start, int Length)> lines = [];
     private string? wrappedText;
     private float wrappedScale, wrappedWidth;
+
+    // How big a text that doesn't wrap came out, measured again only once the text, its size or the font is another
+    private string? measuredText;
+    private float measuredScale;
+    private UIFont? measuredFont;
+    private bool measuredBold;
+    private Vector2 measuredSize;
 
     // Whether the lines are what the text is drawn as right now
     private bool wrapped;
@@ -165,16 +197,29 @@ public class Label : UIComponent
         paintedAlign = shapes != 0 ? Origin.TopLeft : Align;
         if (drawnRich)
         {
+            rich.CodeLanguage = CodeLanguage;
+            rich.Document = Document;
+            rich.CodeFont = CodeFont;
             rich.Build(text, skin.Font, scale, width, Markdown, shapes != 0 ? roomOf ??= RoomAt : null, shapes);
             wrapped = false;
             return new Vector2(width > 0.0f ? width : rich.Width, rich.Height);
         }
 
         wrapped = width > 0.0f;
-        if (!wrapped && Bold && !text.Contains('\n'))
-            return new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
         if (!wrapped)
-            return skin.Font.Measure(text, scale);
+        {
+            // Measured every tick it was a walk along every letter of every label for the size it was the tick before
+            bool bold = Bold && !text.Contains('\n');
+            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || measuredFont != skin.Font || measuredBold != bold)
+            {
+                measuredSize = bold
+                    ? new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale)
+                    : skin.Font.Measure(text, scale);
+                (measuredText, measuredScale, measuredFont, measuredBold) = (text, scale, skin.Font, bold);
+            }
+
+            return measuredSize;
+        }
 
         // Only cut again when the text, its size or the room has changed. The text is a string, the same one is the same text
         if (!ReferenceEquals(wrappedText, text) || wrappedScale != scale || wrappedWidth != width)
@@ -241,30 +286,33 @@ public class Label : UIComponent
         right = to - shapedBounds.Min.X;
     }
 
+    /// <summary>The text's area, overridable by labels that reserve space for disclosure or selection marks.</summary>
+    protected virtual UIRect TextBounds => Bounds;
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
-        Vector4 color = Color ?? skin.TextColor;
+        Vector4 color = Color ?? (Dim ? skin.DimTextColor : skin.TextColor);
         string text = Resolve(Text);
 
         if (drawnRich)
         {
-            rich.Paint(list, Bounds, paintedAlign, color);
+            rich.Paint(list, TextBounds, paintedAlign, color);
             return;
         }
 
         if (wrapped)
-            list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), Bounds, Align, ScaleOf(skin), color);
+            list.Text(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), TextBounds, Align, ScaleOf(skin), color);
         else if (Bold && !text.Contains('\n'))
         {
             // Placed the way a plain line is in its box, by its bold width
             float scale = ScaleOf(skin);
             var size = new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
-            Vector2 center = Bounds.PointAt(Align) - Align.ToVector() * size;
+            Vector2 center = TextBounds.PointAt(Align) - Align.ToVector() * size;
             list.Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, true, UITextStyle.Bold, default);
         }
         else
-            list.Text(text, Bounds, Align, ScaleOf(skin), color);
+            list.Text(text, TextBounds, Align, ScaleOf(skin), color);
     }
 
     protected override void DefineScript()
@@ -275,8 +323,10 @@ public class Label : UIComponent
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("bold", () => Bold, value => Bold = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value);
+        Expose("dim", () => Dim, value => Dim = value);
         Expose("wrap", () => Wrap, value => Wrap = value);
         Expose("markdown", () => Markdown, value => Markdown = value);
+        Expose("code_language", () => CodeLanguage ?? string.Empty, value => CodeLanguage = string.IsNullOrWhiteSpace(value) ? null : value);
         Expose(
             "wrap_around",
             () => new Horizon.HIDL.Runtime.ListValue([.. WrapAround.Select(other => other.Object)]),

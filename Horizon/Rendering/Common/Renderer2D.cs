@@ -33,8 +33,15 @@ public class Renderer2D : GameObject
     /// <summary>
     /// Whether the renderer keeps itself the size of the window, remade whenever that changes. For a renderer that
     /// draws a pixel a pixel. One that draws pixel art at a size of its own and has it blown up leaves this off.
+    /// With a render scale (see <see cref="Scaling.FrameScaler"/>) it's the size of the scene, not of the window, and
+    /// that once, a renderer inside of another one that follows the window is the same size as it, never scaled twice.
+    /// One of a size of its own keeps it, whatever the scale, and is blown up into the scene the way it always was.
     /// </summary>
     public bool FollowWindow { get; set; }
+
+    // Fixed-resolution artwork retains its own coordinate space; window followers retain native coordinates
+    // even while their render targets are smaller. Nested renderers must not apply the scale a second time.
+    internal Vector2 LogicalSize => FollowWindow ? Engine.WindowManager.ViewportSize : ViewportSize;
 
     /// <summary>What shows wherever nothing was drawn.</summary>
     public Vector4 ClearColor { get; set; } = new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
@@ -155,7 +162,7 @@ public class Renderer2D : GameObject
 
         if (FollowWindow)
         {
-            Vector2 window = Engine.WindowManager.ViewportSize;
+            Vector2 window = Engine.WindowManager.Scaling.TargetSize;
             Resize((uint)window.X, (uint)window.Y);
         }
 
@@ -202,7 +209,8 @@ public class Renderer2D : GameObject
                 HoldsPicture ? FrameBuffer.Color : null,
                 resolve,
                 bindOutput,
-                OutputSize(outer));
+                OutputSize(outer),
+                LogicalSize);
         }
         else
         {
@@ -257,7 +265,7 @@ public class Renderer2D : GameObject
         if (outer is not null)
             return outer.ViewportSize;
 
-        return Engine.WindowManager.ViewportSize;
+        return Engine.WindowManager.Scaling.TargetSize;
     }
 
     protected override void DisposeOther()

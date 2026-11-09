@@ -120,8 +120,10 @@ public sealed partial class UIDrawList
         uint packed = SpriteItem.PackColor(color);
         float lineHeight = font.LineHeight * scale;
 
-        // A line that starts on a whole pixel keeps every glyph's edge where the field says it is.
-        position = new Vector2(MathF.Round(position.X), MathF.Round(position.Y));
+        // A line that starts on a whole pixel of the screen keeps every glyph's edge where the field says it is. Rounded
+        // to whole units of the layout it was a whole pixel only at 100% and with nothing moving it, scaled or scrolled
+        // the lines sat off the screen's pixels and a scroll had the words wobble against the boxes under them
+        position = OnScreenPixel(position);
         Vector2 pen = position;
 
         // Bold is the field's edge further out, and room made for it. Italic leans every letter over about the line it sits on
@@ -141,9 +143,9 @@ public sealed partial class UIDrawList
             }
 
             // $(name), an icon of UISymbols, as tall as the line wants it
-            if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth))
+            if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth, out UIIconMotion motion))
             {
-                Symbol(symbol, UISymbols.InText(pen, lineHeight), color);
+                Symbol(symbol, UISymbols.InText(pen, lineHeight), color, motion);
                 pen.X += symbolWidth;
                 i += symbolLength - 1;
                 continue;
@@ -161,7 +163,7 @@ public sealed partial class UIDrawList
                 // Centred on the line. Art that hasn't made it into the atlas yet still takes up its room.
                 if (Skin.TryGetIcon(name, icons, time, out var icon))
                 {
-                    Vector2 corner = new(pen.X, MathF.Round(pen.Y - (lineHeight + size.Y) * 0.5f));
+                    Vector2 corner = new(pen.X, OnScreenPixel(new Vector2(pen.X, pen.Y - (lineHeight + size.Y) * 0.5f)).Y);
                     Icon(icon, new UIRect(corner, corner + size), new Vector4(1.0f, 1.0f, 1.0f, color.W));
                 }
 

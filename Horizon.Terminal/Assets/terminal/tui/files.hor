@@ -20,26 +20,19 @@ func load(tui, folder, pick) {
     shown.top = 0;
     // coming up out of a folder, that folder is the one picked
     if (pick != null) {
-        let at = 0;
-        for (let entry in shown.items) {
-            if (entry.path == pick) {
-                shown.selected = at;
-            }
-            at += 1;
+        for (let at, entry in shown.items) {
+            if (entry.path == pick) shown.selected = at;
         }
     }
 }
 
 func narrow() {
     let typed = filter.text;
-    ui.list_set(shown, entries.filter(func(entry) { return (hidden || !entry.hidden) && ui.matches(entry.name, typed); }));
+    ui.list_set(shown, entries.filter(entry => (hidden || !entry.hidden) && ui.matches(entry.name, typed)));
 }
 
 func quoted(path) {
-    if (path.contains(" ")) {
-        return `"{path}"`;
-    }
-    return path;
+    return path.contains(" ") ? `"{path}"` : path;
 }
 
 func on_start(tui) {
@@ -60,9 +53,8 @@ func on_key(tui, key) {
 
     if (key.name == "enter") {
         let chosen = ui.list_chosen(shown);
-        if (chosen == null) {
-            return;
-        }
+        if (chosen == null) return;
+
         if (chosen.folder) {
             load(tui, chosen.path, null);
         } else {
@@ -75,7 +67,7 @@ func on_key(tui, key) {
     if (key.name == "tab") {
         let chosen = ui.list_chosen(shown);
         if (chosen != null) {
-            tui.type(quoted(chosen.path) + " ");
+            tui.type(`{quoted(chosen.path)} `);
             tui.exit(0);
         }
         return;
@@ -83,9 +75,7 @@ func on_key(tui, key) {
 
     if (key.name == "backspace" && filter.text.length == 0) {
         let up = tui.parent(here);
-        if (up != null) {
-            load(tui, up, here);
-        }
+        if (up != null) load(tui, up, here);
         return;
     }
 
@@ -95,13 +85,8 @@ func on_key(tui, key) {
         return;
     }
 
-    if (ui.list_key(shown, key, area.h - 4)) {
-        return;
-    }
-
-    if (ui.field_key(filter, key)) {
-        narrow();
-    }
+    if (ui.list_key(shown, key, area.h - 4)) return;
+    if (ui.field_key(filter, key)) narrow();
 }
 
 func draw(tui) {
@@ -111,9 +96,9 @@ func draw(tui) {
     ui.field_draw(tui, filter, ui.rect(3, 1, parts[1].w - 3, 1), "a few letters narrow it down", true);
 
     let columns = [
-        { title: "name", width: 0, get: func(entry) { if (entry.folder) { return entry.name + "\\"; } return entry.name; } },
-        { title: "size", width: 10, get: func(entry) { if (entry.folder) { return ""; } return ui.size(entry.size); } },
-        { title: "changed", width: 18, get: func(entry) { return entry.modified; } }
+        { title: "name", width: 0, get: entry => entry.folder ? entry.name + "\\" : entry.name },
+        { title: "size", width: 10, get: entry => entry.folder ? "" : ui.size(entry.size) },
+        { title: "changed", width: 18, get: entry => entry.modified }
     ];
     ui.table_draw(tui, shown, parts[2], columns, true);
     ui.status(tui, parts[3], "enter open  tab to the shell  backspace up  alt+h hidden  esc leave", `{shown.items.count} of {entries.count}`);

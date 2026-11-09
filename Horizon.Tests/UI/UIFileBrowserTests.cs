@@ -1,3 +1,6 @@
+using System.Numerics;
+
+using Horizon.Engine;
 using Horizon.UI;
 using Horizon.UI.Components;
 
@@ -7,6 +10,7 @@ namespace Horizon.Tests;
 /// The file dialog off screen, driven the way the keys and the buttons drive it, over a folder of its own in the temp
 /// folder. What a row says along the right, a few letters picking a row, back and forward, and an empty folder saying so.
 /// </summary>
+[Collection("UI focus restoration")]
 public sealed class UIFileBrowserTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "horizon_browser_" + Guid.NewGuid().ToString("N"));
@@ -152,6 +156,29 @@ public sealed class UIFileBrowserTests : IDisposable
         var again = new UIFileBrowser(UIBrowse.Open, "Open", Path.Combine(root, "sub"), "nothing.txt", [], resume: true);
         again.GoBack();
         Assert.Equal(root, again.Folder);
+    }
+
+    [Fact]
+    public void Closing_does_not_restore_focus_to_a_hidden_control()
+    {
+        var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));
+        UIModule module = compositor.CreateModule();
+        var previous = module.AddComponent(new Button("Previous"));
+        previous.Focus();
+        UIFileBrowser browser = Open();
+        module.AddComponent(browser.Window);
+        browser.TakeKeyboard();
+        previous.Visible = false;
+
+        try
+        {
+            browser.Cancel();
+            Assert.Null(compositor.Focus);
+        }
+        finally
+        {
+            compositor.RemoveModule(module);
+        }
     }
 
     [Fact]

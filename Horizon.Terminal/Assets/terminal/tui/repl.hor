@@ -14,9 +14,7 @@ let offered = [];
 let picked = 0;
 
 func say(said, style) {
-    for (let piece in said.split("\n")) {
-        output.push({ text: piece, style: style });
-    }
+    for (let piece in said.split("\n")) output.push({ text: piece, style });
 }
 
 // the word that ends at the caret, letters, digits, _ and the dots between them
@@ -27,9 +25,7 @@ func word() {
     let letter = "";
     while (at > 0) {
         letter = before.substring(at - 1, at);
-        if (!"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.".contains(letter)) {
-            break;
-        }
+        if (!letter.is_word() && letter != ".") break;
         at -= 1;
     }
     return before.substring(at);
@@ -37,21 +33,15 @@ func word() {
 
 func offer(tui) {
     let typed = word();
-    offered = [];
+    offered = typed.length > 0 ? tui.complete(typed).filter(name => name != typed).slice(0, 8) : [];
     picked = 0;
-    if (typed.length > 0) {
-        offered = tui.complete(typed).filter(func(name) { return name != typed; }).slice(0, 8);
-    }
 }
 
 // the picked name typed in, the rest of it after what was typed (the names come whole, math.floor for math.fl)
 func take() {
     let typed = word();
     let name = offered[picked];
-    let rest = "";
-    if (name.starts_with(typed)) {
-        rest = name.substring(typed.length);
-    }
+    let rest = name.starts_with(typed) ? name.substring(typed.length) : "";
     line.text = line.text.substring(0, line.caret) + rest + line.text.substring(line.caret);
     line.caret += rest.length;
     offered = [];
@@ -60,9 +50,7 @@ func take() {
 func run(tui) {
     let code = line.text;
     say(`hidl > {code}`, "cyan");
-    if (code.trim().length > 0) {
-        history.push(code);
-    }
+    if (code.trim().length > 0) history.push(code);
     back = history.count;
     line = ui.field("");
     offered = [];
@@ -70,15 +58,10 @@ func run(tui) {
         tui.exit(0);
         return;
     }
-    if (code.trim().length == 0) {
-        return;
-    }
+    if (code.trim().length == 0) return;
+
     let result = tui.evaluate(code);
-    if (result.ok) {
-        say(result.text, "default");
-    } else {
-        say(result.text, "red");
-    }
+    say(result.text, result.ok ? "default" : "red");
 }
 
 func on_start(tui) {
@@ -120,29 +103,18 @@ func on_key(tui, key) {
     }
     if (key.name == "down" && history.count > 0) {
         back = math.min(history.count, back + 1);
-        if (back == history.count) {
-            line = ui.field("");
-        } else {
-            line = ui.field(history[back]);
-        }
+        line = ui.field(back == history.count ? "" : history[back]);
         return;
     }
 
-    if (ui.field_key(line, key)) {
-        offer(tui);
-    }
+    if (ui.field_key(line, key)) offer(tui);
 }
 
 func draw(tui) {
     tui.clear();
     let parts = ui.rows(ui.screen(tui), [0, 1]);
-    let room = parts[0].h;
-    let first = math.max(0, output.count - room);
-    let row = 0;
-    for (let i in range(first, output.count)) {
-        tui.write(0, row, ui.clip(output[i].text, parts[0].w), output[i].style);
-        row += 1;
-    }
+    let first = math.max(0, output.count - parts[0].h);
+    for (let row, said in output.slice(first)) tui.write(0, row, ui.clip(said.text, parts[0].w), said.style);
 
     tui.write(0, parts[1].y, "hidl > ", "magenta");
     ui.field_draw(tui, line, ui.rect(7, parts[1].y, parts[1].w - 7, 1), "", true);

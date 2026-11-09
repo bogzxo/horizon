@@ -4,8 +4,8 @@ namespace Horizon.UI.Scripting;
 /// The language servers an editor knows of, by the files they lint, and the ones that are running. A tool registers
 /// what it has a configuration for (<see cref="Register"/>, csharp-ls for .cs, pyright for .py), asks for the one a
 /// file wants (<see cref="For"/>) and gets it started on the first file of its kind, or null when the command isn't on
-/// this machine, which a tool takes quietly, a file nobody can lint is still a file. One server runs per registration
-/// and root folder (a server knows the projects of the folder it was started in and nothing else, so a file of another
+/// this machine, which a tool takes quietly, a file nobody can lint is still a file. One server runs per registration,
+/// root folder and solution selection (a server knows the projects it was started with, so a file of another
 /// folder gets a server of its own there), and <see cref="StopAll"/> ends them.
 /// </summary>
 public static class LanguageServers
@@ -93,8 +93,10 @@ public static class LanguageServers
     /// <summary>
     /// The server for a file in a root folder, started there if it isn't running yet. Null when nothing is registered for
     /// the file, the command isn't on this machine, or the server couldn't be started there (which isn't tried again).
+    /// A settings override replaces the registration's settings for this instance and participates in its identity,
+    /// so files using different interpreters can have separate servers without changing the global registration.
     /// </summary>
-    public static LanguageServer? For(string path, string rootDirectory)
+    public static LanguageServer? For(string path, string rootDirectory, string? selectedSolution = null, IReadOnlyList<string>? additionalArguments = null, System.Text.Json.Nodes.JsonObject? settingsOverride = null)
     {
         if (RegistrationFor(path) is not { } entry)
             return null;
@@ -104,11 +106,15 @@ public static class LanguageServers
 
         lock (gate)
         {
-            string key = Key(entry.Name, rootDirectory);
+            string? solution = entry.Arguments.Any(argument => argument.Contains("{solution}", StringComparison.Ordinal))
+                ? selectedSolution ?? SolutionIn(rootDirectory) : null;
+            string key = Key(entry.Name, rootDirectory) + "\n" + (solution is null ? string.Empty : Path.GetFullPath(solution))
+                + "\n" + string.Join('\0', additionalArguments ?? []) + "\n" + settingsOverride?.ToJsonString();
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, ArgumentsIn(entry.Arguments, rootDirectory), entry.LanguageId, rootDirectory, SettingsIn(entry.Settings, rootDirectory)) : null;
+            string[] arguments = [.. ArgumentsIn(entry.Arguments, rootDirectory, solution), .. additionalArguments ?? []];
+            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, arguments, entry.LanguageId, rootDirectory, SettingsIn(settingsOverride ?? entry.Settings, rootDirectory)) : null;
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
@@ -122,12 +128,12 @@ public static class LanguageServers
     /// it. csharp-ls looks for solutions all the way down and loads the first it likes, Fighter2D's was the engine's in
     /// its external folder, and nothing of the game's own code had a hover or a definition.
     /// </summary>
-    internal static string[] ArgumentsIn(string[] arguments, string rootDirectory)
+    internal static string[] ArgumentsIn(string[] arguments, string rootDirectory, string? selectedSolution = null)
     {
         if (!arguments.Any(argument => argument.Contains("{solution}", StringComparison.Ordinal)))
             return arguments;
 
-        string? solution = SolutionIn(rootDirectory);
+        string? solution = selectedSolution ?? SolutionIn(rootDirectory);
         var filled = new List<string>(arguments.Length);
         foreach (string argument in arguments)
         {
@@ -147,7 +153,7 @@ public static class LanguageServers
     }
 
     /// <summary>The solution of a folder, in it and not under it, the one named after the folder first, null for none.</summary>
-    internal static string? SolutionIn(string folder)
+    public static string? SolutionIn(string folder)
     {
         try
         {
@@ -182,43 +188,21 @@ public static class LanguageServers
     /// <summary>The servers that were started, running or not. The same array until one starts or stops, nothing to iterate it costs.</summary>
     public static IReadOnlyList<LanguageServer> Running => started;
 
-    /// <summary>Whether a command can be started, a file that is there or a program on the PATH (with PATHEXT's endings on Windows).</summary>
-    public static bool IsAvailable(string command)
+    /// <summary>Retires one unused server instance without stopping other roots of the same language.</summary>
+    public static Task Stop(LanguageServer server)
     {
-        if (command.Length == 0)
-            return false;
-
-        if (command.Contains(Path.DirectorySeparatorChar) || command.Contains(Path.AltDirectorySeparatorChar))
-            return File.Exists(command);
-
-        string[] endings = OperatingSystem.IsWindows()
-            ? (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.CMD;.BAT;.COM").Split(';', StringSplitOptions.RemoveEmptyEntries)
-            : [];
-
-        foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        lock (gate)
         {
-            string candidate;
-            try
-            {
-                candidate = Path.Combine(folder.Trim('"'), command);
-            }
-            catch (ArgumentException)
-            {
-                continue;
-            }
-
-            if (File.Exists(candidate))
-                return true;
-
-            foreach (string ending in endings)
-            {
-                if (File.Exists(candidate + ending))
-                    return true;
-            }
+            string? key = running.FirstOrDefault(pair => ReferenceEquals(pair.Value, server)).Key;
+            if (key is null) return Task.CompletedTask;
+            running.Remove(key);
+            started = [.. running.Values.OfType<LanguageServer>()];
         }
-
-        return false;
+        return Task.Run(server.Dispose);
     }
+
+    /// <summary>Whether a command can be started, a file that is there or a program on the PATH (with PATHEXT's endings on Windows).</summary>
+    public static bool IsAvailable(string command) => LanguageServerProgram.Locate(command) is not null;
 
     /// <summary>
     /// Shuts down the servers started in a folder or anywhere in it, off the caller's thread, done when their processes

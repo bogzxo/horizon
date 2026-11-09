@@ -6,6 +6,27 @@ namespace Horizon.Tests;
 
 public class SimulationLoopTests
 {
+    [Fact]
+    public void Idle_deadlines_choose_the_earliest_change_and_expire_after_a_tick()
+    {
+        long now = Seconds(1);
+        using var loop = new SimulationLoop(120, 120, new Recorder(), () => now) { IdlePeriod = 0.25 };
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(0.53);
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(0.04);
+        loop.RequestTickIn(0.12);
+        now += Seconds(0.01);
+        Assert.Equal(0.03, loop.IdleWaitSeconds, 6);
+        now += Seconds(0.04);
+        Assert.Equal(0, loop.IdleWaitSeconds);
+        loop.Step();
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+        loop.RequestTickIn(double.NaN);
+        loop.RequestTickIn(-1);
+        Assert.Equal(0.25, loop.IdleWaitSeconds, 6);
+    }
+
     private sealed class Recorder : ISimulationHost
     {
         public readonly List<string> Calls = [];
@@ -66,6 +87,47 @@ public class SimulationLoopTests
         Assert.All(host.LogicDeltas, dt => Assert.Equal(1.0f / 120.0f, dt, 1e-6f));
         Assert.All(host.PhysicsDeltas, dt => Assert.Equal(1.0f / 120.0f, dt, 1e-6f));
         Assert.Equal(1.0, loop.Time, 6);
+    }
+
+    [Fact]
+    public void An_application_that_falls_behind_makes_one_long_tick_and_keeps_to_real_time()
+    {
+        var host = new Recorder();
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, host, () => now) { StretchWhenBehind = true };
+
+        loop.Step();
+        now += Seconds(0.01);
+        loop.Step();
+
+        // Three and a half ticks late, one tick of all of it rather than four to catch up
+        now += Seconds(0.045);
+        loop.Step();
+
+        Assert.Equal(3, host.LogicDeltas.Count);
+        Assert.Equal(0.045f, host.LogicDeltas[^1], 1e-4f);
+        Assert.Equal(now, host.Stamps[^1]);
+        Assert.Equal(0.065, loop.Time, 4);
+
+        // And back to a tick at a time from there
+        now += Seconds(0.01);
+        loop.Step();
+        Assert.Equal(0.01f, host.LogicDeltas[^1], 1e-4f);
+    }
+
+    [Fact]
+    public void A_game_that_falls_behind_still_catches_up_a_tick_at_a_time()
+    {
+        var host = new Recorder();
+        long now = Seconds(1.0);
+        var loop = new SimulationLoop(100, 100, host, () => now);
+
+        loop.Step();
+        now += Seconds(0.035);
+        loop.Step();
+
+        Assert.Equal(4, host.LogicDeltas.Count);
+        Assert.All(host.LogicDeltas, dt => Assert.Equal(0.01f, dt, 1e-6f));
     }
 
     [Fact]
@@ -216,6 +278,23 @@ public class SimulationLoopTests
 
 public class SimulationContextTests
 {
+    [Fact]
+    public void Posting_work_wakes_a_sleeping_application_without_waiting_for_its_idle_period()
+    {
+        using var sleeping = new ManualResetEventSlim();
+        using var completed = new ManualResetEventSlim();
+        using var loop = new SimulationLoop("Idle wake test", 120, 120, new Idle())
+        {
+            IdlePeriod = 10,
+            IsIdle = () => { sleeping.Set(); return true; }
+        };
+        loop.Start();
+        Assert.True(sleeping.Wait(TimeSpan.FromSeconds(2)));
+        loop.Context.Post(_ => completed.Set(), null);
+        Assert.True(completed.Wait(TimeSpan.FromSeconds(1)), "Posted work waited for the ten-second idle timeout.");
+        loop.Stop();
+    }
+
     private sealed class Idle : ISimulationHost
     {
         public void BeginTick() { }

@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.HIDL;
@@ -30,7 +31,7 @@ public sealed partial class UISkin
     private static Dictionary<string, IRuntimeValue> ReadProperties(string directory, string file, int depth)
     {
         string path = Path.Combine(directory, file);
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
             throw new FileNotFoundException($"'{path}' doesn't exist.");
         if (depth > MAX_INHERITANCE)
             throw new Exception($"'{path}' inherits from itself.");
@@ -50,8 +51,8 @@ public sealed partial class UISkin
     /// </summary>
     private static ObjectValue Evaluate(string path, string name)
     {
-        HIDLRuntime runtime = new();
-        var (success, message) = runtime.Evaluate(File.ReadAllText(path));
+        HIDLRuntime runtime = new HIDLRuntime().ReadingContent();
+        var (success, message) = runtime.Evaluate(ContentFiles.ReadAllText(path));
         if (!success)
             throw new Exception($"'{path}': {message}");
 
@@ -81,9 +82,9 @@ public sealed partial class UISkin
         }
 
         string folder = Path.Combine(directory, UITheme.FOLDER);
-        if (Directory.Exists(folder))
+        if (ContentFiles.DirectoryExists(folder))
         {
-            foreach (string file in Directory.GetFiles(folder, "*.hor").Order(StringComparer.OrdinalIgnoreCase))
+            foreach (string file in ContentFiles.GetFiles(folder, "*.hor").Order(StringComparer.OrdinalIgnoreCase))
             {
                 string name = Path.GetFileNameWithoutExtension(file);
                 if (themes.Exists(theme => theme.Name == name))
@@ -222,9 +223,9 @@ public sealed partial class UISkin
     /// <summary>
     /// Helper method to make (or find) the font of a skin file, shared by its themes.
     /// </summary>
-    private static UIFont FontOf(string skinPath, string directory, string file, int size)
+    private static UIFont FontOf(string skinKey, string directory, string file, int size)
     {
-        var key = (skinPath, directory, file, size);
+        var key = (skinKey, directory, file, size);
         lock (fonts)
         {
             if (!fonts.TryGetValue(key, out UIFont? font))
@@ -267,7 +268,7 @@ public sealed partial class UISkin
             ? Path.Combine(directory, UIScript.ToText(textureFile, "texture"))
             : null;
 
-        UIFont skinFont = FontOf(Path.GetFullPath(Path.Combine(directory, file)), fontDirectory, fontFile, fontSize);
+        UIFont skinFont = FontOf(ContentFiles.CacheKey(Path.Combine(directory, file)), fontDirectory, fontFile, fontSize);
         var skin = new UISkin(skinFont, sheet, worn?.Name, art);
 
         // Art that was drawn big to be shown small (art_scale under one) is smoothed on its way down, pixel art
@@ -322,7 +323,7 @@ public sealed partial class UISkin
                     skin.IconBlink = MathF.Max(0.0f, UIScript.ToNumber(value, key));
                     break;
                 // Read with the colours, see ReadPalette
-                case "syntax":
+                case "syntax" or "terminal":
                     break;
                 case "icon_scale":
                     skin.IconScale = UIScript.ToNumber(value, key);
@@ -437,6 +438,8 @@ public sealed partial class UISkin
         bool syntaxGiven = properties.TryGetValue("syntax", out var syntax);
         if (syntaxGiven)
             ReadSyntax(palette.Syntax, syntax!);
+        if (properties.TryGetValue("terminal", out var terminal))
+            ReadTerminal(palette, terminal);
 
         palette.Derive(given, syntaxGiven);
     }
@@ -453,6 +456,21 @@ public sealed partial class UISkin
         {
             if (!colors.Set(name, UIScript.ToColor(color, $"syntax.{name}")))
                 throw new Exception($"'{name}' isn't something code is coloured by.");
+        }
+    }
+
+    /// <summary>
+    /// The colours of a terminal a skin (or a theme) wants its own way, by the names of the sixteen (red, bright_red).
+    /// </summary>
+    private static void ReadTerminal(UIPalette palette, IRuntimeValue value)
+    {
+        if (value is not ObjectValue terminal)
+            throw new Exception("terminal has to be an object, a colour under the name of each of the sixteen it changes.");
+
+        foreach (var (name, color) in terminal.Properties)
+        {
+            if (!palette.SetTerminal(name, UIScript.ToColor(color, $"terminal.{name}")))
+                throw new Exception($"'{name}' isn't one of a terminal's sixteen colours, they're {string.Join(", ", UIPalette.TerminalNames)}.");
         }
     }
 

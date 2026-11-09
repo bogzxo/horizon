@@ -14,7 +14,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using Button = Horizon.UI.Components.Button;
 
@@ -357,7 +357,7 @@ public sealed partial class SkylineDebugger : GameObject, IGameDebugger
         Vector2 size = Engine.WindowManager.ViewportSize;
         float shown = dock.Bounds.Width > 0.0f ? dock.GameRect.Width / dock.Bounds.Width : 1.0f;
         string scene = Engine.Scene is { } current ? current.GetType().Name : "no scene";
-        dock.Caption = $"{scene}   {size.X:0} x {size.Y:0}, shown at {shown:0%}";
+        dock.Caption = $"{scene}   {size.X:0} × {size.Y:0}, shown at {shown:0%}";
     }
 
     /* Drawing, which is the last thing in the frame */

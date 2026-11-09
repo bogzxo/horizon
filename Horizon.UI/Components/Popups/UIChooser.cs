@@ -7,7 +7,7 @@ namespace Horizon.UI.Components;
 
 /// <summary>
 /// One of a list picked in a palette, narrowed down by what is typed (a piece of it, or the letters starting its words),
-/// enter or a click on the chosen row picks and escape goes. A command palette and every chooser of a program, Hex's quick
+/// Enter or one click on a row picks; Escape or an outside press cancels. A command palette and every chooser of a program, Hex's quick
 /// open with its prefixes (> for commands, @ for something in the file) among them. It's a card hanging under the top of
 /// the window, Spotlight's, a box to type in with the title written in it until something is, the list under a hairline,
 /// and the line about what can be typed quietly at the bottom. A choice written <c>"Menu: What it does   (Ctrl+K)"</c> is shown
@@ -18,9 +18,9 @@ namespace Horizon.UI.Components;
 /// it. Only for the list the dialog started with, a prefix's list is a list of its own.
 /// </para>
 /// </summary>
-public static class UIChooser
+public static partial class UIChooser
 {
-    private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.13f;
+    private const float WIDTH = 640.0f, BOX_HEIGHT = 40.0f, BOX_TEXT = 0.18f, TEXT = 0.15f, HINT_TEXT = 0.14f;
 
     // How far in from the card's edge the line along the bottom is written, where the rows' text starts
     private const float HINT_INSET = 12.0f;
@@ -34,35 +34,61 @@ public static class UIChooser
     /// <param name="typed">What's in the box as it opens, ":" for the lines of a file, the way VS Code's Ctrl+G opens.</param>
     public static UIDialog Show(UIModule module, string title, string message, List<(string Text, Action Picked)> choices,
         string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<(string Text, Action Picked)>?>? prefixed = null,
-        UIRecentList? recent = null, string typed = "")
+        UIRecentList? recent = null, string typed = "") =>
+        Show(module, title, message, Rows(choices), placeholder, shortestFirst,
+            prefixed is null ? null : prefix => prefixed(prefix) is { } some ? Rows(some) : null, recent, typed);
+
+    /// <summary>Rows written the old way, <c>"File: Save   (Ctrl+S)"</c>, as rows in their parts (<see cref="UIChoice.Of"/>).</summary>
+    public static List<UIChoice> Rows(List<(string Text, Action Picked)> choices) => [.. choices.Select(choice => UIChoice.Of(choice.Text, choice.Picked))];
+
+    /// <summary>
+    /// The chooser of rows in their parts, the menu quiet in front, a symbol, a folder or an author dim after, keys as
+    /// keycaps, and the letters typed lit up in the accent. Rows are told apart, narrowed down and remembered by their
+    /// <see cref="UIChoice.Id"/>.
+    /// </summary>
+    /// <param name="searched">
+    /// The lists that are searched off the UI thread for what is typed rather than narrowed down (see
+    /// <see cref="UIChoiceSearch"/>), by their prefix, '\0' for the one the dialog started with. Null for one that isn't.
+    /// </param>
+    public static UIDialog Show(UIModule module, string title, string message, List<UIChoice> choices,
+        string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<UIChoice>?>? prefixed = null,
+        UIRecentList? recent = null, string typed = "", Func<char, UIChoiceSearch?>? searched = null)
     {
         string[] texts = [];
-        var byText = new Dictionary<string, Action>();
+        var byText = new Dictionary<string, UIChoice>();
         char showing = '￿';
-
-        // The list that is being narrowed down, the one the dialog started with or another for a prefix
-        void Use(char prefix, List<(string Text, Action Picked)> from)
-        {
-            showing = prefix;
-            texts = [.. from.Select(choice => choice.Text)];
-            byText.Clear();
-            foreach (var (text, picked) in from)
-                byText.TryAdd(text, picked);
-        }
-
-        Use('\0', choices);
-
         ListBox list = null!;
         Label nothing = null!;
+        UIDialog shown = null!;
+
+        // The search of the list that's showing, when it's searched, the one going, what it's for and whether Enter was
+        // pressed before it came back (it picks the best of what comes back then, the way it would have had it been quick)
+        UIChoiceSearch? search = null;
+        Task<List<UIChoice>>? looking = null;
+        CancellationTokenSource? stopLooking = null;
+        string lookingFor = string.Empty;
+        bool pickWhenFound = false;
+
+        // The list that is being narrowed down, the one the dialog started with or another for a prefix
+        void Use(char prefix, List<UIChoice> from)
+        {
+            showing = prefix;
+            byText.Clear();
+            foreach (UIChoice choice in from)
+                byText.TryAdd(choice.Id, choice);
+            texts = [.. byText.Keys];
+            list.IconRoom = byText.Values.Any(choice => choice.Icon.Length > 0);
+        }
+
         void PickChosen()
         {
-            if (list.Index < 0 || list.Index >= list.Items.Length || !byText.TryGetValue(list.Items[list.Index], out Action? picked))
+            if (list.Index < 0 || list.Index >= list.Items.Length || !byText.TryGetValue(list.Items[list.Index], out UIChoice? picked))
                 return;
 
             // Remembered before it runs, what it runs might well open another chooser
             if (showing == '\0')
                 recent?.Remember(list.Items[list.Index]);
-            picked();
+            picked.Picked();
         }
 
         // What is left for what was typed, the ones picked last first when it's the list the dialog started with
@@ -77,8 +103,10 @@ public static class UIChooser
             // Trigger Completion under Close and Close All
             int best = ranked.Count > 0 ? ranked.Min(pair => pair.Rank) : 0;
             var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE).OrderBy(pair => pair.Rank);
+
+            // Files, a backup or a picture after the code as good as it, a short a.bak sat over Program.cs
             if (shortestFirst && showing == '\0')
-                ordered = ordered.ThenBy(pair => Path.GetFileName(pair.Text).Length);
+                ordered = ordered.ThenBy(pair => Leftover(pair.Text)).ThenBy(pair => Path.GetFileName(pair.Text).Length);
 
             // the shorter one goes first between two as good, nothing typed keeps the list's own order
             if (query.Trim().Length > 0)
@@ -89,7 +117,8 @@ public static class UIChooser
                 ? [.. recent.Items.Where(text => byText.ContainsKey(text) && Matches(text, query))]
                 : [];
             list.Lead = lead.Length;
-            list.Items = lead.Length == 0 ? [.. left.Take(MOST)] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST)];
+            list.Query = query;
+            list.Items =lead.Length == 0 ? [.. left.Take(MOST)] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST)];
             if (list.Items.Length > 0) list.Choose(0);
 
             // The card as tall as what's left and no taller, Spotlight's, and a line saying so when nothing is
@@ -99,10 +128,74 @@ public static class UIChooser
             nothing.Text = query.Trim().Length > 0 ? $"Nothing matches \"{query.Trim()}\"" : "Nothing to pick from here";
         }
 
+        // A searched list asked again for what's typed now, the last search let go of. What it found stays up until the
+        // new one comes back, so the rows don't blink away between two keys
+        void Search(string query)
+        {
+            stopLooking?.Cancel();
+            stopLooking = new CancellationTokenSource();
+            CancellationToken token = stopLooking.Token;
+            UIChoiceSearch asked = search!;
+            lookingFor = query;
+            looking = Task.Run(() =>
+            {
+                try
+                {
+                    return asked(query, token);
+                }
+                finally
+                {
+                    // It's taken in on the next tick, which an idle window wouldn't have for a while
+                    Horizon.Engine.GameEngine.Instance?.WindowManager.Wake();
+                }
+            }, token);
+
+            if (list.Items.Length == 0)
+            {
+                nothing.Text = query.Trim().Length > 0 ? LOOKING : TYPE_SOMETHING;
+                nothing.Visible = true;
+            }
+        }
+
+        // What a search came back with, put up in the order it came, every tick while one is going (a look at a field,
+        // nothing made)
+        void TakeFound()
+        {
+            if (looking is not { IsCompleted: true } done)
+                return;
+
+            looking = null;
+            if (!done.IsCompletedSuccessfully)
+                return;
+
+            byText.Clear();
+            foreach (UIChoice choice in done.Result)
+                byText.TryAdd(choice.Id, choice);
+            texts = [.. byText.Keys];
+            list.IconRoom = byText.Values.Any(choice => choice.Icon.Length > 0);
+            list.Lead = 0;
+            list.Query = lookingFor;
+            list.Items = [.. texts.Take(MOST)];
+            if (list.Items.Length > 0) list.Choose(0);
+            list.Visible = list.Items.Length > 0;
+            nothing.Visible = !list.Visible;
+            nothing.Text = lookingFor.Trim().Length > 0 ? $"Nothing matches \"{lookingFor.Trim()}\"" : TYPE_SOMETHING;
+
+            if (pickWhenFound)
+            {
+                pickWhenFound = false;
+                if (shown.IsOpen && list.Items.Length > 0)
+                {
+                    shown.Close();
+                    PickChosen();
+                }
+            }
+        }
+
         // The title is what the box says until something's typed, the line about it goes quietly along the bottom
-        UIDialog shown = UIDialog.ShowPalette(module, title, new DialogChoice("Go", PickChosen), new DialogChoice("Cancel"));
+        shown = UIDialog.ShowPalette(module, title, new DialogChoice("Go", PickChosen), new DialogChoice("Cancel"));
         Vector4 edge = module.Compositor.Skin?.BorderColor ?? new Vector4(1.0f, 1.0f, 1.0f, 0.1f);
-        var picking = shown.Body.Add(new StackPanel { Spacing = 6.0f });
+        var picking = shown.Body.Add(new ChooserPanel { Spacing = 6.0f });
         TextBox box = picking.Add(new TextBox
         {
             Size = new Vector2(WIDTH, BOX_HEIGHT),
@@ -113,29 +206,137 @@ public static class UIChooser
             Bare = true,
             LeadIcon = "search"
         });
-        picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
-        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, Columns = Columns });
+        Panel divider = picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
+        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, ActivateOnClick = true, Choice = id => byText.GetValueOrDefault(id) });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
-        // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
-        // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
-        if (message.Length > 0)
+        // What the highlighted row would do, under the list while any row has something to say of it
+        Panel? previewBox = null;
+        Label? preview = null;
+        string? previewOf = null;
+        if (choices.Exists(choice => choice.Preview.Length > 0))
         {
-            Panel foot = picking.Add(new Panel { Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
-            foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
+            previewBox = picking.Add(new Panel { Size = new Vector2(WIDTH, 0.0f), Padding = new UIEdges(HINT_INSET, 6.0f, HINT_INSET, 2.0f), Anchor = Origin.Left, Visible = false });
+            preview = previewBox.Add(new Label { Markdown = true, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft });
         }
 
+        // The preview of the row that's highlighted now, looked at every tick and only changed when the row did
+        void ShowPreview()
+        {
+            if (preview is null || previewBox is null)
+                return;
+
+            string? id = list.Visible && list.Index >= 0 && list.Index < list.Items.Length ? list.Items[list.Index] : null;
+            if (ReferenceEquals(id, previewOf))
+                return;
+
+            previewOf = id;
+            preview.Text = id is not null && byText.TryGetValue(id, out UIChoice? row) ? row.Preview : string.Empty;
+            previewBox.Visible = preview.Text.Length > 0;
+        }
+
+        // The line along the bottom in from the card's edge as far as the rows' text is. A label writes over the whole of its
+        // bounds, its padding only made it bigger, and the line sat hard against the edge of the glass
+        Panel? foot = null;
+        Label? hint = null;
+        if (message.Length > 0)
+        {
+            foot = picking.Add(new Panel { Size = new Vector2(WIDTH, 0.0f), Padding = new UIEdges(HINT_INSET, 4.0f, HINT_INSET, 2.0f), Anchor = Origin.Left });
+            hint = foot.Add(new Label { Text = message, TextScale = HINT_TEXT, Wrap = true, Size = new Vector2(WIDTH - HINT_INSET * 2.0f, 0.0f), Align = Origin.TopLeft, Color = module.Compositor.Skin?.DimTextColor });
+        }
+
+        // Work in module units, so the same chooser also fits an enlarged UI or a narrow editor.
+        // Keep the list scrollable instead of shrinking text or letting the card leave the window.
+        float fittedWidth = -1.0f;
+        void Fit()
+        {
+            float width = MathF.Min(WIDTH, MathF.Max(1.0f, module.Frame.Width - 48.0f));
+            if (width != fittedWidth)
+            {
+                fittedWidth = width;
+                box.Size = new Vector2(width, BOX_HEIGHT);
+                divider.Size = new Vector2(width, 1.0f);
+                list.Size = new Vector2(width, 0.0f);
+                nothing.Size = new Vector2(width, 64.0f);
+                if (previewBox is not null && preview is not null)
+                {
+                    previewBox.Size = new Vector2(width, 0.0f);
+                    preview.Size = new Vector2(MathF.Max(1.0f, width - HINT_INSET * 2.0f), 0.0f);
+                }
+                if (foot is not null && hint is not null)
+                {
+                    foot.Size = new Vector2(width, 0.0f);
+                    hint.Size = new Vector2(MathF.Max(1.0f, width - HINT_INSET * 2.0f), 0.0f);
+                }
+            }
+            float rowHeight = MathF.Max(1.0f, list.RowHeightSeen > 0.0f ? list.RowHeightSeen : 32.0f);
+            float footerHeight = (foot is not null ? MathF.Max(32.0f, foot.DesiredSize.Y) : 0.0f) + (previewBox is { Visible: true } ? previewBox.DesiredSize.Y : 0.0f);
+            int rows = Math.Max(1, (int)((module.Frame.Height - UIDialog.PaletteDrop - 24.0f - BOX_HEIGHT - 26.0f - footerHeight) / rowHeight));
+            int fittedRows = Math.Clamp(list.Items.Length, 1, Math.Min(ROWS, rows));
+            if (list.Rows != fittedRows)
+            {
+                list.Rows = fittedRows;
+                list.Index = list.Index; // Keep the selection visible when fewer rows fit.
+            }
+        }
+        picking.OnFit = () =>
+        {
+            TakeFound();
+            ShowPreview();
+            Fit();
+        };
+
+        // A list that's searched starts with what it was handed (the files picked last, say) until something's typed
+        search = searched?.Invoke('\0');
+        Use('\0', choices);
         Narrow(string.Empty);
+        if (search is not null && choices.Count == 0)
+            Search(string.Empty);
+        Fit();
 
         box.OnChanged = typed =>
         {
-            char prefix = typed.Length > 0 && prefixed?.Invoke(typed[0]) is not null ? typed[0] : '\0';
+            char prefix = typed.Length > 0 && (searched?.Invoke(typed[0]) is not null || prefixed?.Invoke(typed[0]) is not null) ? typed[0] : '\0';
             if (prefix != showing)
-                Use(prefix, prefix == '\0' ? choices : prefixed!(prefix)!);
+            {
+                search = searched?.Invoke(prefix);
+                Use(prefix, search is not null ? [] : prefix == '\0' ? choices : prefixed!(prefix)!);
 
-            Narrow(prefix == '\0' ? typed : typed[1..]);
+                // The rows of the list before aren't this one's, nothing's up until the search comes back
+                if (search is not null)
+                {
+                    list.Items = [];
+                    list.Visible = false;
+                }
+            }
+
+            string query = prefix == '\0' ? typed : typed[1..];
+            if (search is not null && (query.Length > 0 || prefix != '\0' || choices.Count == 0))
+            {
+                Search(query);
+            }
+            else
+            {
+                // Back to what the dialog started with, a search that's still going has nothing to say about it
+                looking = null;
+                stopLooking?.Cancel();
+                if (search is not null)
+                    Use(prefix, choices);
+                Narrow(query);
+            }
+
+            Fit();
         };
         box.OnSubmitted = _ =>
         {
+            // Typed and Enter pressed before the search came back, the best of what it comes back with is picked
+            if (shown.IsOpen && looking is not null)
+            {
+                pickWhenFound = true;
+                return;
+            }
+
+            if (!shown.IsOpen || list.Index < 0 || list.Index >= list.Items.Length)
+                return;
             shown.Close();
             PickChosen();
         };
@@ -163,12 +364,25 @@ public static class UIChooser
         };
         list.OnActivated = _ =>
         {
+            if (!shown.IsOpen) return;
+            module.Compositor.FinishChooserClick(list);
             shown.Close();
             PickChosen();
         };
 
         box.Focus();
         return shown;
+    }
+
+    private sealed class ChooserPanel : StackPanel
+    {
+        internal Action? OnFit;
+
+        protected override void Update(float dt)
+        {
+            base.Update(dt);
+            OnFit?.Invoke();
+        }
     }
 
     /// <summary>

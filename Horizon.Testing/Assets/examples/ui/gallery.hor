@@ -16,7 +16,7 @@ let pick = compositor.stack({ parent: tabs, spacing: 12 });
 let fruit = compositor.dropdown({
     parent: pick, size: vec(480, 44), text_scale: 0.26, max_rows: 5,
     options: ["apple", "banana", "cherry", "damson", "elderberry", "fig", "grape", "honeydew", "kiwi", "lemon", "mango", "nectarine"],
-    value: "elderberry"
+    value: "elderberry",
 });
 let difficulty = compositor.selector({ parent: pick, size: vec(480, 44), text_scale: 0.26, options: ["Easy", "Normal", "Hard"], value: "Normal" });
 
@@ -43,7 +43,7 @@ let stage_column = compositor.stack({ parent: lists, spacing: 8, anchor: "top" }
 let stage_title = compositor.label({ parent: stage_column, text: "A list box", text_scale: 0.24 });
 let stage = compositor.list({
     parent: stage_column, size: vec(260, 0), rows: 6, text_scale: 0.24,
-    items: ["Dojo", "Harbour", "Rooftop", "Subway", "Temple", "Junkyard", "Arcade", "Bridge", "Cellar", "Town"]
+    items: ["Dojo", "Harbour", "Rooftop", "Subway", "Temple", "Junkyard", "Arcade", "Bridge", "Cellar", "Town"],
 });
 
 // A scroll panel is a window onto something taller than it. Its rows come out of a template, the game says how many
@@ -71,7 +71,7 @@ let clan = compositor.textbox({ parent: text, placeholder: "clan, tab gets you h
 // Give a label a width and tell it to wrap, and it breaks its own lines and grows downwards to fit them
 let about = compositor.label({
     parent: text, size: vec(620, 0), wrap: true, align: "top_left", text_scale: 0.22,
-    text: "This label wraps. Whatever does not fit on a line goes onto the next one, broken between words, and the label grows to make room. Icons go in the middle of text too, [icon:pad_a] to confirm and [icon:pad_b] to go back."
+    text: "This label wraps. Whatever does not fit on a line goes onto the next one, broken between words, and the label grows to make room. Icons go in the middle of text too, [icon:pad_a] to confirm and [icon:pad_b] to go back.",
 });
 
 // The game puts the on screen keyboard in here, it types into the first box

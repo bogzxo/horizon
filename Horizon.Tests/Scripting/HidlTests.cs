@@ -448,6 +448,10 @@ public class HidlTests
 
         error = Assert.Throws<ParseException>(() => HIDLRuntime.Parse("\"unterminated"));
         Assert.Equal(1, error.Line);
+
+        // A string never closed is about the whole of what's left of its line, an editor underlines all of it
+        error = Assert.Throws<ParseException>(() => HIDLRuntime.Parse("let y = \"abc\r\nlet z = 1;"));
+        Assert.Equal((1, 9, 4), (error.Line, error.Col, error.Length));
     }
 
     [Fact]
@@ -484,6 +488,19 @@ public class HidlTests
         Assert.Equal("@", tokens[4].Value);
         Assert.Equal(TokenType.Number, tokens[5].Type);
         Assert.Throws<ParseException>(() => Lexer.Tokenize("let x = \"open"));
+    }
+
+    [Fact]
+    public void DigitsOfOtherScriptsAreNoNumbers()
+    {
+        // An N'Ko digit and an Arabic-Indic one, what a png opened as text is full of. float.Parse took Hex down on them
+        Token[] tokens = Lexer.Tokenize("1߁2 ٣", lenient: true);
+
+        Assert.Equal(TokenType.Number, tokens[0].Type);
+        Assert.Equal("1", tokens[0].Value);
+        Assert.Equal(TokenType.Unknown, tokens[1].Type);
+        Assert.Equal(TokenType.Number, tokens[2].Type);
+        Assert.Equal(TokenType.Unknown, tokens[3].Type);
     }
 
     [Fact]

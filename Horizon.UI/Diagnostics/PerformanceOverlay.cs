@@ -2,7 +2,7 @@ using Horizon.Rendering;
 
 using Horizon.Engine;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI;
 
@@ -33,7 +33,8 @@ public enum PerformanceDetail
 /// engine.AddEntity(new PerformanceOverlay());                          // the minimal one, F3 for the lot
 /// engine.AddEntity(new PerformanceOverlay(PerformanceDetail.Off));     // not there until F3
 /// </code>
-/// F3 goes Off, Compact, Full and round again (<see cref="ToggleKey"/>, null for no key, then set <see cref="Detail"/>
+/// A tap or a click on it goes between the minimal one and the full one, which is all a phone has instead of the key
+/// (<see cref="TapToggles"/>). F3 goes Off, Compact, Full and round again (<see cref="ToggleKey"/>, null for no key, then set <see cref="Detail"/>
 /// yourself, from an options screen say). It sits on a screen UI of its own over everything else, drawn in the plain
 /// flat skin so it reads the same in every game. What it looks like is two layouts made in Hex like any other UI
 /// (Assets/uix/diagnostics, open them there to move things about), filled in by <see cref="PerformanceFace"/> out
@@ -84,11 +85,18 @@ public sealed class PerformanceOverlay : GameObject
     private Key? capped;
     private bool keyed;
 
+    // A press on the pill or the card, where it went down, and whether the pointer was down the update before
+    private bool pressedOn, wasDown;
+    private System.Numerics.Vector2 pressedAt;
+
     /// <summary>How much is shown, see <see cref="PerformanceDetail"/>. From any thread.</summary>
     public PerformanceDetail Detail { get; set; }
 
     /// <summary>The key that goes round the levels of detail, null for none.</summary>
     public Key? ToggleKey { get; set; } = Key.F3;
+
+    /// <summary>Whether a tap or a click on it swaps the minimal one for the full one and back.</summary>
+    public bool TapToggles { get; set; } = true;
 
     /// <summary>Which corner of the screen it sits in.</summary>
     public Origin Corner { get; set; } = Origin.TopRight;
@@ -180,6 +188,37 @@ public sealed class PerformanceOverlay : GameObject
 
         // The UI of the overlay goes along with it, off or on
         base.UpdateState(dt);
+
+        // Its own UI has routed the pointer by now, a press and a let go on whichever of the two is up swaps them
+        if (TapToggles && detail != PerformanceDetail.Off)
+            TapToToggle(detail == PerformanceDetail.Full ? face.Card : face.Pill);
+        else
+            pressedOn = wasDown = false;
+    }
+
+    /// <summary>
+    /// Helper method to go between the minimal one and the full one when the pointer (the mouse or a finger) is pressed
+    /// and let go of on it without wandering off, a scroll that happened to start on it isn't a tap.
+    /// </summary>
+    private void TapToToggle(Components.UIComponent up)
+    {
+        UIPointer pointer = ui.Pointer;
+        System.Numerics.Vector2 at = module.ToLocal(pointer.Position);
+        bool over = up.Visible && up.Bounds.Contains(at);
+
+        if (pointer.Down && !wasDown)
+        {
+            pressedOn = over;
+            pressedAt = at;
+        }
+        else if (!pointer.Down && wasDown && pressedOn)
+        {
+            pressedOn = false;
+            if (over && System.Numerics.Vector2.Distance(at, pressedAt) <= ui.TouchSlop * 2.0f)
+                Detail = Detail == PerformanceDetail.Full ? PerformanceDetail.Compact : PerformanceDetail.Full;
+        }
+
+        wasDown = pointer.Down;
     }
 
     public override void Render(float dt)

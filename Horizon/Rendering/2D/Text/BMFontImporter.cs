@@ -1,4 +1,5 @@
-﻿using Horizon.Logging;
+using Horizon.Content;
+using Horizon.Logging;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -54,12 +55,12 @@ public class BMFontImporter
 
         public static (CharDefinition[] definitions, string imgPath) Parse(in string bmFile)
         {
-            if (!File.Exists(bmFile))
+            if (!ContentFiles.Exists(bmFile))
             {
                 Log.Error($"[BMFont Parser] Couldn't find file '{bmFile}'!");
                 return (Array.Empty<CharDefinition>(), string.Empty);
             }
-            string[] lines = File.ReadAllLines(bmFile);
+            string[] lines = ContentFiles.ReadAllLines(bmFile);
             return ParseTokens(Tokenize(lines));
         }
 
@@ -296,10 +297,10 @@ public class BMFontImporter
     // The char parser skips the header, so the "common" line is picked out separately.
     private void ReadCommon(string bmFile)
     {
-        if (!File.Exists(bmFile))
+        if (!ContentFiles.Exists(bmFile))
             return;
 
-        foreach (string line in File.ReadLines(bmFile))
+        foreach (string line in ContentFiles.ReadAllLines(bmFile))
         {
             if (!line.StartsWith("common"))
                 continue;

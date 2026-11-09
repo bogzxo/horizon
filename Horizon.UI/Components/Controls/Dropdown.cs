@@ -296,13 +296,12 @@ public class Dropdown : UIComponent
         Vector2 pointer = Module is { } owner ? owner.ToLocal(owner.Compositor.Pointer.Position) : default;
 
         // From where the glide has got to, the row half out at the top cut off at the list's edge and one more at the
-        // bottom, in steps while it glides (see UIScrollEase)
+        // bottom
         int from = (int)MathF.Floor(shownRow);
         float slide = (shownRow - from) * Bounds.Height;
-        bool gliding = shownRow != firstRow;
         list.PushClip(bounds.Shrink(new UIEdges(LIST_BORDER)));
-        if (gliding)
-            list.BeginSteps();
+        // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        list.PushFrame(new Vector2(0.0f, shownRow * Bounds.Height));
         for (int row = 0; row <= VisibleRows && from + row < options.Length; row++)
         {
             int option = from + row;
@@ -322,8 +321,7 @@ public class Dropdown : UIComponent
                 markup: false);
         }
 
-        if (gliding)
-            list.EndSteps();
+        list.PopFrame();
         list.PopClip();
         list.EndParts();
 
@@ -375,10 +373,16 @@ public class Dropdown : UIComponent
             return IsOpen;
 
         // A row per notch, and never less than one for a wheel that turns in smaller steps than that.
-        int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta))) * MathF.Sign(delta);
+        BeginScrollMotion(shownRow != firstRow);
+        wheelRemainder += delta;
+        int rows = (int)wheelRemainder;
+        wheelRemainder -= rows;
         firstRow = Math.Clamp(firstRow - rows, 0, options.Length - VisibleRows);
         return true;
     }
+
+    private float wheelRemainder;
+    protected internal override bool UsesScrollSpeed => true;
 
     protected override void Update(float dt)
     {
@@ -386,7 +390,8 @@ public class Dropdown : UIComponent
         if (shownRow == firstRow)
             return;
 
-        shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        float scrollDt = ScrollMotionDelta(dt);
+        shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(firstRow - shownRow) < 0.01f)
             shownRow = firstRow;
     }

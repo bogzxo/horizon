@@ -22,13 +22,23 @@ namespace Horizon.UI.Components;
 /// a warning, a dotted line in the text's colour and no mark in the gutter. One is a warning as well, for whoever only
 /// tells what's wrong apart from what isn't.
 /// </param>
-public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false);
+/// <param name="Deprecated">Whether it says what it's about is obsolete, struck through the way ReSharper strikes it as well as marked.</param>
+public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false, bool Deprecated = false)
+{
+    /// <summary>The language server's web documentation for this diagnostic code.</summary>
+    public string? DocumentationUrl { get; init; }
+    public IReadOnlyList<UICodeDiagnosticLocation>? RelatedLocations { get; init; }
+}
+
+/// <summary>A source location the server associates with a diagnostic, such as an earlier declaration.</summary>
+public readonly record struct UICodeDiagnosticLocation(string File, int Line, int Column, string Message);
 
 /// <summary>Something a <see cref="CodeEditor"/> offers to write where the caret is, a word it knows.</summary>
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
 /// <param name="Detail">A few words about it, written fainter next to it.</param>
 /// <param name="Insert">What goes in when it is picked, the text itself unless this says otherwise.</param>
-public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "");
+/// <param name="Kind">What kind of thing it is in a language server's words (method, field, keyword), its icon, see UICompletionKinds.</param>
+public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "", string Kind = "", IReadOnlyList<UITextEdit>? AdditionalEdits = null, int? ExpectedVersion = null, UITextPosition? ReplacementEnd = null, Func<Task<UICompletionDocumentation?>>? ResolveDocumentation = null, UITextPosition? ReplacementStart = null, int? SelectionStart = null, int SelectionLength = 0);
 
 /// <summary>
 /// What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.
@@ -38,10 +48,46 @@ public readonly record struct UICompletion(string Text, string Detail = "", stri
 public readonly record struct UICompletionRequest(int Start, IReadOnlyList<UICompletion> Items, string Waiting = "");
 
 /// <summary>How a function is called, said over a call being typed, the piece from Start for Length (the argument the caret is on) in bold.</summary>
-public readonly record struct UISignature(string Text, int Start, int Length);
+public readonly record struct UISignature(string Text, int Start, int Length)
+{
+    /// <summary>The native method documentation, as plain prose for the signature popup.</summary>
+    public string Documentation { get; init; } = string.Empty;
+
+    /// <summary>Documentation for the parameter currently being entered, when supplied by the server.</summary>
+    public string ParameterDocumentation { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Every overload of the call, this one among them, each with its own argument picked out. Null (or one) for a call
+    /// with no others. Up and down go through them while it's said, Visual Studio's way.
+    /// </summary>
+    public IReadOnlyList<UISignature>? Overloads { get; init; }
+
+    /// <summary>Which of the overloads this one is, the one the language server thought best.</summary>
+    public int Active { get; init; }
+}
 
 /// <summary>A few words written faintly after the end of a line, the value a let came to in Hex (Light Table's inline results).</summary>
 public readonly record struct UICodeHint(int Line, string Text);
+
+/// <summary>What happened to some lines since a version they're measured against, the last commit say.</summary>
+public enum UILineChangeKind
+{
+    Added,
+    Modified,
+
+    /// <summary>Lines taken out from just before <see cref="UICodeLineChange.Line"/>, which has nothing to colour so it gets a wedge at its top.</summary>
+    Deleted,
+
+    /// <summary>Lines that are there to show what was taken out (a diff shows them), a bar of the error colour like added's of success.</summary>
+    Removed
+}
+
+/// <summary>A run of lines with a colour behind them right across, from a line (0 based) for so many, the lines a diff took out or put in.</summary>
+public readonly record struct UICodeLineHighlight(int Line, int Count, Vector4 Colour);
+public readonly record struct UICodeOccurrence(int Line, int Column, int Length, int Kind);
+
+/// <summary>A run of lines that changed, from a line (0 based) for so many, drawn as a bar down the gutter beside them.</summary>
+public readonly record struct UICodeLineChange(int Line, int Count, UILineChangeKind Kind);
 
 /// <summary>
 /// HIDL code to edit, which is what every .hor file is. Coloured in by the language's own lexer the way a
@@ -58,20 +104,22 @@ public readonly record struct UICodeHint(int Line, string Text);
 /// </summary>
 public partial class CodeEditor : UIComponent
 {
-    // How many characters wide the gap between the line numbers and the code is, and the room either side of the code
-    private const int GUTTER_GAP = 2;
+    // How many characters wide the room between the line numbers and the code is (the chevron and the change's bar go in
+    // it), and the room either side of the code
+    private const float GUTTER_GAP = 2.5f;
     private const float TEXT_PAD = 6.0f;
+
+    // How far up from the bottom edge a row cut off by it fades out over, a share of a line
+    private const float BOTTOM_FADE = 0.5f;
 
     // How long after the last change the code is parsed again, how often the caret blinks, and the double click
     private const float CHECK_DELAY = 0.35f;
     private const float BLINK = 0.53f;
     private const double DOUBLE_CLICK = 0.4;
 
-    private const float BAR_WIDTH = 6.0f;
+    private const float BAR_WIDTH = UIScrollBar.WIDTH;
     private const int WHEEL_LINES = 3;
 
-    // How many spaces wide a tab is drawn, the font has no tab of its own
-    private const int TAB_SPACES = 4;
 
     // The list of what can be completed, as many rows as it shows at once and the most it holds
     private const int COMPLETION_ROWS = 10;
@@ -94,6 +142,26 @@ public partial class CodeEditor : UIComponent
     // The parts of what is drawn that are counted apart, see UIDrawList.BeginPart. Lines count from 0 on their own
     private const int PART_BACK = -1, PART_OVERLAY = -2, PART_CARET = -3, PART_BAR = -4, PART_SWATCHES = -5, PART_BACKDROP = -6, PART_STICKY = -7, PART_SIGNATURE = -8, PART_ART = -9, PART_GUTTER = 1 << 20;
 
+    // Well clear of the lens rows' parts, which count down from -11 by line
+    private const int PART_BRACKETS = -(1 << 30), PART_RULERS = -(1 << 30) + 1;
+
+    // What a row has painted under its text, each a part of the row's own (see RowPart)
+    private const int ROW_BEHIND = 1, ROW_GUIDES = 2, ROW_WHITESPACE = 3, ROW_SELECTED = 4;
+
+    // What a squiggle's part is worked out from, with where it is
+    private const int PART_SQUIGGLE = 5;
+
+    // How many rows past either edge of what's in sight are painted, out of sight, for the next tick to blend from
+    private const int ROWS_AROUND = 3;
+
+    /// <summary>
+    /// Helper method for the part one row paints something in, by what the row is (its line and where it starts) the way
+    /// its text is. The guides and the dots of the whitespace were all one part for every row in sight, counted down the
+    /// screen, so a row scrolled into sight or a selection a row longer had every one after it blended with another's for
+    /// a frame, and the blank lines filled up with dots and guides on their way somewhere else.
+    /// </summary>
+    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens) & 0x3FFFFFFF;
+
     private readonly UITextDocument document = new();
 
     // The colouring of every line, and the colours written in it. Worked out for the whole file, 1.7 ms and a megabyte for
@@ -102,6 +170,10 @@ public partial class CodeEditor : UIComponent
     // the last colouring found it starts (FreshColours), it was drawn plain for a tenth of a second. What colours it is
     // the highlighter, HIDL unless the file is another language (CodeLanguages)
     private const float RECOLOUR_DELAY = 0.05f;
+
+    // How many lines a new text has coloured on the spot, a screen or so, the rest is coloured on the pool
+    private const int COLOUR_AT_ONCE = 300;
+
     private List<SyntaxSpan>[] spans = [[]];
     private string[] colouredLines = [];
     private CodeLineStart[] lineStarts = [CodeLineStart.First];
@@ -112,7 +184,11 @@ public partial class CodeEditor : UIComponent
     private bool recolourNow = true;
 
     // The colouring going on off the editor's thread, and the lines coloured on their own while it does, by their text
-    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art);
+    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art, ICodeHighlighter Reader);
+
+    // What the colours there are now were worked out by, null for none (plain text), the next colouring goes on from them
+    // when it's the same
+    private ICodeHighlighter? colouredWith;
 
     // The art named in the code, found with the colours, where the last paint put each of it (nothing for what it couldn't
     // draw), which of it the pointer is on, and where the pictures named in it are on disk by the name, asked once a name
@@ -133,11 +209,24 @@ public partial class CodeEditor : UIComponent
     private readonly List<UITextPosition> occurrences = [];
     private int occurrenceLength;
     private (int Version, UITextPosition Caret) occurrencesFor = (-1, default);
+
+    // How long the typing has to stop before the word's other places are looked for again. Looked for on every key, a
+    // file of twenty thousand lines was gone through a line at a time for every letter typed
+    private const float OCCURRENCES_AFTER = 0.1f;
+    private int occurrencesVersionSeen = -1;
+    private float occurrencesWait;
     private const int MAX_OCCURRENCES = 500;
 
     // What the hover hint was last asked about, so it is asked once for as long as the pointer stays on one word
     private (int Version, int Line, int Start) hoverFor = (-1, -1, -1);
     private string hoverText = string.Empty;
+
+    // How long the text has to stay the same before the hint is asked again after a change, and how long it has been. A
+    // hint can be worked out of the whole file (HIDL's is), and a pointer left resting on the code had a five thousand
+    // line .hor parsed for every key typed, sixty milliseconds a letter
+    private const float HOVER_AFTER = 0.3f;
+    private int hoverVersionSeen = -1;
+    private float hoverQuiet;
 
     // Parsing a moment after the last change, and what came of it
     private int checkedVersion = -1;
@@ -150,6 +239,9 @@ public partial class CodeEditor : UIComponent
     // rows that came into sight sat over the ones still sliding past for a frame, the text flickered as it scrolled.
     // A few pixels a tick nothing comes in over anything
     private float? scrollGoal;
+
+    // The give past the top and the bottom of the code, see UIOverscroll
+    private UIOverscroll over;
 
     // How quickly the view gets to where the wheel wants it, a share of the way left every second (most of it in a tenth)
     private const float SCROLL_EASE = 22.0f;
@@ -190,14 +282,40 @@ public partial class CodeEditor : UIComponent
         }
     }
 
-    /// <summary>The scale of the text, or zero to use the skin's.</summary>
-    public float TextScale { get; set; }
+    /// <summary>
+    /// The scale of the text, or zero to use the skin's. Changed (a zoom), the caret's line stays where it was on the
+    /// screen, or the line at the top when the caret is out of sight. The scroll is in pixels, so it went on pointing at the
+    /// same pixel of a taller or shorter text and the code slid away under the caret.
+    /// </summary>
+    public float TextScale
+    {
+        get => textScale;
+        set
+        {
+            if (value == textScale)
+                return;
+
+            KeepPlaceThroughZoom();
+            textScale = value;
+        }
+    }
+
+    private float textScale;
+
+    // The line (and column, for a wrapped one) a zoom keeps in place and how far down the view it was, null for none
+    private (int Line, int Column, float Down, float OldScale)? zoomAnchor;
 
     /// <summary>Whether the lines are numbered down the left.</summary>
     public bool LineNumbers { get; set; } = true;
 
+    /// <summary>What the first line is numbered, 1 unless it shows a piece of a file from further in (a peek at a declaration).</summary>
+    public int FirstLineNumber { get; set; } = 1;
+
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
+
+    // A soft keyboard comes up for an editor a finger focused, unless nothing can be typed into it
+    protected internal override bool WantsTextInput => !ReadOnly;
 
     /// <summary>Whether the code is parsed after every change and what the parser doesn't like is underlined.</summary>
     public bool CheckSyntax { get; set; } = true;
@@ -215,6 +333,12 @@ public partial class CodeEditor : UIComponent
         set
         {
             Highlight = value is not null;
+
+            // Ctrl+/ and Shift+Alt+A write the comments of the language, # in Python, -- in SQL, <!-- --> in HTML
+            CodeComment comment = CodeComments.For(value);
+            document.LineComment = comment.Line;
+            document.BlockComment = (comment.BlockStart, comment.BlockEnd);
+
             if (value is not null && !ReferenceEquals(value, highlighter))
             {
                 highlighter = value;
@@ -230,6 +354,12 @@ public partial class CodeEditor : UIComponent
     /// narrowed down to what matches what is typed between its start and the caret, as the typing goes on.
     /// </summary>
     public Func<CodeEditor, UICompletionRequest?>? CompletionSource { get; set; }
+
+    /// <summary>Whether completion still belongs to the current external context, such as a paused debugger frame.</summary>
+    public Func<bool>? CompletionAvailable { get; set; }
+
+    /// <summary>Additional characters that ask the completion source for suggestions, such as a C++ scope colon.</summary>
+    public Func<char, bool>? CompletionTrigger { get; set; }
 
     /// <summary>
     /// Whether the last asking of <see cref="CompletionSource"/> was for something typed rather than asked for (control
@@ -275,19 +405,39 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public Func<string, int, UISignature?>? SignatureSource { get; set; }
 
-    /// <summary>What the call at the caret was said to be, null when the caret isn't in one or nobody had anything to say.</summary>
-    public UISignature? Signature => signature;
+    /// <summary>
+    /// What the call at the caret is said to be, the overload up and down went to, null when the caret isn't in one,
+    /// nobody had anything to say or escape took it away.
+    /// </summary>
+    public UISignature? Signature => ShownSignature();
+
+    /// <summary>Which overload of the call is said, from 0, and how many it has, (0, 1) for a call that has just the one.</summary>
+    public (int Index, int Count) SignatureOverload =>
+        signature is { Overloads: { Count: > 1 } all } said ? (Wrap(said.Active + overloadStep, all.Count), all.Count) : (0, 1);
+
+    /// <summary>What the box over a call says of its overloads in front of it, "1 of 3", the one it is then how many.</summary>
+    public string OverloadCounter { get; set; } = "{0} of {1}";
 
     /// <summary>
     /// Escape with nothing open over the code keeps the keyboard in it, the way every code editor has it. It let go of the
     /// keyboard and what was typed next went nowhere. In a window of its own it's the window's to close.
     /// </summary>
+    /// <summary>Whether the hover asked for at the caret is up, which Escape takes down before anything else.</summary>
+    public bool HoverUp => hoverPinnedFor is not null;
+
     protected internal override bool OnEscape()
     {
         // The hover asked for at the caret comes down first
         if (hoverPinnedFor is not null)
         {
             TakeHoverDown();
+            return true;
+        }
+
+        // Then the box over the call, until the caret's in another call or Ctrl+Shift+Space asks for it again
+        if (ShownSignature() is not null)
+        {
+            signatureHidden = true;
             return true;
         }
 
@@ -311,6 +461,7 @@ public partial class CodeEditor : UIComponent
             return;
 
         hoverPinnedFor = (document.Version, document.Caret);
+        HideSignature();
         float below = paintedSkin is { } skin ? FontOf(skin).LineHeight * paintedScale * 0.5f : 10.0f;
         module.Compositor.PinTooltip(this, markdown, CaretPoint + new Vector2(-8.0f, below), markdown: true);
     }
@@ -342,6 +493,27 @@ public partial class CodeEditor : UIComponent
     }
 
     private IReadOnlyList<UICodeHint> inlineHints = [];
+
+    /// <summary>
+    /// A note about the line the caret is on, fainter than a hint and after it, shown only while the caret is on that
+    /// line (who last changed it, git blame). The program keeps it up as the caret moves. Null for none.
+    /// </summary>
+    public UICodeHint? LineNote { get; set; }
+
+    /// <summary>
+    /// How long the caret stays on a line before its note fades in, in seconds. Arrowing down through the code had a
+    /// note flash up on every line it went past.
+    /// </summary>
+    public float LineNoteDelay { get; set; } = 0.5f;
+
+    // How many digits after the end of its line the note starts, and how much of a comment's colour it's drawn in. It was
+    // four digits on at half a comment, after a lit bracket it read as more of the code
+    private const float LINE_NOTE_GAP = 6.0f, LINE_NOTE_INK = 0.75f;
+
+    // How long the note takes to fade in once it's due, and the line the caret's been on and how long for
+    private const float LINE_NOTE_FADE = 0.2f;
+    private int lineNoteFor = -1;
+    private float lineNoteAge;
 
     /// <summary>Called when the swatch of a colour written in the code is clicked, to pick another (see <see cref="HidlSwatch"/>).</summary>
     public Action<HidlSwatch>? OnSwatchPressed { get; set; }
@@ -418,6 +590,27 @@ public partial class CodeEditor : UIComponent
     public bool IndentGuides { get; set; } = true;
 
     /// <summary>
+    /// How many spaces wide a tab is drawn (the font has no tab of its own) and how far apart the guides are, 1 to 16.
+    /// What Tab puts in is the document's <see cref="UITextDocument.Indent"/>, the program sets the two together.
+    /// </summary>
+    public int TabSize
+    {
+        get => tabSize;
+        set
+        {
+            int clamped = Math.Clamp(value, 1, 16);
+            if (clamped == tabSize)
+                return;
+
+            // A tab is wider or narrower, so a wrapped line can wrap somewhere else
+            tabSize = clamped;
+            rowsFor = rowsFor with { Version = -1 };
+        }
+    }
+
+    private int tabSize = 4;
+
+    /// <summary>
     /// A picture drawn behind the code in its bottom right corner, the way an IDE has a background picture (somebody's
     /// favourite character, usually). Null for none. Turning it is the program's business, the editor draws it upright.
     /// </summary>
@@ -454,7 +647,7 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>Where the <see cref="Backdrop"/> is drawn in the text area, its bottom right corner moved by the offset.</summary>
     private UIRect BackdropBounds(UIRect area, Horizon.Graphics.Texture picture) =>
-        PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset);
+        PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset, BackdropStretch);
 
     /// <summary>
     /// Where a backdrop goes in an area, its bottom right corner moved in by the offset, the size and the offset both
@@ -481,6 +674,15 @@ public partial class CodeEditor : UIComponent
     public IReadOnlySet<int>? Breakpoints { get; set; }
 
     /// <summary>
+    /// How the breakpoints that aren't plain are drawn, by their line, a condition's dot, a message's diamond, the outline
+    /// of one that's off. A line with a breakpoint and nothing here has the plain red dot. Null for all plain.
+    /// </summary>
+    public IReadOnlyDictionary<int, CodeBreakpointMark>? BreakpointMarks { get; set; }
+
+    /// <summary>Counted up by whoever changes <see cref="BreakpointMarks"/>, so the gutter is drawn again for it.</summary>
+    public int BreakpointMarksVersion { get; set; }
+
+    /// <summary>
     /// A press in the gutter's strip for the marks, given the line pressed, a breakpoint put down or taken up. Set, a dot
     /// shows faintly under the pointer there. Null and a press in the gutter selects the line, as it always did.
     /// </summary>
@@ -489,17 +691,125 @@ public partial class CodeEditor : UIComponent
     /// <summary>The line a debugger stopped on, lit right across and an arrow in the gutter, -1 for none.</summary>
     public int ExecutionLine { get; set; } = -1;
 
+    /// <summary>
+    /// The lines that changed since some version of them (git's), a bar down the gutter between the numbers and the code,
+    /// the skin's success colour for added, warning for changed, and a wedge of the error colour where lines were taken
+    /// out. The program works them out and keeps them up as the text changes, the editor only shows them. Empty for none.
+    /// </summary>
+    public IReadOnlyList<UICodeLineChange> LineChanges
+    {
+        get => lineChanges;
+        set
+        {
+            lineChanges = value ?? [];
+            changedLines.Clear();
+            deletedBefore.Clear();
+            foreach (UICodeLineChange change in lineChanges)
+            {
+                if (change.Kind == UILineChangeKind.Deleted)
+                    deletedBefore.Add(change.Line);
+                else
+                    for (int line = change.Line; line < change.Line + change.Count; line++)
+                        changedLines[line] = change.Kind;
+            }
+        }
+    }
+
+    private IReadOnlyList<UICodeLineChange> lineChanges = [];
+
+    // The same by the line, for painting a row at a time
+    private readonly Dictionary<int, UILineChangeKind> changedLines = [];
+    private readonly HashSet<int> deletedBefore = [];
+
+    /// <summary>A press on the bar or the wedge of a change in the gutter, given the change. Null and it selects the line as ever.</summary>
+    public Action<UICodeLineChange>? OnChangePressed { get; set; }
+
+    /// <summary>Runs of lines with a colour behind them right across, under the selection, the lines of a diff. Empty for none.</summary>
+    public IReadOnlyList<UICodeLineHighlight> LineHighlights
+    {
+        get => lineHighlights;
+        set
+        {
+            lineHighlights = value ?? [];
+            highlightedLines.Clear();
+            foreach (UICodeLineHighlight highlight in lineHighlights)
+                for (int line = highlight.Line; line < highlight.Line + highlight.Count; line++)
+                    highlightedLines[line] = highlight.Colour;
+        }
+    }
+
+    private IReadOnlyList<UICodeLineHighlight> lineHighlights = [];
+    private readonly Dictionary<int, Vector4> highlightedLines = [];
+
+    // The colour of a change's bar, in the gutter and down the minimap
+    private static Vector4 ChangeColour(UILineChangeKind kind, UISkin skin) => kind switch
+    {
+        UILineChangeKind.Added => skin.Palette.Success,
+        UILineChangeKind.Removed => skin.ErrorColor,
+        _ => skin.WarningColor
+    };
+
     /// <summary>Every place the word under the caret is, which are lit faintly.</summary>
     public IReadOnlyList<UITextPosition> Occurrences => occurrences;
+    public Func<UITextPosition, IReadOnlyList<UICodeOccurrence>?>? OccurrenceSource { get; set; }
+    public IReadOnlyList<UICodeOccurrence> NativeOccurrences => nativeOccurrences;
+    private IReadOnlyList<UICodeOccurrence> nativeOccurrences = [];
+    public void RefreshOccurrences() => occurrencesFor = (document.Version, new UITextPosition(-1, -1));
+
+    /// <summary>
+    /// Whether the other places of the word under the caret are lit. Off for text that's only shown, where the caret sits
+    /// at the start and the first word was lit all down it (every "tick" of a loop's printing in a notebook).
+    /// </summary>
+    public bool LightOccurrences
+    {
+        get => lightOccurrences;
+        set
+        {
+            if (lightOccurrences == value)
+                return;
+
+            lightOccurrences = value;
+            nativeOccurrences = [];
+            occurrences.Clear();
+            occurrenceLength = 0;
+            occurrencesFor = (-1, default);
+        }
+    }
+
+    private bool lightOccurrences = true;
 
     /// <summary>
     /// Called with the notches of the wheel turned while control is held, to zoom the code (away from the user is in).
     /// Null, the wheel scrolls whatever is held.
     /// </summary>
     public Action<float>? OnZoom { get; set; }
+    protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
+
+    protected internal override bool HasOverscroll => over.Active;
+
+    // A finger on the bar or the minimap drags that, anywhere else it scrolls the code
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X) || base.KeepsTouchDrag(point);
+
+    /// <summary>
+    /// Called as Tab is pressed with one caret and nothing selected, before it indents. True when it took the key (an
+    /// abbreviation before the caret written out) and nothing is indented. Null, Tab only ever indents.
+    /// </summary>
+    public Func<bool>? OnTab { get; set; }
+
+    /// <summary>
+    /// Called as Enter is pressed with Control held, true when it took the key and no line is started. For an editor that
+    /// is a box of text with a button after it (a commit's message), Control and Enter being the button. Null, it's a new line.
+    /// </summary>
+    public Func<bool>? OnControlEnter { get; set; }
+
+    /// <summary>Offered Enter after an open completion list; true submits a code prompt instead of inserting a line.</summary>
+    public Func<bool>? OnEnter { get; set; }
 
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
+
+    /// <summary>A character typed into the document, after paired characters and indentation; Enter is a newline.</summary>
+    public Action<char>? OnTyped { get; set; }
 
     /// <summary>Called after the code has been parsed, with what the parser didn't like (null for nothing).</summary>
     public Action<UICodeDiagnostic?>? OnChecked { get; set; }
@@ -562,11 +872,14 @@ public partial class CodeEditor : UIComponent
     {
         document.Changed += () =>
         {
+            nativeFoldingRanges = null;
             checkIn = CHECK_DELAY;
             revealCaret = true;
             OnChanged?.Invoke();
         };
         document.LinesMoved += MoveDiagnostics;
+        document.LinesMoved += MoveInlays;
+        document.LinesMoved += MoveLensesAbove;
     }
 
     public CodeEditor(string text)
@@ -577,7 +890,13 @@ public partial class CodeEditor : UIComponent
 
     protected override bool HitTestVisible => true;
     protected internal override bool Focusable => true;
-    protected internal override bool KeepsTab => true;
+    protected internal override bool KeepsTab => !TabMovesFocus;
+
+    /// <summary>
+    /// Whether Tab goes on to the next thing rather than indenting, VS Code's tab focus mode. For code shown read only
+    /// inside something else (a peek), which Tab got into and never out of again.
+    /// </summary>
+    public bool TabMovesFocus { get; set; }
 
     /* Finding and going places, for the program around it */
 
@@ -642,19 +961,6 @@ public partial class CodeEditor : UIComponent
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
-    private float GutterWidth(UISkin skin, float scale)
-    {
-        if (!LineNumbers)
-            return TEXT_PAD;
-
-        // Room for the biggest number there is, every digit of a font is as wide as its zero
-        int count = document.LineCount, digits = 1;
-        while ((count /= 10) > 0) digits++;
-        // And the room of an icon in front of them, for a line with something wrong on it, with a little gap after it. It
-        // touched a number of two digits ("x11")
-        return FontOf(skin).Measure("0", scale, markup: false).X * (Math.Max(2, digits) + GUTTER_GAP) + MathF.Round(FontOf(skin).LineHeight * scale * 1.15f);
-    }
-
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
     private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
     {
@@ -669,7 +975,7 @@ public partial class CodeEditor : UIComponent
         return width + FontOf(skin).Measure(text, scale, markup: false).X;
     }
 
-    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TAB_SPACES;
+    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TabSize;
 
     /// <summary>Draws a piece of a line, leaving the room of a tab where there is one.</summary>
     private float Draw(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color)
@@ -703,11 +1009,23 @@ public partial class CodeEditor : UIComponent
         recolourNow = false;
         fresh.Clear();
 
+        // New arrays, a colouring going on in the background may be reading the last ones
         int count = document.LineCount;
-        if (lineStarts.Length != count)
-            lineStarts = new CodeLineStart[count];
+        lineStarts = new CodeLineStart[count];
+        colouredWith = Highlight ? highlighter : null;
 
-        if (Highlight)
+        if (Highlight && count > COLOUR_AT_ONCE)
+        {
+            // A big file has its top coloured now and the rest plain, all of it coloured on a thread of the pool and taken
+            // in when it's done. Reading a 100,000 line file through the grammar on the spot held the window up for nine
+            // seconds before it showed a thing
+            List<SyntaxSpan>[] top = highlighter.Read(document.Text, COLOUR_AT_ONCE, lineStarts, swatches, art);
+            spans = PlainSpans();
+            Array.Copy(top, spans, Math.Min(top.Length, spans.Length));
+            colouredWith = null;
+            coloured = document.Version - 1;
+        }
+        else if (Highlight)
         {
             spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
         }
@@ -720,8 +1038,7 @@ public partial class CodeEditor : UIComponent
 
         TookArt();
 
-        if (colouredLines.Length != count)
-            colouredLines = new string[count];
+        colouredLines = new string[count];
         for (int i = 0; i < colouredLines.Length; i++)
             colouredLines[i] = document.LineAt(i);
         FindFoldable();
@@ -738,13 +1055,16 @@ public partial class CodeEditor : UIComponent
 
         changeSeen = version;
         ICodeHighlighter reader = highlighter;
+
+        // Gone on from the last colouring when it was this highlighter's, only the lines from the edit on read again
+        CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
         colouring = Task.Run(() =>
         {
             var found = new List<HidlSwatch>();
             var named = new List<HidlArt>();
             var starts = new CodeLineStart[count];
-            List<SyntaxSpan>[] read = reader.Read(text, count, starts, found, named);
-            return new Colouring(version, read, lines, found, starts, named);
+            List<SyntaxSpan>[] read = last is null ? reader.Read(text, count, starts, found, named) : reader.ReadAgain(text, lines, starts, last, found, named);
+            return new Colouring(version, read, lines, found, starts, named, reader);
         });
     }
 
@@ -753,6 +1073,7 @@ public partial class CodeEditor : UIComponent
         spans = done.Spans;
         colouredLines = done.Lines;
         lineStarts = done.Starts;
+        colouredWith = done.Reader;
         swatches.Clear();
         swatches.AddRange(done.Swatches);
         art.Clear();
@@ -783,7 +1104,11 @@ public partial class CodeEditor : UIComponent
         if (fresh.Count >= MAX_FRESH)
             fresh.Clear();
 
-        List<SyntaxSpan> read = highlighter.ReadLine(text, lineStarts[was]);
+        if (!highlighter.TryReadLine(text, lineStarts[was], out var read) || read is null)
+        {
+            GameEngine.Instance?.WindowManager.RequestTickIn(0.016f);
+            return null;
+        }
         fresh[text] = read;
         return read;
     }
@@ -817,7 +1142,7 @@ public partial class CodeEditor : UIComponent
     private UIRect TextArea(UISkin skin, float scale)
     {
         UIRect content = Bounds.Shrink(Padding);
-        return new UIRect(new Vector2(content.Min.X + GutterWidth(skin, scale), content.Min.Y), new Vector2(content.Max.X - BAR_WIDTH, content.Max.Y));
+        return new UIRect(new Vector2(content.Min.X + GutterWidth(skin, scale), content.Min.Y), new Vector2(content.Max.X - BAR_WIDTH - MinimapWidth, content.Max.Y));
     }
 
     /// <summary>Where in the text a point is, by where it was last drawn.</summary>
@@ -843,50 +1168,91 @@ public partial class CodeEditor : UIComponent
         float wanted = point.X - (area.Min.X + TEXT_PAD - scrollX) - row.Indent;
         float before = 0.0f;
 
+        // Each character from where it's drawn, after a hint just before it, a click on the hint is before the character
         for (int i = row.Start + 1; i <= rowEnd; i++)
         {
-            float after = Width(skin, scale, text.AsSpan(row.Start, i - row.Start));
-            if (wanted < (before + after) * 0.5f)
+            float hints = InlaysWidth(skin, scale, line, row.Start, i);
+            float after = Width(skin, scale, text.AsSpan(row.Start, i - row.Start)) + hints;
+            if (wanted < (before + hints + after) * 0.5f)
                 return new UITextPosition(line, i - 1);
-            before = after;
+            before = after - hints;
         }
 
         // Past the end of a row that isn't the last of its line is the start of the next, which is the same place
         return new UITextPosition(line, rowEnd);
     }
 
-    protected override Vector2 Measure(UISkin skin) => new Vector2(480, 320) + Padding.Total;
+    /// <summary>Where a place in the text was last drawn, the left of its column halfway down its row, the other way round to <see cref="PositionAt"/>.</summary>
+    public Vector2 PlaceOf(UITextPosition at)
+    {
+        if (paintedSkin is not { } skin || document.LineCount == 0)
+            return default;
+
+        float scale = paintedScale;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
+        EnsureRows(skin, scale);
+
+        int line = Math.Clamp(at.Line, 0, document.LineCount - 1);
+        float x = area.Min.X + TEXT_PAD - scrollX + ColumnX(skin, scale, line, at.Column);
+        return new Vector2(x, TopOf(area, line, at.Column, lineHeight) - lineHeight * 0.5f);
+    }
+
+    protected override Vector2 Measure(UISkin skin) => FitRows > 0 ? FittedSize(skin) : new Vector2(480, 320) + Padding.Total;
 
     /* Updating */
 
     protected override void Update(float dt)
     {
         // The list of completions goes with the keyboard, it stayed up over whatever took it (a palette, a window)
-        if (CompletionOpen && !IsFocused)
+        if (CompletionOpen && (!IsFocused || CompletionAvailable?.Invoke() == false))
             CloseCompletion();
+        UpdateCompletionDocumentation();
+
+        // Control and Enter types nothing (UIKeyboard leaves it to the program's shortcuts), so a box with a button after
+        // it hears it here. It never got to OnTextInput, and Ctrl+Enter in a commit's message did nothing at all
+        if (OnControlEnter is not null && IsFocused && !ReadOnly && GameEngine.Instance?.Input.Keyboard is { Primary: true } keys
+            && (keys.WasPressed(Horizon.Input.Key.Enter) || keys.WasPressed(Horizon.Input.Key.KeypadEnter)))
+        {
+            CloseCompletion();
+            OnControlEnter();
+        }
 
         // The hover at the caret goes once the caret or the text moves on, or something else took it down
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
             TakeHoverDown();
 
-        blink = (blink + dt) % (BLINK * 2.0f);
+        // How long the caret's been on the line the note is about, from nothing again every time it goes to another line
+        int noted = LineNote is { } note && note.Line == document.Caret.Line ? note.Line : -1;
+        lineNoteAge = noted == lineNoteFor ? lineNoteAge + dt : 0.0f;
+        lineNoteFor = noted;
+
+        // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
+        // in the background isn't painted again twice a second for a caret nobody's typing at
+        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
         if (waiting.Length > 0)
             waitedFor += dt;
         flowTime += dt;
 
+        float scrollDt = ScrollMotionDelta(dt);
+
         // The completions' rows on the way to the ones picked, a fraction of a row at a time
         if (completionShown != completionTop)
         {
-            completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * scrollDt));
             if (MathF.Abs(completionTop - completionShown) < 0.01f)
                 completionShown = completionTop;
         }
 
+        over.Step(scrollDt, MotionSpeed);
+
         // On the way to where the wheel wants it
         if (scrollGoal is { } goal)
         {
-            scrollY += (goal - scrollY) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            scrollY += (goal - scrollY) * (1.0f - MathF.Exp(-SCROLL_EASE * scrollDt));
             if (MathF.Abs(goal - scrollY) < 0.5f)
             {
                 scrollY = goal;
@@ -931,12 +1297,13 @@ public partial class CodeEditor : UIComponent
             StartCheck();
 
         UpdateFolds();
+        UpdateLensesHeld();
 
         if (bracketFor != (document.Version, document.Caret))
             FindBracket();
 
         if (occurrencesFor != (document.Version, document.Caret))
-            FindOccurrences();
+            UpdateOccurrences(dt);
 
         if (signatureFor != (document.Version, document.Caret))
             FindSignature();
@@ -947,6 +1314,7 @@ public partial class CodeEditor : UIComponent
             Reveal(skin);
 
         UpdateTooltip();
+        UpdateMiddleScroll(dt);
     }
 
     /// <summary>Parses the code now, on the editor's thread, and underlines what the parser didn't like.</summary>
@@ -971,7 +1339,7 @@ public partial class CodeEditor : UIComponent
         UICodeDiagnostic? error = null;
         var more = new List<UICodeDiagnostic>();
 
-        static UICodeDiagnostic Said(ParseException e) => new(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(1, e.Length), e.Message);
+        static UICodeDiagnostic Said(ParseException e) => new(Math.Max(0, e.Line - 1), Math.Max(0, e.Col - 1), Math.Max(0, e.Length), e.Message);
 
         // The parser goes on after a mistake, so every one of them is underlined and not only the first
         var errors = new List<ParseException>();
@@ -1005,6 +1373,13 @@ public partial class CodeEditor : UIComponent
         OnChecked?.Invoke(done.Error);
     }
 
+    /// <summary>Reveal the current caret after its host changes the available editing area.</summary>
+    public void RevealCaret(bool center = false)
+    {
+        revealCaret = true;
+        centreOnReveal = center;
+    }
+
     /// <summary>Helper method to scroll just far enough for the caret to be in sight.</summary>
     private void Reveal(UISkin skin)
     {
@@ -1019,18 +1394,31 @@ public partial class CodeEditor : UIComponent
         UITextPosition caret = document.Caret;
         EnsureRows(skin, scale);
         float top = RowOf(caret.Line, caret.Column) * lineHeight;
+        float lensTop = top - LensRoomAbove(caret.Line, caret.Column, lineHeight);
+        // Pinned scopes cover the top of the text area. Leave one extra row for their
+        // rounded-to-row bottom edge, including when a compact find bar shrinks the view.
+        int pinned = StickyLines(caret.Line).Count;
+        float covered = pinned == 0 ? 0 : MathF.Min(MathF.Max(0, area.Height - lineHeight), (pinned + 1) * lineHeight);
 
         // The caret has the say, wherever the wheel was taking it. A line or a few it went off the edge are eased into
         // sight the way the wheel's are, a page or more away is gone to at once. A line at a time it jumped, and the
         // lines smeared across each jump
         float from = scrollGoal ?? scrollY;
-        if (centreOnReveal)
+        if (AllInSight)
+        {
+            // All of it shows once it's grown to fit, and a new line is revealed before it has. Scrolled to it then, the
+            // code stayed a line up and out of the top of a box already as tall as it, nothing clamped it back after
+            centreOnReveal = false;
+            scrollGoal = null;
+            scrollY = 0.0f;
+        }
+        else if (centreOnReveal)
         {
             centreOnReveal = false;
             scrollGoal = null;
-            scrollY = top - area.Height * 0.4f;
+            scrollY = top - covered - (area.Height - covered - lineHeight) * 0.4f;
         }
-        else if ((top < from ? top : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
+        else if ((lensTop < from + covered ? lensTop - covered : top + lineHeight > from + area.Height ? top + lineHeight - area.Height : (float?)null) is { } wanted)
         {
             if (MathF.Abs(wanted - scrollY) > area.Height)
             {
@@ -1055,12 +1443,31 @@ public partial class CodeEditor : UIComponent
         ClampScroll(skin, scale);
     }
 
+    /// <summary>How far down the code is scrolled in pixels, set it goes there at once, the way a drag of the bar does. For the checks.</summary>
+    internal float ScrollPixels
+    {
+        get => scrollY;
+        set
+        {
+            scrollGoal = null;
+            scrollY = MathF.Max(0.0f, value);
+        }
+    }
+
+    /// <summary>Whether it's on its way somewhere the wheel or the caret sent it. For the checks.</summary>
+    internal bool Easing => scrollGoal is not null || revealCaret;
+
     private void ClampScroll(UISkin skin, float scale)
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
-        float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * 0.5f);
-        scrollY = Math.Clamp(scrollY, 0.0f, most);
+        float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * (FitRows > 0 ? 1.0f : 0.5f));
+
+        // Past the end because the code got shorter under it (lines taken out, a row of counts gone), eased back rather
+        // than put there. Put there, the whole view jumped the next time the caret moved
+        if (scrollY > most && scrollGoal is null)
+            scrollGoal = most;
+        scrollY = MathF.Max(0.0f, scrollY);
         if (scrollGoal is { } goal) scrollGoal = Math.Clamp(goal, 0.0f, most);
         scrollX = MathF.Max(0.0f, scrollX);
     }
@@ -1124,10 +1531,37 @@ public partial class CodeEditor : UIComponent
 
     private static bool IsBracket(char character) => character is '(' or ')' or '[' or ']' or '{' or '}';
 
+    /// <summary>
+    /// The caret over to the pair of the bracket next to it, the same side of it as it was of the first one, so going
+    /// again comes back. False with no bracket by the caret, or one whose pair is too far off to find.
+    /// </summary>
+    public bool GoToMatchingBracket()
+    {
+        if (bracketFor != (document.Version, document.Caret))
+            FindBracket();
+        if (bracket is not { } from || bracketPair is not { } to)
+            return false;
+
+        bool after = document.Caret.Column > from.Column;
+        document.MoveTo(new UITextPosition(to.Line, to.Column + (after ? 1 : 0)), false);
+        revealCaret = true;
+        return true;
+    }
+
     // The tooltip says what is wrong where the pointer rests, and nothing anywhere else
     private void UpdateTooltip()
     {
         hoveredArt = -1;
+        if (hoverVersionSeen != document.Version)
+        {
+            hoverVersionSeen = document.Version;
+            hoverQuiet = 0.0f;
+        }
+        else
+        {
+            hoverQuiet += tickTime;
+        }
+
         if (!IsHovered || Module is not { } module || paintedSkin is null)
         {
             if (Tooltip.Length > 0) Tooltip = string.Empty;
@@ -1136,6 +1570,7 @@ public partial class CodeEditor : UIComponent
 
         // A piece of art at the end of a line is shown big, and says nothing
         Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+        if (AgentHintTooltip(pointer)) return;
         for (int i = 0; i < art.Count && i < artBoxes.Length; i++)
         {
             if (artBoxes[i].Width > 0.0f && artBoxes[i].Shrink(new UIEdges(-2.0f)).Contains(pointer))
@@ -1144,6 +1579,13 @@ public partial class CodeEditor : UIComponent
                 if (Tooltip.Length > 0) Tooltip = string.Empty;
                 return;
             }
+        }
+
+        // A lens row over a line has none of the line on it to say anything about
+        if (OverLensRow(pointer))
+        {
+            if (Tooltip.Length > 0) Tooltip = string.Empty;
+            return;
         }
 
         UITextPosition at = PositionAt(pointer);
@@ -1170,7 +1612,14 @@ public partial class CodeEditor : UIComponent
         if (said.Length == 0 && HoverSource is { } source)
         {
             var (start, end) = document.WordAt(at);
-            if (end > start && at.Column < document.LineAt(at.Line).Length)
+
+            // The text changed under a word that was asked about, nothing until the typing stops, what it said may be wrong now
+            bool typing = hoverFor.Version >= 0 && hoverFor.Version != document.Version && hoverQuiet < HOVER_AFTER;
+            if (typing)
+            {
+                hoverText = string.Empty;
+            }
+            else if (end > start && at.Column < document.LineAt(at.Line).Length)
             {
                 if (hoverFor != (document.Version, at.Line, start))
                 {
@@ -1189,16 +1638,49 @@ public partial class CodeEditor : UIComponent
     }
 
     // Every place the word under the caret is, whole words only, unless something is selected
+    /// <summary>
+    /// Helper method for the word's other places, looked for at once when the caret moved and a moment after the typing
+    /// stops when the text changed. What was lit goes as soon as the text changes, it would be in the wrong places.
+    /// </summary>
+    private void UpdateOccurrences(float dt)
+    {
+        if (occurrencesFor.Version == document.Version)
+        {
+            FindOccurrences();
+            return;
+        }
+
+        if (occurrencesVersionSeen != document.Version)
+        {
+            occurrencesVersionSeen = document.Version;
+            occurrencesWait = OCCURRENCES_AFTER;
+            nativeOccurrences = [];
+            occurrences.Clear();
+            occurrenceLength = 0;
+            return;
+        }
+
+        if ((occurrencesWait -= dt) <= 0.0f)
+            FindOccurrences();
+    }
+
     private void FindOccurrences()
     {
+        nativeOccurrences = [];
         occurrencesFor = (document.Version, document.Caret);
         occurrences.Clear();
         occurrenceLength = 0;
 
-        if (document.HasSelection || !Highlight)
+        if (document.HasSelection || !Highlight || !lightOccurrences)
             return;
 
         UITextPosition caret = document.Caret;
+        if (OccurrenceSource?.Invoke(caret) is { } supplied)
+        {
+            nativeOccurrences = supplied;
+            foreach (var occurrence in supplied) occurrences.Add(new(occurrence.Line, occurrence.Column));
+            return;
+        }
         var (start, end) = document.WordAt(caret);
         if (end - start < 2)
             return;
@@ -1232,13 +1714,12 @@ public partial class CodeEditor : UIComponent
 
     private static bool IsWordChar(char character) => char.IsLetterOrDigit(character) || character == '_';
 
-    private static bool Covers(in UICodeDiagnostic diagnostic, UITextPosition at) =>
-        at.Line == diagnostic.Line && at.Column >= diagnostic.Column && at.Column <= diagnostic.Column + Math.Max(1, diagnostic.Length);
-
     /* The keyboard */
 
     protected internal override void OnTextInput(char character)
     {
+        char? typed = null;
+        middleScroll.Cancel();
         blink = 0.0f;
         revealCaret = true;
 
@@ -1251,8 +1732,32 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        if (character == UIKeyboard.PARAMETER_INFO)
+        {
+            ShowSignature();
+            return;
+        }
+
+        // Up and down go through a call's overloads while it has more than one, Visual Studio's way
+        if (character is UIKeyboard.UP or UIKeyboard.DOWN && StepOverload(character == UIKeyboard.UP ? -1 : 1))
+            return;
+
         switch (character)
         {
+            // A box selection grown from the keyboard, Visual Studio's shift and alt with an arrow
+            case UIKeyboard.BOX_UP:
+                document.ExtendBox(-1, 0);
+                return;
+            case UIKeyboard.BOX_DOWN:
+                document.ExtendBox(1, 0);
+                return;
+            case UIKeyboard.BOX_LEFT:
+                document.ExtendBox(0, -1);
+                return;
+            case UIKeyboard.BOX_RIGHT:
+                document.ExtendBox(0, 1);
+                return;
+
             // Going about, which is allowed when it can only be read
             case UIKeyboard.LEFT or UIKeyboard.SELECT_LEFT:
                 document.MoveHorizontally(-1, character == UIKeyboard.SELECT_LEFT);
@@ -1317,6 +1822,12 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.CARETS_AT_LINE_ENDS:
                 document.CaretsAtLineEnds();
                 return;
+            case UIKeyboard.SELECT_ALL_OCCURRENCES:
+                document.SelectAllOccurrences();
+                return;
+            case UIKeyboard.SELECT_LINE:
+                document.ExpandLineSelection();
+                return;
             case UIKeyboard.FOLD:
                 FoldAtCaret();
                 return;
@@ -1334,15 +1845,27 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.DELETE: document.Delete(); break;
             case UIKeyboard.WORD_BACKSPACE: document.DeleteWord(-1); break;
             case UIKeyboard.WORD_DELETE: document.DeleteWord(1); break;
-            case UIKeyboard.ENTER: document.NewLine(); break;
-            case UIKeyboard.TAB: document.IndentLines(); break;
+            case UIKeyboard.ENTER when OnControlEnter is not null && GameEngine.Instance.Input.Keyboard.Control && OnControlEnter(): break;
+            // Alt+Enter is a command's key in every editor (Properties in Hex, a quick fix elsewhere), never a new line. It
+            // put one in the file as it brought the Properties up
+            case UIKeyboard.ENTER when GameEngine.Instance.Input.Keyboard.Alt: break;
+            case UIKeyboard.ENTER:
+                if (OnEnter?.Invoke() != true) { document.NewLine(); typed = '\n'; }
+                break;
+            case UIKeyboard.TAB:
+                if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)
+                    IndentOrTab();
+                break;
             case UIKeyboard.SHIFT_TAB: document.Outdent(); break;
             case UIKeyboard.UNDO: document.Undo(); break;
             case UIKeyboard.REDO: document.Redo(); break;
             case UIKeyboard.TOGGLE_COMMENT: document.ToggleComment(); break;
+            case UIKeyboard.TOGGLE_BLOCK_COMMENT: document.ToggleBlockComment(); break;
             case UIKeyboard.DUPLICATE: document.Duplicate(); break;
             case UIKeyboard.MOVE_LINES_UP: document.MoveLines(-1); break;
             case UIKeyboard.MOVE_LINES_DOWN: document.MoveLines(1); break;
+            case UIKeyboard.COPY_LINES_UP: document.CopyLines(-1); break;
+            case UIKeyboard.COPY_LINES_DOWN: document.CopyLines(1); break;
 
             case UIKeyboard.CUT:
                 UIKeyboard.Copy(CopiedText());
@@ -1355,9 +1878,10 @@ public partial class CodeEditor : UIComponent
                 if (!UIKeyboard.IsEditingKey(character) && !char.IsControl(character))
                 {
                     document.Type(character);
+                    typed = character;
 
                     // A word being typed (or a member, or a key of a text) is offered what it could be
-                    if (UITextDocument.IsWordChar(character) || character is '.' or '@')
+                    if (StartsCompletion(character))
                         Complete(typed: true);
                     else
                         CloseCompletion();
@@ -1370,12 +1894,16 @@ public partial class CodeEditor : UIComponent
         {
             if (character is UIKeyboard.BACKSPACE or UIKeyboard.DELETE)
                 Complete(typed: true);
-            else if (!UITextDocument.IsWordChar(character) && character is not ('.' or '@'))
+            else if (!StartsCompletion(character))
                 CloseCompletion();
         }
+        if (typed is {} inserted) OnTyped?.Invoke(inserted);
     }
 
     /* Completing what is typed */
+
+    private bool StartsCompletion(char character) => UITextDocument.IsWordChar(character) || character is '.' or '@'
+        || CompletionTrigger?.Invoke(character) == true;
 
     /// <summary>
     /// Opens (or narrows down) the list of what the word at the caret could be. Typed, it only opens for a word that has
@@ -1383,6 +1911,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public void Complete(bool typed = false)
     {
+        if (CompletionAvailable?.Invoke() == false) { CloseCompletion(); return; }
         CompletionTyped = typed;
         UICompletionRequest? asked = (CompletionSource ?? DefaultCompletions)(this);
         UITextPosition caret = document.Caret;
@@ -1398,7 +1927,8 @@ public partial class CodeEditor : UIComponent
         string prefix = line[request.Start..caret.Column];
 
         // Typed, nothing started is nothing to offer, unless it comes straight after a dot (a member) or an @ (a key)
-        bool afterMark = request.Start > 0 && line[request.Start - 1] is '.' or '@';
+        bool afterMark = request.Start > 0 && (line[request.Start - 1] is '.' or '@'
+            || CompletionTrigger?.Invoke(line[request.Start - 1]) == true);
         if (typed && prefix.Length == 0 && !afterMark)
         {
             CloseCompletion();
@@ -1464,6 +1994,8 @@ public partial class CodeEditor : UIComponent
     /// <summary>Closes the list of what can be completed, if it is open.</summary>
     public void CloseCompletion()
     {
+        completionDocumentation = null;
+        completionDocumentationFor = null;
         waiting = string.Empty;
         if (CompletionOpen)
             ClosePopup();
@@ -1475,13 +2007,31 @@ public partial class CodeEditor : UIComponent
     /// <summary>Puts what is picked in the list where the word being typed is.</summary>
     public void AcceptCompletion()
     {
+        if (CompletionAvailable?.Invoke() == false) { CloseCompletion(); return; }
         if (!CompletionOpen || completionIndex < 0 || completionIndex >= completions.Count)
             return;
 
         UICompletion picked = completions[completionIndex];
         UITextPosition caret = document.Caret;
+        string insert = picked.Insert ?? picked.Text;
+        if (picked.SelectionStart is {} selected && (selected < 0 || selected > insert.Length || picked.SelectionLength < 0 || picked.SelectionLength > insert.Length - selected)) return;
 
         CloseCompletion();
+        if (picked.AdditionalEdits is { Count: > 0 } || picked.ReplacementStart is not null || picked.ReplacementEnd is not null || picked.SelectionStart is not null)
+        {
+            if (picked.ExpectedVersion is { } version && version != document.Version)
+            {
+                Complete();
+                return;
+            }
+            UITextPosition start = picked.ReplacementStart ?? (caret with { Column = completionStart });
+            UITextPosition end = picked.ReplacementEnd ?? caret;
+            if (start.Line != caret.Line || start.Column < 0 || start > caret || end.Line != caret.Line || end < caret)
+                return;
+            document.ApplyCompletion(new(start, end, insert), picked.AdditionalEdits ?? [], picked.SelectionStart, picked.SelectionLength);
+            revealCaret = true;
+            return;
+        }
         document.Select(caret with { Column = completionStart }, caret);
         document.Insert(picked.Insert ?? picked.Text);
         revealCaret = true;
@@ -1555,13 +2105,13 @@ public partial class CodeEditor : UIComponent
         foreach (string keyword in Keywords)
         {
             if (seen.Add(keyword))
-                items.Add(new UICompletion(keyword, "keyword"));
+                items.Add(new UICompletion(keyword, "keyword", Kind: "keyword"));
         }
 
         foreach (Token token in Lexer.Tokenize(editor.Text, lenient: true))
         {
             if (token.Type == TokenType.Identifier && token.Value.Length > 1 && seen.Add(token.Value))
-                items.Add(new UICompletion(token.Value, "in this file"));
+                items.Add(new UICompletion(token.Value, "in this file", Kind: "variable"));
         }
 
         return new UICompletionRequest(start, items);
@@ -1572,6 +2122,21 @@ public partial class CodeEditor : UIComponent
     // room round the rows inside the popup. A line of code to a row was a list too cramped to read, its text against the edge
     private float CompletionRow(UISkin skin) => MathF.Max(FontOf(skin).LineHeight * paintedScale + 8.0f, 22.0f);
     private const float COMPLETION_PAD = 6.0f;
+
+    // The room in front of the completions' words for the icon of their kind (UICompletionKinds), a line's height and a
+    // gap, none when none of the rows in sight says its kind
+    private const float COMPLETION_ICON_GAP = 6.0f;
+    private float CompletionIconRoom(float lineHeight)
+    {
+        int last = Math.Min(completions.Count, completionTop + COMPLETION_ROWS + 1);
+        for (int i = Math.Max(0, completionTop - 1); i < last; i++)
+        {
+            if (completions[i].Kind.Length > 0)
+                return MathF.Round(lineHeight * 0.9f) + COMPLETION_ICON_GAP;
+        }
+
+        return 0.0f;
+    }
 
     private UIRect CompletionBounds()
     {
@@ -1597,7 +2162,7 @@ public partial class CodeEditor : UIComponent
             widest = MathF.Max(widest, text + detail);
         }
 
-        float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f;
+        float width = widest + TEXT_PAD * 4.0f + COMPLETION_PAD * 2.0f + CompletionIconRoom(lineHeight);
         float height = Math.Clamp(completions.Count, 1, COMPLETION_ROWS) * rowHeight + COMPLETION_PAD * 2.0f;
 
         // Under the line unless that runs off the bottom of the module
@@ -1659,10 +2224,6 @@ public partial class CodeEditor : UIComponent
         int last = Math.Min(completions.Count, first + COMPLETION_ROWS + 1);
         list.PushClip(new UIRect(new Vector2(bounds.Min.X, bounds.Min.Y + COMPLETION_PAD), new Vector2(bounds.Max.X, bounds.Max.Y - COMPLETION_PAD)));
 
-        // Gliding, the rows as the newer tick has them, see ListBox
-        bool gliding = completionShown != completionTop;
-        if (gliding)
-            list.BeginSteps();
         for (int i = first; i < last; i++)
         {
             list.BeginPart(i);
@@ -1675,7 +2236,14 @@ public partial class CodeEditor : UIComponent
             // The text in the middle of its row
             float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
-            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD, top), scale, colors.Name, markup: false);
+            float iconRoom = CompletionIconRoom(lineHeight);
+            if (iconRoom > 0.0f && UICompletionKinds.IconOf(item.Kind) is { Length: > 0 } icon)
+            {
+                float side = iconRoom - COMPLETION_ICON_GAP;
+                float middle = MathF.Round(row.Center.Y);
+                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), skin.DimTextColor);
+            }
+            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, colors.Name, markup: false);
 
             if (item.Detail.Length > 0)
             {
@@ -1685,8 +2253,6 @@ public partial class CodeEditor : UIComponent
             }
         }
 
-        if (gliding)
-            list.EndSteps();
         list.PopClip();
         list.EndParts();
         PaintCompletionDocs(list, skin, scale, bounds, colors);
@@ -1776,17 +2342,23 @@ public partial class CodeEditor : UIComponent
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
-        UIRect track = new(new Vector2(area.Max.X, area.Min.Y), new Vector2(area.Max.X + BAR_WIDTH, area.Max.Y));
+        UIRect track = new(new Vector2(area.Max.X + MinimapWidth, area.Min.Y), new Vector2(area.Max.X + MinimapWidth + BAR_WIDTH, area.Max.Y));
         float total = Math.Max(1, rows.Count) * lineHeight;
-        float length = MathF.Max(24.0f, track.Height * area.Height / MathF.Max(1.0f, total));
+        float length = MathF.Max(UIScrollBar.MIN_THUMB, track.Height * area.Height / MathF.Max(1.0f, total));
         float most = MathF.Max(1.0f, total - area.Height * 0.5f);
         float top = track.Max.Y - (track.Height - length) * Math.Clamp(scrollY / most, 0.0f, 1.0f);
         return (track, MathF.Min(length, track.Height), most, top);
     }
 
+    // Whether the press was taken by something on the code rather than by the text (a lens, a swatch, the lines held at
+    // the top, a chevron), so dragging off it selects nothing. A reference count clicked selected from the caret to it
+    // the moment the pointer shook on the way up
+    private bool pressTaken;
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         blink = 0.0f;
+        pressTaken = true;
 
         // A swatch of a colour written in the code, to pick another
         if (OnSwatchPressed is { } swatched && paintedSkin is { } swatchSkin)
@@ -1820,7 +2392,11 @@ public partial class CodeEditor : UIComponent
         CloseCompletion();
         wordDrag = null;
 
-        if (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X)
+        // The minimap, its slider taken hold of or the code gone to where it was pressed
+        if (PressMinimap(point))
+            return;
+
+        if (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X + MinimapWidth)
         {
             // Taken by the thumb it stays where it was taken, anywhere else on the track the thumb's middle goes there
             var (_, length, _, top) = BarGeometry(skin, paintedScale);
@@ -1837,15 +2413,28 @@ public partial class CodeEditor : UIComponent
         UITextPosition at = PositionAt(point);
         double now = Environment.TickCount64 / 1000.0;
 
+        // A lens after the end of a line is the program's, ahead of the caret going there
+        if (PressLens(point))
+            return;
+
+        // A press on a lens row that isn't on a lens is between two of them, never the line under it
+        if (OverLensRow(point))
+            return;
+
+        // A change's bar is the program's to say what to do with (show what changed), ahead of the chevron it's next to
+        if (PressLineChange(point, at))
+            return;
+
         // In the gutter a press on a chevron folds, anywhere else in it is the whole line
         if (PressFold(point, at))
             return;
 
+        pressTaken = false;
+
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
             // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
-            float strip = Bounds.Shrink(Padding).Min.X + 2.0f + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
-            if (OnGutterPressed is not null && point.X < strip)
+            if (OnGutterPressed is not null && point.X < BreakpointStripRight(painted))
             {
                 OnGutterPressed(at.Line);
                 return;
@@ -1866,9 +2455,11 @@ public partial class CodeEditor : UIComponent
         lastPress = now;
         lastPressAt = at;
 
-        // Alt puts down another caret, alt and shift dragged makes a column of them
+        // Alt puts down another caret, alt and shift dragged makes a column of them. With Visual Studio's keys alt dragged
+        // makes the column and it's control and alt that puts down a caret
         var keyboard = GameEngine.Instance.Input.Keyboard;
-        if (keyboard.Alt && keyboard.Shift)
+        bool visualStudio = UIKeyboard.VisualStudioKeys;
+        if (keyboard.Alt && (keyboard.Shift || visualStudio && !keyboard.Control))
         {
             columnFrom = at;
             document.SelectColumn(at, at);
@@ -1889,6 +2480,15 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void OnPointerDrag(Vector2 point)
     {
+        if (changePressed || pressTaken && !draggingBar && !draggingMinimap)
+            return;
+
+        if (draggingMinimap)
+        {
+            DragMinimap(point);
+            return;
+        }
+
         if (draggingBar)
         {
             if (paintedSkin is { } skin)
@@ -1915,12 +2515,16 @@ public partial class CodeEditor : UIComponent
     protected internal override void OnPointerUp(Vector2 point)
     {
         draggingBar = false;
+        draggingMinimap = false;
+        changePressed = false;
+        pressTaken = false;
         wordDrag = null;
         columnFrom = null;
     }
 
     protected internal override bool OnScroll(float delta)
     {
+        middleScroll.Cancel();
         if (OnZoom is { } zoom && GameEngine.Instance?.Input.Keyboard.Control == true)
         {
             zoom(delta);
@@ -1935,13 +2539,22 @@ public partial class CodeEditor : UIComponent
         if (CompletionOpen && Module is { } module && CompletionBounds().Contains(module.ToLocal(module.Compositor.Pointer.Position)))
         {
             int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
+            BeginScrollMotion(completionShown != completionTop);
             completionTop = Math.Clamp(completionTop - rows * Math.Sign(delta), 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
             return true;
         }
 
-        // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up
-        scrollGoal = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
+        // As tall as its code, the wheel is for whatever it's in
+        if (AllInSight)
+            return false;
+
+        // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up.
+        // Whatever of it goes past the top or the bottom stretches the code out past it and springs back
+        BeginScrollMotion(scrollGoal is not null || over.Active);
+        float wanted = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
+        scrollGoal = wanted;
         ClampScroll(skin, paintedScale);
+        over.Push(wanted - (scrollGoal ?? scrollY), MotionSpeed);
         return true;
     }
 
@@ -1949,16 +2562,9 @@ public partial class CodeEditor : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
-        // Easing, the lines as the newer tick has them (see UIScrollEase), a line coming into sight sat over the one
-        // sliding out of it for a frame between two ticks
-        bool easing = scrollGoal is not null;
-        if (easing)
-            list.BeginSteps();
         list.PushFont(FontOf(list.Skin));
         PaintCode(list);
         list.PopFont();
-        if (easing)
-            list.EndSteps();
     }
 
     private void PaintCode(UIDrawList list)
@@ -1970,6 +2576,7 @@ public partial class CodeEditor : UIComponent
         float scale = ScaleOf(skin);
         paintedScale = scale;
         EnsureRows(skin, scale);
+        ApplyZoomAnchor(skin, scale);
 
         float lineHeight = FontOf(skin).LineHeight * scale;
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
@@ -1994,27 +2601,50 @@ public partial class CodeEditor : UIComponent
         int last = Math.Min(rows.Count - 1, first + (int)(area.Height / lineHeight) + 1);
         int firstLine = rows.Count > 0 ? rows[first].Line : 0, lastLine = rows.Count > 0 ? rows[last].Line : 0;
 
+        // And a few either side of them painted too, out of sight under the clip, so a row scrolled into sight was there
+        // the tick before to be blended with. With nothing to blend with it was drawn where the newer tick had it while
+        // the row next to it was still on its way, and for a frame the two sat on top of each other
+        int beyond = over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / lineHeight) + 1;
+        int paintFrom = Math.Max(0, first - ROWS_AROUND - beyond), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND + beyond);
+
         bool focused = IsFocused;
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
         Vector4 selection = skin.Palette.Selection;
         Vector4 band = skin.HoverColor with { W = skin.HoverColor.W * 0.35f };
 
-        list.PushClip(area);
+        // An editor grown to its code has no rows above or below to hide, and clipped at its padding the tall letters of
+        // its first and last rows (p, d, brackets) were cut a little differently every tick it moved. A cut letter can't
+        // be blended with the last tick's, so while a notebook scrolled they jumped ahead of the rest of their line
+        list.PushClip(AllInSight ? new UIRect(new Vector2(area.Min.X, area.Min.Y - lineHeight), new Vector2(area.Max.X, area.Max.Y + lineHeight)) : area);
+
+        // The code moves by the scroll as one, on whole pixels (see UIDrawList.PushFrame), and a frame between two ticks
+        // moves it smoothly while what's in it is the newer tick's. Only the code, the box, the bar and the minimap stay
+        // put. Moved by fractions of a pixel the boxes behind the words slid while the words snapped to the pixels
+        bool stretched = over.Begin(list, area);
+        list.PushFrame(new Vector2(-scrollX, scrollY));
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
-        list.BeginPart(PART_OVERLAY);
         var extras = document.ExtraCarets;
-        for (int index = first; index <= last; index++)
+        for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
             float top = RowTop(area, index, lineHeight);
+            if (row.Lens)
+                continue;
+            list.BeginPart(RowPart(ROW_BEHIND, row));
 
             if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
 
+            if (highlightedLines.Count > 0 && highlightedLines.TryGetValue(row.Line, out Vector4 highlight))
+                list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), highlight);
+
             if (row.Line == ExecutionLine)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), skin.WarningColor with { W = 0.2f });
 
+            // The selection in a part apart from the line's band, a selection taken away puts the band back and the two were
+            // one quad, the selection stretched out across the line into it
+            list.BeginPart(RowPart(ROW_SELECTED, row));
             if (document.HasSelection)
                 PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, start, end, selection);
 
@@ -2025,6 +2655,10 @@ public partial class CodeEditor : UIComponent
                     PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, extras[i].Start, extras[i].End, selection);
             }
         }
+
+        list.BeginPart(PART_OVERLAY);
+        PaintRanges(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
+        PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
         if (findQuery.Length > 0)
         {
@@ -2044,6 +2678,13 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        foreach (var occurrence in nativeOccurrences)
+        {
+            if (occurrence.Line < firstLine || occurrence.Line > lastLine || occurrence.Line >= document.LineCount || occurrence.Length <= 0) continue;
+            Vector4 colour = occurrence.Kind == 3 ? skin.HighlightColor with { W = 0.25f }
+                : occurrence.Kind == 2 ? skin.HighlightColor with { W = 0.12f } : skin.TextColor with { W = 0.1f };
+            list.Rect(Piece(skin, scale, area, left, lineHeight, occurrence.Line, occurrence.Column, occurrence.Column + occurrence.Length), colour);
+        }
         if (occurrenceLength > 0)
         {
             Vector4 same = skin.TextColor with { W = 0.1f };
@@ -2056,35 +2697,50 @@ public partial class CodeEditor : UIComponent
         }
 
         if (IndentGuides)
-            PaintGuides(list, skin, scale, area, left, lineHeight, first, last);
+            PaintGuides(list, skin, scale, area, left, lineHeight, paintFrom, paintTo);
+        list.BeginPart(PART_RULERS);
+        PaintRulers(list, skin, area, left, digit);
+        PaintWhitespace(list, skin, scale, left, area, lineHeight, paintFrom, paintTo);
 
         if (focused && bracket is { } one && bracketPair is { } two)
         {
-            PaintBracket(list, skin, scale, area, left, lineHeight, one, firstLine, lastLine);
-            PaintBracket(list, skin, scale, area, left, lineHeight, two, firstLine, lastLine);
+            // The one further up first, whichever the caret's at. Caret's first, the two swapped over as the caret went from
+            // one end to the other and each box flew across the line to where the other had been
+            list.BeginPart(PART_BRACKETS);
+            var (earlier, later) = one < two ? (one, two) : (two, one);
+            PaintBracket(list, skin, scale, area, left, lineHeight, earlier, firstLine, lastLine);
+            PaintBracket(list, skin, scale, area, left, lineHeight, later, firstLine, lastLine);
         }
 
         // The code itself, a row at a time, each a part of its own so a row scrolled along is blended with itself. By what
         // it is (its line and where in it it starts), not by its number, which is somebody else's row once the code is
         // wrapped again (round the picture as it scrolls by, a word typed further up), and every letter of it blended
         // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
-        Span<char> number = stackalloc char[12];
         float origin = area.Max.Y + scrollY;
         BeginFlow(lineHeight);
-        for (int index = first; index <= last; index++)
+        for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
+            if (row.Lens)
+                continue;
             list.BeginPart(HashCode.Combine(row.Line, row.Start) & 0x3FFFFFFF);
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
             float x = left + row.Indent;
+
+            // A row cut off by the bottom edge fades out there rather than being sliced in half, the way a scrolled list
+            // does (UIDrawList.PushFade). Only the row that's cut, the letters hanging low in a row all in sight stay whole
+            bool cut = top - lineHeight < area.Min.Y - 0.5f;
+            if (cut)
+                list.PushFade(area, 0.0f, lineHeight * BOTTOM_FADE);
+
             int rowEnd = Math.Min(row.End, written.Length);
 
             // Typed into and not coloured with the rest yet, coloured on its own, or all one colour for a moment when it
             // can't be (it starts inside a comment over several lines)
-            if ((ColoursOf(row.Line, written) ?? FreshColours(row.Line, written)) is not { } colours)
+            if (DrawnColours(row.Line, written) is not { } colours)
             {
-                x = DrawFlowing(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin);
+                x = DrawWithInlays(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
             }
             else
             {
@@ -2099,19 +2755,38 @@ public partial class CodeEditor : UIComponent
                     if (to <= from)
                         continue;
 
-                    x += Width(skin, scale, written.AsSpan(at, from - at));
-                    x = DrawFlowing(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colors.Of(span.Kind), left, origin);
+                    // The gap before it is spaces in code a grammar coloured, stepped over. Text a terminal coloured
+                    // has words in its gaps, the plain ones between two coloured, and a traceback's code went missing
+                    // round its keywords
+                    ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
+                    bool blank = gap.IsWhiteSpace();
+                    x = DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, blank ? default : colors.Of(SyntaxKind.Name), left, origin, colors, draw: !blank);
+                    Vector4 colour = ColourOf(colors, span);
+                    float started = x;
+                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);
+                    if (span.Modifiers != SyntaxModifiers.None)
+                        DrawModifiers(list, span.Modifiers, started, x, top, lineHeight, StrikeY(skin, scale, top, lineHeight), colour);
                     at = to;
                 }
 
                 if (at < rowEnd)
-                    x = DrawFlowing(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin);
+                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
             }
+
+            // The hints after the end of the line, once its last row is drawn
+            if (rowEnd == written.Length)
+                x = DrawInlaysAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
 
             // A folded line says what it folds away after it, the closing line, the way VS Code does
             if (rowEnd == written.Length && folded.Contains(row.Line) && foldable.TryGetValue(row.Line, out int foldEnd))
                 PaintFolded(list, skin, scale, x, top, lineHeight, foldEnd, colors);
+
+            if (cut)
+                list.PopFade();
         }
+
+        // The lenses over the lines, on the rows left for them
+        PaintLensesAbove(list, skin, scale, area, left, lineHeight, first, last, colors);
 
         // The colours written in the code, a swatch at the end of their line
         list.BeginPart(PART_SWATCHES);
@@ -2128,7 +2803,8 @@ public partial class CodeEditor : UIComponent
         // The art named in the code, after the swatches
         PaintArt(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
-        // What the program has to say after the end of a line, the value a let came to
+        // What the program has to say after the end of a line, the value a let came to, in the same pill as the hints in
+        // among the code. It was plain grey words two spaces on, and the names in the middle of the line were in pills
         for (int i = 0; i < inlineHints.Count; i++)
         {
             UICodeHint hint = inlineHints[i];
@@ -2136,12 +2812,29 @@ public partial class CodeEditor : UIComponent
                 continue;
 
             int length = document.LineAt(hint.Line).Length;
-            float x = left + ColumnX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + 2) + ArtWidthOn(hint.Line);
-            list.Text(hint.Text, new Vector2(x, TopOf(area, hint.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * 0.8f }, markup: false);
+            float x = left + EndX(skin, scale, hint.Line, length) + digit * (SwatchesOn(hint.Line) * 2 + INLAY_END_GAP) + ArtWidthOn(hint.Line);
+            DrawPill(list, skin, scale, hint.Text, x, TopOf(area, hint.Line, length, lineHeight), colors);
+        }
+
+        PaintLenses(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
+
+        // The caret line's note, after its hint if it has one, fainter, and only while the caret is on its line. Well clear
+        // of the code, a bracket lit at the end of the line and the note read as one thing
+        float noteShown = Math.Clamp((lineNoteAge - LineNoteDelay) / LINE_NOTE_FADE, 0.0f, 1.0f);
+        if (noteShown > 0.0f && LineNote is { } note && note.Line == lineNoteFor && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
+        {
+            int length = document.LineAt(note.Line).Length;
+            float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + LINE_NOTE_GAP) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);
+            for (int i = 0; i < inlineHints.Count; i++)
+            {
+                if (inlineHints[i].Line == note.Line)
+                    x += EndHintWidth(skin, scale, inlineHints[i].Text, digit);
+            }
+
+            list.Text(note.Text, new Vector2(x, TopOf(area, note.Line, length, lineHeight)), scale, colors.Comment with { W = colors.Comment.W * LINE_NOTE_INK * noteShown }, markup: false);
         }
 
         // What is wrong, a line under it
-        list.BeginPart(PART_CARET);
         if (SyntaxError is { } error)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, error, firstLine, lastLine);
         for (int i = 0; i < moreErrors.Count; i++)
@@ -2149,81 +2842,36 @@ public partial class CodeEditor : UIComponent
         for (int i = 0; i < diagnostics.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], firstLine, lastLine);
 
+        PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
+
         // How the call being typed is called, over it
-        if (focused && signature is { } said)
+        if (focused && ShownSignature() is { } said)
             PaintSignature(list, skin, scale, area, left, lineHeight, first, said);
 
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
         if (focused && blink < BLINK)
         {
+            list.BeginPart(PART_CARET);
             PaintCaret(list, skin, scale, area, left, lineHeight, first, last, document.Caret);
             for (int i = 0; i < extras.Count; i++)
                 PaintCaret(list, skin, scale, area, left, lineHeight, first, last, extras[i].Caret);
         }
 
+        list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
         list.PopClip();
 
-        // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds
+        // The numbers down the side, the caret's lit, a mark where something is wrong, and a chevron for what folds. They
+        // go up and down with the code and not across with it
         if (LineNumbers)
         {
-            list.PushClip(new UIRect(content.Min, new Vector2(area.Min.X, content.Max.Y)));
-            Vector2 pointerAt = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
-            bool overGutter = IsHovered && pointerAt.X < area.Min.X;
-            float pointerY = pointerAt.Y;
-            for (int index = first; index <= last; index++)
-            {
-                CodeRow row = rows[index];
-                if (row.Start > 0)
-                    continue;
-
-                int line = row.Line;
-                list.BeginPart(PART_GUTTER + line);
-                float top = FlowTop(line, RowTop(area, index, lineHeight), origin);
-                if (!(line + 1).TryFormat(number, out int length))
-                    continue;
-
-                float right = area.Min.X - digit * GUTTER_GAP;
-                Vector4 shade = line == document.Caret.Line ? colors.Name : colors.LineNumber;
-
-                // What is wrong has its icon at the far side of the gutter, the number lit the same colour. A breakpoint
-                // has that place before it, and the line a debugger stopped on its arrow over that
-                bool breakpoint = Breakpoints?.Contains(line) == true;
-                bool marked = IsMarked(line, out bool warning);
-                if (marked)
-                    shade = warning ? skin.WarningColor : skin.ErrorColor;
-
-                float markSide = MathF.Round(lineHeight * 0.8f);
-                float markMiddle = top - lineHeight * 0.5f;
-                var slot = new UIRect(new Vector2(content.Min.X + 2.0f, markMiddle - markSide * 0.5f), new Vector2(content.Min.X + 2.0f + markSide, markMiddle + markSide * 0.5f));
-                bool pointing = OnGutterPressed is not null && overGutter && pointerY <= top && pointerY > top - lineHeight;
-                if (breakpoint || pointing)
-                {
-                    float dot = MathF.Round(markSide * 0.32f);
-                    var round = new UIRect(slot.Center - new Vector2(dot), slot.Center + new Vector2(dot));
-                    list.RoundRect(round, dot, skin.ErrorColor with { W = breakpoint ? 1.0f : 0.35f });
-                }
-                else if (marked)
-                {
-                    list.Symbol(warning ? "warning" : "error", slot, shade);
-                }
-
-                if (line == ExecutionLine)
-                    list.Symbol("debug-stackframe", slot, skin.WarningColor);
-
-                list.Text(number[..length], new Vector2(right - digit * length, top), scale, shade, markup: false);
-
-                // What can fold has its chevron in the gap after the number, always when it's folded, under the pointer otherwise
-                bool isFolded = folded.Contains(line);
-                if ((isFolded || overGutter) && foldable.ContainsKey(line))
-                {
-                    float side = MathF.Round(lineHeight * 0.7f);
-                    float middle = top - lineHeight * 0.5f;
-                    float from = area.Min.X - digit * GUTTER_GAP + (digit * GUTTER_GAP - side) * 0.5f;
-                    list.Symbol(isFolded ? "chevron-right" : "chevron-down", new UIRect(new Vector2(from, middle - side * 0.5f), new Vector2(from + side, middle + side * 0.5f)),
-                        isFolded ? colors.Name : colors.LineNumber);
-                }
-            }
-            list.PopClip();
+            bool gutterStretched = over.Begin(list, new UIRect(new Vector2(content.Min.X, area.Min.Y), area.Max));
+            list.PushFrame(new Vector2(0.0f, scrollY));
+            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
+            list.PopFrame();
+            if (gutterStretched)
+                UIOverscroll.End(list);
         }
 
         EndFlow();
@@ -2236,18 +2884,13 @@ public partial class CodeEditor : UIComponent
         // The bar, as long against its track as what is in sight is against all of it, and the line along the top that
         // says it has the keyboard, a hairline of the accent and not a stripe of it. The thumb is the text seen through,
         // the way ScrollPanel's is, it was a bar of gold down the side of every file
+        PaintMinimap(list, skin, scale, colors, lineHeight);
+
         list.BeginPart(PART_BAR);
         if (FocusLine && focused)
             list.Rect(new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - 1.0f), Bounds.Max), skin.AccentColor with { W = 0.55f });
-        float total = rows.Count * lineHeight;
-        if (total > area.Height)
-        {
-            var (track, length, _, topOfThumb) = BarGeometry(skin, paintedScale);
-
-            list.Rect(track, skin.HoverColor with { W = skin.HoverColor.W * 0.5f });
-            UIRect thumb = new(new Vector2(track.Min.X, topOfThumb - length), new Vector2(track.Max.X, topOfThumb));
-            list.RoundRect(thumb.Shrink(new UIEdges(1.0f, 0.0f)), track.Width * 0.5f, skin.TextColor with { W = 0.22f });
-        }
+        PaintBar(list, skin, lineHeight, area);
+        PaintMiddleScroll(list);
 
         // The art under the pointer, big, over everything
         if (hoveredArt >= 0 && hoveredArt < art.Count && hoveredArt < artBoxes.Length && artBoxes[hoveredArt].Width > 0.0f)
@@ -2271,13 +2914,66 @@ public partial class CodeEditor : UIComponent
     private UITextPosition signatureAt;
     private (int Version, UITextPosition Caret) signatureFor = (-1, default);
 
-    // Back from the caret to the bracket of the call it's inside of, counting the commas on the way, and the name before it
+    // How many overloads on from the one the source picked up and down went, and whether escape took the box away, both
+    // for the call they were for and forgotten in another
+    private int overloadStep;
+    private bool signatureHidden;
+    private (UITextPosition At, string Name) signatureOf;
+
+    private static int Wrap(int index, int count) => ((index % count) + count) % count;
+
+    // The overload up and down went to, nothing while escape has it away
+    private UISignature? ShownSignature()
+    {
+        if (signatureHidden || signature is not { } said)
+            return null;
+        return said.Overloads is { Count: > 1 } all ? all[Wrap(said.Active + overloadStep, all.Count)] with { Overloads = all, Active = said.Active } : said;
+    }
+
+    /// <summary>
+    /// The box over the call at the caret taken away the way Escape takes it, for another popup coming up over the code
+    /// (the fixes of Ctrl+., the hover). It stayed up over them, saying what a call the caret had left took.
+    /// </summary>
+    public void HideSignature() => signatureHidden = true;
+
+    /// <summary>The box over the call at the caret said again after escape took it away (Ctrl+Shift+Space), and asked for afresh.</summary>
+    public void ShowSignature()
+    {
+        signatureHidden = false;
+        signatureFor = (-1, default);
+    }
+
+    // Up or down with a call of more than one overload said, the next one or the one before it. False for anything else,
+    // the caret goes up or down then
+    private bool StepOverload(int by)
+    {
+        if (ShownSignature() is not { Overloads.Count: > 1 })
+            return false;
+
+        overloadStep += by;
+        return true;
+    }
+
+    // The call the caret's in found, and out of every call the next one is said afresh. Escape's was for the call it
+    // was pressed in, and going back into that one later had nothing said of it
     private void FindSignature()
+    {
+        if (FindCall())
+            return;
+
+        signatureOf = default;
+        overloadStep = 0;
+        signatureHidden = false;
+    }
+
+    // Back from the caret to the bracket of the call it's inside of, counting the commas on the way, and the name before
+    // it. False when it's in none
+    private bool FindCall()
     {
         signatureFor = (document.Version, document.Caret);
         signature = null;
         if (SignatureSource is not { } source || document.HasSelection)
-            return;
+            return false;
 
         int line = document.Caret.Line, column = document.Caret.Column, depth = 0, commas = 0;
         for (int steps = 0; steps < 4000; steps++)
@@ -2285,19 +2981,32 @@ public partial class CodeEditor : UIComponent
             if (column == 0)
             {
                 if (--line < 0)
-                    return;
+                    return false;
                 column = document.LineAt(line).Length;
                 continue;
             }
 
             string text = document.LineAt(line);
             char at = text[--column];
-            if (at == '"')
+            if (at == '\'' && column > 0 && column + 1 < text.Length
+                && char.IsAsciiHexDigit(text[column - 1]) && char.IsAsciiHexDigit(text[column + 1]))
+            {
+                // C++ digit separators are not character-literal delimiters.
+                continue;
+            }
+            if (at is '"' or '\'')
             {
                 // A text is gone over whole, its commas and brackets aren't the call's
-                int open = column > 0 ? text.LastIndexOf('"', column - 1) : -1;
+                int open = column - 1;
+                for (; open >= 0; open--)
+                {
+                    if (text[open] != at) continue;
+                    int slashes = 0;
+                    for (int before = open - 1; before >= 0 && text[before] == '\\'; before--) slashes++;
+                    if (slashes % 2 == 0) break;
+                }
                 if (open < 0)
-                    return;
+                    return false;
                 column = open;
             }
             else if (at is ')' or ']' or '}')
@@ -2314,18 +3023,27 @@ public partial class CodeEditor : UIComponent
 
                 // Inside a list or an object rather than a call, or a bracket with no name before it, nothing to say
                 if (at != '(')
-                    return;
+                    return false;
 
                 int end = column;
                 while (end > 0 && text[end - 1] == ' ') end--;
                 int start = end;
                 while (start > 0 && (UITextDocument.IsWordChar(text[start - 1]) || text[start - 1] == '.')) start--;
                 if (end <= start)
-                    return;
+                    return false;
 
-                signature = source(text[start..end], commas);
+                string name = text[start..end];
+                signature = source(name, commas);
                 signatureAt = new UITextPosition(line, start);
-                return;
+
+                // Another call starts over at the overload the source picks, and is said again after escape
+                if (signatureOf != (signatureAt, name))
+                {
+                    signatureOf = (signatureAt, name);
+                    overloadStep = 0;
+                    signatureHidden = false;
+                }
+                return true;
             }
             else if (at == ',' && depth == 0)
             {
@@ -2333,9 +3051,11 @@ public partial class CodeEditor : UIComponent
             }
             else if (at == ';' && depth == 0)
             {
-                return;
+                return false;
             }
         }
+
+        return false;
     }
 
     // The signature in a box over the row of the call's name (under it when that's the top row), the argument the caret is
@@ -2347,26 +3067,51 @@ public partial class CodeEditor : UIComponent
 
         list.BeginPart(PART_SIGNATURE);
         float small = scale * 0.92f;
-        float height = FontOf(skin).LineHeight * small + TEXT_PAD;
-        float width = FontOf(skin).Measure(said.Text, small, markup: false).X + TEXT_PAD * 2.0f + FontOf(skin).Measure(" ", small, markup: false).X;
+        UIFont codeFont = FontOf(skin), proseFont = skin.Font;
+
+        // Which overload of how many in front of it, when it has others, the way Visual Studio says it
+        var (index, count) = SignatureOverload;
+        string counter = count > 1 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, OverloadCounter, index + 1, count) + "   " : string.Empty;
+        Vector2 size = SignaturePopupSize(said, counter, codeFont, proseFont, small, area.Size);
+        float width = size.X, height = size.Y;
         int row = RowOf(signatureAt.Line, signatureAt.Column);
         float top = RowTop(area, row, lineHeight);
         float x = MathF.Max(area.Min.X, left + ColumnX(skin, scale, signatureAt.Line, signatureAt.Column) - TEXT_PAD);
+        x = Math.Clamp(x, area.Min.X, MathF.Max(area.Min.X, area.Max.X - width));
         float bottom = row > first ? top : top - lineHeight - height;
         if (bottom + height > area.Max.Y) bottom = top - lineHeight - height;
+        bottom = Math.Clamp(bottom, area.Min.Y, MathF.Max(area.Min.Y, area.Max.Y - height));
 
         var box = new UIRect(new Vector2(x, bottom), new Vector2(x + width, bottom + height));
         list.Popup(box, Module?.Compositor.PopupGlass);
 
         int start = Math.Clamp(said.Start, 0, said.Text.Length), length = Math.Clamp(said.Length, 0, said.Text.Length - start);
+        start += counter.Length;
         Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.75f };
-        float pen = box.Min.X + TEXT_PAD, textTop = box.Max.Y - TEXT_PAD * 0.5f;
-        ReadOnlySpan<char> all = said.Text;
-        list.Text(all[..start], new Vector2(pen, textTop), small, text, markup: false);
-        pen += FontOf(skin).Measure(all[..start], small, markup: false).X;
-        list.Text(all.Slice(start, length), new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
-        pen += FontOf(skin).Measure(all.Slice(start, length), small, markup: false).X + FontOf(skin).BoldAdvance * small * length;
-        list.Text(all[(start + length)..], new Vector2(pen, textTop), small, text, markup: false);
+        float textTop = box.Max.Y - TEXT_PAD * 0.5f;
+        list.PushFont(codeFont);
+        foreach (var line in signatureLabelLines)
+        {
+            ReadOnlySpan<char> all = signaturePopupLabel.AsSpan(line.Start, line.Length);
+            int from = Math.Clamp(start - line.Start, 0, line.Length), to = Math.Clamp(start + length - line.Start, from, line.Length);
+            float pen = box.Min.X + TEXT_PAD;
+            list.Text(all[..from], new Vector2(pen, textTop), small, text, markup: false);
+            pen += codeFont.Measure(all[..from], small, markup: false).X;
+            list.Text(all[from..to], new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
+            pen += codeFont.Measure(all[from..to], small, markup: false).X + codeFont.BoldAdvance * small * (to - from);
+            list.Text(all[to..], new Vector2(pen, textTop), small, text, markup: false);
+            textTop -= codeFont.LineHeight * small;
+        }
+        list.PopFont();
+        if (signatureDocLines.Count > 0)
+        {
+            textTop -= TEXT_PAD;
+            var inside = new UIRect(new Vector2(box.Min.X + TEXT_PAD, box.Min.Y + TEXT_PAD * 0.5f), new Vector2(box.Max.X - TEXT_PAD, textTop));
+            list.PushFont(proseFont);
+            list.Text(signaturePopupDocs, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(signatureDocLines), inside,
+                Horizon.Rendering.Origin.TopLeft, small, skin.DimTextColor, markup: false);
+            list.PopFont();
+        }
     }
 
     // The part of a selection on a row, to the end of the row and a little past it on the rows it runs over
@@ -2381,29 +3126,42 @@ public partial class CodeEditor : UIComponent
         int fromColumn = start > rowStart ? start.Column : row.Start;
         int toColumn = end < rowEnd ? end.Column : row.End;
 
-        float from = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, fromColumn - row.Start)));
-        float to = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, toColumn - row.Start)));
+        // Starting at a character that has a hint before it, the hint isn't in it, and a hint before where it ends isn't either
+        float from = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, fromColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, start > rowStart ? fromColumn + 1 : fromColumn);
+        float to = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, toColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, toColumn);
         if (end > rowEnd && row.End == text.Length)
-            to += digit * 0.5f;
+            to += InlaysWidth(skin, scale, row.Line, text.Length, int.MaxValue) + digit * 0.5f;
 
         if (to > from)
             list.Rect(new UIRect(new Vector2(left + from, top - lineHeight), new Vector2(left + to, top)), color);
     }
 
     /// <summary>
-    /// How long the caret takes to glide to where it went, in seconds (about two thirds of the way in that long), 0 for
-    /// it to jump there the way it always did. Only the caret that is drawn glides, typing goes where the caret is.
+    /// How long the caret takes to glide to where it went, in seconds, all the way there in that long and quickest at
+    /// the start, 0 for it to jump there the way it always did. Only the caret that is drawn glides, typing goes where
+    /// the caret is.
     /// </summary>
     public float CaretGlide { get; set; }
 
+    /// <summary>How the caret is drawn, a thin line before the character, a block over it or a line under it.</summary>
+    public UICaretStyle CaretStyle { get; set; }
+
     /// <summary>Where the caret was drawn last, the middle of its left edge, for something to happen there (sparks).</summary>
     public Vector2 CaretPoint { get; private set; }
+
+    /// <summary>How tall the caret's line was drawn last, for something put under it (Visual Studio's fixes by the caret).</summary>
+    public float CaretLineHeight { get; private set; }
 
     // How long the last tick was, for the glide, and where the caret is drawn against the code (from the top of its first
     // row, so scrolling moves it with the code rather than it gliding after it)
     private float tickTime;
     private Vector2 caretDrawn;
     private bool caretSeen;
+
+    // The glide going, from where the caret was drawn to where it went and how far into it. A glide that eased towards
+    // the caret forever crept up on it over its last few pixels, which read as a caret slower than every other editor's
+    private Vector2 glideFrom, glideTo;
+    private float glideTime;
 
     private void PaintCaret(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, UITextPosition caret)
     {
@@ -2413,6 +3171,7 @@ public partial class CodeEditor : UIComponent
 
         float top = RowTop(area, row, lineHeight);
         float x = left + ColumnX(skin, scale, caret.Line, caret.Column);
+        float placedX = x, placedTop = top;
         if (caret == document.Caret)
         {
             Vector2 origin = new(left, RowTop(area, 0, lineHeight));
@@ -2420,21 +3179,61 @@ public partial class CodeEditor : UIComponent
 
             // A long way (a page, the end of the file) is jumped, a glide over half the screen only looks slow
             if (CaretGlide <= 0.0f || !caretSeen || Vector2.Distance(caretDrawn, wanted) > lineHeight * 12.0f)
-                caretDrawn = wanted;
+            {
+                caretDrawn = glideFrom = glideTo = wanted;
+                glideTime = CaretGlide;
+            }
             else
             {
-                caretDrawn += (wanted - caretDrawn) * (1.0f - MathF.Exp(-tickTime / CaretGlide));
-                if (Vector2.DistanceSquared(caretDrawn, wanted) < 0.25f)
-                    caretDrawn = wanted;
+                if (wanted != glideTo)
+                {
+                    glideFrom = caretDrawn;
+                    glideTo = wanted;
+                    glideTime = 0.0f;
+                }
+
+                glideTime = MathF.Min(glideTime + tickTime, CaretGlide);
+                float t = 1.0f - glideTime / CaretGlide;
+                caretDrawn = Vector2.Lerp(glideFrom, glideTo, 1.0f - t * t * t);
             }
 
             caretSeen = true;
             x = origin.X + caretDrawn.X;
             top = origin.Y + caretDrawn.Y;
             CaretPoint = new Vector2(x, top - lineHeight * 0.5f);
+            CaretLineHeight = lineHeight;
         }
 
-        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + MathF.Max(1.0f, MathF.Round(scale * 8.0f)), top)), skin.HighlightColor);
+        if (CaretStyle == UICaretStyle.Line)
+        {
+            list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + MathF.Max(1.0f, MathF.Round(scale * 8.0f)), top)), skin.HighlightColor);
+            return;
+        }
+
+        // A block or an underline is as wide as the character it's on, a tab's room for a tab and a digit at the end
+        string text = document.LineAt(caret.Line);
+        int column = Math.Clamp(caret.Column, 0, text.Length);
+        float width = column < text.Length && RowOf(caret.Line, column + 1) == row
+            ? ColumnX(skin, scale, caret.Line, column + 1) - ColumnX(skin, scale, caret.Line, column)
+            : FontOf(skin).Measure("0", scale, markup: false).X;
+        width = MathF.Max(width, 1.0f);
+
+        if (CaretStyle == UICaretStyle.Underline)
+        {
+            float thick = MathF.Max(1.0f, MathF.Round(scale * 8.0f));
+            list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + width, top - lineHeight + thick)), skin.HighlightColor);
+            return;
+        }
+
+        // The block, and the character under it written again on top in the colour behind the code so it still reads.
+        // Where the character really is, the block glides over it
+        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + width, top)), skin.HighlightColor);
+        if (column < text.Length && text[column] is not ('\t' or ' '))
+        {
+            Vector4 behind = Color ?? skin.FieldColor;
+            behind = behind.W > 0.0f ? behind with { W = 1.0f } : new Vector4(0.0f, 0.0f, 0.0f, 1.0f);
+            list.Text(text.AsSpan(column, char.IsHighSurrogate(text[column]) && column + 1 < text.Length ? 2 : 1), new Vector2(placedX, placedTop), scale, behind, markup: false);
+        }
     }
 
     // After a folded line, a box with the lines it hides counted and the line that closes it, "… }"
@@ -2451,6 +3250,133 @@ public partial class CodeEditor : UIComponent
     }
 
     // The lines the top of the view is inside of, on a strip of their own over the code and the gutter, numbered
+    /// <summary>
+    /// Helper method to remember, before the scale changes, which line a zoom keeps in place and how far down the view it
+    /// is. The caret's when it's in sight, the top row's otherwise. A second zoom before the first was painted keeps the first's.
+    /// </summary>
+    private void KeepPlaceThroughZoom()
+    {
+        if (zoomAnchor is not null || paintedSkin is not { } skin || rows.Count == 0)
+            return;
+
+        float lineHeight = FontOf(skin).LineHeight * paintedScale;
+        UIRect area = TextArea(skin, paintedScale);
+        UITextPosition caret = document.Caret;
+        float down = RowOf(caret.Line, caret.Column) * lineHeight - scrollY;
+        if (down >= 0.0f && down + lineHeight <= area.Height)
+        {
+            zoomAnchor = (caret.Line, caret.Column, down, paintedScale);
+            return;
+        }
+
+        int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
+        if (rows[top].Lens && top + 1 < rows.Count)
+            top++;
+        zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
+    }
+
+    /// <summary>Helper method to scroll the line a zoom kept back to where it was on the screen, once the rows are laid out at the new scale.</summary>
+    private void ApplyZoomAnchor(UISkin skin, float scale)
+    {
+        if (zoomAnchor is not { } anchor || anchor.OldScale == scale)
+        {
+            zoomAnchor = null;
+            return;
+        }
+
+        zoomAnchor = null;
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        scrollGoal = null;
+        scrollY = RowOf(anchor.Line, anchor.Column) * lineHeight - anchor.Down;
+
+        // Sideways it's the same share of the way along, a line too long for the view keeps the caret's part of it in sight
+        if (!wordWrap)
+            scrollX *= scale / MathF.Max(0.0001f, anchor.OldScale);
+        ClampScroll(skin, scale);
+    }
+
+    // How wide a change's bar is and how much of the gutter next to the code it takes, in units of a digit's width
+    private const float CHANGE_BAR = 0.3f, CHANGE_ZONE = 0.8f;
+
+    // A press that went to a change's bar, which a drag after it leaves alone
+    private bool changePressed;
+
+    /// <summary>
+    /// Helper method to paint the bar of a changed line down all of its rows, and the wedge of lines taken out above it.
+    /// The line's top is where its number goes, the first row's as it flows, and the bar is as tall as every row it
+    /// wraps onto. Painted a row at a time a wrapped line's bars flowed apart from each other while the lines moved.
+    /// </summary>
+    private void PaintLineChange(UIDrawList list, UISkin skin, UIRect area, int index, float origin, float lineHeight, float digit, GutterColumns columns)
+    {
+        int line = rows[index].Line;
+        int from = index, to = index;
+        while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens) from--;
+        while (to + 1 < rows.Count && rows[to + 1].Line == line) to++;
+
+        float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
+        float bottom = top - (to - from + 1) * lineHeight;
+        float width = columns.BarRight - columns.BarLeft;
+        float right = columns.BarRight;
+
+        // A folded line has the bar of anything changed that's folded away under it, or nobody would know it was there
+        bool hiddenChange = false, hiddenDelete = false;
+        if (folded.Contains(line) && foldable.TryGetValue(line, out int foldEnd))
+        {
+            for (int under = line + 1; under <= foldEnd && !(hiddenChange && hiddenDelete); under++)
+            {
+                hiddenChange |= changedLines.ContainsKey(under);
+                hiddenDelete |= deletedBefore.Contains(under);
+            }
+        }
+
+        if (changedLines.TryGetValue(line, out UILineChangeKind kind) || hiddenChange)
+        {
+            Vector4 colour = hiddenChange ? skin.WarningColor : ChangeColour(kind, skin);
+            list.Box(new UIRect(new Vector2(right - width, bottom), new Vector2(right, top)), colour);
+        }
+
+        // Lines taken out from just before this one, a wedge across the line between, out into the gutter so it doesn't
+        // read as a dot. Lines taken out at the very end of a text with no line after them have theirs under the last one
+        float half = MathF.Max(2.0f, MathF.Round(lineHeight * 0.16f));
+        float wedge = width * 4.0f;
+        if (deletedBefore.Contains(line) || hiddenDelete)
+            list.Box(new UIRect(new Vector2(right - wedge, top - half), new Vector2(right, top + half)), skin.ErrorColor);
+        if (line == document.LineCount - 1 && deletedBefore.Contains(document.LineCount))
+            list.Box(new UIRect(new Vector2(right - wedge, bottom - half), new Vector2(right, bottom + half)), skin.ErrorColor);
+    }
+
+    /// <summary>Helper method for a press on a change's bar, handed to whoever wants it. False when it wasn't on one.</summary>
+    private bool PressLineChange(Vector2 point, UITextPosition at)
+    {
+        if (OnChangePressed is null || paintedSkin is not { } skin || lineChanges.Count == 0)
+            return false;
+
+        float digit = FontOf(skin).Measure("0", paintedScale, markup: false).X;
+        float codeStarts = TextArea(skin, paintedScale).Min.X;
+        if (point.X >= codeStarts || point.X < codeStarts - digit * CHANGE_ZONE)
+            return false;
+
+        // The change the line is in, or the lines taken out just above it
+        foreach (UICodeLineChange change in lineChanges)
+        {
+            bool on = change.Kind == UILineChangeKind.Deleted
+                ? at.Line == change.Line || at.Line == change.Line - 1
+                : at.Line >= change.Line && at.Line < change.Line + change.Count;
+            if (on)
+            {
+                // The press was the bar's, a drag from it isn't a selection from the caret
+                changePressed = true;
+                OnChangePressed(change);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The lines held at the top as they were last painted, outermost first, for a test.</summary>
+    public IReadOnlyList<int> StickyShown => sticky;
+
     private void PaintSticky(UIDrawList list, UISkin skin, float scale, UIRect content, UIRect area, float lineHeight, float digit, int firstLine, UISyntaxColors colors)
     {
         List<int> held = StickyLines(firstLine);
@@ -2461,10 +3387,16 @@ public partial class CodeEditor : UIComponent
         UIRect strip = StickyBounds(area, lineHeight, held.Count);
         strip = new UIRect(new Vector2(content.Min.X, strip.Min.Y), strip.Max);
         // Solid whatever the editor's own colour is, a see-through editor (over Hex's picture) had the lines scrolled under
-        // the strip showing through it
-        list.Rect(strip, Color is { W: >= 0.99f } solid ? solid : skin.PanelColor with { W = 1.0f });
-        list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.15f });
+        // the strip showing through it. A soft shadow under it, VS Code's, lifts it off the code going by under it, a
+        // hairline of the text's colour was all there was and it read as one more line of code
+        Vector4 back = Color is { W: >= 0.99f } solid ? solid : skin.PanelColor with { W = 1.0f };
+        float lightness = 0.2126f * back.X + 0.7152f * back.Y + 0.0722f * back.Z;
+        float soft = MathF.Max(3.0f, MathF.Round(lineHeight * 0.3f));
+        list.Shadow(strip, 0.0f, soft, new Vector4(0.0f, 0.0f, 0.0f, lightness > 0.5f ? 0.18f : 0.5f), new Vector2(0.0f, -soft * 0.5f));
+        list.Rect(strip, back);
+        list.Rect(new UIRect(strip.Min, new Vector2(strip.Max.X, strip.Min.Y + 1.0f)), skin.TextColor with { W = 0.06f });
 
+        list.PushClip(strip);
         Span<char> number = stackalloc char[12];
         for (int i = 0; i < held.Count; i++)
         {
@@ -2474,17 +3406,18 @@ public partial class CodeEditor : UIComponent
             float x = area.Min.X + TEXT_PAD;
             int at = 0;
 
-            if (LineNumbers && (line + 1).TryFormat(number, out int length))
-                list.Text(number[..length], new Vector2(area.Min.X - digit * GUTTER_GAP - digit * length, top), scale, colors.LineNumber, markup: false);
+            // The line's number where the gutter has it, a diff's the new version's
+            if (LineNumbers)
+                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, colors.LineNumber);
 
-            if ((ColoursOf(line, written) ?? FreshColours(line, written)) is { } colours)
+            if (DrawnColours(line, written) is { } colours)
             {
                 foreach (SyntaxSpan span in colours)
                 {
                     if (span.Start + span.Length > written.Length)
                         break;
                     x += Width(skin, scale, written.AsSpan(at, span.Start - at));
-                    x = Draw(list, skin, scale, written.AsSpan(span.Start, span.Length), x, top, colors.Of(span.Kind));
+                    x = Draw(list, skin, scale, written.AsSpan(span.Start, span.Length), x, top, ColourOf(colors, span));
                     at = span.Start + span.Length;
                 }
             }
@@ -2493,6 +3426,7 @@ public partial class CodeEditor : UIComponent
                 Draw(list, skin, scale, written, x, top, colors.Of(SyntaxKind.Name));
             }
         }
+        list.PopClip();
     }
 
     // How many swatches a line has at its end, for what's written after them
@@ -2518,7 +3452,7 @@ public partial class CodeEditor : UIComponent
         int length = document.LineAt(swatch.Line).Length;
         float side = MathF.Round(lineHeight * 0.6f);
         float top = TopOf(area, swatch.Line, length, lineHeight);
-        float x = left + ColumnX(skin, scale, swatch.Line, length) + side * 0.8f + before * (side + 4.0f);
+        float x = left + EndX(skin, scale, swatch.Line, length) + side * 0.8f + before * (side + 4.0f);
         float middle = MathF.Round(top - lineHeight * 0.5f);
         return new UIRect(new Vector2(x, middle - side * 0.5f), new Vector2(x + side, middle + side * 0.5f));
     }
@@ -2567,7 +3501,7 @@ public partial class CodeEditor : UIComponent
             {
                 line = item.Line;
                 int length = document.LineAt(line).Length;
-                x = left + ColumnX(skin, scale, line, length) + swatchSide * 0.8f + SwatchesOn(line) * (swatchSide + ART_GAP);
+                x = left + EndX(skin, scale, line, length) + swatchSide * 0.8f + SwatchesOn(line) * (swatchSide + ART_GAP);
                 middle = MathF.Round(TopOf(area, line, length, lineHeight) - lineHeight * 0.5f);
             }
 
@@ -2717,11 +3651,12 @@ public partial class CodeEditor : UIComponent
     private void PaintGuides(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last)
     {
         float space = FontOf(skin).Measure(" ", scale, markup: false).X;
-        float tab = space * TAB_SPACES;
+        float tab = space * TabSize;
         Vector4 guide = skin.TextColor with { W = 0.08f };
 
         for (int index = first; index <= last; index++)
         {
+            list.BeginPart(RowPart(ROW_GUIDES, rows[index]));
             int line = rows[index].Line;
             int depth = Indentation(line);
             if (depth < 0)
@@ -2734,7 +3669,7 @@ public partial class CodeEditor : UIComponent
             }
 
             float top = RowTop(area, index, lineHeight);
-            for (int level = 1; level * TAB_SPACES <= depth; level++)
+            for (int level = 1; level * TabSize <= depth; level++)
             {
                 float x = MathF.Round(left + (level - 1) * tab);
                 list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + 1.0f, top)), guide);
@@ -2742,7 +3677,24 @@ public partial class CodeEditor : UIComponent
         }
     }
 
-    // How many spaces in a line starts, a tab as four, -1 for a line with nothing on it
+    /// <summary>
+    /// Tab as the key does it once nothing else wanted it (a snippet's next stop). A document indented with tabs gets a
+    /// tab where the caret is (the document's own Tab goes to the next stop in spaces), and a selection over more than
+    /// one line is indented a level either way.
+    /// </summary>
+    public void IndentOrTab()
+    {
+        if (ReadOnly)
+            return;
+
+        bool lines = document.HasSelection && document.SelectionStart.Line != document.SelectionEnd.Line;
+        if (!lines && document.Indent.StartsWith('\t'))
+            document.Insert("\t");
+        else
+            document.IndentLines();
+    }
+
+    // How many spaces in a line starts, a tab as TabSize of them, -1 for a line with nothing on it
     private int Indentation(int line)
     {
         string text = document.LineAt(line);
@@ -2750,7 +3702,7 @@ public partial class CodeEditor : UIComponent
         foreach (char character in text)
         {
             if (character == ' ') spaces++;
-            else if (character == '\t') spaces += TAB_SPACES;
+            else if (character == '\t') spaces += TabSize;
             else return spaces;
         }
 
@@ -2763,34 +3715,6 @@ public partial class CodeEditor : UIComponent
             return;
 
         list.Outline(Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + 1), 1.0f, skin.HighlightColor with { W = 0.6f });
-    }
-
-    private void PaintDiagnostic(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, in UICodeDiagnostic diagnostic, int firstLine, int lastLine)
-    {
-        if (diagnostic.Line < firstLine || diagnostic.Line > lastLine || diagnostic.Line >= document.LineCount || IsHidden(diagnostic.Line, out _))
-            return;
-
-        int length = document.LineAt(diagnostic.Line).Length;
-        int column = Math.Min(diagnostic.Column, length);
-        int endColumn = Math.Min(length, column + Math.Max(1, diagnostic.Length));
-
-        UIRect piece = Piece(skin, scale, area, left, lineHeight, diagnostic.Line, column, endColumn);
-        float to = MathF.Max(piece.Min.X + lineHeight * 0.5f, piece.Max.X);
-        float thickness = MathF.Max(2.0f, MathF.Round(lineHeight * 0.08f));
-
-        // A hint is a line of dots in the text's colour, seen through, a warning and an error a line of theirs. Always as
-        // many quads for a diagnostic of a kind, the dots a few of them under the whole of it
-        if (diagnostic.Hint)
-        {
-            Vector4 quiet = skin.TextColor with { W = skin.TextColor.W * 0.45f };
-            float dot = thickness, step = thickness * 2.5f;
-            for (float x = piece.Min.X; x + dot <= to; x += step)
-                list.Rect(new UIRect(new Vector2(x, piece.Min.Y), new Vector2(x + dot, piece.Min.Y + dot)), quiet);
-            return;
-        }
-
-        Vector4 shade = diagnostic.Warning ? skin.WarningColor : skin.ErrorColor;
-        list.Rect(new UIRect(piece.Min, new Vector2(to, piece.Min.Y + thickness)), shade);
     }
 
     /// <summary>
@@ -2859,4 +3783,17 @@ public partial class CodeEditor : UIComponent
         Expose("highlight", () => Highlight, value => Highlight = value);
         Expose("color", () => Color ?? Vector4.Zero, value => Color = value.W > 0.0f ? value : null);
     }
+}
+
+/// <summary>How the caret of a code editor is drawn, VS Code's editor.cursorStyle.</summary>
+public enum UICaretStyle
+{
+    /// <summary>A thin line before the character, the way it always was.</summary>
+    Line,
+
+    /// <summary>A block over the character, the character still written in it.</summary>
+    Block,
+
+    /// <summary>A line under the character.</summary>
+    Underline
 }

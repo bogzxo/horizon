@@ -52,7 +52,23 @@ public class Slider : ProgressBar
 
     protected internal override bool Navigable => true;
 
+    private float wheelRemainder;
+
+    protected internal override bool OnScroll(float delta)
+    {
+        if (!EnabledInHierarchy || Max == Min) return false;
+        // Keep trackpad fractions; adjustment never inherits the scroll-view speed multiplier.
+        wheelRemainder += delta;
+        int steps = (int)wheelRemainder;
+        wheelRemainder -= steps;
+        if (steps != 0) AdjustBy(steps);
+        return true;
+    }
+
     protected internal override bool OnAdjust(int step)
+        => AdjustBy(Math.Sign(step));
+
+    private bool AdjustBy(int step)
     {
         if (!EnabledInHierarchy || Max == Min)
             return false;
@@ -60,7 +76,7 @@ public class Slider : ProgressBar
         // A step of its own if it has them, otherwise a twentieth of the way
         float previous = Value;
         float by = Step > 0.0f ? Step : (Max - Min) / 20.0f;
-        Value = Math.Clamp(previous + Math.Sign(step) * by, MathF.Min(Min, Max), MathF.Max(Min, Max));
+        Value = Math.Clamp(previous + step * by, MathF.Min(Min, Max), MathF.Max(Min, Max));
 
         if (Value != previous)
         {
@@ -123,7 +139,10 @@ public class Slider : ProgressBar
         float knob = MathF.Min(KNOB, Bounds.Height);
         float left = Bounds.Min.X + knob * 0.5f, right = Bounds.Max.X - knob * 0.5f;
         float y = Bounds.Center.Y, x = left + (right - left) * Progress;
-        var groove = new UIRect(new Vector2(left, y - GROOVE * 0.5f), new Vector2(right, y + GROOVE * 0.5f));
+
+        // The groove runs the whole width, so its ends are where a toggle's or a dropdown's are in a column of them. It
+        // stopped half a knob short of either end, the knob's middle still goes no further than that
+        var groove = new UIRect(new Vector2(Bounds.Min.X, y - GROOVE * 0.5f), new Vector2(Bounds.Max.X, y + GROOVE * 0.5f));
 
         list.RoundRect(groove, GROOVE * 0.5f, skin.TextColor with { W = 0.16f } * tint);
         list.RoundRect(new UIRect(groove.Min, new Vector2(MathF.Max(groove.Min.X + GROOVE, x), groove.Max.Y)), GROOVE * 0.5f, skin.AccentColor * tint);
@@ -146,6 +165,9 @@ public class Slider : ProgressBar
         float knob = MathF.Min(KNOB, Bounds.Height);
         return new UIRect(new Vector2(Bounds.Min.X + knob * 0.5f, Bounds.Min.Y), new Vector2(Bounds.Max.X - knob * 0.5f, Bounds.Max.Y));
     }
+
+    // Dragged by a finger it slides, even inside of something that scrolls
+    protected internal override bool KeepsTouchDrag(Vector2 point) => true;
 
     protected internal override void OnPointerDown(Vector2 point) => MoveTo(point);
 

@@ -13,7 +13,7 @@ namespace Horizon.UI.Skinning;
 /// accent, and only what it writes out itself is taken as written.
 /// </para>
 /// </summary>
-public sealed class UIPalette
+public sealed partial class UIPalette
 {
     /// <summary>The colour of text that stands on its own. Labels and captions.</summary>
     public Vector4 Text { get; set; } = new(0.08f, 0.09f, 0.13f, 1.0f);
@@ -255,18 +255,32 @@ public sealed class UIPalette
 
     /// <summary>
     /// What selected text is painted under, in code and the terminal. The accent seen through unless the theme says,
-    /// which suits a blue accent and was a swamp under Horizon's gold, so Horizon gives one of its own.
+    /// which suits a blue accent and was a swamp under Horizon's sunset, so Horizon gives one of its own.
     /// </summary>
     public Vector4 Selection { get; set; } = new(0.38f, 0.62f, 1.0f, 0.32f);
 
     /// <summary>
     /// The text that reads on the accent, whichever of the text and the bar's text stands out on it more. Dark on Horizon's
-    /// gold, white on a blue.
+    /// sunset, white on a blue.
     /// </summary>
     public Vector4 OnAccent => Contrast(BarText, Accent with { W = 1.0f }) >= Contrast(Text, Accent with { W = 1.0f }) ? BarText : Text;
 
     /// <summary>Whether the palette is a dark one, text lighter than its panel.</summary>
     public bool IsDark => Luminance(Text) > Luminance(Panel);
+
+    /// <summary>
+    /// A number that's another whenever any of the colours is. A theme put on is its colours written into the palette
+    /// the skin has, which is the same palette, so what's painted with it goes by this (see UIDrawList.PaintContext).
+    /// </summary>
+    internal int Fingerprint()
+    {
+        var hash = new HashCode();
+        hash.Add(Text); hash.Add(ControlText); hash.Add(Control); hash.Add(Field); hash.Add(Border); hash.Add(Panel); hash.Add(Track);
+        hash.Add(Hover); hash.Add(Accent); hash.Add(Highlight); hash.Add(DisabledTint); hash.Add(BarText); hash.Add(TextShadow);
+        hash.Add(IconLabel); hash.Add(DimText); hash.Add(Link); hash.Add(Error); hash.Add(Warning); hash.Add(Success); hash.Add(Selection);
+        hash.Add(Syntax.Fingerprint());
+        return hash.ToHashCode();
+    }
 
     /// <summary>A copy, for a UI that wants to change a colour without changing the skin's.</summary>
     public UIPalette Clone()
@@ -276,7 +290,7 @@ public sealed class UIPalette
             Text = Text, ControlText = ControlText, Control = Control, Field = Field, Border = Border, Panel = Panel, Track = Track,
             Hover = Hover, Accent = Accent, Highlight = Highlight, DisabledTint = DisabledTint, BarText = BarText, TextShadow = TextShadow,
             IconLabel = IconLabel, DimText = DimText, Link = Link, Error = Error, Warning = Warning, Success = Success,
-            Selection = Selection
+            Selection = Selection, Terminal = Terminal is null ? null : (Vector4?[])Terminal.Clone()
         };
         Syntax.CopyTo(copy.Syntax);
         return copy;

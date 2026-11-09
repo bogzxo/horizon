@@ -161,7 +161,7 @@ public static class SyntaxScopes
 
     /// <summary>Whether a kind is a name of some sort, which a language's own lexer may know more about than its grammar.</summary>
     public static bool IsName(SyntaxKind kind) => kind is SyntaxKind.Name or SyntaxKind.Property or SyntaxKind.Call or SyntaxKind.Declaration
-        or SyntaxKind.Builtin or SyntaxKind.Type or SyntaxKind.Keyword or SyntaxKind.Control or SyntaxKind.Constant;
+        or SyntaxKind.Builtin or SyntaxKind.Type or SyntaxKind.Keyword or SyntaxKind.Control or SyntaxKind.Constant or >= SyntaxKind.Class;
 
     // Stands in for a scope no prefix fits, which is kept too so it isn't looked for again
     private const SyntaxKind NOT_FOUND = (SyntaxKind)(-1);

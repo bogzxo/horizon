@@ -100,6 +100,15 @@ public class TextBox : UIComponent
     /// <summary>The only characters that can be typed, or null to allow everything the font can draw.</summary>
     public string? AllowedCharacters { get; set; }
 
+    /// <summary>
+    /// Whether the text is only there to be read, selected and copied, nothing typed, pasted, cut or deleted. A value
+    /// somebody wants out of a properties panel (a path, a size) without being able to change it by accident.
+    /// </summary>
+    public bool ReadOnly { get; set; }
+
+    // A soft keyboard comes up for a box a finger focused, unless nothing can be typed into it
+    protected internal override bool WantsTextInput => !ReadOnly;
+
     /// <summary>Called with the new text whenever typing changes it.</summary>
     public Action<string>? OnChanged { get; set; }
 
@@ -158,6 +167,27 @@ public class TextBox : UIComponent
     /// <summary>A Codicon drawn at its left, before what is typed (search for a box that finds), empty for none.</summary>
     public string LeadIcon { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Whether what's typed is a secret (a password), drawn as a star a letter and never copied out. What it says is still
+    /// <see cref="Text"/> for whoever asked.
+    /// </summary>
+    public bool Secret { get; set; }
+
+    // What's drawn of the text, itself or a star for each letter of a secret, kept while it's as long
+    private string masked = string.Empty;
+
+    private string Shown
+    {
+        get
+        {
+            if (!Secret)
+                return text;
+            if (masked.Length != text.Length)
+                masked = new string('*', text.Length);
+            return masked;
+        }
+    }
+
     /// <summary>Where the button is, as the box was last laid out. Empty for a box without one.</summary>
     public UIRect ButtonBounds
     {
@@ -212,7 +242,7 @@ public class TextBox : UIComponent
     /// </summary>
     public bool Insert(char character)
     {
-        if (char.IsControl(character) || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.PrivateUse)
+        if (ReadOnly || char.IsControl(character) || char.GetUnicodeCategory(character) == System.Globalization.UnicodeCategory.PrivateUse)
             return false;
         if (AllowedCharacters is not null && !AllowedCharacters.Contains(character))
             return false;
@@ -285,7 +315,7 @@ public class TextBox : UIComponent
     /// <summary>Helper to take what is selected out of the text, which is a change only if anything was.</summary>
     private void RemoveSelection()
     {
-        if (!HasSelection)
+        if (!HasSelection || ReadOnly)
             return;
 
         int at = SelectionStart;
@@ -379,10 +409,10 @@ public class TextBox : UIComponent
                 SelectAll();
                 break;
             case UIKeyboard.COPY:
-                if (HasSelection) UIKeyboard.Copy(Selection);
+                if (HasSelection && !Secret) UIKeyboard.Copy(Selection);
                 break;
             case UIKeyboard.CUT:
-                if (HasSelection) UIKeyboard.Copy(Selection);
+                if (HasSelection && !Secret) UIKeyboard.Copy(Selection);
                 RemoveSelection();
                 break;
 
@@ -436,7 +466,7 @@ public class TextBox : UIComponent
 
         for (int i = 1; i <= text.Length; i++)
         {
-            float after = skin.Font.Measure(text.AsSpan(0, i), textScale, markup: false).X;
+            float after = skin.Font.Measure(Shown.AsSpan(0, i), textScale, markup: false).X;
 
             // Nearer to the gap in front of this character than to the one behind it
             if (wanted < (before + after) * 0.5f)
@@ -523,7 +553,9 @@ public class TextBox : UIComponent
 
     protected override void Update(float dt)
     {
-        blink = (blink + dt) % (BLINK_INTERVAL * 2.0f);
+        blink = Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK_INTERVAL * 2.0f);
+        if (IsFocused && Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK_INTERVAL - blink % BLINK_INTERVAL);
     }
 
     protected override Vector2 Measure(UISkin skin)
@@ -560,11 +592,12 @@ public class TextBox : UIComponent
             // always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
             list.Box(Bounds, skin.HoverColor * new Vector4(1.0f, 1.0f, 1.0f, enabled && IsHovered && !focused ? 0.4f : 0.0f));
 
-            // A hairline rim, and while it's typed in a crisp line in the accent with a soft ring of it round the outside,
-            // the way a field that has the keyboard is drawn on a Mac. It was a thick frame of gold, which shouted. The
-            // ring is always painted, see-through when it isn't wanted, so the quads after it don't shift
+            // A hairline rim, and while it's typed in a crisp line in the accent, the one ring whatever has the keyboard
+            // gets. It was a thick frame of gold, which shouted, and then a soft ring round the outside of the line as well,
+            // two rings where a tree's row had one. The soft one's quad is still painted, see-through, so the quads after
+            // it don't shift
             float ring = FOCUS_RING;
-            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = focused ? 0.28f : 0.0f });
+            list.RoundOutline(Bounds.Shrink(new UIEdges(-ring)), skin.CornerRadius + ring, ring, skin.HighlightColor with { W = 0.0f });
             list.Frame(Bounds, 1.0f, focused ? skin.HighlightColor with { W = 0.85f } : skin.BorderColor.W > 0.0f ? skin.BorderColor * tint : skin.HoverColor);
         }
 
@@ -596,7 +629,7 @@ public class TextBox : UIComponent
         }
 
         // Text somebody typed is shown as typed, tags and all.
-        float width = empty ? 0.0f : skin.Font.Measure(Text, scale, markup: false).X;
+        float width = empty ? 0.0f : skin.Font.Measure(Shown, scale, markup: false).X;
         float caretX = Offset(caret);
 
         // Text that has outgrown the box is scrolled just far enough to keep the caret, where the typing happens,
@@ -629,9 +662,9 @@ public class TextBox : UIComponent
         // A box with something said over it (a path's crumbs) shows its text only while it's typed in
         bool shown = focused || !TextWhileTyped;
         if (shown && !empty && !focused && width > content.Width)
-            list.Text(Tail(skin, scale, content.Width), content, Origin.Left, scale, ink * tint, markup: false);
+            list.Text(Tail(skin, scale, content.Width - 4.0f), content, Origin.Left, scale, ink * tint, markup: false);
         else if (shown && !empty)
-            list.Text(Text, line, Origin.Left, scale, ink * tint, markup: false);
+            list.Text(Shown, line, Origin.Left, scale, ink * tint, markup: false);
         else if (shown)
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
         list.PopClip();
@@ -647,7 +680,7 @@ public class TextBox : UIComponent
             PaintSelection(list);
 
         // How far into the text a gap between two characters is drawn
-        float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(text.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
+        float Offset(int index) => index <= 0 ? 0.0f : skin.Font.Measure(Shown.AsSpan(0, Math.Min(index, text.Length)), scale, markup: false).X;
     }
 
     protected override void DefineScript()
@@ -675,22 +708,22 @@ public class TextBox : UIComponent
 
     private string Tail(UISkin skin, float scale, float room)
     {
-        if (ReferenceEquals(tailOf, text) && tailRoom == room)
+        if (ReferenceEquals(tailOf, Shown) && tailRoom == room)
             return tail;
 
         // The fewest letters cut off the front for the rest to fit after the dots
         float dots = skin.Font.Measure(CUT, scale, markup: false).X;
-        int low = 1, high = text.Length;
+        int low = 1, high = Shown.Length;
         while (low < high)
         {
             int middle = (low + high) / 2;
-            if (dots + skin.Font.Measure(text.AsSpan(middle), scale, markup: false).X <= room)
+            if (dots + skin.Font.Measure(Shown.AsSpan(middle), scale, markup: false).X <= room)
                 high = middle;
             else
                 low = middle + 1;
         }
 
-        (tailOf, tailRoom, tail) = (text, room, CUT + text[low..]);
+        (tailOf, tailRoom, tail) = (Shown, room, CUT + Shown[low..]);
         return tail;
     }
 

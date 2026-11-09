@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Text;
 
 namespace Horizon.Graphics;
@@ -14,6 +15,10 @@ namespace Horizon.Graphics;
 /// by a <c>#line</c> directive and the file, so a compiler error still points at the line of the file it is in.
 /// Doing the includes here rather than leaving them to Slang is what lets the compiled program be kept on disk by a
 /// hash of everything that went into it.
+/// <para>
+/// What comes out has \n between its lines whatever the files had, so the same shaders give the same text and the
+/// same key on Windows and out of an APK.
+/// </para>
 /// <para>
 /// The macros say where things are bound, so a shader never spells out a descriptor set.
 /// <c>BIND_UNIFORM(1) ConstantBuffer&lt;Params&gt; params</c>, <c>BIND_BUFFER(2) StructuredBuffer&lt;Light&gt; lights</c>,
@@ -40,38 +45,67 @@ public sealed class ShaderPreprocessor : IDisposable
     /// <summary>How many samplers on their own, after the images on set 1, each the sampler of the texture unit of the same number. For HLSL.</summary>
     public const int SAMPLER_BINDINGS = 8;
 
-    // The bindless table is as big as the card allows (see BindlessTextures.Capacity), which goes into the prelude
-    // and so into the hash the compiled program is kept under, a card with a smaller table gets its own programs
-    private static string Prelude => $"""
-        #define HORIZON_SLANG 1
-        #define BIND_UNIFORM(n) [[vk::binding(n, 0)]]
-        #define BIND_BUFFER(n) [[vk::binding(n, 0)]]
-        #define BIND_TEXTURE(n) [[vk::binding(n, 1)]]
-        #define BIND_IMAGE(n) [[vk::binding(8 + n, 1)]]
-        #define BIND_SAMPLER(n) [[vk::binding(12 + n, 1)]]
-        #define BINDLESS_TEXTURES(name) [[vk::binding(0, 2)]] Sampler2D name[{(GraphicsDevice.IsAvailable ? GraphicsDevice.Current.Bindless.Capacity : Vulkan.BindlessTextures.MAX_CAPACITY)}]
-        #define NO_TEXTURE 0xFFFFu
-        """;
+    /// <summary>
+    /// How big the bindless table is when nobody says, what the running device has or the most there is without one.
+    /// A preprocessor made without a capacity uses this, which is what a game wants. A pack builder says its own.
+    /// </summary>
+    public static uint CurrentBindlessCapacity => GraphicsDevice.IsAvailable ? GraphicsDevice.Current.Bindless.Capacity : Vulkan.BindlessTextures.MAX_CAPACITY;
 
-    private readonly Dictionary<string, string> fileSources = new();
+    // The bindless table is as big as the card allows (see BindlessTextures.Capacity), which goes into the prelude
+    // and so into the hash the compiled program is kept under, a card with a smaller table gets its own programs.
+    // Joined by hand rather than written as a raw string, which would take the line endings of this file's checkout
+    private static string PreludeFor(uint capacity) => string.Join('\n',
+        "#define HORIZON_SLANG 1",
+        "#define BIND_UNIFORM(n) [[vk::binding(n, 0)]]",
+        "#define BIND_BUFFER(n) [[vk::binding(n, 0)]]",
+        "#define BIND_TEXTURE(n) [[vk::binding(n, 1)]]",
+        "#define BIND_IMAGE(n) [[vk::binding(8 + n, 1)]]",
+        "#define BIND_SAMPLER(n) [[vk::binding(12 + n, 1)]]",
+        $"#define BINDLESS_TEXTURES(name) [[vk::binding(0, 2)]] Sampler2D name[{capacity}]",
+        "#define NO_TEXTURE 0xFFFFu");
+
+    private readonly IContentFiles content;
+    private readonly Dictionary<string, string[]> fileSources = new();
     private readonly HashSet<string> included = new(Horizon.Core.Platform.PlatformPaths.Comparer);
+    private readonly List<ShaderInput> inputs = [];
+
+    /// <summary>How big a bindless table the prelude declares, so how big a table the programs made from this expect.</summary>
+    public uint BindlessCapacity { get; }
+
+    /// <summary>Every file the last program read, itself first and then its includes in the order they came in.</summary>
+    public IReadOnlyList<ShaderInput> Inputs => inputs;
+
+    /// <summary>Reads from the installed content and declares the running device's bindless table.</summary>
+    public ShaderPreprocessor() : this(null, null) { }
+
+    /// <summary>
+    /// Reads from one content source the whole way through, so a source swapped in halfway can't mix two packages
+    /// into one program, and declares a bindless table of the given size (the device's when null).
+    /// </summary>
+    public ShaderPreprocessor(IContentFiles? content, uint? bindlessCapacity = null)
+    {
+        this.content = content ?? ContentFiles.Source;
+        BindlessCapacity = bindlessCapacity ?? CurrentBindlessCapacity;
+    }
 
     /// <summary>Scans a file for the directives and brings everything in.</summary>
     /// <exception cref="FileNotFoundException" />
     public string ProcessFile(in string file)
     {
-        if (!File.Exists(file))
+        if (!content.Exists(file))
             throw new FileNotFoundException($"Input file {file} not found! Please supply a valid shader source file.");
 
         included.Clear();
-        included.Add(Path.GetFullPath(file));
-        return Process(file, File.ReadAllLines(file), top: true);
+        inputs.Clear();
+        included.Add(content.ResolvePath(file));
+        return Process(file, ReadLines(file), top: true);
     }
 
     /// <summary>Scans source that didn't come out of a file. Includes are found from the root alone.</summary>
     public string ProcessSource(in string file, in IEnumerable<string> lines)
     {
         included.Clear();
+        inputs.Clear();
         return Process(file, lines, top: true);
     }
 
@@ -82,7 +116,7 @@ public sealed class ShaderPreprocessor : IDisposable
 
         if (top)
         {
-            source.AppendLine(Prelude);
+            source.Append(PreludeFor(BindlessCapacity)).Append('\n');
             source.Append("#line 1\n");
         }
 
@@ -98,7 +132,7 @@ public sealed class ShaderPreprocessor : IDisposable
                     throw new FileNotFoundException($"The include {trimmed.Trim()} of {file} wasn't found.");
 
                 // Once per program is plenty, see the summary
-                if (!included.Add(Path.GetFullPath(path)))
+                if (!included.Add(content.ResolvePath(path)))
                     continue;
 
                 source.Append("#line 1\n");
@@ -107,7 +141,8 @@ public sealed class ShaderPreprocessor : IDisposable
                 continue;
             }
 
-            source.AppendLine(line);
+            // Never AppendLine, that's \r\n on Windows and the key would be different on a phone
+            source.Append(line).Append('\n');
         }
 
         return source.ToString();
@@ -115,13 +150,14 @@ public sealed class ShaderPreprocessor : IDisposable
 
     private string[] ReadLines(string path)
     {
-        if (!fileSources.TryGetValue(path, out string? text))
-            fileSources[path] = text = File.ReadAllText(path);
+        if (!fileSources.TryGetValue(path, out string[]? lines))
+            fileSources[path] = lines = ShaderLines.Split(ContentFiles.ReadAllText(content, path));
 
-        return text.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        inputs.Add(new ShaderInput(path, ShaderLines.Hash(string.Join('\n', lines))));
+        return lines;
     }
 
-    private static string? ResolveInclude(string file, string directive)
+    private string? ResolveInclude(string file, string directive)
     {
         int open = directive.IndexOfAny(['"', '<']);
         if (open < 0) return null;
@@ -135,21 +171,25 @@ public sealed class ShaderPreprocessor : IDisposable
         if (close == '>')
         {
             string fromRoot = Path.Combine(Root, argument);
-            return File.Exists(fromRoot) ? fromRoot : null;
+            return content.Exists(fromRoot) ? fromRoot : null;
         }
 
         string directory = Path.GetDirectoryName(file) ?? string.Empty;
         string beside = Path.Combine(directory, argument);
-        if (File.Exists(beside)) return beside;
+        if (content.Exists(beside)) return beside;
 
         // What isn't beside the file may still be at the root, for a snippet that is used from anywhere
         string rooted = Path.Combine(Root, argument);
-        return File.Exists(rooted) ? rooted : null;
+        return content.Exists(rooted) ? rooted : null;
     }
 
     public void Dispose()
     {
         fileSources.Clear();
         included.Clear();
+        inputs.Clear();
     }
 }
+
+/// <summary>A file a program read, and a hash of its lines joined with \n, which a shader manifest checks is still the same.</summary>
+public readonly record struct ShaderInput(string Path, string Hash);

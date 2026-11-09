@@ -1,4 +1,5 @@
-﻿using Horizon.HIDL;
+using Horizon.Content;
+using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Components;
 using Horizon.UI.Scripting;
@@ -47,7 +48,7 @@ public partial class UIModule
             return kinds.TryGetValue(kind, out var known) ? known.Create() : null;
     }
 
-    public HIDLRuntime Runtime { get; init; } = new();
+    public HIDLRuntime Runtime { get; init; } = new HIDLRuntime().ReadingContent();
 
     // While a layout is being built, what the components it doesn't put anywhere go into (the screen if
     // nothing), and a note of each of them.
@@ -255,5 +256,5 @@ public partial class UIModule
     /// </summary>
     /// <param name="definitionPath">The path to the definition file.</param>
     /// <exception cref="FileNotFoundException">If the defintion could not be found</exception>
-    public (bool success, string result) Load(string definitionPath) => !File.Exists(definitionPath) ? throw new FileNotFoundException($"The file '{definitionPath}' could not be found!") : Runtime.Evaluate(File.ReadAllText(definitionPath));
+    public (bool success, string result) Load(string definitionPath) => !ContentFiles.Exists(definitionPath) ? throw new FileNotFoundException($"The file '{definitionPath}' could not be found!") : Runtime.Evaluate(ContentFiles.ReadAllText(definitionPath));
 }

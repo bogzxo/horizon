@@ -26,6 +26,9 @@ internal static class Program
         // Visual Studio) starts it in the folder of the project instead, where there are none of them
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
+        // A desktop game, the window, its input and its sound are the desktop's
+        Horizon.Platform.Desktop.DesktopPlatform.Install();
+
         GameSettings.Load();
 
         // --size 1920x1080 for a window of another size than the usual

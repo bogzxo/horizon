@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 using System.Security.Cryptography;
 
@@ -35,14 +36,25 @@ public sealed class DistanceFieldFont
     /// <summary>How far the field reaches either side of an edge, in texels of the field.</summary>
     public const int SPREAD = 6;
 
-    private const int CACHE_VERSION = 1;
+    private const int CACHE_VERSION = 2;
     private const uint CACHE_MAGIC = 0x544E4648; // HFNT
 
-    // The characters a TrueType font is built with unless it is told which, the printable ASCII and the Latin-1 ones
-    private static readonly (int From, int To)[] DefaultRanges = [(32, 126), (160, 255)];
+    // The characters a TrueType font is built with unless it is told which. The printable ASCII and Latin-1, Latin's
+    // accents past those, Greek and Cyrillic, typography's dashes, quotes and bullets, sub and superscripts, the euro,
+    // letterlike symbols, arrows, maths, box drawing and shapes. It was ASCII and Latin-1 alone, and a notebook's Δt, Ω
+    // and ∑ came out as question marks. Whatever a font hasn't got of them it goes without
+    private static readonly (int From, int To)[] DefaultRanges =
+    [
+        (32, 126), (160, 383), (0x370, 0x3FF), (0x400, 0x45F), (0x2010, 0x2027), (0x2030, 0x203A), (0x2070, 0x209C),
+        (0x20AC, 0x20AC), (0x2100, 0x2122), (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2500, 0x25FF)
+    ];
+
+    // Kerning is looked for between letters only, every pair of the symbols too was millions of lookups for nothing
+    private const int KERNED_BELOW = 0x2000;
 
     // Which characters this one is built with, an icon font's are up in the private use area
     private (int From, int To)[] ranges = DefaultRanges;
+    private bool rasterizeTrueTypeForDistanceField;
 
     public Texture Texture { get; private set; } = Texture.Invalid;
     public Dictionary<char, CharDefinition> Glyphs { get; } = [];
@@ -71,14 +83,26 @@ public sealed class DistanceFieldFont
     /// an icon font (Codicons, see <see cref="Horizon.UI.Drawing.UISymbols"/>) has its pictures in the private use area.
     /// They have to be in the Basic Multilingual Plane, a glyph is known by its char.
     /// </param>
-    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM, (int From, int To)[]? characters = null)
+    public static DistanceFieldFont Load(string directory, string file, int emSize = DEFAULT_EM, (int From, int To)[]? characters = null) =>
+        Load(directory, file, emSize, characters, rasterizeTrueTypeForDistanceField: false);
+
+    /// <summary>
+    /// Loads a font with an optional coverage-based distance transform. This avoids the outline SDF solver's stack
+    /// limits for complex icon fonts. The usual overload keeps the original outline rendering path.
+    /// </summary>
+    public static DistanceFieldFont Load(string directory, string file, int emSize, (int From, int To)[]? characters, bool rasterizeTrueTypeForDistanceField)
     {
         string path = Path.Combine(directory, file);
-        var font = new DistanceFieldFont { EmSize = Math.Max(8, emSize), ranges = characters ?? DefaultRanges };
+        var font = new DistanceFieldFont
+        {
+            EmSize = Math.Max(8, emSize),
+            ranges = characters ?? DefaultRanges,
+            rasterizeTrueTypeForDistanceField = rasterizeTrueTypeForDistanceField
+        };
 
         try
         {
-            if (!File.Exists(path))
+            if (!ContentFiles.Exists(path))
             {
                 Log.Error($"[DistanceFieldFont] There is no font at '{path}'.");
                 return font;
@@ -105,7 +129,7 @@ public sealed class DistanceFieldFont
 
     private unsafe (int, int, byte[]) BuildFromTrueType(string path)
     {
-        byte[] bytes = File.ReadAllBytes(path);
+        byte[] bytes = ContentFiles.ReadAllBytes(path);
         var info = new StbTrueType.stbtt_fontinfo();
         fixed (byte* data = bytes)
         {
@@ -133,13 +157,36 @@ public sealed class DistanceFieldFont
                     StbTrueType.stbtt_GetCodepointHMetrics(info, codepoint, &advance, &bearing);
 
                     int width = 0, height = 0, xOff = 0, yOff = 0;
-                    byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
                     byte[]? field = null;
-                    if (sdf != null && width > 0 && height > 0)
+                    if (rasterizeTrueTypeForDistanceField)
                     {
-                        field = new byte[width * height];
-                        new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
-                        StbTrueType.stbtt_FreeSDF(sdf, null);
+                        byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(info, fieldScale, fieldScale, codepoint, &width, &height, &xOff, &yOff);
+                        if (bitmap != null && width > 0 && height > 0)
+                        {
+                            int paddedWidth = width + SPREAD * 2, paddedHeight = height + SPREAD * 2;
+                            var inside = new bool[paddedWidth * paddedHeight];
+                            for (int y = 0; y < height; y++)
+                            {
+                                for (int x = 0; x < width; x++)
+                                    inside[(y + SPREAD) * paddedWidth + x + SPREAD] = bitmap[y * width + x] > 127;
+                            }
+                            field = SignedField(inside, paddedWidth, paddedHeight, SPREAD);
+                            width = paddedWidth;
+                            height = paddedHeight;
+                            xOff -= SPREAD;
+                            yOff -= SPREAD;
+                            StbTrueType.stbtt_FreeBitmap(bitmap, null);
+                        }
+                    }
+                    else
+                    {
+                        byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
+                        if (sdf != null && width > 0 && height > 0)
+                        {
+                            field = new byte[width * height];
+                            new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
+                            StbTrueType.stbtt_FreeSDF(sdf, null);
+                        }
                     }
 
                     pictures.Add(((char)codepoint, width, height, xOff, yOff, advance * fieldScale, field));
@@ -149,8 +196,10 @@ public sealed class DistanceFieldFont
             // Kerning, for the pairs the font has
             foreach (var a in pictures)
             {
+                if (a.Id >= KERNED_BELOW) continue;
                 foreach (var b in pictures)
                 {
+                    if (b.Id >= KERNED_BELOW) continue;
                     int kern = StbTrueType.stbtt_GetCodepointKernAdvance(info, a.Id, b.Id);
                     if (kern != 0) Kerning[KerningKey(a.Id, b.Id)] = kern * fieldScale * toEm;
                 }
@@ -220,7 +269,7 @@ public sealed class DistanceFieldFont
     private (int, int, byte[]) BuildFromBitmap(string directory, string path)
     {
         var importer = new BMFontImporter(directory, Path.GetFileName(path));
-        if (importer.ImagePath.Length == 0 || !File.Exists(importer.ImagePath))
+        if (importer.ImagePath.Length == 0 || !ContentFiles.Exists(importer.ImagePath))
             throw new FileNotFoundException($"the picture of the font, '{importer.ImagePath}', isn't there");
 
         var image = ImageFile.Load(importer.ImagePath);
@@ -373,12 +422,19 @@ public sealed class DistanceFieldFont
         string? shaders = ShaderCompiler.CacheDirectory();
         if (shaders is null) return null;
 
-        var hash = SHA256.HashData(File.ReadAllBytes(path));
+        var hash = SHA256.HashData(ContentFiles.ReadAllBytes(path));
         string key = Convert.ToHexString(hash)[..24] + "_" + emSize + "_" + CACHE_VERSION;
+        if (rasterizeTrueTypeForDistanceField) key += "_bitmap";
 
         // Built with other characters it is another font as far as the cache goes
         if (ranges != DefaultRanges)
-            key += "_" + string.Join("-", ranges.Select(range => $"{range.From:x}{range.To:x}"));
+        {
+            string characters = string.Join("-", ranges.Select(range => $"{range.From:x}{range.To:x}"));
+            // Sparse icon catalogs can have hundreds of ranges. Keep the filename within filesystem limits.
+            if (characters.Length > 96)
+                characters = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(characters)))[..24];
+            key += "_" + characters;
+        }
         return Path.Combine(Path.GetDirectoryName(shaders) ?? shaders, "Fonts", key + ".hfont");
     }
 

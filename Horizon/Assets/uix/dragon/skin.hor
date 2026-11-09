@@ -13,7 +13,6 @@
 // Under icons is how many pixels of the art make a line of text, for the icons this pack has art of its own for
 // (the arrows). The numbers the Dead Revolver skin gives them are for its art, which is half as tall, and left
 // at those an arrow in a line of text came out twice as tall as the line.
-// Comments can't go inside of the object, the parser won't have it.
 
 let paper = vec(1.0, 0.95, 0.85, 1.0);
 

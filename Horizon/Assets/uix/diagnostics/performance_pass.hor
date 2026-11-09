@@ -4,7 +4,7 @@
 #define layout
 
 let pass = compositor.panel({
-    size: vec(404, 16)
+    size: vec(404, 16),
 });
 
 let chip = compositor.panel({
@@ -13,7 +13,7 @@ let chip = compositor.panel({
     pos: vec(1, 0),
     size: vec(8, 8),
     radius: 2,
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let name = compositor.readout({
@@ -23,7 +23,7 @@ let name = compositor.readout({
     size: vec(247, 16),
     text: "a pass",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let ms = compositor.readout({
@@ -35,7 +35,7 @@ let ms = compositor.readout({
     unit: "ms",
     text: "0.00",
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let share = compositor.readout({
@@ -46,5 +46,5 @@ let share = compositor.readout({
     align: "right",
     text: "0%",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });

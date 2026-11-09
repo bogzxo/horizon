@@ -3,6 +3,7 @@ using Horizon.Rendering;
 using System.Numerics;
 
 using Horizon.UI.Components;
+using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Drawing;
 
@@ -16,10 +17,60 @@ internal static class UITooltip
     // How wide a tooltip is at most before its text wraps, and the room around the text
     private const float MAX_WIDTH = 320.0f;
     private const float MAX_RICH_WIDTH = 520.0f;
-    private const float PADDING = 10.0f;
+    private const float PADDING = 12.0f;
 
-    // How far from the pointer the box sits, so the pointer doesn't cover its first word
+    // How far from the pointer the box sits, so the pointer doesn't cover its first word, how far over the pointer its
+    // bottom is when it goes over it, and how far in from the edges of the window it stays
     private static readonly Vector2 Offset = new(14.0f, -22.0f);
+    private const float ABOVE = 24.0f, MARGIN = 16.0f;
+
+    // How wide the widest word of a text is
+    private static float LongestWord(UISkin skin, string text, float scale)
+    {
+        float widest = 0.0f;
+        // By spans, it's asked every frame a tooltip is up and a Split made garbage each time
+        foreach (Range range in text.AsSpan().SplitAny(' ', '\n'))
+        {
+            ReadOnlySpan<char> word = text.AsSpan(range);
+            if (!word.IsEmpty)
+                widest = MathF.Max(widest, skin.Font.Measure(word, scale, markup: false).X);
+        }
+        return widest;
+    }
+
+    // The width a text was last balanced to, so it's worked out once a tooltip and not every frame it's up
+    private static string? balancedText;
+    private static float balancedScale, balancedMost, balancedWidth;
+
+    /// <summary>
+    /// Helper method for the narrowest width a text wraps to in as few lines as it does at its widest, so the lines come
+    /// out about even. A tooltip of two lines had one word left on its own on the second.
+    /// </summary>
+    private static float Balanced(UISkin skin, string text, float scale, float most, List<(int Start, int Length)> lines)
+    {
+        if (text == balancedText && scale == balancedScale && most == balancedMost)
+            return balancedWidth;
+
+        skin.Font.Wrap(text, scale, most, lines, markup: false);
+        int count = lines.Count;
+        float low = LongestWord(skin, text, scale), high = most;
+        if (count > 1)
+        {
+            // Halved a few times, a pixel or two out is nothing anybody sees
+            for (int i = 0; i < 8 && high - low > 2.0f; i++)
+            {
+                float middle = (low + high) * 0.5f;
+                skin.Font.Wrap(text, scale, middle, lines, markup: false);
+                if (lines.Count > count)
+                    low = middle;
+                else
+                    high = middle;
+            }
+        }
+
+        (balancedText, balancedScale, balancedMost, balancedWidth) = (text, scale, most, count > 1 ? high : most);
+        return balancedWidth;
+    }
 
     /// <summary>
     /// Paints a tooltip into a list that has the transform of the module set, see <see cref="UIModule.Paint"/>.
@@ -28,7 +79,8 @@ internal static class UITooltip
     /// <param name="lines">Scratch for cutting the text into lines, reused from one frame to the next.</param>
     /// <param name="rich">Where a tooltip that is markdown is laid out, null for one that is plain words.</param>
     /// <param name="openedAt">When it was first painted, for its entrance, less than 0 for not yet.</param>
-    public static void Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich, ref float openedAt)
+    /// <returns>The box it was painted in, in the module's units, so the pointer can go over to it and read it.</returns>
+    public static UIRect Paint(UIDrawList list, UIModule module, string text, Vector2 point, List<(int Start, int Length)> lines, UIRichText? rich, ref float openedAt)
     {
         var skin = list.Skin;
 
@@ -44,17 +96,24 @@ internal static class UITooltip
         }
         else
         {
-            skin.Font.Wrap(text, scale, MAX_WIDTH, lines, markup: false);
+            // As wide as its longest word when that's wider than a tooltip usually is, so a word is never broken in two (a
+            // path came out as "RE/ADME.md"), never wider than the frame leaves
+            float most = MathF.Max(MAX_WIDTH, MathF.Min(LongestWord(skin, text, scale), module.Frame.Width - MARGIN * 2.0f - PADDING * 2.0f));
+            skin.Font.Wrap(text, scale, Balanced(skin, text, scale, most, lines), lines, markup: false);
             size = skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale, markup: false) + new Vector2(PADDING * 2.0f);
         }
 
-        // Its top left corner hangs off the pointer, and the whole box stays inside the frame of the module
+        // Its top left corner hangs off the pointer, under it, or over it when there's no room under it (a status bar's
+        // tooltip was pushed up over the item it was about). The whole box stays inside the frame of the module with a
+        // margin, one flush with the window's edges lost its round corners there
         UIRect frame = module.Frame;
         Vector2 corner = point + Offset;
-        corner.X = MathF.Min(corner.X, frame.Max.X - size.X);
-        corner.Y = MathF.Max(corner.Y, frame.Min.Y + size.Y);
-        corner.X = MathF.Max(corner.X, frame.Min.X);
-        corner.Y = MathF.Min(corner.Y, frame.Max.Y);
+        if (corner.Y - size.Y < frame.Min.Y + MARGIN)
+            corner.Y = point.Y + ABOVE + size.Y;
+        corner.X = MathF.Min(corner.X, frame.Max.X - MARGIN - size.X);
+        corner.Y = MathF.Max(corner.Y, frame.Min.Y + MARGIN + size.Y);
+        corner.X = MathF.Max(corner.X, frame.Min.X + MARGIN);
+        corner.Y = MathF.Min(corner.Y, frame.Max.Y - MARGIN);
 
         var box = new UIRect(new Vector2(corner.X, corner.Y - size.Y), new Vector2(corner.X + size.X, corner.Y));
 
@@ -69,5 +128,7 @@ internal static class UITooltip
 
         if (entering)
             list.EndEntrance();
+
+        return box;
     }
 }

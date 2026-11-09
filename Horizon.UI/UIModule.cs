@@ -122,6 +122,9 @@ namespace Horizon.UI
         /// </summary>
         public Vector4? FrameColor { get; set; }
 
+        /// <summary>An optional backing surface for a designer artboard; content paints above it.</summary>
+        public Vector4? FrameBackground { get; set; }
+
         /// <summary>
         /// The screen the module is laid out against, in its own space. Left unset that is whatever the camera
         /// sees. Set, the module is laid out as if that were the screen whatever the real one is, which is how
@@ -208,6 +211,9 @@ namespace Horizon.UI
         // When the tooltip showing was first painted, by the draw list's clock, for its entrance
         private float tooltipOpenedAt = -1.0f;
 
+        // Where the tooltip was last painted, nothing while none was
+        private UIRect tooltipBox;
+
         public UIModule(UICompositor compositor)
         {
             Compositor = compositor;
@@ -221,11 +227,20 @@ namespace Horizon.UI
         /// </summary>
         /// <param name="point">Where the pointer is, in the module's units.</param>
         /// <param name="markdown">Whether the text is markdown, see <see cref="UIComponent.TooltipMarkdown"/>.</param>
+        /// <summary>The text of the tooltip the module has up right now, null while none is, for whoever reads the screen as text.</summary>
+        public string? TooltipText => tooltip;
+
+        /// <summary>The box the tooltip up right now was painted in, in the module's units, empty before it's painted.</summary>
+        internal UIRect TooltipBox => tooltipBox;
+
         internal void ShowTooltip(string? text, Vector2 point, bool markdown = false)
         {
             // Another tooltip (or none) comes in afresh, the same one stays put
             if (!ReferenceEquals(text, tooltip))
+            {
                 tooltipOpenedAt = -1.0f;
+                tooltipBox = default;
+            }
 
             tooltip = text;
             tooltipAt = point;
@@ -241,7 +256,7 @@ namespace Horizon.UI
         /// <summary>Helper method to list what Tab stops on in a component and everything in it, in the order it's laid out in.</summary>
         internal static void CollectFocusable(UIComponent component, List<UIComponent> into)
         {
-            if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled)
+            if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled || component is UIDialog { IsOpen: false })
                 return;
 
             if (component.TabStop)
@@ -295,8 +310,16 @@ namespace Horizon.UI
             UnitScale = MathF.Max(0.01f, fit * Compositor.Scale);
         }
 
+        // Whether something in it laid itself out on the way somewhere this tick and the last, see UIDrawList.LayoutMoves
+        private bool layoutMoving, layoutMoved;
+
+        /// <summary>Says something in it is sliding or folding, see <see cref="UIComponent.LaysOutMoving"/>.</summary>
+        internal void NoteLayoutMoving() => layoutMoving = true;
+
         internal void Layout(UIRect screen, UISkin skin)
         {
+            layoutMoved = layoutMoving;
+            layoutMoving = false;
             Root.MeasureTree(skin);
 
             // The screen as the module sees it once its own scale and that of the whole UI are taken out,
@@ -321,8 +344,13 @@ namespace Horizon.UI
             if (Clip is { } clip)
                 list.PushClip(clip);
 
+            // The tick a slide stops is laid out in frames as well, the frame between it and the one before moves too
+            list.LayoutMoves = layoutMoving || layoutMoved;
+            if (FrameBackground is { } backing)
+                list.Rect(Viewport ?? Frame, backing);
             Root.PaintTree(list);
             PaintRaised(list);
+            list.LayoutMoves = false;
 
             // The edges of the layout, for whoever is editing it
             // and of the screen it's being shown on, fainter, when that's another shape than what it's made for
@@ -338,22 +366,37 @@ namespace Horizon.UI
             if (Clip is not null)
                 list.PopClip();
 
-            // What was open going away, under whatever is open now
-            if (closingPopup is { } going && !(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
-                closingPopup = null;
+            // What was open going away, under whatever is open now. Each as painted by its own component, so a list
+            // that drops down and the one going away under it never have their rows blended into each other's
+            if (closingPopup is { } going)
+            {
+                list.PushOwner(going);
+                if (!(going.Module == this && going.Visible && going.PaintClosing(list, ref closingAt)))
+                    closingPopup = null;
+                list.PopOwner();
+            }
 
             // Whatever is open goes on top of the lot, and isn't cut off by what its owner is inside of.
             if (Popup is { } open)
             {
                 if (open.Module == this && open.Visible)
+                {
+                    list.PushOwner(open);
                     open.PaintPopup(list);
+                    list.PopOwner();
+                }
                 else
                     Popup = null;
             }
 
-            // And a tooltip over everything, popups included
+            // And a tooltip over everything, popups included, as painted by its text. Another tooltip is another
+            // text, which comes in afresh instead of the last one's box sliding over to it
             if (tooltip is { Length: > 0 } text)
-                UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
+            {
+                list.PushOwner(text);
+                tooltipBox = UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
+                list.PopOwner();
+            }
         }
 
         internal UIComponent? HitTest(Vector2 point)

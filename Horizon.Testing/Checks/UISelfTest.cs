@@ -170,6 +170,7 @@ internal sealed class UISelfTest
             if (ok) passed++; else failed++;
 
             Console.WriteLine($"[UI self-test] {(ok ? "pass" : "FAIL")}: {step.Name}");
+            if (!ok) CheckLog.Failed("UI self-test", step.Name ?? "unnamed");
             current = null;
             return;
         }

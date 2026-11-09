@@ -113,11 +113,14 @@ public partial class TerminalView
                 break;
         }
 
+        int readLength = length;
         while (length > 0 && lineText[length - 1] == ' ')
             length--;
 
         // PSReadLine's prediction, dim text after the cursor that isn't typed yet, isn't the line
         int cursor = (screen.Scrollback.Count + screen.CursorY - start.Row) * stride + screen.CursorX - start.Column;
+        // Spaces before the caret are input too: completion after "--configuration " needs that empty argument.
+        if (cursor > length && cursor <= readLength) length = cursor;
         if (cursor >= 0 && cursor < length && OnlyDimFrom(start, stride, cursor, length))
             length = cursor;
 

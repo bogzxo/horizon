@@ -115,6 +115,8 @@ public class Collapsible : StackPanel
     // Cut off at the bottom while it is folding, and with nothing below the bar to hit while it is folded
     protected override bool ClipsChildren => openness < 1.0f;
 
+    protected internal override bool LaysOutMoving => base.LaysOutMoving || openness != (expanded ? 1.0f : 0.0f);
+
     protected internal override bool ShowsChild(UIComponent child) => openness > 0.0f;
 
     protected internal override bool Navigable => true;

@@ -1,112 +1,194 @@
 using System;
-using System.Threading;
 
 using Horizon.Logging;
-
-using Silk.NET.SDL;
-
-using Thread = System.Threading.Thread;
-using ThreadPriority = System.Threading.ThreadPriority;
+using Horizon.Platform;
 
 namespace Horizon.Audio;
 
 /// <summary>
-/// The speakers. SDL's audio (the engine has SDL already, for the window on a Mac and the gamepads), opened for floats
-/// in stereo at 48000 a second, and a thread of its own that keeps a few tens of milliseconds queued up on it out of
-/// <see cref="Mixer"/>. No device (none plugged in, a box without sound, <c>HORIZON_AUDIO=off</c>) is not an error, the
-/// mixer is there all the same and nothing comes out, so a game never has to ask.
+/// The speakers. The mixer (<see cref="Mixer"/>) and its buses, played out of whatever <see cref="IAudioOutput"/> the
+/// platform gives, which asks for floats in stereo at 48000 a second and may get another rate. The engine hands it its
+/// host's output, the plain constructor asks the installed platform (see <see cref="PlatformInstallation"/>). No device (none plugged in, a box without sound, <c>HORIZON_AUDIO=off</c>) is not an error,
+/// the mixer is there all the same and nothing comes out, so a game never has to ask.
 /// </summary>
-public sealed unsafe class AudioDevice : IDisposable
+public sealed class AudioDevice : IDisposable
 {
     // Set this to off in the environment and no device is opened, for a scripted run nobody wants to hear
     private const string VARIABLE = "HORIZON_AUDIO";
 
-    private const uint SDL_INIT_AUDIO = 0x10;
-    private const ushort AUDIO_F32 = 0x8120;
     private const int RATE = 48000;
+    private const int CHANNELS = 2;
 
-    // How many frames are mixed at a time, and how many are kept queued on the device ahead of what it's playing, a
-    // little over 40 ms, which is the delay between a hit and its sound
+    // How many frames are mixed at a time
     private const int CHUNK = 512;
-    private const int AHEAD = 2048;
 
-    private readonly Sdl? sdl;
-    private readonly uint device;
-    private readonly Thread? thread;
-    private volatile bool running;
+    private readonly IAudioOutput? output;
+
+    // Held while a buffer is mixed, so once Pause or Dispose has it no buffer moves anything on
+    private readonly object rendering = new();
+
+    // Keeps pause, resume and dispose in order on the output, without holding up a buffer being mixed
+    private readonly object control = new();
+    private bool paused;
+    private bool disposed;
 
     /// <summary>What plays, see <see cref="AudioMixer"/>.</summary>
     public AudioMixer Mixer { get; }
 
     /// <summary>Whether there's a device and anything played is heard.</summary>
-    public bool IsOpen => device != 0;
+    public bool IsOpen => output is not null;
+
+    /// <summary>Whether playing is held where it is, see <see cref="Pause"/>.</summary>
+    public bool IsPaused
+    {
+        get
+        {
+            lock (rendering) return paused;
+        }
+    }
+
+    /// <summary>The format everything is played in, the one the device gave back when there is one.</summary>
+    public AudioFormat Format { get; }
 
     /// <param name="open">False for none at all, the mixer and nothing out of it (an application, Hex, has no use for
     /// a thread feeding the speakers).</param>
-    public AudioDevice(bool open = true)
+    public AudioDevice(bool open = true) : this(OutputOf(open, static () => PlatformInstallation.Current?.CreateAudioOutput()))
     {
-        if (!open || string.Equals(Environment.GetEnvironmentVariable(VARIABLE), "off", StringComparison.OrdinalIgnoreCase))
+    }
+
+    /// <summary>
+    /// Plays out of an output the platform made. The device owns it from here on and disposes it, also when it fails
+    /// to open. Null is no sound at all.
+    /// </summary>
+    public AudioDevice(IAudioOutput? output)
+    {
+        var wanted = new AudioFormat(RATE, CHANNELS, CHUNK);
+        Format = wanted;
+
+        if (output is not null)
         {
-            Mixer = new AudioMixer(RATE);
-            if (open) Log.Info("[Audio] Off, HORIZON_AUDIO says so.");
-            return;
+            try
+            {
+                AudioFormat got = output.Open(wanted);
+                if (got.SampleRate <= 0 || got.Channels != CHANNELS || got.FramesPerBuffer <= 0)
+                    throw new InvalidOperationException($"it gave back {got.SampleRate} a second in {got.Channels} channels, {got.FramesPerBuffer} frames at a time");
+
+                Format = got;
+                Log.Info($"[Audio] Playing at {got.SampleRate} frames a second.");
+            }
+            catch (Exception exception)
+            {
+                Log.Warning($"[Audio] No sound, there's no audio device to be had: {exception.Message}");
+                output.Dispose();
+                output = null;
+            }
         }
 
-        int rate = RATE;
+        // The mixer is made at the rate the device really runs at before the output is started, so nothing is
+        // ever asked of a mixer that isn't there yet
+        Mixer = new AudioMixer(Format.SampleRate);
+        if (output is null) return;
+
         try
         {
-            sdl = SdlProvider.SDL.Value;
-            if (sdl.InitSubSystem(SDL_INIT_AUDIO) != 0) throw new InvalidOperationException(sdl.GetErrorS());
-
-            var wanted = new AudioSpec { Freq = RATE, Format = AUDIO_F32, Channels = 2, Samples = CHUNK };
-            AudioSpec got;
-            device = sdl.OpenAudioDevice((byte*)null, 0, &wanted, &got, 0);
-            if (device == 0) throw new InvalidOperationException(sdl.GetErrorS());
-
-            rate = got.Freq;
-            sdl.PauseAudioDevice(device, 0);
-            Log.Info($"[Audio] Playing at {rate} frames a second.");
+            output.Start(Render);
+            this.output = output;
         }
         catch (Exception exception)
         {
-            device = 0;
-            Log.Warning($"[Audio] No sound, there's no audio device to be had: {exception.Message}");
+            Log.Warning($"[Audio] No sound, the audio device wouldn't start: {exception.Message}");
+            output.Dispose();
         }
-
-        Mixer = new AudioMixer(rate);
-        if (device == 0) return;
-
-        running = true;
-        thread = new Thread(Pump) { Name = "Audio", IsBackground = true, Priority = ThreadPriority.AboveNormal };
-        thread.Start();
     }
 
-    // Keeps the device fed, mixing a chunk whenever what's queued drops under what it should be ahead by
-    private void Pump()
-    {
-        var chunk = new float[CHUNK * 2];
-        uint ahead = AHEAD * 2 * sizeof(float);
+    /// <summary>
+    /// An audio device out of what a platform host makes, unless it isn't to be opened or HORIZON_AUDIO says off, in
+    /// which case nothing is asked of the host at all.
+    /// </summary>
+    internal static AudioDevice For(bool open, IPlatformHost host) => new(OutputOf(open, host.CreateAudioOutput));
 
-        while (running)
+    // What the platform makes unless audio is off, and nothing for an application
+    private static IAudioOutput? OutputOf(bool open, Func<IAudioOutput?> make)
+    {
+        if (!open) return null;
+        if (SaysOff(Environment.GetEnvironmentVariable(VARIABLE)))
         {
-            // With nothing playing nothing is queued, SDL plays silence by itself, and the thread hardly wakes
-            if (sdl!.GetQueuedAudioSize(device) >= ahead || Mixer.Playing == 0)
+            Log.Info("[Audio] Off, HORIZON_AUDIO says so.");
+            return null;
+        }
+
+        IAudioOutput? output = make();
+        if (output is null)
+            Log.Info("[Audio] No sound, the platform has no speakers to give.");
+        return output;
+    }
+
+    /// <summary>Whether a value of HORIZON_AUDIO switches the sound off.</summary>
+    internal static bool SaysOff(string? value) => string.Equals(value, "off", StringComparison.OrdinalIgnoreCase);
+
+    // Called on the output's thread for every buffer. Paused, disposed or with nothing playing it's silence and the
+    // voices stay exactly where they are
+    private bool Render(Span<float> buffer)
+    {
+        lock (rendering)
+        {
+            if (paused || disposed || Mixer.Playing == 0)
             {
-                Thread.Sleep(2);
-                continue;
+                buffer.Clear();
+                return false;
             }
 
-            Mixer.Mix(chunk);
-            fixed (float* samples = chunk) sdl.QueueAudio(device, samples, (uint)(chunk.Length * sizeof(float)));
+            Mixer.Mix(buffer);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Holds everything where it is, for a game going into the background. Every voice and stream keeps its place and
+    /// nothing is heard until <see cref="Resume"/>. Once this returns no buffer moves anything on.
+    /// </summary>
+    public void Pause()
+    {
+        lock (control)
+        {
+            lock (rendering)
+            {
+                if (paused || disposed) return;
+                paused = true;
+            }
+
+            output?.Pause();
+        }
+    }
+
+    /// <summary>Carries on playing from where <see cref="Pause"/> held it.</summary>
+    public void Resume()
+    {
+        lock (control)
+        {
+            lock (rendering)
+            {
+                if (!paused || disposed) return;
+                paused = false;
+            }
+
+            output?.Resume();
         }
     }
 
     public void Dispose()
     {
-        running = false;
-        thread?.Join(500);
-        Mixer.StopAll();
+        lock (control)
+        {
+            lock (rendering)
+            {
+                if (disposed) return;
+                disposed = true;
+            }
 
-        if (device != 0) sdl!.CloseAudioDevice(device);
+            // Disposing the output waits its thread out, and a buffer it still asks for meanwhile is silence
+            output?.Dispose();
+            Mixer.StopAll();
+        }
     }
 }

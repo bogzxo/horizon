@@ -24,7 +24,7 @@ public enum UIBrowse
 /// by saying so and wanting Save pressed again. It has the keyboard while it's up (<see cref="TakeKeyboard"/>), up and
 /// down go along the list from the box that has it, Enter opens what was gone to, Backspace with no name goes up a folder.
 /// </summary>
-public sealed class UIFileBrowser
+public sealed partial class UIFileBrowser
 {
     private const float WIDTH = 860.0f, HEIGHT = 600.0f, PLACES = 200.0f, GAP = 8.0f, HIDDEN = 140.0f, FILTER = 260.0f;
     private const int ROWS = 14;
@@ -106,10 +106,12 @@ public sealed class UIFileBrowser
         }
         this.filters = [(ALL_FILES, ["*"]), .. filters.Select(pair => (pair.Name, pair.Pattern.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))];
         folder = Directory.Exists(directory) ? Path.GetFullPath(directory) : PlatformPaths.Home;
+        Opened();
 
         Window = new WindowPanel(title)
         {
             Icon = kind == UIBrowse.Folder ? "folder" : "file",
+            Modal = true,
             Size = new Vector2(WIDTH, HEIGHT),
             MinSize = new Vector2(WIDTH, HEIGHT),
             ResizeGrip = false,
@@ -223,6 +225,7 @@ public sealed class UIFileBrowser
 
         var actions = new Panel { Size = new Vector2(WIDTH - 24.0f, 30.0f) };
         body.Add(actions);
+        actions.Add(new SideButtons(this));
         make.Anchor = Horizon.Rendering.Origin.Left;
         make.Pivot = Horizon.Rendering.Origin.Left;
         actions.Add(make);
@@ -960,16 +963,24 @@ public sealed class UIFileBrowser
         if (!answer.TrySetResult(picked))
             return;
 
+        Closed();
         previousBackward = [.. backward];
 
         // The keyboard back to whoever had it, unless it was taken somewhere else while the window was up
+        UICompositor? compositor = Window.Module?.Compositor;
         bool hadIt = false;
-        for (UIComponent? at = Window.Module?.Compositor.Focus; at is not null; at = at.Parent)
+        for (UIComponent? at = compositor?.Focus; at is not null; at = at.Parent)
             hadIt |= at == Window;
 
         Window.OnClosed = null;
         Window.Parent?.Remove(Window);
-        if (hadIt && focusBefore is { Module: not null } before)
-            before.Focus();
+        if (hadIt)
+            compositor!.Focus = CanRestore(focusBefore, compositor) ? focusBefore : null;
+        else if (compositor is not null && compositor.Focus == focusBefore && !CanRestore(focusBefore, compositor))
+            compositor.Focus = null;
     }
+
+    private static bool CanRestore(UIComponent? component, UICompositor? compositor) =>
+        compositor is not null && component is not null && component.Module?.Compositor == compositor
+        && component.IsShownInHierarchy && component.EnabledInHierarchy;
 }

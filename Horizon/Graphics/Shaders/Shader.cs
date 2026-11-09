@@ -15,7 +15,7 @@ namespace Horizon.Graphics;
 public sealed class Shader : GpuResource
 {
     /// <summary>One stage of the program, with the module it is in and the entry point to start at.</summary>
-    internal readonly record struct Stage(ShaderStage Kind, ShaderModule Module, string EntryPoint);
+    internal readonly record struct Stage(ShaderStage Kind, Silk.NET.Vulkan.ShaderModule Module, string EntryPoint);
 
     private readonly GraphicsDevice? device;
 
@@ -44,10 +44,10 @@ public sealed class Shader : GpuResource
         Params = compiled.Params;
 
         // The stages of one Slang file share a module, so each distinct SPIR-V is made once
-        var modules = new Dictionary<byte[], ShaderModule>(ReferenceEqualityComparer.Instance);
+        var modules = new Dictionary<byte[], Silk.NET.Vulkan.ShaderModule>(ReferenceEqualityComparer.Instance);
         foreach (var stage in compiled.Stages)
         {
-            if (!modules.TryGetValue(stage.Spirv, out ShaderModule module))
+            if (!modules.TryGetValue(stage.Spirv, out Silk.NET.Vulkan.ShaderModule module))
                 modules[stage.Spirv] = module = device.CreateShaderModule(stage.Spirv);
 
             Modules.Add(new Stage(stage.Stage, module, stage.EntryPoint));

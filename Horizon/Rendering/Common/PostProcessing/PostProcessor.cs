@@ -119,7 +119,8 @@ public sealed class PostProcessor : IDisposable
     /// <param name="resolve">Draws the picture into whatever is bound, for a renderer that has to work it out first (by lighting it).</param>
     /// <param name="bindOutput">Binds where the picture is shown, set up for however it is to be put there.</param>
     /// <param name="outputSize">How big that is.</param>
-    internal void Run(Vector2 size, float dt, Texture? picture, Action resolve, Action bindOutput, Vector2 outputSize)
+    /// <param name="logicalSize">The picture's dimensions before render scaling, independent of intermediate textures.</param>
+    internal void Run(Vector2 size, float dt, Texture? picture, Action resolve, Action bindOutput, Vector2 outputSize, Vector2 logicalSize)
     {
         int holding = -1;
 
@@ -135,6 +136,7 @@ public sealed class PostProcessor : IDisposable
         context.Processor = this;
         context.DeltaTime = dt;
         context.SourceSize = size;
+        context.LogicalSize = logicalSize;
 
         for (int i = 0; i < activeCount; i++)
         {

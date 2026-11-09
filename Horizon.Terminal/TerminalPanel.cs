@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Core.Processes;
 using Horizon.Core.Tweening;
 using Horizon.Engine;
 using Horizon.UI.Drawing;
@@ -70,7 +71,7 @@ public sealed class TerminalTab
 /// panel.OnKey = press => press.Control &amp;&amp; press.Shift &amp;&amp; press.Key == Key.T &amp;&amp; panel.NewTab() is not null;
 /// </code>
 /// </summary>
-public class TerminalPanel : UIComponent, IDisposable
+public partial class TerminalPanel : UIComponent, IDisposable
 {
     /// <summary>How long the animations take when nobody says, in seconds.</summary>
     public const float DEFAULT_ANIMATION_TIME = 0.16f;
@@ -80,8 +81,12 @@ public class TerminalPanel : UIComponent, IDisposable
     // How much of the background is laid over a pane that hasn't the keyboard, while a tab is split
     private const float UNFOCUSED_DIM = 0.28f;
 
+    // How much of the text colour the hairline round a pane that is a card is
+    private const float PANE_EDGE = 0.08f;
+
     private readonly TabStrip strip;
     private readonly Button add;
+    private readonly Button profilePicker;
     private readonly Room room;
     private readonly List<TerminalTab> tabs = [];
     private TerminalTab? current;
@@ -146,6 +151,12 @@ public class TerminalPanel : UIComponent, IDisposable
 
     private float paneRadius;
 
+    /// <summary>
+    /// Whether every pane has its title in a header along its top, one on its own as well, so the text starts in the same
+    /// place split or not. Off, only a tab split into more than one has them.
+    /// </summary>
+    public bool PaneTitlesAlways { get; set; }
+
     /// <summary>The room round the panes inside the panel, under the row of tabs, for panes that float as cards.</summary>
     public UIEdges RoomPadding { get; set; }
 
@@ -160,6 +171,25 @@ public class TerminalPanel : UIComponent, IDisposable
 
     /// <summary>How long every terminal's cursor takes to glide to its next cell, 0 for it jumping there, see <see cref="TerminalView.CursorGlide"/>.</summary>
     public float CursorGlide { get; set; } = TerminalView.DEFAULT_CURSOR_GLIDE;
+
+    /// <summary>Whether every terminal has its rows drawn small down its right, see <see cref="TerminalView.Minimap"/>. Set on the terminals there are as well.</summary>
+    public bool Minimap
+    {
+        get => minimap;
+        set
+        {
+            minimap = value;
+            foreach (TerminalTab tab in Tabs)
+            {
+                foreach (TerminalView view in tab.Views)
+                    view.Minimap = value;
+            }
+
+            RequestFrame();
+        }
+    }
+
+    private bool minimap = true;
 
     /// <summary>The least a pane can be dragged or squeezed to, along the split's axis.</summary>
     public float MinPane { get; set; } = 48.0f;
@@ -207,7 +237,9 @@ public class TerminalPanel : UIComponent, IDisposable
         Size = new Vector2(800, 500);
         strip = Add(new TabStrip());
         // Only its icon until the pointer finds it, a box at the end of the tabs looked like a tab that wasn't one
-        add = Add(new Button { Icon = "add", Tooltip = "New terminal", Style = "button_flat" });
+        add = Add(new Button { Icon = "add", Tooltip = "New terminal with the default profile", Style = "button_flat", Animated = false });
+        profilePicker = Add(new Button { Icon = "chevron-down", Tooltip = "New terminal with profile...", Style = "button_flat", Animated = false, Visible = false, OnPressed = ShowProfiles });
+        BuildOverflow();
         room = Add(new Room(this));
 
         strip.OnSelected = index => Select(index);
@@ -229,11 +261,11 @@ public class TerminalPanel : UIComponent, IDisposable
 
     private void AddPressed()
     {
-        if (Profiles.Count > 1)
-            ShowProfiles();
-        else
-            NewTab();
+        NewTab();
     }
+
+    /// <summary>The profile dropdown beside New Tab; empty when only one profile is available.</summary>
+    public UIRect ProfilePickerBounds => profilePicker.Visible ? profilePicker.Bounds : default;
 
     /// <summary>The profiles as a menu at the plus, a pick opens a tab of that.</summary>
     public void ShowProfiles()
@@ -251,7 +283,8 @@ public class TerminalPanel : UIComponent, IDisposable
             menu.Add(profile.Name, () => NewTab(picked), icon: profile.Icon);
         }
 
-        ContextMenu.Show(module, new Vector2(add.Bounds.Min.X, add.Bounds.Min.Y), menu);
+        Button anchor = profilePicker.Visible ? profilePicker : add;
+        ContextMenu.Show(module, new Vector2(anchor.Bounds.Min.X, anchor.Bounds.Min.Y), menu);
     }
 
     /* Tabs */
@@ -267,6 +300,22 @@ public class TerminalPanel : UIComponent, IDisposable
         tabs.Add(tab);
         Select(tab);
         StartIn(view, profile, workingDirectory);
+        return tab;
+    }
+
+    /// <summary>
+    /// Opens a tab on a process that's running already (a console Windows handed over to the terminal), selects it and
+    /// gives it the keyboard. It has no profile, its title is what the program says or else what it's called.
+    /// </summary>
+    public TerminalTab AdoptTab(PseudoTerminal running, string? workingDirectory = null)
+    {
+        var tab = new TerminalTab();
+        TerminalView view = MakeView(null);
+        tab.Focused = tab.Tree.Add(view);
+        tab.Refresh();
+        tabs.Add(tab);
+        Select(tab);
+        view.Attach(running, workingDirectory ?? WorkingDirectory);
         return tab;
     }
 
@@ -440,7 +489,8 @@ public class TerminalPanel : UIComponent, IDisposable
     // A pane's badge let go of over another pane of its tab
     private void PaneDropped(TerminalView view, Vector2 point)
     {
-        if (TabOf(view) is not { } tab)
+        // Nothing to swap with while one pane has the whole tab, the others are out of sight under it
+        if (TabOf(view) is not { Zoomed: null } tab)
             return;
 
         var leaves = tab.Leaves;
@@ -621,6 +671,7 @@ public class TerminalPanel : UIComponent, IDisposable
             Scrollback = Scrollback,
             Animated = Animated,
             CursorGlide = CursorGlide,
+            Minimap = Minimap,
             Profile = profile,
             Radius = paneRadius,
             Visible = false
@@ -686,6 +737,9 @@ public class TerminalPanel : UIComponent, IDisposable
     /// <summary>How far the picture is in from the right edge and up from the bottom one, as shares of the window's width and height.</summary>
     public Vector2 BackdropOffset { get; set; }
 
+    /// <summary>How wide the picture is against its own shape, 1 for the shape it has.</summary>
+    public float BackdropStretch { get; set; } = 1.0f;
+
     /// <summary>Helper method to hand the picture to the panes of the tab that's showing, with the room they take together.</summary>
     private void ShowBackdrop()
     {
@@ -710,6 +764,7 @@ public class TerminalPanel : UIComponent, IDisposable
             view.BackdropScale = BackdropScale;
             view.BackdropOpacity = BackdropOpacity;
             view.BackdropOffset = BackdropOffset;
+            view.BackdropStretch = BackdropStretch;
             view.BackdropArea = area;
         }
     }
@@ -717,6 +772,7 @@ public class TerminalPanel : UIComponent, IDisposable
     protected override void Update(float dt)
     {
         base.Update(dt);
+        profilePicker.Visible = Profiles.Count > 1;
 
         // Clicking into a pane gives it the keyboard, the tab's focused pane follows that
         if (current is { } tab && Module?.Compositor.Focus is TerminalView focused && focused != tab.FocusedView && tab.Tree.Find(focused) is { } leaf)
@@ -734,6 +790,8 @@ public class TerminalPanel : UIComponent, IDisposable
 
         if (stripDirty)
             RebuildStrip();
+        UpdateOverflow();
+        UpdateFind(dt);
 
         ShowBackdrop();
 
@@ -786,7 +844,7 @@ public class TerminalPanel : UIComponent, IDisposable
             if (tab.Tree.EdgeOwner(leaf, SplitDirection.Up) is not null) edges |= UIResize.Top;
             if (tab.Tree.EdgeOwner(leaf, SplitDirection.Down) is not null) edges |= UIResize.Bottom;
             view.Resizable = tab.Zoomed is null ? edges : UIResize.None;
-            view.ShowPaneTitle = leaves.Count > 1 && tab.Zoomed is null;
+            view.ShowPaneTitle = PaneTitlesAlways || (leaves.Count > 1 && tab.Zoomed is null);
             view.MinSize = new Vector2(MinPane, MinPane);
         }
     }
@@ -836,11 +894,21 @@ public class TerminalPanel : UIComponent, IDisposable
     protected override void Arrange(UIRect content)
     {
         float stripHeight = strip.DesiredSize.Y;
-        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(content.Max.X - stripHeight, content.Max.Y));
-        var addArea = new UIRect(new Vector2(content.Max.X - stripHeight, content.Max.Y - stripHeight), content.Max);
-        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, content.Max.Y - stripHeight - 2.0f)).Shrink(RoomPadding);
+        float profileWidth = profilePicker.Visible ? stripHeight : 0.0f;
+        // The chevron that lists the tabs, while they don't all fit, goes between the strip and the plus
+        float listing = TabsOverflow ? stripHeight : 0.0f;
+        float controls = content.Max.X - profileWidth;
+        var stripArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - stripHeight), new Vector2(controls - stripHeight - listing, content.Max.Y));
+        var addArea = new UIRect(new Vector2(controls - stripHeight, content.Max.Y - stripHeight), new Vector2(controls, content.Max.Y));
+        profilePicker.ArrangeTree(profilePicker.Visible ? new UIRect(new Vector2(controls, content.Max.Y - stripHeight), content.Max).Shrink(new UIEdges(2.0f, 3.0f)) : default);
+        more?.ArrangeTree(TabsOverflow ? new UIRect(new Vector2(controls - stripHeight - listing, content.Max.Y - stripHeight), new Vector2(controls - stripHeight, content.Max.Y)) : default);
+        float paneTop = content.Max.Y - stripHeight - 2.0f;
+        ArrangeFind(content, paneTop);
+        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, paneTop - (Finding ? FIND_HEIGHT : 0.0f))).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
-        add.ArrangeTree(addArea);
+
+        // In from the strip's edges as far as a tab's pill is, so the plus lights the shape the tabs do
+        add.ArrangeTree(addArea.Shrink(new UIEdges(2.0f, 3.0f)));
         room.ArrangeTree(roomArea);
     }
 
@@ -896,9 +964,23 @@ public class TerminalPanel : UIComponent, IDisposable
     {
         base.PaintChildren(list);
 
+        // Panes that are cards have the same quiet hairline round every one of them, one pane or several, the way Dawn's
+        // cards have their edge. A lone pane had none and split ones had theirs only while they had the keyboard
+        bool split = current is { Focused: { Content.Visible: true }, Tree.Count: > 1, Zoomed: null };
+        if (current is { } shown && paneRadius > 0.0f)
+        {
+            var leaves = shown.Leaves;
+            Vector4 edge = Palette.Foreground with { W = PANE_EDGE };
+            for (int i = 0; i < leaves.Count; i++)
+            {
+                if (leaves[i].Content is { Visible: true } view && (!split || leaves[i] != shown.Focused))
+                    list.RoundOutline(view.Bounds, paneRadius, 1.0f, edge);
+            }
+        }
+
         // Only when there is more than one to tell apart, the panes without the keyboard are dimmed a little, the way
         // iTerm has them, and the one with it gets a hairline of the accent. It was a frame of gold round the whole of it
-        if (current is { Focused: { } leaf, Tree.Count: > 1, Zoomed: null } focusedTab && leaf.Content is { Visible: true })
+        if (split && current is { Focused: { } leaf } focusedTab)
         {
             var leaves = focusedTab.Leaves;
             for (int i = 0; i < leaves.Count; i++)
@@ -907,7 +989,7 @@ public class TerminalPanel : UIComponent, IDisposable
                     list.RoundRect(leaves[i].Bounds, paneRadius, Palette.Background with { W = UNFOCUSED_DIM });
             }
 
-            Vector4 ink = list.Skin.HighlightColor with { W = leaf.Content.IsFocused ? 0.35f : 0.15f };
+            Vector4 ink = list.Skin.HighlightColor with { W = leaf.Content!.IsFocused ? 0.35f : 0.15f };
             list.RoundOutline(leaf.Bounds, paneRadius, 1.0f, ink);
         }
 
@@ -947,6 +1029,7 @@ public class TerminalPanel : UIComponent, IDisposable
 
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("scrollback", () => (float)Scrollback, value => Scrollback = (int)value);
+        Expose("minimap", () => Minimap, value => Minimap = value);
         Expose("animation_time", () => AnimationTime, value => AnimationTime = MathF.Max(0.0f, value));
         Expose("min_pane", () => MinPane, value => MinPane = MathF.Max(8.0f, value));
     }

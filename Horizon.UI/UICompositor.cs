@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.Core;
 using Horizon.Core.Components;
@@ -11,6 +12,7 @@ using Horizon.Rendering;
 using Horizon.Rendering.PostProcessing;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Components;
+using Horizon.UI.Diagnostics;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -86,11 +88,22 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public float AnimationSpeed { get; set; } = 1.0f;
 
+    /// <summary>Mouse-wheel distance for content scrolling. Zoom and value-editing gestures keep their own units.</summary>
+    public float ScrollSpeed { get; set; } = 1.0f;
+
     /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
-    /// fitting the <see cref="DesignSize"/> comes to. A unit of the layout is this many units of the camera.
+    /// fitting the <see cref="DesignSize"/> comes to, times the <see cref="DisplayScale"/>. A unit of the layout is
+    /// this many units of the camera.
     /// </summary>
     public float UIScale { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// How much bigger the screen the window is on wants things drawn, 1.5 on one Windows scales by 150%. Only for a
+    /// window that follows the scale (<c>WindowManagerConfiguration.ScaleToDisplay</c>) and a UI with no
+    /// <see cref="DesignSize"/>, which is fitted to the screen whatever its scale, 1 otherwise. Part of <see cref="UIScale"/>.
+    /// </summary>
+    public float DisplayScale { get; private set; } = 1.0f;
 
     // Scrolling that was asked for with Scroll and hasn't been handed out yet.
     private float pendingScroll;
@@ -252,6 +265,17 @@ public partial class UICompositor : GameComponent, IDisposable
     private Vector2 restingAt;
     private UIModule? tooltipModule;
 
+    // The tooltip up from the pointer resting, what said it, what it says and where it hangs from. It stays put while the
+    // pointer moves about what it's about or goes over to read it, and for a moment after it wanders off either, so the
+    // way across to it doesn't take it down
+    private (UIComponent Of, string Text, bool Markdown, Vector2 At)? held;
+    private float heldFor;
+    private const float TOOLTIP_GRACE = 0.35f;
+
+    // What was last clicked and where, its tooltip kept down until the pointer leaves it
+    private UIComponent? hushed;
+    private Vector2 hushedAt;
+
     // A tooltip put up by a component rather than the pointer resting on it (a hover asked for with the keyboard), where,
     // and where the pointer was as it went up, it comes down once the pointer moves
     private (UIComponent Owner, string Text, Vector2 At, bool Markdown, Vector2 Pointer)? pinned;
@@ -260,7 +284,7 @@ public partial class UICompositor : GameComponent, IDisposable
     internal List<(int Start, int Length)> TooltipLines { get; } = [];
 
     // A tooltip that is markdown, laid out once for as long as it is the same text
-    internal UIRichText TooltipRich { get; } = new();
+    internal UIRichText TooltipRich { get; } = new() { Snug = true };
 
     private System.Collections.Frozen.FrozenDictionary<string, string>? strings;
 
@@ -315,6 +339,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public readonly List<UIDrawList.Run> Runs = [];
         public readonly List<TextureAtlas> Atlases = [];
         public readonly List<UIGlassPane> Glass = [];
+        public readonly UIFrameList Frames = new();
         public int Count;
         public int Painted = -1;
         public UISkin? Skin;
@@ -326,10 +351,69 @@ public partial class UICompositor : GameComponent, IDisposable
     private readonly SnapshotBuffer<CapturedList> captured = new(static () => new CapturedList());
 
     // What of the captured lists was uploaded last, which two lists and how far between them, -1 for something else.
-    // And where blended lists are put together
+    // And what puts a frame between two of them together
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
-    private SpriteItem[] blended = [];
+    private Vector2? shownPointer;
+
+    // How far between two ticks the last frame was drawn, and the newer of the two, for hit testing where things are
+    // drawn (see DrawnMove). Written by the render thread, read by the simulation's
+    private volatile float drawnAlpha = 1.0f;
+    private volatile int drawnAfter = -1;
+
+    // The frames of the list painted before the newest, by key, worked out once that list is painted when a hit test
+    // asks. By how many times it's been painted into and not by the newest's number, a tick that changed nothing paints
+    // into it again and keeps the number, and the frames found were of a list that wasn't there any more
+    private readonly Dictionary<Vector2, int> priorFrames = [];
+    private int priorFor = -1, backPainted;
+
+    /// <summary>
+    /// How far what a component is inside of is drawn, in the last frame drawn, from where the newest tick laid it out,
+    /// in the units of the layout. Only the moves of scrolls and of the layout moving things about, nothing for a
+    /// component painted in no frame that moved. Simulation thread.
+    /// </summary>
+    internal Vector2 DrawnMove(UIComponent component)
+    {
+        float alpha = drawnAlpha;
+        if (alpha >= 1.0f || drawnAfter != paintedFrame || !front.HomeOf(component.PaintId, out int at) || (uint)at >= (uint)front.FrameList.Frames.Count)
+            return Vector2.Zero;
+
+        UIFrame latest = front.FrameList.Frames[at];
+        if (priorFor != backPainted)
+        {
+            priorFor = backPainted;
+            priorFrames.Clear();
+            for (int i = 0; i < back.FrameList.Frames.Count; i++)
+                priorFrames.TryAdd(back.FrameList.Frames[i].Key, i);
+        }
+
+        if (!priorFrames.TryGetValue(latest.Key, out int was) || was >= back.FrameList.Frames.Count)
+            return Vector2.Zero;
+
+        UIFrame shown = UIInBetween.Between(back.FrameList.Frames[was], latest, alpha);
+        return shown.Shift - latest.Shift + (shown.Laid - latest.Laid);
+    }
+    private readonly UIInBetween inBetween = new();
+
+    /// <summary>
+    /// Whether every tick painted is held up against what its frames resolve to and a difference is logged,
+    /// <c>HORIZON_UI_FRAMES_CHECK=1</c>. Costs a second list's worth of work a tick, for a test run.
+    /// </summary>
+    public static bool CheckFrames { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_FRAMES_CHECK") == "1";
+
+    // The last difference logged, so one that stays isn't logged every tick
+    private string? framesDiffered;
+
+    /// <summary>What this UI has cost since it was last reset, see <see cref="UIStatistics"/>.</summary>
+    public UIStatistics Statistics { get; } = new();
+
+    // Helper method to count quads that went up to the GPU
+    private void CountUpload(int quads)
+    {
+        Statistics.FramesUploaded++;
+        Statistics.QuadsUploaded += quads;
+        Statistics.BytesUploaded += (long)quads * System.Runtime.CompilerServices.Unsafe.SizeOf<SpriteItem>();
+    }
 
     /// <summary>
     /// Where the pointer comes from. The mouse unless set to something else, which could be a cursor
@@ -357,6 +441,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
             // Whatever was typed before now was not meant for this component.
             UIKeyboard.Clear();
+            NoteWindowsEntered(focus, value);
             focus = value;
 
             // So the paste of an editor knows whether a text box somewhere has the keyboard
@@ -424,6 +509,24 @@ public partial class UICompositor : GameComponent, IDisposable
     public static UICompositor ForScreen(string skinDirectory, string skinFile, string? theme = null) =>
         new(new Camera2D(GameEngine.Instance.WindowManager.ViewportSize), skinDirectory, skinFile, theme) { ownsCamera = true };
 
+    /// <summary>
+    /// The innermost component at a pixel of the window (from its top left, the way the pointer and a finger say where
+    /// they are), in the topmost module that has one there. What the pointer would land on, labels and panels too,
+    /// whatever size the scene is drawn at. For checks and tools.
+    /// </summary>
+    public UIComponent? FindAtWindow(Vector2 pixel)
+    {
+        Vector2 world = ToWorld(pixel);
+        UIModule[] now = modules;
+        for (int i = now.Length - 1; i >= 0; i--)
+        {
+            if (now[i].FindAt(world) is { } found)
+                return found;
+        }
+
+        return null;
+    }
+
     public UIModule CreateModule()
     {
         var module = new UIModule(this);
@@ -432,6 +535,31 @@ public partial class UICompositor : GameComponent, IDisposable
             modules = [.. modules, module];
 
         return module;
+    }
+
+    /// <summary>Replaces a registered module in place, preserving its order and disabling the retired module.</summary>
+    public bool ReplaceModule(UIModule current, UIModule replacement)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (current.Compositor != this || replacement.Compositor != this)
+            throw new ArgumentException("Both modules must belong to this compositor.");
+        lock (modulesLock)
+        {
+            int index = Array.IndexOf(modules, current);
+            if (index < 0)
+                return false;
+            if (ReferenceEquals(current, replacement))
+                return true;
+            if (Array.IndexOf(modules, replacement) >= 0)
+                throw new ArgumentException("The replacement module is already registered.");
+            var next = (UIModule[])modules.Clone();
+            next[index] = replacement;
+            current.Enabled = false;
+            modules = next;
+            if (Focus?.Module == current)
+                Focus = null;
+            return true;
+        }
     }
 
     public bool RemoveModule(UIModule module)
@@ -568,15 +696,17 @@ public partial class UICompositor : GameComponent, IDisposable
         float fit = DesignSize is { X: > 0.0f, Y: > 0.0f } design && !screen.IsEmpty
             ? MathF.Min(screen.Width / design.X, screen.Height / design.Y)
             : 1.0f;
-        UIScale = MathF.Max(0.01f, fit * Scale);
+        DisplayScale = DesignSize is null && GameEngine.Instance?.WindowManager is { ScalesToDisplay: true } scaled ? scaled.DisplayScale : 1.0f;
+        UIScale = MathF.Max(0.01f, fit * Scale * DisplayScale);
 
         // Every module that was designed for a screen of its own works out its own scale the same way
         foreach (var module in snapshot)
             module.FitTo(screen);
 
         // The pointer is tested against the layout of the previous update, which is the one on screen.
-        RoutePointer(snapshot);
+        RoutePointer(snapshot, dt);
         RouteKeyboard(snapshot);
+        UpdateTextInput();
         UpdateTooltip(snapshot, dt);
 
         foreach (var module in snapshot)
@@ -613,14 +743,21 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // One clock for both lists, see UIDrawList.Begin
         paintClock = (paintClock + dt) % 3600.0f;
+        long started = Stopwatch.GetTimestamp();
+        back.Previous = front;
+        back.MotionSpeed = AnimationSpeed;
         back.Begin(skin, paintFrame, dt, paintClock);
+        backPainted++;
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
                 continue;
 
+            long laying = Stopwatch.GetTimestamp();
             module.Layout(screen, skin);
+            Statistics.LayoutMs += UIStatistics.Since(laying);
             module.Paint(back);
+            PaintMiddleScroll(back, module);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
             // the boxes of the layout debugger and the mark round what is picked were not, they ran on out of the
@@ -660,10 +797,24 @@ public partial class UICompositor : GameComponent, IDisposable
                 back.PopClip();
         }
         back.End();
+        Statistics.PaintMs += UIStatistics.Since(started);
+        if (CheckFrames && back.FramesDiffer() is { } differs && differs != framesDiffered)
+        {
+            framesDiffered = differs;
+            Horizon.Logging.Log.Warning($"[UI frames] what the frames resolve to isn't what was painted, {differs}");
+        }
+        Statistics.Ticks++;
+        Statistics.QuadsPainted += back.Items.Length;
+        Statistics.MostQuads = Math.Max(Statistics.MostQuads, back.Items.Length);
 
         // Nothing happened. What was painted is what is on screen already, and nobody needs to hear about it
-        if (paintedFrame > 0 && back.SameAs(front))
+        started = Stopwatch.GetTimestamp();
+        bool same = paintedFrame > 0 && back.SameAs(front);
+        Statistics.CompareMs += UIStatistics.Since(started);
+        if (same)
             return;
+
+        Statistics.TicksChanged++;
 
         // Something did, a window that only draws when something changed has frames to draw (see RunMode.Application)
         GameEngine.Instance?.WindowManager?.NoteChange();
@@ -706,13 +857,16 @@ public partial class UICompositor : GameComponent, IDisposable
             foreach (var run in front.Runs)
                 into.Runs.Add(run);
 
-            into.Atlases.Clear();
-            foreach (var atlas in front.Atlases)
-                into.Atlases.Add(atlas);
-
             into.Glass.Clear();
             foreach (var pane in front.GlassPanes)
                 into.Glass.Add(pane);
+
+            // And as frames, which the frames between this tick and the next are put together from
+            into.Frames.CopyFrom(front.FrameList);
+
+            into.Atlases.Clear();
+            foreach (var atlas in front.Atlases)
+                into.Atlases.Add(atlas);
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
@@ -726,6 +880,14 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     /// <param name="due">Whether the UI may be drawn anew this frame, see <see cref="FrameRateLimit"/>.</param>
     /// <returns>False if nothing was captured yet, the UI is drawn from its newest list then.</returns>
+    // A captured frame may still say "dragging" after the window has heard release.
+    // Read position first, then the live button, so post-release motion cannot move it.
+    internal static Vector2? LiveDragPointer(Mouse mouse)
+    {
+        Vector2 position = mouse.LivePosition;
+        return mouse.IsLiveDown(Horizon.Input.MouseButton.Left) ? position : null;
+    }
+
     private bool UploadCaptured(in RenderFrame frame, UISkin skin, bool due)
     {
         if (!captured.TryGet(frame, out CapturedList before, out CapturedList after, out bool continuous))
@@ -738,19 +900,27 @@ public partial class UICompositor : GameComponent, IDisposable
             return true;
         }
 
-        // Two lists of the same quads are blended one with the other as they come. Two that aren't (a number in a
-        // corner changed, something lit up under the pointer) are blended quad by quad wherever the newer one has
-        // a quad the older one had, by who painted it, and the rest of it is shown as it is now. Not blending such
-        // lists at all was how one clock in a HUD had the whole UI drawn in steps a tick apart
+        // Two ticks that painted something different are put together between them from their frames, see
+        // UIInBetween.Frames. Not doing it whenever anything changed was how one clock in a HUD had the whole UI drawn
+        // in steps a tick apart
         bool sameList = before.Painted == after.Painted;
         bool canBlend = continuous && !sameList && before.Skin == skin && !before.Incomplete;
 
         // A list that changed in steps is shown as it was until the moment is all the way at the newer one
         CapturedList shown = sameList || canBlend || frame.Alpha >= 1.0f || before.Skin != skin || before.Incomplete ? after : before;
         float alpha = canBlend ? frame.Alpha : 1.0f;
+        if (!sameList && !continuous)
+            Statistics.FramesBroken++;
+        else if (canBlend && frame.Alpha >= 1.0f)
+            Statistics.FramesAtNewer++;
+
+        // Where the pointer is right now, for a window that's being dragged (see UIComponent.FollowsPointer). Only the
+        // mouse, a pointer of somebody else's (a recording, a test) is theirs to read on their own thread
+        Vector2? pointer = after.Frames.Follows && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
+            ? viewportCamera.ScreenToWorld(dragPointer) : null;
 
         int from = canBlend ? before.Painted : shown.Painted;
-        if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha)
+        if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha && pointer == shownPointer)
             return true;
 
         // Not yet, see FrameRateLimit. What is up there already is shown once more and this is asked again the
@@ -759,99 +929,27 @@ public partial class UICompositor : GameComponent, IDisposable
         if (!due)
             return true;
 
-        if (canBlend && alpha < 1.0f)
+        if (canBlend && alpha < 1.0f || pointer is not null)
         {
-            if (blended.Length < after.Count)
-                blended = new SpriteItem[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)after.Count)];
-
-            ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-            if (!Blendable(before, after))
-            {
-                BlendByKey(a, b, alpha);
-            }
-            else for (int i = 0; i < b.Length; i++)
-            {
-                // The same quad if it shows the same thing the same way, then only where it is, how big and what colour
-                // moved. One that is suddenly somewhere else entirely (a menu that was folded away off screen and
-                // popped up) is not shown flying over, it was put there, see SpriteItem.CanBlend
-                blended[i] = a[i].Flags == b[i].Flags && a[i].TexMin == b[i].TexMin && a[i].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[i], b[i])
-                    ? SpriteItem.Blend(a[i], b[i], alpha)
-                    : b[i];
-            }
-
-            renderer.Upload(blended.AsSpan(0, b.Length), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Atlases), BlendGlass(before, after, alpha));
+            long started = Stopwatch.GetTimestamp();
+            bool between = canBlend && alpha < 1.0f;
+            inBetween.Frames(between ? before.Frames : shown.Frames, between ? after.Frames : shown.Frames, between ? alpha : 1.0f, pointer);
+            Statistics.BlendMs += UIStatistics.Since(started);
+            Statistics.FramesBlended++;
+            CountUpload(inBetween.FramedQuads.Length);
+            renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan((between ? after : shown).Atlases), inBetween.FramedGlass);
         }
         else
         {
-            renderer.Upload(shown.Span, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Runs), skin, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Atlases), System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown.Glass));
+            renderer.Upload(shown.Span, CollectionsMarshal.AsSpan(shown.Runs), skin, CollectionsMarshal.AsSpan(shown.Atlases), CollectionsMarshal.AsSpan(shown.Glass));
+            CountUpload(shown.Count);
         }
 
-        (shownBefore, shownAfter, shownAlpha) = (from, shown.Painted, alpha);
+        (shownBefore, shownAfter, shownAlpha, shownPointer) = (from, shown.Painted, alpha, pointer);
+        drawnAfter = after.Painted;
+        drawnAlpha = canBlend ? alpha : 1.0f;
         pictureCurrent = false;
         refreshedAt = renderedAt;
-        return true;
-    }
-
-    // Where the panes of glass of two lists blended are put together
-    private readonly List<UIGlassPane> blendedGlass = [];
-
-    /// <summary>
-    /// Helper method for the panes of glass of a frame between two ticks. Blended one with the other when the two lists
-    /// have as many, so a dialog that slides in has its glass slide with it, and the newer list's as they are otherwise.
-    /// </summary>
-    private ReadOnlySpan<UIGlassPane> BlendGlass(CapturedList before, CapturedList after, float alpha)
-    {
-        if (before.Glass.Count != after.Glass.Count)
-            return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Glass);
-
-        blendedGlass.Clear();
-        for (int i = 0; i < after.Glass.Count; i++)
-            blendedGlass.Add(UIGlassPane.Blend(before.Glass[i], after.Glass[i], alpha));
-
-        return System.Runtime.InteropServices.CollectionsMarshal.AsSpan(blendedGlass);
-    }
-
-    // Where every quad of the older list is, by who painted it as which of its quads, for lists that aren't the same quads
-    private readonly Dictionary<Vector2, int> byKey = [];
-
-    /// <summary>
-    /// Helper method to blend the quads of the newer list with the ones of the older list the same component painted
-    /// as the same one of its quads, wherever the older list has it. What is new is shown as it is.
-    /// </summary>
-    private void BlendByKey(ReadOnlySpan<SpriteItem> a, ReadOnlySpan<SpriteItem> b, float alpha)
-    {
-        byKey.Clear();
-        for (int i = 0; i < a.Length; i++)
-            byKey.TryAdd(a[i].Key, i);
-
-        for (int i = 0; i < b.Length; i++)
-        {
-            blended[i] = byKey.TryGetValue(b[i].Key, out int was) &&
-                a[was].Flags == b[i].Flags && a[was].TexMin == b[i].TexMin && a[was].TexMax == b[i].TexMax && SpriteItem.CanBlend(a[was], b[i])
-                    ? SpriteItem.Blend(a[was], b[i], alpha)
-                    : b[i];
-        }
-    }
-
-    /// <summary>
-    /// Helper method to say whether two lists are the same quads (the same many, in the same runs, every one painted
-    /// by the same component as the same one of its quads) so that they can be blended one quad with the other.
-    /// Blending by place in the list alone was how a hover that put one quad in or took one out had every quad
-    /// after it blended with its neighbour, a button's background halfway to the next one's, a bar across the
-    /// row for a frame. A list that isn't the same quads is shown as it is, the step is a tick long and nobody sees it.
-    /// </summary>
-    private static bool Blendable(CapturedList before, CapturedList after)
-    {
-        if (before.Count != after.Count ||
-            !System.Runtime.InteropServices.CollectionsMarshal.AsSpan(before.Runs).SequenceEqual(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(after.Runs)))
-            return false;
-
-        ReadOnlySpan<SpriteItem> a = before.Span, b = after.Span;
-        for (int i = 0; i < a.Length; i++)
-        {
-            if (a[i].Key != b[i].Key) return false;
-        }
-
         return true;
     }
 
@@ -904,6 +1002,8 @@ public partial class UICompositor : GameComponent, IDisposable
 
         RenderFrame frame = RenderFrame.Active;
         bool due = NoteFrame();
+        Statistics.Frames++;
+        Statistics.CountGpu();
 
         if (frame.IsDecoupled)
         {
@@ -930,6 +1030,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 if (front.Skin == skin && !front.Incomplete)
                 {
                     renderer.Upload(front);
+                    CountUpload(front.Items.Length);
                     pictureCurrent = false;
                     refreshedAt = renderedAt;
                 }
@@ -956,10 +1057,17 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
-        using var scope = GameEngine.Instance.Graphics.BeginGpuScope("ui");
+        // A UI drawn straight into the window is drawn at its own pixels over the scene blown up, unless the whole frame
+        // is drawn small (see FrameScaler). One inside of a renderer is part of that renderer's picture
+        if (Renderer2D.Current is null && (!renderer.IsEmpty || Cursor is { Visible: true }))
+            GameEngine.Instance.WindowManager.Scaling.BeginOverlay();
 
+        using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
+
+        long started = Stopwatch.GetTimestamp();
         DrawList(dt);
         DrawCursor();
+        Statistics.DrawMs += UIStatistics.Since(started);
     }
 
     /// <summary>
@@ -1041,8 +1149,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
-        if (Retained && pictureCurrent && layer.Replay(dt))
-            return;
+        if (Retained && pictureCurrent)
+        {
+            using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.REPLAY_SCOPE))
+            {
+                if (layer.Replay(dt))
+                    return;
+            }
+        }
 
         // Onto its own layer, through its effects if it has any that are on, and kept there to be laid over
         // again. Straight over the scene where there is no layer to be had (inside of a renderer that lights
@@ -1050,16 +1164,22 @@ public partial class UICompositor : GameComponent, IDisposable
         Renderer2D? output = Renderer2D.Current;
         bool layered = layer.Begin(Retained);
 
-        if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+        using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.QUADS_SCOPE))
         {
-            renderer.Draw(viewportCamera);
-            GlassDrawn = default;
+            if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
+            {
+                renderer.Draw(viewportCamera);
+                GlassDrawn = default;
+            }
+            else
+                DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
         }
-        else
-            DrawGlassy(layered ? layer.Under : output, layered ? layer.Picture : null);
 
         if (layered)
+        {
+            using var laid = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.LAYER_SCOPE);
             layer.End(dt);
+        }
 
         // Only a picture that made it onto the layer is there to be shown again. One with glass in it shows what was
         // behind the glass, which a scene that moves under it doesn't keep still for, see GlassKeepsPicture
@@ -1126,7 +1246,8 @@ public partial class UICompositor : GameComponent, IDisposable
             }
 
             bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, i);
-            glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
+            using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GLASS_SCOPE))
+                glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
             if (fresh)
             {
                 blurredBy = i;

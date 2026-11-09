@@ -1,0 +1,130 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Horizon.Testing on a phone or a tablet. The selector, every example and every check of the desktop's, plus the device
+    checks that only mean something on a phone, in an APK that adb installs on its own. Nothing is copied, the sources
+    are linked from Horizon.Testing. Nothing desktop is referenced, no Horizon.Platform.Desktop, no SDL or
+    GLFW, and no native library of ours goes in the APK.
+
+    Not in Horizon.sln or the workspace solution, a desktop build must never need the Android workload. Built on its own,
+    see README.md next to this for the commands, the extras and where the results are pulled from.
+
+    The assembly is called Horizon.Testing on purpose. The examples are written as part of Horizon.Testing, which the
+    engine and the UI let see their internals, and linked here they need the same.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net11.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Horizon.Testing</AssemblyName>
+    <RootNamespace>Horizon.Testing.Android</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+
+    <ApplicationId>dev.horizon.testing</ApplicationId>
+    <ApplicationTitle>Horizon Testing</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+
+    <!-- arm64 is the target that counts (the SM-T725). x64 builds for an emulator but nothing here is checked on one -->
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+
+    <!-- The assemblies go in the APK, so adb install is all a device needs, no fast deployment from the IDE -->
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+
+    <!--
+      The APK's assets are laid out at the logical paths the engine asks for, Assets/... and shaders/.... The SDK cuts
+      MonoAndroidAssetsPrefix off the front of every asset's path, which is "Assets" by default and would turn
+      Assets/fonts/x.ttf into fonts/x.ttf. So the prefix is a folder that doesn't exist and every asset is linked
+      under it, which comes out with Assets/ and shaders/ kept.
+    -->
+    <MonoAndroidAssetsPrefix>ApkAssets</MonoAndroidAssetsPrefix>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- A release build here is still a test build, arm64 only and with the runtime's JIT, AOT is stage 9 -->
+    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+    <AndroidLinkMode>None</AndroidLinkMode>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+    <!-- The terminal example's TerminalView, over the engine's PseudoTerminal, which runs on Android from API 34 -->
+    <ProjectReference Include="..\Horizon.Terminal\Horizon.Terminal.csproj" />
+    <ProjectReference Include="..\Horizon.Platform.Android\Horizon.Platform.Android.csproj" />
+  </ItemGroup>
+
+  <!--
+    The whole of Horizon.Testing, linked where it is, the host, the selector, the catalog, every example and every check.
+    Left out are the two files that are the desktop's alone, Program.cs (the desktop Main) and the desktop half of
+    TestPlatform (Host/TestPlatform.Android.cs here takes its place). The terminal example runs from API 34, where the
+    engine's PseudoTerminal has a pty on Android, and below that says why it can't.
+  -->
+  <PropertyGroup>
+    <_HorizonTestingSources>$(MSBuildThisFileDirectory)..\Horizon.Testing\</_HorizonTestingSources>
+  </PropertyGroup>
+  <!--
+    The Android SDK's implicit usings bring in Android.Widget and friends, whose ProgressBar, ToggleButton and Button
+    clash with Horizon.UI's in the linked examples. Files here say which Android namespaces they want themselves.
+  -->
+  <ItemGroup>
+    <Using Remove="Android.App" />
+    <Using Remove="Android.Widget" />
+    <Using Remove="Android.OS" />
+    <Using Remove="Android.Views" />
+    <Using Remove="Android.Content" />
+    <Using Remove="Android.Runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(_HorizonTestingSources)**\*.cs"
+             Exclude="$(_HorizonTestingSources)obj\**;$(_HorizonTestingSources)bin\**;$(_HorizonTestingSources)Program.cs;$(_HorizonTestingSources)Host\TestPlatform.Desktop.cs"
+             Link="Linked\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    Content, at the same logical paths a desktop build copies it to beside the exe. The engine's fonts, global files and
+    UI skins (the same subset Horizon.csproj copies), every engine shader and the shader pack under shaders/packed (the
+    runtime hashes the sources to find a pack's keys, so both go), and Horizon.Testing's own art and shaders. Manifests,
+    natives and Syncthing's temporary files never go.
+  -->
+  <PropertyGroup>
+    <_HorizonEngine>$(MSBuildThisFileDirectory)..\Horizon\</_HorizonEngine>
+    <_HorizonTesting>$(MSBuildThisFileDirectory)..\Horizon.Testing\</_HorizonTesting>
+    <_HorizonEngineExcludes>$(_HorizonEngine)**\*.manifest;$(_HorizonEngine)**\*.dll;$(_HorizonEngine)**\*.so;$(_HorizonEngine)**\*.dylib;$(_HorizonEngine)**\*.exe;$(_HorizonEngine)**\*.pdb;$(_HorizonEngine)**\~syncthing~*;$(_HorizonEngine)**\*.tmp</_HorizonEngineExcludes>
+    <_HorizonTestingExcludes>$(_HorizonTesting)**\*.manifest;$(_HorizonTesting)**\*.dll;$(_HorizonTesting)**\*.so;$(_HorizonTesting)**\*.dylib;$(_HorizonTesting)**\*.exe;$(_HorizonTesting)**\*.pdb;$(_HorizonTesting)**\~syncthing~*;$(_HorizonTesting)**\*.tmp</_HorizonTestingExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AndroidAsset Include="$(_HorizonEngine)Assets\global\**\*" Exclude="$(_HorizonEngineExcludes)" Link="ApkAssets\Assets\global\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AndroidAsset Include="$(_HorizonEngine)Assets\fonts\**\*" Exclude="$(_HorizonEngineExcludes)" Link="ApkAssets\Assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AndroidAsset Include="$(_HorizonEngine)Assets\uix\**\*.aseprite;$(_HorizonEngine)Assets\uix\**\*.hor;$(_HorizonEngine)Assets\uix\**\README.txt" Exclude="$(_HorizonEngineExcludes)" Link="ApkAssets\Assets\uix\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AndroidAsset Include="$(_HorizonEngine)shaders\**\*" Exclude="$(_HorizonEngineExcludes)" Link="ApkAssets\shaders\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AndroidAsset Include="$(_HorizonTesting)Assets\**\*" Exclude="$(_HorizonTestingExcludes)" Link="ApkAssets\Assets\%(RecursiveDir)%(Filename)%(Extension)" />
+    <AndroidAsset Include="$(_HorizonTesting)shaders\**\*" Exclude="$(_HorizonTestingExcludes)" Link="ApkAssets\shaders\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    Two things that would otherwise only show on the phone. A build without the shader pack would install and then fail
+    every shader. And aapt2 quietly leaves out of the APK every dotfile and every folder whose name starts with an
+    underscore (its default ignore pattern), so content under such a name would be missing at run time with no word
+    about it. Both are errors here, before anything is packaged.
+  -->
+  <Target Name="HorizonCheckContent" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <_HorizonPacks Include="$(_HorizonEngine)shaders\packed\*.hzshaders" />
+      <_HorizonHidden Include="@(AndroidAsset)" Condition="$([System.String]::Copy('%(AndroidAsset.Link)').Contains('\_')) or $([System.String]::Copy('%(AndroidAsset.Link)').Contains('\.'))" />
+    </ItemGroup>
+    <Error Condition="'@(_HorizonHidden)' != ''" Text="aapt2 would leave these out of the APK, a file or folder starting with '_' or '.' is ignored by its default pattern. Rename them. @(_HorizonHidden->'%(Link)', ', ')" />
+    <Error Condition="'@(_HorizonPacks)' == ''" Text="Horizon/shaders/packed has no .hzshaders. Record the manifest and build the pack first (horizon/tasks.hor, Build shader pack, or artifacts/android-platform-baseline/run-shaders-stage4.ps1), the APK only has the pack on a phone." />
+  </Target>
+
+</Project>

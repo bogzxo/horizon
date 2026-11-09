@@ -66,6 +66,11 @@ public struct SpriteItem
     // ending in a pixel's edge, the soft shadow under a popup, see UIDrawList.Shadow
     public const uint SoftFlag = 0x1000000;
 
+    // Set in Flags for a shape the UI's own shader works out per pixel, a rounded box, its edge or its shadow (see
+    // shaders/ui/ui.slang and UIDrawList.Shape). Its Ring, TexMin, TexMax and Key say what shape and where it's clipped
+    // rather than anything about a texture. The sprite renderer draws one as the plain quad round it
+    public const uint ShapeFlag = 0x2000000;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad

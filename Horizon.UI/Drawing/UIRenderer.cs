@@ -1,10 +1,9 @@
 using System.Numerics;
 
 using Horizon.Engine;
+using Horizon.Graphics;
 using Horizon.Rendering.Spriting;
 using Horizon.UI.Skinning;
-using Horizon.Graphics;
-
 
 namespace Horizon.UI.Drawing;
 
@@ -48,6 +47,10 @@ internal sealed class UIRenderer
         batch = new SpriteBatch();
         batch.Initialize();
         batch.InitializeAll();
+
+        // With the UI's own shader rather than the lit sprites', which draws its rounded boxes and their edges and
+        // shadows as a quad each (see shaders/ui/ui.slang). Before the quads' mesh is made, which takes it from here
+        batch.Shader = Technique.Load("shaders/ui", "ui");
 
         // Everything the UI has on the GPU exists from here on, rather than from whenever it first has something to show.
         batch.PrepareItems();

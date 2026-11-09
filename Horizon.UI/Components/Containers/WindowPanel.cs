@@ -18,12 +18,15 @@ namespace Horizon.UI.Components;
 /// Closing it hides it (<see cref="UIComponent.Visible"/>) and says so with <see cref="OnClosed"/>, showing it again is
 /// the program's business.
 /// </summary>
-public class WindowPanel : Panel
+public partial class WindowPanel : Panel
 {
     private const float GRIP = 14.0f;
     private const float CLOSE_WIDTH = 30.0f;
 
-    private enum Drag { None, Move, Resize, Close }
+    // How wide the close button is, wider with a taller title bar so it stays a square-ish button and not a sliver
+    private float CloseWidth => MathF.Max(CLOSE_WIDTH, MathF.Round(TitleHeight * 1.15f));
+
+    private enum Drag { None, Move, Resize, Close, Action }
     private Drag drag;
     private Vector2 dragFrom;
     private Vector2 startPosition, startSize;
@@ -44,9 +47,15 @@ public class WindowPanel : Panel
     public bool Movable { get; set; } = true;
 
     /// <summary>How tall its title bar is.</summary>
-    public float TitleHeight { get; set; } = 26.0f;
+    public float TitleHeight { get; set; } = TITLE_HEIGHT;
 
-    /// <summary>The scale of the title, or zero for a little smaller than the skin's.</summary>
+    /// <summary>
+    /// How tall a title bar is as it comes, and how much bigger than the skin's its words are. Every window has the one
+    /// title bar, the settings' one. The keys and the dialogs had a little 26 with a speck of an icon and a smaller title.
+    /// </summary>
+    public const float TITLE_HEIGHT = 36.0f, TITLE_TEXT = 1.1f;
+
+    /// <summary>The scale of the title, or zero for the skin's a touch bigger (<see cref="TITLE_TEXT"/>).</summary>
     public float TextScale { get; set; }
 
     /// <summary>Called once its x was clicked and it was hidden.</summary>
@@ -76,12 +85,27 @@ public class WindowPanel : Panel
         Title = title;
     }
 
-    protected override bool HitTestVisible => true;
+    protected override bool HitTestVisible => !leaving;
 
     // Tab goes round what's in it, never out to what's behind
     protected internal override bool HoldsTab => true;
 
-    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.95f;
+    /// <summary>
+    /// What the wheel scrolls when it's turned over a part of the window that has no use for it (its title bar, a
+    /// button, a box), the window's main list usually. Null for nothing. Either way the wheel never goes through the
+    /// window to whatever is behind it.
+    /// </summary>
+    public UIComponent? WheelTarget { get; set; }
+    protected internal override bool UsesScrollSpeed => WheelTarget?.UsesScrollSpeed == true;
+
+    protected internal override bool OnScroll(float delta)
+    {
+        if (WheelTarget is { Visible: true } target && target.Module == Module)
+            target.OnScroll(delta);
+        return true;
+    }
+
+    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * TITLE_TEXT;
 
     protected override Vector2 Measure(UISkin skin) => base.Measure(skin) + new Vector2(0.0f, TitleHeight);
 
@@ -93,7 +117,7 @@ public class WindowPanel : Panel
 
     /// <summary>The x that closes it, empty when it has none.</summary>
     public UIRect CloseBounds => Closable
-        ? new UIRect(new Vector2(Bounds.Max.X - CLOSE_WIDTH, Bounds.Max.Y - TitleHeight), Bounds.Max)
+        ? new UIRect(new Vector2(Bounds.Max.X - CloseWidth, Bounds.Max.Y - TitleHeight), Bounds.Max)
         : default;
 
     /// <summary>The grip in the bottom right corner, empty when it has none.</summary>
@@ -137,7 +161,7 @@ public class WindowPanel : Panel
         float x = bar.Min.X + MathF.Max(10.0f, corner * 0.75f);
         if (Icon.Length > 0)
         {
-            float side = MathF.Round(TitleHeight * 0.55f);
+            float side = MathF.Round(TitleHeight * 0.6f);
             list.Symbol(Icon, new UIRect(new Vector2(x, bar.Center.Y - side * 0.5f), new Vector2(x + side, bar.Center.Y + side * 0.5f)), skin.DimTextColor);
             x += side + 6.0f;
         }
@@ -146,7 +170,7 @@ public class WindowPanel : Panel
         string title = Resolve(Title);
         float scale = ScaleOf(skin);
         float tall = list.Font.Measure(title, scale, false).Y;
-        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CLOSE_WIDTH : 0.0f), bar.Max.Y)));
+        list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CloseWidth : 0.0f) - ActionsWidth, bar.Max.Y)));
         list.Text(title, new Vector2(x, bar.Center.Y + tall * 0.5f), scale, skin.TextColor, false, UITextStyle.Bold, default);
         list.PopClip();
 
@@ -155,8 +179,10 @@ public class WindowPanel : Panel
         {
             UIRect close = CloseBounds;
             bool over = IsHovered && close.Contains(pointer);
-            UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor);
+            UIWindowButtons.Paint(list, close, "chrome-close", over, over && IsPressed, true, skin.TextColor, corner);
         }
+
+        PaintTitleActions(list, pointer);
 
         // The grip, three dots along the curve of the corner, and only while the pointer's on it or it's being dragged.
         // Dots sat square in the corner always, out past the curve of a round one, a corner of a box stuck on a round window
@@ -184,6 +210,13 @@ public class WindowPanel : Panel
         list.EndParts();
     }
 
+    // Dragged by its title bar it goes by exactly as much as the pointer does
+    protected internal override bool FollowsPointer => drag == Drag.Move && Movable;
+
+    // A finger on the title bar or the corner moves or sizes the window, not whatever it scrolls
+    protected internal override bool KeepsTouchDrag(Vector2 point) =>
+        GripBounds.Contains(point) || (Movable && TitleBounds.Contains(point)) || base.KeepsTouchDrag(point);
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         // In front of the others in the same parent, the way a window is when it is clicked
@@ -193,8 +226,11 @@ public class WindowPanel : Panel
         startPosition = Position;
         startSize = Size == Vector2.Zero ? Bounds.Size : Size;
 
+        pressedAction = ActionAt(point);
         if (CloseBounds.Contains(point))
             drag = Drag.Close;
+        else if (pressedAction >= 0)
+            drag = Drag.Action;
         else if (GripBounds.Contains(point))
             drag = Drag.Resize;
         else if (Movable && TitleBounds.Contains(point))
@@ -231,50 +267,64 @@ public class WindowPanel : Panel
     {
         if (drag == Drag.Close && CloseBounds.Contains(point))
             Close();
+        else if (drag == Drag.Action && pressedAction >= 0 && ActionAt(point) == pressedAction)
+            titleActions[pressedAction].Pressed();
 
         drag = Drag.None;
+        pressedAction = -1;
     }
 
-    /// <summary>Hides it and says so, what its x does.</summary>
+    /// <summary>
+    /// Hides it and says so, what its x does. It sinks away first when the UI moves (see WindowPanel.Motion), the keyboard
+    /// given back at once and <see cref="OnClosed"/> called once it has gone.
+    /// </summary>
     public void Close()
     {
-        Visible = false;
+        if (leaving)
+            return;
+
         GiveKeyboardBack();
+        if (Leave())
+            return;
+
+        Visible = false;
+        wasUp = false;
         OnClosed?.Invoke();
     }
 
-    // Whoever had the keyboard before the window took it, see TakeKeyboard
-    private UIComponent? keyboardBefore;
+    /// <summary>
+    /// Whoever had the keyboard before it came into the window, from outside of it. The compositor notes it as the
+    /// keyboard comes in and hands it back as the window closes, is hidden or is taken out of the UI with the keyboard
+    /// still in it, whichever window it was (the settings, the keys, Set Up F5). Only About had it given back, and Escape
+    /// out of the rest left the keyboard on nothing.
+    /// </summary>
+    internal UIComponent? KeyboardBefore { get; set; }
 
     /// <summary>
     /// Has the keyboard come to the window itself, for one with nothing in it that takes it (About, a page of help), so
     /// the first Escape closes it and no key goes on to what's behind. It took two, the first only let go of the code
     /// under it. Whoever had the keyboard gets it back as the window closes, while it's still somewhere in the window.
     /// </summary>
-    public void TakeKeyboard()
-    {
-        if (Module is not { } module)
-            return;
-
-        keyboardBefore = module.Compositor.Focus;
-        Focus();
-    }
+    public void TakeKeyboard() => Focus();
 
     private void GiveKeyboardBack()
     {
-        UIComponent? before = keyboardBefore;
-        keyboardBefore = null;
-        if (before is not { Module: not null } || Module is not { } module)
+        if (Module is not { } module || module.Compositor.Focus is not { } focus || !Holds(focus))
             return;
 
-        for (UIComponent? at = module.Compositor.Focus; at is not null; at = at.Parent)
+        module.Compositor.Focus = UICompositor.KeyboardAfter(this);
+    }
+
+    /// <summary>Whether a component is the window or somewhere inside it.</summary>
+    public bool Holds(UIComponent component)
+    {
+        for (UIComponent? at = component; at is not null; at = at.Parent)
         {
             if (at == this)
-            {
-                before.Focus();
-                return;
-            }
+                return true;
         }
+
+        return false;
     }
 
     // Escape with the keyboard in it (its filter box, say) closes one with an x, as the x would. The first press only let
@@ -284,7 +334,7 @@ public class WindowPanel : Panel
         if (BeforeEscape?.Invoke() == true)
             return true;
 
-        if (!Closable || !Visible)
+        if (!Closable || !Visible || leaving)
             return false;
 
         Close();
@@ -294,6 +344,8 @@ public class WindowPanel : Panel
     /// <summary>Puts it after the others in its parent, which is in front of them.</summary>
     public void BringToFront()
     {
+        StopLeaving();
+
         if (Parent is { } parent && parent.Children.Count > 1 && parent.Children[^1] != this)
             parent.MoveChild(this, parent.Children.Count);
     }

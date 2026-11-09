@@ -9,11 +9,8 @@ using Horizon.Core.Diagnostics;
 using Horizon.Core.Primitives;
 using Horizon.Core.Threading;
 
-using Silk.NET.Input;
-using Silk.NET.Input.Glfw;
 using Horizon.Graphics;
-using Silk.NET.Windowing;
-using Silk.NET.Windowing.Glfw;
+using Horizon.Platform;
 
 namespace Horizon.Core;
 
@@ -33,9 +30,10 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// <summary>
 /// Engine component that manages all associated window activities and threads.
 /// <para>
-/// There are three of them. The thread the window was made on (the one <see cref="Run"/> is called on) hears what the
-/// system has to say about the window and its input, about a thousand times a second whatever the frames are doing,
-/// and is the only one that may change the window. Frames are drawn on a thread of their own, the only one that may
+/// There are three of them. The platform's thread (the one <see cref="Run"/> or <see cref="Start"/> is called on) hears
+/// what the system has to say about the window and its input, and is the only one that may change the window. What that
+/// thread is and how it listens is the platform host's (<see cref="IPlatformHost"/>), a desktop's asks about a thousand
+/// times a second whatever the frames are doing, a phone's is called back by its system. Frames are drawn on a thread of their own, the only one that may
 /// talk to the GPU. The game is simulated on a third (see <see cref="SimulationLoop"/>), its logic and its physics,
 /// one tick after another, each at a rate of its own. So a frame that takes its time doesn't make the input late,
 /// and a window that is being dragged about doesn't stop the drawing.
@@ -53,8 +51,9 @@ public sealed record DisplayState(Vector2 ViewportSize, Vector2 WindowSize, Vect
 /// </summary>
 public partial class WindowManager : GameComponent, IDisposable
 {
-    private readonly IWindow _window;
-    private IInputContext _input;
+    // The platform the window manager runs on, owned by it and disposed once the GPU is gone
+    private readonly IPlatformHost host;
+    private readonly HostEvents events;
 
     private SimulationLoop? simulation;
     private readonly double updatesPerSecond, physicsUpdatesPerSecond;
@@ -79,13 +78,11 @@ public partial class WindowManager : GameComponent, IDisposable
     private volatile bool renderStopping;
     private ExceptionDispatchInfo? renderFailure;
 
-    // What the thread that draws needs done to the window, which only the thread of the window may do. It is woken
-    // up for it rather than left to get round to it
-    private readonly ConcurrentQueue<Action> windowWork = new();
-    private readonly AutoResetEvent windowWake = new(false);
-
-    // How long (in milliseconds) the thread of the window waits between two looks at what the system has to say
-    private const int EVENT_POLL = 1;
+    // Done once the frames stopped, failed with what they died of if they did, and the stop that waits for the
+    // simulation after them
+    private readonly TaskCompletionSource framesStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock stopLock = new();
+    private Task? stopped;
 
     // Whether the size of what is drawn into changed since the last frame, which is told about at the start of the next
     private volatile bool resized;
@@ -164,7 +161,16 @@ public partial class WindowManager : GameComponent, IDisposable
     /// How many pixels of what is drawn into there are to one of whatever the system counts the window and the pointer
     /// in. One everywhere but on a Mac, where it is two on a Retina screen and whatever it comes to in fullscreen. From any thread.
     /// </summary>
-    public Vector2 PixelScale { get; private set; } = Vector2.One;
+    public Vector2 PixelScale => platformDisplay.PixelScale;
+
+    /// <summary>
+    /// How big the window is in whatever the system counts it and the pointer in, points on a Mac and pixels everywhere
+    /// else. From any thread.
+    /// </summary>
+    public Vector2 PointSize => platformDisplay.PointSize;
+
+    // Everything the platform said about how big things are, swapped whole
+    private volatile PlatformDisplay platformDisplay;
 
     /// <summary>
     /// The size of the screen the window is on, in pixels. A window can't usefully be any bigger than this.
@@ -182,9 +188,19 @@ public partial class WindowManager : GameComponent, IDisposable
     public GraphicsDevice? Graphics { get; private set; }
 
     /// <summary>
-    /// The native window underneath, for whoever needs something this class doesn't offer.
+    /// The render scale, how big the scene is drawn for the size of the window and what blows it back up. Its settings
+    /// are set from any thread and take at the next frame, see <see cref="Horizon.Rendering.Scaling.FrameScaler"/>.
     /// </summary>
-    public IWindow Window => _window;
+    public Horizon.Rendering.Scaling.FrameScaler Scaling { get; } = new();
+
+    /// <summary>
+    /// The platform the engine runs on. A desktop program that needs something native gets its concrete host from here
+    /// (Horizon.Platform.Desktop's DesktopHost), the engine and the UI only ever ask the contract.
+    /// </summary>
+    public IPlatformHost Host => host;
+
+    /// <summary>What the platform has to offer beyond a surface, see <see cref="PlatformFeatures"/>.</summary>
+    public PlatformFeatures Features => host.Features;
 
     /// <summary>
     /// Asked when the window is about to close because somebody asked it to (its X, alt and F4), false keeps it open. For
@@ -208,18 +224,6 @@ public partial class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// The native input context of the window. Games read their keys, mouse and gamepads through the input manager of the engine instead.
-    /// </summary>
-    public IInputContext Input => _input;
-
-    /// <summary>
-    /// Whether the window's input context has gamepads in it, see <see cref="Engine.GameEngineConfiguration.Gamepads"/>.
-    /// Without, a GLFW window gets one of Horizon's with only the keyboard and the mouse, and the system is never asked
-    /// about a controller. Set before the window loads, which is when the context is made.
-    /// </summary>
-    public bool ReadsGamepads { get; set; } = true;
-
-    /// <summary>
     /// What the title bar of the window says. From any thread, it changes at the start of the next frame.
     /// </summary>
     public string Title
@@ -228,13 +232,11 @@ public partial class WindowManager : GameComponent, IDisposable
         set
         {
             title = value;
-            titleChanged = true;
-            WakeWindow();
+            host.Window?.SetTitle(value);
         }
     }
 
     private volatile string title;
-    private volatile bool titleChanged;
 
     /// <summary>
     /// Raised on the thread that draws, at the start of the first frame after the size of what is drawn into changed,
@@ -243,9 +245,9 @@ public partial class WindowManager : GameComponent, IDisposable
     public event Action<Vector2>? Resized;
 
     /// <summary>
-    /// Raised on the thread of the window every time it has heard what the system had to say (keys, the mouse,
-    /// gamepads coming and going), about a thousand times a second. The moment for whoever samples input to look at
-    /// the devices, and for whatever else may only be done on this thread (the clipboard).
+    /// Raised on the platform's thread every time it has heard what the system had to say (keys, the mouse, gamepads
+    /// coming and going), about a thousand times a second on a desktop. The moment for whatever may only be done on
+    /// that thread (the clipboard).
     /// </summary>
     public event Action? EventsProcessed;
 
@@ -269,33 +271,25 @@ public partial class WindowManager : GameComponent, IDisposable
     /// <summary>
     /// Asks the window to close, which ends <see cref="Run"/> once the frame that is being drawn is done. From any thread.
     /// </summary>
-    public void Close()
+    public void Close() => host.RequestClose();
+
+    // How big the window was asked to be
+    private readonly Vector2 requestedSize;
+
+    /// <summary>A window manager on the platform the program installed, see <see cref="PlatformInstallation"/>.</summary>
+    public WindowManager(in WindowManagerConfiguration config)
+        : this(config, PlatformInstallation.CreateHost(PlatformInstallation.Resolve(null), new PlatformHostRequest(config, BehaviourOf(config), ReadsGamepads: true)))
     {
-        closing = true;
-        WakeWindow();
     }
 
-    private volatile bool closing;
-
-    // what the window was asked to be when it was made, kept as it was
-    public readonly WindowOptions WindowOptions;
-
-    public WindowManager(in WindowManagerConfiguration config)
+    /// <summary>
+    /// A window manager on a host made for it, which it owns from here on and disposes last, after the GPU.
+    /// </summary>
+    public WindowManager(in WindowManagerConfiguration config, IPlatformHost host)
     {
-        // GLFW has no Vulkan to offer on a Mac (cheers, Apple), SDL has (through a Metal surface) and can be told where
-        // MoltenVK is. Linux has SDL too, see WindowManager.Sdl
-        if (UsesSdl)
-        {
-            LoadMoltenVK();
-            ConfigureSdl(config.AppId);
-            Silk.NET.Windowing.Sdl.SdlWindowing.RegisterPlatform();
-            Silk.NET.Input.Sdl.SdlInput.RegisterPlatform();
-        }
-        else
-        {
-            GlfwWindowing.RegisterPlatform();
-            GlfwInput.RegisterPlatform();
-        }
+        ArgumentNullException.ThrowIfNull(host);
+        this.host = host;
+        events = new HostEvents(this);
 
         Name = "Window Manager";
 
@@ -315,7 +309,7 @@ public partial class WindowManager : GameComponent, IDisposable
             }
         }
         title = config.WindowTitle ?? string.Empty;
-        windowIcon = config.WindowIcon;
+        requestedSize = config.WindowSize;
 
         updatesPerSecond = config.UpdatesPerSecond > 0.0 ? config.UpdatesPerSecond : 120.0;
         physicsUpdatesPerSecond = config.PhysicsUpdatesPerSecond > 0.0 ? config.PhysicsUpdatesPerSecond : 120.0;
@@ -323,43 +317,18 @@ public partial class WindowManager : GameComponent, IDisposable
 
         Presentation = config.Presentation;
 
-        // What the window is asked to be. Vulkan gets no say in how it is paced, see below
-        WindowOptions = WindowOptions.Default with
-        {
-            // Vulkan, so the window only has a surface to offer and the device does the rest
-            API = GraphicsAPI.DefaultVulkan,
-            Title = config.WindowTitle ?? string.Empty,
-            // A frameless window on Windows is maximised once Windows has its frame, see SetUpFrame
-            WindowState = config.Fullscreen ? WindowState.Fullscreen
-                : config.Maximized && !(config.CustomFrame && OperatingSystem.IsWindows()) ? WindowState.Maximized
-                : WindowState.Normal,
-            Size = new Silk.NET.Maths.Vector2D<int>(
-                (int)config.WindowSize.X,
-                (int)config.WindowSize.Y
-            ),
-            // The updates are not the window's to pace, they have a loop of their own. Neither are the frames,
-            // it would spend the wait for the next one spinning (see WaitForFrame)
-            UpdatesPerSecond = 0,
-            FramesPerSecond = 0,
-            ShouldSwapAutomatically = false,
-            VSync = config.VSync,
-            Samples = 0,
-
-            // Not shown until there is a picture in it, see SetUpDrawing. A window that is up before its first frame
-            // shows whatever the system had lying around in it. A Mac gets it shown as it always was, nobody has
-            // ever made SDL's window hidden there and the first run is not the time to find out
-            IsVisible = OperatingSystem.IsMacOS(),
-
-            // Without the system's frame the UI draws a title bar of its own (TitleBar), see WindowManager.Frame
-            WindowBorder = config.CustomFrame ? WindowBorder.Hidden : WindowBorder.Resizable,
-        };
-
-        CustomFrame = config.CustomFrame;
+        // Only a window with a frame of its own to draw gets one, a phone's view has none
+        CustomFrame = config.CustomFrame && (host.Features & PlatformFeatures.WindowFrame) != 0;
+        // HORIZON_SCALE_TO_DISPLAY=on has the UI fold the screen's scale in for a run whose program didn't ask for it,
+        // a phone's density for a test of the UI at dp sizes. The window itself is made the way the configuration says
+        ScalesToDisplay = config.ScaleToDisplay
+            || string.Equals(Environment.GetEnvironmentVariable("HORIZON_SCALE_TO_DISPLAY"), "on", StringComparison.OrdinalIgnoreCase);
+        Scaling.Settings = Horizon.Rendering.Scaling.RenderScaleEnvironment.Startup(config.RenderScale, host.Features, Name);
         Mode = config.Mode;
-        Behaviour = config.Behaviour ?? (config.Mode == RunMode.Application ? ApplicationBehaviour.All : ApplicationBehaviour.None);
-        maximizeWhenMade = config.Maximized && config.CustomFrame && OperatingSystem.IsWindows() && !config.Fullscreen;
+        Behaviour = BehaviourOf(config);
 
         display = new DisplayState(config.WindowSize, config.WindowSize, config.WindowSize);
+        platformDisplay = PlatformDisplay.Of(config.WindowSize);
 
         Display = new DisplaySettings
         {
@@ -370,83 +339,19 @@ public partial class WindowManager : GameComponent, IDisposable
         };
         framePeriod = PeriodOf(Display.FramesPerSecond);
 
-        this._window = Silk.NET.Windowing.Window.Create(WindowOptions);
-        SubscribeWindowEvents();
+        // What the Vulkan loader is told goes in before GLFW or the device ask it anything, see VulkanLoader
+        Horizon.Graphics.Vulkan.VulkanLoader.Configure(application: Mode == RunMode.Application);
+
+        // The GPU gets going now, while the game makes its scene and the window is made, see WindowManager.Device
+        StartDeviceAhead();
+
+        // The window itself is the platform's to make, which is told who hears about it
+        host.Attach(events);
     }
 
-    /// <summary>
-    /// Helper method to point SDL at MoltenVK, which the engine brings with it (Silk.NET.MoltenVK.Native, next to
-    /// the exe), on a Mac. SDL loads its Vulkan by the SDL_VULKAN_LIBRARY hint when there is one, which is set here
-    /// to the full path so it needn't be anywhere dyld looks on its own, and the Vulkan API loader of Silk.NET
-    /// finds the same dylib by name once it is loaded. With the Vulkan SDK installed and no dylib next to the exe
-    /// SDL finds the SDK's loader by itself and MoltenVK comes through that instead.
-    /// </summary>
-    private static void LoadMoltenVK()
-    {
-        if (!OperatingSystem.IsMacOS()) return;
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SDL_VULKAN_LIBRARY"))) return;
-
-        foreach (string candidate in new[] { Path.Combine(AppContext.BaseDirectory, "libMoltenVK.dylib"), Path.Combine(AppContext.BaseDirectory, "runtimes", "osx", "native", "libMoltenVK.dylib") })
-        {
-            if (!File.Exists(candidate)) continue;
-            try
-            {
-                System.Runtime.InteropServices.NativeLibrary.Load(candidate);
-                Environment.SetEnvironmentVariable("SDL_VULKAN_LIBRARY", candidate);
-                Log.Info($"[Window Manager] MoltenVK is {candidate}.");
-                return;
-            }
-            catch (Exception e)
-            {
-                Log.Warning($"[Window Manager] MoltenVK at {candidate} would not load, {e.Message}");
-            }
-        }
-    }
-
-    private void SubscribeWindowEvents()
-    {
-        this._window.Resize += WindowResize;
-
-        // The window's half of getting going, on its thread. The rest happens on the thread that draws, see SetUpDrawing
-        this._window.Load += () =>
-        {
-            // A maximised window is where it belongs already, centering it would take it back out of that
-            if (WindowOptions.WindowState != WindowState.Maximized)
-                _window.Center();
-
-            // SDL's window falls over its own default icon (it indexes past the end of the list it was handed), and a
-            // Mac has no icon on a window anyway, the one in the Dock comes from the bundle
-            if (!OperatingSystem.IsMacOS() && !TrySetIcon(windowIcon) && !UsesSdl)
-                _window.SetDefaultIcon();
-
-            // Silk's GLFW context goes through every controller there is as it is made, which a broken driver makes a minute
-            _input = ReadsGamepads || UsesSdl ? _window.CreateInput() : new Horizon.Input.GlfwInputWithoutGamepads(_window);
-            ListenForInput();
-            SetUpWaiting();
-
-            UpdateViewport();
-
-            // The window was made before anybody could know what a point is worth on this screen, so on a Retina one
-            // it came out twice the size it was asked to be. Put right now that it is known
-            if (WindowOptions.WindowState == WindowState.Normal && screenScale != Vector2.One)
-            {
-                _window.Size = InPoints(new Vector2(WindowOptions.Size.X, WindowOptions.Size.Y));
-                _window.Center();
-                UpdateViewport();
-            }
-
-            UpdateScreenSize();
-        };
-    }
-
-    /// <summary>
-    /// Helper method to turn a size in pixels, which is what everybody asks for a window in, into whatever the system
-    /// counts its windows in. The same thing everywhere but on a Mac with a Retina screen, where a point is two pixels.
-    /// </summary>
-    private Silk.NET.Maths.Vector2D<int> InPoints(Vector2 pixels) => new(
-        Math.Max(1, (int)MathF.Round(pixels.X / screenScale.X)),
-        Math.Max(1, (int)MathF.Round(pixels.Y / screenScale.Y)));
-
+    /// <summary>What a configuration's window does to save work while nothing is happening, see <see cref="ApplicationBehaviour"/>.</summary>
+    public static ApplicationBehaviour BehaviourOf(in WindowManagerConfiguration config) =>
+        config.Behaviour ?? (config.Mode == RunMode.Application ? ApplicationBehaviour.All : ApplicationBehaviour.None);
     /// <summary>
     /// Helper method to get everything that draws going, on the thread that draws, before its first frame.
     /// </summary>
@@ -455,26 +360,20 @@ public partial class WindowManager : GameComponent, IDisposable
         EntityLifecycle.ClaimRenderThread();
         SnapshotClock.Active = snapshots;
 
-        // The device belongs to this thread from here on, it is the one that records and submits every frame
-        Silk.NET.Core.Contexts.IVkSurface surface = _window.VkSurface ?? throw new InvalidOperationException("The window has no Vulkan surface, is the Vulkan loader installed?");
+        // The device belongs to this thread from here on, it is the one that records and submits every frame. The
+        // surface is the platform's, which makes it on whichever thread its system wants (a Mac's main one)
+        surface = host.Surface;
 
-        // On a Mac making the surface is SDL putting a Metal view into the window, and a view may only be put into a
-        // window by the main thread. Done from this one nothing complains and every frame is drawn and presented,
-        // into a layer the system never got told about, so the window stays blank
-        if (OperatingSystem.IsMacOS())
-            surface = new WindowThreadSurface(surface, OnWindowThread);
-
-        Graphics = new GraphicsDevice(
-            surface,
-            (uint)ViewportSize.X,
-            (uint)ViewportSize.Y,
-            Display.VSync);
+        // Most of it made already on Windows, see WindowManager.Device
+        Graphics = MakeDevice(surface);
+        StartupTrace.Mark("device made");
 
         // The first thing in the window, before anything of the engine or the game is set up (the engine's loading
         // screen), and only then is there a window to see
         DeviceReady?.Invoke();
-        if (!WindowOptions.IsVisible)
-            OnWindowThread(ShowWindow);
+        if (host.Window is { } window)
+            OnWindowThread(window.Show);
+        StartupTrace.Mark("window shown with the loading screen");
 
         Parent.Initialize();
 
@@ -489,8 +388,6 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     internal Action? DeviceReady;
 
-    /// <summary>Helper method to show the window, which is made hidden. Thread of the window.</summary>
-    private void ShowWindow() => _window.IsVisible = true;
 
     /// <summary>
     /// Helper method to draw a frame from what the simulation published, after whatever it stood still for.
@@ -582,98 +479,11 @@ public partial class WindowManager : GameComponent, IDisposable
         Exclusive?.Invoke(dt);
     }
 
-    private void UpdateViewport()
-    {
-        var drawable = DrawableSize();
-        var size = RenderSize(drawable);
-        display = display with { ViewportSize = size, WindowSize = size };
-
-        // What the system counts the window and the pointer in against the pixels the screen really has, 2 on a
-        // Retina one, and against what is drawn into, which is another number (and not the same one across as down)
-        // while a fullscreen window is drawn small and stretched over the screen
-        var points = new Vector2(_window.Size.X, _window.Size.Y);
-        bool known = points.X > 0 && points.Y > 0;
-        screenScale = known ? drawable / points : Vector2.One;
-        PixelScale = known ? size / points : Vector2.One;
-    }
-
-    private Vector2 screenScale = Vector2.One;
-
     /// <summary>
     /// Helper method to turn where the system says the pointer is in the window into the pixel of what is drawn that
     /// is under it. From any thread.
     /// </summary>
     internal Vector2 PointerToPixels(Vector2 pointer) => pointer * PixelScale;
-
-    /// <summary>
-    /// Helper method to decide how big what is drawn into is, given how many pixels the window has. They are the same
-    /// thing everywhere but in a fullscreen window on a Mac. A Retina screen is five million pixels, and going
-    /// fullscreen (the green button or the game's own) would have a game that was set to 1280 by 720 draw all of
-    /// them and crawl. So it stays the size it was set to, nothing has to be laid out again and whatever was in
-    /// the middle still is, and the system stretches the picture over the whole of the screen (MoltenVK takes a
-    /// swapchain of another size than its layer). No bars, bogz doesn't want them, so 16 by 9 on a 16 by 10 laptop
-    /// comes out a tenth taller than it was drawn.
-    /// </summary>
-    private Vector2 RenderSize(Vector2 drawable)
-    {
-        if (!OperatingSystem.IsMacOS() || !IsFullscreen())
-            return drawable;
-
-        Vector2 set = Display.WindowSize;
-        if (set.X < 1.0f || set.Y < 1.0f || set.X >= drawable.X || set.Y >= drawable.Y)
-            return drawable;
-
-        return new Vector2(MathF.Floor(set.X), MathF.Floor(set.Y));
-    }
-
-    /// <summary>
-    /// Helper method to ask how many pixels there are to draw into. On a Mac the window is counted in points and SDL's
-    /// window says those for its framebuffer too, while the Metal layer underneath (and so the swapchain) is in the
-    /// pixels of the screen, twice as many each way on a Retina one. A swapchain that never comes out the size it was
-    /// asked for is made anew every frame and nothing is ever shown, so SDL is asked how many pixels the window has.
-    /// Not how big the layer's drawables are (SDL_Vulkan_GetDrawableSize), that is whatever MoltenVK set them to for
-    /// the swapchain, which in fullscreen is the size the game was set to and no measure of the screen at all.
-    /// </summary>
-    private unsafe Vector2 DrawableSize()
-    {
-        // A Wayland screen scaled by two is the same as a Retina one
-        if (SdlWindow is var handle && handle != null)
-        {
-            int width = 0, height = 0;
-            Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowSizeInPixels(handle, &width, &height);
-            if (width > 0 && height > 0)
-                return new Vector2(width, height);
-        }
-
-        return new Vector2(_window.FramebufferSize.X, _window.FramebufferSize.Y);
-    }
-
-    private void WindowResize(Silk.NET.Maths.Vector2D<int> size)
-    {
-        RequestFrames();
-
-        // Minimised windows say they are nothing by nothing, which nobody can draw into, not even Jesus
-        if (size.X <= 0 || size.Y <= 0) return;
-
-        UpdateViewport();
-        resized = true;
-
-        // SDL sets the layer's drawables to the size of the window whenever that changes, and a swapchain that stays
-        // the size it was (a window going fullscreen on a Mac, see RenderSize) is then shown small in a corner of
-        // them until it is made anew
-        Graphics?.SurfaceChanged();
-    }
-
-    private void UpdateScreenSize()
-    {
-        if (_window.Monitor is not { } monitor)
-            return;
-
-        var size = monitor.VideoMode.Resolution ?? monitor.Bounds.Size;
-        // In the same pixels as the viewport, a Mac counts its screen in points like it does its windows
-        display = display with { ScreenSize = new Vector2(size.X, size.Y) * screenScale };
-    }
-
     /// <summary>
     /// Changes how the window is shown and how often it is drawn. From any thread.
     /// <para>
@@ -723,147 +533,24 @@ public partial class WindowManager : GameComponent, IDisposable
         framePeriod = PeriodOf(settings.FramesPerSecond);
         Graphics?.SetVSync(settings.VSync);
 
-        OnWindowThread(() => ApplyWindow(settings));
+        if (host.Window is { } window)
+            OnWindowThread(() => window.ApplyDisplay(settings));
 
         Log.Info($"[{Name}] The window is {(settings.Fullscreen ? "fullscreen" : "windowed")} at {ViewportSize.X} by {ViewportSize.Y} now, {(settings.VSync ? "with" : "without")} vsync and {(settings.FramesPerSecond > 0.0 ? $"at most {settings.FramesPerSecond} frames a second" : "no limit on its frames")}.");
     }
 
     /// <summary>
-    /// Helper method to make the window what it was asked to be, fullscreen or the size it was given. Thread of the window.
+    /// Helper method to have something done on the platform's thread, the only one that may touch the window, and wait
+    /// for it. Done right there when it is the platform's thread already, which the host knows. Not just any thread
+    /// that isn't the one that draws, a phone's simulation or audio thread isn't the platform's either.
     /// </summary>
-    private void ApplyWindow(DisplaySettings settings)
-    {
-        bool fullscreen = IsFullscreen();
-        if (settings.Fullscreen)
-        {
-            if (!fullscreen)
-                SetFullscreen(true);
-        }
-        else
-        {
-            if (fullscreen)
-                SetFullscreen(false);
-
-            var size = InPoints(settings.WindowSize);
-            if (_window.Size != size)
-            {
-                _window.Size = size;
-                _window.Center();
-            }
-        }
-
-        // The window says so itself when its size changes, but not always in time for the frame that is about to be drawn
-        UpdateViewport();
-        UpdateScreenSize();
-    }
-
-    // What SDL calls a window that is fullscreen at all, and one that is so by covering the desktop as it is
-    private const uint SDL_FULLSCREEN = 0x1, SDL_FULLSCREEN_DESKTOP = 0x1001;
-
-    /// <summary>
-    /// Helper method to say whether the window is fullscreen. Thread of the window.
-    /// </summary>
-    private unsafe bool IsFullscreen()
-    {
-        if (SdlWindow is var handle && handle != null)
-        {
-            if ((Silk.NET.SDL.SdlProvider.SDL.Value.GetWindowFlags(handle) & SDL_FULLSCREEN) != 0)
-                return true;
-
-            // The green button takes a window into a fullscreen of the system's own that SDL was never asked for
-            // and doesn't count, the window itself knows
-            return OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa && cocoa != 0 && (MsgSend(cocoa, RegisterSelector("styleMask")) & NS_FULLSCREEN) != 0;
-        }
-
-        return _window.WindowState == WindowState.Fullscreen;
-    }
-
-    // NSWindowStyleMaskFullScreen
-    private const ulong NS_FULLSCREEN = 1ul << 14;
-
-    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
-    private static extern nuint MsgSend(nint receiver, nint selector);
-
-    [System.Runtime.InteropServices.DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "sel_registerName")]
-    private static extern nint RegisterSelector([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPStr)] string name);
-
-    /// <summary>
-    /// Helper method to take the window into fullscreen or back out of it. Thread of the window. On a Mac SDL is asked
-    /// itself, for the kind that covers the desktop as it is. What Silk asks for there is the kind that changes what
-    /// the screen is set to, to whatever mode is nearest the window, which on a laptop came out as 2048 by 1280 of
-    /// all things and left the window that size when it came back.
-    /// </summary>
-    private unsafe void SetFullscreen(bool fullscreen)
-    {
-        if (SdlWindow is var handle && handle != null)
-        {
-            Silk.NET.SDL.SdlProvider.SDL.Value.SetWindowFullscreen(handle, fullscreen ? SDL_FULLSCREEN_DESKTOP : 0);
-            return;
-        }
-
-        _window.WindowState = fullscreen ? WindowState.Fullscreen : WindowState.Normal;
-
-        // GLFW takes the styles of a frame back off a window coming out of fullscreen, which Windows needs to snap it
-        if (!fullscreen)
-            AddFrameStyles();
-    }
-
-    /// <summary>
-    /// Helper method to have something done to the window on its thread, the only one that may, and wait for it to be
-    /// done. From the thread that draws. Done right there on the thread of the window itself.
-    /// </summary>
-    private void OnWindowThread(Action work)
-    {
-        if (renderThread is null || Thread.CurrentThread != renderThread)
-        {
-            work();
-            return;
-        }
-
-        using var done = new ManualResetEventSlim(false);
-        Exception? failed = null;
-
-        windowWork.Enqueue(() =>
-        {
-            try
-            {
-                work();
-            }
-            catch (Exception e)
-            {
-                failed = e;
-            }
-            finally
-            {
-                done.Set();
-            }
-        });
-        WakeWindow();
-
-        done.Wait();
-        if (failed is not null)
-            ExceptionDispatchInfo.Throw(failed);
-    }
+    private void OnWindowThread(Action work) => host.Invoke(work);
 
     /// <summary>
     /// Has something done to the window on its thread the next time it looks, without waiting for it. From any thread,
-    /// for whatever GLFW only lets the thread of the window touch (the cursor, say).
+    /// for whatever only the platform's thread may touch (the cursor, say).
     /// </summary>
-    internal void PostToWindow(Action work)
-    {
-        windowWork.Enqueue(work);
-        WakeWindow();
-    }
-
-    /// <summary>
-    /// Helper method to do whatever the thread that draws asked to have done to the window. Thread of the window.
-    /// </summary>
-    private void DoWindowWork()
-    {
-        while (windowWork.TryDequeue(out Action? work))
-            work();
-    }
-
+    internal void PostToWindow(Action work) => host.Post(work);
     private static double PeriodOf(double framesPerSecond) => framesPerSecond > 0.0 ? 1.0 / framesPerSecond : 0.0;
 
     /// <summary>
@@ -881,25 +568,68 @@ public partial class WindowManager : GameComponent, IDisposable
         if (nextFrame < now - period)
             nextFrame = now;
 
-        LoopTiming.WaitUntil(nextFrame);
+        LoopTiming.WaitUntil(nextFrame, spin: Mode != RunMode.Application);
         nextFrame += period;
     }
 
     public override void Initialize()
     {
-        Log.Info($"[{Name}] Created window({WindowOptions.Size})!");
+        Log.Info($"[{Name}] Created window({requestedSize})!");
     }
 
+    /// <summary>
+    /// Opens the window and runs the game until it is closed, on a platform with a loop of its own (a desktop's). The
+    /// calling thread is the platform's from here on and is handed to that loop.
+    /// </summary>
     public void Run()
     {
+        if (host is not IPlatformLoop loop)
+            throw new InvalidOperationException($"{host.GetType().Name} has no loop to run, start the engine with Start and stop it with StopAsync.");
+
+        Start();
+
+        AllocationLog.NameThisThread("Window");
+        LoopTiming.SharpenTimer(true);
+        try
+        {
+            loop.Run();
+        }
+        finally
+        {
+            LoopTiming.SharpenTimer(false);
+        }
+
+        // The last frame is finished, and whatever it may still need done to the window with it
+        Task done = StopAsync();
+        loop.PumpUntil(done);
+
+        // Whatever is let go of from here on is let go of here, GPU and all
+        EntityLifecycle.ClaimRenderThread();
+
+        // One last listen to the system, so the window gets to hear it is closed
+        loop.Finish();
+
+        done.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Gets the window going on the calling thread, which is the platform's from here on, starts the frames on a thread
+    /// of their own and returns. A desktop goes into its loop next (see <see cref="Run"/>), a phone's activity goes back
+    /// to its system. The thread that draws makes the GPU, puts the loading screen up, has the window shown, sets the
+    /// engine up and draws the first frame, and only then starts the simulation.
+    /// </summary>
+    public void Start()
+    {
         if (IsRunning)
-            throw new Exception("Window is already running!");
+            throw new InvalidOperationException("Window is already running!");
 
         IsRunning = true;
 
         // The window, and then everything that draws happens on a thread of its own, see DrawFrames
-        _window.Initialize();
-        SetUpFrame();
+        StartupTrace.Mark("window being made");
+        host.Initialize();
+        TakeState(host.State);
+        StartupTrace.Mark("window made");
 
         renderThread = new Thread(DrawFrames)
         {
@@ -908,74 +638,42 @@ public partial class WindowManager : GameComponent, IDisposable
             IsBackground = true
         };
         renderThread.Start();
-
-        AllocationLog.NameThisThread("Window");
-        LoopTiming.SharpenTimer(true);
-        try
-        {
-            while (!_window.IsClosing)
-            {
-                HandleEvents();
-
-                // Asked to close (its X, alt and F4), whoever said they want a say gets it, and the window stays if they say no
-                if (_window.IsClosing && !MayClose())
-                    _window.IsClosing = false;
-
-                // Woken up early for whatever the thread that draws needs done to the window. An application waits for the
-                // system while nothing is happening instead, see WindowManager.Application
-                WaitForEvents();
-            }
-        }
-        finally
-        {
-            LoopTiming.SharpenTimer(false);
-        }
-
-        // The last frame is finished, and whatever it may still need done to the window with it
-        renderStopping = true;
-        while (!renderThread.Join(EVENT_POLL))
-            DoWindowWork();
-
-        // Nothing is simulated once there is no window left to show it in
-        simulation?.Stop();
-
-        // Whatever is let go of from here on is let go of here, GPU and all
-        EntityLifecycle.ClaimRenderThread();
-
-        // One last listen to the system, so the window gets to hear it is closed
-        _window.DoEvents();
-
-        renderFailure?.Throw();
     }
 
     /// <summary>
-    /// Helper method to hear what the system has to say about the window, and do whatever else may only be done on its
-    /// thread. Thread of the window, about a thousand times a second.
+    /// Stops the frames and then the simulation without waiting for either. Done when both are, failed with whatever the
+    /// frames died of. The platform's thread has to go on doing what is posted to it until then, a frame may still need
+    /// something done to the window to finish. The GPU and its surface are let go of in <see cref="Dispose"/> on the
+    /// platform's thread, and only after them the native window. From any thread, the same task every time.
     /// </summary>
-    private void HandleEvents()
+    public Task StopAsync()
     {
-        _window.DoEvents();
-        EventsProcessed?.Invoke();
-
-        DoWindowWork();
-        TrackFrame();
-        StepSlide();
-
-        // Asked once. Left set, a window whose program said not yet (something unsaved) was asked again a thousand times a
-        // second, and the program put its question up again every tick, never to be answered
-        if (closing)
+        lock (stopLock)
         {
-            closing = false;
-            _window.Close();
-        }
+            if (stopped is not null)
+                return stopped;
 
-        if (titleChanged)
-        {
-            titleChanged = false;
-            _window.Title = title;
+            renderStopping = true;
+
+            // Out of its wait for something to draw, there's no heartbeat to wait for
+            frameWanted.Set();
+
+            if (renderThread is null)
+            {
+                framesStopped.TrySetResult();
+                if (simulation is null)
+                    return stopped = framesStopped.Task;
+            }
+
+            stopped = framesStopped.Task.ContinueWith(static (frames, state) =>
+            {
+                // Nothing is simulated once there is no window left to show it in
+                ((WindowManager)state!).simulation?.Stop();
+                frames.GetAwaiter().GetResult();
+            }, this, CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
+            return stopped;
         }
     }
-
     /// <summary>
     /// Helper method to draw frame after frame for as long as the window is open. The thread that draws.
     /// </summary>
@@ -992,7 +690,11 @@ public partial class WindowManager : GameComponent, IDisposable
                 renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
                 WaitForDemand();
                 WaitForFrame();
+                WaitWithoutSurface();
                 renderStatistics.SetState(LoopStatistics.LoopState.Working);
+
+                // The surface goes and comes back between frames, never in one, see WindowManager.Surface
+                DoSurfaceRequests();
 
                 long started = Stopwatch.GetTimestamp();
                 long allocated = GC.GetAllocatedBytesForCurrentThread();
@@ -1001,8 +703,12 @@ public partial class WindowManager : GameComponent, IDisposable
                 previous = started;
 
                 Graphics!.BeginFrame((uint)ViewportSize.X, (uint)ViewportSize.Y);
+                Scaling.BeginFrame(Graphics, (uint)ViewportSize.X, (uint)ViewportSize.Y, DisplayScale);
                 DrawFrame(dt);
+                Scaling.EndFrame();
                 Graphics.EndFrame();
+                if (StartupTrace.SceneReady)
+                    StartupTrace.Finish("first frame of the scene shown");
 
                 long ended = Stopwatch.GetTimestamp();
 
@@ -1029,15 +735,28 @@ public partial class WindowManager : GameComponent, IDisposable
         {
             // Thrown again on the thread that runs the window, which is where whoever ran it is waiting
             renderFailure = ExceptionDispatchInfo.Capture(e);
-            closing = true;
-            WakeWindow();
+            host.RequestClose();
         }
         finally
         {
             renderStatistics.SetState(LoopStatistics.LoopState.Stopped);
+            CancelSurfaceRequests();
 
             // Nothing is on its way to the GPU once the frames stop, whatever gets freed afterwards is free to go
-            Graphics?.WaitIdle();
+            try
+            {
+                // The scaled scene's target goes with the frames, on the thread that made it
+                if (Graphics is not null)
+                    Scaling.Dispose();
+                Graphics?.WaitIdle();
+            }
+            finally
+            {
+                if (renderFailure is { } failure)
+                    framesStopped.TrySetException(failure.SourceException);
+                else
+                    framesStopped.TrySetResult();
+            }
         }
     }
 
@@ -1046,9 +765,17 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void StartSimulation()
     {
-        simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new Host(this));
+        simulation = new SimulationLoop("Simulation", updatesPerSecond, physicsUpdatesPerSecond, new SimulationHost(this))
+        {
+            // An application's ticks that run late are one longer tick, not a run of them, see SimulationLoop.StretchWhenBehind
+            StretchWhenBehind = Mode == RunMode.Application,
+            PrecisePacing = Mode != RunMode.Application
+        };
         if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
+        {
             simulation.IsIdle = IdleNow;
+            UpdateIdlePeriod();
+        }
 
         Loops = [renderStatistics, simulation.Ticks, simulation.Logic, simulation.Physics];
 
@@ -1060,26 +787,9 @@ public partial class WindowManager : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// A window's Vulkan surface that is made on the thread of the window whoever asks for it, see <see cref="SetUpDrawing"/>.
-    /// </summary>
-    private sealed unsafe class WindowThreadSurface(Silk.NET.Core.Contexts.IVkSurface inner, Action<Action> onWindowThread) : Silk.NET.Core.Contexts.IVkSurface
-    {
-        public Silk.NET.Core.Native.VkNonDispatchableHandle Create<T>(Silk.NET.Core.Native.VkHandle instance, T* allocator) where T : unmanaged
-        {
-            // A pointer can't go into a lambda, an address can
-            nint address = (nint)allocator;
-            Silk.NET.Core.Native.VkNonDispatchableHandle made = default;
-            onWindowThread(() => made = inner.Create(instance, (T*)address));
-            return made;
-        }
-
-        public byte** GetRequiredExtensions(out uint count) => inner.GetRequiredExtensions(out count);
-    }
-
-    /// <summary>
     /// What the simulation loop runs, the engine's updates and the publishing of a snapshot at the end of every tick.
     /// </summary>
-    private sealed class Host(WindowManager window) : ISimulationHost
+    private sealed class SimulationHost(WindowManager window) : ISimulationHost
     {
         public void BeginTick() { }
 
@@ -1122,6 +832,9 @@ public partial class WindowManager : GameComponent, IDisposable
     {
         simulationParked.Release();
 
+        // A window that only draws when asked has to be asked, or this waited for its heartbeat
+        RequestFrames();
+
         if (simulationResumed.Wait(LONGEST_SET_UP_WAIT))
             return;
 
@@ -1158,10 +871,12 @@ public partial class WindowManager : GameComponent, IDisposable
 
         foreach (LoopStatistics loop in Loops)
         {
+            var totals = loop.AllocationTotals;
             Log.Info(
                 $"[{Name}] {loop.Name} at {loop.Rate:0} a second, {loop.WorkMs:0.00} ms a turn ({loop.PeakWorkMs:0.00} at worst), " +
                 $"{loop.AllocatedPerTurn:0} bytes a turn which is {loop.AllocatedPerSecond / 1024.0:0.0} KB a second. " +
-                $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far.");
+                $"{GC.CollectionCount(0)} small and {GC.CollectionCount(2)} big collections so far. " +
+                $"Totals: {totals.Turns} turns, {totals.Bytes} bytes.");
         }
 
         // And what the process weighs. The heap the garbage collector has in hand against what it has committed
@@ -1194,20 +909,48 @@ public partial class WindowManager : GameComponent, IDisposable
     {
         GC.SuppressFinalize(this);
 
+        // A host that's called back by its system may dispose without having stopped first. The frames are done before
+        // anything goes, and whatever is let go of is let go of on this thread
+        if (IsRunning)
+        {
+            Task stopping = StopAsync();
+            if (!stopping.IsCompleted)
+            {
+                // A frame may still need the platform's thread, so that one goes on doing its work while it waits. A host
+                // without a loop has to wait for StopAsync itself before it disposes, nothing here can pump its thread
+                if (host is IPlatformLoop loop)
+                    loop.PumpUntil(stopping);
+                else if (host.IsPlatformThread)
+                    throw new InvalidOperationException("Stop the engine with StopAsync and let the platform's thread go on until that's done, then dispose it.");
+            }
+
+            try
+            {
+                stopping.Wait();
+            }
+            catch (AggregateException)
+            {
+                // What the frames died of was somebody else's to hear, Run throws it
+            }
+            EntityLifecycle.ClaimRenderThread();
+        }
+
         simulation?.Dispose();
+
+        // A device made ahead for a window that never ran
+        TakeDeviceAhead()?.Dispose();
 
         if (SnapshotClock.Active == snapshots)
             SnapshotClock.Active = null;
 
-        // Last, everything on the GPU has gone by now
+        // Last, everything on the GPU has gone by now, the window's surface with it
         Graphics?.Dispose();
         Graphics = null;
 
-        ReleaseFrame();
-        _window.Reset();
-        _window.Dispose();
-        windowWake.Dispose();
+        // And only then the native window that was under the surface
+        host.Dispose();
         simulationParked.Dispose();
+
         simulationResumed.Dispose();
         allocations?.Dispose();
 

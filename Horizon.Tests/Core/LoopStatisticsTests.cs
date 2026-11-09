@@ -4,6 +4,20 @@ namespace Horizon.Tests;
 
 public class LoopStatisticsTests
 {
+    [Fact]
+    public void Allocation_intervals_exclude_startup_and_include_every_catchup_turn()
+    {
+        var statistics = new LoopStatistics("test", 120);
+        statistics.Record(1, 0, 1, allocatedBytes: 1_000_000);
+        var start = statistics.AllocationTotals;
+        statistics.Record(0.01, 0, 0.01, turns: 3, allocatedBytes: 96);
+        statistics.Record(0.01, 0, 0.01, allocatedBytes: 0);
+        var end = statistics.AllocationTotals;
+        Assert.Equal(4, end.Turns - start.Turns);
+        Assert.Equal(96, end.Bytes - start.Bytes);
+        Assert.True(statistics.AllocatedPerTurn > 96); // The smoothed display still includes startup.
+    }
+
     // The peak is kept as the turns come and go instead of being looked for every time. However the turns fall it
     // has to be what going over the whole history would have found
     [Theory]

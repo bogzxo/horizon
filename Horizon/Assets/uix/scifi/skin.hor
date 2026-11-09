@@ -18,7 +18,6 @@
 // Under icons is how many pixels of the art make a line of text, for the icons whose art isn't simply drawn as
 // tall as the line (the arrows, the sticks, the mouse). The numbers the Dead Revolver skin gives them are for
 // its art, a few pixels tall, and this pack's is sixty four. Left at those they came out five lines tall.
-// Comments can't go inside of the object, the parser won't have it.
 
 let slate = vec(0.18, 0.2, 0.28, 1.0);
 
@@ -26,10 +25,8 @@ func dark_bars() {
     let regions = {};
     let names = ["button", "button_pill", "button_slant", "tab_left", "tab_right"];
     let states = ["", "_hover", "_pressed"];
-    for (i in range(names.count)) {
-        for (j in range(states.count)) {
-            regions[names[i] + states[j]] = { sprite: names[i] + states[j], text_color: slate };
-        }
+    for (name in names) {
+        for (state in states) regions[name + state] = { sprite: name + state, text_color: slate };
     }
     regions["button_flat_selected"] = { sprite: "button_flat_selected", text_color: slate };
     regions["header"] = { sprite: "header", text_color: slate };

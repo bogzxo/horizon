@@ -3,7 +3,7 @@ using System.Numerics;
 using Horizon.Engine;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI;
 
@@ -263,7 +263,7 @@ public sealed class UINavigator
 
         for (UIComponent? at = component; at is not null; at = at.Parent)
         {
-            if (!at.Visible || at.IsOnHiddenLayer || (at.Parent is { } parent && !parent.ShowsChild(at)))
+            if (!at.Visible || at.IsOnHiddenLayer || at is UIDialog { IsOpen: false } || (at.Parent is { } parent && !parent.ShowsChild(at)))
                 return false;
 
             if (at == top)
@@ -285,7 +285,7 @@ public sealed class UINavigator
 
     private void Collect(UIComponent component)
     {
-        if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled)
+        if (!component.Visible || component.IsOnHiddenLayer || !component.Enabled || component is UIDialog { IsOpen: false })
             return;
 
         if (component.Navigable)

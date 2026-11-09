@@ -64,6 +64,12 @@ public sealed partial class TerminalScreen : IVtHandler
     /// <summary>The rows of the scrollback, oldest first.</summary>
     public IReadOnlyList<TerminalRow> Scrollback => scrollback;
 
+    /// <summary>
+    /// How many rows have gone off the top into the scrollback since the screen was made, whatever the scrollback let go
+    /// of since. A view read up in the scrollback moves up by as many to stay on what it shows.
+    /// </summary>
+    public long RowsScrolledOff { get; private set; }
+
     /// <summary>The rows of the grid, top to bottom.</summary>
     public IReadOnlyList<TerminalRow> Grid => AlternateScreen ? alternate : main;
 
@@ -489,6 +495,7 @@ public sealed partial class TerminalScreen : IVtHandler
             if (!AlternateScreen && from == 0)
             {
                 scrollback.Add(gone);
+                RowsScrolledOff++;
                 grid.Insert(to, new TerminalRow(Columns) { Cells = Blanks() });
             }
             else

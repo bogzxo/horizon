@@ -8,7 +8,7 @@ using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Testing.Examples.Game;
 

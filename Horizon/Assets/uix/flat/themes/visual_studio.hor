@@ -1,0 +1,94 @@
+// Visual Studio in its dark theme, as near as the flat skin gets to it. Near black greys with no blue in them, hairline
+// borders a shade lighter, nothing round and the rows packed tight, the way the 2022 one is drawn. The code in its colours
+// for C#, blue keywords, pink ones that send the code somewhere, teal types, pale yellow methods, light blue locals and
+// parameters, brown texts and green comments, which every other language gets too. The caret is the text's own grey and
+// the terminals are in Windows Terminal's Campbell, which is what Visual Studio's own terminal is in. The Visual Studio
+// look of Hex's puts this on with the glass and the lights off and the code in Cascadia Mono.
+
+let theme = {
+    title: "Visual Studio",
+
+    corner_radius: 0,
+    popup_radius: 0,
+    row_height: 22,
+
+    background: vec(0.169, 0.169, 0.169, 1.0),
+    surface: vec(0.118, 0.118, 0.118, 1.0),
+    control_color: vec(0.2, 0.2, 0.216, 1.0),
+    text_color: vec(0.863, 0.863, 0.863, 1.0),
+    control_text_color: vec(0.945, 0.945, 0.945, 1.0),
+    dim_text_color: vec(0.616, 0.616, 0.616, 1.0),
+    border_color: vec(0.247, 0.247, 0.275, 1.0),
+    hover_color: vec(1.0, 1.0, 1.0, 0.07),
+    accent_color: vec(0.435, 0.435, 0.859, 1.0),
+    highlight_color: vec(0.863, 0.863, 0.863, 1.0),
+    selection_color: vec(0.149, 0.31, 0.471, 1.0),
+    bar_text_color: vec(1.0, 1.0, 1.0, 1.0),
+    text_shadow_color: vec(0.0, 0.0, 0.0, 0.0),
+    link_color: vec(0.216, 0.58, 1.0, 1.0),
+    error_color: vec(0.945, 0.298, 0.298, 1.0),
+    warning_color: vec(0.8, 0.655, 0.0, 1.0),
+    success_color: vec(0.537, 0.82, 0.522, 1.0),
+
+    syntax: {
+        name: vec(0.855, 0.855, 0.855, 1.0),
+        keyword: vec(0.337, 0.612, 0.839, 1.0),
+        control: vec(0.847, 0.627, 0.875, 1.0),
+        property: vec(0.855, 0.855, 0.855, 1.0),
+        call: vec(0.863, 0.863, 0.667, 1.0),
+        text: vec(0.839, 0.616, 0.522, 1.0),
+        number: vec(0.71, 0.808, 0.659, 1.0),
+        comment: vec(0.341, 0.651, 0.29, 1.0),
+        punctuation: vec(0.706, 0.706, 0.706, 1.0),
+        line_number: vec(0.522, 0.522, 0.522, 1.0),
+        directive: vec(0.608, 0.608, 0.608, 1.0),
+        declaration: vec(0.612, 0.863, 0.996, 1.0),
+        builtin: vec(0.863, 0.863, 0.667, 1.0),
+        type: vec(0.306, 0.788, 0.69, 1.0),
+        constant: vec(0.337, 0.612, 0.839, 1.0),
+        reference: vec(0.839, 0.616, 0.522, 1.0),
+        escape: vec(1.0, 0.839, 0.561, 1.0),
+        markup: vec(0.706, 0.706, 0.706, 1.0),
+        operator: vec(0.706, 0.706, 0.706, 1.0),
+        bracket1: vec(0.706, 0.706, 0.706, 1.0),
+        bracket2: vec(0.706, 0.706, 0.706, 1.0),
+        bracket3: vec(0.706, 0.706, 0.706, 1.0),
+
+        class: vec(0.306, 0.788, 0.69, 1.0),
+        struct: vec(0.306, 0.788, 0.69, 1.0),
+        record: vec(0.306, 0.788, 0.69, 1.0),
+        delegate: vec(0.306, 0.788, 0.69, 1.0),
+        interface: vec(0.722, 0.843, 0.639, 1.0),
+        enum: vec(0.722, 0.843, 0.639, 1.0),
+        type_parameter: vec(0.722, 0.843, 0.639, 1.0),
+        namespace: vec(0.855, 0.855, 0.855, 1.0),
+        method: vec(0.863, 0.863, 0.667, 1.0),
+        extension_method: vec(0.863, 0.863, 0.667, 1.0),
+        field: vec(0.855, 0.855, 0.855, 1.0),
+        named_constant: vec(0.855, 0.855, 0.855, 1.0),
+        enum_member: vec(0.855, 0.855, 0.855, 1.0),
+        event: vec(0.855, 0.855, 0.855, 1.0),
+        local: vec(0.612, 0.863, 0.996, 1.0),
+        parameter: vec(0.612, 0.863, 0.996, 1.0),
+        label: vec(0.784, 0.784, 0.784, 1.0)
+    },
+
+    terminal: {
+        black: vec(0.047, 0.047, 0.047, 1.0),
+        red: vec(0.773, 0.059, 0.122, 1.0),
+        green: vec(0.075, 0.631, 0.055, 1.0),
+        yellow: vec(0.757, 0.612, 0.0, 1.0),
+        blue: vec(0.0, 0.216, 0.855, 1.0),
+        magenta: vec(0.533, 0.09, 0.596, 1.0),
+        cyan: vec(0.227, 0.588, 0.867, 1.0),
+        white: vec(0.8, 0.8, 0.8, 1.0),
+        bright_black: vec(0.463, 0.463, 0.463, 1.0),
+        bright_red: vec(0.906, 0.282, 0.337, 1.0),
+        bright_green: vec(0.086, 0.776, 0.047, 1.0),
+        bright_yellow: vec(0.976, 0.945, 0.647, 1.0),
+        bright_blue: vec(0.231, 0.471, 1.0, 1.0),
+        bright_magenta: vec(0.706, 0.0, 0.62, 1.0),
+        bright_cyan: vec(0.38, 0.839, 0.839, 1.0),
+        bright_white: vec(0.949, 0.949, 0.949, 1.0)
+    }
+};

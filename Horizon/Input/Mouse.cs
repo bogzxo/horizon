@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 
-using Silk.NET.Input;
+using Horizon.Platform;
 
 namespace Horizon.Input;
 
@@ -17,7 +17,7 @@ public sealed class Mouse
 {
     private const int BUTTONS = 16;
 
-    private readonly ConcurrentQueue<(MouseButton Button, bool Down)> _heard = new();
+    private readonly ConcurrentQueue<(MouseButton Button, bool Down, bool Cancel)> _heard = new();
 
     private readonly bool[] _down = new bool[BUTTONS];
     private readonly bool[] _pressed = new bool[BUTTONS];
@@ -28,13 +28,14 @@ public sealed class Mouse
 
     // Written by the thread of the window. A vector is two floats, which is read in one piece through this
     private long _latest;
+    private int _liveButtons;
     private float _scrolled;
     private readonly Lock _scrollLock = new();
 
     private bool _changed, _placed, _captured;
 
-    // The mice of the window and how to get something done on its thread, which is the only one that may change the cursor
-    private IInputContext? _context;
+    // The platform's pointer and how to get something done on its thread, which is the only one that may change the cursor
+    private IPlatformInput? _platform;
     private Action<Action>? _toWindow;
     private Action? _applyCapture;
 
@@ -120,47 +121,50 @@ public sealed class Mouse
 
     public bool WasReleased(MouseButton button) => Known(button) && _released[(int)button];
 
+    /// <summary>Whether the window currently reports a held button, without waiting for the next input update.</summary>
+    public bool IsLiveDown(MouseButton button) => Known(button) && (Volatile.Read(ref _liveButtons) & (1 << (int)button)) != 0;
+
     private static bool Known(MouseButton button) => (uint)button < BUTTONS;
 
-    /// <param name="toPixels">Turns where the system says the pointer is into the pixel that is under it, see <see cref="Core.WindowManager.PointerToPixels"/>.</param>
-    internal void Attach(IInputContext context, Action<Action>? toWindow = null, Func<Vector2, Vector2>? toPixels = null)
+    /// <param name="platform">The platform's pointer, where it is now in the pixels that are drawn into and how it's captured.</param>
+    /// <param name="toWindow">Has something done on the platform's thread, the only one that may change the cursor.</param>
+    internal void Attach(IPlatformInput platform, Action<Action>? toWindow = null)
     {
-        _context = context;
+        _platform = platform;
         _toWindow = toWindow;
         _applyCapture = ApplyCapture;
 
-        foreach (IMouse mouse in context.Mice)
-        {
-            // A Mac says where the pointer is in points, everything in here goes by the pixels that are drawn into
-            Place(toPixels?.Invoke(mouse.Position) ?? mouse.Position);
-
-            mouse.MouseMove += (_, position) => Place(toPixels?.Invoke(position) ?? position);
-            mouse.MouseDown += (_, button) => _heard.Enqueue((button, true));
-            mouse.MouseUp += (_, button) => _heard.Enqueue((button, false));
-            mouse.Scroll += (_, wheel) =>
-            {
-                lock (_scrollLock) _scrolled += wheel.Y;
-            };
-        }
+        // A Mac says where the pointer is in points, the platform hands it over in the pixels that are drawn into
+        Place(platform.PointerPosition);
     }
 
     /// <summary>Helper method to lock the pointer or let it go, as <see cref="Captured"/> says. Thread of the window.</summary>
-    private void ApplyCapture()
+    private void ApplyCapture() => _platform?.SetPointerCaptured(_captured);
+
+    internal void SetLiveButton(MouseButton button, bool down)
     {
-        if (_context is null) return;
-
-        foreach (IMouse mouse in _context.Mice)
-        {
-            ICursor cursor = mouse.Cursor;
-            CursorMode mode = !_captured ? CursorMode.Normal
-                : cursor.IsSupported(CursorMode.Raw) ? CursorMode.Raw
-                : CursorMode.Disabled;
-
-            if (cursor.IsSupported(mode)) cursor.CursorMode = mode;
-        }
+        if (!Known(button)) return;
+        int bit = 1 << (int)button;
+        if (down) Interlocked.Or(ref _liveButtons, bit);
+        else Interlocked.And(ref _liveButtons, ~bit);
     }
 
-    private void Place(Vector2 position)
+    internal void HearButton(MouseButton button, bool down, bool updateLive = true)
+    {
+        if (updateLive) SetLiveButton(button, down);
+        _heard.Enqueue((button, down, false));
+    }
+
+    internal void CancelLiveButtons() => Interlocked.Exchange(ref _liveButtons, 0);
+
+    internal void Cancel() => _heard.Enqueue((default, false, true));
+
+    internal void HearScroll(float amount)
+    {
+        lock (_scrollLock) _scrolled += amount;
+    }
+
+    internal void Place(Vector2 position)
     {
         long packed = ((long)BitConverter.SingleToInt32Bits(position.X) << 32) | (uint)BitConverter.SingleToInt32Bits(position.Y);
         Interlocked.Exchange(ref _latest, packed);
@@ -205,6 +209,18 @@ public sealed class Mouse
 
         while (_heard.TryDequeue(out var heard))
         {
+            if (heard.Cancel)
+            {
+                for (int index = 0; index < BUTTONS; index++)
+                {
+                    if (_down[index]) _released[index] = true;
+                }
+                Array.Clear(_down);
+                Array.Clear(_pressed);
+                Array.Clear(_tapped);
+                _changed = true;
+                continue;
+            }
             if (!Known(heard.Button)) continue;
 
             int button = (int)heard.Button;

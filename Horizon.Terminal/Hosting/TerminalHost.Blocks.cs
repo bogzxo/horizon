@@ -148,6 +148,8 @@ public sealed partial class TerminalHost
 
         if (text is null)
         {
+            if (Panel.BeginFind())
+                return;
             options.Ui?.AskText("Find", "What to look for in all of this terminal, F3 and Shift+F3 step through it", view.Finding, Find);
             return;
         }

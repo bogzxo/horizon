@@ -25,18 +25,11 @@ func load(tui) {
 
 func value_of(field) {
     let value = values[field.key];
-    if (value == null) {
-        return "";
-    }
-    return text(value);
+    return value == null ? "" : text(value);
 }
 
 func set(tui, field, value) {
-    if (tui.set_setting(field.key, value)) {
-        said = `{field.title} is {text(value)} now`;
-    } else {
-        said = `{field.title} can't be {text(value)}`;
-    }
+    said = tui.set_setting(field.key, value) ? `{field.title} is {value} now` : `{field.title} can't be {value}`;
     load(tui);
 }
 
@@ -64,37 +57,25 @@ func on_key(tui, key) {
         } else if (key.name == "enter") {
             let field = editing;
             editing = null;
-            if (field.kind == "number" || field.kind == "whole") {
-                set(tui, field, number(edit.text));
-            } else {
-                set(tui, field, edit.text);
-            }
+            set(tui, field, field.kind in ["number", "whole"] ? number(edit.text) : edit.text);
         } else {
             ui.field_key(edit, key);
         }
         return;
     }
 
-    if (key.name == "escape" || key.name == "q") {
+    if (key.name in ["escape", "q"]) {
         tui.exit(0);
         return;
     }
 
-    if (ui.list_key(rows, key, tui.rows() - 3)) {
-        return;
-    }
+    if (ui.list_key(rows, key, tui.rows() - 3)) return;
 
     let field = ui.list_chosen(rows);
-    if (field == null) {
-        return;
-    }
+    if (field == null) return;
 
-    if (key.name == "left" || key.name == "right") {
-        let by = 1;
-        if (key.name == "left") {
-            by = -1;
-        }
-        step(tui, field, by);
+    if (key.name in ["left", "right"]) {
+        step(tui, field, key.name == "left" ? -1 : 1);
         return;
     }
 
@@ -109,14 +90,8 @@ func draw(tui) {
     let parts = ui.rows(ui.screen(tui), [0, 1, 1]);
     let inside = ui.panel(tui, parts[0], "Settings", editing == null);
     let width = math.min(32, math.floor(inside.w / 3));
-    ui.list_draw(tui, rows, inside, func(field) {
-        let shown = value_of(field);
-        if (field.kind == "flag") {
-            shown = "no";
-            if (values[field.key] == true) {
-                shown = "yes";
-            }
-        }
+    ui.list_draw(tui, rows, inside, field => {
+        let shown = field.kind == "flag" ? (values[field.key] == true ? "yes" : "no") : value_of(field);
         return ui.pad(field.title, width) + shown;
     }, editing == null);
 
@@ -126,7 +101,7 @@ func draw(tui) {
         ui.field_draw(tui, edit, ui.rect(editing.title.length + 3, parts[1].y, parts[1].w - editing.title.length - 3, 1), "", true);
     } else if (field != null) {
         tui.cursor();
-        tui.write(0, parts[1].y, ui.pad(" " + field.help, parts[1].w), "dim");
+        tui.write(0, parts[1].y, ui.pad(` {field.help}`, parts[1].w), "dim");
     }
 
     ui.status(tui, parts[2], "enter edit  left right step  esc leave", said);

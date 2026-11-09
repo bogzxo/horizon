@@ -27,7 +27,7 @@ public class TerminalFileKnowledgeTests
         Assert.Equal("dusk", read.Functions["quit"].Programs);
         Assert.Equal(string.Empty, read.Functions["split"].Programs);
         Assert.Contains(read.Hooks, hook => hook.Name == "on_line");
-        Assert.Equal(["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset"], read.Settings.Find(setting => setting.Key == "theme")!.Choices!);
+        Assert.Equal(["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset", "visual_studio"], read.Settings.Find(setting => setting.Key == "theme")!.Choices!);
         Assert.Null(TerminalApiDescription.Read("not hidl {{"));
     }
 

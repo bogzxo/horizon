@@ -4,6 +4,50 @@ namespace Horizon.Tests;
 
 public class UITextDocumentTests
 {
+    [Fact]
+    public void Selected_line_reordering_reports_the_inverse_range_on_undo()
+    {
+        var doc = Doc("first\nsecond\nthird\nlast");
+        List<(int First, int Last, int Direction)> changes = [];
+        doc.LinesReordered += (first, last, direction) => changes.Add((first, last, direction));
+        doc.Select(new(0, 0), new(2, 0));
+        doc.MoveLines(1);
+        Assert.Equal("third\nfirst\nsecond\nlast", doc.Text);
+        Assert.Equal((0, 1, 1), Assert.Single(changes));
+        doc.Undo();
+        Assert.Equal("first\nsecond\nthird\nlast", doc.Text);
+        Assert.Equal((1, 2, -1), changes[1]);
+        doc.Redo();
+        Assert.Equal((0, 1, 1), changes[2]);
+        doc.MoveLines(-1);
+        Assert.Equal("first\nsecond\nthird\nlast", doc.Text);
+        Assert.Equal((1, 2, -1), changes[3]);
+        doc.MoveLines(-1);
+        doc.MoveLines(0);
+        Assert.Equal(4, changes.Count);
+    }
+
+    [Fact]
+    public void Undo_and_redo_replay_all_line_shifts_of_a_bracket_newline()
+    {
+        var doc = Doc("{}\nafter", 0, 1);
+        int markedLine = 1;
+        doc.LinesShifted += (at, by, moveAt) =>
+        {
+            if (by > 0 && (markedLine > at.Line || markedLine == at.Line && moveAt)) markedLine += by;
+            else if (by < 0 && markedLine > at.Line) markedLine += by;
+            else if (by < 0 && markedLine > at.Line + by) markedLine = at.Line + by;
+        };
+        doc.NewLine();
+        Assert.Equal(3, markedLine);
+        doc.Undo();
+        Assert.Equal("{}\nafter", doc.Text);
+        Assert.Equal(1, markedLine);
+        doc.Redo();
+        Assert.Equal(3, markedLine);
+        Assert.Equal("after", doc.LineAt(markedLine));
+    }
+
     private static UITextDocument Doc(string text, int line = 0, int column = 0)
     {
         var doc = new UITextDocument { Text = text };

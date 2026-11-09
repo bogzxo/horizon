@@ -103,15 +103,24 @@ public sealed class DebugAdapterConnection : IDisposable
                 JsonNode? message;
                 try
                 {
-                    message = JsonNode.Parse(body);
+                    message = JsonNode.Parse(Utf8Only(body));
                 }
                 catch (JsonException)
                 {
                     continue;
                 }
 
-                if (message is JsonObject received)
-                    Dispatch(received);
+                // One message this side couldn't make sense of is that message lost, not the session. A string that
+                // wasn't UTF-8 threw when it was read, out of here, and the whole debug session ended with it
+                try
+                {
+                    if (message is JsonObject received)
+                        Dispatch(received);
+                }
+                catch (Exception e) when (e is InvalidOperationException or FormatException or JsonException or ArgumentException or KeyNotFoundException)
+                {
+                    // the next one's read as if this one never came
+                }
             }
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException)
@@ -125,6 +134,14 @@ public sealed class DebugAdapterConnection : IDisposable
 
         Close(broke);
     }
+
+    /// <summary>
+    /// A message as UTF-8 the JSON reader takes, what wasn't UTF-8 made the replacement character. netcoredbg on Windows
+    /// writes what a program printed in the console's code page, Horizon's "1600×900" came over as a lone 0xFF byte, and
+    /// reading that string threw on the reading thread and ended the debug session with nothing said.
+    /// </summary>
+    internal static byte[] Utf8Only(byte[] body) =>
+        System.Text.Unicode.Utf8.IsValid(body) ? body : Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(body));
 
     // One framed message, null at the end of the stream
     private byte[]? ReadMessage()

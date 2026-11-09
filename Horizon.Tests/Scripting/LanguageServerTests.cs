@@ -1,4 +1,4 @@
-using System.IO.Pipes;
+﻿using System.IO.Pipes;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -11,7 +11,7 @@ namespace Horizon.Tests.Scripting;
 /// The language server client, over pipes in this process and over a little server written in Python that says
 /// every TODO in a file is a warning, which is what a real one does with a real language.
 /// </summary>
-public class LanguageServerTests
+public partial class LanguageServerTests
 {
     /// <summary>
     /// A language server of forty lines. Answers initialize, and on didOpen and didChange publishes a warning for every
@@ -63,17 +63,112 @@ public class LanguageServerTests
                 check(message["params"]["textDocument"]["uri"], message["params"]["contentChanges"][0]["text"])
             elif method == "textDocument/completion":
                 line = message["params"]["position"]["line"]
+                character = message["params"]["position"]["character"]
                 dotted = message["params"].get("context", {}).get("triggerCharacter") == "."
                 items = [{"label": "zeta", "sortText": "3"},
                          {"label": "alpha", "sortText": "1", "detail": "the first", "kind": 3},
                          {"label": "call", "sortText": "2", "kind": 2, "insertText": "call(${1:x}, $0)", "insertTextFormat": 2},
-                         {"label": "edited", "sortText": "4", "textEdit": {"range": {"start": {"line": line, "character": 0}, "end": {"line": line, "character": 0}}, "newText": "edited!"}}]
+                         {"label": "edited", "sortText": "4", "textEdit": {"range": {"start": {"line": line, "character": 0}, "end": {"line": line, "character": character}}, "newText": "edited!"}}]
                 if dotted:
                     items = [{"label": "member", "kind": 5}]
+                if message["params"].get("context", {}).get("triggerCharacter") == "#":
+                    start = {"line": line, "character": 0}
+                    caret = {"line": line, "character": 3}
+                    end = {"line": line, "character": 6}
+                    items = [{"label": "replace", "textEdit": {"newText": "answer", "insert": {"start": start, "end": caret}, "replace": {"start": start, "end": end}}},
+                             {"label": "range", "textEdit": {"newText": "answer", "range": {"start": start, "end": end}}},
+                             {"label": "prefix", "textEdit": {"newText": "answer", "range": {"start": start, "end": caret}}}]
                 send({"jsonrpc": "2.0", "id": message["id"], "result": {"isIncomplete": dotted, "items": items}})
         """;
 
     private static bool HasPython => LanguageServers.IsAvailable("python");
+
+    [Fact]
+    public void VersionedDiagnosticsRejectLateAndQueuedOldResultsButAcceptUnversionedServers()
+    {
+        using var toServer = new AnonymousPipeServerStream(PipeDirection.Out);
+        using var toServerRead = new AnonymousPipeClientStream(PipeDirection.In, toServer.ClientSafePipeHandle);
+        using var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
+        using var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
+        using LanguageServer server = LanguageServer.Over("versions", "csharp", Path.GetTempPath(), toClientRead, toServer);
+        JsonObject initialize = ReadMessage(toServerRead);
+        Assert.True(initialize["params"]!["capabilities"]!["textDocument"]!["publishDiagnostics"]!["versionSupport"]!.GetValue<bool>());
+        Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
+        Assert.Equal("initialized", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+        string file = Path.Combine(Path.GetTempPath(), "versioned.cs");
+        server.Open(file, "before");
+        Assert.Equal("textDocument/didOpen", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+        void Publish(int? version, string message)
+        {
+            var parameters = new JsonObject { ["uri"] = new Uri(file).AbsoluteUri,
+                ["diagnostics"] = new JsonArray(new JsonObject { ["message"] = message,
+                    ["range"] = new JsonObject { ["start"] = new JsonObject { ["line"] = 0, ["character"] = 0 },
+                        ["end"] = new JsonObject { ["line"] = 0, ["character"] = 1 } } }) };
+            if (version is not null) parameters["version"] = version.Value;
+            Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["method"] = "textDocument/publishDiagnostics", ["params"] = parameters }.ToJsonString());
+            Write(toClient, """{"jsonrpc":"2.0","method":"coded/logInstall","params":"barrier"}""");
+            Assert.True(WaitFor(() => server.TryTakeSaid(out string text, out _) && text == "barrier"));
+        }
+        Publish(1, "queued old");
+        server.Change(file, "after");
+        Assert.Equal("textDocument/didChange", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+        Assert.False(server.TryTake(out _, out _));
+        Publish(2, "current");
+        Publish(1, "late old");
+        Assert.True(server.TryTake(out _, out var current));
+        Assert.Equal("current", Assert.Single(current).Message);
+        Assert.False(server.TryTake(out _, out _));
+        Publish(null, "unversioned");
+        Assert.True(server.TryTake(out _, out var compatible));
+        Assert.Equal("unversioned", Assert.Single(compatible).Message);
+        Publish(2, "queued before close");
+        server.Close(file);
+        Assert.Equal("textDocument/didClose", ReadMessage(toServerRead)["method"]!.GetValue<string>());
+        server.Open(file, "reopened");
+        var reopened = ReadMessage(toServerRead);
+        Assert.Equal("textDocument/didOpen", reopened["method"]!.GetValue<string>());
+        int reopenedVersion = reopened["params"]!["textDocument"]!["version"]!.GetValue<int>();
+        Assert.True(reopenedVersion > 2, "Reopening reset the document version and can accept obsolete results");
+        Assert.False(server.TryTake(out _, out _));
+        Publish(2, "late from earlier open");
+        Assert.False(server.TryTake(out _, out _));
+        Publish(reopenedVersion, "reopened current");
+        Assert.True(server.TryTake(out _, out var fresh));
+        Assert.Equal("reopened current", Assert.Single(fresh).Message);
+
+    }
+
+    [Fact]
+    public void StartupFailureRetainsBoundedErrorOutputWithoutLineBreaks()
+    {
+        if (!HasPython) return;
+        using var server = LanguageServer.Start("startup-error", "python",
+            ["-c", "import sys; sys.stderr.write('discarded-prefix' + 'x'*100000 + 'missing runtime fixture'); sys.stderr.flush(); sys.exit(3)"],
+            "python", Path.GetTempPath());
+        Assert.NotNull(server);
+        Assert.True(WaitFor(() => server.Failure is not null && server.ErrorOutput.EndsWith("missing runtime fixture", StringComparison.Ordinal)));
+        Assert.False(server.IsReady);
+        Assert.Equal(8192, server.ErrorOutput.Length);
+        Assert.DoesNotContain("discarded-prefix", server.ErrorOutput);
+    }
+
+    [Fact]
+    public async Task CompletionPreservesSuffixReplacementRangesButKeepsPrefixEditsReusable()
+    {
+        if (!HasPython) return;
+        string folder = Path.GetTempPath();
+        using LanguageServer? server = LanguageServer.Start("ranges", "python", [WriteFakeServer()], "fake", folder);
+        Assert.NotNull(server);
+        string file = Path.Combine(folder, "ranges.fake");
+        server.Open(file, "ansxxx");
+        var offered = await server.Complete(file, 0, 3, 0, '#').WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.NotNull(offered);
+        var items = offered.Value.Items.ToDictionary(item => item.Text);
+        Assert.Equal(new UITextPosition(0, 6), items["replace"].ReplacementEnd);
+        Assert.Equal(new UITextPosition(0, 6), items["range"].ReplacementEnd);
+        Assert.Null(items["prefix"].ReplacementEnd);
+        Assert.All(items.Values, item => Assert.Equal("answer", item.Insert));
+    }
 
     private static string WriteFakeServer()
     {
@@ -269,20 +364,20 @@ public class LanguageServerTests
         Assert.False(offered.Value.Incomplete);
         Assert.Equal(
         [
-            new UICompletion("alpha", "the first"),
-            new UICompletion("call", "method", "call(x, )"),
+            new UICompletion("alpha", "the first", Kind: "function"),
+            new UICompletion("call", "method", "call(x, )", Kind: "method"),
             new UICompletion("zeta"),
             new UICompletion("edited", Insert: "edited!")
         ], offered.Value.Items);
 
-        // An edit that doesn't replace from where the editor will isn't taken, the label goes in instead
+        // The server's wider range wins over the editor's word boundary and retains its coordinates.
         offered = await server.Complete(file, 0, 1, start: 1).WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(new UICompletion("edited"), offered!.Value.Items[^1]);
+        Assert.Equal(new UICompletion("edited", Insert: "edited!", ReplacementStart: new(0, 0), ReplacementEnd: new(0, 1)), offered!.Value.Items[^1]);
 
         // After a dot, the server is told it was a dot
         offered = await server.Complete(file, 0, 2, start: 2, trigger: '.').WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(offered!.Value.Incomplete);
-        Assert.Equal([new UICompletion("member", "field")], offered.Value.Items);
+        Assert.Equal([new UICompletion("member", "field", Kind: "field")], offered.Value.Items);
     }
 
     [Fact]
@@ -438,6 +533,7 @@ public class LanguageServerTests
             File.WriteAllText(Path.Combine(root, "Another.sln"), string.Empty);
             File.WriteAllText(Path.Combine(root, "Game.sln"), string.Empty);
             Assert.Equal(["--solution", Path.Combine(root, "Game.sln")], LanguageServers.ArgumentsIn(["--solution", "{solution}"], root));
+            Assert.Equal(["--solution", Path.Combine(root, "Another.sln")], LanguageServers.ArgumentsIn(["--solution", "{solution}"], root, Path.Combine(root, "Another.sln")));
 
             // None there, the argument goes with its flag, and arguments without one are as they were
             string bare = Path.Combine(root, "external");

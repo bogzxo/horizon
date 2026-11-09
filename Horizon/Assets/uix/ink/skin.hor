@@ -10,7 +10,6 @@
 //
 // The pack's pieces are thirteen pixels or so, drawn three times over (art_scale). Under icons is how many pixels of
 // the art make a line of text, for the arrows, which are seven.
-// Comments can't go inside of the object, the parser won't have it.
 
 let paper = vec(0.94, 0.93, 0.97, 1.0);
 let sakura = vec(0.94, 0.36, 0.57, 1.0);

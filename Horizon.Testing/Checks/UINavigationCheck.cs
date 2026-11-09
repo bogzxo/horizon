@@ -6,7 +6,7 @@ using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using Button = Horizon.UI.Components.Button;
 
@@ -78,7 +78,9 @@ internal sealed class UINavigationCheck : Scene, ITestControls, ISelfCheck
 
     public UINavigationCheck()
     {
-        var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
+        // A screen the size of the design whatever the window is, so the scaling checked below starts from 1 on a
+        // 16:10 tablet the same as in a 1600 by 900 desktop window
+        var cam = AddEntity(new Camera2D(DesignSize));
         ActiveCamera = cam;
 
         _compositor = AddComponent(new UICompositor(cam, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE) { DesignSize = DesignSize });
@@ -286,8 +288,30 @@ internal sealed class UINavigationCheck : Scene, ITestControls, ISelfCheck
         test.Check("nav: confirming on a text box starts typing into it", () => _name.IsFocused);
         test.Run(() => _compositor.FocusNext());
         test.Check("tab: the focus moves to the next text box", () => _clan.IsFocused && !_name.IsFocused);
-        test.Run(() => _compositor.FocusNext());
-        test.Check("tab: and round to the first", () => _name.IsFocused);
+
+        // Since 3ef64c4 every button, list and toggle of the layout is a tab stop too, not only the text boxes, so after the
+        // clan box come the rest of them. Tab is pressed until the focus is back on the name, at most 64 times, and the
+        // stops it went round are written out. How many presses that takes is known first from the module's own stops, in
+        // the order of the layout the compositor tabs through
+        string[] round = [];
+        int expected = -1;
+        test.Run(() =>
+        {
+            var stops = new List<UIComponent>();
+            _module.CollectFocusable(stops);
+            int clan = stops.IndexOf(_clan), name = stops.IndexOf(_name);
+            expected = clan < 0 || name < 0 ? -1 : ((name - clan) % stops.Count + stops.Count) % stops.Count;
+
+            var passed = new List<string>();
+            for (int i = 0; i < 64 && !_name.IsFocused; i++)
+            {
+                _compositor.FocusNext();
+                passed.Add(_compositor.Focus is TextBox box ? $"text box {box.Text}" : _compositor.Focus?.GetType().Name ?? "nothing");
+            }
+            round = [.. passed];
+            Console.WriteLine($"[UI self-test] tab went round {round.Length} stops of the {expected} expected, {string.Join(", ", round)}");
+        });
+        test.Check("tab: and round to the first", () => _name.IsFocused && expected > 1 && round.Length == expected);
         test.Run(() => _clan.OnPaste("Dead Revolvers\nsecond line is dropped"));
         test.Check("paste: a text box takes the first line of what is pasted", () => _clan.Text == "Dead Revolvers");
         test.Run(() => _compositor.Focus = null);
@@ -318,10 +342,14 @@ internal sealed class UINavigationCheck : Scene, ITestControls, ISelfCheck
         test.Run(() => _stages.Index = 0);
         test.Hover(At(_stages), 0.1f);
         test.Run(() => _stages.OnScroll(-1));
-        test.Check("list: the wheel scrolls it", () => _stages.Top == 1);
+        // A notch of the wheel goes ListBox.WHEEL_ROWS rows, three since lists glide (b2d9748), not the one it used to
+        test.Check("list: the wheel scrolls it", () => _stages.Top == 3);
 
+        // The rows glide to the new top and a click picks the row drawn under it this moment, so the click waits for the
+        // glide to land. Then a row and a half down from the top is the second row shown, the fifth of the list
+        test.WaitFor(() => _stages.Shown == _stages.Top);
         test.Click(At(_stages, 0.5f, 1.0f - 1.5f / 4.0f));
-        test.Check("list: a click on a row chooses it", () => _stages.Index == 2 && _stage == "Rooftop");
+        test.Check("list: a click on a row chooses it", () => _stages.Index == 4 && _stage == "Temple");
 
         /* Tooltips */
 

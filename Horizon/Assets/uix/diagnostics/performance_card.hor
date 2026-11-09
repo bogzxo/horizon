@@ -17,31 +17,31 @@ let card = compositor.stack({
     direction: "horizontal",
     color: vec(0.05, 0.058, 0.082, 0.96),
     radius: 10,
-    outline: vec(1, 1, 1, 0.09)
+    outline: vec(1, 1, 1, 0.09),
 });
 
 let left = compositor.stack({
     parent: card,
     anchor: "top",
-    spacing: 6
+    spacing: 6,
 });
 
 let middle = compositor.divider({
     parent: card,
     direction: "vertical",
     fill: "vertical",
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let right = compositor.stack({
     parent: card,
     anchor: "top",
-    spacing: 6
+    spacing: 6,
 });
 
 let header = compositor.panel({
     parent: left,
-    size: vec(404, 50)
+    size: vec(404, 50),
 });
 
 let starting = compositor.label({
@@ -50,7 +50,7 @@ let starting = compositor.label({
     text: "starting up",
     text_scale: 0.1625,
     color: vec(0.8, 0.83, 0.9, 1),
-    visible: false
+    visible: false,
 });
 
 let fps = compositor.readout({
@@ -62,7 +62,7 @@ let fps = compositor.readout({
     text_scale: 0.3375,
     unit_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let frame_ms = compositor.readout({
@@ -71,14 +71,14 @@ let frame_ms = compositor.readout({
     pos: vec(0, -36),
     size: vec(150, 14),
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_tile = compositor.panel({
     parent: header,
     anchor: "top_left",
     pos: vec(150, 0),
-    size: vec(96, 50)
+    size: vec(96, 50),
 });
 
 let cpu_name = compositor.label({
@@ -86,7 +86,7 @@ let cpu_name = compositor.label({
     anchor: "top_left",
     text: "CPU",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_load = compositor.readout({
@@ -95,7 +95,7 @@ let cpu_load = compositor.readout({
     size: vec(40, 13),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_ms = compositor.readout({
@@ -107,7 +107,7 @@ let cpu_ms = compositor.readout({
     text_scale: 0.1625,
     unit_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let cpu_meter = compositor.meter({
@@ -115,14 +115,14 @@ let cpu_meter = compositor.meter({
     anchor: "top_left",
     pos: vec(0, -42),
     size: vec(96, 4),
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let gpu_tile = compositor.panel({
     parent: header,
     anchor: "top_left",
     pos: vec(260, 0),
-    size: vec(96, 50)
+    size: vec(96, 50),
 });
 
 let gpu_name = compositor.label({
@@ -130,7 +130,7 @@ let gpu_name = compositor.label({
     anchor: "top_left",
     text: "GPU",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_load = compositor.readout({
@@ -139,7 +139,7 @@ let gpu_load = compositor.readout({
     size: vec(40, 13),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_ms = compositor.readout({
@@ -151,7 +151,7 @@ let gpu_ms = compositor.readout({
     text_scale: 0.1625,
     unit_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit_color: vec(0.62, 0.66, 0.75, 1)
+    unit_color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_meter = compositor.meter({
@@ -159,7 +159,7 @@ let gpu_meter = compositor.meter({
     anchor: "top_left",
     pos: vec(0, -42),
     size: vec(96, 4),
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let cap = compositor.panel({
@@ -169,30 +169,30 @@ let cap = compositor.panel({
     padding: vec(6, 2, 6, 2),
     color: vec(1, 1, 1, 0.09),
     radius: 5,
-    outline: vec(1, 1, 1, 0.13)
+    outline: vec(1, 1, 1, 0.13),
 });
 
 let cap_key = compositor.label({
     parent: cap,
     text: "F3",
     text_scale: 0.125,
-    color: vec(1, 0.86, 0.3, 1)
+    color: vec(1, 0.86, 0.3, 1),
 });
 
 let header_rule = compositor.divider({
     parent: left,
     fill: "horizontal",
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let frame = compositor.stack({
     parent: left,
-    spacing: 6
+    spacing: 6,
 });
 
 let frame_title = compositor.panel({
     parent: frame,
-    size: vec(404, 15)
+    size: vec(404, 15),
 });
 
 let frame_heading = compositor.label({
@@ -200,7 +200,7 @@ let frame_heading = compositor.label({
     anchor: "left",
     text: "FRAME TIME",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let frame_note = compositor.label({
@@ -208,7 +208,7 @@ let frame_note = compositor.label({
     anchor: "right",
     text: "the last 12 seconds",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let frame_graph = compositor.graph({
@@ -216,19 +216,19 @@ let frame_graph = compositor.graph({
     size: vec(404, 54),
     bars: 120,
     unit: "ms",
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let frame_cells = compositor.stack({
     parent: frame,
     anchor: "left",
     spacing: 0,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let low_cell = compositor.stack({
     parent: frame_cells,
-    spacing: 0
+    spacing: 0,
 });
 
 let low = compositor.readout({
@@ -237,7 +237,7 @@ let low = compositor.readout({
     size: vec(80.8, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "fps"
+    unit: "fps",
 });
 
 let low_label = compositor.label({
@@ -247,12 +247,12 @@ let low_label = compositor.label({
     align: "left",
     text: "1% low",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let p99_cell = compositor.stack({
     parent: frame_cells,
-    spacing: 0
+    spacing: 0,
 });
 
 let p99 = compositor.readout({
@@ -261,7 +261,7 @@ let p99 = compositor.readout({
     size: vec(80.8, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "ms"
+    unit: "ms",
 });
 
 let p99_label = compositor.label({
@@ -271,12 +271,12 @@ let p99_label = compositor.label({
     align: "left",
     text: "p99",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let worst_cell = compositor.stack({
     parent: frame_cells,
-    spacing: 0
+    spacing: 0,
 });
 
 let worst = compositor.readout({
@@ -285,7 +285,7 @@ let worst = compositor.readout({
     size: vec(80.8, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "ms"
+    unit: "ms",
 });
 
 let worst_label = compositor.label({
@@ -295,12 +295,12 @@ let worst_label = compositor.label({
     align: "left",
     text: "worst",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let jitter_cell = compositor.stack({
     parent: frame_cells,
-    spacing: 0
+    spacing: 0,
 });
 
 let jitter = compositor.readout({
@@ -309,7 +309,7 @@ let jitter = compositor.readout({
     size: vec(80.8, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "ms"
+    unit: "ms",
 });
 
 let jitter_label = compositor.label({
@@ -319,12 +319,12 @@ let jitter_label = compositor.label({
     align: "left",
     text: "jitter",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let stutters_cell = compositor.stack({
     parent: frame_cells,
-    spacing: 0
+    spacing: 0,
 });
 
 let stutters = compositor.readout({
@@ -332,7 +332,7 @@ let stutters = compositor.readout({
     anchor: "left",
     size: vec(80.8, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let stutters_label = compositor.label({
@@ -342,23 +342,23 @@ let stutters_label = compositor.label({
     align: "left",
     text: "stutters",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let frame_rule = compositor.divider({
     parent: left,
     fill: "horizontal",
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let threads = compositor.stack({
     parent: left,
-    spacing: 0
+    spacing: 0,
 });
 
 let threads_title = compositor.panel({
     parent: threads,
-    size: vec(404, 15)
+    size: vec(404, 15),
 });
 
 let threads_heading = compositor.label({
@@ -366,7 +366,7 @@ let threads_heading = compositor.label({
     anchor: "left",
     text: "THREADS",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let threads_note = compositor.readout({
@@ -375,17 +375,17 @@ let threads_note = compositor.readout({
     size: vec(280, 15),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let threads_gap = compositor.spacer({
     parent: threads,
-    space: 6
+    space: 6,
 });
 
 let render_row = compositor.panel({
     parent: threads,
-    size: vec(404, 17)
+    size: vec(404, 17),
 });
 
 let render_dot = compositor.panel({
@@ -394,7 +394,7 @@ let render_dot = compositor.panel({
     pos: vec(1, 0),
     size: vec(6, 6),
     radius: 3,
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let render_name = compositor.label({
@@ -403,7 +403,7 @@ let render_name = compositor.label({
     pos: vec(15, 0),
     text: "render",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let render_state = compositor.readout({
@@ -412,7 +412,7 @@ let render_state = compositor.readout({
     pos: vec(104, 0),
     size: vec(70, 17),
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let render_rate = compositor.readout({
@@ -423,7 +423,7 @@ let render_rate = compositor.readout({
     align: "right",
     unit: "/s",
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let render_ms = compositor.readout({
@@ -434,7 +434,7 @@ let render_ms = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let render_meter = compositor.meter({
@@ -442,7 +442,7 @@ let render_meter = compositor.meter({
     anchor: "left",
     pos: vec(316, 0),
     size: vec(50, 4),
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let render_load = compositor.readout({
@@ -452,12 +452,12 @@ let render_load = compositor.readout({
     size: vec(38, 17),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let simulation_row = compositor.panel({
     parent: threads,
-    size: vec(404, 17)
+    size: vec(404, 17),
 });
 
 let simulation_dot = compositor.panel({
@@ -466,7 +466,7 @@ let simulation_dot = compositor.panel({
     pos: vec(1, 0),
     size: vec(6, 6),
     radius: 3,
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let simulation_name = compositor.label({
@@ -475,7 +475,7 @@ let simulation_name = compositor.label({
     pos: vec(15, 0),
     text: "simulation",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let simulation_state = compositor.readout({
@@ -484,7 +484,7 @@ let simulation_state = compositor.readout({
     pos: vec(104, 0),
     size: vec(70, 17),
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let simulation_rate = compositor.readout({
@@ -495,7 +495,7 @@ let simulation_rate = compositor.readout({
     align: "right",
     unit: "/s",
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let simulation_ms = compositor.readout({
@@ -506,7 +506,7 @@ let simulation_ms = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let simulation_meter = compositor.meter({
@@ -514,7 +514,7 @@ let simulation_meter = compositor.meter({
     anchor: "left",
     pos: vec(316, 0),
     size: vec(50, 4),
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let simulation_load = compositor.readout({
@@ -524,12 +524,12 @@ let simulation_load = compositor.readout({
     size: vec(38, 17),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let logic_row = compositor.panel({
     parent: threads,
-    size: vec(404, 17)
+    size: vec(404, 17),
 });
 
 let logic_name = compositor.label({
@@ -538,7 +538,7 @@ let logic_name = compositor.label({
     pos: vec(27, 0),
     text: "logic",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let logic_rate = compositor.readout({
@@ -549,7 +549,7 @@ let logic_rate = compositor.readout({
     align: "right",
     unit: "/s",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let logic_ms = compositor.readout({
@@ -560,7 +560,7 @@ let logic_ms = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let logic_worst = compositor.readout({
@@ -571,12 +571,12 @@ let logic_worst = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let physics_row = compositor.panel({
     parent: threads,
-    size: vec(404, 17)
+    size: vec(404, 17),
 });
 
 let physics_name = compositor.label({
@@ -585,7 +585,7 @@ let physics_name = compositor.label({
     pos: vec(27, 0),
     text: "physics",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let physics_rate = compositor.readout({
@@ -596,7 +596,7 @@ let physics_rate = compositor.readout({
     align: "right",
     unit: "/s",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let physics_ms = compositor.readout({
@@ -607,7 +607,7 @@ let physics_ms = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let physics_worst = compositor.readout({
@@ -618,13 +618,13 @@ let physics_worst = compositor.readout({
     align: "right",
     unit: "ms",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let ticks = compositor.stack({
     parent: threads,
     spacing: 5,
-    padding: vec(0, 7, 0, 0)
+    padding: vec(0, 7, 0, 0),
 });
 
 let tick_graph = compositor.graph({
@@ -632,26 +632,26 @@ let tick_graph = compositor.graph({
     size: vec(404, 34),
     bars: 120,
     unit: "ms",
-    color: vec(0.38, 0.62, 1, 1)
+    color: vec(0.38, 0.62, 1, 1),
 });
 
 let tick_line = compositor.panel({
     parent: ticks,
-    size: vec(404, 17)
+    size: vec(404, 17),
 });
 
 let tick_counts = compositor.stack({
     parent: tick_line,
     anchor: "left",
     spacing: 6,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let waits_label = compositor.label({
     parent: tick_counts,
     text: "waits",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let waits = compositor.readout({
@@ -659,35 +659,35 @@ let waits = compositor.readout({
     size: vec(46, 17),
     text_scale: 0.125,
     color: vec(0.8, 0.83, 0.9, 1),
-    unit: "ms"
+    unit: "ms",
 });
 
 let late_label = compositor.label({
     parent: tick_counts,
     text: "late",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let late = compositor.readout({
     parent: tick_counts,
     size: vec(30, 17),
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let dropped_label = compositor.label({
     parent: tick_counts,
     text: "dropped",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let dropped = compositor.readout({
     parent: tick_counts,
     size: vec(30, 17),
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let tick = compositor.readout({
@@ -696,17 +696,17 @@ let tick = compositor.readout({
     size: vec(110, 17),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu = compositor.stack({
     parent: right,
-    spacing: 6
+    spacing: 6,
 });
 
 let gpu_title = compositor.panel({
     parent: gpu,
-    size: vec(404, 15)
+    size: vec(404, 15),
 });
 
 let gpu_heading = compositor.label({
@@ -714,7 +714,7 @@ let gpu_heading = compositor.label({
     anchor: "left",
     text: "GPU",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let gpu_note = compositor.readout({
@@ -723,12 +723,12 @@ let gpu_note = compositor.readout({
     size: vec(280, 15),
     align: "right",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_bar = compositor.segments({
     parent: gpu,
-    size: vec(404, 8)
+    size: vec(404, 8),
 });
 
 let gpu_silent = compositor.label({
@@ -736,30 +736,30 @@ let gpu_silent = compositor.label({
     anchor: "left",
     text: "the GPU has not said what its passes cost",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let gpu_rows = compositor.stack({
     parent: gpu,
     spacing: 0,
     template: "performance_pass.hor",
-    preview_count: 4
+    preview_count: 4,
 });
 
 let gpu_rule = compositor.divider({
     parent: right,
     fill: "horizontal",
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let device = compositor.stack({
     parent: right,
-    spacing: 3
+    spacing: 3,
 });
 
 let device_title = compositor.panel({
     parent: device,
-    size: vec(404, 15)
+    size: vec(404, 15),
 });
 
 let device_heading = compositor.label({
@@ -767,7 +767,7 @@ let device_heading = compositor.label({
     anchor: "left",
     text: "DEVICE",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let device_note = compositor.label({
@@ -775,19 +775,19 @@ let device_note = compositor.label({
     anchor: "right",
     text: "the last frame",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_row1 = compositor.stack({
     parent: device,
     anchor: "left",
     spacing: 0,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let device_draws_cell = compositor.stack({
     parent: device_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_draws = compositor.readout({
@@ -795,7 +795,7 @@ let device_draws = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_draws_label = compositor.label({
@@ -805,12 +805,12 @@ let device_draws_label = compositor.label({
     align: "left",
     text: "draws",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_instances_cell = compositor.stack({
     parent: device_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_instances = compositor.readout({
@@ -818,7 +818,7 @@ let device_instances = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_instances_label = compositor.label({
@@ -828,12 +828,12 @@ let device_instances_label = compositor.label({
     align: "left",
     text: "instances",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_dispatches_cell = compositor.stack({
     parent: device_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_dispatches = compositor.readout({
@@ -841,7 +841,7 @@ let device_dispatches = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_dispatches_label = compositor.label({
@@ -851,12 +851,12 @@ let device_dispatches_label = compositor.label({
     align: "left",
     text: "dispatches",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_barriers_cell = compositor.stack({
     parent: device_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_barriers = compositor.readout({
@@ -864,7 +864,7 @@ let device_barriers = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_barriers_label = compositor.label({
@@ -874,19 +874,19 @@ let device_barriers_label = compositor.label({
     align: "left",
     text: "barriers",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_row2 = compositor.stack({
     parent: device,
     anchor: "left",
     spacing: 0,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let device_pipelines_cell = compositor.stack({
     parent: device_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_pipelines = compositor.readout({
@@ -894,7 +894,7 @@ let device_pipelines = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_pipelines_label = compositor.label({
@@ -904,12 +904,12 @@ let device_pipelines_label = compositor.label({
     align: "left",
     text: "pipelines",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_sets_cell = compositor.stack({
     parent: device_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_sets = compositor.readout({
@@ -917,7 +917,7 @@ let device_sets = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_sets_label = compositor.label({
@@ -927,12 +927,12 @@ let device_sets_label = compositor.label({
     align: "left",
     text: "sets",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_targets_cell = compositor.stack({
     parent: device_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_targets = compositor.readout({
@@ -940,7 +940,7 @@ let device_targets = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let device_targets_label = compositor.label({
@@ -950,12 +950,12 @@ let device_targets_label = compositor.label({
     align: "left",
     text: "targets",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_sent_cell = compositor.stack({
     parent: device_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let device_sent = compositor.readout({
@@ -964,7 +964,7 @@ let device_sent = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "KB"
+    unit: "KB",
 });
 
 let device_sent_label = compositor.label({
@@ -974,23 +974,23 @@ let device_sent_label = compositor.label({
     align: "left",
     text: "sent up",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let device_rule = compositor.divider({
     parent: right,
     fill: "horizontal",
-    color: vec(1, 1, 1, 0.075)
+    color: vec(1, 1, 1, 0.075),
 });
 
 let memory = compositor.stack({
     parent: right,
-    spacing: 3
+    spacing: 3,
 });
 
 let memory_title = compositor.panel({
     parent: memory,
-    size: vec(404, 15)
+    size: vec(404, 15),
 });
 
 let memory_heading = compositor.label({
@@ -998,19 +998,19 @@ let memory_heading = compositor.label({
     anchor: "left",
     text: "MEMORY",
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let memory_row1 = compositor.stack({
     parent: memory,
     anchor: "left",
     spacing: 0,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let memory_gpu_cell = compositor.stack({
     parent: memory_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_gpu = compositor.readout({
@@ -1019,7 +1019,7 @@ let memory_gpu = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "MB"
+    unit: "MB",
 });
 
 let memory_gpu_label = compositor.readout({
@@ -1028,12 +1028,12 @@ let memory_gpu_label = compositor.readout({
     size: vec(101, 14),
     text: "gpu, 0 blocks",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_textures_cell = compositor.stack({
     parent: memory_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_textures = compositor.readout({
@@ -1041,7 +1041,7 @@ let memory_textures = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let memory_textures_label = compositor.label({
@@ -1051,12 +1051,12 @@ let memory_textures_label = compositor.label({
     align: "left",
     text: "textures",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_buffers_cell = compositor.stack({
     parent: memory_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_buffers = compositor.readout({
@@ -1064,7 +1064,7 @@ let memory_buffers = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let memory_buffers_label = compositor.label({
@@ -1074,12 +1074,12 @@ let memory_buffers_label = compositor.label({
     align: "left",
     text: "buffers",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_pipelines_cell = compositor.stack({
     parent: memory_row1,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_pipelines = compositor.readout({
@@ -1087,7 +1087,7 @@ let memory_pipelines = compositor.readout({
     anchor: "left",
     size: vec(101, 16),
     text_scale: 0.125,
-    color: vec(0.96, 0.97, 1, 1)
+    color: vec(0.96, 0.97, 1, 1),
 });
 
 let memory_pipelines_label = compositor.label({
@@ -1097,19 +1097,19 @@ let memory_pipelines_label = compositor.label({
     align: "left",
     text: "pipelines",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_row2 = compositor.stack({
     parent: memory,
     anchor: "left",
     spacing: 0,
-    direction: "horizontal"
+    direction: "horizontal",
 });
 
 let memory_heap_cell = compositor.stack({
     parent: memory_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_heap = compositor.readout({
@@ -1118,7 +1118,7 @@ let memory_heap = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "MB"
+    unit: "MB",
 });
 
 let memory_heap_label = compositor.label({
@@ -1128,12 +1128,12 @@ let memory_heap_label = compositor.label({
     align: "left",
     text: "heap",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_garbage_cell = compositor.stack({
     parent: memory_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_garbage = compositor.readout({
@@ -1142,7 +1142,7 @@ let memory_garbage = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.96, 0.97, 1, 1),
-    unit: "KB/s"
+    unit: "KB/s",
 });
 
 let memory_garbage_label = compositor.label({
@@ -1152,12 +1152,12 @@ let memory_garbage_label = compositor.label({
     align: "left",
     text: "garbage",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_frames_cell = compositor.stack({
     parent: memory_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_frames = compositor.readout({
@@ -1166,7 +1166,7 @@ let memory_frames = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.8, 0.83, 0.9, 1),
-    unit: "KB/s"
+    unit: "KB/s",
 });
 
 let memory_frames_label = compositor.label({
@@ -1176,12 +1176,12 @@ let memory_frames_label = compositor.label({
     align: "left",
     text: "by the frames",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let memory_ticks_cell = compositor.stack({
     parent: memory_row2,
-    spacing: 0
+    spacing: 0,
 });
 
 let memory_ticks = compositor.readout({
@@ -1190,7 +1190,7 @@ let memory_ticks = compositor.readout({
     size: vec(101, 16),
     text_scale: 0.125,
     color: vec(0.8, 0.83, 0.9, 1),
-    unit: "KB/s"
+    unit: "KB/s",
 });
 
 let memory_ticks_label = compositor.label({
@@ -1200,7 +1200,7 @@ let memory_ticks_label = compositor.label({
     align: "left",
     text: "by the ticks",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let collections = compositor.stack({
@@ -1208,7 +1208,7 @@ let collections = compositor.stack({
     anchor: "left",
     spacing: 6,
     direction: "horizontal",
-    padding: vec(0, 4, 0, 0)
+    padding: vec(0, 4, 0, 0),
 });
 
 let collections_label = compositor.label({
@@ -1217,47 +1217,47 @@ let collections_label = compositor.label({
     align: "left",
     text: "collections",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let small_label = compositor.label({
     parent: collections,
     text: "small",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let small = compositor.readout({
     parent: collections,
     size: vec(34, 17),
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let mid_label = compositor.label({
     parent: collections,
     text: "mid",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let mid = compositor.readout({
     parent: collections,
     size: vec(34, 17),
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });
 
 let big_label = compositor.label({
     parent: collections,
     text: "big",
     text_scale: 0.125,
-    color: vec(0.62, 0.66, 0.75, 1)
+    color: vec(0.62, 0.66, 0.75, 1),
 });
 
 let big = compositor.readout({
     parent: collections,
     size: vec(34, 17),
     text_scale: 0.125,
-    color: vec(0.8, 0.83, 0.9, 1)
+    color: vec(0.8, 0.83, 0.9, 1),
 });

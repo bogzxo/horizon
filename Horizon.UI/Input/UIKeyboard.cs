@@ -3,7 +3,7 @@ using System.Diagnostics;
 
 using Horizon.Engine;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI;
 
@@ -111,8 +111,21 @@ public static class UIKeyboard
     public const char CARET_ABOVE = '\uE014';
     public const char CARET_BELOW = '\uE015';
 
-    /// <summary>Control, shift and L, a caret at the end of every line of the selection.</summary>
+    /// <summary>Shift, alt and I, a caret at the end of every line of the selection. It was control, shift and L, VS Code has it here.</summary>
     public const char CARETS_AT_LINE_ENDS = '\uE016';
+
+    /// <summary>Control, shift and L, a caret on every place the selection (or the word at the caret) is, each with it selected.</summary>
+    public const char SELECT_ALL_OCCURRENCES = '\uE01C';
+
+    /// <summary>Control with L, the caret's line selected, and the next one as well every time again.</summary>
+    public const char SELECT_LINE = '\uE01B';
+
+    /// <summary>Shift, alt and up or down, the line (or the lines of the selection) copied above or below itself.</summary>
+    public const char COPY_LINES_UP = '\uE019';
+    public const char COPY_LINES_DOWN = '\uE01A';
+
+    /// <summary>Shift, alt and A, the selection put in a block comment or taken out of one.</summary>
+    public const char TOGGLE_BLOCK_COMMENT = '\uE01D';
 
     /// <summary>Control, shift and [ folds what the caret is inside of, and ] opens it again.</summary>
     public const char FOLD = '\uE017';
@@ -124,6 +137,25 @@ public static class UIKeyboard
     /// <summary>Alt with up and with down, the line (or the lines of the selection) swapped with the one above or below.</summary>
     public const char MOVE_LINES_UP = '\uE010';
     public const char MOVE_LINES_DOWN = '\uE011';
+
+    /// <summary>
+    /// Shift, alt and an arrow with Visual Studio's keys, the box selection grown a line or a column that way, a caret
+    /// on every line of it (see <see cref="VisualStudioKeys"/>).
+    /// </summary>
+    public const char BOX_UP = '\uE01E';
+    public const char BOX_DOWN = '\uE01F';
+    public const char BOX_LEFT = '\uE020';
+    public const char BOX_RIGHT = '\uE021';
+
+    /// <summary>Control, shift and space, how the call the caret is in is called said again, after escape took it away.</summary>
+    public const char PARAMETER_INFO = '\uE022';
+
+    /// <summary>
+    /// Whether the editing keys are Visual Studio's where the two differ. Control with D duplicates the line rather than
+    /// adding the next occurrence, shift and alt with an arrow grows a box selection rather than copying the lines, and
+    /// shift and alt with a full stop (or a semicolon) adds the next occurrence (or every one). Off for VS Code's.
+    /// </summary>
+    public static bool VisualStudioKeys { get; set; }
 
     // What a key that types nothing at all comes to, never put in the queue
     private const char NOTHING = '\0';
@@ -146,7 +178,7 @@ public static class UIKeyboard
     private static UIKeyPress heldRaw;
     private static long rawRepeatDue;
     private static volatile bool altHeld;
-    private static bool hooked;
+    private static Horizon.Core.WindowManager? clipboardWindow;
 
     // The texts that were pasted, one for every PASTE in the queue of characters and in the same order
     private static readonly ConcurrentQueue<string> pasted = new();
@@ -156,51 +188,88 @@ public static class UIKeyboard
     private static Key heldKey;
     private static long repeatDue;
 
+    // When the key being repeated went down, for how long it's been held
+    private static long heldSince;
+
+    // Most repeats in one update, so a long tick doesn't fire a burst of them all at once when it ends
+    private const int MOST_REPEATS = 6;
+
+    /// <summary>
+    /// How long an arrow key is held, in seconds, before the caret it moves goes quicker, the way it does in Visual
+    /// Studio after a moment. 0 for never.
+    /// </summary>
+    public static float FastAfter { get; set; } = 1.0f;
+
+    /// <summary>How many times a second an arrow key held past <see cref="FastAfter"/> moves the caret, at least the usual rate.</summary>
+    public static float FastRate { get; set; } = 80.0f;
+
+    // Whether a key that's repeated moves the caret about (arrows, with shift or a word at a time), the ones that speed up
+    private static bool MovesCaret(int code) => code is LEFT or RIGHT or UP or DOWN or WORD_LEFT or WORD_RIGHT
+        or SELECT_LEFT or SELECT_RIGHT or SELECT_UP or SELECT_DOWN or SELECT_WORD_LEFT or SELECT_WORD_RIGHT;
+
+    // Between two repeats of a key held so long, in the stopwatch's ticks
+    internal static long IntervalFor(int code, long held)
+    {
+        long usual = REPEAT_INTERVAL * Stopwatch.Frequency / 1000;
+        float after = FastAfter, rate = FastRate;
+        if (after <= 0.0f || rate <= 0.0f || !MovesCaret(code) || held < (long)(after * Stopwatch.Frequency))
+            return usual;
+
+        return Math.Min(usual, Math.Max(1L, (long)(Stopwatch.Frequency / rate)));
+    }
+
     // What is waiting to be put on the clipboard, which only the thread of the window may touch
     private static string? clipboardPending;
-    private static IKeyboard? clipboardOwner;
+    private static InputManager? clipboardOwner;
 
     // The tick whose turn of the mouse wheel somebody already used, -1 for none
     private static long scrollUsedOn = -1;
 
     /// <summary>
-    /// Starts listening to the keyboards. Only the first call does anything, and it has to be made once
-    /// the window exists.
+    /// Starts listening to the engine's input events. Repeated calls on the same engine do nothing.
     /// </summary>
     public static void Hook()
     {
-        if (hooked || GameEngine.Instance.Input.Native is not { } input)
-            return;
+        if (GameEngine.Instance is not { } engine || ReferenceEquals(clipboardOwner, engine.Input)) return;
+        Hook(engine.Input);
+        clipboardWindow = engine.WindowManager;
+        clipboardWindow.EventsProcessed += FlushClipboard;
+    }
 
-        hooked = true;
+    internal static void Hook(InputManager input)
+    {
+        if (ReferenceEquals(clipboardOwner, input)) return;
+        if (clipboardOwner is not null) clipboardOwner.EventReceived -= OnInput;
+        if (clipboardWindow is not null) clipboardWindow.EventsProcessed -= FlushClipboard;
+        clipboardWindow = null;
+        clipboardOwner = input;
+        input.EventReceived += OnInput;
+        Volatile.Write(ref heldCode, 0);
+        heldRaw = default;
+        altHeld = false;
+    }
 
-        // The clipboard is the window's, it is only ever touched on its thread
-        GameEngine.Instance.WindowManager.EventsProcessed += FlushClipboard;
-
-        foreach (var keyboard in input.Keyboards)
+    private static void OnInput(InputEvent input)
+    {
+        if (input.Kind == InputEventKind.Text && input.Text is { } text)
         {
-            clipboardOwner ??= keyboard;
-
-            keyboard.KeyChar += (_, character) => Push(character);
-            keyboard.KeyDown += (pressed, key, _) => OnKeyDown(pressed, key);
-            keyboard.KeyUp += (_, key, _) =>
-            {
-                if (key == heldKey)
-                    Volatile.Write(ref heldCode, 0);
-                if (key == heldRaw.Key)
-                    heldRaw = default;
-                if (key is Key.AltLeft or Key.AltRight)
-                    altHeld = false;
-            };
+            foreach (char character in text) Push(character);
+        }
+        else if (input.Kind == InputEventKind.KeyDown) OnKeyDown(input.Key, input.Modifiers, input.ClipboardText);
+        else if (input.Kind == InputEventKind.KeyUp)
+        {
+            if (input.Key == heldKey) Volatile.Write(ref heldCode, 0);
+            if (input.Key == heldRaw.Key) heldRaw = default;
+            altHeld = (input.Modifiers & KeyModifiers.Alt) != 0;
         }
     }
 
-    private static void OnKeyDown(IKeyboard keyboard, Key key)
+    private static void OnKeyDown(Key key, KeyModifiers modifiers, string? clipboardText)
     {
-        bool control = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
-        bool shift = keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight);
-        bool alt = keyboard.IsKeyPressed(Key.AltLeft) || keyboard.IsKeyPressed(Key.AltRight);
-        bool super = keyboard.IsKeyPressed(Key.SuperLeft) || keyboard.IsKeyPressed(Key.SuperRight);
+        bool control = (modifiers & KeyModifiers.Control) != 0;
+        bool shift = (modifiers & KeyModifiers.Shift) != 0;
+        bool alt = (modifiers & KeyModifiers.Alt) != 0;
+        bool super = (modifiers & KeyModifiers.Super) != 0;
         if (key is Key.AltLeft or Key.AltRight)
             altHeld = true;
 
@@ -215,7 +284,7 @@ public static class UIKeyboard
         {
             if (key == Key.V && primary)
             {
-                Paste(keyboard);
+                PasteEvent(clipboardText);
                 return;
             }
 
@@ -231,57 +300,11 @@ public static class UIKeyboard
         }
 
         // What the key means, and whether holding it does it over and over
-        (char code, bool repeats) = key switch
-        {
-            // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
-            Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
-            Key.Delete when mac && alt => (WORD_DELETE, true),
-            Key.Left when mac && primary => (shift ? SELECT_HOME : HOME, false),
-            Key.Right when mac && primary => (shift ? SELECT_END : END, false),
-            Key.Left when mac && alt => (shift ? SELECT_WORD_LEFT : WORD_LEFT, true),
-            Key.Right when mac && alt => (shift ? SELECT_WORD_RIGHT : WORD_RIGHT, true),
-            Key.Up when mac && primary && !alt => (shift ? SELECT_TEXT_START : TEXT_START, false),
-            Key.Down when mac && primary && !alt => (shift ? SELECT_TEXT_END : TEXT_END, false),
-            Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
-            Key.Delete => (primary ? WORD_DELETE : DELETE, true),
-            // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
-            Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
-            // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
-            Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
-            Key.Escape => (ESCAPE, false),
-            // Alt with left and right is somebody's going back and forward, not the caret's
-            Key.Left or Key.Right when alt && !primary => (NOTHING, false),
-            Key.Left => ((shift, primary) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
-            Key.Right => ((shift, primary) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
-            Key.Home => ((shift, primary) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
-            Key.End => ((shift, primary) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
-            Key.Up when alt && primary => (CARET_ABOVE, true),
-            Key.Down when alt && primary => (CARET_BELOW, true),
-            Key.Up when alt => (MOVE_LINES_UP, true),
-            Key.Down when alt => (MOVE_LINES_DOWN, true),
-            Key.Up => (shift ? SELECT_UP : UP, true),
-            Key.Down => (shift ? SELECT_DOWN : DOWN, true),
-            Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
-            Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
-            Key.Z when primary && shift => (REDO, true),
-            Key.Z when primary => (UNDO, true),
-            Key.Y when primary => (REDO, true),
-            Key.Slash when primary => (TOGGLE_COMMENT, false),
-            Key.D when primary && shift => (DUPLICATE, false),
-            Key.D when primary => (NEXT_OCCURRENCE, false),
-            Key.L when primary && shift => (CARETS_AT_LINE_ENDS, false),
-            Key.LeftBracket when primary && shift => (FOLD, false),
-            Key.RightBracket when primary && shift => (UNFOLD, false),
-            Key.Space when primary => (COMPLETE, false),
-            Key.A when primary => (SELECT_ALL, false),
-            Key.C when primary => (COPY, false),
-            Key.X when primary => (CUT, false),
-            _ => ('\0', false)
-        };
+        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
 
         if (key == Key.V && primary)
         {
-            Paste(keyboard);
+            PasteEvent(clipboardText);
             return;
         }
 
@@ -293,16 +316,93 @@ public static class UIKeyboard
         if (repeats)
         {
             heldKey = key;
-            repeatDue = Stopwatch.GetTimestamp() + REPEAT_DELAY * Stopwatch.Frequency / 1000;
+            heldSince = Stopwatch.GetTimestamp();
+            repeatDue = heldSince + REPEAT_DELAY * Stopwatch.Frequency / 1000;
             Volatile.Write(ref heldCode, code);
         }
     }
 
     /// <summary>
+    /// What a key pressed comes to in the queue, and whether holding it does it over and over, nothing (0) for a key that
+    /// types nothing. Primary is control, command on a Mac, and visualStudio is Visual Studio's keys where they differ
+    /// (see <see cref="VisualStudioKeys"/>). On its own so the keys can be tested without a keyboard.
+    /// </summary>
+    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac, bool visualStudio = false) =>
+        visualStudio && VisualStudioMeaning(key, primary, shift, alt) is { } theirs ? theirs : CodeMeaning(key, primary, shift, alt, mac);
+
+    // The keys Visual Studio has for something else, null for one that's the same in both
+    private static (char Code, bool Repeats)? VisualStudioMeaning(Key key, bool primary, bool shift, bool alt) => key switch
+    {
+        Key.Up when alt && shift && !primary => (BOX_UP, true),
+        Key.Down when alt && shift && !primary => (BOX_DOWN, true),
+        Key.Left when alt && shift && !primary => (BOX_LEFT, true),
+        Key.Right when alt && shift && !primary => (BOX_RIGHT, true),
+        Key.D when primary && !shift && !alt => (DUPLICATE, false),
+        Key.Period when alt && shift && !primary => (NEXT_OCCURRENCE, false),
+        Key.Semicolon when alt && shift && !primary => (SELECT_ALL_OCCURRENCES, false),
+        _ => null
+    };
+
+    // VS Code's keys, which are Hex's own
+    private static (char Code, bool Repeats) CodeMeaning(Key key, bool primary, bool shift, bool alt, bool mac) => key switch
+    {
+        // A Mac's caret keys: option goes a word, command to the end of the line (or with up and down, of the text)
+        Key.Backspace when mac && alt => (WORD_BACKSPACE, true),
+        Key.Delete when mac && alt => (WORD_DELETE, true),
+        Key.Left when mac && primary => (shift ? SELECT_HOME : HOME, false),
+        Key.Right when mac && primary => (shift ? SELECT_END : END, false),
+        Key.Left when mac && alt => (shift ? SELECT_WORD_LEFT : WORD_LEFT, true),
+        Key.Right when mac && alt => (shift ? SELECT_WORD_RIGHT : WORD_RIGHT, true),
+        Key.Up when mac && primary && !alt => (shift ? SELECT_TEXT_START : TEXT_START, false),
+        Key.Down when mac && primary && !alt => (shift ? SELECT_TEXT_END : TEXT_END, false),
+        Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
+        Key.Delete => (primary ? WORD_DELETE : DELETE, true),
+        // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
+        Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
+        // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
+        Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
+        Key.Escape => (ESCAPE, false),
+        // Alt with left and right is somebody's going back and forward, not the caret's
+        Key.Left or Key.Right when alt && !primary => (NOTHING, false),
+        Key.Left => ((shift, primary) switch { (true, true) => SELECT_WORD_LEFT, (true, false) => SELECT_LEFT, (false, true) => WORD_LEFT, _ => LEFT }, true),
+        Key.Right => ((shift, primary) switch { (true, true) => SELECT_WORD_RIGHT, (true, false) => SELECT_RIGHT, (false, true) => WORD_RIGHT, _ => RIGHT }, true),
+        Key.Home => ((shift, primary) switch { (true, true) => SELECT_TEXT_START, (false, true) => TEXT_START, (true, false) => SELECT_HOME, _ => HOME }, false),
+        Key.End => ((shift, primary) switch { (true, true) => SELECT_TEXT_END, (false, true) => TEXT_END, (true, false) => SELECT_END, _ => END }, false),
+        Key.Up when alt && primary => (CARET_ABOVE, true),
+        Key.Down when alt && primary => (CARET_BELOW, true),
+        Key.Up when alt && shift => (COPY_LINES_UP, true),
+        Key.Down when alt && shift => (COPY_LINES_DOWN, true),
+        Key.Up when alt => (MOVE_LINES_UP, true),
+        Key.Down when alt => (MOVE_LINES_DOWN, true),
+        Key.Up => (shift ? SELECT_UP : UP, true),
+        Key.Down => (shift ? SELECT_DOWN : DOWN, true),
+        Key.PageUp => (shift ? SELECT_PAGE_UP : PAGE_UP, true),
+        Key.PageDown => (shift ? SELECT_PAGE_DOWN : PAGE_DOWN, true),
+        Key.Z when primary && shift => (REDO, true),
+        Key.Z when primary => (UNDO, true),
+        Key.Y when primary => (REDO, true),
+        Key.Slash when primary => (TOGGLE_COMMENT, false),
+        Key.D when primary && shift => (DUPLICATE, false),
+        Key.D when primary => (NEXT_OCCURRENCE, false),
+        Key.L when primary && shift => (SELECT_ALL_OCCURRENCES, false),
+        Key.L when primary => (SELECT_LINE, true),
+        Key.I when alt && shift && !primary => (CARETS_AT_LINE_ENDS, false),
+        Key.A when alt && shift && !primary => (TOGGLE_BLOCK_COMMENT, false),
+        Key.LeftBracket when primary && shift => (FOLD, false),
+        Key.RightBracket when primary && shift => (UNFOLD, false),
+        Key.Space when primary && shift => (PARAMETER_INFO, false),
+        Key.Space when primary => (COMPLETE, false),
+        Key.A when primary => (SELECT_ALL, false),
+        Key.C when primary => (COPY, false),
+        Key.X when primary => (CUT, false),
+        _ => ('\0', false)
+    };
+
+    /// <summary>
     /// Helper to queue what is on the clipboard, as one paste. Whoever has the focus takes what it can use of it.
     /// We are on the thread of the window here, which is the one that may ask for it.
     /// </summary>
-    private static void Paste(IKeyboard keyboard)
+    private static void Paste(InputManager keyboard)
     {
         string text;
         try
@@ -315,6 +415,17 @@ public static class UIKeyboard
             return;
         }
 
+        EnqueuePaste(text);
+    }
+
+    private static void PasteEvent(string? text)
+    {
+        if (text is null) RequestPaste();
+        else EnqueuePaste(text);
+    }
+
+    private static void EnqueuePaste(string text)
+    {
         if (text.Length == 0 || typed.Count >= MAX_PENDING)
             return;
 
@@ -351,11 +462,22 @@ public static class UIKeyboard
             return;
 
         long now = Stopwatch.GetTimestamp();
-        if (now < Volatile.Read(ref repeatDue))
+        long due = Volatile.Read(ref repeatDue);
+        if (now < due)
             return;
 
-        Volatile.Write(ref repeatDue, now + REPEAT_INTERVAL * Stopwatch.Frequency / 1000);
-        Push((char)code);
+        // As many as were due since the last update, quicker than updates come once an arrow's been held a while, a few
+        // at most, and then due again from now rather than catching up on a stall
+        long interval = IntervalFor(code, now - heldSince);
+        int repeats = 0;
+        while (now >= due && repeats < MOST_REPEATS)
+        {
+            Push((char)code);
+            due += interval;
+            repeats++;
+        }
+
+        Volatile.Write(ref repeatDue, now >= due ? now + interval : due);
     }
 
     /// <summary>
@@ -432,17 +554,102 @@ public static class UIKeyboard
     /// did with sod all. Simulation thread.
     /// </summary>
     public static float PeekScroll() =>
-        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.Scroll;
+        GameEngine.Instance is not { } engine ? clipboardOwner?.Mouse.Scroll ?? 0.0f
+        : Volatile.Read(ref scrollUsedOn) == engine.WindowManager.Tick ? 0.0f : engine.Input.Mouse.Scroll;
 
     /// <summary>
     /// The same, as the window heard it, whether the wheel is being withheld from the game or not. For the UI that
     /// is doing the withholding (the Skyline debugger), which would otherwise withhold the wheel from itself.
     /// </summary>
     internal static float PeekWindowScroll() =>
-        Volatile.Read(ref scrollUsedOn) == GameEngine.Instance.WindowManager.Tick ? 0.0f : GameEngine.Instance.Input.Mouse.WindowScroll;
+        GameEngine.Instance is not { } engine ? clipboardOwner?.Mouse.WindowScroll ?? 0.0f
+        : Volatile.Read(ref scrollUsedOn) == engine.WindowManager.Tick ? 0.0f : engine.Input.Mouse.WindowScroll;
 
     /// <summary>Says the turn of the wheel of this update was used, nobody else is to scroll with it.</summary>
-    public static void UseScroll() => Volatile.Write(ref scrollUsedOn, GameEngine.Instance.WindowManager.Tick);
+    public static void UseScroll()
+    {
+        // Without an engine (a test driving a UI from its own input) there is one UI and nobody to keep it from
+        if (GameEngine.Instance is { } engine) Volatile.Write(ref scrollUsedOn, engine.WindowManager.Tick);
+    }
+
+    /* Typing without a keyboard, for a program driven by something other than a person (Hex's tools for agents) */
+
+    /// <summary>How many more characters the queue takes before it's full, for whoever types a lot to wait for room.</summary>
+    public static int Room => Math.Max(0, MAX_PENDING - typed.Count);
+
+    /// <summary>
+    /// Types a character as though it came off the keyboard, a new line being enter. False when the queue is full and it
+    /// went nowhere, see <see cref="Room"/>. From any thread.
+    /// </summary>
+    public static bool Type(char character)
+    {
+        if (typed.Count >= MAX_PENDING)
+            return false;
+
+        Push(character == '\r' ? ENTER : character);
+        return true;
+    }
+
+    /// <summary>
+    /// Presses a key as though it came off the keyboard, what it comes to in the queue (an arrow's code, enter, control
+    /// with Z's undo, a letter's character), or the key itself while a component takes them raw (a terminal). The keys of
+    /// a program's shortcuts are the engine keyboard's, see Keyboard.Tap, whoever drives both says it to both. From any thread.
+    /// </summary>
+    public static void Press(Key key, bool control, bool shift, bool alt, bool super)
+    {
+        bool mac = Horizon.Input.Keyboard.PrimaryIsCommand;
+        bool primary = mac ? super : control;
+        if (rawMode)
+        {
+            if (key == Key.V && primary)
+                RequestPaste();
+            else if (rawKeys.Count < MAX_PENDING)
+                rawKeys.Enqueue(new UIKeyPress(key, control, shift, alt, super));
+
+            // A letter without control or alt is typed as well, the way the keyboard's character comes with its key
+            if (!control && !alt && CharacterOf(key, shift) is { } raw)
+                Push(raw);
+            return;
+        }
+
+        if (key == Key.V && primary)
+        {
+            RequestPaste();
+            return;
+        }
+
+        (char code, _) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
+        if (code != NOTHING)
+            Push(code);
+        else if (!control && !alt && !super && CharacterOf(key, shift) is { } character)
+            Push(character);
+    }
+
+    /// <summary>The character a key types on a US keyboard, null for one that types none.</summary>
+    public static char? CharacterOf(Key key, bool shift)
+    {
+        if (key is >= Key.A and <= Key.Z)
+            return (char)((shift ? 'A' : 'a') + (key - Key.A));
+        if (key is >= Key.Number0 and <= Key.Number9)
+            return shift ? ")!@#$%^&*("[key - Key.Number0] : (char)('0' + (key - Key.Number0));
+
+        return key switch
+        {
+            Key.Space => ' ',
+            Key.Comma => shift ? '<' : ',',
+            Key.Period => shift ? '>' : '.',
+            Key.Slash => shift ? '?' : '/',
+            Key.Semicolon => shift ? ':' : ';',
+            Key.Apostrophe => shift ? '"' : '\'',
+            Key.LeftBracket => shift ? '{' : '[',
+            Key.RightBracket => shift ? '}' : ']',
+            Key.BackSlash => shift ? '|' : '\\',
+            Key.Minus => shift ? '_' : '-',
+            Key.Equal => shift ? '+' : '=',
+            Key.GraveAccent => shift ? '~' : '`',
+            _ => null
+        };
+    }
 
     /// <summary>Throws away whatever was typed while nothing was listening, pastes and all.</summary>
     public static void Clear()

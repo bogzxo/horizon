@@ -55,6 +55,8 @@ public static class UIPropertyHelp
         ["style"] = "which piece of the skin's art it wears, the ... button shows them all to pick one by eye. A style is the name less what its pieces end in (_hover, _on, _frame)",
         ["align"] = "where in its box the text sits, left, center, right, top_left and so on",
         ["bold"] = "whether its line of text is written in bold, a heading's",
+        ["dim"] = "whether its text is in the dim colour of the theme when it has no colour of its own, a heading of a side bar or a caption",
+        ["max_tab_width"] = "the most a tab is wide, a longer title cut short in the middle with dots, 0 for as wide as its title",
         ["icon_color"] = "the colour of its icon, the skin's accent if it is left at nothing",
         ["window_buttons"] = "whether it has the window's minimise, maximise and close at its right end",
         ["closable"] = "whether its title bar has an x that closes it",
@@ -67,6 +69,8 @@ public static class UIPropertyHelp
         ["window.title"] = "what its title bar says",
         ["text_color"] = "the colour of the words on it, the skin's own if it is left at nothing",
         ["icon"] = "one of the icons every skin has, VS Code's Codicons by name (save, folder, git-branch, play), in front of the words or on its own with none. $(name) does the same in any text",
+        ["primary"] = "whether it's the one to press, a dialog's default, filled with the accent where the skin has no art for a button",
+        ["danger"] = "whether what it does can't be taken back (Delete, Don't save), filled with the skin's error red where it has no art for a button, and a dialog never starts the keyboard on it",
 
         // ---- containers ----
 
@@ -106,6 +110,7 @@ public static class UIPropertyHelp
         ["tabs"] = "the names of the tabs, in order, one page for each, the children of the tabs being the pages",
         ["tabs.selected"] = "which page is open, counted from 0",
         ["header_height"] = "how tall the strip of tabs is, 0 for as tall as a line of text needs",
+        ["header_align"] = "where the tabs sit across their strip, left, center or right, in the middle unless it says",
         ["prev_hint"] = "text at the left end of the strip, the button that goes to the tab before (LB)",
         ["next_hint"] = "text at the right end of the strip, the button that goes to the next tab (RB)",
         ["accent"] = "the colour of the open tab's name and the line under it, nothing for the skin's accent",
@@ -195,6 +200,7 @@ public static class UIPropertyHelp
         ["unit_scale"] = "how big the unit is written, 0 for the skin's size, which next to a big number is smaller than it",
         ["wrap_around"] = "a component, or a list of them, that wrapped text runs round instead of over, a line cut short where one is in its way. An image of a file goes by the shape of what is drawn in it, anything else by its box",
         ["markdown"] = "reads the text as markdown, **bold**, *italic*, `code`, # headings, - lists, > quotes, --- rules and [links](somewhere). The [b], [i], [color:#ff8040] and [size:1.5] tags work whether it is on or not",
+        ["code_language"] = "what a block of code in the markdown is coloured as when its fence names no language, hidl or cs the way a fence would say it, nothing for code in one colour",
         ["wrap"] = "breaks text that is wider than the label into more lines instead of running off the edge",
         ["region"] = "which piece of the skin's art it shows, the ... button shows them all",
         ["file"] = "a PNG to show instead of a piece of the skin, the path from the game's folder",

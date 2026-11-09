@@ -6,7 +6,7 @@ using Microsoft.Win32.SafeHandles;
 namespace Horizon.Core.Processes;
 
 /// <summary>
-/// A pty on Linux and macOS. The master out of posix_openpt, the child started with posix_spawn in a session of its
+/// A pty on Linux, macOS and Android 14 on. The master out of posix_openpt, the child started with posix_spawn in a session of its
 /// own with the slave as its stdin, stdout and stderr (opened by the child itself through the file actions, which is
 /// what makes it the controlling terminal without a fork of our own, a fork in a .NET process is nothing to do by
 /// hand). The constants differ between the two and are picked at run time. Run on Linux (Ubuntu, glibc), where the
@@ -14,6 +14,7 @@ namespace Horizon.Core.Processes;
 /// </summary>
 [SupportedOSPlatform("linux")]
 [SupportedOSPlatform("macos")]
+[SupportedOSPlatform("android34.0")]
 internal sealed class UnixPseudoTerminal : PseudoTerminal
 {
     private readonly int master;

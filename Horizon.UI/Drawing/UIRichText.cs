@@ -2,6 +2,7 @@
 using System.Numerics;
 
 using Horizon.Rendering;
+using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Drawing;
@@ -19,10 +20,12 @@ namespace Horizon.UI.Drawing;
 /// 1. a numbered one
 /// > a quote
 /// ---
-/// ```
-/// a block of code, written as it is
+/// ```cs
+/// a block of code, written as it is and coloured the way the code editor colours C#
 /// ```
 /// </code>
+/// A block of code says what it is in after its fence (hidl, cs, json, py, diff, see <see cref="CodeLanguage"/> for one
+/// that says nothing), and is coloured the way the code editor colours that language, in the skin's colours of code.
 /// The colours a tag can name are a hex (#rgb, #rrggbb, #rrggbbaa), the skin's (accent, highlight, text, dim) and the
 /// usual words (red, green, blue, yellow, orange, purple, cyan, pink, white, black, grey). A size is a multiple of the
 /// size the text is drawn at. <c>[/color]</c> and <c>[/size]</c> go back one, <c>[reset]</c> (or <c>[/]</c>) to plain.
@@ -33,7 +36,7 @@ namespace Horizon.UI.Drawing;
 /// other face to load. Nothing is allocated while painting, the pieces are slices of the text it was given.
 /// </para>
 /// </summary>
-public sealed class UIRichText
+public sealed partial class UIRichText
 {
     // What a piece is, a run of letters or a box (a code background, a quote's bar, a bullet, a line under or through)
     private enum Kind : byte
@@ -56,7 +59,10 @@ public sealed class UIRichText
         Warning,
         Success,
         Field,
-        Border
+        Border,
+
+        // A piece of a block of code, in the colour its language gives the kind of thing it is
+        Syntax
     }
 
     private struct Piece
@@ -77,6 +83,17 @@ public sealed class UIRichText
         public float Alpha;
         public int IconsStart, IconsLength;
         public int Link;
+
+        // Which block of code it is in (-1 for none), and what it is there as far as colouring goes
+        public int Block;
+        public SyntaxKind Syntax;
+
+        // Whether it is written in the font for code, and for a box how round its corners are, whether it is only its
+        // edge and whether it is the back of some inline code
+        public bool Mono;
+        public float Radius;
+        public bool Outline;
+        public bool CodeBack;
     }
 
     /// <summary>
@@ -103,6 +120,8 @@ public sealed class UIRichText
         public float Alpha;
         public int Link;
         public int IconsStart, IconsLength;
+        public int Block;
+        public SyntaxKind Syntax;
     }
 
     // A piece of a word waiting to see whether the word fits on the line
@@ -128,6 +147,8 @@ public sealed class UIRichText
     private float builtScale, builtWidth;
     private bool builtMarkdown;
     private int builtRoom;
+    private UIFont? builtCodeFont;
+    private bool builtDocument;
 
     // What gives every line its room, and the room of the line going on, how far it is moved along and how wide it is
     private Room? room;
@@ -152,6 +173,12 @@ public sealed class UIRichText
 
     /// <summary>How wide the text came out, the widest of its lines.</summary>
     public float Width { get; private set; }
+
+    /// <summary>
+    /// Whether rules and the backs of blocks of code are only as wide as the text, not the whole room. A tooltip with a
+    /// line of code in it stretched to as wide as a tooltip can be. Set it before the first build.
+    /// </summary>
+    public bool Snug { get; init; }
 
     /// <summary>How tall the text came out, every line and every gap.</summary>
     public float Height { get; private set; }
@@ -228,10 +255,16 @@ public sealed class UIRichText
     public void Build(string text, UIFont font, float scale, float maxWidth, bool markdown, Room? room, int roomKey)
     {
         if (room is null) roomKey = 0;
-        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown && roomKey == builtRoom)
+        if (ReferenceEquals(text, builtText) && font == builtFont && scale == builtScale && maxWidth == builtWidth && markdown == builtMarkdown && roomKey == builtRoom && CodeLanguage == builtCode
+            && CodeFont == builtCodeFont && Document == builtDocument)
             return;
 
-        (builtText, builtFont, builtScale, builtWidth, builtMarkdown, builtRoom) = (text, font, scale, maxWidth, markdown, roomKey);
+        // The code is only coloured again for other text, or for a fence that says nothing being something else now
+        if (!ReferenceEquals(text, builtText) || CodeLanguage != builtCode)
+            codeRead.Clear();
+
+        (builtText, builtFont, builtScale, builtWidth, builtMarkdown, builtRoom, builtCode) = (text, font, scale, maxWidth, markdown, roomKey, CodeLanguage);
+        (builtCodeFont, builtDocument) = (CodeFont, Document);
         this.room = room;
 
         source = text;
@@ -245,6 +278,8 @@ public sealed class UIRichText
         links.Clear();
         word.Clear();
         fullWidth.Clear();
+        blocks.Clear();
+        block = -1;
         ResetState();
 
         lineStartPiece = 0;
@@ -252,6 +287,7 @@ public sealed class UIRichText
         quoteX = -1.0f;
         lineCount = 0;
         wrapped = false;
+        spacing = BODY_SPACING;
         StartRoom();
 
         LayOut();
@@ -260,8 +296,9 @@ public sealed class UIRichText
         foreach (var line in lines)
             Width = MathF.Max(Width, line.Width);
 
-        // A rule and the back of a block of code are as wide as the room there is, or as the text if it has no limit
-        float full = float.IsPositiveInfinity(this.maxWidth) ? Width : MathF.Max(Width, this.maxWidth);
+        // A rule and the back of a block of code are as wide as the room there is, or as the text if it has no limit or
+        // it's snug
+        float full = Snug || float.IsPositiveInfinity(this.maxWidth) ? Width : MathF.Max(Width, this.maxWidth);
         foreach (int index in fullWidth)
         {
             Piece piece = pieces[index];
@@ -275,7 +312,7 @@ public sealed class UIRichText
 
     private void ResetState()
     {
-        state = new State { Shade = Shade.Inherit, Size = 1.0f, Alpha = 1.0f, Link = -1 };
+        state = new State { Shade = Shade.Inherit, Size = 1.0f, Alpha = 1.0f, Link = -1, Block = -1 };
         colours.Clear();
         sizes.Clear();
     }
@@ -331,38 +368,20 @@ public sealed class UIRichText
         ReadOnlySpan<char> trimmed = line.TrimStart();
         int leading = length - trimmed.Length;
 
-        // A fence opens a block of code and closes it again, what is in it is written as it is
+        // A fence opens a block of code and closes it again, what is in it is written as it is (see UIRichText.Code)
         if (trimmed.StartsWith("```"))
         {
-            if (inCode)
-            {
-                CloseCodeBlock(codeFirstLine, codeIndent);
-                inCode = false;
-                pendingGap = font.LineHeight * baseScale * 0.3f;
-            }
-            else
-            {
-                inCode = true;
-                codeFirstLine = lineCount;
-                codeIndent = 0.0f;
-                if (!first) pendingGap = MathF.Max(pendingGap, font.LineHeight * baseScale * 0.3f);
-            }
-
+            Fence(start + length, trimmed[3..], ref inCode, ref codeFirstLine, ref codeIndent, first);
             return;
         }
 
         quoteX = -1.0f;
+        spacing = BODY_SPACING;
 
         if (inCode)
         {
-            ResetState();
-            state.Code = true;
-
-            float pad = font.LineHeight * baseScale * 0.4f;
-            lineIndent = wrapIndent = penX = pad;
-            LayOutLiteral(start, length);
-            FlushWord();
-            EndLine();
+            spacing = CODE_SPACING;
+            LayOutCodeLine(start, length);
             return;
         }
 
@@ -372,7 +391,7 @@ public sealed class UIRichText
         // An empty line is the gap between two paragraphs
         if (trimmed.IsEmpty)
         {
-            pendingGap = font.LineHeight * baseScale * 0.5f;
+            pendingGap = font.LineHeight * baseScale * (Document ? PARAGRAPH_GAP : 0.5f);
             return;
         }
 
@@ -381,6 +400,12 @@ public sealed class UIRichText
         while (hashes < trimmed.Length && hashes < 6 && trimmed[hashes] == '#') hashes++;
         if (hashes > 0 && hashes < trimmed.Length && trimmed[hashes] == ' ')
         {
+            if (Document)
+            {
+                LayOutDocumentHeading(start + leading, start + length, hashes, first);
+                return;
+            }
+
             if (!first) pendingGap = MathF.Max(pendingGap, font.LineHeight * baseScale * 0.35f);
 
             state.Size = hashes switch { 1 => 1.6f, 2 => 1.35f, 3 => 1.15f, _ => 1.0f };
@@ -396,7 +421,7 @@ public sealed class UIRichText
         // A rule, three or more of the same of -, * or _ and nothing else
         if (IsRule(trimmed))
         {
-            float height = font.LineHeight * baseScale * 0.6f;
+            float height = font.LineHeight * baseScale * (Document ? 1.4f : 0.6f);
             float thickness = MathF.Max(1.0f, MathF.Round(font.LineHeight * baseScale * 0.06f));
 
             fullWidth.Add(pieces.Count);
@@ -408,8 +433,9 @@ public sealed class UIRichText
                 Y = cursorY + pendingGap + MathF.Round((height - thickness) * 0.5f),
                 Height = thickness,
                 Shade = Shade.Dim,
-                Alpha = 1.0f,
-                Link = -1
+                Alpha = Document ? RULE_ALPHA : 1.0f,
+                Link = -1,
+                Block = -1
             });
 
             cursorY += pendingGap + height;
@@ -428,8 +454,8 @@ public sealed class UIRichText
         if (trimmed.StartsWith(">"))
         {
             quoteX = 0.0f;
-            indent = em * 0.7f;
-            state.Alpha = 0.72f;
+            indent = em * (Document ? 1.0f : 0.7f);
+            state.Alpha = Document ? 0.85f : 0.72f;
             at++;
             if (at < start + length && source[at] == ' ') at++;
 
@@ -448,10 +474,18 @@ public sealed class UIRichText
             float text = marker + em * 0.9f;
 
             lineIndent = wrapIndent = text;
-            AddBullet(marker, em);
-            penX = text;
-
             int from = at + 2;
+            if (TaskOf(trimmed[2..]) is { } done)
+            {
+                AddTaskBox(marker, em, done);
+                from += 4;
+            }
+            else
+            {
+                AddBullet(marker, em, level);
+            }
+
+            penX = text;
             LayOutInline(from, start + length - from, inline: true);
             FlushWord();
             EndLine();
@@ -500,9 +534,9 @@ public sealed class UIRichText
         return count >= 3;
     }
 
-    private void AddBullet(float x, float em)
+    private void AddBullet(float x, float em, int level)
     {
-        float side = MathF.Max(2.0f, MathF.Round(em * 0.22f));
+        float side = MathF.Max(2.0f, MathF.Round(em * (Document ? 0.26f : 0.22f)));
 
         pieces.Add(new Piece
         {
@@ -515,52 +549,16 @@ public sealed class UIRichText
             Shade = state.Shade,
             Color = state.Color,
             Alpha = state.Alpha,
-            Link = -1
-        });
-    }
+            Link = -1,
+            Block = -1,
 
-    private void CloseCodeBlock(int firstLine, float indent)
-    {
-        if (firstLine >= lines.Count)
-            return;
-
-        float top = lines[firstLine].Top;
-        float bottom = lines[^1].Top + lines[^1].Height;
-
-        fullWidth.Add(pieces.Count);
-        pieces.Add(new Piece
-        {
-            Kind = Kind.Box,
-            Line = -1,
-            X = indent,
-            Y = top,
-            Height = bottom - top,
-            Shade = Shade.Field,
-            Alpha = 1.0f,
-            Link = -1
+            // A document's go round, a disc, a ring a level in and a square in from that, the way a browser has them
+            Radius = Document && level % 3 != 2 ? side * 0.5f : 0.0f,
+            Outline = Document && level % 3 == 1
         });
     }
 
     /* A line's words, with the tags and the markdown that change how they are written */
-
-    /// <summary>Helper method to lay out a line of a block of code, every character of it as it is written.</summary>
-    private void LayOutLiteral(int start, int length)
-    {
-        int segment = start;
-        for (int i = start; i < start + length; i++)
-        {
-            if (source[i] != ' ')
-                continue;
-
-            Take(segment, i - segment);
-            FlushWord();
-            Take(i, 1);
-            FlushWord();
-            segment = i + 1;
-        }
-
-        Take(segment, start + length - segment);
-    }
 
     private void LayOutInline(int start, int length, bool inline)
     {
@@ -640,7 +638,7 @@ public sealed class UIRichText
                             links.Add((close + 2, closeUrl - close - 2));
                             State outside = state;
                             state.Link = links.Count - 1;
-                            state.Underline = true;
+                            state.Underline = !Document;
                             state.Shade = Shade.Link;
 
                             LayOutInline(i + 1, close - i - 1, inline: true);
@@ -669,7 +667,12 @@ public sealed class UIRichText
             if (character == '`')
             {
                 Take(segment, i - segment);
+
+                // A document pads its inline code a little either side, the back runs under the padding too
+                if (Document && state.Code) CodeSpacer(i);
                 state.Code = !state.Code;
+                if (Document && state.Code) CodeSpacer(i);
+
                 segment = i + 1;
                 continue;
             }
@@ -844,9 +847,10 @@ public sealed class UIRichText
         if (length <= 0)
             return;
 
-        float scale = baseScale * state.Size;
+        bool mono = IsMono(state);
+        float scale = mono ? CodeScale(baseScale * state.Size) : baseScale * state.Size;
         ReadOnlySpan<char> icons = state.IconsLength > 0 ? source.AsSpan(state.IconsStart, state.IconsLength) : default;
-        float width = font.MeasureLine(source.AsSpan(start, length), scale, state.Style, icons, markup: !state.Code);
+        float width = FaceOf(mono).MeasureLine(source.AsSpan(start, length), scale, state.Style, icons, markup: !state.Code);
 
         word.Add(new Pending { Start = start, Length = length, Width = width, State = state, Scale = scale });
     }
@@ -904,6 +908,9 @@ public sealed class UIRichText
 
     private void AddPiece(int start, int length, float width, in State style, float scale)
     {
+        bool mono = IsMono(style);
+        UIFont face = FaceOf(mono);
+
         pieces.Add(new Piece
         {
             Kind = Kind.Text,
@@ -912,10 +919,10 @@ public sealed class UIRichText
             Line = lineCount,
             X = penX,
             Width = width,
-            Height = font.LineHeight * scale,
+            Height = face.LineHeight * scale,
 
             // Measured up from the baseline until the line knows where that is
-            Y = -font.Baseline * scale,
+            Y = -face.Baseline * scale,
             Scale = scale,
             Style = style.Style,
             Markup = !style.Code,
@@ -924,16 +931,20 @@ public sealed class UIRichText
             Alpha = style.Alpha,
             IconsStart = style.IconsStart,
             IconsLength = style.IconsLength,
-            Link = style.Link
+            Link = style.Link,
+            Block = style.Block,
+            Syntax = style.Syntax,
+            Mono = mono
         });
 
         // What is drawn round a piece rather than in it, which the line puts in place with the rest of it. A space is
-        // underlined (the line runs on between two words of a link) but has no code behind it
+        // underlined (the line runs on between two words of a link) but has no code behind it, and neither does a piece
+        // of a block of code, the block has one of its own
         Piece text = pieces[^1];
         bool blank = length == 1 && source[start] == ' ';
 
-        if (style.Code && !blank)
-            pieces.Add(Decoration(text, scale, -font.Baseline * scale, font.LineHeight * scale, Shade.Field, style, padded: true));
+        if (style.Code && (!blank || Document) && style.Block < 0)
+            pieces.Add(Decoration(text, scale, -face.Baseline * scale, face.LineHeight * scale, Shade.Field, style, padded: !Document) with { CodeBack = true, Radius = Document ? CodeRadius() : 0.0f });
         if (style.Underline)
             pieces.Add(Decoration(text, scale, MathF.Round(font.LineHeight * scale * 0.06f), Thickness(scale), style.Shade, style));
         if (style.Strike)
@@ -959,7 +970,8 @@ public sealed class UIRichText
             Shade = shade,
             Color = style.Color,
             Alpha = style.Alpha,
-            Link = -1
+            Link = -1,
+            Block = -1
         };
     }
 
@@ -976,7 +988,6 @@ public sealed class UIRichText
     /// <summary>Helper method to finish the line going on with whatever is on it, see <see cref="EndLine"/>.</summary>
     private void FinishLine()
     {
-
         float baseline = 0.0f, below = 0.0f, width = 0.0f;
         for (int i = lineStartPiece; i < pieces.Count; i++)
         {
@@ -984,8 +995,9 @@ public sealed class UIRichText
             if (piece.Kind != Kind.Text)
                 continue;
 
-            baseline = MathF.Max(baseline, font.Baseline * piece.Scale);
-            below = MathF.Max(below, (font.LineHeight - font.Baseline) * piece.Scale);
+            UIFont face = FaceOf(piece.Mono);
+            baseline = MathF.Max(baseline, face.Baseline * piece.Scale);
+            below = MathF.Max(below, (face.LineHeight - face.Baseline) * piece.Scale);
             width = MathF.Max(width, piece.X + piece.Width);
         }
 
@@ -995,6 +1007,15 @@ public sealed class UIRichText
             float scale = baseScale * state.Size;
             baseline = font.Baseline * scale;
             below = (font.LineHeight - font.Baseline) * scale;
+        }
+
+        // A document's lines have room between them, half of it over a line and half under
+        if (Document)
+        {
+            float extra = (baseline + below) * (spacing - 1.0f) * 0.5f;
+            baseline += extra;
+            below += extra;
+            JoinCodeBacks();
         }
 
         float top = cursorY + pendingGap;
@@ -1025,7 +1046,8 @@ public sealed class UIRichText
                 Height = baseline + below,
                 Shade = Shade.Accent,
                 Alpha = 1.0f,
-                Link = -1
+                Link = -1,
+                Block = -1
             });
         }
 
@@ -1078,7 +1100,11 @@ public sealed class UIRichText
     {
         Vector2 topLeft = TopLeft(area, align);
         float side = align.ToVector().X;
-        UISkin skin = list.Skin;
+        UIPalette palette = list.Skin.Palette;
+
+        // The colours of code of the block the pieces are in, looked up again only when the block changes
+        int syntaxBlock = -1;
+        UISyntaxColors? syntax = null;
 
         // Behind the letters first, the back of the code and the bars, then the letters over them
         for (int pass = 0; pass < 2; pass++)
@@ -1093,17 +1119,21 @@ public sealed class UIRichText
 
                 float shift = piece.Line >= 0 && piece.Line < lines.Count ? (side + 0.5f) * (Width - lines[piece.Line].Width) : 0.0f;
                 Vector2 corner = new(topLeft.X + shift + piece.X, topLeft.Y - piece.Y);
-                Vector4 ink = ShadeOf(piece, skin, color);
+                if (piece.Shade == Shade.Syntax)
+                    syntax = SyntaxColours(piece.Block, palette, ref syntaxBlock, syntax);
+                Vector4 ink = ShadeOf(piece, palette, color, syntax);
 
                 if (kind == Kind.Box)
                 {
                     if (piece.Width > 0.0f && piece.Height > 0.0f)
-                        list.Rect(new UIRect(new Vector2(corner.X, corner.Y - piece.Height), new Vector2(corner.X + piece.Width, corner.Y)), ink);
+                        PaintBox(list, piece, new UIRect(new Vector2(corner.X, corner.Y - piece.Height), new Vector2(corner.X + piece.Width, corner.Y)), ink);
                     continue;
                 }
 
                 ReadOnlySpan<char> icons = piece.IconsLength > 0 ? source.AsSpan(piece.IconsStart, piece.IconsLength) : default;
+                if (piece.Mono) list.PushFont(CodeFont!);
                 list.Text(source.AsSpan(piece.Start, piece.Length), corner, piece.Scale, ink, piece.Markup, piece.Style, icons);
+                if (piece.Mono) list.PopFont();
             }
         }
     }
@@ -1115,21 +1145,22 @@ public sealed class UIRichText
         return center + new Vector2(-0.5f, 0.5f) * size;
     }
 
-    private static Vector4 ShadeOf(in Piece piece, UISkin skin, Vector4 inherited)
+    private static Vector4 ShadeOf(in Piece piece, UIPalette palette, Vector4 inherited, UISyntaxColors? syntax)
     {
         Vector4 colour = piece.Shade switch
         {
             Shade.Explicit => piece.Color,
-            Shade.Accent => skin.AccentColor,
-            Shade.Highlight => skin.HighlightColor,
-            Shade.Text => skin.TextColor,
-            Shade.Dim => skin.DimTextColor,
-            Shade.Link => skin.LinkColor,
-            Shade.Error => skin.ErrorColor,
-            Shade.Warning => skin.WarningColor,
-            Shade.Success => skin.SuccessColor,
-            Shade.Field => skin.FieldColor.W > 0.0f ? skin.FieldColor : new Vector4(0.0f, 0.0f, 0.0f, 0.3f),
-            Shade.Border => skin.BorderColor,
+            Shade.Accent => palette.Accent,
+            Shade.Highlight => palette.Highlight,
+            Shade.Text => palette.Text,
+            Shade.Dim => palette.DimText,
+            Shade.Link => palette.Link,
+            Shade.Error => palette.Error,
+            Shade.Warning => palette.Warning,
+            Shade.Success => palette.Success,
+            Shade.Field => palette.Field.W > 0.0f ? palette.Field : new Vector4(0.0f, 0.0f, 0.0f, 0.3f),
+            Shade.Border => palette.Border,
+            Shade.Syntax => syntax?.Of(piece.Syntax) ?? inherited,
             _ => inherited
         };
 

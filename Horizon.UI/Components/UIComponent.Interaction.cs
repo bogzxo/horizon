@@ -28,6 +28,9 @@ public abstract partial class UIComponent
     /// </summary>
     protected virtual bool ClipsChildren => false;
 
+    /// <summary>Whether what sticks out of this component is cut off, for whoever looks for what's drawn where.</summary>
+    internal bool CutsOffChildren => ClipsChildren;
+
     /// <summary>
     /// Whether a child is part of what is shown right now. Not shown it is neither drawn nor hit by the pointer,
     /// without anything about the child itself changing (its <see cref="Visible"/> included, which goes into the
@@ -36,10 +39,16 @@ public abstract partial class UIComponent
     protected internal virtual bool ShowsChild(UIComponent child) => true;
 
     /// <summary>The topmost component under a point, searching this component and everything inside it.</summary>
-    internal UIComponent? HitTest(Vector2 point)
+    /// <param name="moved">How far what this is inside of is drawn from where the layout has it, taken off the point already.</param>
+    internal virtual UIComponent? HitTest(Vector2 point, Vector2 moved = default)
     {
         if (!Visible || IsOnHiddenLayer)
             return null;
+
+        // The pointer is where things are drawn, which between two ticks of a scroll or a slide is a little way from
+        // where the newest tick laid them out. Hit there, a scroll easing had the hover on a row the pointer wasn't over
+        Vector2 drawn = Module?.Compositor.DrawnMove(this) ?? Vector2.Zero;
+        point -= drawn - moved;
 
         // The pointer is where things are drawn, which for a component that is being animated isn't where
         // the layout has them.
@@ -62,7 +71,7 @@ public abstract partial class UIComponent
         var snapshot = children;
         for (int i = snapshot.Length - 1; i >= 0; i--)
         {
-            if (ShowsChild(snapshot[i]) && snapshot[i].HitTest(point) is { } hit)
+            if (ShowsChild(snapshot[i]) && snapshot[i].HitTest(point, drawn) is { } hit)
                 return hit;
         }
 
@@ -93,6 +102,56 @@ public abstract partial class UIComponent
     /// </summary>
     /// <param name="delta">How many notches, positive away from the user (up).</param>
     protected internal virtual bool OnScroll(float delta) => false;
+
+    /// <summary>Whether wheel input represents scrolling distance, rather than zooming or editing a value.</summary>
+    protected internal virtual bool UsesScrollSpeed => false;
+
+    /// <summary>Whether an end spring has taken over from scrolling, so a released finger must stop pushing it.</summary>
+    protected internal virtual bool HasOverscroll => false;
+
+    // What a finger dragged that didn't add up to a whole notch yet, see OnPan
+    private float panCarry;
+
+    /// <summary>How far a finger drags for one notch of the wheel, on whatever scrolls by notches and has no OnPan of its own.</summary>
+    internal const float PAN_NOTCH = 48.0f;
+
+    /// <summary>
+    /// A finger dragged over this component or something inside it, and the drag is a scroll (see
+    /// <see cref="UICompositor.TouchSlop"/>). The content goes along with the finger. True when it scrolled, false at
+    /// the end it can't go past, which hands the rest to whatever it's inside of. By default anything that scrolls by
+    /// the wheel (<see cref="UsesScrollSpeed"/>) is turned a notch for every <see cref="PAN_NOTCH"/> units.
+    /// </summary>
+    /// <param name="delta">How far the finger moved since the last time, in the layout's units, Y up.</param>
+    protected internal virtual bool OnPan(Vector2 delta)
+    {
+        if (!UsesScrollSpeed)
+            return false;
+
+        // Up the screen is down the content, which is the wheel turned towards the user
+        panCarry -= delta.Y / PAN_NOTCH;
+        int notches = (int)panCarry;
+        if (notches == 0)
+            return true;
+
+        panCarry -= notches;
+        return OnScroll(notches);
+    }
+
+    /// <summary>
+    /// Whether a finger pressed here keeps the drag that may follow, rather than having it scroll what this is inside
+    /// of. A slider, a colour, an edge that sizes, a window's title bar, a scroll bar. Asked as the finger goes down,
+    /// and a press that doesn't keep its drag inside something that scrolls isn't handed to the component until it's
+    /// clear it's no scroll (a tap, a drag sideways, a long hold).
+    /// </summary>
+    /// <param name="point">Where the finger went down, in the layout's units.</param>
+    protected internal virtual bool KeepsTouchDrag(Vector2 point) => GripAt(point) != UIResize.None;
+
+    /// <summary>
+    /// The press on this component was taken away, a finger that turned out to be scrolling, held for a context menu,
+    /// or cancelled by the system. Nothing is released and nothing is clicked.
+    /// </summary>
+    protected internal virtual void OnPointerCancel()
+    { }
 
     /// <summary>
     /// What the other button of the pointer (right click) does on this component, or on anything inside it that has
@@ -217,6 +276,16 @@ public abstract partial class UIComponent
     /// <summary>Whether a point is on what the component has open, in which case the pointer is this component's.</summary>
     protected internal virtual bool PopupContains(Vector2 point) => false;
 
+    /// <summary>
+    /// Whether what it has open takes the keys while it's open, a menu the arrows go down and Enter picks from. Nothing
+    /// behind it types or hears a shortcut meanwhile, the keyboard stays where it was and gets them again once it shuts.
+    /// </summary>
+    protected internal virtual bool TakesPopupKeys => false;
+
+    /// <summary>The keys pressed this update while what it has open takes them, see <see cref="TakesPopupKeys"/>.</summary>
+    protected internal virtual void OnPopupKeys(Horizon.Input.Keyboard keyboard)
+    { }
+
     /* Tweens a layout asks for */
 
     /// <summary>How the component makes its entrance when <see cref="PlayIntro"/> is called, which loading a layout does.</summary>
@@ -249,21 +318,33 @@ public abstract partial class UIComponent
     /// <param name="delay">Seconds to wait on top of each component's own delay and the delays of whatever it is inside of.</param>
     public void PlayIntro(float delay = 0.0f)
     {
-        float wait = IntroDelay + delay;
+        // As quick as the compositor's AnimationSpeed says, and none at all when it says 0, a UI told to keep still is
+        // simply there. The delays go with it, a staggered list waiting on nothing would sit there blank for no reason
+        float time = MotionTime(IntroTime);
+        float speed = IntroTime > 0.0f && time > 0.0f ? time / IntroTime : 1.0f;
+        float wait = (IntroDelay + delay) * speed;
+        bool still = Intro != UIIntro.None && time <= 0.0f && IntroTime > 0.0f;
 
-        switch (Intro)
+        switch (still ? UIIntro.None : Intro)
         {
             case UIIntro.Pop:
-                this.PopIn(IntroTime, wait, IntroEasing ?? Easing.OutBack);
+                this.PopIn(time, wait, IntroEasing ?? Easing.OutBack);
                 break;
 
             case UIIntro.Fade:
-                this.FadeIn(IntroTime, wait, IntroEasing ?? Easing.OutCubic);
+                this.FadeIn(time, wait, IntroEasing ?? Easing.OutCubic);
                 break;
 
             case UIIntro.Slide:
-                this.SlideIn(IntroOffset, IntroTime, wait, IntroEasing ?? Easing.OutCubic);
+                this.SlideIn(IntroOffset, time, wait, IntroEasing ?? Easing.OutCubic);
                 break;
+        }
+
+        if (still)
+        {
+            VisualOffset = Vector2.Zero;
+            VisualScale = Vector2.One;
+            Opacity = 1.0f;
         }
 
         // What is inside waits as long as this does, its delay is theirs as well. A child that made its entrance
@@ -274,7 +355,31 @@ public abstract partial class UIComponent
         var snapshot = children;
 
         for (int i = 0; i < snapshot.Length; i++)
-            snapshot[i].PlayIntro(wait + i * step);
+            snapshot[i].PlayIntro((IntroDelay + delay) + i * step);
+    }
+
+    /// <summary>
+    /// Whether the pointer or the keys can do anything with this component, a button, a box, a list, rather than something
+    /// only drawn. For whoever lists what there is to click (Hex's tools for agents).
+    /// </summary>
+    public bool IsInteractive => HitTestVisible || Navigable || Focusable || TabStop;
+
+    /// <summary>
+    /// Whether the component is on screen as far as it and its parents go, every one of them visible, none on a hidden
+    /// layer, each a child its parent is showing (a tab's page that isn't open isn't), in a module that's switched on.
+    /// </summary>
+    public bool IsShownInHierarchy
+    {
+        get
+        {
+            for (UIComponent? at = this; at is not null; at = at.Parent)
+            {
+                if (!at.Visible || at.IsOnHiddenLayer || (at.Parent is { } parent && !parent.ShowsChild(at)))
+                    return false;
+            }
+
+            return Module is { Enabled: true };
+        }
     }
 
     /* The keyboard */
@@ -305,11 +410,30 @@ public abstract partial class UIComponent
     protected internal virtual bool HoldsTab => false;
 
     /// <summary>
+    /// Whether a press on it leaves the keyboard where it was, a menu bar's word or an item of a menu, which do something
+    /// and have nothing to type into. A press on anything else that doesn't take the keyboard takes it away, and the
+    /// code a menu was opened over had nothing typing into it after.
+    /// </summary>
+    protected internal virtual bool LeavesFocus => false;
+
+    /// <summary>
+    /// Where Tab goes from it, given 1 for Tab and -1 for Shift+Tab, null for the next one along the layout. For an order
+    /// the layout doesn't have, a find box going to its replace box before the toggles beside it.
+    /// </summary>
+    public Func<int, UIComponent?>? TabTo { get; set; }
+
+    /// <summary>
     /// Whether the keys come to it as themselves through <see cref="OnKeyDown"/>, with the modifiers, rather than as the
     /// characters and editing codes of <see cref="OnTextInput"/>. A terminal, which sends them on to a program. Escape
     /// and tab are its own then too, the compositor leaves them alone.
     /// </summary>
     protected internal virtual bool TakesRawKeys => false;
+
+    /// <summary>
+    /// Whether this takes typed text, so a platform without a keyboard of its own (a phone) puts its soft keyboard up
+    /// while it has the focus. Only for a focus a finger gave it, see <see cref="UICompositor.TouchSlop"/>.
+    /// </summary>
+    protected internal virtual bool WantsTextInput => false;
 
     /// <summary>A key pressed (or held) while this has the focus and takes its keys raw, see <see cref="TakesRawKeys"/>.</summary>
     protected internal virtual void OnKeyDown(in UIKeyPress press)

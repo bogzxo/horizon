@@ -1,13 +1,12 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Horizon.Content;
 
 using Horizon.Logging;
 
 using Horizon.Engine;
 using Horizon.Graphics;
-
-
 
 namespace Horizon.Rendering.Spriting;
 
@@ -77,7 +76,7 @@ public sealed class TextureAtlas : IDisposable
     public bool Smooth { get; set; }
     private const int MAX_HEIGHT = 16384;   // As tall as it is allowed to grow, or what the card takes if that's less
 
-    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer, int Most = 0);
+    private readonly record struct Pending(string Key, FoundContent File, int X, int Y, int Width, int Height, string? Layer, int Most = 0);
 
     // The top edge of what's been packed, left to right, as a run of flat segments. A new region goes on the
     // lowest segment it fits on (the skyline packer), which fills the holes rows would leave
@@ -103,9 +102,12 @@ public sealed class TextureAtlas : IDisposable
     private int _height;
     private readonly bool _shared;
 
-    // The texture a grown atlas left behind. Whoever drew with it this frame still points at it, so it goes the
-    // next time round rather than from under them
-    private Texture _retired = Texture.Invalid;
+    // The texture a grown atlas left behind. A UI draws the last two lists it captured blended, painted a tick or two
+    // before, and those still point at it, so it hangs on for a few frames rather than one and goes from under nobody
+    private readonly List<(Texture Texture, int Frames)> _retired = [];
+
+    // How many frames a retired texture is kept, past the two captured lists and the frames in flight
+    private const int RETIRED_FRAMES = 6;
 
     // What has been packed (Pack) and not yet sent up, the pieces themselves, the regions they came to and whether
     // the atlas grew for them. Everything that packs or sends up holds the lock, the cuts and the skyline are one
@@ -140,6 +142,13 @@ public sealed class TextureAtlas : IDisposable
     /// on the first frame calls <see cref="Pack"/> as well.
     /// </summary>
     public bool PacksOnWorker { get; init; }
+
+    /// <summary>
+    /// Something run over the pixels of every part before it goes up, RGBA a byte each and a row after the other. A game
+    /// that draws a second fighter off the first one's art in other colours (a palette swap) gives it one, null for the
+    /// pixels as they are. Called on whichever thread packs, so it keeps its hands off anything else.
+    /// </summary>
+    public Action<Span<byte>>? Recolour { get; init; }
 
     /// <summary>How much of the atlas holds something, 0 to 1, padding included as in use.</summary>
     public float Occupancy => _width * (long)_height == 0 ? 0.0f : (float)_used / (_width * (long)_height);
@@ -177,10 +186,13 @@ public sealed class TextureAtlas : IDisposable
     /// picture far too big for the atlas), 0 for as it is.
     /// </param>
     public void Request(string key, string imagePath, int x, int y, int width, int height, string? layer = null, int most = 0)
+        => Request(key, ContentFiles.Find(imagePath), x, y, width, height, layer, most);
+
+    internal void Request(string key, FoundContent file, int x, int y, int width, int height, string? layer, int most = 0)
     {
         if (_requested.TryAdd(key, 0))
         {
-            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height, layer, most));
+            _pending.Enqueue(new Pending(key, file, x, y, width, height, layer, most));
         }
     }
 
@@ -208,7 +220,9 @@ public sealed class TextureAtlas : IDisposable
     /// </summary>
     internal AtlasFrames Frames(in SpriteSource sprite)
     {
-        if (_frames.TryGetValue(sprite, out AtlasFrames? known))
+        SpriteSource captured = sprite.File.HasValue ? sprite : sprite with { File = ContentFiles.Find(sprite.Path) };
+        FoundContent file = captured.File!.Value;
+        if (_frames.TryGetValue(captured, out AtlasFrames? known))
             return known;
 
         string[] keys = new string[Math.Max(sprite.Frames, 1)];
@@ -217,17 +231,32 @@ public sealed class TextureAtlas : IDisposable
             // Wherever the sheet says the frame is, to the right of the one before unless it says otherwise
             (int x, int y) = sprite.FrameAt(frame);
 
-            keys[frame] = KeyFor(sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
-            Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
+            keys[frame] = KeyFor(file.Key, x, y, sprite.Width, sprite.Height, sprite.Layer);
+            Request(keys[frame], file, x, y, sprite.Width, sprite.Height, sprite.Layer);
         }
 
-        return _frames.GetOrAdd(sprite, new AtlasFrames(keys));
+        return _frames.GetOrAdd(captured, new AtlasFrames(keys));
     }
 
     /// <summary>
     /// Whether anything that was asked for is still waiting for <see cref="Update"/> to put it in. Thread-safe.
     /// </summary>
-    public bool HasPending => !_pending.IsEmpty;
+    public bool HasPending
+    {
+        get
+        {
+            // A drained queue can still be getting packed or uploaded, and packed regions aren't published yet
+            if (!Monitor.TryEnter(_packing)) return true;
+            try
+            {
+                return !_pending.IsEmpty || _packed is not null;
+            }
+            finally
+            {
+                Monitor.Exit(_packing);
+            }
+        }
+    }
 
     /// <summary>
     /// Finds where a piece of art is in the atlas, false if it wasn't asked for or hasn't been put in yet. Thread-safe.
@@ -241,10 +270,16 @@ public sealed class TextureAtlas : IDisposable
     /// <returns>Whether anything was added.</returns>
     public bool Update()
     {
-        if (_retired.Handle != 0)
+        for (int i = _retired.Count - 1; i >= 0; i--)
         {
-            GameEngine.Instance.ObjectManager.Textures.Remove(_retired);
-            _retired = Texture.Invalid;
+            if (_retired[i].Frames + 1 < RETIRED_FRAMES)
+            {
+                _retired[i] = _retired[i] with { Frames = _retired[i].Frames + 1 };
+                continue;
+            }
+
+            GameEngine.Instance.ObjectManager.Textures.Remove(_retired[i].Texture);
+            _retired.RemoveAt(i);
         }
 
         if (_pending.IsEmpty && _packed is null && Texture.Handle != 0) return false;
@@ -314,7 +349,7 @@ public sealed class TextureAtlas : IDisposable
         foreach (var pending in batch)
         {
             // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for
-            if (SpriteImages.Read(pending.Path, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
+            if (SpriteImages.Read(pending.File, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
             if (pending.Most > 0 && (part.Width > pending.Most || part.Height > pending.Most))
                 part = Shrink(part, pending.Most);
 
@@ -337,6 +372,7 @@ public sealed class TextureAtlas : IDisposable
                     .CopyTo(pixels.AsSpan(row * width * 4));
             }
 
+            Recolour?.Invoke(pixels);
             _cuts.Add(new Cut(x, y, width, height, pixels));
             regions[pending.Key] = new AtlasRegion(new Vector2(x, y), new Vector2(width, height), new Vector2(left, top), new Vector2(part.Width, part.Height));
         }
@@ -538,8 +574,7 @@ public sealed class TextureAtlas : IDisposable
             Texture old = Texture;
             if (old.Handle != 0)
             {
-                if (_retired.Handle != 0) engine.ObjectManager.Textures.Remove(_retired);
-                _retired = old;
+                _retired.Add((old, 0));
             }
 
             // A shared atlas is the engine's, not the scene's that happened to fill it first
@@ -581,11 +616,8 @@ public sealed class TextureAtlas : IDisposable
 
     public void Dispose()
     {
-        if (_retired.Handle != 0)
-        {
-            GameEngine.Instance.ObjectManager.Textures.Remove(_retired);
-            _retired = Texture.Invalid;
-        }
+        foreach (var (retired, _) in _retired) GameEngine.Instance.ObjectManager.Textures.Remove(retired);
+        _retired.Clear();
 
         if (Texture.Handle != 0)
         {

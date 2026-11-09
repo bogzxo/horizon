@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Graphics;
@@ -60,14 +61,14 @@ internal sealed class TileMapGeometryOcclusion : IDisposable
         long written;
         try
         {
-            written = System.IO.File.GetLastWriteTimeUtc(map.Path).Ticks;
+            written = ContentFiles.GetLastWriteTimeUtc(map.Path).Ticks;
         }
         catch (System.IO.IOException)
         {
             written = 0;
         }
 
-        var key = (System.IO.Path.GetFullPath(map.Path), written, signature);
+        var key = (ContentFiles.CacheKey(map.Path), written, signature);
         if (shared.TryGetValue(key, out var known))
         {
             prepared = known;

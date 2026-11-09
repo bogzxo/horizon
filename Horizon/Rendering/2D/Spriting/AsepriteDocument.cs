@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Buffers.Binary;
 using System.IO.Compression;
 
@@ -63,7 +64,10 @@ public sealed class AsepriteDocument
     // The file as it was read, which the frames are put together out of. Let go of with the frames (DropRendered)
     // and read again the first time one is wanted after that, a character's file is 7 MB and a fight has it twice
     private byte[]? fileBytes;
-    private byte[] file => fileBytes ??= File.ReadAllBytes(Path);
+    private byte[] file => fileBytes ??= ContentFiles.ReadAllBytes(source, Path);
+    // Who it was read out of, so reading it again after DropRendered never takes bytes from a source put in since
+    private readonly IContentFiles source;
+    internal FoundContent ContentFile { get; }
     private readonly int depth;
     private readonly byte transparentIndex;
     private readonly uint[] palette = new uint[256];
@@ -95,16 +99,16 @@ public sealed class AsepriteDocument
     /// <summary>
     /// Reads a file, or hands back the one read before. Throws, saying what's wrong, for a file that isn't an Aseprite file.
     /// </summary>
-    public static AsepriteDocument Open(string path)
-    {
-        string full = System.IO.Path.GetFullPath(path);
+    public static AsepriteDocument Open(string path) => Open(ContentFiles.Find(path));
 
+    internal static AsepriteDocument Open(FoundContent found)
+    {
         lock (cache)
         {
-            if (cache.TryGetValue(full, out var known)) return known;
+            if (cache.TryGetValue(found.Key, out var known)) return known;
 
-            var document = new AsepriteDocument(full, File.ReadAllBytes(full));
-            cache[full] = document;
+            var document = new AsepriteDocument(found, found.ReadAllBytes());
+            cache[found.Key] = document;
             return document;
         }
     }
@@ -240,8 +244,11 @@ public sealed class AsepriteDocument
         lock (rendered) return rendered[frame] ??= made;
     }
 
-    private AsepriteDocument(string path, byte[] file)
+    private AsepriteDocument(FoundContent found, byte[] file)
     {
+        ContentFile = found;
+        source = found.Source;
+        string path = found.Path;
         Path = path;
         fileBytes = file;
 

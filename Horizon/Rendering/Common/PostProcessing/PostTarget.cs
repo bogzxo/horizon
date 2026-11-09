@@ -73,7 +73,7 @@ public sealed class PostTarget : IDisposable
     /// </summary>
     public void CopyFromWindow()
     {
-        Vector2 window = GameEngine.Instance.WindowManager.ViewportSize;
+        Vector2 window = GameEngine.Instance.WindowManager.Scaling.TargetSize;
         GraphicsDevice.Current.CopyWindow(frameBuffer, (uint)window.X, (uint)window.Y, (uint)Size.X, (uint)Size.Y);
     }
 

@@ -18,6 +18,9 @@ public sealed class UITableColumn
     /// <summary>What its header says under the pointer.</summary>
     public string Tooltip { get; set; } = string.Empty;
 
+    /// <summary>Where its text sits across a cell and its header, 0 at the left, 0.5 in the middle and 1 at the right.</summary>
+    public float Align { get; set; }
+
     /// <summary>Whatever the owner wants to know it by.</summary>
     public object? Tag { get; set; }
 
@@ -75,10 +78,14 @@ public class Table : UIComponent
 {
     private const float PAD = 8.0f, GRAB = 5.0f, BAR = 5.0f, MIN_COLUMN = 40.0f, DOUBLE_CLICK = 0.4f;
 
+    // How far in from the header and the bottom the rows fade while there are more past that edge, as a ScrollPanel's do
+    private const float FADE = 18.0f;
+
     // The rows in the order they are shown, by where they are in Rows
     private readonly List<int> order = [];
     private float scrollX, scrollY, sinceClick = float.MaxValue;
-    private UIScrollEase ease;
+    private UIScrollEase ease, easeX;
+    internal float HorizontalScroll => scrollX;
     private (int Row, int Column) selected = (-1, -1), hovered = (-1, -1), lastClicked = (-1, -1);
     private int sortColumn = -1;
     private bool sortDown;
@@ -90,6 +97,9 @@ public class Table : UIComponent
 
     /// <summary>The rows, a cell for every column each.</summary>
     public List<UITableCell[]> Rows { get; set; } = [];
+
+    /// <summary>Row indices in their current displayed order, including rows outside the viewport.</summary>
+    public IReadOnlyList<int> RowOrder => order;
 
     /// <summary>How tall a row is, 0 for a line of the text and a little.</summary>
     public float RowHeight { get; set; }
@@ -138,6 +148,9 @@ public class Table : UIComponent
     }
 
     protected override bool HitTestVisible => true;
+    protected internal override bool UsesScrollSpeed => true;
+
+    protected internal override bool HasOverscroll => ease.Over.Active;
 
     protected internal override bool Focusable => true;
 
@@ -207,6 +220,10 @@ public class Table : UIComponent
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
     private float LineHeight(UISkin skin) => RowHeight > 0.0f ? RowHeight : MathF.Round(skin.Font.LineHeight * ScaleOf(skin) + PAD);
+
+    // Helper method for where text that wide starts in a cell, lined up the way its column says, never left of the padding
+    private static float Lined(float left, float right, float wide, float align) =>
+        MathF.Round(left + PAD + MathF.Max(0.0f, right - left - PAD * 2.0f - wide) * Math.Clamp(align, 0.0f, 1.0f));
 
     private float TotalWidth()
     {
@@ -331,11 +348,26 @@ public class Table : UIComponent
 
         // Shift turns the wheel across, the way every spreadsheet does
         bool across = Horizon.Engine.GameEngine.Instance?.Input.Keyboard.Shift == true;
+        return ScrollWheel(delta, skin, across);
+    }
+
+    internal bool ScrollWheel(float delta, UISkin skin, bool across)
+    {
+        // All of it in sight that way, the wheel is for whatever it's in (a table in a notebook's output, say)
+        if (across ? TravelX <= 0.0f : TravelY(skin) <= 0.0f)
+            return false;
+
         float by = delta * LineHeight(skin) * 3.0f;
         if (across)
-            scrollX = Math.Clamp(scrollX - by, 0.0f, TravelX);
+        {
+            BeginScrollMotion(easeX.Goal is not null);
+            easeX.To((easeX.Goal ?? scrollX) - by, TravelX);
+        }
         else
-            ease.Wheel(scrollY, -by, TravelY(skin));
+        {
+            BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
+            ease.Wheel(scrollY, -by, TravelY(skin), MotionSpeed);
+        }
         return true;
     }
 
@@ -365,7 +397,11 @@ public class Table : UIComponent
     protected override void Update(float dt)
     {
         sinceClick += dt;
-        scrollY = ease.Step(scrollY, dt);
+        float scrollDt = ScrollMotionDelta(dt);
+        easeX.Clamp(TravelX);
+        scrollX = Math.Clamp(easeX.Step(scrollX, scrollDt), 0.0f, TravelX);
+        scrollY = ease.Step(scrollY, scrollDt);
+        ease.Over.Step(scrollDt, MotionSpeed);
 
         hovered = Module is { } module && IsHovered && CellAt(module.ToLocal(module.Compositor.Pointer.Position)) is var (row, column) ? (row, column) : (-1, -1);
         Tooltip = hovered.Row >= 0 && hovered.Column >= 0 && hovered.Column < Rows[hovered.Row].Length ? Rows[hovered.Row][hovered.Column].Tooltip ?? string.Empty
@@ -382,6 +418,7 @@ public class Table : UIComponent
 
         scrollX = Math.Clamp(scrollX, 0.0f, TravelX);
         scrollY = Math.Clamp(scrollY, 0.0f, TravelY(skin));
+        easeX.Clamp(TravelX);
         ease.Clamp(TravelY(skin));
 
         list.Box(bounds, Color ?? skin.FieldColor);
@@ -392,13 +429,18 @@ public class Table : UIComponent
         Vector4 lit = text with { W = ListBox.PICKED };
         Vector4 header = (skin.PanelColor with { W = 1.0f }) * new Vector4(0.85f, 0.85f, 0.85f, 1.0f);
 
-        int first = (int)(scrollY / line);
-        int last = Math.Min(order.Count - 1, first + (int)(bounds.Height / line) + 1);
+        // Stretched past an end it shows more of what's next to the rows in sight, see UIOverscroll
+        int beyond = ease.Over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(ease.Over.Stretch) / line) + 1;
+        int first = Math.Max(0, (int)(scrollY / line) - beyond);
+        int last = Math.Min(order.Count - 1, (int)(scrollY / line) + (int)(bounds.Height / line) + 1 + beyond);
 
-        // Easing, the cells as the newer tick has them (see UIScrollEase)
-        bool easing = ease.Goal is not null;
-        if (easing)
-            list.BeginSteps();
+        // The cells move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
+        bool stretched = ease.Over.Begin(list, bounds);
+        list.PushFrame(new Vector2(0.0f, scrollY));
+
+        // Soft under the header and along the bottom while there's more past them, the way every other list scrolls
+        float travel = TravelY(skin), fade = MathF.Min(FADE, (bounds.Height - line) * 0.25f);
+        list.PushFade(new UIRect(bounds.Min, new Vector2(bounds.Max.X, bounds.Max.Y - line)), MathF.Min(fade, scrollY), MathF.Min(fade, travel - scrollY));
 
         // The frozen column last, over what scrolls under it
         int part = 0;
@@ -428,18 +470,16 @@ public class Table : UIComponent
                     UITableCell value = c < Rows[row].Length ? Rows[row][c] : default;
                     if (frozen)
                         list.Rect(cell, header);
-                    if (value.Fill is { } fill)
-                        list.Rect(cell, fill);
-                    if ((row, c) == selected)
-                        list.Rect(cell, lit);
-                    else if (row == hovered.Row)
-                        list.Rect(cell, skin.HoverColor);
+                    // Keep paint slots stable as hover, selection, and cell fills change. Inserting a quad here
+                    // made interpolation pair the highlight with text or rules from the previous tick.
+                    list.Rect(cell, value.Fill ?? Vector4.Zero);
+                    list.Rect(cell, (row, c) == selected ? lit : row == hovered.Row ? skin.HoverColor : skin.HoverColor with { W = 0 });
 
                     if (value.Text is { Length: > 0 } said)
                     {
                         list.PushClip(cell.Shrink(new UIEdges(PAD * 0.5f, 0.0f)));
                         Vector2 size = skin.Font.Measure(said, scale, markup: false);
-                        list.Text(said, new Vector2(left + PAD, MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, value.Color ?? text, markup: false);
+                        list.Text(said, new Vector2(Lined(left, right, size.X, Columns[c].Align), MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, value.Color ?? text, markup: false);
                         list.PopClip();
                     }
 
@@ -449,8 +489,10 @@ public class Table : UIComponent
             }
         }
 
-        if (easing)
-            list.EndSteps();
+        list.PopFrame();
+        if (stretched)
+            UIOverscroll.End(list);
+        list.PopFade();
 
         // The header over the rows, sticky, sorted by an arrow
         UIRect head = new(new Vector2(bounds.Min.X, bounds.Max.Y - line), bounds.Max);
@@ -471,11 +513,11 @@ public class Table : UIComponent
                 UIRect cell = new(new Vector2(left, head.Min.Y), new Vector2(right, head.Max.Y));
                 list.BeginPart(part++);
                 if (frozen) list.Rect(cell, header);
-                if (hovered == (-1, c)) list.Rect(cell, skin.HoverColor);
+                list.Rect(cell, hovered == (-1, c) ? skin.HoverColor : skin.HoverColor with { W = 0 });
 
                 list.PushClip(cell.Shrink(new UIEdges(PAD * 0.5f, 0.0f)));
                 Vector2 size = skin.Font.Measure(Columns[c].Title, scale, markup: false);
-                list.Text(Columns[c].Title, new Vector2(left + PAD, MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, text, markup: false);
+                list.Text(Columns[c].Title, new Vector2(Lined(left, right, size.X, Columns[c].Align), MathF.Round(cell.Center.Y + size.Y * 0.5f)), scale, text, markup: false);
                 list.PopClip();
 
                 if (c == sortColumn)

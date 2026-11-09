@@ -13,9 +13,18 @@ public sealed class SimulationContext : SynchronizationContext
 {
     private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> posted = new();
     private int ownerThread = -1;
+    private readonly Action? wake;
+
+    public SimulationContext() { }
+
+    internal SimulationContext(Action wake) => this.wake = wake;
 
     /// <summary>Has something run on the simulation thread at the start of the next tick. From any thread.</summary>
-    public override void Post(SendOrPostCallback d, object? state) => posted.Enqueue((d, state));
+    public override void Post(SendOrPostCallback d, object? state)
+    {
+        posted.Enqueue((d, state));
+        wake?.Invoke();
+    }
 
     /// <summary>
     /// Has something run on the simulation thread and waits for it, straight away when called on that thread. The

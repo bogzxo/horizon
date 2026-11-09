@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Globalization;
 using System.Numerics;
 
@@ -115,7 +116,7 @@ public sealed class TileMapProperties
     public string GetFile(string name)
     {
         string file = GetString(name);
-        return file.Length > 0 ? Path.GetFullPath(Path.Combine(directory, file)) : string.Empty;
+        return file.Length > 0 ? ContentFiles.ResolvePath(Path.Combine(directory, file)) : string.Empty;
     }
 
     /// <summary>The id of the object an object property points at, 0 for none. See <see cref="TileMap.FindObject(int)"/>.</summary>

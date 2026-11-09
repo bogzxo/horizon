@@ -1,5 +1,6 @@
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
+using Horizon.Platform;
 
 namespace Horizon.UI.Components;
 
@@ -33,6 +34,8 @@ public sealed class FileSectionSource(string? path, string section, IReadOnlyLis
 
     public void Reset(string key) => Write(values => values.Remove(key));
 
+    public IRuntimeValue? Default(string key) => usual.GetValueOrDefault(key);
+
     private void Write(Action<Dictionary<string, IRuntimeValue>> change)
     {
         if (path is null)
@@ -45,7 +48,7 @@ public sealed class FileSectionSource(string? path, string section, IReadOnlyLis
             written.Add(key, value, settings.FirstOrDefault(setting => setting.Key == key)?.Help);
         try
         {
-            File.WriteAllText(path, SettingsSections.Write(path, (section, written)));
+            PlatformStorage.WriteAllText(path, SettingsSections.Write(path, (section, written)));
         }
         catch (IOException)
         {

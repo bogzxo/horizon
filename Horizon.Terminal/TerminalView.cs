@@ -7,7 +7,7 @@ using Horizon.Engine;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 
@@ -16,7 +16,7 @@ namespace Horizon.UI.Components;
 /// Dusk), as many columns and rows as fit, fed from a <see cref="PseudoTerminal"/> (<see cref="Start"/>, a shell or
 /// anything else) or by hand (<see cref="Feed"/>, for a log or a test), with the keys going to the program as the
 /// bytes a terminal sends (<see cref="TerminalKeys"/>), the mouse when the program asked for it and a selection by
-/// cells when it didn't, the wheel through the scrollback, a cursor that glides to where it is going and blinks, and
+/// cells when it didn't, the wheel, a scroll bar and a minimap down the right through the scrollback, a cursor that glides to where it is going and blinks, and
 /// the bell as a flash. Nothing in its paint allocates, a row is drawn as runs of one style and the text of a run is
 /// put together in a buffer kept for it. What the program writes arrives on the pty's thread and is queued, the
 /// screen is only ever touched on the UI's thread, in <see cref="Update"/>.
@@ -52,6 +52,9 @@ public partial class TerminalView : UIComponent, IDisposable
 
     public Vector2 BackdropOffset { get; set; }
 
+    /// <summary>How wide the picture is against its own shape, 1 for the shape it has (see <see cref="CodeEditor.BackdropStretch"/>).</summary>
+    public float BackdropStretch { get; set; } = 1.0f;
+
     public UIRect? BackdropArea { get; set; }
 
     /// <summary>The middle of the cursor where it was last drawn, in the UI's units, for whoever throws sparks off it.</summary>
@@ -59,8 +62,10 @@ public partial class TerminalView : UIComponent, IDisposable
     private bool cursorPlaced;
     private float blink, bell;
 
-    // How many rows up into the scrollback the view is, 0 for the bottom
+    // How many rows up into the scrollback the view is, 0 for the bottom, and how many rows had gone off the top as of
+    // the last update
     private int scrolled;
+    private long scrolledOffSeen;
 
     // The selection by cell, in rows of the whole (scrollback and grid), anchor to end, inclusive
     private (int X, int Y) selectionAnchor, selectionEnd;
@@ -200,6 +205,24 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>Starts a command in the terminal, the machine's shell when none is given, in a folder, ending whatever ran before.</summary>
     public PseudoTerminal Start(string? commandLine = null, string? workingDirectory = null, IReadOnlyDictionary<string, string>? environment = null)
     {
+        string folder = workingDirectory ?? Environment.CurrentDirectory;
+        return Attach(() => PseudoTerminal.Start(commandLine ?? PseudoTerminal.DefaultShell(), folder, screen.Columns, screen.Rows, environment), folder);
+    }
+
+    /// <summary>
+    /// Shows a process that's running already in the terminal (a console Windows handed over), ending whatever ran before,
+    /// and tells it how big the terminal is.
+    /// </summary>
+    public PseudoTerminal Attach(PseudoTerminal running, string? workingDirectory = null)
+    {
+        PseudoTerminal attached = Attach(() => running, workingDirectory ?? Environment.CurrentDirectory);
+        attached.Resize(screen.Columns, screen.Rows);
+        return attached;
+    }
+
+    // What both have, whatever ran before ended, the screen cleared, and the process listened to
+    private PseudoTerminal Attach(Func<PseudoTerminal> make, string folder)
+    {
         process?.Dispose();
         program?.Dispose();
         program = null;
@@ -207,8 +230,8 @@ public partial class TerminalView : UIComponent, IDisposable
         scrolled = 0;
         hasSelection = false;
 
-        startedIn = workingDirectory ?? Environment.CurrentDirectory;
-        PseudoTerminal started = PseudoTerminal.Start(commandLine ?? PseudoTerminal.DefaultShell(), startedIn, screen.Columns, screen.Rows, environment);
+        startedIn = folder;
+        PseudoTerminal started = make();
         // Windows' ConPTY lets the shell's marks through ahead of the text it paints, the screen settles them after
         screen.LateMarks = OperatingSystem.IsWindows();
         started.Output += Arrived;
@@ -338,11 +361,18 @@ public partial class TerminalView : UIComponent, IDisposable
                 titleSaid = screen.Title;
                 OnTitle?.Invoke(titleSaid);
             }
-
-            // New output takes the view back to the bottom unless it is being read, in which case it stays where it is
-            if (scrolled > 0 && scrolled > screen.Scrollback.Count)
-                scrolled = screen.Scrollback.Count;
         }
+
+        // New output is followed at the bottom. Read up in the scrollback the view stays on what it shows, moved up by the
+        // rows that went off the top under it, where it went down with them and the text slid out from under the reader
+        long gone = screen.RowsScrolledOff - scrolledOffSeen;
+        scrolledOffSeen = screen.RowsScrolledOff;
+        if (scrolled > 0 && gone > 0)
+            scrolled = (int)Math.Min(scrolled + gone, screen.Scrollback.Count);
+        if (scrolled > screen.Scrollback.Count)
+            scrolled = screen.Scrollback.Count;
+
+        UpdateScrollBar(dt);
 
         if (exitedWith is { } code)
         {
@@ -351,11 +381,17 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         lastDt = dt;
-        blink = (blink + dt) % (BLINK * 2.0f);
+        // Like the editor caret, a background terminal stays lit instead of waking the renderer to blink.
+        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
+            GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         if (bell > 0.0f)
             bell = MathF.Max(0.0f, bell - dt);
 
-        if (changed || screen.Version != drawnVersion || bell > 0.0f || IsFocused)
+        // The compositor detects cursor blink changes in the painted list. Focus alone must not keep renewing
+        // the frame deadline: doing so renders continuously even when the terminal has nothing new to show.
+        if (changed || screen.Version != drawnVersion || bell > 0.0f)
             RequestFrame();
     }
 
@@ -486,23 +522,35 @@ public partial class TerminalView : UIComponent, IDisposable
         // A full screen program hears the wheel as arrows, or as the mouse if it asked for that
         if (screen.AlternateScreen)
         {
+            tuiWheel += delta;
+            int turns = (int)tuiWheel;
+            tuiWheel -= turns;
+            if (turns == 0) return true;
+            int count = Math.Min(256, Math.Abs(turns));
             if (screen.MouseMode != TerminalMouseMode.None)
             {
                 var (x, y) = CellAt(lastPointer);
-                Write(TerminalKeys.Mouse(delta > 0.0f ? 64 : 65, x, y, 0, true, false, screen.MouseSgr));
+                for (int i = 0; i < count; i++)
+                    Write(TerminalKeys.Mouse(turns > 0 ? 64 : 65, x, y, 0, true, false, screen.MouseSgr));
             }
             else
             {
-                string arrow = delta > 0.0f ? (screen.ApplicationCursorKeys ? "\u001bOA" : "\u001b[A") : (screen.ApplicationCursorKeys ? "\u001bOB" : "\u001b[B");
-                for (int i = 0; i < 3; i++)
+                string arrow = turns > 0 ? (screen.ApplicationCursorKeys ? "\u001bOA" : "\u001b[A") : (screen.ApplicationCursorKeys ? "\u001bOB" : "\u001b[B");
+                for (int i = 0; i < 3 * count; i++)
                     Write(arrow);
             }
             return true;
         }
 
-        ScrollBy((int)(delta * 3.0f));
+        wheelRows += delta * 3;
+        int rows = (int)wheelRows;
+        wheelRows -= rows;
+        ScrollBy(rows);
         return true;
     }
+
+    private float wheelRows, tuiWheel;
+    protected override bool UsesScrollSpeed => true;
 
     private void ScrollBy(int rows)
     {
@@ -517,6 +565,10 @@ public partial class TerminalView : UIComponent, IDisposable
         Focus();
         lastPointer = point;
         if (BadgePressed(point))
+            return;
+
+        // The scroll bar and the minimap down the right, theirs whatever the program asked of the mouse
+        if (PressScrollBar(point) || PressMinimap(point))
             return;
 
         var (x, y) = CellAt(point);
@@ -568,6 +620,22 @@ public partial class TerminalView : UIComponent, IDisposable
         if (BadgeDragged(point))
             return;
 
+        if (draggingBar)
+        {
+            DragScrollBar(point);
+            return;
+        }
+
+        if (draggingMinimap)
+        {
+            DragMinimap(point);
+            return;
+        }
+
+        // The track held pages on in the update, towards where the pointer is now
+        if (paging != 0)
+            return;
+
         var (x, y) = CellAt(point);
         if (reporting)
         {
@@ -591,7 +659,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     protected override void OnPointerUp(Vector2 point)
     {
-        if (BadgeReleased(point))
+        if (BadgeReleased(point) || ReleaseSide())
             return;
 
         var (x, y) = CellAt(point);
@@ -762,10 +830,11 @@ public partial class TerminalView : UIComponent, IDisposable
         cellWidth = font.Measure("M", scale, markup: false).X;
         cellHeight = font.LineHeight * scale;
         // The gutter on the left once the shell says its marks, the blocks' marks are drawn in it. A pane with round corners
-        // keeps its cells clear of them
-        float pad = MathF.Max(PADDING, Radius * 0.6f);
+        // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
+        float pad = MathF.Max(PADDING, Radius * 0.85f);
         float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
-        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad, pad));
+        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad));
+        PlaceSide();
         if (cellWidth <= 0.0f || cellHeight <= 0.0f)
             return;
 
@@ -788,7 +857,7 @@ public partial class TerminalView : UIComponent, IDisposable
         if (Backdrop is { IsValid: true } picture && BackdropOpacity > 0.0f && !screen.AlternateScreen)
         {
             UIRect area = BackdropArea ?? Bounds;
-            UIRect placed = CodeEditor.PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset);
+            UIRect placed = CodeEditor.PlaceBackdrop(area, Module?.Frame ?? area, picture, BackdropScale, BackdropOffset, BackdropStretch);
             list.PushClip(Bounds);
             list.Image(picture, placed, new Vector4(1.0f, 1.0f, 1.0f, BackdropOpacity));
             list.PopClip();
@@ -802,10 +871,9 @@ public partial class TerminalView : UIComponent, IDisposable
         // The marks of the blocks in the gutter, outside the cells, and the matches of a find under the text
         PaintMarks(list, offset, rows, top, palette);
 
-        // The cells in steps, a row's quads are another line's the moment a program scrolls (micro down a long file)
-        // or the scrollback's oldest row goes, and blended between two ticks letters slid between rows
+        // The cells, a row at a time. A row's quads are another line's the moment a program scrolls (micro down a long
+        // file) or the scrollback's oldest row goes, which is fine, a frame between two ticks shows the newer tick's
         list.PushClip(paintedArea);
-        list.BeginSteps();
         for (int y = 0; y < rows; y++)
         {
             int index = offset + y;
@@ -815,7 +883,6 @@ public partial class TerminalView : UIComponent, IDisposable
             list.BeginPart(index);
             PaintRow(list, font, scale, screen.RowAt(index), index, top - y * cellHeight, palette);
         }
-        list.EndSteps();
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
         if (screen.CursorVisible && scrolled == 0)
@@ -842,7 +909,8 @@ public partial class TerminalView : UIComponent, IDisposable
             Vector4 ink = palette.Cursor;
             if (!IsFocused)
             {
-                list.Frame(box, 1.0f, ink);
+                // Square, a cell's outline. The skin's corners rounded it, a fat pill in Dusk and a box in Dawn
+                list.RoundOutline(box, 0.0f, 1.0f, ink);
             }
             else if (blink < BLINK || screen.CursorShape is 2 or 4 or 6)
             {
@@ -869,6 +937,8 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         list.PopClip();
+        PaintMinimap(list, palette);
+        PaintScrollBar(list, palette);
         PaintBadge(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
@@ -955,6 +1025,7 @@ public partial class TerminalView : UIComponent, IDisposable
             int plainEnd = at;
             int length = 0;
             while (plainEnd < to && !bold && row.Cells[plainEnd].CodePoint < 0x10000 && row.Cells[plainEnd].Combining is null
+                && TerminalSymbols.IconOf(row.Cells[plainEnd].CodePoint) is null
                 && !row.Cells[plainEnd].Style.Has(TerminalAttributes.Wide | TerminalAttributes.Continuation))
             {
                 runBuffer[length++] = (char)row.Cells[plainEnd].CodePoint;
@@ -1031,6 +1102,13 @@ public partial class TerminalView : UIComponent, IDisposable
         if (cell.IsContinuation || cell.CodePoint <= ' ' && cell.Combining is null)
             return;
 
+        if (TerminalSymbols.IconOf(cell.CodePoint) is { } symbol && UISymbols.TryGet(symbol, out char symbolCode))
+        {
+            float width = cellWidth * (cell.Style.Has(TerminalAttributes.Wide) ? 2 : 1);
+            list.Symbol(symbolCode, new UIRect(corner, corner + new Vector2(width, cellHeight)), cursorInk ? ink : ForegroundOf(cell.Style, palette));
+            return;
+        }
+
         int length = 0;
         if (cell.CodePoint < 0x10000)
         {
@@ -1095,5 +1173,6 @@ public partial class TerminalView : UIComponent, IDisposable
         Expose("scrollback", () => (float)Scrollback, value => Scrollback = (int)value);
         Expose("animated", () => Animated, value => Animated = value);
         Expose("cursor_glide", () => CursorGlide, value => CursorGlide = MathF.Max(0.0f, value));
+        Expose("minimap", () => Minimap, value => Minimap = value);
     }
 }

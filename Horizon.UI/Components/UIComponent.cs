@@ -65,6 +65,16 @@ public abstract partial class UIComponent
 
     public UIComponent? Parent { get; private set; }
 
+    // The last name handed out, see PaintId
+    private static int lastPaintId;
+
+    /// <summary>
+    /// The component's own name for what it paints, from a count of the components made, so no two alive at once have the
+    /// same one. Cut to what a float holds exactly, the way a quad's key carries it (see <see cref="SpriteItem.Key"/>),
+    /// which wraps after sixteen million components and never comes out as 0, the name of nobody.
+    /// </summary>
+    internal float PaintId { get; } = (int)((uint)Interlocked.Increment(ref lastPaintId) % 0xFFFFFFu) + 1;
+
     /// <summary>The components inside this one, drawn in order so the last is on top.</summary>
     public IReadOnlyList<UIComponent> Children => children;
 
@@ -257,6 +267,7 @@ public abstract partial class UIComponent
             children = [.. children, child];
 
         child.Parent = this;
+        child.OnParentChanged();
         return child;
     }
 
@@ -303,13 +314,32 @@ public abstract partial class UIComponent
         }
 
         child.Parent = null;
+        child.OnParentChanged();
         return true;
     }
+
+    /// <summary>Called once it was put inside something, or taken out of where it was (<see cref="Parent"/> is null then).</summary>
+    protected virtual void OnParentChanged()
+    { }
 
     /* Layout. Sizes are worked out from the leaves up, then places are handed out from the root down */
 
     internal Vector2 MeasureTree(UISkin skin)
     {
+        bool timed = Diagnostics.UIPaintProfile.On;
+        if (timed)
+            Diagnostics.UIPaintProfile.Begin();
+        Vector2 measured = MeasureTreeUntimed(skin);
+        if (timed)
+            Diagnostics.UIPaintProfile.End(this, measuring: true);
+        return measured;
+    }
+
+    private Vector2 MeasureTreeUntimed(UISkin skin)
+    {
+        if (LaysOutMoving && Visible)
+            Module?.NoteLayoutMoving();
+
         foreach (var child in children)
             child.MeasureTree(skin);
 
@@ -415,31 +445,76 @@ public abstract partial class UIComponent
     /// <summary>Where its shadow, its glass and the lining of the glass go, its bounds unless it draws itself further in (a Panel's Inset).</summary>
     protected virtual UIRect SurfaceBounds => Bounds;
 
-    // The ring round a control the keyboard is on, its part (out of the way of any a component numbers its own), how far
-    // out of it it is and how wide
+    // The ring round a control the keyboard is on, its part (out of the way of any a component numbers its own) and how
+    // far out of it it is
     private const int FOCUS_RING_PART = 0x7F0C;
-    private const float FOCUS_RING_GAP = 2.0f, FOCUS_RING_WIDTH = 1.5f;
+    private const float FOCUS_RING_GAP = 2.0f;
+
+    /// <summary>How wide the ring round whatever has the keyboard is, the one width every ring is drawn at.</summary>
+    internal const float FOCUS_RING_WIDTH = 1.5f;
 
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
             return;
 
-        // Put aside for after the rest of the module, see ZOffset
+        // Put aside for after the rest of the module, see ZOffset. Whatever it's inside of can't be painted again as it
+        // was without it
         if (ZOffset > 0 && Module is { } owner && owner.Raise(this))
+        {
+            list.Uncacheable();
             return;
+        }
 
         // What the tweens did to it, with the hover on top, see UIComponent.Hover
         Vector2 offset = VisualOffset, scale = VisualScale;
         if (hoverness > 0.0f)
             ApplyHover(ref offset, ref scale);
 
-        bool animated = offset != Vector2.Zero || scale != Vector2.One || Opacity < 1.0f;
-        if (animated)
-            list.PushVisual(offset, scale, Bounds.Center, Opacity);
+        // Out of sight under a clip, further than a frame between two ticks could bring it in from, it has nothing to
+        // paint. A settings page painted every one of its rows every tick, and laid out every word of every row
+        // scrolled away to have it all cut off again, most of a tick for nothing
+        if (offset == Vector2.Zero && scale == Vector2.One && list.OutOfSight(Bounds))
+            return;
 
-        // Every quad is ours by name, see UIDrawList.PushOwner
+        // Painted the tick before at the same version in the same place, it's taken out of that list as it was, see
+        // PaintVersion. What PaintTree paints of its own (the focus ring, the grips, a lift) goes into the version. Only
+        // a component with nothing in it, the version is its own and not its children's
+        long version = children.Length == 0 ? PaintVersion : -1;
+        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && Glass is null && !FollowsPointer && !list.LayoutMoves;
+        int context = 0;
+        if (recorded)
+        {
+            version = HashCode.Combine(version, IsFocused, IsHovered, EnabledInHierarchy, Module?.Compositor.FocusVisible ?? false, Resizable, Lift);
+            context = list.PaintContext(Bounds);
+            if (list.TryReuse(PaintId, version, context))
+                return;
+            list.BeginRecord();
+        }
+
+        // Timed while somebody's finding out what's slow, see UIPaintProfile
+        bool timed = Diagnostics.UIPaintProfile.On;
+        if (timed)
+            Diagnostics.UIPaintProfile.Begin();
+
+        // Every quad is ours by name, see UIDrawList.PushOwner. The animation's frame is named after us too
         list.PushOwner(this);
+
+        // Where the layout put us, while it's moving things about, see UIDrawList.LayoutMoves
+        bool laidOut = list.LayoutMoves;
+        if (laidOut)
+            list.PushLaidFrame(Bounds.Min);
+
+        // A drawer on its way in or out fades a little with it as well, so it eases into view rather than wiping across
+        float opacity = slideWanted is null ? Opacity : Opacity * (SLIDE_FADE + (1.0f - SLIDE_FADE) * SlideAmount);
+        bool animated = offset != Vector2.Zero || scale != Vector2.One || opacity < 1.0f;
+        if (animated)
+            list.PushVisual(offset, scale, Bounds.Center, opacity);
+
+        // Going where the pointer goes, see FollowsPointer
+        bool follows = FollowsPointer && Module is not null;
+        if (follows)
+            list.PushFollowFrame(Module!.Compositor.Pointer.Position);
 
         // What's in it is laid out whole while it slides, the part that's gone is cut off at its edge
         bool sliding = slideWanted is not null;
@@ -471,8 +546,9 @@ public abstract partial class UIComponent
             list.PopClip();
 
         // The keyboard on a control a click doesn't give it to (a button Tab went to), a ring round it in the colour the
-        // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes
-        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy)
+        // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes. Only once the
+        // keys moved about, a click on it rings nothing
+        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible)
         {
             list.BeginPart(FOCUS_RING_PART);
             float out_ = FOCUS_RING_GAP;
@@ -485,11 +561,45 @@ public abstract partial class UIComponent
         if (Resizable != UIResize.None)
             PaintGrips(list);
 
-        list.PopOwner();
+        if (follows)
+            list.PopFollowFrame();
 
         if (animated)
             list.PopVisual();
+
+        if (laidOut)
+            list.PopLaidFrame();
+
+        list.PopOwner();
+
+        if (recorded)
+            list.EndRecord(PaintId, version, context, this);
+
+        if (timed)
+            Diagnostics.UIPaintProfile.End(this);
     }
+
+    /// <summary>
+    /// A number that's another whenever what the component paints of itself and what's in it would come out
+    /// differently (its text, its scroll, what's lit), so that painted the tick before at the same version in the same
+    /// place it's taken out of the list painted then and not painted again. Less than 0, the usual, for painting every
+    /// tick, which is always right. Only for what paints a lot out of a lot of state (the code editor), and only
+    /// worth trusting once <c>HORIZON_UI_REUSE_CHECK=1</c> has run it through everything and found nothing.
+    /// </summary>
+    protected virtual long PaintVersion => -1;
+
+    /// <summary>
+    /// Whether its layout is on its way somewhere (sliding in or out, folding), which moves it and what's round it about
+    /// a little every tick, see <see cref="UIDrawList.LayoutMoves"/>.
+    /// </summary>
+    protected internal virtual bool LaysOutMoving => slideWanted is not null;
+
+    /// <summary>
+    /// Whether it's being moved by the pointer right now, a window dragged by its title bar. Drawn, it goes where the
+    /// pointer is as every frame is drawn rather than where the pointer was when the tick laid it out, see
+    /// <see cref="UIDrawList.PushFollowFrame"/>. Only what moves by exactly as much as the pointer does says so.
+    /// </summary>
+    protected internal virtual bool FollowsPointer => false;
 
     /// <summary>
     /// Draws the children, on top of the component and in their order. A component that wants something
@@ -511,6 +621,19 @@ public abstract partial class UIComponent
     { }
 
     /* Updating */
+
+    private bool scrollStarting;
+
+    // Wheel input is routed before Update. The first dt after application-idle includes time
+    // before this gesture existed; do not spend that time advancing its new animation.
+    protected void BeginScrollMotion(bool alreadyMoving) => scrollStarting |= !alreadyMoving;
+
+    protected float ScrollMotionDelta(float dt)
+    {
+        bool starting = scrollStarting;
+        scrollStarting = false;
+        return starting ? MathF.Min(dt, 1.0f / 60.0f) : dt;
+    }
 
     internal void UpdateTree(float dt)
     {

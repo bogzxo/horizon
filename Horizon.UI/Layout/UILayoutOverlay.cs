@@ -75,6 +75,11 @@ internal static class UILayoutOverlay
             point = component.Bounds.Center + (point - component.VisualOffset - component.Bounds.Center) / component.VisualScale;
         }
 
+        // What a scroll panel cuts off isn't drawn there, the rows of a long list ran on past the bottom of their window
+        // and were found over whatever was really under the pointer
+        if (component.CutsOffChildren && !hidden && !component.Bounds.Contains(point))
+            return null;
+
         var children = component.Children;
         for (int i = children.Count - 1; i >= 0; i--)
         {
@@ -240,7 +245,7 @@ internal static class UILayoutOverlay
         LabelText label = labels.GetValue(component, static _ => new LabelText());
         if (label.Text.Length == 0 || label.Size != size || label.Padding != padding || !label.Gap.Equals(gap))
         {
-            string written = $"{component.GetType().Name}  {size.X:0} x {size.Y:0}";
+            string written = $"{component.GetType().Name}  {size.X:0} × {size.Y:0}";
             if (padding != default)
                 written += $"  pad {padding.Left:0} {padding.Top:0} {padding.Right:0} {padding.Bottom:0}";
             if (!float.IsNaN(gap))

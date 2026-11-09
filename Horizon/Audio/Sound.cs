@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,7 +8,7 @@ using Horizon.Logging;
 namespace Horizon.Audio;
 
 /// <summary>
-/// A sound read off disk whole, a .wav or an .ogg, kept as 16 bit samples two to a frame (left, right) at the rate it
+/// A sound read whole from content, a .wav or an .ogg, kept as 16 bit samples two to a frame (left, right) at the rate it
 /// was recorded at, the mixer goes from that rate to the device's as it plays. For the short ones, a hit, a click, a
 /// call. A piece of music is streamed instead (<see cref="OggStream"/>), a few minutes of it whole is tens of megabytes.
 /// <para>
@@ -17,7 +18,7 @@ namespace Horizon.Audio;
 /// </summary>
 public sealed class Sound
 {
-    // By where they are on disk, a sound is read the once whoever asks
+    // By content source and path, a sound is read the once whoever asks
     private static readonly Dictionary<string, Sound?> cache = [];
 
     /// <summary>What a sample of <see cref="Samples"/> is multiplied by to be a level, -1 to 1.</summary>
@@ -73,23 +74,24 @@ public sealed class Sound
     /// </summary>
     public static Sound? Load(string path)
     {
-        string full = Path.GetFullPath(path);
+        string full = ContentFiles.ResolvePath(path);
+        string key = ContentFiles.CacheKey(path);
         lock (cache)
         {
-            if (cache.TryGetValue(full, out Sound? known)) return known;
+            if (cache.TryGetValue(key, out Sound? known)) return known;
         }
 
         Sound? read = null;
         try
         {
-            read = Path.GetExtension(full).Equals(".ogg", StringComparison.OrdinalIgnoreCase) ? ReadOgg(full) : WaveFile.Read(File.ReadAllBytes(full), full);
+            read = Path.GetExtension(full).Equals(".ogg", StringComparison.OrdinalIgnoreCase) ? ReadOgg(full) : WaveFile.Read(ContentFiles.ReadAllBytes(full), full);
         }
         catch (Exception exception)
         {
             Log.Warning($"[Sound] Couldn't read '{path}': {exception.Message}");
         }
 
-        lock (cache) return cache[full] = read;
+        lock (cache) return cache[key] = read;
     }
 
     /// <summary>Forgets every sound that was read, for when they've changed on disk.</summary>
@@ -100,7 +102,7 @@ public sealed class Sound
 
     private static Sound ReadOgg(string path)
     {
-        using var reader = new NVorbis.VorbisReader(path);
+        using var reader = OggStream.OpenReader(path);
         int channels = Math.Max(1, reader.Channels);
 
         // Straight into 16 bits as it is decoded, a list of floats the size of the whole sound on the way was twice what is kept

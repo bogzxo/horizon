@@ -1,9 +1,9 @@
 using System.Runtime.InteropServices;
 
 using Horizon.Logging;
+using Horizon.Platform;
 
 using Silk.NET.Core;
-using Silk.NET.Core.Contexts;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.EXT;
@@ -26,6 +26,7 @@ internal sealed unsafe class VulkanContext : IDisposable
     private const string DYNAMIC_RENDERING = "VK_KHR_dynamic_rendering";
     private const string SYNCHRONIZATION2 = "VK_KHR_synchronization2";
     private const string MAINTENANCE4 = "VK_KHR_maintenance4";
+    private const string DEMOTE_TO_HELPER = "VK_EXT_shader_demote_to_helper_invocation";
 
     public Vk Vk { get; }
     public Instance Instance { get; private set; }
@@ -103,17 +104,143 @@ internal sealed unsafe class VulkanContext : IDisposable
     /// <summary>What the validation layer (or the driver) had to say, for the engine's log.</summary>
     public Action<string, DebugLevel, int>? DebugMessage { get; set; }
 
-    public VulkanContext(IVkSurface surfaceSource)
+    /// <summary>
+    /// A context for a platform's surface, which is made along with the instance so the card picked is one that can
+    /// show pictures in it.
+    /// </summary>
+    public VulkanContext(IPlatformSurface surfaceSource)
     {
+        VulkanLoader.Configure();
         Vk = Vk.GetApi();
 
-        CreateInstance(surfaceSource);
-        CreateSurface(surfaceSource);
-        PickPhysicalDevice();
+        StartVulkan([.. surfaceSource.VulkanInstanceExtensions], () => CreateSurface(surfaceSource));
         CreateDevice();
     }
 
-    private void CreateInstance(IVkSurface surfaceSource)
+    /// <summary>
+    /// A context made before there is a window to draw into, the instance, the card and the device, with the surface
+    /// to come later (<see cref="AttachSurface"/>). Making the device is a good part of what starting takes and the
+    /// system making the window is another, so they're done side by side. Only where the platform knows what any of
+    /// its windows will want of the instance and can say whether a queue shows pictures without a surface, see
+    /// <see cref="IPlatformSurfaceAhead"/>.
+    /// </summary>
+    private VulkanContext(IPlatformSurfaceAhead ahead)
+    {
+        VulkanLoader.Configure();
+        Vk = Vk.GetApi();
+
+        presentsAhead = ahead;
+        StartVulkan([.. ahead.VulkanInstanceExtensions], () => { });
+        CreateDevice();
+    }
+
+    /// <summary>
+    /// Helper method to make the instance, whatever the window needs of it (its surface), and pick the card. If the loader
+    /// was told to load only the driver of the card picked last time (VulkanLoader) and that came to nothing, all of it
+    /// is done once more with every driver. The vendor of the card picked is kept for the next start.
+    /// </summary>
+    private void StartVulkan(string[] windowExtensions, Action withInstance)
+    {
+        try
+        {
+            CreateInstance(windowExtensions);
+            withInstance();
+            PickPhysicalDevice();
+        }
+        catch (Exception) when (VulkanLoader.ForgetDriver())
+        {
+            DropInstance();
+            CreateInstance(windowExtensions);
+            withInstance();
+            PickPhysicalDevice();
+        }
+
+        VulkanLoader.Remember(Properties.VendorID);
+    }
+
+    /// <summary>Helper method to let go of an instance (and its surface and messenger) that came to nothing, to make it again.</summary>
+    private void DropInstance()
+    {
+        if (Surface.Handle != 0 && KhrSurface is not null) KhrSurface.DestroySurface(Instance, Surface, null);
+        if (messenger.Handle != 0) debugUtils?.DestroyDebugUtilsMessenger(Instance, messenger, null);
+        if (Instance.Handle != 0) Vk.DestroyInstance(Instance, null);
+        Surface = default;
+        messenger = default;
+        Instance = default;
+        debugUtils = null;
+    }
+
+    // How a queue's showing of pictures is asked of the card before there is a surface, for a context made ahead
+    private readonly IPlatformSurfaceAhead? presentsAhead;
+
+    // The instance extensions the instance was made with for the window, to check a surface attached later has them all
+    private string[] instanceExtensions = [];
+
+    /// <summary>How the swapchain's pictures are turned, as the surface attached last asked.</summary>
+    public SurfaceTransformPolicy TransformPolicy { get; private set; }
+
+    /// <summary>
+    /// Makes a context ahead of the window, see the constructor above. Null where the platform has no way to (anything
+    /// but desktop Windows now) or if it went wrong, the context is made the usual way once the window is there then.
+    /// Any thread.
+    /// </summary>
+    public static VulkanContext? Prepare(IPlatformSurfaceAhead? ahead)
+    {
+        if (ahead is null)
+            return null;
+
+        try
+        {
+            return new VulkanContext(ahead);
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"[Vulkan] Couldn't get the device going ahead of the window, it's made once the window is up instead. {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gives the context a surface to draw into, the window's first one for a context made ahead (<see cref="Prepare"/>),
+    /// or a new one after <see cref="DetachSurface"/>. Anything but <see cref="SurfaceAttachResult.Attached"/> leaves
+    /// the context without a surface and the device as it was. A context made ahead that can't take its window's
+    /// surface is no good, whoever asked disposes of it and makes one the usual way. The thread that draws.
+    /// </summary>
+    public SurfaceAttachResult AttachSurface(IPlatformSurface surfaceSource)
+    {
+        if (Surface.Handle != 0)
+            return SurfaceAttachResult.AlreadyAttached;
+        if (!surfaceSource.IsAvailable)
+            return SurfaceAttachResult.Unavailable;
+        if (SurfaceLifecycle.MissingExtensions(surfaceSource.VulkanInstanceExtensions, instanceExtensions).Count > 0)
+            return SurfaceAttachResult.MissingExtensions;
+
+        CreateSurface(surfaceSource);
+        KhrSurface.GetPhysicalDeviceSurfaceSupport(PhysicalDevice, GraphicsFamily, Surface, out Bool32 presents);
+        if (presents)
+            return SurfaceAttachResult.Attached;
+
+        DetachSurface();
+        return SurfaceAttachResult.CannotPresent;
+    }
+
+    /// <summary>
+    /// Destroys the surface, after which the host's native window may go. Whoever calls it has the swapchain gone and
+    /// the GPU done with it first, see GraphicsDevice.DetachSurface.
+    /// </summary>
+    public void DetachSurface()
+    {
+        if (Surface.Handle != 0) KhrSurface.DestroySurface(Instance, Surface, null);
+        Surface = default;
+    }
+
+    /// <summary>Whether there is a surface right now.</summary>
+    public bool HasSurface => Surface.Handle != 0;
+
+    /// <summary>Helper method to find an instance function by name, for a platform that calls Vulkan on its own.</summary>
+    private nint InstanceFunction(string name) => (nint)Vk.GetInstanceProcAddr(Instance, name).Handle;
+
+    private void CreateInstance(string[] windowExtensions)
     {
         string? setting = Environment.GetEnvironmentVariable(VALIDATION_VARIABLE);
         bool wantValidation = !string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase) && setting != "0";
@@ -129,10 +256,8 @@ internal sealed unsafe class VulkanContext : IDisposable
 #endif
         bool wantDebugUtils = (ValidationEnabled || wantLabels) && HasInstanceExtension(ExtDebugUtils.ExtensionName);
 
-        byte** windowExtensions = surfaceSource.GetRequiredExtensions(out uint windowExtensionCount);
-        var extensions = new List<string>();
-        for (uint i = 0; i < windowExtensionCount; i++)
-            extensions.Add(Marshal.PtrToStringAnsi((nint)windowExtensions[i])!);
+        var extensions = new List<string>(windowExtensions);
+        instanceExtensions = windowExtensions;
         if (wantDebugUtils) extensions.Add(ExtDebugUtils.ExtensionName);
 
         // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
@@ -308,8 +433,8 @@ internal sealed unsafe class VulkanContext : IDisposable
     }
 
     /// <summary>
-    /// Whether a card will do. Vulkan 1.3, or 1.2 with dynamic rendering and synchronization2 as extensions, which
-    /// is what an older MoltenVK has, and a queue that can draw and present.
+    /// Whether a card will do. Vulkan 1.3, or 1.2 with dynamic rendering, synchronization2 and demote to helper
+    /// invocation as extensions, which is what an older MoltenVK has, and a queue that can draw and present.
     /// </summary>
     private bool IsUsable(PhysicalDevice candidate, in PhysicalDeviceProperties properties)
     {
@@ -317,7 +442,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         if (properties.ApiVersion < Vk.Version13)
         {
             var extensions = DeviceExtensionsOf(candidate);
-            if (!extensions.Contains(DYNAMIC_RENDERING) || !extensions.Contains(SYNCHRONIZATION2)) return false;
+            if (!extensions.Contains(DYNAMIC_RENDERING) || !extensions.Contains(SYNCHRONIZATION2) || !extensions.Contains(DEMOTE_TO_HELPER)) return false;
         }
 
         return FindQueues(candidate, out _, out _, out _);
@@ -341,9 +466,13 @@ internal sealed unsafe class VulkanContext : IDisposable
         return false;
     }
 
-    private void CreateSurface(IVkSurface surfaceSource)
+    private void CreateSurface(IPlatformSurface surfaceSource)
     {
-        Surface = surfaceSource.Create<AllocationCallbacks>(Instance.ToHandle(), null).ToSurface();
+        ulong made = surfaceSource.CreateVulkanSurface(Instance.Handle, InstanceFunction);
+        if (made == 0)
+            throw new InvalidOperationException("The platform made no Vulkan surface for its window.");
+        Surface = new SurfaceKHR(made);
+        TransformPolicy = surfaceSource.TransformPolicy;
     }
 
     private void PickPhysicalDevice()
@@ -423,7 +552,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         for (uint i = 0; i < count; i++)
         {
             var flags = families[i].QueueFlags;
-            KhrSurface.GetPhysicalDeviceSurfaceSupport(device, i, Surface, out Bool32 presents);
+            bool presents = Presents(device, i);
 
             if (graphics == uint.MaxValue && (flags & QueueFlags.GraphicsBit) != 0 && presents)
                 graphics = i;
@@ -434,6 +563,21 @@ internal sealed unsafe class VulkanContext : IDisposable
         }
 
         return graphics != uint.MaxValue;
+    }
+
+    /// <summary>
+    /// Whether a queue family of a card can show pictures, in the window's surface, or before there is one (a context
+    /// made ahead) as the platform answers for any of its windows, which <see cref="AttachSurface"/> checks again.
+    /// </summary>
+    private bool Presents(PhysicalDevice device, uint family)
+    {
+        if (Surface.Handle != 0)
+        {
+            KhrSurface.GetPhysicalDeviceSurfaceSupport(device, family, Surface, out Bool32 presents);
+            return presents;
+        }
+
+        return presentsAhead is not null && presentsAhead.PresentsWithoutSurface(Instance.Handle, device.Handle, family, InstanceFunction);
     }
 
     private void CreateDevice()
@@ -467,7 +611,8 @@ internal sealed unsafe class VulkanContext : IDisposable
         bool is13 = Properties.ApiVersion >= Vk.Version13;
         var deviceExtensions = DeviceExtensionsOf(PhysicalDevice);
 
-        var availableSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features };
+        var availableDemote = new PhysicalDeviceShaderDemoteToHelperInvocationFeatures { SType = StructureType.PhysicalDeviceShaderDemoteToHelperInvocationFeatures };
+        var availableSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, PNext = &availableDemote };
         var availableDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &availableSync2 };
         var available13 = new PhysicalDeviceVulkan13Features { SType = StructureType.PhysicalDeviceVulkan13Features };
         var available12 = new PhysicalDeviceVulkan12Features { SType = StructureType.PhysicalDeviceVulkan12Features, PNext = is13 ? &available13 : (void*)&availableDynamic };
@@ -494,6 +639,13 @@ internal sealed unsafe class VulkanContext : IDisposable
         if (!available12.DescriptorIndexing || !available12.DescriptorBindingSampledImageUpdateAfterBind || !available12.ShaderSampledImageArrayNonUniformIndexing || !available12.RuntimeDescriptorArray)
             throw new InvalidOperationException($"{DeviceName} hasn't got descriptor indexing with update after bind, which the bindless textures can't do without.");
 
+        // Slang writes a discard as OpDemoteToHelperInvocation for SPIR-V 1.6, and nearly every fragment shader of
+        // the engine discards, so a module with it is only valid where the feature is turned on. 1.3 has it in core
+        // (and every 1.3 card has to have it), a 1.2 card through the extension IsUsable already asked for
+        bool demote = is13 ? available13.ShaderDemoteToHelperInvocation : availableDemote.ShaderDemoteToHelperInvocation;
+        if (!demote)
+            throw new InvalidOperationException($"{DeviceName} hasn't got shader demote to helper invocation, which every shader that discards is compiled to.");
+
         if (!available11.ShaderDrawParameters)
             throw new InvalidOperationException($"{DeviceName} hasn't got shader draw parameters, which the instanced quads can't do without.");
 
@@ -502,11 +654,13 @@ internal sealed unsafe class VulkanContext : IDisposable
             SType = StructureType.PhysicalDeviceVulkan13Features,
             DynamicRendering = true,
             Synchronization2 = true,
+            ShaderDemoteToHelperInvocation = true,
             Maintenance4 = available13.Maintenance4
         };
 
-        // The same two for a 1.2 card, through the extensions
-        var featuresSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, Synchronization2 = true };
+        // The same three for a 1.2 card, through the extensions
+        var featuresDemote = new PhysicalDeviceShaderDemoteToHelperInvocationFeatures { SType = StructureType.PhysicalDeviceShaderDemoteToHelperInvocationFeatures, ShaderDemoteToHelperInvocation = true };
+        var featuresSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, PNext = &featuresDemote, Synchronization2 = true };
         var featuresDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &featuresSync2, DynamicRendering = true };
 
         var features12 = new PhysicalDeviceVulkan12Features
@@ -554,6 +708,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         {
             extensions.Add(DYNAMIC_RENDERING);
             extensions.Add(SYNCHRONIZATION2);
+            extensions.Add(DEMOTE_TO_HELPER);
             if (deviceExtensions.Contains(MAINTENANCE4)) extensions.Add(MAINTENANCE4);
         }
 

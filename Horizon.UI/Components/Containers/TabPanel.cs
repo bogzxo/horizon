@@ -6,6 +6,7 @@ using Horizon.Core.Tweening;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
+using Horizon.UI.Scripting;
 
 namespace Horizon.UI.Components;
 
@@ -60,6 +61,12 @@ public class TabPanel : UIComponent
     /// </summary>
     public Action<bool>? OnFold { get; set; }
 
+    /// <summary>What the chevron says under the pointer while the panel is open, nothing for nothing.</summary>
+    public string FoldTip { get; set; } = string.Empty;
+
+    /// <summary>What the chevron says under the pointer while the panel is folded, nothing for nothing.</summary>
+    public string UnfoldTip { get; set; } = string.Empty;
+
     // How long folding it down or opening it up takes, a drawer's time, see UIComponent.Sliding
     private const float FOLD_TIME = DEFAULT_SLIDE_TIME + 0.04f;
 
@@ -87,6 +94,8 @@ public class TabPanel : UIComponent
     /// <summary>Whether it's on its way up or down.</summary>
     public bool IsFolding => foldProgress != (folded ? 1.0f : 0.0f);
 
+    protected internal override bool LaysOutMoving => base.LaysOutMoving || IsFolding;
+
     /// <summary>
     /// Folds it down to its strip or opens it up again, eased the way <see cref="Folded"/> says, or at once when it's
     /// told to be instant (a program putting itself back the way it was left) or the UI isn't to move.
@@ -109,6 +118,10 @@ public class TabPanel : UIComponent
             float step = time > 0.0f ? dt / time : 1.0f;
             foldProgress = folded ? MathF.Min(1.0f, foldProgress + step) : MathF.Max(0.0f, foldProgress - step);
         }
+
+        // The chevron's tooltip while the pointer is on it, the panel's own (none) anywhere else
+        if (OnFold is not null && Module is { } module)
+            Tooltip = IsHovered && FoldBounds.Contains(module.ToLocal(module.Compositor.Pointer.Position)) ? Folded ? UnfoldTip : FoldTip : string.Empty;
 
         base.Update(dt);
     }
@@ -138,7 +151,9 @@ public class TabPanel : UIComponent
                 return default;
 
             UIRect header = HeaderBounds;
-            float side = header.Height;
+
+            // A little wider than tall, so lit it's a pill like the tabs' and not a circle beside them
+            float side = MathF.Round(header.Height * 1.4f);
             return new UIRect(new Vector2(header.Max.X - side, header.Min.Y), header.Max);
         }
     }
@@ -148,6 +163,9 @@ public class TabPanel : UIComponent
 
     /// <summary>How tall the strip of tabs is, 0 for as tall as a line of text needs.</summary>
     public float HeaderHeight { get; set; }
+
+    /// <summary>Where tabs sit across the header; centered by default for existing layouts.</summary>
+    public Origin HeaderAlign { get; set; } = Origin.Center;
 
     /// <summary>The room between two tabs, and between the strip and the page.</summary>
     public float Spacing { get; set; } = 28.0f;
@@ -215,9 +233,28 @@ public class TabPanel : UIComponent
         if (wanted == selected)
             return;
 
+        int was = selected;
         selected = wanted;
+        ArrivePage(wanted > was ? 1.0f : -1.0f);
         OnChanged?.Invoke(selected);
         InvokeScript(changedHandler, new NumberValue(selected));
+    }
+
+    // How long a page opened takes to settle in, and how far it comes from, the way of the tab clicked
+    private const float PAGE_TIME = 0.16f, PAGE_SHIFT = 10.0f;
+
+    /// <summary>
+    /// Helper method to bring the page just opened in from a little to the side it was picked on, faded up, as quick
+    /// as the compositor's AnimationSpeed says. Only once it's on screen, a layout picking its first page moves nothing.
+    /// </summary>
+    private void ArrivePage(float side)
+    {
+        if (Module is null || !IsShownInHierarchy || ChildSpan.Length <= selected)
+            return;
+
+        float time = MotionTime(PAGE_TIME);
+        if (time > 0.0f)
+            ChildSpan[selected].SlideIn(new Vector2(side * PAGE_SHIFT, 0.0f), time);
     }
 
     /// <summary>Opens the next page, back to the first after the last.</summary>
@@ -320,7 +357,8 @@ public class TabPanel : UIComponent
         for (int i = 0; i < ChildSpan.Length; i++)
             total += skin.Font.Measure(TitleOf(i), scale).X + (i > 0 ? Spacing : 0.0f);
 
-        float left = header.Center.X - total * 0.5f;
+        float left = header.Center.X - total * 0.5f
+            + HeaderAlign.ToVector().X * MathF.Max(0.0f, header.Width - total - Spacing * 0.5f);
         for (int i = 0; i < index; i++)
             left += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
 
@@ -368,12 +406,13 @@ public class TabPanel : UIComponent
 
         list.EndParts();
 
-        // The chevron that folds it, quiet, lit under the pointer, always painted while it's there so the quads don't shift
+        // The chevron that folds it, quiet, lit under the pointer, always painted while it's there so the quads don't shift.
+        // Lit the shape a tab is lit, the same way in from the strip's edges, it was a circle beside the tabs' pills
         if (OnFold is not null)
         {
             UIRect fold = FoldBounds;
             bool over = IsHovered && fold.Contains(pointer);
-            list.Box(fold.Shrink(new UIEdges(3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
+            list.Box(fold.Shrink(new UIEdges(2.0f, 3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
             float side = MathF.Round(fold.Height * 0.5f);
             list.Symbol(Folded ? "chevron-up" : "chevron-down", UIRect.FromCenter(fold.Center, new Vector2(side)), over ? skin.TextColor : dim);
         }
@@ -413,6 +452,7 @@ public class TabPanel : UIComponent
         Expose("selected", () => selected, value => Select((int)value));
         Expose("text_scale", () => TextScale, value => TextScale = value);
         Expose("header_height", () => HeaderHeight, value => HeaderHeight = MathF.Max(0.0f, value));
+        Expose("header_align", () => UIScript.FromEnum(HeaderAlign), value => HeaderAlign = UIScript.ToEnum<Origin>(value, "header_align"));
         Expose("spacing", () => Spacing, value => Spacing = MathF.Max(0.0f, value));
         Expose("prev_hint", () => PreviousHint, value => PreviousHint = value);
         Expose("next_hint", () => NextHint, value => NextHint = value);

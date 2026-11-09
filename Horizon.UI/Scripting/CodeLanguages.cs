@@ -26,10 +26,11 @@ public sealed record CodeLanguage(string Name, string Id, IReadOnlyList<string> 
 /// </para>
 /// <para>
 /// D (.d and .di) has a grammar of the engine's own, Scripting/Grammars/d.tmLanguage.json, VS Code ships none and
-/// neither does TextMateSharp. A grammar of that folder is one more scope in the registry, by its scopeName.
+/// neither does TextMateSharp. A grammar of that folder is one more scope in the registry, by its scopeName. TOML
+/// (.toml, Cargo's and the rest) has one there too for the same reason.
 /// </para>
 /// </summary>
-public static class CodeLanguages
+public static partial class CodeLanguages
 {
     private static readonly Lock gate = new();
     private static Options? options;
@@ -47,14 +48,17 @@ public static class CodeLanguages
         { ".hex-workspace", HIDLGrammar.ScopeName },
         { ".slang", "source.hlsl" },
         { ".d", D_SCOPE },
-        { ".di", D_SCOPE }
+        { ".di", D_SCOPE },
+        { ".toml", TOML_SCOPE }
     };
 
     // The grammars of the engine's own by their scope, and the resource each is in (Scripting/Grammars)
     private const string D_SCOPE = "source.d";
+    private const string TOML_SCOPE = "source.toml";
     private static readonly Dictionary<string, string> ownGrammars = new(StringComparer.Ordinal)
     {
-        { D_SCOPE, "Horizon.UI.Grammars.d.tmLanguage.json" }
+        { D_SCOPE, "Horizon.UI.Grammars.d.tmLanguage.json" },
+        { TOML_SCOPE, "Horizon.UI.Grammars.toml.tmLanguage.json" }
     };
 
     // The colours a language has of its own over the skin's, by its grammar's scope, for a dark field and a light one
@@ -68,6 +72,13 @@ public static class CodeLanguages
     {
         lock (gate)
             ownColors[scopeName] = (dark, light);
+    }
+
+    /// <summary>Takes the colours a language was given of its own away, it's the skin's again.</summary>
+    public static void ForgetColors(string scopeName)
+    {
+        lock (gate)
+            ownColors.Remove(scopeName);
     }
 
     /// <summary>The colours code of a language is painted in on a skin's palette, its own when it was given some, the palette's otherwise.</summary>
@@ -98,11 +109,22 @@ public static class CodeLanguages
         {
             ownExtensions[extension] = scopeName;
             byExtension.Remove(extension);
+            Version++;
         }
     }
 
-    /// <summary>The highlighter for a file by its extension, null for one nothing has a grammar for, which is shown as plain text.</summary>
-    public static ICodeHighlighter? ForFile(string path) => ForExtension(Path.GetExtension(path));
+    /// <summary>
+    /// The highlighter for a file, null for one nothing has a grammar for, which is shown as plain text. What it was set
+    /// to by hand comes first, then the associations, then its name (Dockerfile) and its extension, both with a backup's
+    /// suffix taken off (a.cs.orig is C#), see CodeLanguages.Files.
+    /// </summary>
+    public static ICodeHighlighter? ForFile(string path) => Resolve(path, null, useOverride: true);
+
+    /// <summary>
+    /// The same, with the file's first line to go on for a file with no extension, a shebang (#!/usr/bin/env bash) says
+    /// which language it is when nothing else does.
+    /// </summary>
+    public static ICodeHighlighter? ForFile(string path, string? firstLine) => Resolve(path, firstLine, useOverride: true);
 
     /// <summary>The highlighter for files with an extension (".cs"), null for one nothing has a grammar for.</summary>
     public static ICodeHighlighter? ForExtension(string extension)
@@ -145,7 +167,8 @@ public static class CodeLanguages
             var found = new Dictionary<string, CodeLanguage>(StringComparer.OrdinalIgnoreCase)
             {
                 ["d"] = new CodeLanguage("D", "d", [".d", ".di"]),
-                ["slang"] = new CodeLanguage("Slang", "slang", [".slang"])
+                ["slang"] = new CodeLanguage("Slang", "slang", [".slang"]),
+                ["toml"] = new CodeLanguage("TOML", "toml", [".toml"])
             };
 
             foreach (Language language in OptionsLocked().GetAvailableLanguages())
@@ -263,7 +286,7 @@ public static class CodeLanguages
                 return GrammarReader.ReadGrammarSync(reader);
             }
 
-            return bundled.GetGrammar(scopeName);
+            return Mended(scopeName, bundled.GetGrammar(scopeName));
         }
 
         public ICollection<string>? GetInjections(string scopeName) =>

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The engine on an Android phone or tablet. The SurfaceView's native window for Vulkan, the APK's assets as content,
+    the app's own folders as storage and AAudio for the speakers, each straight on the NDK libraries the system ships
+    (libandroid.so, libaaudio.so) with no Java bindings package between. HorizonActivity is the host a game's activity
+    derives from, with the SurfaceView, input, Back, the logs and the run's settings, see notes/android-plan.md stage 5.
+    It references the engine and the engine never names it. No AndroidX, everything is the platform's own API.
+
+    Not in Horizon.sln or the workspace solution on purpose, building a desktop must never need the Android workload.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net11.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <RootNamespace>Horizon.Platform.Android</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <IsPublishable>false</IsPublishable>
+    <IsTrimmable>true</IsTrimmable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+  </ItemGroup>
+
+</Project>

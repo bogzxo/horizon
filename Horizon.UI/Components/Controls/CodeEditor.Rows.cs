@@ -15,8 +15,11 @@ public partial class CodeEditor
     // How many lines are held at the top at the most
     private const int MAX_STICKY = 4;
 
-    /// <summary>A row the code is drawn in, a piece of a line from one column to another, so far in from the left.</summary>
-    private readonly record struct CodeRow(int Line, int Start, int End, float Indent);
+    /// <summary>
+    /// A row the code is drawn in, a piece of a line from one column to another, so far in from the left. A lens row has
+    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove).
+    /// </summary>
+    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false);
 
     private readonly List<CodeRow> rows = [];
 
@@ -25,7 +28,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -45,7 +48,7 @@ public partial class CodeEditor
 
     // The lines held at the top, and what they were worked out for
     private readonly List<int> sticky = [];
-    private (int Line, int Coloured, int Folds) stickyFor = (-1, -1, -1);
+    private (int Line, int Version, int Coloured, int Folds) stickyFor = (-1, -1, -1, -1);
 
     /// <summary>Whether long lines are wrapped at the edge (Alt+Z in Hex), off they run off it and the view scrolls along.</summary>
     public bool WordWrap
@@ -67,16 +70,21 @@ public partial class CodeEditor
     /// <summary>How many rows the code takes as it's drawn, more than its lines when they wrap, fewer when some are folded.</summary>
     public int RowCount => rows.Count;
 
+    /// <summary>How many of the rows are the room over a line for its lenses (CodeEditor.LensesAbove) rather than any of the code.</summary>
+    public int LensRowCount => lensRows;
+
+    private int lensRows;
+
     /// <summary>The lines that are folded, by the line each opens on.</summary>
     public IReadOnlyCollection<int> FoldedLines => folded;
 
     /// <summary>Whether a line opens a bracket that closes further down, and so can be folded.</summary>
-    public bool CanFold(int line) => foldable.ContainsKey(line);
+    public bool CanFold(int line) => line >= 0 && line < document.LineCount && foldable.ContainsKey(line);
 
     /// <summary>A line folded or opened again, a line that can't be folded is left alone.</summary>
     public void ToggleFold(int line)
     {
-        if (folded.Remove(line) || (foldable.ContainsKey(line) && folded.Add(line)))
+        if (folded.Remove(line) || (CanFold(line) && folded.Add(line)))
             foldsChanged++;
     }
 
@@ -114,10 +122,14 @@ public partial class CodeEditor
     /// </summary>
     public void FoldAll(int level = 1)
     {
-        foreach (int start in foldable.Keys)
+        var ends = new Stack<int>();
+        foreach (int start in foldable.Keys.Order())
         {
-            if (DepthAt(start) >= level - 1)
+            while (ends.Count > 0 && ends.Peek() < start) ends.Pop();
+            int depth = nativeFoldingRanges is null ? DepthAt(start) : ends.Count;
+            if (depth >= level - 1)
                 folded.Add(start);
+            ends.Push(foldable[start]);
         }
 
         foldsChanged++;
@@ -139,9 +151,16 @@ public partial class CodeEditor
     /// </summary>
     private void FindFoldable()
     {
+        foldsWere.Clear();
+        foreach (int start in folded)
+        {
+            if (foldable.TryGetValue(start, out int end))
+                foldsWere[start] = end;
+        }
+
         foldable.Clear();
         var open = new Stack<int>();
-        for (int line = 0; line < colouredLines.Length && line < spans.Length; line++)
+        for (int line = 0; (nativeFoldingRanges is null || !completeNativeFolding) && line < colouredLines.Length && line < spans.Length; line++)
         {
             string text = colouredLines[line];
             foreach (SyntaxSpan span in spans[line])
@@ -163,9 +182,24 @@ public partial class CodeEditor
             }
         }
 
+        if (nativeFoldingRanges is {} native)
+            foreach (var range in native.OrderBy(range => range.End)) foldable[range.Start] = range.End;
+
+        // A fold that doesn't open anything now keeps where it ended, the brackets are only out for a moment while
+        // something's half typed (a quote, a brace), and let go of it opened the fold and every line under it jumped
+        // down. It opens the way any fold does, the caret going in
+        foreach (var (start, end) in foldsWere)
+        {
+            if (nativeFoldingRanges is null && !foldable.ContainsKey(start) && end > start && end < document.LineCount)
+                foldable[start] = end;
+        }
+
         if (folded.RemoveWhere(start => !foldable.ContainsKey(start)) > 0)
             foldsChanged++;
     }
+
+    // The folds there were before the brackets were found again, by the line each opens on, and where each ended
+    private readonly Dictionary<int, int> foldsWere = [];
 
     // Every tick, the folds moved along with lines put in or taken out above them, and opened when the caret goes inside
     private void UpdateFolds()
@@ -244,7 +278,7 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -253,6 +287,26 @@ public partial class CodeEditor
         shapedTop = area.Max.Y + scrolled;
         shapedLeft = area.Min.X + TEXT_PAD;
         shapedLineHeight = lineHeight;
+
+        // Rows of lenses coming or going above what's in sight would push it about, so the line at the top of the view keeps
+        // its place. Gone to a reference, the counts came a moment after and the line went to was pushed off the bottom
+        (int Line, int Row)? anchor = null;
+        if (rowsFor.Lenses != lensRowsChanged && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        {
+            int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
+            while (top < rows.Count - 1 && rows[top].Lens)
+                top++;
+            int line = rows[top].Line;
+
+            // The caret's line when it's in sight, the one somebody went to and is looking at, so the rows of the lines
+            // between the top and it don't push it down either
+            int caret = document.Caret.Line;
+            if (caret < lineRow.Length && lineRow[caret] >= top && lineRow[caret] < top + (int)(area.Height / lineHeight))
+                line = caret;
+
+            if (line < lineRow.Length)
+                anchor = (line, lineRow[line]);
+        }
 
         rowsFor = wanted;
         rows.Clear();
@@ -263,8 +317,17 @@ public partial class CodeEditor
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         int columns = wordWrap ? Math.Max(8, (int)((width - TEXT_PAD * 2.0f) / MathF.Max(1.0f, digit))) : int.MaxValue;
 
+        int lens = 0;
+        lensRows = 0;
         for (int line = 0; line < count; line++)
         {
+            // A line with lenses has a row over it for them, the line itself starts on the row after
+            if (lensesAbove.Count > 0 && LensAboveOn(line, ref lens))
+            {
+                rows.Add(new CodeRow(line, 0, 0, 0.0f, Lens: true));
+                lensRows++;
+            }
+
             lineRow[line] = rows.Count;
             string text = document.LineAt(line);
             AddRows(line, text, columns, digit);
@@ -278,13 +341,24 @@ public partial class CodeEditor
                 line = Math.Min(end, count - 1);
             }
         }
+
+        if (anchor is { } kept && kept.Line < count)
+        {
+            float moved = (lineRow[kept.Line] - kept.Row) * lineHeight;
+            if (moved != 0.0f)
+            {
+                scrollY = MathF.Max(0.0f, scrollY + moved);
+                if (scrollGoal is { } goal)
+                    scrollGoal = MathF.Max(0.0f, goal + moved);
+            }
+        }
     }
 
     // A line's rows, one when it isn't wrapped or fits, cut at the last space before the edge when it is and doesn't
     private void AddRows(int line, string text, int columns, float digit)
     {
         float at = 0.0f;
-        if (!wordWrap || Columns(text, 0, text.Length) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
+        if (!wordWrap || Columns(text, 0, text.Length) + InlayColumnsOf(line) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
         {
             rows.Add(new CodeRow(line, 0, text.Length, at));
             return;
@@ -301,9 +375,10 @@ public partial class CodeEditor
         {
             int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
             int end = start, used = 0;
-            while (end < text.Length && used + (text[end] == '\t' ? TAB_SPACES : 1) <= room)
+            // A hint just before a character takes its room along with it
+            while (end < text.Length && used + (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end) <= room)
             {
-                used += text[end] == '\t' ? TAB_SPACES : 1;
+                used += (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end);
                 end++;
             }
 
@@ -352,11 +427,11 @@ public partial class CodeEditor
     }
 
     // How many columns a piece of a line takes, a tab as so many spaces
-    private static int Columns(string text, int from, int to)
+    private int Columns(string text, int from, int to)
     {
         int columns = 0;
         for (int i = from; i < to; i++)
-            columns += text[i] == '\t' ? TAB_SPACES : 1;
+            columns += text[i] == '\t' ? TabSize : 1;
         return columns;
     }
 
@@ -401,8 +476,11 @@ public partial class CodeEditor
             return 0.0f;
 
         int from = Math.Min(row.Start, column);
-        return row.Indent + (column <= from ? 0.0f : Width(skin, scale, text.AsSpan(from, column - from)));
+        return row.Indent + (column <= from ? 0.0f : Width(skin, scale, text.AsSpan(from, column - from)) + InlaysWidth(skin, scale, line, from, column));
     }
+
+    /// <summary>How far along its last row the end of a line is, past any hints after it, for what goes after the line.</summary>
+    private float EndX(UISkin skin, float scale, int line, int length) => ColumnX(skin, scale, line, length) + InlaysWidth(skin, scale, line, length, int.MaxValue);
 
     // The lines the top of the view is inside of, outermost first, worked out when the top or the folds change
     private List<int> StickyLines(int firstLine)
@@ -413,7 +491,7 @@ public partial class CodeEditor
             return sticky;
         }
 
-        var wanted = (firstLine, coloured, foldsChanged);
+        var wanted = (firstLine, document.Version, coloured, foldsChanged);
         if (stickyFor == wanted)
             return sticky;
 
@@ -421,8 +499,10 @@ public partial class CodeEditor
         sticky.Clear();
         foreach (var (start, end) in foldable)
         {
-            if (start < firstLine && firstLine <= end)
-                sticky.Add(start);
+            if (start < 0 || start >= document.LineCount) continue;
+            int header = HeaderOf(start);
+            if (header < firstLine && firstLine <= end && !sticky.Contains(header))
+                sticky.Add(header);
         }
 
         sticky.Sort();
@@ -431,9 +511,34 @@ public partial class CodeEditor
         return sticky;
     }
 
+    // The line that says what a bracket opens, the bracket's own line unless it's on a line of its own (C# the Allman way,
+    // public int Method() and then { under it), where it's the line before it with something on it that isn't a comment
+    // or an attribute. The held lines were a column of lone {s
+    private int HeaderOf(int start)
+    {
+        if (document.LineAt(start).AsSpan().Trim() is not ("{" or "[" or "("))
+            return start;
+
+        for (int line = start - 1; line >= 0 && line > start - 8; line--)
+        {
+            ReadOnlySpan<char> text = document.LineAt(line).AsSpan().Trim();
+            if (text.Length == 0 || text.StartsWith("//") || (text[0] == '[' && text[^1] == ']'))
+                continue;
+            return line;
+        }
+
+        return start;
+    }
+
     // Where the lines held at the top are, as many rows as there are of them from the top of the code
-    private UIRect StickyBounds(UIRect area, float lineHeight, int count) =>
-        new(new Vector2(area.Min.X, area.Max.Y - count * lineHeight), area.Max);
+    private UIRect StickyBounds(UIRect area, float lineHeight, int count)
+    {
+        // End at a body-row boundary: a half-visible row under the pinned scopes reads as stray glyphs.
+        float bottom = area.Max.Y - count * lineHeight;
+        float firstWholeRow = MathF.Ceiling((area.Max.Y + scrollY - bottom) / lineHeight);
+        bottom = area.Max.Y + scrollY - firstWholeRow * lineHeight;
+        return new UIRect(new Vector2(area.Min.X, bottom), area.Max);
+    }
 
     /// <summary>A press on the lines held at the top goes to the one pressed, true when it was on them.</summary>
     private bool PressSticky(Vector2 point)

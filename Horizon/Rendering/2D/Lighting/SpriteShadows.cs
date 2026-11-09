@@ -60,16 +60,20 @@ internal sealed class SpriteShadows : IDisposable
         uint groupsX = (cells + 7) / 8, groupsY = (rows + 7) / 8;
 
         // The seeds, an edge texel of what blocks and of what glows for every cell that has one
-        seed!.Bind();
-        seed.SetUniform("uSize", in size);
-        seed.SetUniform("uCells", in grid);
-        seed.SetUniform("uScale", scale);
-        seed.SetUniform("uSpritesBlock", spritesBlockRays);
-        material.Bind(0);
-        surface.Bind(1);
-        device.BindStorageImage(0, seedsA);
-        device.Dispatch(groupsX, groupsY);
-        device.Barrier(BarrierTargets.ShaderImages);
+        using (device.BeginGpuScope("shadow seeds"))
+        {
+            seed!.Bind();
+            seed.SetUniform("uSize", in size);
+            seed.SetUniform("uCells", in grid);
+            seed.SetUniform("uScale", scale);
+            seed.SetUniform("uSpritesBlock", spritesBlockRays);
+            material.Bind(0);
+            surface.Bind(1);
+            device.BindStorageImage(0, seedsA);
+            device.Dispatch(groupsX, groupsY);
+            device.Barrier(BarrierTargets.ShaderImages);
+
+        }
 
         // The flood, from the longest step down to one, back and forth between the two seed textures
         int step = 1;
@@ -77,34 +81,41 @@ internal sealed class SpriteShadows : IDisposable
         float far = step * 2.0f * scale;
 
         Texture from = seedsA!, into = seedsB!;
-        flood!.Bind();
-        flood.SetUniform("uCells", in grid);
-        flood.SetUniform("uScale", scale);
-        for (; step >= 1; step /= 2)
+        using (device.BeginGpuScope("shadow flood"))
         {
-            flood.SetUniform("uStep", step);
-            device.BindStorageImage(0, from);
-            device.BindStorageImage(1, into);
-            device.Dispatch(groupsX, groupsY);
-            device.Barrier(BarrierTargets.ShaderImages);
-            (from, into) = (into, from);
+            flood!.Bind();
+            flood.SetUniform("uCells", in grid);
+            flood.SetUniform("uScale", scale);
+            for (; step >= 1; step /= 2)
+            {
+                flood.SetUniform("uStep", step);
+                device.BindStorageImage(0, from);
+                device.BindStorageImage(1, into);
+                device.Dispatch(groupsX, groupsY);
+                device.Barrier(BarrierTargets.ShaderImages);
+                (from, into) = (into, from);
+            }
+
         }
 
         // And the distances, exact, for every texel of the picture
-        field!.Bind();
-        field.SetUniform("uSize", in size);
-        field.SetUniform("uCells", in grid);
-        field.SetUniform("uScale", scale);
-        field.SetUniform("uFar", far);
-        field.SetUniform("uPixelWorld", pixelWorld);
-        field.SetUniform("uSpritesBlock", spritesBlockRays);
-        material.Bind(0);
-        surface.Bind(1);
-        device.BindStorageImage(0, from);
-        device.BindStorageImage(1, result);
-        device.Dispatch((width + 7) / 8, (height + 7) / 8);
-        device.Barrier(BarrierTargets.ShaderImages);
-        field.Unbind();
+        using (device.BeginGpuScope("shadow distances"))
+        {
+            field!.Bind();
+            field.SetUniform("uSize", in size);
+            field.SetUniform("uCells", in grid);
+            field.SetUniform("uScale", scale);
+            field.SetUniform("uFar", far);
+            field.SetUniform("uPixelWorld", pixelWorld);
+            field.SetUniform("uSpritesBlock", spritesBlockRays);
+            material.Bind(0);
+            surface.Bind(1);
+            device.BindStorageImage(0, from);
+            device.BindStorageImage(1, result);
+            device.Dispatch((width + 7) / 8, (height + 7) / 8);
+            device.Barrier(BarrierTargets.ShaderImages);
+            field.Unbind();
+        }
 
         device.BindStorageImage(0, null);
         device.BindStorageImage(1, null);
