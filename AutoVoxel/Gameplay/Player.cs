@@ -5,7 +5,7 @@ using Horizon.Engine;
 using Horizon.Physics.Colliders;
 using Horizon.Rendering.Voxels;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using static AutoVoxel.Blocks.Blocks;
 

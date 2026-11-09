@@ -1,3 +1,4 @@
+using Horizon.UI.Components;
 using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
@@ -17,6 +18,38 @@ public class TextMateHighlighterTests
         ICodeHighlighter? highlighter = CodeLanguages.ForExtension(extension);
         Assert.NotNull(highlighter);
         return highlighter.Read(code, code.Count(c => c == '\n') + 1);
+    }
+
+    [Theory]
+    [InlineData(".cs", "int value = 42;")]
+    [InlineData(".py", "value = 42")]
+    [InlineData(".cpp", "int value = 42;")]
+    [InlineData(".hor", "let value = 42;")]
+    public async Task PaintedLineDoesNotWaitForBackgroundGrammarAndRecoversWhenAvailable(string extension, string line)
+    {
+        var highlighter = CodeLanguages.ForExtension(extension)!;
+        var textMate = highlighter is HidlHighlighter hidl ? hidl.Grammar : Assert.IsType<TextMateHighlighter>(highlighter);
+        const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        object grammar = typeof(TextMateHighlighter).GetField("grammar", hidden)!.GetValue(textMate)!;
+        var editor = new CodeEditor(line) { Highlighter = highlighter };
+        typeof(CodeEditor).GetMethod("Recolour", hidden)!.Invoke(editor, null);
+        editor.Document.MoveTo(new UITextPosition(0, line.Length));
+        editor.Document.Type(' ');
+        string changed = line + " ";
+        var freshColours = typeof(CodeEditor).GetMethod("FreshColours", hidden)!;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var holding = Task.Run(() => { lock (grammar) { entered.Set(); release.Wait(TimeSpan.FromSeconds(10)); } });
+        try
+        {
+            Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
+            object? deferred = await Task.Run(() => freshColours.Invoke(editor, [0, changed])).WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Null(deferred);
+        }
+        finally { release.Set(); await holding; }
+        var spans = Assert.IsType<List<SyntaxSpan>>(freshColours.Invoke(editor, [0, changed]));
+        Assert.Equal(highlighter.ReadLine(changed, CodeLineStart.First), spans);
+        Assert.Same(spans, freshColours.Invoke(editor, [0, changed]));
     }
 
     [Fact]

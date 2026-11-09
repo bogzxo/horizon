@@ -535,6 +535,14 @@ public sealed unsafe partial class GraphicsDevice
     /// </summary>
     public void CopyWindow(RenderTarget into, uint windowWidth, uint windowHeight, uint width, uint height)
     {
+        // The scene drawn small is what the window is so far, all of it whatever size it was asked for as
+        if (sceneTarget is { } scene)
+        {
+            if (into.ColorTextures.Length > 0)
+                CopySceneTarget(scene, into, width, height);
+            return;
+        }
+
         if (!Frame.HasImage || swapchain.Current < 0 || into.ColorTextures.Length == 0 || into.ColorTextures[0] is not { } destination) return;
 
         EndRendering();

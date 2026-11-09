@@ -53,6 +53,12 @@ public sealed record UIChoice(string Text, Action Picked)
     /// </summary>
     public int TextDigits { get; init; }
 
+    /// <summary>
+    /// What picking it would do, markdown, shown under the list while it's the row highlighted (a fix's change, the way
+    /// Visual Studio previews one by its lightbulb). Empty for none.
+    /// </summary>
+    public string Preview { get; init; } = string.Empty;
+
     /// <summary>One of <see cref="UISymbols"/>' names drawn in front of it, empty for none.</summary>
     public string Icon { get; init; } = string.Empty;
 

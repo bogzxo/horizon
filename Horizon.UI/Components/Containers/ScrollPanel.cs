@@ -94,10 +94,11 @@ public partial class ScrollPanel : Panel
     protected override void Update(float dt)
     {
         base.Update(dt);
+        float scrollDt = ScrollMotionDelta(dt);
         ease.Clamp(MaxOffset);
         if (ease.Goal is not null)
-            offset = Math.Clamp(ease.Step(offset, dt), 0.0f, MaxOffset);
-        ease.Over.Step(dt, MotionSpeed);
+            offset = Math.Clamp(ease.Step(offset, scrollDt), 0.0f, MaxOffset);
+        ease.Over.Step(scrollDt, MotionSpeed);
     }
 
     protected override bool HitTestVisible => true;
@@ -170,11 +171,32 @@ public partial class ScrollPanel : Panel
         if (MaxOffset <= 0.0f)
             return false;
 
+        BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
         ease.Wheel(offset, -delta * WheelStep, MaxOffset, MotionSpeed);
         return true;
     }
 
     protected internal override bool UsesScrollSpeed => true;
+
+    // Dragged by a finger the content goes along with it, to the pixel, and at an end the rest goes to whatever this is in
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        float max = MaxOffset;
+        if (max <= 0.0f || delta.Y == 0.0f)
+            return false;
+
+        float wanted = offset + delta.Y;
+        if ((delta.Y < 0.0f && offset <= 0.0f) || (delta.Y > 0.0f && offset >= max))
+            return false;
+
+        ease.Stop();
+        offset = Math.Clamp(wanted, 0.0f, max);
+        return true;
+    }
+
+    // A finger on the bar drags the bar, anywhere else it drags what's in the panel
+    protected internal override bool KeepsTouchDrag(Vector2 point) =>
+        (MaxOffset > 0.0f && TrackBounds.Shrink(new UIEdges(-BarWidth)).Contains(point)) || base.KeepsTouchDrag(point);
 
     protected override void DefineScript()
     {

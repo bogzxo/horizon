@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Graphics;
@@ -97,7 +98,7 @@ public sealed class UIFont
     /// </summary>
     public static UIFont? Shared(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM, bool terminal = false)
     {
-        var key = (Path.GetFullPath(Path.Combine(directory, file)), emSize, terminal);
+        var key = (ContentFiles.CacheKey(Path.Combine(directory, file)), emSize, terminal);
         lock (shared)
         {
             if (shared.TryGetValue(key, out UIFont? known))

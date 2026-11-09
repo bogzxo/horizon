@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Collections.Frozen;
 using System.Text;
 
@@ -67,7 +68,7 @@ public static class Localisation
     public static bool Load(string folder, string language = DEFAULT_LANGUAGE)
     {
         string file = Path.Combine(folder, language + ".hor");
-        if (!File.Exists(file))
+        if (!ContentFiles.Exists(file))
         {
             Log.Error($"[Localisation] There is no {language} in {folder}, there is no {file}.");
             return false;
@@ -75,7 +76,7 @@ public static class Localisation
 
         try
         {
-            texts = Read(File.ReadAllText(file), file);
+            texts = Read(ContentFiles.ReadAllText(file), file);
         }
         catch (Exception e)
         {
@@ -102,8 +103,8 @@ public static class Localisation
     /// The languages there are in a folder, the names of its .hor files, in order. Empty for a folder that isn't there.
     /// </summary>
     public static IReadOnlyList<string> Available(string folder) =>
-        Directory.Exists(folder)
-            ? [.. Directory.GetFiles(folder, "*.hor").Select(Path.GetFileNameWithoutExtension).OfType<string>().Order()]
+        ContentFiles.DirectoryExists(folder)
+            ? [.. ContentFiles.GetFiles(folder, "*.hor").Select(Path.GetFileNameWithoutExtension).OfType<string>().Order()]
             : [];
 
     /// <summary>
@@ -113,19 +114,19 @@ public static class Localisation
     /// </summary>
     public static string? FindNear(string path, int levels = 4)
     {
-        string? at = Path.GetDirectoryName(Path.GetFullPath(path));
+        string? at = Path.GetDirectoryName(ContentFiles.ResolvePath(path));
 
         for (int i = 0; i <= levels && at is not null; i++, at = Path.GetDirectoryName(at))
         {
             string here = Path.Combine(at, "localisation");
-            if (Directory.Exists(here))
+            if (ContentFiles.DirectoryExists(here))
                 return here;
 
             // A layout in a folder next to the languages, ui/layouts and ui/localisation
-            foreach (string sibling in Directory.GetDirectories(at))
+            foreach (string sibling in ContentFiles.GetDirectories(at))
             {
                 string inside = Path.Combine(sibling, "localisation");
-                if (Directory.Exists(inside))
+                if (ContentFiles.DirectoryExists(inside))
                     return inside;
             }
         }
@@ -150,14 +151,15 @@ public static class Localisation
             return texts.TryGetValue(key, out string? here) ? here : null;
 
         string file = Path.Combine(Folder, language + ".hor");
+        string cacheKey = ContentFiles.CacheKey(file);
         FrozenDictionary<string, string>? read;
         lock (othersLock)
         {
-            if (!others.TryGetValue(file, out read))
+            if (!others.TryGetValue(cacheKey, out read))
             {
                 try
                 {
-                    read = File.Exists(file) ? Read(File.ReadAllText(file), file) : null;
+                    read = ContentFiles.Exists(file) ? Read(ContentFiles.ReadAllText(file), file) : null;
                 }
                 catch (Exception e)
                 {
@@ -165,7 +167,7 @@ public static class Localisation
                     read = null;
                 }
 
-                others[file] = read;
+                others[cacheKey] = read;
             }
         }
 
@@ -277,7 +279,7 @@ public static class Localisation
     /// </summary>
     internal static FrozenDictionary<string, string> Read(string source, string file)
     {
-        var runtime = new HIDLRuntime();
+        var runtime = new HIDLRuntime().ReadingContent();
         var (success, result) = runtime.Evaluate(source);
         if (!success)
             throw new Exception($"{file} didn't run, {result}");
@@ -310,7 +312,7 @@ public static class Localisation
     /// apart from the game's (an editor's own help, while the game's language is loaded for its layouts).
     /// </summary>
     /// <exception cref="Exception">The file isn't there, didn't run, or isn't texts, the message says which.</exception>
-    public static IReadOnlyDictionary<string, string> ReadFile(string path) => Read(File.ReadAllText(path), path);
+    public static IReadOnlyDictionary<string, string> ReadFile(string path) => Read(ContentFiles.ReadAllText(path), path);
 
     private static void Flatten(Dictionary<string, IRuntimeValue> values, string prefix, Dictionary<string, string> into, string file)
     {

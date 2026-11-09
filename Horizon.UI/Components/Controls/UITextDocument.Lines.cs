@@ -20,7 +20,7 @@ public sealed partial class UITextDocument
         var (first, last) = SelectedLines();
         int count = last - first + 1;
         lines.InsertRange(last + 1, lines.GetRange(first, count));
-        LinesMoved?.Invoke(new UITextPosition(last, lines[last].Length), count);
+        NoteLineMovement(new(last, lines[last].Length), count, false, new(last + count, lines[last].Length), false);
 
         if (direction > 0)
         {

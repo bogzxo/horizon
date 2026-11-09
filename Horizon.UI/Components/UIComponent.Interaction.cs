@@ -106,6 +106,50 @@ public abstract partial class UIComponent
     /// <summary>Whether wheel input represents scrolling distance, rather than zooming or editing a value.</summary>
     protected internal virtual bool UsesScrollSpeed => false;
 
+    // What a finger dragged that didn't add up to a whole notch yet, see OnPan
+    private float panCarry;
+
+    /// <summary>How far a finger drags for one notch of the wheel, on whatever scrolls by notches and has no OnPan of its own.</summary>
+    internal const float PAN_NOTCH = 48.0f;
+
+    /// <summary>
+    /// A finger dragged over this component or something inside it, and the drag is a scroll (see
+    /// <see cref="UICompositor.TouchSlop"/>). The content goes along with the finger. True when it scrolled, false at
+    /// the end it can't go past, which hands the rest to whatever it's inside of. By default anything that scrolls by
+    /// the wheel (<see cref="UsesScrollSpeed"/>) is turned a notch for every <see cref="PAN_NOTCH"/> units.
+    /// </summary>
+    /// <param name="delta">How far the finger moved since the last time, in the layout's units, Y up.</param>
+    protected internal virtual bool OnPan(Vector2 delta)
+    {
+        if (!UsesScrollSpeed)
+            return false;
+
+        // Up the screen is down the content, which is the wheel turned towards the user
+        panCarry -= delta.Y / PAN_NOTCH;
+        int notches = (int)panCarry;
+        if (notches == 0)
+            return true;
+
+        panCarry -= notches;
+        return OnScroll(notches);
+    }
+
+    /// <summary>
+    /// Whether a finger pressed here keeps the drag that may follow, rather than having it scroll what this is inside
+    /// of. A slider, a colour, an edge that sizes, a window's title bar, a scroll bar. Asked as the finger goes down,
+    /// and a press that doesn't keep its drag inside something that scrolls isn't handed to the component until it's
+    /// clear it's no scroll (a tap, a drag sideways, a long hold).
+    /// </summary>
+    /// <param name="point">Where the finger went down, in the layout's units.</param>
+    protected internal virtual bool KeepsTouchDrag(Vector2 point) => GripAt(point) != UIResize.None;
+
+    /// <summary>
+    /// The press on this component was taken away, a finger that turned out to be scrolling, held for a context menu,
+    /// or cancelled by the system. Nothing is released and nothing is clicked.
+    /// </summary>
+    protected internal virtual void OnPointerCancel()
+    { }
+
     /// <summary>
     /// What the other button of the pointer (right click) does on this component, or on anything inside it that has
     /// nothing of its own. Called with where the pointer is, in the layout's units. Usually shows a
@@ -381,6 +425,12 @@ public abstract partial class UIComponent
     /// and tab are its own then too, the compositor leaves them alone.
     /// </summary>
     protected internal virtual bool TakesRawKeys => false;
+
+    /// <summary>
+    /// Whether this takes typed text, so a platform without a keyboard of its own (a phone) puts its soft keyboard up
+    /// while it has the focus. Only for a focus a finger gave it, see <see cref="UICompositor.TouchSlop"/>.
+    /// </summary>
+    protected internal virtual bool WantsTextInput => false;
 
     /// <summary>A key pressed (or held) while this has the focus and takes its keys raw, see <see cref="TakesRawKeys"/>.</summary>
     protected internal virtual void OnKeyDown(in UIKeyPress press)

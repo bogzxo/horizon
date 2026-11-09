@@ -306,7 +306,7 @@ public class InBetweenTests
     {
         var mouse = new Horizon.Input.Mouse();
         mouse.Place(new Vector2(100));
-        mouse.HearButton(Silk.NET.Input.MouseButton.Left, true);
+        mouse.HearButton(Horizon.Input.MouseButton.Left, true);
         mouse.Update();
         var list = new UIDrawList();
         list.Begin(Skin, 1, 1.0f / 120, 1.0f / 120);
@@ -321,14 +321,14 @@ public class InBetweenTests
         between.Frames(painted.Frames, painted.Frames, 1, UICompositor.LiveDragPointer(mouse));
         Assert.Equal(new Vector2(120, 85), Drawn(between.FramedQuads.ToArray(), Colour(0)).Min);
 
-        mouse.HearButton(Silk.NET.Input.MouseButton.Left, false);
+        mouse.HearButton(Horizon.Input.MouseButton.Left, false);
         mouse.Place(new Vector2(500, 700));
-        Assert.True(mouse.IsDown(Silk.NET.Input.MouseButton.Left)); // Simulation has not heard release yet.
+        Assert.True(mouse.IsDown(Horizon.Input.MouseButton.Left)); // Simulation has not heard release yet.
         Assert.Null(UICompositor.LiveDragPointer(mouse));
         between.Frames(painted.Frames, painted.Frames, 1, UICompositor.LiveDragPointer(mouse));
         Assert.Equal(new Vector2(90), Drawn(between.FramedQuads.ToArray(), Colour(0)).Min);
         mouse.Update();
-        Assert.False(mouse.IsDown(Silk.NET.Input.MouseButton.Left));
+        Assert.False(mouse.IsDown(Horizon.Input.MouseButton.Left));
     }
 
     [Fact]

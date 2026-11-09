@@ -89,6 +89,11 @@ public static class TerminalIntegration
     /// <summary>The file a profile's shell writes its commands into, one a profile in the user's folder.</summary>
     public static string CommandsFile(TerminalProfile profile)
     {
+        // Application profiles can encode paths or other session identity in their IDs.
+        // Keep the cache filename bounded even when that identity contains a long path.
+        if (profile.Id.Length > 80)
+            return Path.Combine(TerminalFiles.UserFolder, "cache", "commands-" + Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(profile.Id))) + ".txt");
         var name = new System.Text.StringBuilder("commands-");
         foreach (char c in profile.Id)
             name.Append(char.IsAsciiLetterOrDigit(c) ? c : '_');

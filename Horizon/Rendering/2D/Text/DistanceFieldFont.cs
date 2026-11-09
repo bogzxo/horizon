@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 using System.Security.Cryptography;
 
@@ -101,7 +102,7 @@ public sealed class DistanceFieldFont
 
         try
         {
-            if (!File.Exists(path))
+            if (!ContentFiles.Exists(path))
             {
                 Log.Error($"[DistanceFieldFont] There is no font at '{path}'.");
                 return font;
@@ -128,7 +129,7 @@ public sealed class DistanceFieldFont
 
     private unsafe (int, int, byte[]) BuildFromTrueType(string path)
     {
-        byte[] bytes = File.ReadAllBytes(path);
+        byte[] bytes = ContentFiles.ReadAllBytes(path);
         var info = new StbTrueType.stbtt_fontinfo();
         fixed (byte* data = bytes)
         {
@@ -268,7 +269,7 @@ public sealed class DistanceFieldFont
     private (int, int, byte[]) BuildFromBitmap(string directory, string path)
     {
         var importer = new BMFontImporter(directory, Path.GetFileName(path));
-        if (importer.ImagePath.Length == 0 || !File.Exists(importer.ImagePath))
+        if (importer.ImagePath.Length == 0 || !ContentFiles.Exists(importer.ImagePath))
             throw new FileNotFoundException($"the picture of the font, '{importer.ImagePath}', isn't there");
 
         var image = ImageFile.Load(importer.ImagePath);
@@ -421,7 +422,7 @@ public sealed class DistanceFieldFont
         string? shaders = ShaderCompiler.CacheDirectory();
         if (shaders is null) return null;
 
-        var hash = SHA256.HashData(File.ReadAllBytes(path));
+        var hash = SHA256.HashData(ContentFiles.ReadAllBytes(path));
         string key = Convert.ToHexString(hash)[..24] + "_" + emSize + "_" + CACHE_VERSION;
         if (rasterizeTrueTypeForDistanceField) key += "_bitmap";
 

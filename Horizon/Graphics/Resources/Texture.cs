@@ -147,13 +147,13 @@ public sealed class Texture : GpuResource, IDisposable
     {
         try
         {
-            string full = System.IO.Path.GetFullPath(path);
-            if (!File.Exists(full)) return;
+            FoundContent found = ContentFiles.Find(path);
+            if (!found.Exists) return;
 
-            long written = File.GetLastWriteTimeUtc(full).Ticks;
-            if (decodedAhead.TryGetValue(full, out Decoded known) && known.Written == written) return;
+            long written = found.LastWriteTimeUtc.Ticks;
+            if (decodedAhead.TryGetValue(found.Key, out Decoded known) && known.Written == written) return;
 
-            var image = ImageFile.Load(full);
+            var image = ImageFile.Load(found);
             var pixels = image.Pixels;
 
             if (decodedAhead.Count >= MAX_DECODED_AHEAD || Interlocked.Read(ref decodedAheadBytes) + pixels.Length > MAX_DECODED_AHEAD_BYTES)
@@ -162,7 +162,7 @@ public sealed class Texture : GpuResource, IDisposable
                 Interlocked.Exchange(ref decodedAheadBytes, 0);
             }
 
-            if (decodedAhead.TryAdd(full, new Decoded(written, image.Width, image.Height, pixels)))
+            if (decodedAhead.TryAdd(found.Key, new Decoded(written, image.Width, image.Height, pixels)))
                 Interlocked.Add(ref decodedAheadBytes, pixels.Length);
         }
         catch (Exception)
@@ -174,11 +174,11 @@ public sealed class Texture : GpuResource, IDisposable
     // What DecodeAhead made of a file, taken, if it is of the file as it is now
     private static bool TakeDecoded(string path, out Decoded decoded)
     {
-        string full = System.IO.Path.GetFullPath(path);
-        if (decodedAhead.TryRemove(full, out decoded))
+        FoundContent found = ContentFiles.Find(path);
+        if (decodedAhead.TryRemove(found.Key, out decoded))
         {
             Interlocked.Add(ref decodedAheadBytes, -decoded.Pixels.Length);
-            if (decoded.Written == File.GetLastWriteTimeUtc(full).Ticks) return true;
+            if (decoded.Written == found.LastWriteTimeUtc.Ticks) return true;
         }
 
         decoded = default;
@@ -193,7 +193,7 @@ public sealed class Texture : GpuResource, IDisposable
         if (description.Paths.Length > 0 && !string.IsNullOrEmpty(description.Paths[0]))
         {
             string path = description.Paths[0];
-            if (!File.Exists(path))
+            if (!ContentFiles.Exists(path))
             {
                 result = new AssetCreationResult<Texture> { Asset = Invalid, Message = $"Failed to find image '{path}'!", Status = AssetCreationStatus.Failed };
                 return false;

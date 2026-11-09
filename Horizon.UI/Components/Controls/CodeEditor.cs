@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Horizon.Engine;
 using Horizon.HIDL.Lexing;
@@ -23,14 +23,22 @@ namespace Horizon.UI.Components;
 /// tells what's wrong apart from what isn't.
 /// </param>
 /// <param name="Deprecated">Whether it says what it's about is obsolete, struck through the way ReSharper strikes it as well as marked.</param>
-public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false, bool Deprecated = false);
+public readonly record struct UICodeDiagnostic(int Line, int Column, int Length, string Message, bool Warning = false, bool Hint = false, bool Deprecated = false)
+{
+    /// <summary>The language server's web documentation for this diagnostic code.</summary>
+    public string? DocumentationUrl { get; init; }
+    public IReadOnlyList<UICodeDiagnosticLocation>? RelatedLocations { get; init; }
+}
+
+/// <summary>A source location the server associates with a diagnostic, such as an earlier declaration.</summary>
+public readonly record struct UICodeDiagnosticLocation(string File, int Line, int Column, string Message);
 
 /// <summary>Something a <see cref="CodeEditor"/> offers to write where the caret is, a word it knows.</summary>
 /// <param name="Text">What it is, which is what is matched against what has been typed so far.</param>
 /// <param name="Detail">A few words about it, written fainter next to it.</param>
 /// <param name="Insert">What goes in when it is picked, the text itself unless this says otherwise.</param>
 /// <param name="Kind">What kind of thing it is in a language server's words (method, field, keyword), its icon, see UICompletionKinds.</param>
-public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "", string Kind = "");
+public readonly record struct UICompletion(string Text, string Detail = "", string? Insert = null, string Documentation = "", string Kind = "", IReadOnlyList<UITextEdit>? AdditionalEdits = null, int? ExpectedVersion = null, UITextPosition? ReplacementEnd = null, Func<Task<UICompletionDocumentation?>>? ResolveDocumentation = null, UITextPosition? ReplacementStart = null, int? SelectionStart = null, int SelectionLength = 0);
 
 /// <summary>
 /// What there is to offer at the caret, and from which column of the caret's line what is picked replaces what is there.
@@ -40,7 +48,23 @@ public readonly record struct UICompletion(string Text, string Detail = "", stri
 public readonly record struct UICompletionRequest(int Start, IReadOnlyList<UICompletion> Items, string Waiting = "");
 
 /// <summary>How a function is called, said over a call being typed, the piece from Start for Length (the argument the caret is on) in bold.</summary>
-public readonly record struct UISignature(string Text, int Start, int Length);
+public readonly record struct UISignature(string Text, int Start, int Length)
+{
+    /// <summary>The native method documentation, as plain prose for the signature popup.</summary>
+    public string Documentation { get; init; } = string.Empty;
+
+    /// <summary>Documentation for the parameter currently being entered, when supplied by the server.</summary>
+    public string ParameterDocumentation { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Every overload of the call, this one among them, each with its own argument picked out. Null (or one) for a call
+    /// with no others. Up and down go through them while it's said, Visual Studio's way.
+    /// </summary>
+    public IReadOnlyList<UISignature>? Overloads { get; init; }
+
+    /// <summary>Which of the overloads this one is, the one the language server thought best.</summary>
+    public int Active { get; init; }
+}
 
 /// <summary>A few words written faintly after the end of a line, the value a let came to in Hex (Light Table's inline results).</summary>
 public readonly record struct UICodeHint(int Line, string Text);
@@ -60,6 +84,7 @@ public enum UILineChangeKind
 
 /// <summary>A run of lines with a colour behind them right across, from a line (0 based) for so many, the lines a diff took out or put in.</summary>
 public readonly record struct UICodeLineHighlight(int Line, int Count, Vector4 Colour);
+public readonly record struct UICodeOccurrence(int Line, int Column, int Length, int Kind);
 
 /// <summary>A run of lines that changed, from a line (0 based) for so many, drawn as a bar down the gutter beside them.</summary>
 public readonly record struct UICodeLineChange(int Line, int Count, UILineChangeKind Kind);
@@ -145,6 +170,10 @@ public partial class CodeEditor : UIComponent
     // the last colouring found it starts (FreshColours), it was drawn plain for a tenth of a second. What colours it is
     // the highlighter, HIDL unless the file is another language (CodeLanguages)
     private const float RECOLOUR_DELAY = 0.05f;
+
+    // How many lines a new text has coloured on the spot, a screen or so, the rest is coloured on the pool
+    private const int COLOUR_AT_ONCE = 300;
+
     private List<SyntaxSpan>[] spans = [[]];
     private string[] colouredLines = [];
     private CodeLineStart[] lineStarts = [CodeLineStart.First];
@@ -285,6 +314,9 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
 
+    // A soft keyboard comes up for an editor a finger focused, unless nothing can be typed into it
+    protected internal override bool WantsTextInput => !ReadOnly;
+
     /// <summary>Whether the code is parsed after every change and what the parser doesn't like is underlined.</summary>
     public bool CheckSyntax { get; set; } = true;
 
@@ -322,6 +354,12 @@ public partial class CodeEditor : UIComponent
     /// narrowed down to what matches what is typed between its start and the caret, as the typing goes on.
     /// </summary>
     public Func<CodeEditor, UICompletionRequest?>? CompletionSource { get; set; }
+
+    /// <summary>Whether completion still belongs to the current external context, such as a paused debugger frame.</summary>
+    public Func<bool>? CompletionAvailable { get; set; }
+
+    /// <summary>Additional characters that ask the completion source for suggestions, such as a C++ scope colon.</summary>
+    public Func<char, bool>? CompletionTrigger { get; set; }
 
     /// <summary>
     /// Whether the last asking of <see cref="CompletionSource"/> was for something typed rather than asked for (control
@@ -367,8 +405,18 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public Func<string, int, UISignature?>? SignatureSource { get; set; }
 
-    /// <summary>What the call at the caret was said to be, null when the caret isn't in one or nobody had anything to say.</summary>
-    public UISignature? Signature => signature;
+    /// <summary>
+    /// What the call at the caret is said to be, the overload up and down went to, null when the caret isn't in one,
+    /// nobody had anything to say or escape took it away.
+    /// </summary>
+    public UISignature? Signature => ShownSignature();
+
+    /// <summary>Which overload of the call is said, from 0, and how many it has, (0, 1) for a call that has just the one.</summary>
+    public (int Index, int Count) SignatureOverload =>
+        signature is { Overloads: { Count: > 1 } all } said ? (Wrap(said.Active + overloadStep, all.Count), all.Count) : (0, 1);
+
+    /// <summary>What the box over a call says of its overloads in front of it, "1 of 3", the one it is then how many.</summary>
+    public string OverloadCounter { get; set; } = "{0} of {1}";
 
     /// <summary>
     /// Escape with nothing open over the code keeps the keyboard in it, the way every code editor has it. It let go of the
@@ -383,6 +431,13 @@ public partial class CodeEditor : UIComponent
         if (hoverPinnedFor is not null)
         {
             TakeHoverDown();
+            return true;
+        }
+
+        // Then the box over the call, until the caret's in another call or Ctrl+Shift+Space asks for it again
+        if (ShownSignature() is not null)
+        {
+            signatureHidden = true;
             return true;
         }
 
@@ -406,6 +461,7 @@ public partial class CodeEditor : UIComponent
             return;
 
         hoverPinnedFor = (document.Version, document.Caret);
+        HideSignature();
         float below = paintedSkin is { } skin ? FontOf(skin).LineHeight * paintedScale * 0.5f : 10.0f;
         module.Compositor.PinTooltip(this, markdown, CaretPoint + new Vector2(-8.0f, below), markdown: true);
     }
@@ -618,6 +674,15 @@ public partial class CodeEditor : UIComponent
     public IReadOnlySet<int>? Breakpoints { get; set; }
 
     /// <summary>
+    /// How the breakpoints that aren't plain are drawn, by their line, a condition's dot, a message's diamond, the outline
+    /// of one that's off. A line with a breakpoint and nothing here has the plain red dot. Null for all plain.
+    /// </summary>
+    public IReadOnlyDictionary<int, CodeBreakpointMark>? BreakpointMarks { get; set; }
+
+    /// <summary>Counted up by whoever changes <see cref="BreakpointMarks"/>, so the gutter is drawn again for it.</summary>
+    public int BreakpointMarksVersion { get; set; }
+
+    /// <summary>
     /// A press in the gutter's strip for the marks, given the line pressed, a breakpoint put down or taken up. Set, a dot
     /// shows faintly under the pointer there. Null and a press in the gutter selects the line, as it always did.
     /// </summary>
@@ -686,6 +751,10 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>Every place the word under the caret is, which are lit faintly.</summary>
     public IReadOnlyList<UITextPosition> Occurrences => occurrences;
+    public Func<UITextPosition, IReadOnlyList<UICodeOccurrence>?>? OccurrenceSource { get; set; }
+    public IReadOnlyList<UICodeOccurrence> NativeOccurrences => nativeOccurrences;
+    private IReadOnlyList<UICodeOccurrence> nativeOccurrences = [];
+    public void RefreshOccurrences() => occurrencesFor = (document.Version, new UITextPosition(-1, -1));
 
     /// <summary>
     /// Whether the other places of the word under the caret are lit. Off for text that's only shown, where the caret sits
@@ -700,6 +769,7 @@ public partial class CodeEditor : UIComponent
                 return;
 
             lightOccurrences = value;
+            nativeOccurrences = [];
             occurrences.Clear();
             occurrenceLength = 0;
             occurrencesFor = (-1, default);
@@ -715,6 +785,9 @@ public partial class CodeEditor : UIComponent
     public Action<float>? OnZoom { get; set; }
     protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
 
+    // A finger on the bar or the minimap drags that, anywhere else it scrolls the code
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X) || base.KeepsTouchDrag(point);
+
     /// <summary>
     /// Called as Tab is pressed with one caret and nothing selected, before it indents. True when it took the key (an
     /// abbreviation before the caret written out) and nothing is indented. Null, Tab only ever indents.
@@ -727,8 +800,14 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public Func<bool>? OnControlEnter { get; set; }
 
+    /// <summary>Offered Enter after an open completion list; true submits a code prompt instead of inserting a line.</summary>
+    public Func<bool>? OnEnter { get; set; }
+
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
+
+    /// <summary>A character typed into the document, after paired characters and indentation; Enter is a newline.</summary>
+    public Action<char>? OnTyped { get; set; }
 
     /// <summary>Called after the code has been parsed, with what the parser didn't like (null for nothing).</summary>
     public Action<UICodeDiagnostic?>? OnChecked { get; set; }
@@ -791,6 +870,7 @@ public partial class CodeEditor : UIComponent
     {
         document.Changed += () =>
         {
+            nativeFoldingRanges = null;
             checkIn = CHECK_DELAY;
             revealCaret = true;
             OnChanged?.Invoke();
@@ -932,7 +1012,18 @@ public partial class CodeEditor : UIComponent
         lineStarts = new CodeLineStart[count];
         colouredWith = Highlight ? highlighter : null;
 
-        if (Highlight)
+        if (Highlight && count > COLOUR_AT_ONCE)
+        {
+            // A big file has its top coloured now and the rest plain, all of it coloured on a thread of the pool and taken
+            // in when it's done. Reading a 100,000 line file through the grammar on the spot held the window up for nine
+            // seconds before it showed a thing
+            List<SyntaxSpan>[] top = highlighter.Read(document.Text, COLOUR_AT_ONCE, lineStarts, swatches, art);
+            spans = PlainSpans();
+            Array.Copy(top, spans, Math.Min(top.Length, spans.Length));
+            colouredWith = null;
+            coloured = document.Version - 1;
+        }
+        else if (Highlight)
         {
             spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
         }
@@ -1011,7 +1102,11 @@ public partial class CodeEditor : UIComponent
         if (fresh.Count >= MAX_FRESH)
             fresh.Clear();
 
-        List<SyntaxSpan> read = highlighter.ReadLine(text, lineStarts[was]);
+        if (!highlighter.TryReadLine(text, lineStarts[was], out var read) || read is null)
+        {
+            GameEngine.Instance?.WindowManager.RequestTickIn(0.016f);
+            return null;
+        }
         fresh[text] = read;
         return read;
     }
@@ -1108,8 +1203,18 @@ public partial class CodeEditor : UIComponent
     protected override void Update(float dt)
     {
         // The list of completions goes with the keyboard, it stayed up over whatever took it (a palette, a window)
-        if (CompletionOpen && !IsFocused)
+        if (CompletionOpen && (!IsFocused || CompletionAvailable?.Invoke() == false))
             CloseCompletion();
+        UpdateCompletionDocumentation();
+
+        // Control and Enter types nothing (UIKeyboard leaves it to the program's shortcuts), so a box with a button after
+        // it hears it here. It never got to OnTextInput, and Ctrl+Enter in a commit's message did nothing at all
+        if (OnControlEnter is not null && IsFocused && !ReadOnly && GameEngine.Instance?.Input.Keyboard is { Primary: true } keys
+            && (keys.WasPressed(Horizon.Input.Key.Enter) || keys.WasPressed(Horizon.Input.Key.KeypadEnter)))
+        {
+            CloseCompletion();
+            OnControlEnter();
+        }
 
         // The hover at the caret goes once the caret or the text moves on, or something else took it down
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
@@ -1123,25 +1228,29 @@ public partial class CodeEditor : UIComponent
         // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
         // in the background isn't painted again twice a second for a caret nobody's typing at
         blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
         if (waiting.Length > 0)
             waitedFor += dt;
         flowTime += dt;
 
+        float scrollDt = ScrollMotionDelta(dt);
+
         // The completions' rows on the way to the ones picked, a fraction of a row at a time
         if (completionShown != completionTop)
         {
-            completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * scrollDt));
             if (MathF.Abs(completionTop - completionShown) < 0.01f)
                 completionShown = completionTop;
         }
 
-        over.Step(dt, MotionSpeed);
+        over.Step(scrollDt, MotionSpeed);
 
         // On the way to where the wheel wants it
         if (scrollGoal is { } goal)
         {
-            scrollY += (goal - scrollY) * (1.0f - MathF.Exp(-SCROLL_EASE * dt));
+            scrollY += (goal - scrollY) * (1.0f - MathF.Exp(-SCROLL_EASE * scrollDt));
             if (MathF.Abs(goal - scrollY) < 0.5f)
             {
                 scrollY = goal;
@@ -1420,6 +1529,23 @@ public partial class CodeEditor : UIComponent
 
     private static bool IsBracket(char character) => character is '(' or ')' or '[' or ']' or '{' or '}';
 
+    /// <summary>
+    /// The caret over to the pair of the bracket next to it, the same side of it as it was of the first one, so going
+    /// again comes back. False with no bracket by the caret, or one whose pair is too far off to find.
+    /// </summary>
+    public bool GoToMatchingBracket()
+    {
+        if (bracketFor != (document.Version, document.Caret))
+            FindBracket();
+        if (bracket is not { } from || bracketPair is not { } to)
+            return false;
+
+        bool after = document.Caret.Column > from.Column;
+        document.MoveTo(new UITextPosition(to.Line, to.Column + (after ? 1 : 0)), false);
+        revealCaret = true;
+        return true;
+    }
+
     // The tooltip says what is wrong where the pointer rests, and nothing anywhere else
     private void UpdateTooltip()
     {
@@ -1526,6 +1652,7 @@ public partial class CodeEditor : UIComponent
         {
             occurrencesVersionSeen = document.Version;
             occurrencesWait = OCCURRENCES_AFTER;
+            nativeOccurrences = [];
             occurrences.Clear();
             occurrenceLength = 0;
             return;
@@ -1537,6 +1664,7 @@ public partial class CodeEditor : UIComponent
 
     private void FindOccurrences()
     {
+        nativeOccurrences = [];
         occurrencesFor = (document.Version, document.Caret);
         occurrences.Clear();
         occurrenceLength = 0;
@@ -1545,6 +1673,12 @@ public partial class CodeEditor : UIComponent
             return;
 
         UITextPosition caret = document.Caret;
+        if (OccurrenceSource?.Invoke(caret) is { } supplied)
+        {
+            nativeOccurrences = supplied;
+            foreach (var occurrence in supplied) occurrences.Add(new(occurrence.Line, occurrence.Column));
+            return;
+        }
         var (start, end) = document.WordAt(caret);
         if (end - start < 2)
             return;
@@ -1582,6 +1716,7 @@ public partial class CodeEditor : UIComponent
 
     protected internal override void OnTextInput(char character)
     {
+        char? typed = null;
         middleScroll.Cancel();
         blink = 0.0f;
         revealCaret = true;
@@ -1595,8 +1730,32 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        if (character == UIKeyboard.PARAMETER_INFO)
+        {
+            ShowSignature();
+            return;
+        }
+
+        // Up and down go through a call's overloads while it has more than one, Visual Studio's way
+        if (character is UIKeyboard.UP or UIKeyboard.DOWN && StepOverload(character == UIKeyboard.UP ? -1 : 1))
+            return;
+
         switch (character)
         {
+            // A box selection grown from the keyboard, Visual Studio's shift and alt with an arrow
+            case UIKeyboard.BOX_UP:
+                document.ExtendBox(-1, 0);
+                return;
+            case UIKeyboard.BOX_DOWN:
+                document.ExtendBox(1, 0);
+                return;
+            case UIKeyboard.BOX_LEFT:
+                document.ExtendBox(0, -1);
+                return;
+            case UIKeyboard.BOX_RIGHT:
+                document.ExtendBox(0, 1);
+                return;
+
             // Going about, which is allowed when it can only be read
             case UIKeyboard.LEFT or UIKeyboard.SELECT_LEFT:
                 document.MoveHorizontally(-1, character == UIKeyboard.SELECT_LEFT);
@@ -1688,7 +1847,9 @@ public partial class CodeEditor : UIComponent
             // Alt+Enter is a command's key in every editor (Properties in Hex, a quick fix elsewhere), never a new line. It
             // put one in the file as it brought the Properties up
             case UIKeyboard.ENTER when GameEngine.Instance.Input.Keyboard.Alt: break;
-            case UIKeyboard.ENTER: document.NewLine(); break;
+            case UIKeyboard.ENTER:
+                if (OnEnter?.Invoke() != true) { document.NewLine(); typed = '\n'; }
+                break;
             case UIKeyboard.TAB:
                 if (document.HasSelection || document.HasExtraCarets || OnTab?.Invoke() != true)
                     IndentOrTab();
@@ -1715,9 +1876,10 @@ public partial class CodeEditor : UIComponent
                 if (!UIKeyboard.IsEditingKey(character) && !char.IsControl(character))
                 {
                     document.Type(character);
+                    typed = character;
 
                     // A word being typed (or a member, or a key of a text) is offered what it could be
-                    if (UITextDocument.IsWordChar(character) || character is '.' or '@')
+                    if (StartsCompletion(character))
                         Complete(typed: true);
                     else
                         CloseCompletion();
@@ -1730,12 +1892,16 @@ public partial class CodeEditor : UIComponent
         {
             if (character is UIKeyboard.BACKSPACE or UIKeyboard.DELETE)
                 Complete(typed: true);
-            else if (!UITextDocument.IsWordChar(character) && character is not ('.' or '@'))
+            else if (!StartsCompletion(character))
                 CloseCompletion();
         }
+        if (typed is {} inserted) OnTyped?.Invoke(inserted);
     }
 
     /* Completing what is typed */
+
+    private bool StartsCompletion(char character) => UITextDocument.IsWordChar(character) || character is '.' or '@'
+        || CompletionTrigger?.Invoke(character) == true;
 
     /// <summary>
     /// Opens (or narrows down) the list of what the word at the caret could be. Typed, it only opens for a word that has
@@ -1743,6 +1909,7 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     public void Complete(bool typed = false)
     {
+        if (CompletionAvailable?.Invoke() == false) { CloseCompletion(); return; }
         CompletionTyped = typed;
         UICompletionRequest? asked = (CompletionSource ?? DefaultCompletions)(this);
         UITextPosition caret = document.Caret;
@@ -1758,7 +1925,8 @@ public partial class CodeEditor : UIComponent
         string prefix = line[request.Start..caret.Column];
 
         // Typed, nothing started is nothing to offer, unless it comes straight after a dot (a member) or an @ (a key)
-        bool afterMark = request.Start > 0 && line[request.Start - 1] is '.' or '@';
+        bool afterMark = request.Start > 0 && (line[request.Start - 1] is '.' or '@'
+            || CompletionTrigger?.Invoke(line[request.Start - 1]) == true);
         if (typed && prefix.Length == 0 && !afterMark)
         {
             CloseCompletion();
@@ -1824,6 +1992,8 @@ public partial class CodeEditor : UIComponent
     /// <summary>Closes the list of what can be completed, if it is open.</summary>
     public void CloseCompletion()
     {
+        completionDocumentation = null;
+        completionDocumentationFor = null;
         waiting = string.Empty;
         if (CompletionOpen)
             ClosePopup();
@@ -1835,13 +2005,31 @@ public partial class CodeEditor : UIComponent
     /// <summary>Puts what is picked in the list where the word being typed is.</summary>
     public void AcceptCompletion()
     {
+        if (CompletionAvailable?.Invoke() == false) { CloseCompletion(); return; }
         if (!CompletionOpen || completionIndex < 0 || completionIndex >= completions.Count)
             return;
 
         UICompletion picked = completions[completionIndex];
         UITextPosition caret = document.Caret;
+        string insert = picked.Insert ?? picked.Text;
+        if (picked.SelectionStart is {} selected && (selected < 0 || selected > insert.Length || picked.SelectionLength < 0 || picked.SelectionLength > insert.Length - selected)) return;
 
         CloseCompletion();
+        if (picked.AdditionalEdits is { Count: > 0 } || picked.ReplacementStart is not null || picked.ReplacementEnd is not null || picked.SelectionStart is not null)
+        {
+            if (picked.ExpectedVersion is { } version && version != document.Version)
+            {
+                Complete();
+                return;
+            }
+            UITextPosition start = picked.ReplacementStart ?? (caret with { Column = completionStart });
+            UITextPosition end = picked.ReplacementEnd ?? caret;
+            if (start.Line != caret.Line || start.Column < 0 || start > caret || end.Line != caret.Line || end < caret)
+                return;
+            document.ApplyCompletion(new(start, end, insert), picked.AdditionalEdits ?? [], picked.SelectionStart, picked.SelectionLength);
+            revealCaret = true;
+            return;
+        }
         document.Select(caret with { Column = completionStart }, caret);
         document.Insert(picked.Insert ?? picked.Text);
         revealCaret = true;
@@ -2244,8 +2432,7 @@ public partial class CodeEditor : UIComponent
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
             // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
-            float strip = Bounds.Shrink(Padding).Min.X + GLYPH_PAD + MathF.Round(FontOf(painted).LineHeight * paintedScale * 0.8f) + 2.0f;
-            if (OnGutterPressed is not null && point.X < strip)
+            if (OnGutterPressed is not null && point.X < BreakpointStripRight(painted))
             {
                 OnGutterPressed(at.Line);
                 return;
@@ -2266,9 +2453,11 @@ public partial class CodeEditor : UIComponent
         lastPress = now;
         lastPressAt = at;
 
-        // Alt puts down another caret, alt and shift dragged makes a column of them
+        // Alt puts down another caret, alt and shift dragged makes a column of them. With Visual Studio's keys alt dragged
+        // makes the column and it's control and alt that puts down a caret
         var keyboard = GameEngine.Instance.Input.Keyboard;
-        if (keyboard.Alt && keyboard.Shift)
+        bool visualStudio = UIKeyboard.VisualStudioKeys;
+        if (keyboard.Alt && (keyboard.Shift || visualStudio && !keyboard.Control))
         {
             columnFrom = at;
             document.SelectColumn(at, at);
@@ -2348,6 +2537,7 @@ public partial class CodeEditor : UIComponent
         if (CompletionOpen && Module is { } module && CompletionBounds().Contains(module.ToLocal(module.Compositor.Pointer.Position)))
         {
             int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
+            BeginScrollMotion(completionShown != completionTop);
             completionTop = Math.Clamp(completionTop - rows * Math.Sign(delta), 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
             return true;
         }
@@ -2358,6 +2548,7 @@ public partial class CodeEditor : UIComponent
 
         // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up.
         // Whatever of it goes past the top or the bottom stretches the code out past it and springs back
+        BeginScrollMotion(scrollGoal is not null || over.Active);
         float wanted = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
         scrollGoal = wanted;
         ClampScroll(skin, paintedScale);
@@ -2485,6 +2676,13 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        foreach (var occurrence in nativeOccurrences)
+        {
+            if (occurrence.Line < firstLine || occurrence.Line > lastLine || occurrence.Line >= document.LineCount || occurrence.Length <= 0) continue;
+            Vector4 colour = occurrence.Kind == 3 ? skin.HighlightColor with { W = 0.25f }
+                : occurrence.Kind == 2 ? skin.HighlightColor with { W = 0.12f } : skin.TextColor with { W = 0.1f };
+            list.Rect(Piece(skin, scale, area, left, lineHeight, occurrence.Line, occurrence.Column, occurrence.Column + occurrence.Length), colour);
+        }
         if (occurrenceLength > 0)
         {
             Vector4 same = skin.TextColor with { W = 0.1f };
@@ -2645,7 +2843,7 @@ public partial class CodeEditor : UIComponent
         PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // How the call being typed is called, over it
-        if (focused && signature is { } said)
+        if (focused && ShownSignature() is { } said)
             PaintSignature(list, skin, scale, area, left, lineHeight, first, said);
 
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
@@ -2714,13 +2912,66 @@ public partial class CodeEditor : UIComponent
     private UITextPosition signatureAt;
     private (int Version, UITextPosition Caret) signatureFor = (-1, default);
 
-    // Back from the caret to the bracket of the call it's inside of, counting the commas on the way, and the name before it
+    // How many overloads on from the one the source picked up and down went, and whether escape took the box away, both
+    // for the call they were for and forgotten in another
+    private int overloadStep;
+    private bool signatureHidden;
+    private (UITextPosition At, string Name) signatureOf;
+
+    private static int Wrap(int index, int count) => ((index % count) + count) % count;
+
+    // The overload up and down went to, nothing while escape has it away
+    private UISignature? ShownSignature()
+    {
+        if (signatureHidden || signature is not { } said)
+            return null;
+        return said.Overloads is { Count: > 1 } all ? all[Wrap(said.Active + overloadStep, all.Count)] with { Overloads = all, Active = said.Active } : said;
+    }
+
+    /// <summary>
+    /// The box over the call at the caret taken away the way Escape takes it, for another popup coming up over the code
+    /// (the fixes of Ctrl+., the hover). It stayed up over them, saying what a call the caret had left took.
+    /// </summary>
+    public void HideSignature() => signatureHidden = true;
+
+    /// <summary>The box over the call at the caret said again after escape took it away (Ctrl+Shift+Space), and asked for afresh.</summary>
+    public void ShowSignature()
+    {
+        signatureHidden = false;
+        signatureFor = (-1, default);
+    }
+
+    // Up or down with a call of more than one overload said, the next one or the one before it. False for anything else,
+    // the caret goes up or down then
+    private bool StepOverload(int by)
+    {
+        if (ShownSignature() is not { Overloads.Count: > 1 })
+            return false;
+
+        overloadStep += by;
+        return true;
+    }
+
+    // The call the caret's in found, and out of every call the next one is said afresh. Escape's was for the call it
+    // was pressed in, and going back into that one later had nothing said of it
     private void FindSignature()
+    {
+        if (FindCall())
+            return;
+
+        signatureOf = default;
+        overloadStep = 0;
+        signatureHidden = false;
+    }
+
+    // Back from the caret to the bracket of the call it's inside of, counting the commas on the way, and the name before
+    // it. False when it's in none
+    private bool FindCall()
     {
         signatureFor = (document.Version, document.Caret);
         signature = null;
         if (SignatureSource is not { } source || document.HasSelection)
-            return;
+            return false;
 
         int line = document.Caret.Line, column = document.Caret.Column, depth = 0, commas = 0;
         for (int steps = 0; steps < 4000; steps++)
@@ -2728,19 +2979,32 @@ public partial class CodeEditor : UIComponent
             if (column == 0)
             {
                 if (--line < 0)
-                    return;
+                    return false;
                 column = document.LineAt(line).Length;
                 continue;
             }
 
             string text = document.LineAt(line);
             char at = text[--column];
-            if (at == '"')
+            if (at == '\'' && column > 0 && column + 1 < text.Length
+                && char.IsAsciiHexDigit(text[column - 1]) && char.IsAsciiHexDigit(text[column + 1]))
+            {
+                // C++ digit separators are not character-literal delimiters.
+                continue;
+            }
+            if (at is '"' or '\'')
             {
                 // A text is gone over whole, its commas and brackets aren't the call's
-                int open = column > 0 ? text.LastIndexOf('"', column - 1) : -1;
+                int open = column - 1;
+                for (; open >= 0; open--)
+                {
+                    if (text[open] != at) continue;
+                    int slashes = 0;
+                    for (int before = open - 1; before >= 0 && text[before] == '\\'; before--) slashes++;
+                    if (slashes % 2 == 0) break;
+                }
                 if (open < 0)
-                    return;
+                    return false;
                 column = open;
             }
             else if (at is ')' or ']' or '}')
@@ -2757,18 +3021,27 @@ public partial class CodeEditor : UIComponent
 
                 // Inside a list or an object rather than a call, or a bracket with no name before it, nothing to say
                 if (at != '(')
-                    return;
+                    return false;
 
                 int end = column;
                 while (end > 0 && text[end - 1] == ' ') end--;
                 int start = end;
                 while (start > 0 && (UITextDocument.IsWordChar(text[start - 1]) || text[start - 1] == '.')) start--;
                 if (end <= start)
-                    return;
+                    return false;
 
-                signature = source(text[start..end], commas);
+                string name = text[start..end];
+                signature = source(name, commas);
                 signatureAt = new UITextPosition(line, start);
-                return;
+
+                // Another call starts over at the overload the source picks, and is said again after escape
+                if (signatureOf != (signatureAt, name))
+                {
+                    signatureOf = (signatureAt, name);
+                    overloadStep = 0;
+                    signatureHidden = false;
+                }
+                return true;
             }
             else if (at == ',' && depth == 0)
             {
@@ -2776,9 +3049,11 @@ public partial class CodeEditor : UIComponent
             }
             else if (at == ';' && depth == 0)
             {
-                return;
+                return false;
             }
         }
+
+        return false;
     }
 
     // The signature in a box over the row of the call's name (under it when that's the top row), the argument the caret is
@@ -2790,26 +3065,51 @@ public partial class CodeEditor : UIComponent
 
         list.BeginPart(PART_SIGNATURE);
         float small = scale * 0.92f;
-        float height = FontOf(skin).LineHeight * small + TEXT_PAD;
-        float width = FontOf(skin).Measure(said.Text, small, markup: false).X + TEXT_PAD * 2.0f + FontOf(skin).Measure(" ", small, markup: false).X;
+        UIFont codeFont = FontOf(skin), proseFont = skin.Font;
+
+        // Which overload of how many in front of it, when it has others, the way Visual Studio says it
+        var (index, count) = SignatureOverload;
+        string counter = count > 1 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, OverloadCounter, index + 1, count) + "   " : string.Empty;
+        Vector2 size = SignaturePopupSize(said, counter, codeFont, proseFont, small, area.Size);
+        float width = size.X, height = size.Y;
         int row = RowOf(signatureAt.Line, signatureAt.Column);
         float top = RowTop(area, row, lineHeight);
         float x = MathF.Max(area.Min.X, left + ColumnX(skin, scale, signatureAt.Line, signatureAt.Column) - TEXT_PAD);
+        x = Math.Clamp(x, area.Min.X, MathF.Max(area.Min.X, area.Max.X - width));
         float bottom = row > first ? top : top - lineHeight - height;
         if (bottom + height > area.Max.Y) bottom = top - lineHeight - height;
+        bottom = Math.Clamp(bottom, area.Min.Y, MathF.Max(area.Min.Y, area.Max.Y - height));
 
         var box = new UIRect(new Vector2(x, bottom), new Vector2(x + width, bottom + height));
         list.Popup(box, Module?.Compositor.PopupGlass);
 
         int start = Math.Clamp(said.Start, 0, said.Text.Length), length = Math.Clamp(said.Length, 0, said.Text.Length - start);
+        start += counter.Length;
         Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.75f };
-        float pen = box.Min.X + TEXT_PAD, textTop = box.Max.Y - TEXT_PAD * 0.5f;
-        ReadOnlySpan<char> all = said.Text;
-        list.Text(all[..start], new Vector2(pen, textTop), small, text, markup: false);
-        pen += FontOf(skin).Measure(all[..start], small, markup: false).X;
-        list.Text(all.Slice(start, length), new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
-        pen += FontOf(skin).Measure(all.Slice(start, length), small, markup: false).X + FontOf(skin).BoldAdvance * small * length;
-        list.Text(all[(start + length)..], new Vector2(pen, textTop), small, text, markup: false);
+        float textTop = box.Max.Y - TEXT_PAD * 0.5f;
+        list.PushFont(codeFont);
+        foreach (var line in signatureLabelLines)
+        {
+            ReadOnlySpan<char> all = signaturePopupLabel.AsSpan(line.Start, line.Length);
+            int from = Math.Clamp(start - line.Start, 0, line.Length), to = Math.Clamp(start + length - line.Start, from, line.Length);
+            float pen = box.Min.X + TEXT_PAD;
+            list.Text(all[..from], new Vector2(pen, textTop), small, text, markup: false);
+            pen += codeFont.Measure(all[..from], small, markup: false).X;
+            list.Text(all[from..to], new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
+            pen += codeFont.Measure(all[from..to], small, markup: false).X + codeFont.BoldAdvance * small * (to - from);
+            list.Text(all[to..], new Vector2(pen, textTop), small, text, markup: false);
+            textTop -= codeFont.LineHeight * small;
+        }
+        list.PopFont();
+        if (signatureDocLines.Count > 0)
+        {
+            textTop -= TEXT_PAD;
+            var inside = new UIRect(new Vector2(box.Min.X + TEXT_PAD, box.Min.Y + TEXT_PAD * 0.5f), new Vector2(box.Max.X - TEXT_PAD, textTop));
+            list.PushFont(proseFont);
+            list.Text(signaturePopupDocs, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(signatureDocLines), inside,
+                Horizon.Rendering.Origin.TopLeft, small, skin.DimTextColor, markup: false);
+            list.PopFont();
+        }
     }
 
     // The part of a selection on a row, to the end of the row and a little past it on the rows it runs over
@@ -2846,6 +3146,9 @@ public partial class CodeEditor : UIComponent
 
     /// <summary>Where the caret was drawn last, the middle of its left edge, for something to happen there (sparks).</summary>
     public Vector2 CaretPoint { get; private set; }
+
+    /// <summary>How tall the caret's line was drawn last, for something put under it (Visual Studio's fixes by the caret).</summary>
+    public float CaretLineHeight { get; private set; }
 
     // How long the last tick was, for the glide, and where the caret is drawn against the code (from the top of its first
     // row, so scrolling moves it with the code rather than it gliding after it)
@@ -2896,6 +3199,7 @@ public partial class CodeEditor : UIComponent
             x = origin.X + caretDrawn.X;
             top = origin.Y + caretDrawn.Y;
             CaretPoint = new Vector2(x, top - lineHeight * 0.5f);
+            CaretLineHeight = lineHeight;
         }
 
         if (CaretStyle == UICaretStyle.Line)

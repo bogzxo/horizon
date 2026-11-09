@@ -80,15 +80,15 @@ public sealed class UIWrapShape
         try
         {
             // The last picture read is kept, it's read again as often as anybody asks for its shape (a setting changed)
-            string full = System.IO.Path.GetFullPath(path);
-            long written = System.IO.File.GetLastWriteTimeUtc(full).Ticks;
+            Horizon.Content.FoundContent found = Horizon.Content.ContentFiles.Find(path);
+            long written = found.LastWriteTimeUtc.Ticks;
             lock (lastSync)
             {
-                if (last is not { } known || known.Path != full || known.Written != written)
+                if (last is not { } known || known.Path != found.Key || known.Written != written)
                 {
-                    var image = ImageFile.Load(full);
+                    var image = ImageFile.Load(found);
                     var read = image.Pixels;
-                    last = known = (full, written, read, image.Width, image.Height);
+                    last = known = (found.Key, written, read, image.Width, image.Height);
                 }
 
                 return FromPixels(known.Pixels, known.Width, known.Height, solid);

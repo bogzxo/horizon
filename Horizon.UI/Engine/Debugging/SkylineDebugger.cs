@@ -14,7 +14,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using Button = Horizon.UI.Components.Button;
 

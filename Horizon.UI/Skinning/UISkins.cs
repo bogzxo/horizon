@@ -1,4 +1,6 @@
+using Horizon.Content;
 using Horizon.Logging;
+using Horizon.Platform;
 using Horizon.UI.Scripting;
 
 namespace Horizon.UI.Skinning;
@@ -222,7 +224,7 @@ public static class UISkins
                 return;
             }
 
-            if (File.Exists(path) && File.ReadAllText(path).Trim() is { Length: > 0 } kept)
+            if (PlatformStorage.Exists(path) && PlatformStorage.ReadAllText(path).Trim() is { Length: > 0 } kept)
             {
                 string[] parts = kept.Split(':', 2);
                 if (Find(parts[0]) is { } skin)
@@ -246,11 +248,9 @@ public static class UISkins
 
         try
         {
-            if (Path.GetDirectoryName(Path.GetFullPath(path)) is { Length: > 0 } folder)
-                System.IO.Directory.CreateDirectory(folder);
-
+            // Storage makes the folder it needs, and only puts the file in place once all of it is written
             UISkinChoice skin = Current;
-            File.WriteAllText(path, Theme is { } theme ? $"{skin.Name}:{theme}" : skin.Name);
+            PlatformStorage.WriteAllText(path, Theme is { } theme ? $"{skin.Name}:{theme}" : skin.Name);
         }
         catch (Exception e)
         {
@@ -308,12 +308,12 @@ public static class UISkins
     private static UISkinChoice[] Scan()
     {
         var found = new List<UISkinChoice>();
-        if (!System.IO.Directory.Exists(ROOT))
+        if (!ContentFiles.DirectoryExists(ROOT))
             return [];
 
-        foreach (string folder in System.IO.Directory.GetDirectories(ROOT).Order(StringComparer.OrdinalIgnoreCase))
+        foreach (string folder in ContentFiles.GetDirectories(ROOT).Order(StringComparer.OrdinalIgnoreCase))
         {
-            if (!System.IO.File.Exists(Path.Combine(folder, FILE)))
+            if (!ContentFiles.Exists(Path.Combine(folder, FILE)))
                 continue;
 
             string name = Path.GetFileName(folder.TrimEnd('/', '\\'));

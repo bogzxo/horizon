@@ -110,6 +110,11 @@ internal static class TestCatalog
             ["UISkin", "themes", "icons in text", "TextureAtlas"],
             "Examples/Game/UISkinExample.cs", () => new UISkinExample()) { Aliases = ["ui-pack"] },
 
+        new("touch-input", TestLevel.MakingAGame, "Touch, mouse and keyboard",
+            "Everything that points and types on one page that says what it heard. Taps, double clicks, holding for a menu, a slider, a text box and a list that scrolls by the wheel or a finger, with the mouse, the keys, the modifiers and every finger on the screen read out.",
+            ["Touch", "Mouse", "Keyboard", "UIPointer", "PointerKind", "ScrollPanel"],
+            "Examples/Game/TouchInputExample.cs", () => new TouchInputExample()) { Aliases = ["touch", "mouse-keyboard"] },
+
         /* Light and effects */
 
         new("lighting", TestLevel.LightAndEffects, "Lights and shadows",
@@ -154,7 +159,7 @@ internal static class TestCatalog
         new("terminal", TestLevel.UnderTheHood, "A terminal",
             "The machine's shell in a TerminalView, the first piece of Dusk. A real terminal, ConPTY and a VT screen, type into it, run vim in it, resize the window and watch the lines reflow.",
             ["TerminalView", "TerminalScreen", "PseudoTerminal"],
-            "Examples/Internals/TerminalExample.cs", () => new TerminalExample()),
+            "Examples/Internals/TerminalExample.cs", TestPlatform.Terminal) { Unsupported = TestPlatform.TerminalUnsupported },
 
         /* Checks */
 
@@ -202,6 +207,26 @@ internal static class TestCatalog
             "Bold, italic, colours and sizes out of tags in square brackets, and markdown in a label, headings, lists, quotes, code, rules and links, wrapped and clicked.",
             ["UIRichText", "Label", "UITextStyle"],
             "Checks/UITextCheck.cs", () => new UITextCheck()),
+
+        new("check-surface", TestLevel.Checks, "The window's surface",
+            "Takes the window's surface away and gives it back three times, resizing in between, and checks the device and a render target made at the start stay through it all.",
+            ["GraphicsDevice", "IPlatformSurface"],
+            "Checks/SurfaceCheck.cs", () => new SurfaceCheck()),
+
+        new("check-render-scale", TestLevel.Checks, "Render scale and upscaling",
+            "The scene drawn at 0.75 and 0.5 of the window and blown up with CAS, bilinear and nearest, the UI at full size over it or drawn small with the whole frame, through a resize and the surface going away. The window, the camera and the UI's layout stay put, CAS and nearest on the GPU match their references.",
+            ["FrameScaler", "RenderScaleSettings", "CasReference"],
+            "Checks/RenderScaleCheck.cs", () => new RenderScaleCheck()),
+
+        new("check-render-scale-quality", TestLevel.Checks, "Render scale, the upscalers side by side",
+            "A lit tile map, a sprite, text in the world and a native UI line, held still and drawn at 0.75, 0.5 and 720p through CAS, GSR 1, FSR 1 and bilinear. Each frame's size, upscaler and UI are checked, how close it comes to native and its GPU time go in the log.",
+            ["FrameScaler", "Upscaler", "SpatialReference"],
+            "Checks/RenderScaleQualityCheck.cs", () => new RenderScaleQualityCheck()),
+        new("check-crt-resolution", TestLevel.Checks, "CRT logical resolution and sampling",
+            "The lit cellar through CRT at native, 75% and 45%, with zoom and aspect changes. Checks the tube grid stays artwork-sized and undersampled beams retain their mean light.",
+            ["CrtEffect", "PostContext"],
+            "Checks/RenderScaleQualityCheck.Crt.cs", () => new RenderScaleQualityCheck(crt: true)),
+        .. TestPlatform.Extra,
     ]);
 
     /// <summary>Finds an example by its id, or by one of the ids the examples before it went by, whatever the case. Null if there's no such thing.</summary>

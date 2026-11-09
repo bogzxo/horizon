@@ -44,7 +44,7 @@ public sealed class BlurredBackdrop : GameObject, IDisposable
 
     public override void Render(float dt)
     {
-        Vector2 size = GameEngine.Instance.WindowManager.ViewportSize;
+        Vector2 size = GameEngine.Instance.WindowManager.Scaling.TargetSize;
         if (size.X < 1.0f || size.Y < 1.0f)
             return;
 

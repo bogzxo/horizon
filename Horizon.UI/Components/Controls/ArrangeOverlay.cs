@@ -4,7 +4,7 @@ using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 

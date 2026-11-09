@@ -40,7 +40,8 @@
  *   HORIZON_SCREENSHOT=f.png@3  saves what was drawn three seconds in
  *
  * Keys that work in every example. Esc for the menu, Page Up and Page Down for the one before and after, F1 folds
- * the list of keys away, F3 goes round the performance overlay (a pill, the whole card, nothing), and in a Debug build
+ * the list of keys away, F3 goes round the performance overlay (a pill, the whole card, nothing), F4 steps the render scale (Auto,
+ * Native, 75%, 50%) and F5 opens its picker, upscaler and all, and in a Debug build
  * F10 brings up the engine's Skyline debugger, the example in a container with the scene tree, an inspector that
  * changes its fields as it runs, what is loaded and what every pass costs around it. F8 pauses, F9 steps a tick.
  */
@@ -59,6 +60,9 @@ internal class Program
         // The shaders, the skins and Assets/examples are next to the exe, and `dotnet run` (or an editor that isn't
         // Visual Studio) starts it in the folder of the project instead, where there are none of them
         Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
+        // The examples run in a desktop window, the platform is said before the engine is made
+        Horizon.Platform.Desktop.DesktopPlatform.Install();
 
         // A 1600 by 900 window, logic and physics each ticking 120 times a second. Change any of that with a
         // `with` (UpdatesPerSecond, PhysicsUpdatesPerSecond, Presentation, VSync and friends).
@@ -81,10 +85,13 @@ internal class Program
         // one corner the examples leave alone
         engine.AddEntity(new Horizon.UI.PerformanceOverlay { Corner = Horizon.Rendering.Origin.BottomRight });
 
-        // The skin the examples were left in the last time (the selector has the setting, F6 and F7 step it). Not
-        // for a run of the checks, those want the same skin every time
+        // The skin and the render scale the examples were left in the last time (the selector has both, F6 and F7 step
+        // the skin, F4 the scale). Not for a run of the checks, those want the same skin and scale every time
         if (args.Length == 0 || !args[0].StartsWith("check", StringComparison.OrdinalIgnoreCase) && args[0] != CHECKS)
+        {
             Horizon.UI.Skinning.UISkins.Remember(Path.Combine(AppContext.BaseDirectory, "examples_skin.txt"));
+            host.RememberRenderScale(Path.Combine(AppContext.BaseDirectory, "examples_render_scale.txt"));
+        }
 
         // `dotnet run -- particles` starts straight in an example, by its id. Without one, or with one that doesn't
         // exist, you get the selector.

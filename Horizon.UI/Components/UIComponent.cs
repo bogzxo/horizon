@@ -622,6 +622,19 @@ public abstract partial class UIComponent
 
     /* Updating */
 
+    private bool scrollStarting;
+
+    // Wheel input is routed before Update. The first dt after application-idle includes time
+    // before this gesture existed; do not spend that time advancing its new animation.
+    protected void BeginScrollMotion(bool alreadyMoving) => scrollStarting |= !alreadyMoving;
+
+    protected float ScrollMotionDelta(float dt)
+    {
+        bool starting = scrollStarting;
+        scrollStarting = false;
+        return starting ? MathF.Min(dt, 1.0f / 60.0f) : dt;
+    }
+
     internal void UpdateTree(float dt)
     {
         tweens?.Tick(dt);

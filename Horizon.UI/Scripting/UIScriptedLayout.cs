@@ -4,7 +4,7 @@ using Horizon.HIDL.Library;
 using Horizon.HIDL.Runtime;
 using Horizon.UI.Components;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 using ValueType = Horizon.HIDL.Runtime.ValueType;
 
 namespace Horizon.UI.Scripting;
@@ -228,22 +228,22 @@ public sealed class UIScriptedLayout(IUIScriptOwner owner, string kind, UILayout
     {
         var keys = new List<(Key, string)>
         {
-            (Silk.NET.Input.Key.Left, "left"), (Silk.NET.Input.Key.Right, "right"), (Silk.NET.Input.Key.Up, "up"), (Silk.NET.Input.Key.Down, "down"),
-            (Silk.NET.Input.Key.Home, "home"), (Silk.NET.Input.Key.End, "end"), (Silk.NET.Input.Key.Space, "space"), (Silk.NET.Input.Key.Delete, "delete"),
-            (Silk.NET.Input.Key.Enter, "enter"), (Silk.NET.Input.Key.PageUp, "page_up"), (Silk.NET.Input.Key.PageDown, "page_down")
+            (Horizon.Input.Key.Left, "left"), (Horizon.Input.Key.Right, "right"), (Horizon.Input.Key.Up, "up"), (Horizon.Input.Key.Down, "down"),
+            (Horizon.Input.Key.Home, "home"), (Horizon.Input.Key.End, "end"), (Horizon.Input.Key.Space, "space"), (Horizon.Input.Key.Delete, "delete"),
+            (Horizon.Input.Key.Enter, "enter"), (Horizon.Input.Key.PageUp, "page_up"), (Horizon.Input.Key.PageDown, "page_down")
         };
         for (char letter = 'a'; letter <= 'z'; letter++)
-            keys.Add((Silk.NET.Input.Key.A + (letter - 'a'), letter.ToString()));
+            keys.Add((Horizon.Input.Key.A + (letter - 'a'), letter.ToString()));
         for (char digit = '0'; digit <= '9'; digit++)
-            keys.Add((Silk.NET.Input.Key.Number0 + (digit - '0'), digit.ToString()));
-        keys.Add((Silk.NET.Input.Key.Comma, ","));
-        keys.Add((Silk.NET.Input.Key.Period, "."));
-        keys.Add((Silk.NET.Input.Key.LeftBracket, "["));
-        keys.Add((Silk.NET.Input.Key.RightBracket, "]"));
-        keys.Add((Silk.NET.Input.Key.Escape, "escape"));
-        keys.Add((Silk.NET.Input.Key.Backspace, "backspace"));
-        keys.Add((Silk.NET.Input.Key.Tab, "tab"));
-        keys.Add((Silk.NET.Input.Key.Slash, "/"));
+            keys.Add((Horizon.Input.Key.Number0 + (digit - '0'), digit.ToString()));
+        keys.Add((Horizon.Input.Key.Comma, ","));
+        keys.Add((Horizon.Input.Key.Period, "."));
+        keys.Add((Horizon.Input.Key.LeftBracket, "["));
+        keys.Add((Horizon.Input.Key.RightBracket, "]"));
+        keys.Add((Horizon.Input.Key.Escape, "escape"));
+        keys.Add((Horizon.Input.Key.Backspace, "backspace"));
+        keys.Add((Horizon.Input.Key.Tab, "tab"));
+        keys.Add((Horizon.Input.Key.Slash, "/"));
         return [.. keys];
     }
 }

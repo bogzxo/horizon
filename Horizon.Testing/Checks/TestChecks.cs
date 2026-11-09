@@ -39,7 +39,11 @@ internal sealed class TestChecks(string title)
 
         results.Add((name, passed));
         Console.WriteLine($"[{title}] {(passed ? "pass" : "FAIL")}: {name}");
+        if (!passed) CheckLog.Failed(title, name);
     }
+
+    /// <summary>A check that can't be made here, said with why. It's neither passed nor failed and isn't counted.</summary>
+    public void Skip(string name, string why) => CheckLog.Skipped(title, name, why);
 
     /// <summary>Prints how many of the checks held.</summary>
     public void Report() => Console.WriteLine($"[{title}] {Passed} of {Count} checks passed.");

@@ -6,11 +6,32 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ "master", "development" ]
+    branches: [ "master", "development", "platform" ]
   pull_request:
     branches: [ "master", "development" ]
 
 jobs:
+  android-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
+          dotnet-quality: preview
+      - name: Install Android workload
+        run: dotnet workload install android
+      - name: Report Android toolchain
+        run: dotnet workload list
+      - uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: '21'
+      - name: Install Android SDK dependencies
+        run: dotnet build Horizon.Android.Probe/Horizon.Android.Probe.csproj -t:InstallAndroidDependencies -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME" -p:AcceptAndroidSdkLicenses=True
+      - name: Build Android loader probe
+        run: dotnet build Horizon.Android.Probe/Horizon.Android.Probe.csproj -c Debug -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME"
+
   test:
     strategy:
       fail-fast: false

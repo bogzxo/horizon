@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 using Horizon.Graphics;
 
@@ -159,7 +160,7 @@ public sealed class VoxelPalette
     /// <summary>The same, the atlas read from a file (a PNG, or anything else ImageSharp or the Aseprite reader takes). Nothing happens if it can't be read.</summary>
     public void AverageTiles(string atlasPath)
     {
-        if (!File.Exists(atlasPath)) return;
+        if (!ContentFiles.Exists(atlasPath)) return;
 
         var image = ImageFile.Load(atlasPath);
         if (image.Width != image.Height) return;

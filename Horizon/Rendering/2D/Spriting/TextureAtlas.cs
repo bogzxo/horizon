@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Horizon.Content;
 
 using Horizon.Logging;
 
@@ -75,7 +76,7 @@ public sealed class TextureAtlas : IDisposable
     public bool Smooth { get; set; }
     private const int MAX_HEIGHT = 16384;   // As tall as it is allowed to grow, or what the card takes if that's less
 
-    private readonly record struct Pending(string Key, string Path, int X, int Y, int Width, int Height, string? Layer, int Most = 0);
+    private readonly record struct Pending(string Key, FoundContent File, int X, int Y, int Width, int Height, string? Layer, int Most = 0);
 
     // The top edge of what's been packed, left to right, as a run of flat segments. A new region goes on the
     // lowest segment it fits on (the skyline packer), which fills the holes rows would leave
@@ -185,10 +186,13 @@ public sealed class TextureAtlas : IDisposable
     /// picture far too big for the atlas), 0 for as it is.
     /// </param>
     public void Request(string key, string imagePath, int x, int y, int width, int height, string? layer = null, int most = 0)
+        => Request(key, ContentFiles.Find(imagePath), x, y, width, height, layer, most);
+
+    internal void Request(string key, FoundContent file, int x, int y, int width, int height, string? layer, int most = 0)
     {
         if (_requested.TryAdd(key, 0))
         {
-            _pending.Enqueue(new Pending(key, imagePath, x, y, width, height, layer, most));
+            _pending.Enqueue(new Pending(key, file, x, y, width, height, layer, most));
         }
     }
 
@@ -216,7 +220,9 @@ public sealed class TextureAtlas : IDisposable
     /// </summary>
     internal AtlasFrames Frames(in SpriteSource sprite)
     {
-        if (_frames.TryGetValue(sprite, out AtlasFrames? known))
+        SpriteSource captured = sprite.File.HasValue ? sprite : sprite with { File = ContentFiles.Find(sprite.Path) };
+        FoundContent file = captured.File!.Value;
+        if (_frames.TryGetValue(captured, out AtlasFrames? known))
             return known;
 
         string[] keys = new string[Math.Max(sprite.Frames, 1)];
@@ -225,17 +231,32 @@ public sealed class TextureAtlas : IDisposable
             // Wherever the sheet says the frame is, to the right of the one before unless it says otherwise
             (int x, int y) = sprite.FrameAt(frame);
 
-            keys[frame] = KeyFor(sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
-            Request(keys[frame], sprite.Path, x, y, sprite.Width, sprite.Height, sprite.Layer);
+            keys[frame] = KeyFor(file.Key, x, y, sprite.Width, sprite.Height, sprite.Layer);
+            Request(keys[frame], file, x, y, sprite.Width, sprite.Height, sprite.Layer);
         }
 
-        return _frames.GetOrAdd(sprite, new AtlasFrames(keys));
+        return _frames.GetOrAdd(captured, new AtlasFrames(keys));
     }
 
     /// <summary>
     /// Whether anything that was asked for is still waiting for <see cref="Update"/> to put it in. Thread-safe.
     /// </summary>
-    public bool HasPending => !_pending.IsEmpty;
+    public bool HasPending
+    {
+        get
+        {
+            // A drained queue can still be getting packed or uploaded, and packed regions aren't published yet
+            if (!Monitor.TryEnter(_packing)) return true;
+            try
+            {
+                return !_pending.IsEmpty || _packed is not null;
+            }
+            finally
+            {
+                Monitor.Exit(_packing);
+            }
+        }
+    }
 
     /// <summary>
     /// Finds where a piece of art is in the atlas, false if it wasn't asked for or hasn't been put in yet. Thread-safe.
@@ -328,7 +349,7 @@ public sealed class TextureAtlas : IDisposable
         foreach (var pending in batch)
         {
             // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for
-            if (SpriteImages.Read(pending.Path, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
+            if (SpriteImages.Read(pending.File, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
             if (pending.Most > 0 && (part.Width > pending.Most || part.Height > pending.Most))
                 part = Shrink(part, pending.Most);
 

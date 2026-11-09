@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Content.Descriptions;
 
 namespace Horizon.Graphics;
@@ -18,11 +19,11 @@ public readonly struct ShaderDescription : IAssetDescription
     /// </summary>
     public static ShaderDescription FromPath(in string path, in string name)
     {
-        if (!Path.Exists(path))
+        if (!ContentFiles.DirectoryExists(path))
             return new ShaderDescription { Definitions = [] };
 
         List<ShaderDefinition> definitions = [];
-        foreach (string file in Directory.GetFiles(path, $"{name}.*"))
+        foreach (string file in ContentFiles.GetFiles(path, $"{name}.*"))
         {
             string ext = Path.GetExtension(file).ToLowerInvariant().Trim('.');
             if (ext is not ("slang" or "hlsl"))

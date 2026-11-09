@@ -2,7 +2,7 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Scripting;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 
 namespace Horizon.Tests.UI;
 
@@ -74,6 +74,30 @@ public class CodeCommentsTests
         var sql = Doc("select 1;", CodeComments.For("source.sql"));
         sql.ToggleComment();
         Assert.Equal("-- select 1;", sql.Text);
+    }
+
+    [Fact]
+    public void Visual_studios_comment_and_uncomment_go_one_way_each()
+    {
+        // Ctrl+K Ctrl+C comments every line, one that's a comment already one deeper, Ctrl+K Ctrl+U takes one off the
+        // lines that have one and leaves the rest
+        var cs = Doc("// a();\nb();", CodeComments.For("source.cs"));
+        cs.SelectAll();
+        cs.CommentSelection();
+        Assert.Equal("// // a();\n// b();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("// a();\nb();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("a();\nb();", cs.Text);
+        cs.UncommentSelection();
+        Assert.Equal("a();\nb();", cs.Text);
+
+        var html = Doc("<p>hi</p>", CodeComments.For("text.html.basic"));
+        html.CommentSelection();
+        html.CommentSelection();
+        Assert.Equal("<!-- <p>hi</p> -->", html.Text);
+        html.UncommentSelection();
+        Assert.Equal("<p>hi</p>", html.Text);
     }
 
     [Fact]

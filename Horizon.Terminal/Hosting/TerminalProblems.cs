@@ -25,9 +25,12 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
     [
         // A file of these has no > in it, which keeps a prompt that echoed one of these lines from being read as a file
         new("dotnet", @"^\s*(?<file>[^\s(>][^(>]*?)\((?<line>\d+),(?<column>\d+)\)\s*:\s*(?<kind>error|warning)\s+(?<code>[A-Z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$"),
-        new("msbuild", @"^\s*(?<file>[^\s:][^:]*?)\s*:\s*(?<kind>error|warning)\s+(?<code>MSB\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$"),
-        new("python", @"^\s*(?<kind>[A-Za-z]*Error): (?<message>.*)$", @"^\s*File ""(?<file>[^""]+)"", line (?<line>\d+)"),
-        new("gcc", @"^(?<file>(?:[A-Za-z]:)?[^:\s][^:]*?):(?<line>\d+):(?<column>\d+): (?<kind>error|warning|fatal error): (?<message>.*)$"),
+        // A project's own, MSBuild's, NuGet's (a package with a hole in it) and the SDK's, the file a whole path with its drive or not
+        new("msbuild", @"^\s*(?<file>(?:[A-Za-z]:)?[^\s:>][^:>]*?)\s*:\s*(?<kind>error|warning)\s+(?<code>(?:MSB|NU|NETSDK)\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$"),
+        new("python", @"^(?<kind>[\w]+(?:\.[\w]+)*)(?:: (?<message>.*))?$", @"^\s*File ""(?<file>[^""]+)"", line (?<line>\d+)"),
+        new("gcc", @"^(?<file>(?:[A-Za-z]:)?[^:\s>][^:>]*?):(?<line>\d+)(?::(?<column>\d+))?: (?<kind>error|warning|fatal error): (?<message>.*)$"),
+        // MSVC and clang-cl, including MSBuild's numbered project prefix and Clang's code-less diagnostics.
+        new("msvc", @"^\s*(?:\d+>)?(?<file>[^\s>][^>]*?)\((?<line>\d+)(?:,(?<column>\d+))?\)\s*:\s*(?<kind>fatal error|error|warning)(?:\s+(?<code>[A-Z]+\d+))?\s*:\s*(?<message>.*)$"),
         new("rust", @"^(?<kind>error|warning)(?:\[(?<code>E\d+)\])?: (?<message>.*)$", @"^\s*--> (?<file>[^:]+):(?<line>\d+):(?<column>\d+)"),
         new("slang", @"^(?<file>[^\s(][^(]*?)\((?<line>\d+)\): (?<kind>error|warning) (?<code>\d+): (?<message>.*)$"),
 
@@ -69,7 +72,9 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
         string code = said.Groups["code"].Success ? said.Groups["code"].Value + ": " : string.Empty;
         string message = said.Groups["message"].Success ? said.Groups["message"].Value.Trim() : said.Value.Trim();
         // An exception's kind is half of what it says, ZeroDivisionError on its own said nothing of what went wrong
-        if (Name == "python" || Name.EndsWith("exception", StringComparison.Ordinal))
+        if (Name == "python")
+            message = said.Groups["message"].Success ? $"{kind}: {message}" : kind;
+        else if (Name.EndsWith("exception", StringComparison.Ordinal))
             message = $"{kind}: {message}";
         bool warning = kind.StartsWith("warn", StringComparison.OrdinalIgnoreCase) || kind.StartsWith("deprecat", StringComparison.OrdinalIgnoreCase);
         return new TerminalProblem(at.Groups["file"].Value.Trim(), Number(at, "line"), Number(at, "column"), code + message, warning, Name);
@@ -83,9 +88,11 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
 /// What a terminal's program printed, read a line at a time for problems. The bytes as they come, escape sequences and
 /// all, a line ended by a newline, the sequences taken out of it and the matchers run over it. A two line matcher
 /// keeps the message of the line before for the place on this one (Python says where and then what, so its place is
-/// kept for the message after it). Nothing of the screen in it, it reads the stream.
+/// kept for the message after it). Nothing of the screen in it, it reads the stream. A reader of a terminal knows how
+/// wide it is, which puts the lines Windows' console broke at its edge back together (TerminalProblemReader.Wraps). One
+/// that can say whether a file is there puts the start of a path back on a problem whose file isn't, from the line before.
 /// </summary>
-public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> matchers, Action<TerminalProblem> found)
+public sealed partial class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> matchers, Action<TerminalProblem> found, Func<int>? columns = null, Func<string, bool>? exists = null)
 {
     private static readonly Regex Escapes = new(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])", RegexOptions.Compiled);
 
@@ -103,17 +110,33 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
         for (int i = 0; i < count; i++)
         {
             char character = chars[i];
+
+            // A carriage return that isn't the start of a new line has the line drawn over from its start (two of them
+            // before a new line are still the one line's end)
+            if (returned && character is not ('\n' or '\r'))
+                DrawnOver();
+            returned = character == '\r';
+
             if (character == '\n')
             {
-                Line(pending.ToString());
-                pending.Clear();
+                Ended();
             }
-            else if (character != '\r' && pending.Length < 4096)
+            else if (character != '\r' && pending.Length < LONGEST)
             {
                 pending.Append(character);
+                if (broken is not null)
+                    Continued();
+                else if (character is 'H' or 'f')
+                    Jumped();
             }
         }
     }
+
+    // Whether the last thing read was a carriage return, which a new line may or may not follow (in the next bytes, even)
+    private bool returned;
+
+    // How long a line can get, a build's warning with its links and colours is a good few hundred
+    private const int LONGEST = 16384;
 
     /// <summary>Text the program wrote, for a test.</summary>
     public void Feed(string text) => Feed(Encoding.UTF8.GetBytes(text));
@@ -171,6 +194,8 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
     {
         // A shell without the marks has its prompt kept out by what it looks like (no > in a file, see Shipped)
         string line = Escapes.Replace(WithoutPrompts(raw), string.Empty).TrimEnd();
+        lineBefore = lastLine;
+        lastLine = line;
 
         // A D problem said without its column has it from the ^ under the code it quotes on the line after
         if (held is { } waiting)
@@ -195,6 +220,23 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
 
         foreach (TerminalProblemMatcher matcher in matchers)
         {
+            // Python always prints the place before the exception. Never carry an unlocated exception
+            // forward into the next run, or mistake an indented source line for its exception type.
+            if (matcher.Name == "python" && matcher.Place is not null)
+            {
+                if (line == "Traceback (most recent call last):")
+                    lastPlace.Remove(matcher);
+                else if (matcher.Place.IsMatch(line))
+                    lastPlace[matcher] = line;
+                else if (matcher.Pattern.IsMatch(line) && lastPlace.Remove(matcher, out string? pythonPlace)
+                    && matcher.Match(line, pythonPlace) is { } pythonProblem)
+                {
+                    found(pythonProblem);
+                    return;
+                }
+                continue;
+            }
+
             if (matcher.Place is null)
             {
                 if (matcher.Match(line) is { } problem)
@@ -237,8 +279,34 @@ public sealed class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> 
     private TerminalProblem? held;
     private int heldFor;
 
+    // The line read before this one and this one, for the start of a path that was broken off onto the line before
+    private string? lineBefore, lastLine;
+
+    /// <summary>
+    /// A problem whose file isn't there may have had the start of its path broken off onto the line before, when Windows'
+    /// console wrapped the line in a way the reader couldn't see (NuGet's warning about a project was under
+    /// DL\Horizon.HIDL.csproj when it was Horizon.HIDL\Horizon.HIDL.csproj). The line before, or its last word, is put
+    /// back on the front when that makes a file that is there.
+    /// </summary>
+    private TerminalProblem Rejoined(TerminalProblem problem)
+    {
+        if (exists is null || lineBefore is not { Length: > 0 } before || problem.File.Length == 0 || exists(problem.File))
+            return problem;
+
+        string head = before.Trim();
+        int space = head.LastIndexOf(' ');
+        foreach (string start in (string[])[head, space < 0 ? string.Empty : head[(space + 1)..]])
+        {
+            if (start.Length > 0 && exists(start + problem.File))
+                return problem with { File = start + problem.File };
+        }
+
+        return problem;
+    }
+
     private void Found(TerminalProblem problem)
     {
+        problem = Rejoined(problem);
         if (held is { } before)
         {
             held = null;

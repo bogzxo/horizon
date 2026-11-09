@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Logging;
 using Horizon.Graphics;
 
@@ -14,19 +15,22 @@ public readonly record struct SpritePixels(byte[] Data, int Width, int Height);
 /// </summary>
 internal static class SpriteImages
 {
-    // Sheets read lately, by path. Sprite sheets are small and asked for in bursts (every frame of an animation), so a
+    // Sheets read lately, by content key (the source and where in it). Sprite sheets are small and asked for in bursts (every frame of an animation), so a
     // few are kept rather than read off disk once per frame of art
     private const int KEPT = 8;
-    private static readonly List<(string Path, SpritePixels Image)> kept = [];
+    private static readonly List<(string Key, SpritePixels Image)> kept = [];
 
     /// <summary>The whole of an image, null (and logged) if it can't be read. Aseprite files aren't whole images, see <see cref="Read"/>.</summary>
-    public static SpritePixels? Load(string path)
+    public static SpritePixels? Load(string path) => Load(ContentFiles.Find(path));
+
+    private static SpritePixels? Load(FoundContent found)
     {
+        string path = found.Path;
         lock (kept)
         {
             for (int i = 0; i < kept.Count; i++)
             {
-                if (kept[i].Path != path) continue;
+                if (kept[i].Key != found.Key) continue;
 
                 var hit = kept[i];
                 kept.RemoveAt(i);
@@ -35,7 +39,7 @@ internal static class SpriteImages
             }
         }
 
-        if (!File.Exists(path))
+        if (!found.Exists)
         {
             Log.Error($"[SpriteImages] There is no image at '{path}'.");
             return null;
@@ -43,14 +47,14 @@ internal static class SpriteImages
 
         try
         {
-            var image = ImageFile.Load(path);
+            var image = ImageFile.Load(found);
 
             var pixels = image.Pixels;
             var read = new SpritePixels(pixels, image.Width, image.Height);
 
             lock (kept)
             {
-                kept.Add((path, read));
+                kept.Add((found.Key, read));
                 if (kept.Count > KEPT) kept.RemoveAt(0);
             }
 
@@ -85,8 +89,12 @@ internal static class SpriteImages
     /// read or isn't inside the image, which has been logged.
     /// </summary>
     /// <param name="layer">One layer of an Aseprite file on its own, null for the frame as it looks. Nothing for anything else.</param>
-    public static SpritePixels? Read(string path, int x, int y, int width, int height, string? layer = null)
+    public static SpritePixels? Read(string path, int x, int y, int width, int height, string? layer = null) =>
+        Read(ContentFiles.Find(path), x, y, width, height, layer);
+
+    internal static SpritePixels? Read(FoundContent found, int x, int y, int width, int height, string? layer = null)
     {
+        string path = found.Path;
         if (width < 1 || height < 1) return null;
 
         if (AsepriteDocument.IsAseprite(path))
@@ -94,7 +102,7 @@ internal static class SpriteImages
             AsepriteDocument document;
             try
             {
-                document = AsepriteDocument.Open(path);
+                document = AsepriteDocument.Open(found);
             }
             catch (Exception e)
             {
@@ -126,7 +134,7 @@ internal static class SpriteImages
             return Crop(new SpritePixels(whole, document.Width, document.Height), x % document.Width, y, width, height, path);
         }
 
-        return Load(path) is { } image ? Crop(image, x, y, width, height, path) : null;
+        return Load(found) is { } image ? Crop(image, x, y, width, height, path) : null;
     }
 
     private static SpritePixels? Crop(in SpritePixels image, int x, int y, int width, int height, string path)

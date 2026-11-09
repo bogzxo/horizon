@@ -263,6 +263,7 @@ public partial class ListBox : UIComponent
             return false;
 
         int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
+        BeginScrollMotion(shown != top || over.Active);
         int wanted = top - rows * Math.Sign(delta);
         top = Math.Clamp(wanted, 0, items.Length - Rows);
         over.Push((wanted - top) * rowHeightSeen, MotionSpeed);
@@ -270,6 +271,9 @@ public partial class ListBox : UIComponent
     }
 
     protected internal override bool UsesScrollSpeed => true;
+
+    // A finger on the bar drags the bar, anywhere else it scrolls the rows
+    protected internal override bool KeepsTouchDrag(Vector2 point) => (items.Length > Rows && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
 
     protected internal override void OnPointerDown(Vector2 point)
     {
@@ -311,11 +315,12 @@ public partial class ListBox : UIComponent
     protected override void Update(float dt)
     {
         base.Update(dt);
-        over.Step(dt, MotionSpeed);
+        float scrollDt = ScrollMotionDelta(dt);
+        over.Step(scrollDt, MotionSpeed);
         if (shown == top)
             return;
 
-        shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * dt));
+        shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(top - shown) < 0.01f)
             shown = top;
     }

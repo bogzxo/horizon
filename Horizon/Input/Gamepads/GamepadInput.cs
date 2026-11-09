@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.Input;
 
 namespace Horizon.Input;
 
@@ -162,33 +161,4 @@ public static class GamepadInputs
         Enum.TryParse(name.Trim(), ignoreCase: true, out input)
         && Enum.IsDefined(input)
         && !char.IsAsciiDigit(name.Trim()[0]);
-
-    /// <summary>
-    /// The input a button of the device is, if it is one this system knows.
-    /// </summary>
-    public static bool TryFromButton(ButtonName button, out GamepadInput input)
-    {
-        GamepadInput? found = button switch
-        {
-            ButtonName.A => GamepadInput.A,
-            ButtonName.B => GamepadInput.B,
-            ButtonName.X => GamepadInput.X,
-            ButtonName.Y => GamepadInput.Y,
-            ButtonName.LeftBumper => GamepadInput.LeftBumper,
-            ButtonName.RightBumper => GamepadInput.RightBumper,
-            ButtonName.Back => GamepadInput.Back,
-            ButtonName.Start => GamepadInput.Start,
-            ButtonName.Home => GamepadInput.Home,
-            ButtonName.LeftStick => GamepadInput.LeftStick,
-            ButtonName.RightStick => GamepadInput.RightStick,
-            ButtonName.DPadUp => GamepadInput.DPadUp,
-            ButtonName.DPadRight => GamepadInput.DPadRight,
-            ButtonName.DPadDown => GamepadInput.DPadDown,
-            ButtonName.DPadLeft => GamepadInput.DPadLeft,
-            _ => null
-        };
-
-        input = found ?? default;
-        return found is not null;
-    }
 }

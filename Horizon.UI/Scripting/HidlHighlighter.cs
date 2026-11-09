@@ -112,6 +112,15 @@ public sealed class HidlHighlighter : ICodeHighlighter
         return spans;
     }
 
+    public bool TryReadLine(string line, in CodeLineStart start, out List<SyntaxSpan>? spans)
+    {
+        if (!Grammar.TryReadLine(line, start, out spans)) return false;
+        List<SyntaxSpan>[] lines = [spans!];
+        Overlay(lines, line, null, null);
+        spans = lines[0];
+        return true;
+    }
+
     public List<SyntaxSpan> ReadLine(string line, in CodeLineStart start)
     {
         List<SyntaxSpan>[] spans = [Grammar.ReadLine(line, start)];

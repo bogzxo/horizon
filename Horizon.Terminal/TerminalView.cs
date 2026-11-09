@@ -7,7 +7,7 @@ using Horizon.Engine;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 
@@ -381,11 +381,17 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         lastDt = dt;
-        blink = (blink + dt) % (BLINK * 2.0f);
+        // Like the editor caret, a background terminal stays lit instead of waking the renderer to blink.
+        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
+            GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         if (bell > 0.0f)
             bell = MathF.Max(0.0f, bell - dt);
 
-        if (changed || screen.Version != drawnVersion || bell > 0.0f || IsFocused)
+        // The compositor detects cursor blink changes in the painted list. Focus alone must not keep renewing
+        // the frame deadline: doing so renders continuously even when the terminal has nothing new to show.
+        if (changed || screen.Version != drawnVersion || bell > 0.0f)
             RequestFrame();
     }
 

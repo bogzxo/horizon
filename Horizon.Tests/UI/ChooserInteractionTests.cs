@@ -100,6 +100,40 @@ public sealed class ChooserInteractionTests : IDisposable
     }
 
     [Fact]
+    public void A_searched_list_is_asked_off_the_thread_and_enter_waits_for_it()
+    {
+        // Go to All's way, the rows worked out by whoever asked for each thing typed, best first, and Enter pressed before
+        // they come back picks the best of them once they do
+        int picked = 0;
+        var asked = new List<string>();
+        var gate = new ManualResetEventSlim(false);
+        UIChoiceSearch search = (typed, cancel) =>
+        {
+            lock (asked) asked.Add(typed);
+            gate.Wait(TimeSpan.FromSeconds(5));
+            return typed.Length == 0 ? [] : [new UIChoice("SimulationLoop", () => picked++), new UIChoice("SimulationLoopTests", () => picked += 10)];
+        };
+
+        var dialog = UIChooser.Show(module, "Go to All", "", new List<UIChoice>(), searched: prefix => prefix == '\0' ? search : null);
+        var query = All(dialog).OfType<TextBox>().Single();
+        query.Text = "simloop";
+        query.OnChanged!(query.Text);
+        query.OnSubmitted!(query.Text);
+        Assert.True(dialog.IsOpen);
+
+        gate.Set();
+        for (int tick = 0; tick < 200 && dialog.IsOpen; tick++)
+        {
+            Thread.Sleep(5);
+            dialog.UpdateTree(0.01f);
+        }
+
+        Assert.False(dialog.IsOpen);
+        Assert.Equal(1, picked);
+        lock (asked) Assert.Contains("simloop", asked);
+    }
+
+    [Fact]
     public void Decorative_dialog_press_preserves_its_input_but_workspace_press_does_not()
     {
         var workspace = module.AddComponent(new Panel());

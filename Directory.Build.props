@@ -1,0 +1,12 @@
+<Project>
+  <!-- Preserve workspace or consuming repository properties when this checkout is nested. -->
+  <PropertyGroup>
+    <HorizonParentProps>$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))</HorizonParentProps>
+  </PropertyGroup>
+  <Import Project="$(HorizonParentProps)" Condition="'$(HorizonParentProps)' != '' and Exists('$(HorizonParentProps)')" />
+
+  <!-- Keep the engine and its companion assemblies on the same release version. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
+    <Version>1.2.0</Version>
+  </PropertyGroup>
+</Project>

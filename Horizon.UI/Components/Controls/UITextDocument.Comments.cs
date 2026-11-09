@@ -10,16 +10,31 @@ public sealed partial class UITextDocument
     /// already. The comment goes in at the indentation of the least indented of them. A language with no line comment
     /// has the lines wrapped in its block comment instead, or unwrapped when they already are.
     /// </summary>
-    public void ToggleComment()
+    public void ToggleComment() => CommentLines(null);
+
+    /// <summary>
+    /// Visual Studio's Ctrl+K Ctrl+C, the lines of the selection (or the caret's) made comments whatever they are now, a
+    /// line that's a comment already one more deep. A language with no line comment has them wrapped in its block comment.
+    /// </summary>
+    public void CommentSelection() => CommentLines(true);
+
+    /// <summary>
+    /// Visual Studio's Ctrl+K Ctrl+U, the comment taken off every line of the selection (or the caret's) that is one, the
+    /// rest left as they are. A language with no line comment has them unwrapped from its block comment.
+    /// </summary>
+    public void UncommentSelection() => CommentLines(false);
+
+    // The lines commented (true), uncommented (false) or either, whichever they all aren't (null, Ctrl+/)
+    private void CommentLines(bool? wanted)
     {
         if (LineComment.Length == 0)
         {
-            if (BlockComment.Start.Length > 0 && BlockComment.End.Length > 0)
+            if (BlockComment.Start.Length > 0 && BlockComment.End.Length > 0 && wanted != BlockLines())
                 ToggleLinesAsBlock();
             return;
         }
 
-        if (AtEveryCaret(ToggleComment, EditKind.Other))
+        if (AtEveryCaret(() => CommentLines(wanted), EditKind.Other))
             return;
 
         Record(EditKind.Other);
@@ -39,14 +54,18 @@ public sealed partial class UITextDocument
         if (indent == int.MaxValue)
             return;
 
+        bool taking = wanted is { } commenting ? !commenting : allComments;
         int caretShift = 0, anchorShift = 0;
         for (int line = first; line <= last; line++)
         {
             string text = lines[line];
             if (text.Trim().Length == 0) continue;
 
+            // Uncommenting leaves a line that isn't a comment as it is
+            if (taking && !text.TrimStart().StartsWith(LineComment)) continue;
+
             int shift;
-            if (allComments)
+            if (taking)
             {
                 int at = text.IndexOf(LineComment, StringComparison.Ordinal);
                 int length = text.AsSpan(at).StartsWith(mark) ? mark.Length : LineComment.Length;
@@ -160,6 +179,23 @@ public sealed partial class UITextDocument
 
         preferredColumn = Caret.Column;
         Touched();
+    }
+
+    // Whether the lines of the selection are wrapped in the block comment already, the way ToggleLinesAsBlock sees it.
+    // Null for nothing but blank lines, which has nothing to wrap either way
+    private bool? BlockLines()
+    {
+        var (first, last) = SelectedLines();
+        while (first < last && lines[first].Trim().Length == 0) first++;
+        while (last > first && lines[last].Trim().Length == 0) last--;
+        if (lines[first].Trim().Length == 0)
+            return null;
+
+        var (open, close) = BlockComment;
+        string top = lines[first], bottom = lines[last];
+        int start = top.Length - top.TrimStart().Length, end = bottom.TrimEnd().Length;
+        return top.AsSpan(start).StartsWith(open) && bottom.AsSpan(0, end).EndsWith(close)
+            && (first != last || end - start >= open.Length + close.Length);
     }
 
     // The block comment's marks put round the text from one place to another, a space inside each. What was selected

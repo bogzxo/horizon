@@ -182,23 +182,23 @@ internal sealed partial class MenuPanel
     /// </summary>
     public static (MenuKey Key, char Letter)? Read(Horizon.Input.Keyboard keyboard)
     {
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Escape)) return (MenuKey.Escape, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Down)) return (MenuKey.Down, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Up)) return (MenuKey.Up, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Left)) return (MenuKey.Left, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Right)) return (MenuKey.Right, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Home) || keyboard.WasPressed(Silk.NET.Input.Key.PageUp)) return (MenuKey.Home, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.End) || keyboard.WasPressed(Silk.NET.Input.Key.PageDown)) return (MenuKey.End, '\0');
-        if (keyboard.WasPressed(Silk.NET.Input.Key.Enter) || keyboard.WasPressed(Silk.NET.Input.Key.KeypadEnter) || keyboard.WasPressed(Silk.NET.Input.Key.Space))
+        if (keyboard.WasPressed(Horizon.Input.Key.Escape)) return (MenuKey.Escape, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Down)) return (MenuKey.Down, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Up)) return (MenuKey.Up, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Left)) return (MenuKey.Left, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Right)) return (MenuKey.Right, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Home) || keyboard.WasPressed(Horizon.Input.Key.PageUp)) return (MenuKey.Home, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.End) || keyboard.WasPressed(Horizon.Input.Key.PageDown)) return (MenuKey.End, '\0');
+        if (keyboard.WasPressed(Horizon.Input.Key.Enter) || keyboard.WasPressed(Horizon.Input.Key.KeypadEnter) || keyboard.WasPressed(Horizon.Input.Key.Space))
             return (MenuKey.Enter, '\0');
 
         // A letter with nothing held, the item starting with it. Alt and a letter is the bar's, another menu
         if (keyboard.Control || keyboard.Primary || keyboard.Alt)
             return null;
-        for (var key = Silk.NET.Input.Key.A; key <= Silk.NET.Input.Key.Z; key++)
+        for (var key = Horizon.Input.Key.A; key <= Horizon.Input.Key.Z; key++)
         {
             if (keyboard.WasPressed(key))
-                return (MenuKey.Letter, (char)('a' + (key - Silk.NET.Input.Key.A)));
+                return (MenuKey.Letter, (char)('a' + (key - Horizon.Input.Key.A)));
         }
 
         return null;

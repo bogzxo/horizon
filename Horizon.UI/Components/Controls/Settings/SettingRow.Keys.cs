@@ -104,6 +104,10 @@ internal sealed partial class SettingRow
         // How wide all of what it says is, whatever room it has
         private float whole;
 
+        // The tooltip's unstyled words only change with the text, not on every layout pass.
+        private string? wordsFor;
+        private string words = string.Empty;
+
         // How far its words go once they're cut to its room, the dots and all
         public UIRect Painted => new(Bounds.Min, new Vector2(MathF.Min(Bounds.Max.X, Bounds.Min.X + whole), Bounds.Max.Y));
 
@@ -115,7 +119,17 @@ internal sealed partial class SettingRow
             Vector2 size = base.Measure(skin);
             whole = size.X;
             float room = Most + Borrowed();
-            Tooltip = size.X > room + 0.5f ? Words(Text) : string.Empty;
+            if (size.X > room + 0.5f)
+            {
+                if (!ReferenceEquals(wordsFor, Text))
+                {
+                    wordsFor = Text;
+                    words = Words(Text);
+                }
+                Tooltip = words;
+            }
+            else
+                Tooltip = string.Empty;
             return size with { X = MathF.Min(size.X, room) };
         }
 
@@ -128,8 +142,11 @@ internal sealed partial class SettingRow
                 return 0.0f;
 
             RowTitle? before = null;
-            foreach (UIComponent child in line.Children)
+            // Children is an interface; enumerating it boxes an array enumerator on every measure.
+            IReadOnlyList<UIComponent> children = line.Children;
+            for (int i = 0; i < children.Count; i++)
             {
+                UIComponent child = children[i];
                 if (child == this)
                     break;
                 before = child as RowTitle;

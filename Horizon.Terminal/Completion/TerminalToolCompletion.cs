@@ -28,17 +28,19 @@ public sealed class TerminalToolCompletion
 
     private readonly TerminalToolHelp help;
     private readonly TerminalGitValues git;
+    private readonly TerminalDotnetCompletion dotnet;
     private readonly HashSet<string> tools;
 
-    public TerminalToolCompletion(IEnumerable<string>? tools = null, TerminalToolHelp? help = null, TerminalGitValues? git = null)
+    public TerminalToolCompletion(IEnumerable<string>? tools = null, TerminalToolHelp? help = null, TerminalGitValues? git = null, TerminalDotnetCompletion? dotnet = null)
     {
         this.tools = new HashSet<string>((tools ?? DefaultTools).Select(TerminalToolHelp.ToolName), StringComparer.OrdinalIgnoreCase);
         this.help = help ?? TerminalToolHelp.Shared;
         this.git = git ?? TerminalGitValues.Shared;
+        this.dotnet = dotnet ?? TerminalDotnetCompletion.Shared;
     }
 
     /// <summary>Goes up when something was learned that could change a list.</summary>
-    public int Version => help.Version + git.Version;
+    public int Version => help.Version + git.Version + dotnet.Version;
 
     /// <summary>
     /// What fits the word being typed after a tool, best first, null when the command isn't a tool on the list (so the
@@ -51,6 +53,7 @@ public sealed class TerminalToolCompletion
             return null;
 
         string tool = words[0];
+        if (TerminalToolHelp.ToolName(tool) == "dotnet" && dotnet.Complete(words, word, folder) is { Count: > 0 } native) return native;
         bool isGit = TerminalToolHelp.IsGit(tool);
 
         // Down the subcommands that were typed, as far as they are subcommands, the rest are what they're given

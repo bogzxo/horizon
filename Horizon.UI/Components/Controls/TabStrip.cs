@@ -220,7 +220,7 @@ public class TabStrip : UIComponent
         Tooltip = over >= 0 ? Tabs[over].Tooltip : string.Empty;
 
         var mouse = Horizon.Engine.GameEngine.Instance?.Input.Mouse;
-        bool middle = mouse is not null && mouse.IsDown(Silk.NET.Input.MouseButton.Middle);
+        bool middle = mouse is not null && mouse.IsDown(Horizon.Input.MouseButton.Middle);
         if (middle && !middleWas)
             middleTab = over;
         else if (!middle && middleWas && middleTab >= 0 && middleTab == over)

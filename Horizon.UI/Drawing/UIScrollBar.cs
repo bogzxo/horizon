@@ -47,7 +47,8 @@ public static class UIScrollBar
     {
         float middle = top - (top - bottom) * Math.Clamp(share, 0.0f, 1.0f);
         float half = height * 0.5f;
-        middle = Math.Clamp(middle, bottom + half, top - half);
+        // A track shorter than the tick has it in the middle, Clamp threw with its ends the wrong way round
+        middle = top - bottom < height ? (top + bottom) * 0.5f : Math.Clamp(middle, bottom + half, top - half);
         list.Rect(new UIRect(new Vector2(left, middle - half), new Vector2(right, middle + half)), colour);
     }
 }

@@ -1,7 +1,5 @@
 ﻿using System.Collections.Concurrent;
 
-using Silk.NET.Input;
-
 namespace Horizon.Input;
 
 /// <summary>
@@ -102,20 +100,19 @@ public sealed class Keyboard
 
     private static bool Known(Key key) => (uint)key < KEYS;
 
-    internal void Attach(IInputContext context)
-    {
-        foreach (IKeyboard keyboard in context.Keyboards)
-        {
-            keyboard.KeyDown += (_, key, _) => Hear(key, true);
-            keyboard.KeyUp += (_, key, _) => Hear(key, false);
-        }
-    }
+    internal Action<InputEvent>? EventSink { get; set; }
 
     /// <summary>
     /// Hears a key go down or come up, taken on at the next <see cref="Update"/>. The window's keyboards come through here,
     /// and so does a test with no window.
     /// </summary>
-    internal void Hear(Key key, bool down) => _heard.Enqueue((key, down));
+    internal void Hear(Key key, bool down)
+    {
+        if (EventSink is { } sink) sink(InputEvent.KeyChange(key, down));
+        else Accept(key, down);
+    }
+
+    internal void Accept(Key key, bool down) => _heard.Enqueue((key, down));
 
     /// <summary>
     /// Presses keys as though somebody had, the ones before the last held round it (Ctrl, Shift, P) and all of them let go

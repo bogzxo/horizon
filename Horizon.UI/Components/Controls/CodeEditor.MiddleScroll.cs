@@ -1,7 +1,7 @@
 using System.Numerics;
 using Horizon.Engine;
 using Horizon.UI.Drawing;
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.UI.Components;
 
@@ -10,6 +10,7 @@ public partial class CodeEditor
     private readonly MiddleScrollGesture middleScroll = new();
     /// <summary>Whether middle-mouse autoscroll is active.</summary>
     public bool AutoScrolling => middleScroll.Active;
+    internal bool HasInternalAutoScroll => !AllInSight;
 
     private void UpdateMiddleScroll(float dt)
     {

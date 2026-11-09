@@ -102,7 +102,7 @@ internal sealed unsafe class LinearArena
 }
 
 /// <summary>
-/// Everything one frame in flight owns, its command pool and buffers, the semaphores that tie it to the swapchain,
+/// Everything one frame in flight owns, its command pool and buffers, the semaphore its swapchain picture is acquired with,
 /// its descriptor sets, its arenas, and whatever was destroyed while it was being drawn (which can't go until the
 /// GPU is done with the frame). Two of these take turns.
 /// </summary>
@@ -113,7 +113,6 @@ internal sealed unsafe class FrameResources : IDisposable
 
     public CommandPool CommandPool { get; }
     public Semaphore ImageAvailable { get; }
-    public Semaphore RenderFinished { get; }
     public DescriptorAllocator Descriptors { get; }
     public LinearArena Uniforms { get; }
     public LinearArena Staging { get; }
@@ -161,11 +160,8 @@ internal sealed unsafe class FrameResources : IDisposable
 
         var semaphoreInfo = new SemaphoreCreateInfo { SType = StructureType.SemaphoreCreateInfo };
         VulkanContext.Check(context.Vk.CreateSemaphore(context.Device, in semaphoreInfo, null, out Semaphore available), "making a semaphore");
-        VulkanContext.Check(context.Vk.CreateSemaphore(context.Device, in semaphoreInfo, null, out Semaphore finished), "making a semaphore");
         ImageAvailable = available;
-        RenderFinished = finished;
         context.Name(ObjectType.Semaphore, available.Handle, $"frame {index} image available");
-        context.Name(ObjectType.Semaphore, finished.Handle, $"frame {index} render finished");
 
         Descriptors = new DescriptorAllocator(context, index);
         Uniforms = new LinearArena(context, memory, BufferUsageFlags.UniformBufferBit, 1024 * 1024, $"frame {index} uniforms");
@@ -233,7 +229,6 @@ internal sealed unsafe class FrameResources : IDisposable
         Uniforms.Dispose();
         Staging.Dispose();
         context.Vk.DestroySemaphore(context.Device, ImageAvailable, null);
-        context.Vk.DestroySemaphore(context.Device, RenderFinished, null);
         context.Vk.DestroyCommandPool(context.Device, CommandPool, null);
     }
 }

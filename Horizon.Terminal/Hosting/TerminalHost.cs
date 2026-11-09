@@ -3,7 +3,7 @@ using System.Text;
 using Horizon.HIDL;
 using Horizon.HIDL.Runtime;
 
-using Key = Silk.NET.Input.Key;
+using Key = Horizon.Input.Key;
 
 namespace Horizon.UI.Components;
 
@@ -142,7 +142,8 @@ public sealed partial class TerminalHost : IDisposable
         view.OnLink = target => OpenLink(new TerminalLink(target, 0, 0));
         ColourLine(view);
 
-        var reader = new TerminalProblemReader(ProblemMatchers, problem => Found(view, problem));
+        var reader = new TerminalProblemReader(ProblemMatchers, problem => Found(view, problem), () => view.Screen.Columns,
+            file => TerminalLinks.Resolve(file, view.WorkingDirectory, path => File.Exists(path) || Directory.Exists(path)) is not null);
         view.OnOutput = bytes => reader.Feed(bytes);
         view.OnRequest = Requested;
 

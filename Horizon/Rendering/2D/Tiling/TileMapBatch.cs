@@ -1,3 +1,4 @@
+using Horizon.Content;
 using Horizon.Logging;
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -79,7 +80,7 @@ internal sealed class TileMapTexture
         {
             // Without an engine (a test that only reads maps) there are no textures to make of them either
             if (GameEngine.Instance is not { } engine) return;
-            if (!engine.ObjectManager.Textures.Has(Path.GetFullPath(file)))
+            if (!engine.ObjectManager.Textures.Has(ContentFiles.CacheKey(file)))
                 Texture.DecodeAhead(file);
         }
     }
@@ -101,12 +102,12 @@ internal sealed class TileMapTexture
 
     private static Texture LoadImage(string path)
     {
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
             return Texture.Invalid;
 
         // By where it is, so two maps that use the same image share it
         bool loaded = GameEngine.Instance.ObjectManager.Textures.TryCreateOrGet(
-            Path.GetFullPath(path),
+            ContentFiles.CacheKey(path),
             new TextureDescription { Paths = [path], Definition = TextureDefinition.RgbaUnsignedByteNearest },
             out var result);
 

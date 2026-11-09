@@ -5,7 +5,6 @@ using Horizon.Input;
 using Horizon.Rendering.Particles;
 using Horizon.Rendering.Particles.Simulation;
 
-using Silk.NET.Input;
 
 namespace Horizon.Testing.Examples.Game;
 

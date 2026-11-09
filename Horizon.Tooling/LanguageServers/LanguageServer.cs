@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 
@@ -22,8 +22,8 @@ public enum LanguageServerFileChange
 /// <summary>
 /// A language server (the protocol VS Code's linting, completion and hovers come through, microsoft.github.io/language-server-protocol)
 /// run as a process and talked to over its stdin and stdout, so far for what it has to say about the files open in it.
-/// It is started with a root folder, told about a file as it is opened (<see cref="Open"/>), sent the whole text again as
-/// it changes (<see cref="Change"/>, the server is asked for full sync, which every one of them does) and told when it
+/// It is started with a root folder, told about a file as it is opened (<see cref="Open"/>), synchronized as
+/// it changes (<see cref="Change"/>, using range updates when the server supports them) and told when it
 /// is closed, and whatever it publishes about a file queues up here (<see cref="TryTake"/>) for the editor's thread to
 /// take on its next tick, as <see cref="UICodeDiagnostic"/>s ready for <see cref="CodeEditor.Diagnostics"/>.
 /// <see cref="Woken"/> is called on the reading thread when anything arrives, for an application that sleeps
@@ -45,6 +45,11 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Why it isn't running any more, null while it is or before it was started.</summary>
     public string? Failure { get; private set; }
 
+    /// <summary>The last 8192 characters of the server's error output, including startup failures.</summary>
+    public string ErrorOutput => errorOutput?.Text ?? string.Empty;
+
+    private readonly LanguageServerOutput? errorOutput;
+
     /// <summary>Whether its process is up and the connection open.</summary>
     public bool IsRunning => rpc is { IsClosed: false } && process is { HasExited: false };
 
@@ -63,20 +68,23 @@ public sealed partial class LanguageServer : IDisposable
 
     private readonly Process? process;
     private readonly JsonRpcConnection rpc;
+    // A shared sequence prevents a reopened document from reusing an earlier protocol version.
+    private int nextDocumentVersion;
     private readonly Dictionary<string, int> versions = new(Horizon.Core.Platform.PlatformPaths.Comparer);
-    private readonly ConcurrentQueue<(string Path, IReadOnlyList<UICodeDiagnostic> Found)> arrived = new();
+    private readonly ConcurrentQueue<(string Path, int? Version, IReadOnlyList<UICodeDiagnostic> Found)> arrived = new();
     private readonly Lock queue = new();
     private List<Action>? waiting = [];
 
     // What has been asked of the server and not answered, answered with nothing when it stops
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
-    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null)
+    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null)
     {
         Name = name;
         LanguageId = languageId;
         RootDirectory = rootDirectory;
         Settings = settings;
+        this.errorOutput = errorOutput;
         this.process = process;
         this.rpc = rpc;
         rpc.OnNotification("textDocument/publishDiagnostics", Published);
@@ -111,11 +119,10 @@ public sealed partial class LanguageServer : IDisposable
         if (process is null)
             return null;
 
-        // What it writes to its error stream is read and dropped, or a chatty server fills the pipe and stalls
-        process.ErrorDataReceived += static (_, _) => { };
-        process.BeginErrorReadLine();
+        var errors = new LanguageServerOutput();
+        _ = errors.Read(process.StandardError);
 
-        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings);
+        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings, errors);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
@@ -129,7 +136,7 @@ public sealed partial class LanguageServer : IDisposable
             ["textDocument"] = new JsonObject
             {
                 ["synchronization"] = new JsonObject { ["dynamicRegistration"] = false, ["willSave"] = false, ["willSaveWaitUntil"] = false, ["didSave"] = true },
-                ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = false, ["versionSupport"] = false, ["tagSupport"] = new JsonObject { ["valueSet"] = new JsonArray(1, 2) } },
+                ["publishDiagnostics"] = new JsonObject { ["relatedInformation"] = true, ["codeDescriptionSupport"] = true, ["versionSupport"] = true, ["tagSupport"] = new JsonObject { ["valueSet"] = new JsonArray(1, 2) } },
 
                 // What is inserted is plain text, the editor has no placeholders to tab between
                 ["completion"] = new JsonObject
@@ -139,8 +146,9 @@ public sealed partial class LanguageServer : IDisposable
                     ["completionItem"] = new JsonObject
                     {
                         ["snippetSupport"] = false,
-                        ["insertReplaceSupport"] = false,
+                        ["insertReplaceSupport"] = true,
                         ["labelDetailsSupport"] = false,
+                        ["resolveSupport"] = new JsonObject { ["properties"] = new JsonArray("detail", "documentation") },
                         ["documentationFormat"] = new JsonArray("markdown", "plaintext")
                     }
                 },
@@ -158,16 +166,27 @@ public sealed partial class LanguageServer : IDisposable
                     }
                 },
                 ["definition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
+                ["typeDefinition"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
+                ["selectionRange"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["foldingRange"] = new JsonObject { ["dynamicRegistration"] = false, ["lineFoldingOnly"] = true },
                 ["references"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["implementation"] = new JsonObject { ["dynamicRegistration"] = false, ["linkSupport"] = true },
+                ["callHierarchy"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["typeHierarchy"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["codeLens"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["inlayHint"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["semanticTokens"] = SemanticCapabilities(),
                 ["documentSymbol"] = new JsonObject { ["dynamicRegistration"] = false, ["hierarchicalDocumentSymbolSupport"] = true },
-                ["rename"] = new JsonObject { ["dynamicRegistration"] = false, ["prepareSupport"] = false },
+                ["documentHighlight"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["rename"] = new JsonObject { ["dynamicRegistration"] = false, ["prepareSupport"] = true, ["prepareSupportDefaultBehavior"] = 1 },
                 ["formatting"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["rangeFormatting"] = new JsonObject { ["dynamicRegistration"] = false },
+                ["onTypeFormatting"] = new JsonObject { ["dynamicRegistration"] = false },
                 ["codeAction"] = new JsonObject
                 {
                     ["dynamicRegistration"] = false,
+                    ["dataSupport"] = true,
+                    ["resolveSupport"] = new JsonObject { ["properties"] = new JsonArray("edit") },
                     ["isPreferredSupport"] = true,
                     ["disabledSupport"] = true,
                     ["codeActionLiteralSupport"] = new JsonObject
@@ -189,7 +208,9 @@ public sealed partial class LanguageServer : IDisposable
                 ["applyEdit"] = true,
                 ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true },
-                ["semanticTokens"] = new JsonObject { ["refreshSupport"] = true }
+                ["semanticTokens"] = new JsonObject { ["refreshSupport"] = true },
+                ["codeLens"] = new JsonObject { ["refreshSupport"] = true },
+                ["inlayHint"] = new JsonObject { ["refreshSupport"] = true }
             }
         };
 
@@ -277,7 +298,7 @@ public sealed partial class LanguageServer : IDisposable
 
     // Helper method to ask the server something once it is ready, behind everything sent before. Null for an error, or
     // for a server that stopped before answering, nothing asked here throws
-    private Task<JsonNode?> Ask(string method, JsonNode parameters)
+    private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false)
     {
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
         asking[answer] = 0;
@@ -293,7 +314,10 @@ public sealed partial class LanguageServer : IDisposable
         Later(() => rpc.Request(method, parameters).ContinueWith(asked =>
         {
             asking.TryRemove(answer, out _);
-            answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
+            if (propagateErrors && !asked.IsCompletedSuccessfully)
+                answer.TrySetException(asked.Exception?.GetBaseException() ?? new IOException("The language-server request was cancelled."));
+            else
+                answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
         }, TaskScheduler.Default));
 
         return answer.Task;
@@ -305,33 +329,39 @@ public sealed partial class LanguageServer : IDisposable
         string full = Path.GetFullPath(path);
         Later(() =>
         {
+            int version;
             lock (versions)
-                versions[full] = 1;
+            {
+                versions[full] = version = ++nextDocumentVersion;
+                if (IncrementalChanges) synchronizedText[full] = text;
+            }
             rpc.Notify("textDocument/didOpen", new JsonObject
             {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageId, ["version"] = 1, ["text"] = text }
+                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageId, ["version"] = version, ["text"] = text }
             });
         });
     }
 
-    /// <summary>Sends the server the whole text of a file again, after it changed.</summary>
+    /// <summary>Synchronizes a changed file, sending a range update when the server supports incremental changes.</summary>
     public void Change(string path, string text)
     {
         string full = Path.GetFullPath(path);
         Later(() =>
         {
             int version;
+            JsonObject change;
             lock (versions)
             {
-                if (!versions.TryGetValue(full, out version))
+                if (!versions.ContainsKey(full))
                     return;
-                versions[full] = ++version;
+                versions[full] = version = ++nextDocumentVersion;
+                change = ContentChange(full, text);
             }
 
             rpc.Notify("textDocument/didChange", new JsonObject
             {
                 ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
-                ["contentChanges"] = new JsonArray(new JsonObject { ["text"] = text })
+                ["contentChanges"] = new JsonArray(change)
             });
         });
     }
@@ -362,6 +392,7 @@ public sealed partial class LanguageServer : IDisposable
             {
                 if (!versions.Remove(full))
                     return;
+                synchronizedText.Remove(full);
             }
 
             rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
@@ -404,16 +435,36 @@ public sealed partial class LanguageServer : IDisposable
         var offered = new List<(string Sort, UICompletion Item)>(items.Count);
         foreach (JsonNode? node in items)
         {
-            if (node is JsonObject item && CompletionOf(item, line, start) is { } completion)
+            if (node is JsonObject item && CompletionOf(item, line, character, start) is { } completion)
+            {
+                if (serverCapabilities?["completionProvider"] is JsonObject provider && provider["resolveProvider"]?.GetValue<bool>() == true)
+                {
+                    // Re-filtering the same list reuses one request per item, and only highlighted items
+                    // are resolved. Preserve the server's original data and edit fields in the request.
+                    var resolved = new Lazy<Task<UICompletionDocumentation?>>(() => ResolveCompletionDocumentation(item));
+                    completion = completion with { ResolveDocumentation = () => resolved.Value };
+                }
                 offered.Add((item["sortText"]?.GetValue<string>() ?? completion.Text, completion));
+            }
         }
 
         // In the order the server ranks them, which the editor keeps (a stable sort, ties stay as they came)
         return new LanguageServerCompletions([.. offered.OrderBy(pair => pair.Sort, StringComparer.Ordinal).Select(pair => pair.Item)], incomplete);
     }
 
+    private async Task<UICompletionDocumentation?> ResolveCompletionDocumentation(JsonObject item)
+    {
+        if (await Ask("completionItem/resolve", item.DeepClone()).ConfigureAwait(false) is not JsonObject resolved)
+            return null;
+        string label = item["label"]?.GetValue<string>() ?? "";
+        string detail = resolved["detail"]?.GetValue<string>() is { Length: > 0 } said
+            ? DetailWithout(said.Split('\n')[0].Trim(), label) : "";
+        if (detail.Length > 60) detail = string.Concat(detail.AsSpan(0, 59), "\u2026");
+        return new(detail, PlainDocs(Markdown(resolved["documentation"])));
+    }
+
     // Helper method to make one of the server's completion items into one of the editor's, null for one with no label
-    private static UICompletion? CompletionOf(JsonObject item, int line, int start)
+    private static UICompletion? CompletionOf(JsonObject item, int line, int character, int start)
     {
         if (item["label"]?.GetValue<string>() is not { Length: > 0 } label)
             return null;
@@ -423,13 +474,23 @@ public sealed partial class LanguageServer : IDisposable
         if (item["sortText"]?.GetValue<string>() is { Length: > 0 } sort && sort.EndsWith(' '))
             return null;
 
-        // An edit the server worked out wins, as long as it replaces from where the editor will, otherwise what it says
-        // to insert, otherwise the label
+        // The native range can cover punctuation within a name or path, beyond the editor's word boundary.
         string? insert = item["insertText"]?.GetValue<string>();
-        if (item["textEdit"] is JsonObject edit && edit["newText"]?.GetValue<string>() is { } newText
-            && (edit["range"] ?? edit["insert"]) is JsonObject range && range["start"] is JsonObject from
-            && JsonNumbers.Int(from["line"], int.MinValue) == line && JsonNumbers.Int(from["character"], int.MinValue) == start)
+        UITextPosition? replacementStart = null, replacementEnd = null;
+        if (item["textEdit"] is { } nativeEdit)
+        {
+            if (nativeEdit is not JsonObject edit || edit["newText"]?.GetValue<string>() is not { } newText
+                || (edit["range"] ?? edit["replace"] ?? edit["insert"]) is not JsonObject range
+                || range["start"] is not JsonObject from || range["end"] is not JsonObject to
+                || JsonNumbers.Int(from["line"], -1) != line || JsonNumbers.Int(to["line"], -1) != line)
+                return null;
+            int first = JsonNumbers.Int(from["character"], -1), last = JsonNumbers.Int(to["character"], -1);
+            if (first < 0 || first > character || last < character) return null;
             insert = newText;
+            // Ordinary prefix replacements remain reusable as the word grows. Other ranges belong to this version.
+            if (first != start) replacementStart = new(line, first);
+            if (replacementStart is not null || last > character) replacementEnd = new(line, last);
+        }
 
         // A snippet anyway (some servers send them asked or not), its placeholders become what they stand for
         if (insert is not null && JsonNumbers.Int(item["insertTextFormat"], int.MinValue) == 2)
@@ -442,7 +503,24 @@ public sealed partial class LanguageServer : IDisposable
 
         // serve-d's label says how many overloads in markdown's italics, "(*2 overloads*)", which read with the stars
         string shown = label.Replace("(*", "(", StringComparison.Ordinal).Replace("*)", ")", StringComparison.Ordinal);
-        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])), KindOf(JsonNumbers.Int(item["kind"], 0)));
+        List<UITextEdit>? additional = null;
+        if (item["additionalTextEdits"] is JsonArray extras)
+        {
+            additional = [];
+            foreach (JsonNode? extra in extras)
+            {
+                if (extra is not JsonObject replacement || replacement["range"] is not JsonObject span
+                    || span["start"] is not JsonObject first || span["end"] is not JsonObject last
+                    || replacement["newText"]?.GetValue<string>() is not { } text)
+                    return null;
+                var extraStart = new UITextPosition(JsonNumbers.Int(first["line"], -1), JsonNumbers.Int(first["character"], -1));
+                var to = new UITextPosition(JsonNumbers.Int(last["line"], -1), JsonNumbers.Int(last["character"], -1));
+                if (extraStart.Line < 0 || extraStart.Column < 0 || to.Line < 0 || to.Column < 0 || to < extraStart)
+                    return null;
+                additional.Add(new(extraStart, to, text));
+            }
+        }
+        return new UICompletion(shown, detail, insert == shown ? null : insert ?? (shown == label ? null : label), PlainDocs(Markdown(item["documentation"])), KindOf(JsonNumbers.Int(item["kind"], 0)), additional, ReplacementEnd: replacementEnd, ReplacementStart: replacementStart);
     }
 
     // How much of what an item does goes beside the list
@@ -581,9 +659,10 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Takes what the server last said about a file, oldest first, false when there is nothing waiting.</summary>
     public bool TryTake(out string path, out IReadOnlyList<UICodeDiagnostic> found)
     {
-        if (arrived.TryDequeue(out var next))
+        while (arrived.TryDequeue(out var next))
         {
-            (path, found) = next;
+            if (next.Version is {} version && DocumentVersion(next.Path) is {} current && version < current) continue;
+            (path, found) = (next.Path, next.Found);
             return true;
         }
 
@@ -599,6 +678,9 @@ public sealed partial class LanguageServer : IDisposable
 
         if (PathOf(uri) is not { } path)
             return;
+
+        int? version = published["version"] is JsonValue value && value.TryGetValue<int>(out int number) ? number : null;
+        if (version is {} sent && DocumentVersion(path) is {} current && sent < current) return;
 
         var found = new List<UICodeDiagnostic>();
         if (published["diagnostics"] is JsonArray diagnostics)
@@ -625,16 +707,19 @@ public sealed partial class LanguageServer : IDisposable
                 // own codes for using something [Obsolete] count too
                 bool deprecated = diagnostic["tags"] is JsonArray tags && tags.Any(tag => JsonNumbers.Int(tag, 0) == 2)
                     || diagnostic["code"]?.ToString() is "CS0612" or "CS0618" or "CS0619";
-                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3, Deprecated: deprecated));
+                found.Add(new UICodeDiagnostic(line, column, length, message, Warning: severity != 1, Hint: severity >= 3, Deprecated: deprecated)
+                {
+                    RelatedLocations = DiagnosticLocations(diagnostic["relatedInformation"]),
+                    DocumentationUrl = diagnostic["codeDescription"]?["href"] is JsonValue href && href.TryGetValue<string>(out var link)
+                        && Uri.TryCreate(link, UriKind.Absolute, out var documentation) && documentation.Scheme is "https" or "http" ? link : null
+                });
             }
         }
 
         KeepDiagnostics(path, published["diagnostics"] as JsonArray);
-        arrived.Enqueue((path, found));
+        arrived.Enqueue((path, version, found));
         Woken?.Invoke();
     }
-
-    private static string UriOf(string path) => new Uri(Path.GetFullPath(path)).AbsoluteUri;
 
     /// <summary>Asks the server to shut down and ends its process, waiting a moment for it to go by itself.</summary>
     public void Dispose()

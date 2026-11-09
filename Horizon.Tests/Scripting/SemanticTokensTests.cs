@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 
 using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
@@ -303,7 +303,7 @@ public class SemanticTokensTests
         using LanguageServer server = LanguageServer.Over("obsolete", "csharp", Path.GetTempPath(), toClientRead, toServer);
 
         string uri = new Uri(Path.Combine(Path.GetTempPath(), "old.cs")).AbsoluteUri;
-        string json = $$$$"""{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"{{{{uri}}}}","diagnostics":[{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":7}},"severity":2,"message":"tagged","tags":[2]},{"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":7}},"severity":2,"message":"coded","code":"CS0618"},{"range":{"start":{"line":3,"character":4},"end":{"line":3,"character":7}},"severity":2,"message":"plain","code":"CS0168"}]}}""";
+        string json = $$$$"""{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"{{{{uri}}}}","diagnostics":[{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":7}},"severity":2,"message":"tagged","tags":[2],"codeDescription":{"href":"https://example.com/diagnostics/obsolete"}},{"range":{"start":{"line":2,"character":4},"end":{"line":2,"character":7}},"severity":2,"message":"coded","code":"CS0618","codeDescription":{"href":"file:///private/document.txt"}},{"range":{"start":{"line":3,"character":4},"end":{"line":3,"character":7}},"severity":2,"message":"plain","code":"CS0168","codeDescription":{"href":"not a URI"}}]}}""";
         byte[] body = System.Text.Encoding.UTF8.GetBytes(json);
         toClient.Write(System.Text.Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n"));
         toClient.Write(body);
@@ -315,6 +315,9 @@ public class SemanticTokensTests
             Thread.Sleep(10);
 
         Assert.Equal([true, true, false], found.Select(diagnostic => diagnostic.Deprecated));
+        Assert.Equal("https://example.com/diagnostics/obsolete", found[0].DocumentationUrl);
+        Assert.Null(found[1].DocumentationUrl);
+        Assert.Null(found[2].DocumentationUrl);
         toClient.Dispose();
     }
 }

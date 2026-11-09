@@ -1,6 +1,6 @@
 using System.Globalization;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Input;
 

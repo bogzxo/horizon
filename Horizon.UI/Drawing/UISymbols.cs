@@ -1,3 +1,4 @@
+using Horizon.Content;
 using System.Numerics;
 
 using Horizon.Graphics;
@@ -71,7 +72,8 @@ public static class UISymbols
 
             using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
-            font = DistanceFieldFont.Load(DIRECTORY, FONT_FILE, DistanceFieldFont.DEFAULT_EM, Characters);
+            // The outline solver exhausts small mobile stacks, as it does for the file-kind icons below.
+            font = DistanceFieldFont.Load(DIRECTORY, FONT_FILE, DistanceFieldFont.DEFAULT_EM, Characters, rasterizeTrueTypeForDistanceField: true);
             foreach (var glyph in font.Glyphs.Values)
             {
                 if (glyph.Size.X <= 0.0f || glyph.TexelSize.X <= 0.0f) continue;
@@ -90,14 +92,14 @@ public static class UISymbols
     private static void ReadNames()
     {
         string path = Path.Combine(DIRECTORY, NAMES_FILE);
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
         {
             Log.Error($"[UISymbols] There are no names of the icons at '{path}'.");
             return;
         }
 
-        var runtime = new HIDLRuntime();
-        var (success, _) = runtime.Evaluate(File.ReadAllText(path));
+        var runtime = new HIDLRuntime().ReadingContent();
+        var (success, _) = runtime.Evaluate(ContentFiles.ReadAllText(path));
         if (!success || runtime.UserScope.Lookup("icons") is not ObjectValue { Properties: { } icons })
         {
             Log.Error($"[UISymbols] '{path}' didn't come out as an object of icons.");
@@ -120,14 +122,14 @@ public static class UISymbols
     private static void ReadFileKindNames()
     {
         string path = Path.Combine(FILE_KIND_DIRECTORY, FILE_KIND_NAMES);
-        if (!File.Exists(path))
+        if (!ContentFiles.Exists(path))
         {
             Log.Error($"[UISymbols] There are no file-kind icon names at '{path}'.");
             return;
         }
 
-        var runtime = new HIDLRuntime();
-        var (success, _) = runtime.Evaluate(File.ReadAllText(path));
+        var runtime = new HIDLRuntime().ReadingContent();
+        var (success, _) = runtime.Evaluate(ContentFiles.ReadAllText(path));
         if (!success || runtime.UserScope.Lookup("icons") is not ObjectValue { Properties: { } icons })
         {
             Log.Error($"[UISymbols] '{path}' didn't come out as an object of file-kind icons.");

@@ -2,7 +2,6 @@ using Horizon.Input;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
 
 namespace Horizon.Tests.UI;
 
@@ -12,6 +11,28 @@ namespace Horizon.Tests.UI;
 /// </summary>
 public class UIShortcutsTests
 {
+    [Fact]
+    public void Cancelled_chord_cannot_resume_after_another_keyboard_scope()
+    {
+        var shortcuts = new UIShortcuts();
+        int invoked = 0, ended = 0;
+        shortcuts.OnChordEnded = () => ended++;
+        shortcuts.Add(Key.R, () => invoked++, control: true, whileTyping: true,
+            then: new UIKeyStroke(Key.A, false, false, false));
+        shortcuts.Update(key => key == Key.R, true, false, false, false);
+        Assert.NotNull(shortcuts.Pending);
+        shortcuts.CancelChord();
+        shortcuts.CancelChord();
+        shortcuts.Update(key => key == Key.A, false, false, false, false);
+        Assert.Null(shortcuts.Pending);
+        Assert.Equal(0, invoked);
+        Assert.Equal(1, ended);
+        Assert.False(shortcuts.Swallowed);
+        shortcuts.Update(key => key == Key.R, true, false, false, false);
+        shortcuts.Update(key => key == Key.A, false, false, false, false);
+        Assert.Equal(1, invoked);
+    }
+
     // Ctrl+Shift+G pressed this update, nothing else
     private static void PressCtrlShiftG(UIShortcuts shortcuts, bool typing = false) =>
         shortcuts.Update(key => key == Key.G, control: true, shift: true, alt: false, typing);
@@ -271,5 +292,22 @@ public class UIShortcutsTests
         {
             File.Delete(path);
         }
+    }
+
+    [Fact]
+    public void Taking_a_key_with_shift_leaves_the_one_without_it()
+    {
+        // Visual Studio's zoom took Ctrl+Shift+. and Ctrl+. went off Quick Fix with it
+        var shortcuts = new UIShortcuts();
+        int fixes = 0, zooms = 0;
+        shortcuts.Add(Key.Period, () => { fixes++; return true; }, control: true);
+        shortcuts.Remove(Key.Period, control: true, shift: true, alt: false);
+        shortcuts.Add(Key.Period, () => zooms++, control: true, shift: true);
+
+        shortcuts.Update(key => key == Key.Period, control: true, shift: false, alt: false, typing: false);
+        shortcuts.Update(key => key == Key.Period, control: true, shift: true, alt: false, typing: false);
+
+        Assert.Equal(1, fixes);
+        Assert.Equal(1, zooms);
     }
 }

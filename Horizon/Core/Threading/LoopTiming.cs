@@ -20,7 +20,7 @@ internal static class LoopTiming
     /// <summary>
     /// Waits for a moment (in seconds of the stopwatch), asleep for most of it, awake for the end.
     /// </summary>
-    public static void WaitUntil(double moment)
+    public static void WaitUntil(double moment, bool spin = true)
     {
         double frequency = Stopwatch.Frequency;
 
@@ -29,7 +29,7 @@ internal static class LoopTiming
         // frame, which was most of what an editor sitting there blinking its caret cost
         if (PreciseTimer() is var timer && timer != 0)
         {
-            double sleepFor = moment - Stopwatch.GetTimestamp() / frequency - PRECISE_MARGIN;
+            double sleepFor = moment - Stopwatch.GetTimestamp() / frequency - (spin ? PRECISE_MARGIN : 0.0);
             if (sleepFor > 0.0)
             {
                 long due = -(long)(sleepFor * 10_000_000.0);
@@ -43,7 +43,10 @@ internal static class LoopTiming
             double left = moment - Stopwatch.GetTimestamp() / frequency;
             if (left <= 0.0) return;
 
-            if (left > SPIN_MARGIN) Thread.Sleep(1);
+            // Desktop applications can tolerate a timer's small overshoot. Burning the last fraction of every
+            // tick/frame on a core is useful for a game, but costs more than drawing an idle editor's caret.
+            if (!spin) Thread.Sleep((int)Math.Min(int.MaxValue, Math.Ceiling(left * 1000.0)));
+            else if (left > SPIN_MARGIN) Thread.Sleep(1);
             else Thread.SpinWait(32);
         }
     }

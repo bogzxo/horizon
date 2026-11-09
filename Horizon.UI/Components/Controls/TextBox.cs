@@ -106,6 +106,9 @@ public class TextBox : UIComponent
     /// </summary>
     public bool ReadOnly { get; set; }
 
+    // A soft keyboard comes up for a box a finger focused, unless nothing can be typed into it
+    protected internal override bool WantsTextInput => !ReadOnly;
+
     /// <summary>Called with the new text whenever typing changes it.</summary>
     public Action<string>? OnChanged { get; set; }
 
@@ -550,7 +553,9 @@ public class TextBox : UIComponent
 
     protected override void Update(float dt)
     {
-        blink = (blink + dt) % (BLINK_INTERVAL * 2.0f);
+        blink = Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK_INTERVAL * 2.0f);
+        if (IsFocused && Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+            blinkingWindow.RequestTickIn(BLINK_INTERVAL - blink % BLINK_INTERVAL);
     }
 
     protected override Vector2 Measure(UISkin skin)

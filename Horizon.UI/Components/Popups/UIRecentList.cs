@@ -1,3 +1,5 @@
+using Horizon.Platform;
+
 namespace Horizon.UI.Components;
 
 /// <summary>
@@ -21,12 +23,12 @@ public sealed class UIRecentList
         this.file = file;
         Most = most;
 
-        if (file is null || !File.Exists(file))
+        if (file is null || !PlatformStorage.Exists(file))
             return;
 
         try
         {
-            foreach (string line in File.ReadAllLines(file))
+            foreach (string line in PlatformStorage.ReadAllText(file).Split('\n').Select(line => line.TrimEnd('\r')))
                 if (line.Length > 0 && items.Count < most && !items.Contains(line))
                     items.Add(line);
         }
@@ -50,8 +52,7 @@ public sealed class UIRecentList
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-            File.WriteAllLines(file, items);
+            PlatformStorage.WriteAllText(file, string.Concat(items.Select(item => item + System.Environment.NewLine)));
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -62,6 +63,6 @@ public sealed class UIRecentList
     {
         items.Clear();
         if (file is not null)
-            try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { PlatformStorage.Current.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 }

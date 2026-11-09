@@ -5,7 +5,7 @@ using Horizon.Graphics;
 using Horizon.Rendering;
 using Horizon.Rendering.Meshes;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 namespace Horizon.Testing.Examples.Game;
 

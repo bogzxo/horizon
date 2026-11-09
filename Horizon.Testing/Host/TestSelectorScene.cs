@@ -73,6 +73,12 @@ internal sealed class TestSelectorScene : Scene
         looks.Add(new Label("The examples' UI is drawn in") { TextScale = 0.25f, Color = HostStyle.Dim });
         looks.Add(new SkinPicker { TextScale = 0.25f });
 
+        // The render scale every example is drawn at, the engine's setting (WindowManager.Scaling), kept between runs
+        // by the host. F4 steps it while an example runs and F5 opens the same picker over it
+        var scaled = screen.Add(new StackPanel { Anchor = Origin.Left, Direction = UIDirection.Horizontal, Spacing = 12 });
+        scaled.Add(new Label("Render scale") { Anchor = Origin.Top, TextScale = 0.25f, Color = HostStyle.Dim });
+        scaled.Add(new RenderScalePicker { TextScale = 0.22f, OnPicked = host.KeepRenderScale });
+
         var body = screen.Add(new StackPanel { Direction = UIDirection.Horizontal, Spacing = 20 });
 
         /* The list */
@@ -119,7 +125,7 @@ internal sealed class TestSelectorScene : Scene
             {
                 // Pressed on the simulation thread (that's where the UI is updated). Start is fine with that, the
                 // actual switch waits for the start of the next frame.
-                var row = column.Add(new Button(test.Number > 0 ? $"{test.Number:00}   {test.Name}" : test.Name)
+                var row = column.Add(new Button((test.Number > 0 ? $"{test.Number:00}   {test.Name}" : test.Name) + (test.Unsupported is null ? "" : "   (not here)"))
                 {
                     Style = "button_flat",
                     Size = new Vector2(LIST_WIDTH, ROW_HEIGHT),
@@ -127,6 +133,19 @@ internal sealed class TestSelectorScene : Scene
                     OnPressed = () => host.Start(test)
                 });
                 rows[row] = test;
+            }
+
+            // Every check one after the other, the same as --checks, for a machine with no command line to give it
+            if (level == TestLevel.Checks)
+            {
+                column.Add(new Button("Run every check")
+                {
+                    Style = "button_flat",
+                    Size = new Vector2(LIST_WIDTH, ROW_HEIGHT),
+                    LabelScale = 0.26f,
+                    Tooltip = "Runs them all and comes back with how they went",
+                    OnPressed = () => host.RunChecks(exit: false)
+                });
             }
         }
 
@@ -228,10 +247,10 @@ internal sealed class TestSelectorScene : Scene
 
         where.Text = test.Number > 0 ? $"{TestCatalog.NameOf(test.Level)}, number {test.Number}" : "A check, it runs by itself";
         name.Text = test.Name;
-        summary.Text = test.Summary;
+        summary.Text = test.Unsupported is { } why ? $"{test.Summary}\n\nIt can't run here, {why}" : test.Summary;
         shows.Text = string.Join("     ", test.Shows);
         source.Text = $"Horizon.Testing/{test.Source}";
-        command.Text = $"Start straight in it with   Horizon.Testing {test.Id}";
+        command.Text = TestPlatform.HowToStart(test.Id);
         run.OnPressed = () => host.Start(test);
     }
 }

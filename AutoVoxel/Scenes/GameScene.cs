@@ -12,7 +12,7 @@ using Horizon.Rendering.Voxels;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using Button = Horizon.UI.Components.Button;
 

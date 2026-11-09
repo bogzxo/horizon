@@ -101,6 +101,11 @@ public class TitleBar : StackPanel
     /// <summary>Whether it has the window's minimise, maximise and close at the right end.</summary>
     public bool WindowButtons { get; set; } = true;
 
+    // Only where there's a window to minimise and maximise, a phone's bar has no business pretending. Without an engine
+    // (a test laying the bar out) it's what it was told
+    private bool ShowsWindowButtons => WindowButtons &&
+        (GameEngine.Instance?.WindowManager is not { } window || (window.Features & Horizon.Platform.PlatformFeatures.Window) != 0);
+
     /// <summary>How tall it is when nothing in it is taller, in the window's pixels (see <see cref="PixelSized"/>).</summary>
     public float Height { get; set; } = 32.0f;
 
@@ -145,7 +150,7 @@ public class TitleBar : StackPanel
 
     // The room at the left for the icon, and at the right for the buttons
     private float IconRoom => Icon.Length > 0 ? BarHeight : 0.0f;
-    private float ButtonsRoom => WindowButtons ? ButtonWidth * 3.0f : 0.0f;
+    private float ButtonsRoom => ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f;
 
     protected override Vector2 Measure(UISkin skin)
     {
@@ -182,7 +187,7 @@ public class TitleBar : StackPanel
         if (!Bounds.Contains(point))
             return Part.None;
 
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             if (ButtonBounds(0).Contains(point)) return Part.Minimize;
             if (ButtonBounds(1).Contains(point)) return Part.Maximize;
@@ -239,7 +244,7 @@ public class TitleBar : StackPanel
                 list.Text(shown, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
         }
 
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             bool down = IsPressed;
             for (int i = 0; i < 3; i++)
@@ -256,8 +261,8 @@ public class TitleBar : StackPanel
         // bar is and what on it isn't, for the desktop to move the window by it (SDL's, see WindowManager.HitTest)
         if (GameEngine.Instance?.WindowManager is { CustomFrame: true } window && Module is { } module)
         {
-            window.MaximizeButton = WindowButtons ? InWindow(module, ButtonBounds(1)) : default;
-            if (Core.WindowManager.UsesSdl)
+            window.MaximizeButton = ShowsWindowButtons ? InWindow(module, ButtonBounds(1)) : default;
+            if ((window.Features & Horizon.Platform.PlatformFeatures.DragArea) != 0)
                 window.SetDragArea(Visible ? InWindow(module, Bounds) : default, Holes(module));
         }
 
@@ -271,7 +276,7 @@ public class TitleBar : StackPanel
     private ReadOnlySpan<System.Drawing.RectangleF> Holes(UIModule module)
     {
         holes.Clear();
-        if (WindowButtons)
+        if (ShowsWindowButtons)
         {
             for (int i = 0; i < 3; i++)
                 holes.Add(InWindow(module, ButtonBounds(i)));

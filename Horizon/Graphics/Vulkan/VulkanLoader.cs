@@ -145,7 +145,7 @@ internal static class VulkanLoader
         try
         {
             string game = Assembly.GetEntryAssembly()?.GetName().Name ?? "Horizon";
-            return Path.Combine(Horizon.Core.Platform.PlatformPaths.Cache(Path.Combine("Horizon", game)), DRIVER_FILE);
+            return Path.Combine(Horizon.Platform.PlatformStorage.Cache(Path.Combine("Horizon", game)), DRIVER_FILE);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

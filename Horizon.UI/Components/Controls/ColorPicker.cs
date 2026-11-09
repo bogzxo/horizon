@@ -195,6 +195,8 @@ public class ColorPicker : UIComponent
         }
     }
 
+    protected internal override bool KeepsTouchDrag(Vector2 point) => true;
+
     protected internal override void OnPointerDown(Vector2 point)
     {
         // Whatever was pressed on keeps the pointer until it is let go of, wherever it wanders off to.

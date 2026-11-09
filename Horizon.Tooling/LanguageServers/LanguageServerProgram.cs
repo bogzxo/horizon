@@ -12,7 +12,11 @@ public static partial class LanguageServerProgram
         string path = ProcessEnvironment.Path();
         // npm's default global bin directory need not be in the launching application's environment.
         if (OperatingSystem.IsWindows())
+        {
             path += Path.PathSeparator + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm");
+            path += Path.PathSeparator + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "LLVM", "bin");
+        }
+        path += Path.PathSeparator + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools");
         return path;
     }
 

@@ -1,5 +1,4 @@
 using System.Numerics;
-using Silk.NET.Input;
 
 namespace Horizon.Input;
 
@@ -16,16 +15,9 @@ public sealed class Gamepad
     private uint held, heldBefore;
     private GamepadBindings bindings;
 
-    // Some drivers rest their triggers at -1 rather than at 0, because of course they do. There is no asking which, so a trigger is
-    // taken to be one of those from the first time it reads below zero.
-    private bool leftTriggerFromMinusOne, rightTriggerFromMinusOne;
-
-    // What the device was last seen holding by the thread of the window, and every button it was seen holding since the
-    // simulation last took a look. A press that came and went between two updates is still a press
-    private readonly Lock sampleLock = new();
+    // Every sample is delivered on the simulation thread before the gamepad takes its next turn.
     private GamepadSnapshot sampled;
     private uint heldSinceTaken;
-    private bool hasSample;
 
     /// <summary>Which gamepad this is, counted from 0. The first player is on slot 0.</summary>
     public int Slot { get; }
@@ -50,7 +42,7 @@ public sealed class Gamepad
     public GamepadKind Kind { get; set; }
 
     /// <summary>The device behind this gamepad. Null while it is unplugged, and always for a virtual gamepad.</summary>
-    public IGamepad? Device { get; internal set; }
+    internal GamepadDevice? Device { get; set; }
 
     /// <summary>
     /// Whether this gamepad isn't a device at all but is driven by the game through <see cref="Update(in GamepadSnapshot)"/>.
@@ -102,6 +94,9 @@ public sealed class Gamepad
     /// a combination of buttons collects these until they are all let go of again.
     /// </summary>
     public uint HeldMask => held;
+
+    /// <summary>Everything that was held the update before, for the manager's log of what changed.</summary>
+    internal uint HeldBeforeMask => heldBefore;
 
     internal Gamepad(int slot, string name, GamepadBindings bindings, bool isVirtual)
     {
@@ -158,17 +153,7 @@ public sealed class Gamepad
     /// <summary>
     /// Runs the rumble motors of the device, from 0 to 1 each. Does nothing if there is no device or it has none.
     /// </summary>
-    public void Vibrate(float left, float right)
-    {
-        if (Device is not { } device)
-            return;
-
-        var motors = device.VibrationMotors;
-        if (motors.Count > 0)
-            motors[0].Speed = Math.Clamp(left, 0.0f, 1.0f);
-        if (motors.Count > 1)
-            motors[1].Speed = Math.Clamp(right, 0.0f, 1.0f);
-    }
+    public void Vibrate(float left, float right) => Device?.Vibrate(left, right);
 
     /// <summary>
     /// Moves this gamepad on by one update to what a snapshot says. The manager does this for real devices,
@@ -201,107 +186,26 @@ public sealed class Gamepad
         held = now;
     }
 
-    /// <summary>
-    /// Moves on by one update to what the device was seen doing since the last one (see <see cref="Sample"/>), or reads
-    /// it right now if nobody samples it. A gamepad without a device reads as nothing held.
-    /// </summary>
-    internal void Poll(bool sampled)
+    /// <summary>Moves on once per tick, retaining a button tap that arrived between ticks.</summary>
+    internal void Poll()
     {
-        if (Device is not { IsConnected: true })
-        {
-            lock (sampleLock)
-            {
-                hasSample = false;
-                heldSinceTaken = 0;
-            }
-
-            Update(default);
-            return;
-        }
-
-        if (!sampled)
-        {
-            Update(Read());
-            return;
-        }
-
-        GamepadSnapshot raw = default;
-        lock (sampleLock)
-        {
-            if (hasSample)
-            {
-                raw = this.sampled;
-                raw.Buttons |= heldSinceTaken;
-                heldSinceTaken = 0;
-            }
-        }
-
+        GamepadSnapshot raw = Device is null ? default : sampled;
+        if (Device is not null) raw.Buttons |= heldSinceTaken;
+        heldSinceTaken = 0;
         Update(raw);
     }
 
-    /// <summary>
-    /// Looks at the device and keeps what it is doing for the next update. On the thread of the window, every time it
-    /// has heard what the system had to say. That is when the device is refreshed, and reading it from anywhere else
-    /// could catch it halfway.
-    /// </summary>
-    internal void Sample()
+    internal void Sample(in GamepadSnapshot raw)
     {
-        if (Device is not { IsConnected: true })
-            return;
-
-        GamepadSnapshot raw = Read();
-
-        lock (sampleLock)
-        {
-            sampled = raw;
-            heldSinceTaken |= raw.Buttons;
-            hasSample = true;
-        }
+        sampled = raw;
+        heldSinceTaken |= raw.Buttons;
     }
 
-    /// <summary>
-    /// Helper method to read what the device is holding right now.
-    /// </summary>
-    private GamepadSnapshot Read()
-    {
-        GamepadSnapshot raw = default;
-        if (Device is not { IsConnected: true } device)
-            return raw;
-
-        // By number rather than with a foreach. The list is handed out as an interface, a foreach over that
-        // makes an enumerator on the heap, and this is run a thousand times a second for every gamepad
-        var buttons = device.Buttons;
-        for (int i = 0; i < buttons.Count; i++)
-        {
-            var button = buttons[i];
-            if (button.Pressed && GamepadInputs.TryFromButton(button.Name, out var input))
-                raw.Buttons |= GamepadInputs.Bit(input);
-        }
-
-        // Devices say down is positive, everything else in the engine says up is.
-        var sticks = device.Thumbsticks;
-        if (sticks.Count > 0) raw.LeftStick = new Vector2(sticks[0].X, -sticks[0].Y);
-        if (sticks.Count > 1) raw.RightStick = new Vector2(sticks[1].X, -sticks[1].Y);
-
-        var triggers = device.Triggers;
-        if (triggers.Count > 0) raw.LeftTrigger = ReadTrigger(triggers[0].Position, ref leftTriggerFromMinusOne);
-        if (triggers.Count > 1) raw.RightTrigger = ReadTrigger(triggers[1].Position, ref rightTriggerFromMinusOne);
-
-        return raw;
-    }
-
-    /// <summary>Forgets what the device before this one was like.</summary>
+    /// <summary>Forgets every sample from the previous device when the slot is reused.</summary>
     internal void ResetDevice()
     {
-        leftTriggerFromMinusOne = rightTriggerFromMinusOne = false;
-    }
-
-    private static float ReadTrigger(float position, ref bool fromMinusOne)
-    {
-        if (position < 0.0f)
-            fromMinusOne = true;
-
-        return fromMinusOne ? (position + 1.0f) * 0.5f : position;
+        sampled = default;
+        heldSinceTaken = 0;
     }
 
     /// <summary>

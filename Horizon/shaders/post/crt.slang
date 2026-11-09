@@ -68,7 +68,18 @@ float3 beam(float3 colour, float narrow, float wide)
 [shader("fragment")]
 float4 fsMain(ScreenVaryings input) : SV_Target0
 {
-    float2 pos = warp(input.texCoords) * params.uResolution;
+    float2 uv = warp(input.texCoords);
+    float2 pos = uv * params.uResolution;
+
+    // A tube dot is artwork-sized, independent of this pass's target. Fade its periodic modulation between
+    // four and two output samples per dot; at Nyquist and below use the beam's mean light instead. Derivatives
+    // include glass warp, non-square outputs and intermediate render scaling. This filters the tube pattern,
+    // not aliasing already present in the source artwork.
+    float2 footprint = fwidth(pos);
+    float unresolvable = smoothstep(0.25, 0.5, max(footprint.x, footprint.y));
+    float3 mean = beam(uSource.Sample(uv).rgb, params.uScanMean, 1.0);
+    if (unresolvable >= 1.0)
+        return float4(toSrgb(mean), 1.0);
 
     // The dot we are in, and how far its middle is from us. The dots to either side are one and two further
     float2 cell = floor(pos);
@@ -120,5 +131,5 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
         beam(lineB, narrow.y, wide.y) +
         beam(lineC, narrow.z, wide.z);
 
-    return float4(toSrgb(colour), 1.0);
+    return float4(toSrgb(lerp(colour, mean, unresolvable)), 1.0);
 }

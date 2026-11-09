@@ -6,7 +6,7 @@ using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
 
-using Silk.NET.Input;
+using Horizon.Input;
 
 using Button = Horizon.UI.Components.Button;
 
@@ -62,7 +62,9 @@ internal sealed class UILayoutCheck : Scene, ITestControls, ISelfCheck
 
     public UILayoutCheck()
     {
-        var cam = AddEntity(new Camera2D(Engine.WindowManager.ViewportSize));
+        // A screen the size of the design whatever the window is, so the scaling checked below starts from 1 on a
+        // 16:10 tablet the same as in a 1600 by 900 desktop window
+        var cam = AddEntity(new Camera2D(DesignSize));
         ActiveCamera = cam;
 
         _compositor = AddComponent(new UICompositor(cam, UICompositor.DEFAULT_SKIN_DIRECTORY, UICompositor.DEFAULT_SKIN_FILE) { DesignSize = DesignSize });

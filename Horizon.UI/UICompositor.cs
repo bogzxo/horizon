@@ -509,6 +509,24 @@ public partial class UICompositor : GameComponent, IDisposable
     public static UICompositor ForScreen(string skinDirectory, string skinFile, string? theme = null) =>
         new(new Camera2D(GameEngine.Instance.WindowManager.ViewportSize), skinDirectory, skinFile, theme) { ownsCamera = true };
 
+    /// <summary>
+    /// The innermost component at a pixel of the window (from its top left, the way the pointer and a finger say where
+    /// they are), in the topmost module that has one there. What the pointer would land on, labels and panels too,
+    /// whatever size the scene is drawn at. For checks and tools.
+    /// </summary>
+    public UIComponent? FindAtWindow(Vector2 pixel)
+    {
+        Vector2 world = ToWorld(pixel);
+        UIModule[] now = modules;
+        for (int i = now.Length - 1; i >= 0; i--)
+        {
+            if (now[i].FindAt(world) is { } found)
+                return found;
+        }
+
+        return null;
+    }
+
     public UIModule CreateModule()
     {
         var module = new UIModule(this);
@@ -517,6 +535,31 @@ public partial class UICompositor : GameComponent, IDisposable
             modules = [.. modules, module];
 
         return module;
+    }
+
+    /// <summary>Replaces a registered module in place, preserving its order and disabling the retired module.</summary>
+    public bool ReplaceModule(UIModule current, UIModule replacement)
+    {
+        ArgumentNullException.ThrowIfNull(replacement);
+        if (current.Compositor != this || replacement.Compositor != this)
+            throw new ArgumentException("Both modules must belong to this compositor.");
+        lock (modulesLock)
+        {
+            int index = Array.IndexOf(modules, current);
+            if (index < 0)
+                return false;
+            if (ReferenceEquals(current, replacement))
+                return true;
+            if (Array.IndexOf(modules, replacement) >= 0)
+                throw new ArgumentException("The replacement module is already registered.");
+            var next = (UIModule[])modules.Clone();
+            next[index] = replacement;
+            current.Enabled = false;
+            modules = next;
+            if (Focus?.Module == current)
+                Focus = null;
+            return true;
+        }
     }
 
     public bool RemoveModule(UIModule module)
@@ -661,8 +704,9 @@ public partial class UICompositor : GameComponent, IDisposable
             module.FitTo(screen);
 
         // The pointer is tested against the layout of the previous update, which is the one on screen.
-        RoutePointer(snapshot);
+        RoutePointer(snapshot, dt);
         RouteKeyboard(snapshot);
+        UpdateTextInput();
         UpdateTooltip(snapshot, dt);
 
         foreach (var module in snapshot)
@@ -713,6 +757,7 @@ public partial class UICompositor : GameComponent, IDisposable
             module.Layout(screen, skin);
             Statistics.LayoutMs += UIStatistics.Since(laying);
             module.Paint(back);
+            PaintMiddleScroll(back, module);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
             // the boxes of the layout debugger and the mark round what is picked were not, they ran on out of the
@@ -840,7 +885,7 @@ public partial class UICompositor : GameComponent, IDisposable
     internal static Vector2? LiveDragPointer(Mouse mouse)
     {
         Vector2 position = mouse.LivePosition;
-        return mouse.IsLiveDown(Silk.NET.Input.MouseButton.Left) ? position : null;
+        return mouse.IsLiveDown(Horizon.Input.MouseButton.Left) ? position : null;
     }
 
     private bool UploadCaptured(in RenderFrame frame, UISkin skin, bool due)
@@ -1012,6 +1057,11 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     private void DrawUploaded(float dt)
     {
+        // A UI drawn straight into the window is drawn at its own pixels over the scene blown up, unless the whole frame
+        // is drawn small (see FrameScaler). One inside of a renderer is part of that renderer's picture
+        if (Renderer2D.Current is null && (!renderer.IsEmpty || Cursor is { Visible: true }))
+            GameEngine.Instance.WindowManager.Scaling.BeginOverlay();
+
         using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
 
         long started = Stopwatch.GetTimestamp();
