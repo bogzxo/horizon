@@ -47,7 +47,15 @@ public class TextMateHighlighterTests
             Assert.Null(deferred);
         }
         finally { release.Set(); await holding; }
-        var spans = Assert.IsType<List<SyntaxSpan>>(freshColours.Invoke(editor, [0, changed]));
+        // Other tests and the background recolourer share this grammar. A later paint can still defer while one
+        // of them owns it; the editor retries on its next frame rather than waiting for the grammar lock.
+        object? recovered = null;
+        for (int attempt = 0; attempt < 100 && recovered is null; attempt++)
+        {
+            recovered = freshColours.Invoke(editor, [0, changed]);
+            if (recovered is null) await Task.Delay(10);
+        }
+        var spans = Assert.IsType<List<SyntaxSpan>>(recovered);
         Assert.Equal(highlighter.ReadLine(changed, CodeLineStart.First), spans);
         Assert.Same(spans, freshColours.Invoke(editor, [0, changed]));
     }
