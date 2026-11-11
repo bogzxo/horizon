@@ -17,6 +17,45 @@ public sealed class UITouchRoutingTests
     private static readonly UISkin Skin = new(new UIFont(Path.GetTempPath(), "no-font-here.ttf"));
     private const float TICK = 1.0f / 60.0f;
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Middle_scroll_moves_row_views_by_small_continuous_steps_and_stops_on_release(int kind)
+    {
+        using var rig = new Rig();
+        var list = new ListBox { Rows = 6, Items = [.. Enumerable.Range(0, 80).Select(i => $"item {i}")] };
+        var tree = new TreeView { RowHeight = 20, Items = [.. Enumerable.Range(0, 80).Select(i => new UITreeItem($"item {i}"))] };
+        var table = new Table { RowHeight = 20, Columns = [new("Name")], Rows = [.. Enumerable.Range(0, 80).Select(i => new[] { new UITableCell($"item {i}") })] };
+        table.Refresh();
+        UIComponent view = kind switch { 0 => list, 1 => tree, _ => table };
+        view.Size = new Vector2(300, 200);
+        rig.Module.AddComponent(view);
+        rig.Compositor.MiddleScrollSpeed = 0.25f;
+        rig.Tick();
+        float Offset() => kind switch { 0 => list.Shown * list.RowHeightSeen, 1 => tree.ScrollOffset, _ => table.VerticalScroll };
+        Vector2 at = rig.At(view);
+        rig.Mouse(InputEventKind.PointerDown, at, MouseButton.Middle); rig.Tick();
+        Assert.Same(view, rig.Compositor.AutoScrollTarget);
+        rig.Mouse(InputEventKind.PointerMove, at + new Vector2(0, 20));
+        for (int tick = 0; tick < 8; tick++)
+        {
+            float before = Offset();
+            rig.Tick();
+            Assert.InRange(Offset() - before, 0.01f, 1);
+        }
+        rig.Mouse(InputEventKind.PointerUp, at + new Vector2(0, 20), MouseButton.Middle); rig.Tick();
+        Assert.Null(rig.Compositor.AutoScrollTarget);
+        float stopped = Offset();
+        rig.Tick(20);
+        Assert.Equal(stopped, Offset());
+        Assert.Equal(0, list.Index);
+        Assert.Null(tree.Selected);
+        rig.Mouse(InputEventKind.PointerDown, at, MouseButton.Middle); rig.Tick();
+        rig.Mouse(InputEventKind.PointerMove, at - new Vector2(0, 20)); rig.Tick();
+        Assert.True(Offset() < stopped);
+    }
+
     [Fact]
     public void Middle_click_scrolls_a_panel_and_second_click_stops_it()
     {

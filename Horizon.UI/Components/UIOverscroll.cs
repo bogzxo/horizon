@@ -106,7 +106,7 @@ internal struct UIOverscroll
         // A clip moves with what's moved under it, so the one around the scroll came along and the code went out over the
         // tabs. Cut again where the area really is, which inside of the move is the area moved back the other way
         list.PushVisual(Shift, System.Numerics.Vector2.One, area.Center, 1.0f);
-        list.PushClip(new UIRect(area.Min - Shift, area.Max - Shift));
+        list.PushStationaryClip(area, Shift);
         return true;
     }
 

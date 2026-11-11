@@ -65,7 +65,7 @@ public partial class UICompositor
         cancel |= target is null || target.Module is not { Enabled: true, Interactive: true }
             || !target.EnabledInHierarchy || !target.IsShownInHierarchy;
         Vector2 point = target?.Module?.ToLocal(pointer.Position) ?? pointer.Position;
-        float distance = middleScroll.Step(point, pointer.MiddleDown, target is not null, cancel, dt);
+        float distance = middleScroll.Step(point, pointer.MiddleDown, target is not null, cancel, dt, MiddleScrollSpeed);
         if (!middleScroll.Active) { middleScrollTarget = null; return; }
         if (distance != 0) target!.OnPan(new Vector2(0, distance));
         GameEngine.Instance?.WindowManager.RequestFrames(0.1);

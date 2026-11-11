@@ -95,6 +95,9 @@ public class TitleBar : StackPanel
     /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) at the left end, empty for none.</summary>
     public string Icon { get; set; } = string.Empty;
 
+    /// <summary>An image used instead of the symbol, tinted with <see cref="IconColor"/> or the skin's accent.</summary>
+    public string IconFile { get; set; } = string.Empty;
+
     /// <summary>The colour of the icon, null for the skin's accent.</summary>
     public Vector4? IconColor { get; set; }
 
@@ -149,7 +152,7 @@ public class TitleBar : StackPanel
     private float ScaleOf(UISkin skin) => (TextScale > 0.0f ? TextScale : skin.TextScale) * Unit;
 
     // The room at the left for the icon, and at the right for the buttons
-    private float IconRoom => Icon.Length > 0 ? BarHeight : 0.0f;
+    private float IconRoom => Icon.Length > 0 || IconFile.Length > 0 ? BarHeight : 0.0f;
     private float ButtonsRoom => ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f;
 
     protected override Vector2 Measure(UISkin skin)
@@ -210,11 +213,18 @@ public class TitleBar : StackPanel
         list.BeginPart(-1);
         list.Rect(Bounds, Color ?? skin.PanelColor with { W = 1.0f });
 
-        if (Icon.Length > 0)
+        if (IconRoom > 0)
         {
             float side = MathF.Round(BarHeight * 0.5f);
             Vector2 middle = Vector2.Round(new Vector2(Bounds.Min.X + BarHeight * 0.5f, Bounds.Center.Y));
-            list.Symbol(Icon, new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f)), IconColor ?? skin.AccentColor);
+            var area = new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f));
+            Vector4 tint = IconColor ?? skin.AccentColor;
+            if (IconFile.Length > 0)
+            {
+                // A title-bar image is small even on a high-DPI screen; keep large source art out of the UI atlas.
+                if (skin.TryGetImage(IconFile, 128, out var image)) list.NineSlice(image, area, tint);
+            }
+            else list.Symbol(Icon, area, tint);
         }
 
         // The title in the middle of the window, or after what is in the bar when that runs past where the middle would put it
@@ -348,6 +358,7 @@ public class TitleBar : StackPanel
 
         Expose("title", () => Title, value => Title = value);
         Expose("icon", () => Icon, value => Icon = value);
+        Expose("icon_file", () => IconFile, value => IconFile = value);
         Expose("icon_color", () => IconColor ?? Vector4.Zero, value => IconColor = value == Vector4.Zero ? null : value);
         Expose("window_buttons", () => WindowButtons, value => WindowButtons = value);
         Expose("height", () => Height, value => Height = MathF.Max(16.0f, value));

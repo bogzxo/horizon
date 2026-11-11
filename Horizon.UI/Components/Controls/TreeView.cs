@@ -510,6 +510,22 @@ public partial class TreeView : UIComponent
         return true;
     }
 
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        if (Module?.Compositor.Skin is not { } skin)
+            return false;
+        float max = Travel(skin);
+        if (max <= 0 || delta.Y == 0
+            || (delta.Y < 0 && scroll <= 0) || (delta.Y > 0 && scroll >= max))
+            return false;
+
+        ease.Stop();
+        scroll = Math.Clamp(scroll + delta.Y, 0, max);
+        revealSelected = false;
+        revealOnly = null;
+        return true;
+    }
+
     protected internal override void OnTextInput(char character)
     {
         // The owner has first go at a key, a row of its own can mean something by it

@@ -23,7 +23,7 @@ public partial class CodeEditor
             || GameEngine.Instance?.Input.Keyboard.WasPressed(Key.Escape) == true;
         bool wasActive = middleScroll.Active;
         float movement = middleScroll.Step(module.ToLocal(pointer.Position), pointer.MiddleDown,
-            IsHovered && !AllInSight, cancel, dt);
+            IsHovered && !AllInSight, cancel, dt, module.Compositor.MiddleScrollSpeed);
         if (!wasActive && middleScroll.Active) Focus();
         if (!middleScroll.Active) return;
         // This is displacement-driven motion, independent of the wheel's lines-per-notch setting.
@@ -58,7 +58,7 @@ public partial class CodeEditor
         private float held;
         internal void Cancel() => Active = latched = false;
 
-        internal float Step(Vector2 point, bool down, bool mayStart, bool cancel, float dt)
+        internal float Step(Vector2 point, bool down, bool mayStart, bool cancel, float dt, float multiplier = 1)
         {
             bool pressed = down && !wasDown, released = !down && wasDown;
             wasDown = down;
@@ -84,7 +84,8 @@ public partial class CodeEditor
             if (!down && !latched) return 0;
             float outside = MathF.Max(0, MathF.Abs(distance) - 8);
             float speed = MathF.Min(2400, outside * 5 + outside * outside * 0.045f);
-            return MathF.Sign(distance) * speed * MathF.Min(dt, 0.05f);
+            multiplier = float.IsFinite(multiplier) ? Math.Clamp(multiplier, 0.25f, 5) : 1;
+            return MathF.Sign(distance) * speed * multiplier * MathF.Min(dt, 0.05f);
         }
     }
 }

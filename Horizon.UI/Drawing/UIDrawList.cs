@@ -352,6 +352,17 @@ public sealed partial class UIDrawList
         PushFrameClip(rect);
     }
 
+    /// <summary>Clips in the space before a visual translation, keeping the viewport and its parent clips stationary.</summary>
+    internal void PushStationaryClip(UIRect rect, Vector2 translation)
+    {
+        clips.Push(clip);
+        var stationary = new UIRect(rect.Min - translation, rect.Max - translation);
+        // Both rectangles need the same inverse translation before they are intersected. Intersecting against
+        // the unadjusted parent clipped away a strip that grew with overscroll and slid back over the content.
+        clip = new UIRect(clip.Min - translation, clip.Max - translation).Intersect(stationary);
+        PushFrameClip(rect, frameList.Frames[frameAt].Parent);
+    }
+
     /// <summary>
     /// Whether a rectangle is out of sight under the clip, further from it than <see cref="UIInBetween.JUMP"/> pixels,
     /// the furthest a frame between two ticks moves anything smoothly. Never for a list with no clip.

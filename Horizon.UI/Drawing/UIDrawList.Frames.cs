@@ -41,7 +41,11 @@ internal readonly record struct UIFrame(Vector2 Key, int Parent, Vector2 Shift, 
 /// A clip as it was pushed, where the layout had it, cut down further by the one it was pushed inside of. It moves with
 /// the frame it was pushed in.
 /// </summary>
-internal readonly record struct UIFrameClip(UIRect Rect, int Frame, int Parent);
+internal readonly record struct UIFrameClip(UIRect Rect, int Frame, int Parent)
+{
+    // A viewport established before a visual translation, such as the stationary edge of overscrolled content.
+    public int? StationaryParentFrame { get; init; }
+}
 
 /// <summary>
 /// A quad as it was asked for, before clipping, where the layout had it when it was painted. It moves with its frame,
@@ -145,7 +149,16 @@ internal sealed class UIFrameList
         {
             UIFrameClip cut = Clips[i];
             UIRect rect = Shifted(cut.Rect, Moved(at, cut.Frame));
-            resolvedClips[i] = cut.Parent < 0 ? Unclipped.Intersect(rect) : resolvedClips[cut.Parent].Intersect(rect);
+            UIRect parent = cut.Parent < 0 ? Unclipped : resolvedClips[cut.Parent];
+            if (cut.StationaryParentFrame is { } outside)
+            {
+                UIFrame frame = at[cut.Frame];
+                Vector2 translation = frame.VisualScale.X != 0 && frame.VisualScale.Y != 0
+                    ? (frame.VisualOffset - at[outside].VisualOffset) / frame.VisualScale : Vector2.Zero;
+                rect = Shifted(rect, -translation);
+                parent = Shifted(parent, -translation);
+            }
+            resolvedClips[i] = parent.Intersect(rect);
         }
 
         int count = 0, glassNext = 0, runNext = 0, runFirst = 0;
@@ -414,10 +427,10 @@ public sealed partial class UIDrawList
         OpenFrame();
     }
 
-    private void PushFrameClip(UIRect rect)
+    private void PushFrameClip(UIRect rect, int? stationaryParentFrame = null)
     {
         openClips.Push(clipAt);
-        frameList.Clips.Add(new UIFrameClip(rect, frameAt, clipAt));
+        frameList.Clips.Add(new UIFrameClip(rect, frameAt, clipAt) { StationaryParentFrame = stationaryParentFrame });
         clipAt = frameList.Clips.Count - 1;
     }
 

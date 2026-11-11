@@ -86,6 +86,7 @@ public class Table : UIComponent
     private float scrollX, scrollY, sinceClick = float.MaxValue;
     private UIScrollEase ease, easeX;
     internal float HorizontalScroll => scrollX;
+    internal float VerticalScroll => scrollY;
     private (int Row, int Column) selected = (-1, -1), hovered = (-1, -1), lastClicked = (-1, -1);
     private int sortColumn = -1;
     private bool sortDown;
@@ -349,6 +350,20 @@ public class Table : UIComponent
         // Shift turns the wheel across, the way every spreadsheet does
         bool across = Horizon.Engine.GameEngine.Instance?.Input.Keyboard.Shift == true;
         return ScrollWheel(delta, skin, across);
+    }
+
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        if (Module?.Compositor.Skin is not { } skin)
+            return false;
+        float max = TravelY(skin);
+        if (max <= 0 || delta.Y == 0
+            || (delta.Y < 0 && scrollY <= 0) || (delta.Y > 0 && scrollY >= max))
+            return false;
+
+        ease.Stop();
+        scrollY = Math.Clamp(scrollY + delta.Y, 0, max);
+        return true;
     }
 
     internal bool ScrollWheel(float delta, UISkin skin, bool across)

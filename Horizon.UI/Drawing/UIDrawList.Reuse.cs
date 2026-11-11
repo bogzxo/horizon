@@ -159,7 +159,8 @@ public sealed partial class UIDrawList
         for (int i = was.Clips; i < was.ClipsEnd; i++)
         {
             UIFrameClip cut = before.frameList.Clips[i];
-            frameList.Clips.Add(cut with { Frame = Frame(cut.Frame), Parent = Clip(cut.Parent) });
+            frameList.Clips.Add(cut with { Frame = Frame(cut.Frame), Parent = Clip(cut.Parent),
+                StationaryParentFrame = cut.StationaryParentFrame is { } outside ? Frame(outside) : null });
         }
 
         for (int i = was.Quads; i < was.QuadsEnd; i++)

@@ -28,7 +28,8 @@ public partial class ListBox : UIComponent
 
     private IRuntimeValue? changedHandler, activatedHandler;
     private string[] items = [];
-    private int index, top;
+    private int index;
+    private float top;
     private bool draggingBar;
     private float barGrab;
     private UIRect scrollBarTrack, scrollBarThumb;
@@ -192,7 +193,7 @@ public partial class ListBox : UIComponent
     }
 
     /// <summary>The first row that is in sight, for a list longer than the box.</summary>
-    public int Top => top;
+    public int Top => (int)MathF.Floor(top);
 
     /// <summary>The track as it was last painted, empty when the list fits.</summary>
     public UIRect ScrollBarTrack => scrollBarTrack;
@@ -264,9 +265,22 @@ public partial class ListBox : UIComponent
 
         int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
         BeginScrollMotion(shown != top || over.Active);
-        int wanted = top - rows * Math.Sign(delta);
+        float wanted = top - rows * Math.Sign(delta);
         top = Math.Clamp(wanted, 0, items.Length - Rows);
         over.Push((wanted - top) * rowHeightSeen, MotionSpeed);
+        return true;
+    }
+
+    protected internal override bool OnPan(Vector2 delta)
+    {
+        float max = items.Length - Rows;
+        if (max <= 0 || rowHeightSeen <= 0 || delta.Y == 0
+            || (delta.Y < 0 && shown <= 0) || (delta.Y > 0 && shown >= max))
+            return false;
+
+        // A continuous gesture moves what is on screen, without waiting for a wheel notch or a whole row.
+        over.Stop();
+        top = shown = Math.Clamp(shown + delta.Y / rowHeightSeen, 0, max);
         return true;
     }
 

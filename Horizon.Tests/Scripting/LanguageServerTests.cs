@@ -121,6 +121,9 @@ public partial class LanguageServerTests
         Publish(null, "unversioned");
         Assert.True(server.TryTake(out _, out var compatible));
         Assert.Equal("unversioned", Assert.Single(compatible).Message);
+        Publish(null, string.Empty);
+        Assert.True(server.TryTake(out _, out var markerOnly));
+        Assert.Empty(markerOnly);
         Publish(2, "queued before close");
         server.Close(file);
         Assert.Equal("textDocument/didClose", ReadMessage(toServerRead)["method"]!.GetValue<string>());

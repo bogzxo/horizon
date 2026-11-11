@@ -66,6 +66,7 @@ public static class UIPropertyHelp
         ["pixel_sized"] = "whether its height, title and buttons are in the window's pixels, so it doesn't grow when the UI is drawn bigger",
         ["title_bar.height"] = "how tall the bar is when nothing in it is taller",
         ["title_bar.title"] = "what the bar says, the window's own title when it is left empty",
+        ["title_bar.icon_file"] = "an image in place of the icon, tinted with icon_color or the theme's accent",
         ["window.title"] = "what its title bar says",
         ["text_color"] = "the colour of the words on it, the skin's own if it is left at nothing",
         ["icon"] = "one of the icons every skin has, VS Code's Codicons by name (save, folder, git-branch, play), in front of the words or on its own with none. $(name) does the same in any text",

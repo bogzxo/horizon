@@ -91,6 +91,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// <summary>Mouse-wheel distance for content scrolling. Zoom and value-editing gestures keep their own units.</summary>
     public float ScrollSpeed { get; set; } = 1.0f;
 
+    /// <summary>Middle-mouse autoscroll speed, relative to its default distance-driven motion.</summary>
+    public float MiddleScrollSpeed { get; set; } = 1.0f;
+
     /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
     /// fitting the <see cref="DesignSize"/> comes to, times the <see cref="DisplayScale"/>. A unit of the layout is
