@@ -91,6 +91,8 @@ public partial class LanguageServerTests
         using var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
         using var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
         using LanguageServer server = LanguageServer.Over("versions", "csharp", Path.GetTempPath(), toClientRead, toServer);
+        // Close the fake server's writer before disposing the client's pipe, including when an assertion fails.
+        using var serverOutput = toClient;
         JsonObject initialize = ReadMessage(toServerRead);
         Assert.True(initialize["params"]!["capabilities"]!["textDocument"]!["publishDiagnostics"]!["versionSupport"]!.GetValue<bool>());
         Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
