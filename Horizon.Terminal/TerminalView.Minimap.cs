@@ -21,11 +21,43 @@ public partial class TerminalView
     // How see-through a row's text is in it, and a background that isn't the terminal's
     private const float MINIMAP_INK = 0.65f, MINIMAP_BACK = 0.4f;
 
-    /// <summary>Whether the rows are drawn small down the right, a slider over the ones in sight. Off unless the program turns it on.</summary>
+    /// <summary>
+    /// Whether the rows are drawn small down the right, a slider over the ones in sight. Off unless the program turns it
+    /// on, and on it comes by itself once there's enough gone off the top to be worth a map of (<see cref="MinimapUp"/>).
+    /// </summary>
     public bool Minimap { get; set; }
 
-    /// <summary>Where the minimap was last drawn, in the view's units, nothing while it's off.</summary>
-    public UIRect MinimapBounds => Minimap ? minimapMap : default;
+    /// <summary>
+    /// How many screens of rows have to have gone off the top before the minimap comes up. A terminal with a prompt and a
+    /// few lines in it has nothing to find one's way about in, and the map was a strip of nothing taking a dozen columns.
+    /// </summary>
+    public const int MINIMAP_AFTER_SCREENS = 2;
+
+    // Whether there's been enough history for it, kept so until the history is cleared: the map takes columns, and coming
+    // and going with every screenful would have the shell told of a new width each time
+    private bool minimapEarned;
+
+    /// <summary>
+    /// Whether the minimap is there now: switched on, and more than <see cref="MINIMAP_AFTER_SCREENS"/> screens of rows
+    /// gone off the top since the history was last empty.
+    /// </summary>
+    public bool MinimapUp => Minimap && minimapEarned;
+
+    // Every update, whether the history has earned the map or been cleared since. A program on the other screen (an
+    // editor, a pager) has no history of its own, what was there before it is still there after and so is the map
+    private void KeepMinimap()
+    {
+        int gone = screen.Scrollback.Count;
+        bool earned = minimapEarned ? gone > 0 || screen.AlternateScreen : gone > screen.Rows * MINIMAP_AFTER_SCREENS;
+        if (earned == minimapEarned)
+            return;
+
+        minimapEarned = earned;
+        RequestFrame();
+    }
+
+    /// <summary>Where the minimap was last drawn, in the view's units, nothing while it's away.</summary>
+    public UIRect MinimapBounds => MinimapUp ? minimapMap : default;
 
     /// <summary>How many rows the minimap drew last time, for a test.</summary>
     public int MinimapRowsDrawn { get; private set; }
@@ -45,7 +77,7 @@ public partial class TerminalView
     private TerminalPalette? minimapPalette;
     private bool minimapReverse;
 
-    private float MinimapWidth => Minimap ? MINIMAP_WIDTH + MINIMAP_GAP : 0.0f;
+    private float MinimapWidth => MinimapUp ? MINIMAP_WIDTH + MINIMAP_GAP : 0.0f;
 
     /// <summary>The rows the minimap shows, the scrollback and the grid, or the grid alone for a program with the whole screen.</summary>
     private (int Start, int Count) MinimapRows() => screen.AlternateScreen ? (screen.Scrollback.Count, screen.Rows) : (0, screen.TotalRows);
@@ -63,7 +95,7 @@ public partial class TerminalView
     private void PaintMinimap(UIDrawList list, TerminalPalette palette)
     {
         MinimapRowsDrawn = 0;
-        if (!Minimap || minimapArea.Width <= 0.0f || minimapArea.Height <= 0.0f)
+        if (!MinimapUp || minimapArea.Width <= 0.0f || minimapArea.Height <= 0.0f)
             return;
 
         UIModule? module = Module;
@@ -207,7 +239,7 @@ public partial class TerminalView
     /// </summary>
     private bool PressMinimap(Vector2 point)
     {
-        if (!Minimap || !minimapMap.Contains(point))
+        if (!MinimapUp || !minimapMap.Contains(point))
             return false;
 
         int most = screen.Scrollback.Count;

@@ -23,7 +23,13 @@ public sealed class TerminalSettings
     public const string FILE = "settings.hor";
 
     /// <summary>Which theme of the flat skin the window and the terminals are in, Dusk's, Hex has its own.</summary>
-    public string Theme = "horizon";
+    public string Theme = UsualTheme;
+
+    /// <summary>
+    /// The theme a terminal is in when its settings say none, the skin's own unless the program has another (Hex's is
+    /// its Solstice). Set before any settings are read, as the program starts.
+    /// </summary>
+    public static string UsualTheme { get; set; } = "horizon";
 
     /// <summary>The id of the profile a new tab opens with, empty for the first one found.</summary>
     public string Profile = string.Empty;

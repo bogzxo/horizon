@@ -88,6 +88,13 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public float AnimationSpeed { get; set; } = 1.0f;
 
+    /// <summary>
+    /// How much of a button's give is kept, the bump as the pointer comes over it and the squeeze as it's pressed: 1 as
+    /// they're made, less for a quieter UI, 0 for none. What suits a game's few big buttons is a lot on a tool with
+    /// hundreds of small ones, where every pass of the pointer sets a row of them going.
+    /// </summary>
+    public float ButtonGive { get; set; } = 1.0f;
+
     /// <summary>Mouse-wheel distance for content scrolling. Zoom and value-editing gestures keep their own units.</summary>
     public float ScrollSpeed { get; set; } = 1.0f;
 

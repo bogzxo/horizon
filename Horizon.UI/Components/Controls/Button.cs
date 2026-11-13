@@ -262,13 +262,16 @@ public class Button : UIComponent
             list.Frame(Bounds, 1.0f, skin.BorderColor * new Vector4(1.0f, 1.0f, 1.0f, 0.5f) * tint);
     }
 
+    // How much of its give the compositor keeps (UICompositor.ButtonGive), all of it outside of one
+    private float Give => Module?.Compositor.ButtonGive ?? 1.0f;
+
     protected override void Update(float dt)
     {
         bool lit = EnabledInHierarchy && (IsHovered || Chosen);
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
-        if (lit && !wasLit && updated && Animated && MotionTime(0.2f) > 0.0f)
-            this.Punch(0.05f, MotionTime(0.2f));
+        if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+            this.Punch(0.05f * Give, MotionTime(0.2f));
 
         wasLit = lit;
         updated = true;
@@ -276,8 +279,8 @@ public class Button : UIComponent
 
     protected internal override void OnClick()
     {
-        if (Animated && MotionTime(0.2f) > 0.0f)
-            this.Punch(-0.08f, MotionTime(0.2f));
+        if (Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+            this.Punch(-0.08f * Give, MotionTime(0.2f));
 
         OnPressed?.Invoke();
         InvokeScript(pressedHandler);

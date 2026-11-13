@@ -61,6 +61,13 @@ public class TabPanel : UIComponent
     /// </summary>
     public Action<bool>? OnFold { get; set; }
 
+    /// <summary>
+    /// Whether a click on the tab of the page that's showing folds the panel down to its tabs, the way a click on a tab
+    /// of a folded panel opens it: the name of what is up is the handle for putting it away and bringing it back. Off
+    /// unless asked for, and only with somebody listening for the fold (<see cref="OnFold"/>).
+    /// </summary>
+    public bool FoldOnSelectedTab { get; set; }
+
     /// <summary>What the chevron says under the pointer while the panel is open, nothing for nothing.</summary>
     public string FoldTip { get; set; } = string.Empty;
 
@@ -439,6 +446,13 @@ public class TabPanel : UIComponent
         {
             if (Folded)
                 OnFold?.Invoke(false);
+            else if (FoldOnSelectedTab && index == Selected && OnFold is not null)
+            {
+                // The tab of what's already up, pressed again, puts the panel away under its tabs
+                OnFold(true);
+                return;
+            }
+
             Select(index);
         }
     }
