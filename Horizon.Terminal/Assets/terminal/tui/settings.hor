@@ -1,6 +1,6 @@
-// Settings, the terminal's settings as a form in the terminal, the same rows Dusk's settings window and Hex's page for
-// settings.hor have. Enter or the arrows left and right flip a flag and step a choice, Enter on anything else edits it
-// on the line at the bottom (Enter keeps it, Esc doesn't), a list is its names with | between them. Taken in at once.
+// Settings, the terminal settings as a form in the terminal, the same keys as the terminal section of the Settings
+// window. Enter or the arrows left and right flip a flag and step a choice, Enter on anything else edits it on the line
+// at the bottom (Enter keeps it, Esc doesn't), a list is its names with | between them. A change applies at once.
 let ui = include("widgets.hor");
 
 let program = { name: "Settings" };

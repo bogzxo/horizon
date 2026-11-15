@@ -5,18 +5,26 @@ using Horizon.HIDL;
 using Horizon.HIDL.Library;
 using Horizon.HIDL.Runtime;
 using Horizon.Logging;
+using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Components;
 
-/// <summary>One setting as an editor shows it, its key, its kind (flag, number, whole, text, choice or list), what it comes as and a line of help.</summary>
-public sealed record TerminalSettingInfo(string Key, string Kind, string Default, string Help, string[]? Choices = null, float Least = 0.0f, float Most = 0.0f);
+/// <summary>One setting as an editor shows it, its key, its kind (flag, number, whole, text, choice or list), its default value and a line of help.</summary>
+public sealed record TerminalSettingInfo(string Key, string Kind, string Default, string Help, string[]? Choices = null, float Least = 0.0f, float Most = 0.0f)
+{
+    /// <summary>
+    /// What it can be now. The theme is one of the themes of the skin the terminals are drawn in, files that come with
+    /// the program and not a list the engine knows, the rest are what they were described with.
+    /// </summary>
+    public string[]? ChoicesNow => Key == "theme" ? TerminalSettings.Themes : Choices;
+}
 
 /// <summary>
-/// What a terminal application is set to, kept in settings.hor, a HIDL file anybody can read and edit
-/// (<c>let settings = { theme: "horizon", ... }</c>), shared by Dusk and Hex's terminal page. Read as the program
-/// starts and again when the file changes, written when something is changed from inside. A file that is missing or
-/// makes no sense is everything at what it comes as, a line it leaves out stays at that too, and a key it has that
-/// isn't one of these is kept as it was and written back, for a newer program or a plugin of its own.
+/// A terminal application's settings, kept in the terminal section of settings.hor, a HIDL file anyone can read and edit
+/// (<c>let settings = { theme: "horizon", ... }</c>), shared by Dusk and Hex's terminal page. Loaded when the program
+/// starts and reloaded when the file changes, written when a setting changes in the program. A missing or invalid file
+/// means every setting has its default value, and so does a missing key. An unknown key is kept and written back as
+/// it was, for a newer program or a plugin's own settings.
 /// </summary>
 public sealed class TerminalSettings
 {
@@ -111,6 +119,12 @@ public sealed class TerminalSettings
 
     /// <summary>What the file had that isn't one of these, kept and written back as it was.</summary>
     public readonly Dictionary<string, IRuntimeValue> Extra = new(StringComparer.Ordinal);
+
+    /// <summary>The skin the terminals are drawn in, whose themes the theme setting picks from. Dusk's and Hex's is flat.</summary>
+    public static string Skin { get; set; } = "flat";
+
+    /// <summary>The themes the theme setting can be, the skin's own, or the ones the engine comes with when there's no such skin.</summary>
+    public static string[] Themes => UISkins.Find(Skin) is { Themes.Count: > 0 } skin ? [.. skin.Themes] : Described[0].Choices ?? [];
 
     /// <summary>Every setting, for an editor's completion, hover and form, and api.hor.</summary>
     public static readonly TerminalSettingInfo[] Described =

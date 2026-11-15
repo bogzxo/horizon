@@ -116,9 +116,9 @@ public sealed class SettingsTexts
     /// <summary>What a program asks before every change is reset, {count} of them.</summary>
     public string ResetAllTitle { get; init; } = "Reset all settings?";
 
-    public string ResetAllTextOne { get; init; } = "{count} setting goes back to what it comes as.";
+    public string ResetAllTextOne { get; init; } = "{count} setting is reset to its default value.";
 
-    public string ResetAllTextMany { get; init; } = "{count} settings go back to what they come as.";
+    public string ResetAllTextMany { get; init; } = "{count} settings are reset to their default values.";
 
     public string ResetAllYes { get; init; } = "Reset all";
 

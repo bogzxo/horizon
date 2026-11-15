@@ -384,9 +384,15 @@ public sealed partial class TerminalHost : IDisposable
             index => SwitchPlugin(listed[index], !listed[index].Enabled));
     }
 
-    /// <summary>settings.hor opened to edit, written first when it isn't there yet.</summary>
+    /// <summary>
+    /// Opens the terminal settings in the program's Settings window. A program without one gets settings.hor opened in an
+    /// editor instead, created first when it doesn't exist yet.
+    /// </summary>
     public void OpenSettings()
     {
+        if (options.Ui?.ShowSettings() == true)
+            return;
+
         if (Settings.Path is not { } path)
         {
             Say("the settings aren't kept in a file this time", true);

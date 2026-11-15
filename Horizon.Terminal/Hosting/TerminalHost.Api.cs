@@ -65,7 +65,7 @@ public sealed partial class TerminalHost
         new("new_tab_with", "", "Asks which shell and opens a tab of it."),
         new("keys", "", "Every command with its key, in a list, a pick runs it."),
         new("plugins", "", "Every plugin, a pick switches it on or off."),
-        new("open_settings", "", "Opens settings.hor to edit, taken in as it is saved."),
+        new("open_settings", "", "Puts the program's settings window up at the terminal's settings, or opens settings.hor to edit in one that hasn't a window."),
         new("open_keys", "", "Opens the user's keys.hor to edit, taken in as it is saved."),
         new("open", "path, line?", "Opens a file to edit at a line, in Hex or the editor Hex is."),
         new("edit_plugin", "", "Opens the plugin that asks to edit, started again as it is saved."),

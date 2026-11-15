@@ -10,13 +10,13 @@ public partial class SettingsPage
     /// <summary>What a reset says when nobody knows what it puts back, in English, the texts' own (<see cref="SettingsTexts.ResetToDefault"/>) unless a program gives others.</summary>
     public const string RESET_TO_DEFAULT = "Reset to default";
 
-    /// <summary>What a setting comes as, what its reset puts back, null where nobody says.</summary>
+    /// <summary>A setting's default value, which its reset restores, null where none is given.</summary>
     public Func<string, IRuntimeValue?>? DefaultOf { get; set; }
 
     /// <summary>
     /// What a setting's reset says it puts back, "Reset to 4", "Reset to On" or a choice's label, the way a slider of it
-    /// writes a number ("Reset to 22%"). <see cref="SettingsTexts.ResetToDefault"/> when nobody says what it comes as or it comes as
-    /// nothing written (an empty path).
+    /// writes a number ("Reset to 22%"). <see cref="SettingsTexts.ResetToDefault"/> when the default value is unknown or is
+    /// empty (an empty path).
     /// </summary>
     public string ResetText(string key)
     {

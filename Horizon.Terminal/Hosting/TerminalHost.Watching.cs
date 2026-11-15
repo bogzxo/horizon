@@ -5,9 +5,9 @@ using Horizon.Engine;
 
 namespace Horizon.UI.Components;
 
-// The files watched, so a change saved in Hex (or anything) is taken in without a restart. The settings applied, the
+// The files watched, so a change saved in Hex (or anything) is reloaded without a restart. The settings applied, the
 // keys bound again, a plugin that changed started again, one that is new found. The watcher's events come on a thread
-// of the pool and in bursts (an editor saving writes a file two or three times), so they are queued and taken in on
+// of the pool and in bursts (an editor saving writes a file two or three times), so they are queued and reloaded on
 // the program's thread a fifth of a second after the last of a burst.
 public sealed partial class TerminalHost
 {

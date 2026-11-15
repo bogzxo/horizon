@@ -5,9 +5,9 @@ using Horizon.Platform;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// A section of the settings file edited as it is written, for a program that doesn't own it (Hex's Dusk showing the
-/// editor's settings). A change is written into the file straight away, the other sections kept, and the mode that owns the
-/// section takes it in when it starts or sees the file change.
+/// A section of the settings file edited directly in the file, for a program that doesn't own it (Hex's Dusk showing the
+/// editor settings). A change is written to the file at once with the other sections kept, and the program that owns the
+/// section applies it when it starts or reloads the file.
 /// </summary>
 public sealed class FileSectionSource(string? path, string section, IReadOnlyList<UISetting> settings, IReadOnlyDictionary<string, IRuntimeValue> usual) : ISettingsSource
 {

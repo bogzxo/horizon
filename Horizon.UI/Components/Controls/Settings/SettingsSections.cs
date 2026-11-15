@@ -5,11 +5,11 @@ using Horizon.Platform;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// Hex's one settings file, a <c>settings</c> object in sections, the terminal's (Dusk and Dawn's terminal page), the
-/// editor's (Dawn) and the extensions'. Each side reads its own section and writes only that, the others kept as the
-/// file has them at that moment (read again just before, so Dawn and Dusk running at once don't write over each other),
-/// the terminal's help over every one of its keys whoever writes. A file from before the sections (the terminal's
-/// keys at the top) is read as the terminal's section and written in sections the next time.
+/// Hex's settings file, settings.hor, a <c>settings</c> object with one section each for the terminal (Dusk and Dawn's
+/// terminal page), the editor (Dawn) and the extensions. Each program reads and writes only its own section. The file is
+/// read again just before a write so the other sections keep their current values, and Dawn and Dusk running at once
+/// don't overwrite each other. Every terminal key gets its help comment whoever writes. A legacy file with the
+/// terminal's keys at the top level is read as the terminal section and written in sections on the next save.
 /// </summary>
 public static class SettingsSections
 {
@@ -149,10 +149,10 @@ public static class SettingsSections
         }
 
         return new HIDLDocument()
-            .Comment("Hex's settings, Dawn's and Dusk's both, in sections. Written when something is changed from inside, read\n" +
-                "again the moment it is saved. Edit it by hand all you like, a line that is missing is left at what it comes as.")
+            .Comment("Hex's settings for the editor (Dawn) and the terminal (Dusk), one section each. Hex writes this file when a\n" +
+                "setting changes in the Settings window and reloads it when it is saved. You can edit it by hand. A missing key\n" +
+                "uses its default value.")
             .Define("dusk")
-            .Define("dusk_settings")
             .Define("hex_settings")
             .Let("settings", settings)
             .Write();
@@ -164,19 +164,19 @@ public static class SettingsSections
 
     private static string? About(string section) => section switch
     {
-        TERMINAL => "The terminal, Dusk and Dawn's terminal page.",
-        EDITOR => "The editor, Dawn.",
-        EXTENSIONS => "What every extension of Dawn's keeps, by its id.",
+        TERMINAL => "Terminal settings, for Dusk and Dawn's terminal page.",
+        EDITOR => "Editor settings, for Dawn.",
+        EXTENSIONS => "Extension settings, by extension id.",
         _ => null
     };
 
     /// <summary>
-    /// What a section's keys are, by the section, written over each of them as the file is saved. The terminal says its
-    /// own (TerminalKinds), the engine doesn't know them.
+    /// The help comment for each key, by section, written above the key when the file is saved. The terminal registers
+    /// its own (TerminalKinds) because the engine doesn't know them.
     /// </summary>
     public static readonly Dictionary<string, Func<string, string?>> Help = [];
 
-    // a section kept as the file had it, with its help over every key again when it has some
+    // a section kept as the file has it, with the help comment written again above each key that has one
     private static HIDLObject Commented(string name, Dictionary<string, IRuntimeValue> section)
     {
         Help.TryGetValue(name, out Func<string, string?>? help);

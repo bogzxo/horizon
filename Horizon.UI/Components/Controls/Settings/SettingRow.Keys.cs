@@ -215,11 +215,54 @@ internal sealed partial class SettingRow
             return new Vector2(MathF.Min(size.X + PAD * 2.0f, Most), HEIGHT);
         }
 
+        /// <summary>
+        /// The words without markup, for a pill that has to be cut short (a file's path in the note). Too long for the
+        /// pill, they're cut in the middle with dots so the end, the file's name, still reads. Null draws the label as it is.
+        /// </summary>
+        public string? Plain { get; set; }
+
         protected override void Paint(UIDrawList list)
         {
-            Vector4 tint = accent ? list.Skin.AccentColor : list.Skin.TextColor;
+            UISkin skin = list.Skin;
+            Vector4 tint = accent ? skin.AccentColor : skin.TextColor;
             list.RoundRect(Bounds, Bounds.Height * 0.5f, tint with { W = accent ? 0.14f : 0.07f });
+
+            float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
+            float room = Bounds.Width - PAD * 2.0f;
+            if (Plain is { } words && skin.Font.Measure(words, scale, markup: false).X > room)
+            {
+                list.Text(Cut(words, skin, scale, room), Bounds, Horizon.Rendering.Origin.Center, scale, accent ? skin.AccentColor : skin.TextColor, markup: false);
+                return;
+            }
+
+            // Whatever it says stays inside the pill, a label draws past its edges otherwise
+            list.PushClip(Bounds);
             base.Paint(list);
+            list.PopClip();
         }
+
+        // As much of the start and the end as fit with dots between, more of the end, where a file's name is. Room for only a
+        // few characters has the end alone, F...ps said nothing and ...Items.props says which file
+        private static string Cut(string words, UISkin skin, float scale, float room)
+        {
+            const string DOTS = "...";
+            int low = 0, high = words.Length;
+            while (low < high)
+            {
+                int keep = (low + high + 1) / 2;
+                int head = Head(keep), tail = keep - head;
+                string tried = string.Concat(words.AsSpan(0, head), DOTS, words.AsSpan(words.Length - tail));
+                if (skin.Font.Measure(tried, scale, markup: false).X <= room)
+                    low = keep;
+                else
+                    high = keep - 1;
+            }
+
+            int start = Head(low);
+            return string.Concat(words.AsSpan(0, start), DOTS, words.AsSpan(words.Length - (low - start)));
+        }
+
+        // How much of a cut's characters go at the start, none until there are enough for both ends to mean something
+        private static int Head(int keep) => keep < 16 ? 0 : keep / 3;
     }
 }
