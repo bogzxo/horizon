@@ -39,7 +39,11 @@ internal sealed class TestHost : GameObject
         new("F5", "the render scale picker, upscaler and all"),
         new("F6  F7", "the next UI skin, the next theme of it"),
         new("F10", "the Skyline debugger, in a debug build"),
+        new("Pad View", "back to the menu, held with LB or RB the example either side"),
     ];
+
+    // The pad's View held, and whether a bumper was pressed with it, which makes it a step and not the menu
+    private bool viewHeld, viewStepped;
 
     private readonly IReadOnlyList<TestDefinition> tests;
     private readonly UIModule overlay;
@@ -125,6 +129,7 @@ internal sealed class TestHost : GameObject
         Small("Menu", 86, ShowSelector, "Back to the list (Esc)");
         Small(">", 38, () => Step(1), "The example after this one (Page Down)");
         Small("Scale", 86, () => scaleCard!.Visible = !scaleCard.Visible, "The render scale (F5, F4 steps it)");
+        Small("Keys", 76, () => ShowKeys(!keys!.Visible), "The keys this example reacts to (F1)");
 
         strip.Add(new Spacer { Space = 2 });
         number = strip.Add(new Label { TextScale = 0.3f, Color = HostStyle.Accent });
@@ -153,7 +158,9 @@ internal sealed class TestHost : GameObject
         inputs = columns.Add(new StackPanel { Spacing = 6 });
         actions = columns.Add(new StackPanel { Spacing = 6 });
 
-        ShowKeys(true);
+        // A phone's screen hasn't the room for the card over an example, so it starts folded there and the strip's
+        // Keys button gets it out
+        ShowKeys(!Touchscreen);
 
         /* The render scale, over the top middle, hidden until asked for */
 
@@ -350,6 +357,8 @@ internal sealed class TestHost : GameObject
         if (keyboard.WasPressed(Key.F1))
             ShowKeys(!keys.Visible);
 
+        ReadPad();
+
         // For checking the swapchain follows, the loop numbers (HORIZON_LOG_LOOPS) say whether it did
         if (keyboard.WasPressed(Key.F11))
         {
@@ -357,6 +366,32 @@ internal sealed class TestHost : GameObject
             Engine.WindowManager.Apply(display with { VSync = !display.VSync });
             Horizon.Logging.Log.Info($"[TestHost] VSync {(display.VSync ? "off" : "on")}.");
         }
+    }
+
+    /// <summary>
+    /// Helper method to drive the host from a pad, for a phone with a controller and no keyboard. View (Back, the
+    /// DualSense's Create, the Xbox pad's two squares) goes to the menu when it's let go, unless a bumper was pressed
+    /// while it was held, which steps to the example either side instead. Nothing an example reads on its own.
+    /// </summary>
+    private void ReadPad()
+    {
+        if (Engine.Input.Gamepads.LastUsed is not { } pad)
+        {
+            viewHeld = viewStepped = false;
+            return;
+        }
+
+        bool view = pad.IsDown(GamepadInput.Back);
+        if (view)
+        {
+            if (!viewHeld) viewStepped = false;
+            if (pad.WasPressed(GamepadInput.LeftBumper)) { Step(-1); viewStepped = true; }
+            else if (pad.WasPressed(GamepadInput.RightBumper)) { Step(1); viewStepped = true; }
+        }
+        else if (viewHeld && !viewStepped)
+            ShowSelector();
+
+        viewHeld = view;
     }
 
     /// <summary>Helper method to go to the example before or after the running one, round the ends of the list.</summary>
@@ -477,11 +512,14 @@ internal sealed class TestHost : GameObject
         }
     }
 
-    /// <summary>Helper method to show or hide the card of keys. The strip always says how to get it back.</summary>
+    // A phone or a tablet, a host without a desktop window, where a finger is what there is
+    private bool Touchscreen => (Engine.WindowManager.Host.Features & Horizon.Platform.PlatformFeatures.Window) == 0;
+
+    /// <summary>Helper method to show or hide the card of keys. The strip's Keys button always gets it back.</summary>
     private void ShowKeys(bool show)
     {
         keys.Visible = show;
-        keysHint.Text = show ? "F1 hides the keys" : "F1 shows the keys";
+        keysHint.Text = Touchscreen ? "" : show ? "F1 hides the keys" : "F1 shows the keys";
     }
 
     /// <summary>Helper method to swap the list of keys for an example's, followed by the host's own.</summary>
@@ -500,22 +538,34 @@ internal sealed class TestHost : GameObject
             AddControl(control, dim: true);
     }
 
-    /// <summary>Helper method to add one line to the card, the key on a cap and what it does next to it.</summary>
+    /// <summary>
+    /// Helper method to add one line to the card, the keys on caps and what they do next to it. A cap that is a key
+    /// can be pressed with a finger too (see <see cref="TouchKey"/>), which is how a phone with no keyboard gets at them.
+    /// </summary>
     private void AddControl(TestControl control, bool dim)
     {
-        // A cap is a little rounded panel as wide as what is written on it, pushed up against the actions
-        var cap = inputs.Add(new StackPanel
+        // The caps side by side, pushed up against the actions
+        var row = inputs.Add(new StackPanel
         {
             Anchor = Origin.Right,
-
-            // Sideways, so the one thing in it sits in the middle of its height
             Direction = UIDirection.Horizontal,
-            Color = dim ? HostStyle.Key with { W = 0.5f } : HostStyle.Key,
-            Radius = 5.0f,
-            Padding = new UIEdges(9, 0),
+            Spacing = 4,
             Size = new Vector2(0, KEY_ROW_HEIGHT)
         });
-        cap.Add(new Label(control.Input) { TextScale = KEYS_TEXT_SCALE, Color = dim ? HostStyle.Dim : HostStyle.Accent });
+
+        var color = dim ? HostStyle.Key with { W = 0.5f } : HostStyle.Key;
+        foreach (var (text, key) in TouchKey.Split(control.Input))
+        {
+            // A little rounded panel as wide as what is written on it, sideways so the one thing in it sits in the
+            // middle of its height
+            StackPanel cap = key is { } pressed ? new TouchKey([pressed], color) : new StackPanel { Color = color };
+            cap.Direction = UIDirection.Horizontal;
+            cap.Radius = 5.0f;
+            cap.Padding = new UIEdges(9, 0);
+            cap.Size = new Vector2(0, KEY_ROW_HEIGHT);
+            cap.Add(new Label(text) { TextScale = KEYS_TEXT_SCALE, Color = dim ? HostStyle.Dim : HostStyle.Accent });
+            row.Add(cap);
+        }
 
         actions.Add(new Label(control.Action)
         {

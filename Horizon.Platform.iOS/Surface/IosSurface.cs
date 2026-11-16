@@ -15,6 +15,12 @@ public sealed class IosSurface : IPlatformSurface
     public IReadOnlyList<string> VulkanInstanceExtensions => extensions;
     public SurfaceTransformPolicy TransformPolicy => SurfaceTransformPolicy.Current;
     public bool IsAvailable { get { lock (gate) return layer is not null && !withdrawn; } }
+
+    /// <summary>Whether a layer is held, withdrawn or not, so the engine may still have a swapchain on it.</summary>
+    public bool Holding { get { lock (gate) return layer is not null; } }
+
+    /// <summary>How many layers were taken so far, which tells one attach from the next in the log.</summary>
+    public int Generation { get; private set; }
     public SurfaceSize PixelSize
     {
         get
@@ -31,9 +37,10 @@ public sealed class IosSurface : IPlatformSurface
         lock (gate)
         {
             if (layer is not null) throw new InvalidOperationException("Detach and release the previous Metal layer first.");
-            if (value.Handle == 0) throw new ObjectDisposedException(nameof(value));
+            if (value.Handle == ObjCRuntime.NativeHandle.Zero) throw new ObjectDisposedException(nameof(value));
             layer = value;
             withdrawn = false;
+            Generation++;
             Resized(width, height);
         }
     }

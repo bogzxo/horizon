@@ -8,7 +8,7 @@ public sealed class IosContent : IndexedContent
 {
     private readonly string root;
 
-    public IosContent() : this(NSBundle.MainBundle.ResourcePath) { }
+    public IosContent() : this(NSBundle.MainBundle.ResourcePath ?? throw new InvalidOperationException("The app has no bundle to read content from.")) { }
 
     public IosContent(string resourceRoot) : base(Index(resourceRoot), resourceRoot)
         => root = Path.GetFullPath(resourceRoot);

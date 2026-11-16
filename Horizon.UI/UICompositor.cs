@@ -115,6 +115,13 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public float DisplayScale { get; private set; } = 1.0f;
 
+    /// <summary>
+    /// The fewest units of layout the short side of the screen is allowed to have, which caps <see cref="DisplayScale"/>
+    /// on a small dense screen. A phone at density 3 would otherwise lay out in 440 units, 720 keeps a desktop's UI
+    /// fitting. 0 for no cap, the screen's scale as it is.
+    /// </summary>
+    public float MinimumShortEdge { get; set; } = 720.0f;
+
     // Scrolling that was asked for with Scroll and hasn't been handed out yet.
     private float pendingScroll;
 
@@ -707,6 +714,15 @@ public partial class UICompositor : GameComponent, IDisposable
             ? MathF.Min(screen.Width / design.X, screen.Height / design.Y)
             : 1.0f;
         DisplayScale = DesignSize is null && GameEngine.Instance?.WindowManager is { ScalesToDisplay: true } scaled ? scaled.DisplayScale : 1.0f;
+
+        // A phone's screen is small in its own units, 440 dp across at density 3, and a UI laid out for a desktop
+        // doesn't fit in that. The scale gives as much as it takes to keep MinimumShortEdge units on the short side,
+        // never less than 1. Only on a phone or a tablet (a host with no desktop window), a desktop at 150% is left
+        // exactly as the system scales it, whatever its size
+        if (DisplayScale > 1.0f && MinimumShortEdge > 0.0f && !screen.IsEmpty
+            && GameEngine.Instance?.WindowManager.Host.Features.HasFlag(Horizon.Platform.PlatformFeatures.Window) == false)
+            DisplayScale = MathF.Max(1.0f, MathF.Min(DisplayScale, MathF.Min(screen.Width, screen.Height) / MinimumShortEdge));
+
         UIScale = MathF.Max(0.01f, fit * Scale * DisplayScale);
 
         // Every module that was designed for a screen of its own works out its own scale the same way

@@ -1,0 +1,124 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Horizon.Testing on an iPhone, an iPad or the simulator. The selector, every example and every check of the desktop's,
+    in an app that simctl installs on its own. Nothing is copied, the sources are linked from Horizon.Testing the way
+    Horizon.Testing.Android links them. Nothing desktop is referenced, no Horizon.Platform.Desktop, no SDL or GLFW.
+    MoltenVK is linked into the app statically (Silk.NET.MoltenVK.Native's NativeReference), so Vulkan is the app's own.
+
+    Not in Horizon.sln or the workspace solution, a desktop build must never need the iOS workload, and it only builds
+    on a Mac with Xcode. See README.md for the commands.
+
+    The assembly is called Horizon.Testing on purpose, the examples see the engine's and the UI's internals under it.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net11.0-ios</TargetFramework>
+    <SupportedOSPlatformVersion>16.1</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Horizon.Testing</AssemblyName>
+    <RootNamespace>Horizon.Testing.iOS</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>preview</LangVersion>
+    <!--
+      Not invariant. With it on, the rc.2 iOS SDK leaves libSystem.Globalization.Native out of the link while ILC still
+      asks for its _GlobalizationNative_ exports as direct calls, and the NativeAOT link fails on twelve of them
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <WarningLevel>4</WarningLevel>
+
+    <ApplicationId>dev.horizon.testing</ApplicationId>
+    <ApplicationTitle>Horizon Testing</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.1</ApplicationDisplayVersion>
+
+    <!--
+      The simulator on an Apple silicon Mac by default, the phone with -p:HorizonDevice=true. Never -r or a global
+      RuntimeIdentifier, those reach every referenced project and Horizon.HIDL publishes AOT for net11.0 (NETSDK1203)
+    -->
+    <RuntimeIdentifier Condition="'$(HorizonDevice)' == 'true'">ios-arm64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">iossimulator-arm64</RuntimeIdentifier>
+
+    <!--
+      NativeAOT, which is what an iPhone runs, there's no JIT on iOS. It only happens on dotnet publish, a plain build
+      comes out on CoreCLR with an interpreter. Every assembly goes through the trimmer, so no MtouchLink here
+    -->
+    <PublishAot>true</PublishAot>
+
+    <!--
+      The CoreCLR debug build registers the Objective-C classes the same way NativeAOT does, ahead of time. Its default
+      left HorizonSceneDelegate without UISceneDelegate on it and UIKit threw at launch
+    -->
+    <Registrar>managed-static</Registrar>
+
+    <!--
+      The rc.2 workload insists on Xcode 27.0 exactly and the Mac has the 27.3 beta. Same SDK family, so the check is
+      skipped rather than keeping an older Xcode around. Take this out once the workload and Xcode agree again
+    -->
+    <ValidateXcodeVersion>false</ValidateXcodeVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Horizon\Horizon.csproj" />
+    <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
+    <ProjectReference Include="..\Horizon.HIDL\Horizon.HIDL.csproj" />
+    <ProjectReference Include="..\Horizon.Terminal\Horizon.Terminal.csproj" />
+    <ProjectReference Include="..\Horizon.Platform.iOS\Horizon.Platform.iOS.csproj" />
+
+    <!-- The NativeReference that links libMoltenVK.a only comes in for the app that's linked, so it's named here too -->
+    <PackageReference Include="Silk.NET.MoltenVK.Native" Version="2.23.0" />
+  </ItemGroup>
+
+  <!--
+    The whole of Horizon.Testing, linked where it is. Left out are the desktop's Main (Program.cs) and the desktop
+    half of TestPlatform, Host/TestPlatform.iOS.cs here takes its place.
+  -->
+  <PropertyGroup>
+    <_HorizonTestingSources>$(MSBuildThisFileDirectory)..\Horizon.Testing\</_HorizonTestingSources>
+  </PropertyGroup>
+  <!--
+    The iOS SDK's implicit usings bring in UIKit, whose UIKeyboard and UITextPosition clash with Horizon.UI's in the
+    linked examples. Files here say which Apple namespaces they want themselves.
+  -->
+  <ItemGroup>
+    <Using Remove="UIKit" />
+    <Using Remove="Foundation" />
+    <Using Remove="CoreGraphics" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(_HorizonTestingSources)**\*.cs"
+             Exclude="$(_HorizonTestingSources)obj\**;$(_HorizonTestingSources)bin\**;$(_HorizonTestingSources)Program.cs;$(_HorizonTestingSources)Host\TestPlatform.Desktop.cs"
+             Link="Linked\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    Content, at the same logical paths a desktop build copies it to beside the exe, as bundle resources so they land
+    at the top of the .app where IosContent looks. The same subset the Android head ships, and the shader pack.
+  -->
+  <PropertyGroup>
+    <_HorizonEngine>$(MSBuildThisFileDirectory)..\Horizon\</_HorizonEngine>
+    <_HorizonTesting>$(MSBuildThisFileDirectory)..\Horizon.Testing\</_HorizonTesting>
+    <_HorizonEngineExcludes>$(_HorizonEngine)**\*.manifest;$(_HorizonEngine)**\*.dll;$(_HorizonEngine)**\*.so;$(_HorizonEngine)**\*.dylib;$(_HorizonEngine)**\*.exe;$(_HorizonEngine)**\*.pdb;$(_HorizonEngine)**\~syncthing~*;$(_HorizonEngine)**\*.tmp;$(_HorizonEngine)**\.DS_Store</_HorizonEngineExcludes>
+    <_HorizonTestingExcludes>$(_HorizonTesting)**\*.manifest;$(_HorizonTesting)**\*.dll;$(_HorizonTesting)**\*.so;$(_HorizonTesting)**\*.dylib;$(_HorizonTesting)**\*.exe;$(_HorizonTesting)**\*.pdb;$(_HorizonTesting)**\~syncthing~*;$(_HorizonTesting)**\*.tmp;$(_HorizonTesting)**\.DS_Store;$(_HorizonTesting)bin\**;$(_HorizonTesting)obj\**</_HorizonTestingExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <BundleResource Include="$(_HorizonEngine)Assets\global\**\*" Exclude="$(_HorizonEngineExcludes)" Link="Assets\global\%(RecursiveDir)%(Filename)%(Extension)" />
+    <BundleResource Include="$(_HorizonEngine)Assets\fonts\**\*" Exclude="$(_HorizonEngineExcludes)" Link="Assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" />
+    <BundleResource Include="$(_HorizonEngine)Assets\uix\**\*.aseprite;$(_HorizonEngine)Assets\uix\**\*.hor;$(_HorizonEngine)Assets\uix\**\README.txt" Exclude="$(_HorizonEngineExcludes)" Link="Assets\uix\%(RecursiveDir)%(Filename)%(Extension)" />
+    <BundleResource Include="$(_HorizonEngine)shaders\**\*" Exclude="$(_HorizonEngineExcludes)" Link="shaders\%(RecursiveDir)%(Filename)%(Extension)" />
+    <BundleResource Include="$(_HorizonTesting)Assets\**\*" Exclude="$(_HorizonTestingExcludes)" Link="Assets\%(RecursiveDir)%(Filename)%(Extension)" />
+    <BundleResource Include="$(_HorizonTesting)shaders\**\*" Exclude="$(_HorizonTestingExcludes)" Link="shaders\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- A build without the shader pack would install and then fail every shader, so that's an error here -->
+  <Target Name="HorizonCheckContent" BeforeTargets="PrepareForBuild">
+    <ItemGroup>
+      <_HorizonPacks Include="$(_HorizonEngine)shaders\packed\*.hzshaders" />
+    </ItemGroup>
+    <Error Condition="'@(_HorizonPacks)' == ''" Text="Horizon/shaders/packed has no .hzshaders. Build the pack first (horizon/tasks.hor, Build shader pack), the app only has the pack on a phone." />
+  </Target>
+
+</Project>

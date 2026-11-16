@@ -320,8 +320,11 @@ public partial class WindowManager : GameComponent, IDisposable
         // Only a window with a frame of its own to draw gets one, a phone's view has none
         CustomFrame = config.CustomFrame && (host.Features & PlatformFeatures.WindowFrame) != 0;
         // HORIZON_SCALE_TO_DISPLAY=on has the UI fold the screen's scale in for a run whose program didn't ask for it,
-        // a phone's density for a test of the UI at dp sizes. The window itself is made the way the configuration says
+        // a phone's density for a test of the UI at dp sizes. The window itself is made the way the configuration says.
+        // A phone or a tablet (no desktop window) always does, its screen is two or three pixels to a dp and a UI laid
+        // out in pixels would come out a third of the size it should be, too small to read or hit with a finger
         ScalesToDisplay = config.ScaleToDisplay
+            || (host.Features & PlatformFeatures.Window) == 0
             || string.Equals(Environment.GetEnvironmentVariable("HORIZON_SCALE_TO_DISPLAY"), "on", StringComparison.OrdinalIgnoreCase);
         Scaling.Settings = Horizon.Rendering.Scaling.RenderScaleEnvironment.Startup(config.RenderScale, host.Features, Name);
         Mode = config.Mode;
@@ -334,7 +337,13 @@ public partial class WindowManager : GameComponent, IDisposable
         {
             Fullscreen = config.Fullscreen,
             WindowSize = config.WindowSize,
-            VSync = config.VSync,
+            // HORIZON_VSYNC=off (or on) for a run whatever the program said, how a benchmark gets its frames uncapped
+            VSync = Environment.GetEnvironmentVariable("HORIZON_VSYNC")?.Trim().ToLowerInvariant() switch
+            {
+                "off" or "0" or "false" => false,
+                "on" or "1" or "true" => true,
+                _ => config.VSync
+            },
             FramesPerSecond = Math.Max(0.0, config.FramesPerSecond)
         };
         framePeriod = PeriodOf(Display.FramesPerSecond);
@@ -883,16 +892,12 @@ public partial class WindowManager : GameComponent, IDisposable
         // from the machine, the process as the machine sees it, the memory the device has taken in blocks (the part
         // of it the CPU can see is the machine's memory as well), and the threads
         var info = GC.GetGCMemoryInfo();
-        using (var process = System.Diagnostics.Process.GetCurrentProcess())
-        {
-            Log.Info(
-                $"[{Name}] memory, heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB of {info.TotalCommittedBytes / (1024.0 * 1024.0):0.0} committed, " +
-                $"working set {process.WorkingSet64 / (1024.0 * 1024.0):0} MB, private {process.PrivateMemorySize64 / (1024.0 * 1024.0):0} MB, " +
-                $"{process.Threads.Count} threads" +
-                (Graphics is { } gpu
-                    ? $", device {gpu.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in use of {gpu.Statistics.MemoryBlockBytes / (1024.0 * 1024.0):0} in {gpu.Statistics.MemoryBlocks} blocks, {gpu.Statistics.MemoryHostBytes / (1024.0 * 1024.0):0} MB of them mapped"
-                    : string.Empty));
-        }
+        Log.Info(
+            $"[{Name}] memory, heap {GC.GetTotalMemory(false) / (1024.0 * 1024.0):0.0} MB of {info.TotalCommittedBytes / (1024.0 * 1024.0):0.0} committed" +
+            ProcessWeight() +
+            (Graphics is { } gpu
+                ? $", device {gpu.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in use of {gpu.Statistics.MemoryBlockBytes / (1024.0 * 1024.0):0} in {gpu.Statistics.MemoryBlocks} blocks, {gpu.Statistics.MemoryHostBytes / (1024.0 * 1024.0):0} MB of them mapped"
+                : string.Empty));
 
         // And what the GPU spent on the last frame it finished, pass by pass, the way the overlay shows it
         if (Graphics is { } device && device.GpuScopes.Length > 0)
@@ -957,4 +962,13 @@ public partial class WindowManager : GameComponent, IDisposable
         Log.Info($"[{Name}] Disposed!");
     }
 
+    // The process as the machine sees it, its working set, private memory and threads. Apple's phones don't let a
+    // process ask (Process throws PlatformNotSupportedException there), so it's left out on them
+    private static string ProcessWeight()
+    {
+        if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst()) return string.Empty;
+
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return $", working set {process.WorkingSet64 / (1024.0 * 1024.0):0} MB, private {process.PrivateMemorySize64 / (1024.0 * 1024.0):0} MB, {process.Threads.Count} threads";
+    }
 }

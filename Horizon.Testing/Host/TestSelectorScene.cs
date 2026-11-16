@@ -1,6 +1,7 @@
 using System.Numerics;
 
 using Horizon.Engine;
+using Horizon.Input;
 using Horizon.Rendering;
 using Horizon.UI;
 using Horizon.UI.Components;
@@ -217,6 +218,17 @@ internal sealed class TestSelectorScene : Scene
     public override void UpdateState(float dt)
     {
         base.UpdateState(dt);
+
+        // A pad walks the list the way the arrow keys do, the d-pad or the left stick, and A starts what's picked
+        if (Engine.Input.Gamepads.LastUsed is { } pad)
+        {
+            var navigation = module.Navigation;
+            if (pad.WasPressed(GamepadInput.DPadUp) || pad.WasPressed(GamepadInput.LeftStickUp)) navigation.Move(0, -1);
+            if (pad.WasPressed(GamepadInput.DPadDown) || pad.WasPressed(GamepadInput.LeftStickDown)) navigation.Move(0, 1);
+            if (pad.WasPressed(GamepadInput.DPadLeft) || pad.WasPressed(GamepadInput.LeftStickLeft)) navigation.Move(-1, 0);
+            if (pad.WasPressed(GamepadInput.DPadRight) || pad.WasPressed(GamepadInput.LeftStickRight)) navigation.Move(1, 0);
+            if (pad.WasPressed(GamepadInput.A)) navigation.Activate();
+        }
 
         // The details follow the pointer while it is on a row, and the navigator's selection the rest of the time
         TestDefinition? picked = null;

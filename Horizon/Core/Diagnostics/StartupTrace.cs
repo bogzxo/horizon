@@ -50,6 +50,10 @@ public static class StartupTrace
     {
         if (!weighs) return string.Empty;
 
+        // Apple's phones don't let a process ask how much it weighs, Process throws there
+        if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst())
+            return $", heap {GC.GetTotalMemory(false) / (1024 * 1024)} MB";
+
         using var process = Process.GetCurrentProcess();
         return $", working set {process.WorkingSet64 / (1024 * 1024)} MB, private {process.PrivateMemorySize64 / (1024 * 1024)} MB, heap {GC.GetTotalMemory(false) / (1024 * 1024)} MB";
     }
