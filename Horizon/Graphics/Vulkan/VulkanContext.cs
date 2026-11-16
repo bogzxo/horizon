@@ -23,10 +23,10 @@ internal sealed unsafe class VulkanContext : IDisposable
     private const string LABELS_VARIABLE = "HORIZON_VULKAN_LABELS";
     private const string PORTABILITY_ENUMERATION = "VK_KHR_portability_enumeration";
     private const string PORTABILITY_SUBSET = "VK_KHR_portability_subset";
-    private const string DYNAMIC_RENDERING = "VK_KHR_dynamic_rendering";
-    private const string SYNCHRONIZATION2 = "VK_KHR_synchronization2";
-    private const string MAINTENANCE4 = "VK_KHR_maintenance4";
-    private const string DEMOTE_TO_HELPER = "VK_EXT_shader_demote_to_helper_invocation";
+    private const string PUSH_DESCRIPTOR = "VK_KHR_push_descriptor";
+
+    /// <summary>The Vulkan the instance asks for. A 1.3 card is still made, the device's own version is what it gets.</summary>
+    public static readonly uint Version14 = Vk.MakeVersion(1, 4);
 
     public Vk Vk { get; }
     public Instance Instance { get; private set; }
@@ -90,6 +90,39 @@ internal sealed unsafe class VulkanContext : IDisposable
     public bool HasDrawIndirectCount { get; private set; }
 
     public bool HasMultiDrawIndirect { get; private set; }
+
+    /// <summary>Whether the card is Vulkan 1.4, rather than 1.3 with some of it as extensions.</summary>
+    public bool Is14 { get; private set; }
+
+    /// <summary>
+    /// Whether descriptors can be pushed straight into the command buffer (1.4 core, VK_KHR_push_descriptor before it),
+    /// which the textures and images of set 1 are then, rather than a set allocated and written every time they change.
+    /// </summary>
+    public bool HasPushDescriptors { get; private set; }
+
+    /// <summary>How many descriptors one push may hold, 32 at the least where there's pushing at all.</summary>
+    public uint MaxPushDescriptors { get; private set; }
+
+    /// <summary>
+    /// Whether images can be written from the CPU without a staging buffer or a command buffer (1.4's hostImageCopy),
+    /// for the uploads of textures that are made on the loading thread.
+    /// </summary>
+    public bool HasHostImageCopy { get; private set; }
+
+    /// <summary>The layout a host copy writes into and leaves an image in, one the card lists for host copies, sampled where it can be.</summary>
+    public ImageLayout HostCopyLayout { get; private set; } = ImageLayout.General;
+
+    // Whether a host copy into an image of a format and usage costs nothing when the GPU reads it, asked once each
+    private readonly Dictionary<(Format, ImageUsageFlags), bool> hostCopyFits = [];
+
+    /// <summary>Whether index buffers may be 8 bit (1.4's indexTypeUint8).</summary>
+    public bool HasIndexUint8 { get; private set; }
+
+    /// <summary>Whether 1.4's maintenance5 and maintenance6 are on, buffer ranges by size and the *2 binding calls.</summary>
+    public bool HasMaintenance56 { get; private set; }
+
+    // The push descriptor extension's own functions, for a 1.3 card that has it
+    private KhrPushDescriptor? khrPushDescriptor;
 
     // Every queue is submitted to under this, the render thread and whoever uploads on a transfer queue included
     public readonly Lock QueueLock = new();
@@ -278,7 +311,7 @@ internal sealed unsafe class VulkanContext : IDisposable
             ApplicationVersion = Vk.MakeVersion(1, 0, 0),
             PEngineName = (byte*)SilkMarshal.StringToPtr("Horizon"),
             EngineVersion = Vk.MakeVersion(1, 0, 0),
-            ApiVersion = Vk.Version13
+            ApiVersion = Version14
         };
 
         var createInfo = new InstanceCreateInfo
@@ -433,20 +466,11 @@ internal sealed unsafe class VulkanContext : IDisposable
     }
 
     /// <summary>
-    /// Whether a card will do. Vulkan 1.3, or 1.2 with dynamic rendering, synchronization2 and demote to helper
-    /// invocation as extensions, which is what an older MoltenVK has, and a queue that can draw and present.
+    /// Whether a card will do. Vulkan 1.3 at the least, and a queue that can draw and present. The 1.2 cards with 1.3's
+    /// parts as extensions went with the Adreno 6xx tablets, SPIR-V 1.6 had stopped running on them anyway.
     /// </summary>
-    private bool IsUsable(PhysicalDevice candidate, in PhysicalDeviceProperties properties)
-    {
-        if (properties.ApiVersion < Vk.Version12) return false;
-        if (properties.ApiVersion < Vk.Version13)
-        {
-            var extensions = DeviceExtensionsOf(candidate);
-            if (!extensions.Contains(DYNAMIC_RENDERING) || !extensions.Contains(SYNCHRONIZATION2) || !extensions.Contains(DEMOTE_TO_HELPER)) return false;
-        }
-
-        return FindQueues(candidate, out _, out _, out _);
-    }
+    private bool IsUsable(PhysicalDevice candidate, in PhysicalDeviceProperties properties) =>
+        properties.ApiVersion >= Vk.Version13 && FindQueues(candidate, out _, out _, out _);
 
     private bool HasLayer(string name)
     {
@@ -606,27 +630,24 @@ internal sealed unsafe class VulkanContext : IDisposable
             };
         }
 
-        // What there is, so that only what is there is asked for. A 1.2 card has dynamic rendering and
-        // synchronization2 as extensions, with feature structs of their own that are the 1.3 ones by other names
-        bool is13 = Properties.ApiVersion >= Vk.Version13;
+        // What there is, so that only what is there is asked for. Every card is 1.3 (IsUsable), a 1.4 one says what of
+        // 1.4 it has in a struct of its own, a 1.3 one may still push descriptors through the extension
+        Is14 = Properties.ApiVersion >= Version14;
         var deviceExtensions = DeviceExtensionsOf(PhysicalDevice);
 
-        var availableDemote = new PhysicalDeviceShaderDemoteToHelperInvocationFeatures { SType = StructureType.PhysicalDeviceShaderDemoteToHelperInvocationFeatures };
-        var availableSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, PNext = &availableDemote };
-        var availableDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &availableSync2 };
-        var available13 = new PhysicalDeviceVulkan13Features { SType = StructureType.PhysicalDeviceVulkan13Features };
-        var available12 = new PhysicalDeviceVulkan12Features { SType = StructureType.PhysicalDeviceVulkan12Features, PNext = is13 ? &available13 : (void*)&availableDynamic };
+        var available14 = new PhysicalDeviceVulkan14Features { SType = StructureType.PhysicalDeviceVulkan14Features };
+        var available13 = new PhysicalDeviceVulkan13Features { SType = StructureType.PhysicalDeviceVulkan13Features, PNext = Is14 ? &available14 : null };
+        var available12 = new PhysicalDeviceVulkan12Features { SType = StructureType.PhysicalDeviceVulkan12Features, PNext = &available13 };
         var available11 = new PhysicalDeviceVulkan11Features { SType = StructureType.PhysicalDeviceVulkan11Features, PNext = &available12 };
         var available = new PhysicalDeviceFeatures2 { SType = StructureType.PhysicalDeviceFeatures2, PNext = &available11 };
         Vk.GetPhysicalDeviceFeatures2(PhysicalDevice, &available);
 
-        bool dynamicRendering = is13 ? available13.DynamicRendering : availableDynamic.DynamicRendering;
-        bool synchronization2 = is13 ? available13.Synchronization2 : availableSync2.Synchronization2;
-        if (!dynamicRendering || !synchronization2 || !available12.TimelineSemaphore || !available12.DescriptorBindingPartiallyBound)
+        if (!available13.DynamicRendering || !available13.Synchronization2 || !available12.TimelineSemaphore || !available12.DescriptorBindingPartiallyBound)
             throw new InvalidOperationException($"{DeviceName} hasn't got dynamic rendering, synchronization2, timeline semaphores and partially bound descriptors, which the engine can't do without.");
 
-        // What a set written after bind may hold, for the bindless table
-        var indexingProperties = new PhysicalDeviceDescriptorIndexingProperties { SType = StructureType.PhysicalDeviceDescriptorIndexingProperties };
+        // What a set written after bind may hold, for the bindless table, and how much one push of descriptors may
+        var pushProperties = new PhysicalDevicePushDescriptorProperties { SType = StructureType.PhysicalDevicePushDescriptorProperties };
+        var indexingProperties = new PhysicalDeviceDescriptorIndexingProperties { SType = StructureType.PhysicalDeviceDescriptorIndexingProperties, PNext = &pushProperties };
         var properties2 = new PhysicalDeviceProperties2 { SType = StructureType.PhysicalDeviceProperties2, PNext = &indexingProperties };
         Vk.GetPhysicalDeviceProperties2(PhysicalDevice, &properties2);
         MaxUpdateAfterBindSampledImages = indexingProperties.MaxDescriptorSetUpdateAfterBindSampledImages;
@@ -641,32 +662,54 @@ internal sealed unsafe class VulkanContext : IDisposable
 
         // Slang writes a discard as OpDemoteToHelperInvocation for SPIR-V 1.6, and nearly every fragment shader of
         // the engine discards, so a module with it is only valid where the feature is turned on. 1.3 has it in core
-        // (and every 1.3 card has to have it), a 1.2 card through the extension IsUsable already asked for
-        bool demote = is13 ? available13.ShaderDemoteToHelperInvocation : availableDemote.ShaderDemoteToHelperInvocation;
-        if (!demote)
+        if (!available13.ShaderDemoteToHelperInvocation)
             throw new InvalidOperationException($"{DeviceName} hasn't got shader demote to helper invocation, which every shader that discards is compiled to.");
 
         if (!available11.ShaderDrawParameters)
             throw new InvalidOperationException($"{DeviceName} hasn't got shader draw parameters, which the instanced quads can't do without.");
 
+        // What of 1.4 is turned on where the card has it, every one with the old way beside it. Pushing descriptors
+        // needs room for set 1's twenty in one push. HORIZON_VULKAN14=off leaves all of it off, for a run to compare
+        bool allow14 = !string.Equals(Environment.GetEnvironmentVariable("HORIZON_VULKAN14"), "off", StringComparison.OrdinalIgnoreCase);
+        uint setOne = (uint)(ShaderPreprocessor.TEXTURE_BINDINGS * 2 + ShaderPreprocessor.IMAGE_BINDINGS);
+        bool pushExtension = !Is14 && deviceExtensions.Contains(PUSH_DESCRIPTOR);
+        HasPushDescriptors = allow14 && (Is14 ? (bool)available14.PushDescriptor : pushExtension) && pushProperties.MaxPushDescriptors >= setOne;
+        MaxPushDescriptors = pushProperties.MaxPushDescriptors;
+        HasHostImageCopy = allow14 && Is14 && available14.HostImageCopy;
+        HasIndexUint8 = allow14 && Is14 && available14.IndexTypeUint8;
+        HasMaintenance56 = allow14 && Is14 && available14.Maintenance5 && available14.Maintenance6;
+
+        // The layouts a host copy may write into, sampled reading best of them, General where that isn't one
+        if (HasHostImageCopy)
+        {
+            HostCopyLayout = PickHostCopyLayout();
+            HasHostImageCopy = HostCopyLayout != ImageLayout.Undefined;
+        }
+
+        var features14 = new PhysicalDeviceVulkan14Features
+        {
+            SType = StructureType.PhysicalDeviceVulkan14Features,
+            PushDescriptor = HasPushDescriptors,
+            HostImageCopy = HasHostImageCopy,
+            IndexTypeUint8 = HasIndexUint8,
+            Maintenance5 = HasMaintenance56,
+            Maintenance6 = HasMaintenance56
+        };
+
         var features13 = new PhysicalDeviceVulkan13Features
         {
             SType = StructureType.PhysicalDeviceVulkan13Features,
+            PNext = Is14 ? &features14 : null,
             DynamicRendering = true,
             Synchronization2 = true,
             ShaderDemoteToHelperInvocation = true,
             Maintenance4 = available13.Maintenance4
         };
 
-        // The same three for a 1.2 card, through the extensions
-        var featuresDemote = new PhysicalDeviceShaderDemoteToHelperInvocationFeatures { SType = StructureType.PhysicalDeviceShaderDemoteToHelperInvocationFeatures, ShaderDemoteToHelperInvocation = true };
-        var featuresSync2 = new PhysicalDeviceSynchronization2Features { SType = StructureType.PhysicalDeviceSynchronization2Features, PNext = &featuresDemote, Synchronization2 = true };
-        var featuresDynamic = new PhysicalDeviceDynamicRenderingFeatures { SType = StructureType.PhysicalDeviceDynamicRenderingFeatures, PNext = &featuresSync2, DynamicRendering = true };
-
         var features12 = new PhysicalDeviceVulkan12Features
         {
             SType = StructureType.PhysicalDeviceVulkan12Features,
-            PNext = is13 ? &features13 : (void*)&featuresDynamic,
+            PNext = &features13,
             TimelineSemaphore = true,
             DescriptorIndexing = true,
             DescriptorBindingPartiallyBound = true,
@@ -704,13 +747,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         };
 
         var extensions = new List<string> { KhrSwapchain.ExtensionName };
-        if (!is13)
-        {
-            extensions.Add(DYNAMIC_RENDERING);
-            extensions.Add(SYNCHRONIZATION2);
-            extensions.Add(DEMOTE_TO_HELPER);
-            if (deviceExtensions.Contains(MAINTENANCE4)) extensions.Add(MAINTENANCE4);
-        }
+        if (HasPushDescriptors && !Is14) extensions.Add(PUSH_DESCRIPTOR);
 
         // The spec says a portability card has to be made with this on, and MoltenVK is one
         if (IsPortability) extensions.Add(PORTABILITY_SUBSET);
@@ -736,6 +773,12 @@ internal sealed unsafe class VulkanContext : IDisposable
             throw new InvalidOperationException("The device has no swapchain extension.");
         KhrSwapchain = khrSwapchain;
 
+        if (HasPushDescriptors && !Is14)
+        {
+            if (Vk.TryGetDeviceExtension(Instance, Device, out KhrPushDescriptor push)) khrPushDescriptor = push;
+            else HasPushDescriptors = false;
+        }
+
         Vk.GetDeviceQueue(Device, graphics, 0, out Queue graphicsQueue);
         GraphicsQueue = graphicsQueue;
 
@@ -755,6 +798,68 @@ internal sealed unsafe class VulkanContext : IDisposable
 
         Log.Info($"[Vulkan] {DeviceName}, driver {DriverVersion}, Vulkan {Properties.ApiVersion >> 22}.{(Properties.ApiVersion >> 12) & 0x3FF}{(IsPortability ? " (portability)" : "")}. " +
                  $"Async compute {(HasAsyncCompute ? "yes" : "no")}, transfer queue {(HasTransferQueue ? "yes" : "no")}, timestamps {(TimestampsSupported ? "yes" : "no")}.");
+        Log.Info($"[Vulkan] Push descriptors {(HasPushDescriptors ? $"yes, {MaxPushDescriptors} a push" : "no")}, host image copy {(HasHostImageCopy ? "yes" : "no")}, " +
+                 $"8 bit indices {(HasIndexUint8 ? "yes" : "no")}, maintenance5 and 6 {(HasMaintenance56 ? "yes" : "no")}{(allow14 ? "" : " (HORIZON_VULKAN14=off)")}.");
+    }
+
+    // The best of the layouts a host copy may write into, Undefined for none the engine can use
+    private ImageLayout PickHostCopyLayout()
+    {
+        var hostProperties = new PhysicalDeviceHostImageCopyProperties { SType = StructureType.PhysicalDeviceHostImageCopyProperties };
+        var properties = new PhysicalDeviceProperties2 { SType = StructureType.PhysicalDeviceProperties2, PNext = &hostProperties };
+        Vk.GetPhysicalDeviceProperties2(PhysicalDevice, &properties);
+        if (hostProperties.CopyDstLayoutCount == 0) return ImageLayout.Undefined;
+
+        var layouts = new ImageLayout[hostProperties.CopyDstLayoutCount];
+        fixed (ImageLayout* pointer = layouts)
+        {
+            hostProperties.PCopyDstLayouts = pointer;
+            hostProperties.CopySrcLayoutCount = 0;
+            hostProperties.PCopySrcLayouts = null;
+            Vk.GetPhysicalDeviceProperties2(PhysicalDevice, &properties);
+        }
+
+        if (Array.IndexOf(layouts, ImageLayout.ShaderReadOnlyOptimal) >= 0) return ImageLayout.ShaderReadOnlyOptimal;
+        if (Array.IndexOf(layouts, ImageLayout.General) >= 0) return ImageLayout.General;
+        return ImageLayout.Undefined;
+    }
+
+    /// <summary>
+    /// Whether an image of a format and usage can be written by a host copy and loses nothing on the GPU for it
+    /// (optimalDeviceAccess, some cards lay a host copyable image out differently). Asked once a format and usage.
+    /// </summary>
+    public bool HostCopyFits(Format format, ImageUsageFlags usage)
+    {
+        if (!HasHostImageCopy) return false;
+        lock (hostCopyFits)
+        {
+            if (hostCopyFits.TryGetValue((format, usage), out bool known)) return known;
+
+            var performance = new HostImageCopyDevicePerformanceQuery { SType = StructureType.HostImageCopyDevicePerformanceQuery };
+            var result = new ImageFormatProperties2 { SType = StructureType.ImageFormatProperties2, PNext = &performance };
+            var info = new PhysicalDeviceImageFormatInfo2
+            {
+                SType = StructureType.PhysicalDeviceImageFormatInfo2,
+                Format = format,
+                Type = ImageType.Type2D,
+                Tiling = ImageTiling.Optimal,
+                Usage = usage | ImageUsageFlags.HostTransferBit
+            };
+
+            bool fits = Vk.GetPhysicalDeviceImageFormatProperties2(PhysicalDevice, &info, &result) == Result.Success && performance.OptimalDeviceAccess;
+            hostCopyFits[(format, usage)] = fits;
+            return fits;
+        }
+    }
+
+    /// <summary>
+    /// Pushes descriptors into a command buffer for a set of the layout, through 1.4's core call or the extension's.
+    /// Only where <see cref="HasPushDescriptors"/> says so.
+    /// </summary>
+    public void PushDescriptors(CommandBuffer commands, PipelineBindPoint bindPoint, PipelineLayout layout, uint set, uint count, WriteDescriptorSet* writes)
+    {
+        if (khrPushDescriptor is { } extension) extension.CmdPushDescriptorSet(commands, bindPoint, layout, set, count, writes);
+        else Vk.CmdPushDescriptorSet(commands, bindPoint, layout, set, count, writes);
     }
 
     /// <summary>Throws with what went wrong, for the calls that have no business failing.</summary>

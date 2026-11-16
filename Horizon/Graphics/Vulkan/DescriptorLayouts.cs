@@ -10,7 +10,8 @@ namespace Horizon.Graphics.Vulkan;
 /// binding is partially bound, a shader that doesn't use one doesn't need anything in it. Set 2 is the bindless
 /// table of every texture, see <see cref="BindlessTextures"/>.
 /// The descriptor sets themselves come out of a pool per frame that is wiped at the start of the frame, see
-/// <see cref="FrameResources"/>.
+/// <see cref="FrameResources"/>. Where the card can push descriptors (Vulkan 1.4, or VK_KHR_push_descriptor) set 1 is
+/// pushed into the command buffer instead, the textures change far more often than anything else that is bound.
 /// </summary>
 internal sealed unsafe class DescriptorLayouts : IDisposable
 {
@@ -45,7 +46,9 @@ internal sealed unsafe class DescriptorLayouts : IDisposable
             imageBindings[ShaderPreprocessor.TEXTURE_BINDINGS + ShaderPreprocessor.IMAGE_BINDINGS + i] = Binding(FIRST_SAMPLER_BINDING + i, DescriptorType.Sampler);
 
         Buffers = MakeLayout(bufferBindings);
-        Images = MakeLayout(imageBindings);
+
+        // Set 1 is pushed where the card can, rather than allocated and written whenever a texture changes
+        Images = MakeLayout(imageBindings, context.HasPushDescriptors ? DescriptorSetLayoutCreateFlags.PushDescriptorBit : 0);
         context.Name(ObjectType.DescriptorSetLayout, Buffers.Handle, "set 0, the buffers");
         context.Name(ObjectType.DescriptorSetLayout, Images.Handle, "set 1, the textures and images");
 
@@ -70,13 +73,13 @@ internal sealed unsafe class DescriptorLayouts : IDisposable
         StageFlags = ShaderStageFlags.All
     };
 
-    private DescriptorSetLayout MakeLayout(DescriptorSetLayoutBinding[] bindings)
+    private DescriptorSetLayout MakeLayout(DescriptorSetLayoutBinding[] bindings, DescriptorSetLayoutCreateFlags flags = 0)
     {
-        var flags = new DescriptorBindingFlags[bindings.Length];
-        Array.Fill(flags, DescriptorBindingFlags.PartiallyBoundBit);
+        var bindingFlags = new DescriptorBindingFlags[bindings.Length];
+        Array.Fill(bindingFlags, DescriptorBindingFlags.PartiallyBoundBit);
 
         fixed (DescriptorSetLayoutBinding* bindingPointer = bindings)
-        fixed (DescriptorBindingFlags* flagPointer = flags)
+        fixed (DescriptorBindingFlags* flagPointer = bindingFlags)
         {
             var flagsInfo = new DescriptorSetLayoutBindingFlagsCreateInfo
             {
@@ -89,6 +92,7 @@ internal sealed unsafe class DescriptorLayouts : IDisposable
             {
                 SType = StructureType.DescriptorSetLayoutCreateInfo,
                 PNext = &flagsInfo,
+                Flags = flags,
                 BindingCount = (uint)bindings.Length,
                 PBindings = bindingPointer
             };

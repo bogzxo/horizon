@@ -108,6 +108,11 @@ public sealed unsafe partial class GraphicsDevice
         if ((definition.Usage & TextureUsage.RenderTarget) != 0)
             usage |= definition.IsDepth ? ImageUsageFlags.DepthStencilAttachmentBit : ImageUsageFlags.ColorAttachmentBit;
 
+        // A texture made with its pixels and only ever sampled after is written from the CPU straight into the image
+        // where the card can (Vulkan 1.4's host image copy), no staging and no copy in the command buffer
+        bool hostCopy = !pixels.IsEmpty && (definition.Usage & (TextureUsage.Storage | TextureUsage.RenderTarget)) == 0 && Context.HostCopyFits(format, usage);
+        if (hostCopy) usage |= ImageUsageFlags.HostTransferBit;
+
         var imageInfo = new ImageCreateInfo
         {
             SType = StructureType.ImageCreateInfo,
@@ -158,7 +163,14 @@ public sealed unsafe partial class GraphicsDevice
         Statistics.Textures++;
         LabelTexture(texture);
 
-        if (!pixels.IsEmpty)
+        if (hostCopy)
+        {
+            fixed (byte* pointer = pixels)
+                HostCopyTexels(texture, pointer, (ulong)pixels.Length);
+
+            if (levels > 1) GenerateMipmaps(texture);
+        }
+        else if (!pixels.IsEmpty)
         {
             fixed (byte* pointer = pixels)
                 UploadTexels(texture, 0, 0, texture.Width, texture.Height, definition.Format == PixelFormat.R8 ? TexelFormat.R8 : TexelFormat.Rgba8, pointer);
@@ -170,6 +182,47 @@ public sealed unsafe partial class GraphicsDevice
             // A texture that is read before anything was put in it shows nothing rather than whatever was in the memory
             ClearImageNow(texture, System.Numerics.Vector4.Zero);
         }
+    }
+
+    /// <summary>
+    /// Helper method to write a new texture's top level from the CPU (host image copy), the whole image first put in the
+    /// layout the copy writes into, which it stays in and is read in. Any thread, the image isn't anybody else's yet.
+    /// What was written is the GPU's from the next submission on, nothing in a command buffer waits for it.
+    /// </summary>
+    private void HostCopyTexels(Texture texture, byte* texels, ulong bytes)
+    {
+        var transition = new HostImageLayoutTransitionInfo
+        {
+            SType = StructureType.HostImageLayoutTransitionInfo,
+            Image = texture.Image,
+            OldLayout = ImageLayout.Undefined,
+            NewLayout = Context.HostCopyLayout,
+            SubresourceRange = new ImageSubresourceRange(texture.Aspect, 0, texture.MipLevels, 0, 1)
+        };
+        VulkanContext.Check(Vk.TransitionImageLayout(Device, 1, &transition), "putting a new image in the host copy layout");
+
+        var region = new MemoryToImageCopy
+        {
+            SType = StructureType.MemoryToImageCopy,
+            PHostPointer = texels,
+            ImageSubresource = new ImageSubresourceLayers(texture.Aspect, 0, 0, 1),
+            ImageExtent = new Extent3D(texture.Width, texture.Height, 1)
+        };
+        var copy = new CopyMemoryToImageInfo
+        {
+            SType = StructureType.CopyMemoryToImageInfo,
+            DstImage = texture.Image,
+            DstImageLayout = Context.HostCopyLayout,
+            RegionCount = 1,
+            PRegions = &region
+        };
+        VulkanContext.Check(Vk.CopyMemoryToImage(Device, &copy), "copying texels into an image from the CPU");
+
+        texture.Layout = Context.HostCopyLayout;
+        texture.LastStage = PipelineStageFlags2.None;
+        texture.LastAccess = AccessFlags2.None;
+        Statistics.Counting.BytesUploaded += (long)bytes;
+        Statistics.Counting.HostCopies++;
     }
 
     internal void DestroyTexture(Texture texture)

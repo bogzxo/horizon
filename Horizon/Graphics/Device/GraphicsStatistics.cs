@@ -17,6 +17,12 @@ public sealed class GraphicsStatistics
         public int PipelineBinds;
         public int RenderTargetBinds;
         public int DescriptorSets;
+
+        /// <summary>Pushes of descriptors (set 1 where the card pushes them), each in place of a set allocated and written.</summary>
+        public int DescriptorPushes;
+
+        /// <summary>Textures written straight from the CPU (host image copy), each in place of a staged upload.</summary>
+        public int HostCopies;
         public int Barriers;
         public long BytesUploaded;
         public long BytesStreamed;

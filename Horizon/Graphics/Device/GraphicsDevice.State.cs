@@ -39,6 +39,12 @@ public sealed unsafe partial class GraphicsDevice
     private DescriptorSet bufferSet, imageSet;
     private PipelineBindPoint setsBoundFor = (PipelineBindPoint)(-1);
 
+    // Where descriptors are pushed (VulkanContext.HasPushDescriptors), which textures and images set 1 holds now (a count
+    // that goes up whenever they change) and which of them graphics and compute were last pushed. Each has a push of
+    // its own that stays through the other's, so going between them only pushes what changed, not set 1 every time
+    private int imagesVersion;
+    private readonly int[] imagesPushedVersion = [-1, -1];
+
     // The pipeline state that isn't dynamic, see PipelineCache
     private bool blend, colorWrite = true;
     private BlendMode blendMode = BlendMode.Replace;
@@ -69,6 +75,7 @@ public sealed unsafe partial class GraphicsDevice
         renderingTarget = null;
         buffersDirty = imagesDirty = offsetsDirty = true;
         setsBoundFor = (PipelineBindPoint)(-1);
+        imagesPushedVersion[0] = imagesPushedVersion[1] = -1;
         dynamicDirty = viewportDirty = true;
     }
 
@@ -527,10 +534,22 @@ public sealed unsafe partial class GraphicsDevice
             setsBoundFor = (PipelineBindPoint)(-1);
         }
 
-        if (imagesDirty)
+        bool push = Context.HasPushDescriptors;
+        int pushSlot = bindPoint == PipelineBindPoint.Compute ? 1 : 0;
+        if (push && imagesDirty)
         {
-            imageSet = frame.Descriptors.Allocate(Layouts.Images);
-            Statistics.Counting.DescriptorSets++;
+            imagesVersion++;
+            imagesDirty = false;
+        }
+
+        if (push ? imagesPushedVersion[pushSlot] != imagesVersion : imagesDirty)
+        {
+            // Pushed, the writes go straight into the command buffer and there's no set to allocate
+            if (!push)
+            {
+                imageSet = frame.Descriptors.Allocate(Layouts.Images);
+                Statistics.Counting.DescriptorSets++;
+            }
 
             int most = ShaderPreprocessor.TEXTURE_BINDINGS * 2 + ShaderPreprocessor.IMAGE_BINDINGS;
             var infos = stackalloc DescriptorImageInfo[most];
@@ -544,13 +563,13 @@ public sealed unsafe partial class GraphicsDevice
 
                 Sampler sampler = SamplerOf(boundSamplers[i], texture);
                 infos[i] = new DescriptorImageInfo(sampler, texture.View, ImageLayout.ShaderReadOnlyOptimal);
-                writes[count++] = WriteImage(imageSet, i, DescriptorType.CombinedImageSampler, &infos[i]);
+                writes[count++] = WriteImage(push ? default : imageSet, i, DescriptorType.CombinedImageSampler, &infos[i]);
                 texture.LastUse = NextSubmission;
 
                 // The same sampler on its own, for an HLSL shader that keeps its textures and samplers apart
                 int at = ShaderPreprocessor.TEXTURE_BINDINGS + ShaderPreprocessor.IMAGE_BINDINGS + (int)i;
                 infos[at] = new DescriptorImageInfo(sampler, default, ImageLayout.Undefined);
-                writes[count++] = WriteImage(imageSet, DescriptorLayouts.FIRST_SAMPLER_BINDING + i, DescriptorType.Sampler, &infos[at]);
+                writes[count++] = WriteImage(push ? default : imageSet, DescriptorLayouts.FIRST_SAMPLER_BINDING + i, DescriptorType.Sampler, &infos[at]);
             }
 
             for (uint i = 0; i < ShaderPreprocessor.IMAGE_BINDINGS; i++)
@@ -560,20 +579,45 @@ public sealed unsafe partial class GraphicsDevice
 
                 int at = ShaderPreprocessor.TEXTURE_BINDINGS + (int)i;
                 infos[at] = new DescriptorImageInfo(default, image.View, ImageLayout.General);
-                writes[count++] = WriteImage(imageSet, DescriptorLayouts.FIRST_IMAGE_BINDING + i, DescriptorType.StorageImage, &infos[at]);
+                writes[count++] = WriteImage(push ? default : imageSet, DescriptorLayouts.FIRST_IMAGE_BINDING + i, DescriptorType.StorageImage, &infos[at]);
                 image.LastUse = NextSubmission;
             }
 
-            if (count > 0) Vk.UpdateDescriptorSets(Device, count, writes, 0, null);
+            if (push)
+            {
+                if (count > 0)
+                {
+                    Context.PushDescriptors(cmd, bindPoint, Layouts.PipelineLayout, 1, count, writes);
+                    Statistics.Counting.DescriptorPushes++;
+                }
+                imagesPushedVersion[pushSlot] = imagesVersion;
+            }
+            else
+            {
+                if (count > 0) Vk.UpdateDescriptorSets(Device, count, writes, 0, null);
+                setsBoundFor = (PipelineBindPoint)(-1);
+            }
             imagesDirty = false;
-            setsBoundFor = (PipelineBindPoint)(-1);
         }
 
         if (offsetsDirty || setsBoundFor != bindPoint)
         {
-            var sets = stackalloc DescriptorSet[3] { bufferSet, imageSet, Bindless.Set };
             var offsets = stackalloc uint[2] { (uint)cameraOffset, (uint)paramsOffset };
-            Vk.CmdBindDescriptorSets(cmd, bindPoint, Layouts.PipelineLayout, 0, 3, sets, 2, offsets);
+            if (push)
+            {
+                // Set 1 is pushed, so sets 0 and 2 are bound around it. Binding one set leaves the push of another of
+                // the same pipeline layout as it was
+                var buffers = bufferSet;
+                var bindless = Bindless.Set;
+                Vk.CmdBindDescriptorSets(cmd, bindPoint, Layouts.PipelineLayout, 0, 1, &buffers, 2, offsets);
+                if (setsBoundFor != bindPoint)
+                    Vk.CmdBindDescriptorSets(cmd, bindPoint, Layouts.PipelineLayout, 2, 1, &bindless, 0, null);
+            }
+            else
+            {
+                var sets = stackalloc DescriptorSet[3] { bufferSet, imageSet, Bindless.Set };
+                Vk.CmdBindDescriptorSets(cmd, bindPoint, Layouts.PipelineLayout, 0, 3, sets, 2, offsets);
+            }
             offsetsDirty = false;
             setsBoundFor = bindPoint;
         }
