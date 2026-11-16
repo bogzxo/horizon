@@ -54,6 +54,20 @@
     <PublishTrimmed>false</PublishTrimmed>
   </PropertyGroup>
 
+  <!--
+    NativeAOT, dotnet publish -c Release -r android-arm64 -p:PublishAot=true, the way Fighter2D.Android does it. ILC
+    trims and compiles everything ahead of time, optimised for speed. A plain Release build is CoreCLR with its JIT,
+    which is what this is measured against
+  -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <AndroidLinkMode>Full</AndroidLinkMode>
+    <PublishTrimmed>true</PublishTrimmed>
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <UseSizeOptimizedLinq>false</UseSizeOptimizedLinq>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Horizon\Horizon.csproj" />
     <ProjectReference Include="..\Horizon.UI\Horizon.UI.csproj" />
