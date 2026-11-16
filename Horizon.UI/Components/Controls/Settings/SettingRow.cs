@@ -12,7 +12,7 @@ namespace Horizon.UI.Components;
 /// it is changed, the sentence of what it does, and what sets it. On a page wide enough a toggle, a choice, a number or a
 /// line of text sits in a column of its own down the right the way VS Code has them, and anything with buttons or a list
 /// of choices goes on a line under the sentence. Lit under the pointer, a line in the accent down its left edge while it
-/// is not what it comes as. A row that hangs off a switch (<see cref="UISetting.DependsOn"/>) is in a little and fades
+/// differs from its default value. A row that hangs off a switch (<see cref="UISetting.DependsOn"/>) is in a little and fades
 /// while the switch is off. A right click has its reset and its key copied.
 /// </summary>
 internal sealed partial class SettingRow : StackPanel
@@ -61,6 +61,9 @@ internal sealed partial class SettingRow : StackPanel
     private readonly RowTitle name;
     private readonly Label key;
     private readonly Label? help;
+
+    // The page's note under the name, when the row is too narrow for its pill beside the name
+    private readonly Label noteLine;
     private string lit = string.Empty;
 
     // After its key, the keyword or choice a search found it by when that's nowhere it shows, and the note the page has
@@ -160,6 +163,9 @@ internal sealed partial class SettingRow : StackPanel
             Tooltip = page.Texts.ResetToDefault,
             OnPressed = () => page.ResetPressed(setting.Key)
         });
+
+        // The note on a line of its own under the name, for a row too narrow to have it beside the name (see FitName)
+        noteLine = text.Add(new Label { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
 
         if (setting.Help.Length > 0 && !page.CompactRows)
         {
@@ -277,6 +283,7 @@ internal sealed partial class SettingRow : StackPanel
 
         noteText = said;
         note.Text = said is null ? string.Empty : $"[color:accent]{UIRichText.Literal(said)}[/color]";
+        note.Plain = said;
         note.Tooltip = tip ?? string.Empty;
         note.Visible = said is not null;
         FitName();
@@ -294,14 +301,28 @@ internal sealed partial class SettingRow : StackPanel
         FitName();
     }
 
-    // The name given what the pills leave of its room, so a pill never pushes the reset past the left column
+    // The name given what the pills leave of its room, so a pill never pushes the reset past the left column. A note that
+    // would leave the name cut short in a narrow row goes on a line of its own under the name instead, all of it.
+    // Squeezed in beside the name it read "Copy to ..." and "F...ps", neither of them saying anything
     private void FitName()
     {
         float taken = 0.0f;
         if (foundByText is not null)
             taken += MathF.Min(foundBy.Most, Room(UIRichText.Plain(foundByText)) + RowPill.PAD * 2.0f) + 8.0f;
+
+        bool below = false;
         if (noteText is not null)
-            taken += MathF.Min(note.Most, Room(noteText) + RowPill.PAD * 2.0f) + 8.0f;
+        {
+            float pill = MathF.Min(note.Most, Room(noteText) + RowPill.PAD * 2.0f) + 8.0f;
+            below = nameRoom - taken - pill < Room(Setting.Title);
+            if (!below)
+                taken += pill;
+        }
+
+        note.Visible = noteText is not null && !below;
+        noteLine.Visible = noteText is not null && below;
+        noteLine.Text = noteText is null ? string.Empty : $"[color:accent]{UIRichText.Literal(noteText)}[/color]";
+
         name.Most = MathF.Max(60.0f, nameRoom - taken);
     }
 
@@ -311,7 +332,7 @@ internal sealed partial class SettingRow : StackPanel
     /// <summary>Where its name's text is, as wide as what it says.</summary>
     public UIRect TitleBounds => name.Bounds;
 
-    /// <summary>Where its reset is, empty while it's what it comes as and the reset is hidden.</summary>
+    /// <summary>Where its reset is, empty while it has its default value and the reset is hidden.</summary>
     public UIRect ResetBounds => reset.Visible ? reset.Bounds : default;
 
     /// <summary>What its reset says when the pointer rests on it.</summary>

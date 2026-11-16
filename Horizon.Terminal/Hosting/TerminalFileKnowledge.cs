@@ -176,7 +176,7 @@ public sealed class TerminalFileKnowledge(TerminalApiDescription api)
 
         if (kind == TerminalFileKind.Settings && after.StartsWith(':') && Api.Settings.Find(setting => setting.Key == word) is { } described)
             return $"$(settings-gear) **{word}**, {described.Kind}, {described.Default} when it isn't said\n\n{described.Help}"
-                + (described.Choices is { Length: > 0 } choices ? $"\n\nOne of {string.Join(", ", choices)}." : string.Empty);
+                + (described.ChoicesNow is { Length: > 0 } choices ? $"\n\nOne of {string.Join(", ", choices)}." : string.Empty);
 
         if (kind == TerminalFileKind.Keys && after.StartsWith(':') && Api.Commands.TryGetValue(word, out var command))
             return $"$(keyboard) **{word}**, {command.Title}" + (command.Key.Length > 0 ? $"\n\nOn {command.Key} unless this says otherwise." : "\n\nOn no key unless this says one.");
@@ -245,7 +245,7 @@ public sealed class TerminalFileKnowledge(TerminalApiDescription api)
                     {
                         found.Add(new TerminalFileProblem(i, column, key.Length, $"{key} is no setting, it is kept as it is and nothing reads it"));
                     }
-                    else if (setting.Choices is { Length: > 0 } choices && FirstText(entry.Groups[2].Value) is { } chosen && !choices.Contains(chosen))
+                    else if (setting.ChoicesNow is { Length: > 0 } choices && FirstText(entry.Groups[2].Value) is { } chosen && !choices.Contains(chosen))
                     {
                         found.Add(new TerminalFileProblem(i, code.IndexOf('"' + chosen, StringComparison.Ordinal) + 1, chosen.Length, $"{key} is one of {string.Join(", ", choices)}"));
                     }

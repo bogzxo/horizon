@@ -888,10 +888,64 @@ public sealed partial class UIRichText
 
         wrapped = false;
 
+        if (Document && space && penX + width > lineRoom)
+        {
+            word.Clear();
+            return;
+        }
+
+        // A document's narrow column must not cut off a whole word that is wider than its line (a table header,
+        // identifier or URL). Ordinary labels keep their compact word layout.
+        if (Document && !space && width > MathF.Max(1, lineRoom - wrapIndent))
+        {
+            foreach (var part in word) AddOverwidePart(part);
+            word.Clear();
+            return;
+        }
+
         foreach (var part in word)
             AddPiece(part.Start, part.Length, part.Width, part.State, part.Scale);
 
         word.Clear();
+    }
+
+    private void AddOverwidePart(in Pending part)
+    {
+        if (part.Length == 0)
+        {
+            // Inline code's trailing padding may be all that no longer fits. It does not need its own line.
+            if (penX + part.Width <= lineRoom)
+                AddPiece(part.Start, 0, part.Width, part.State, part.Scale);
+            return;
+        }
+        UIFont face = FaceOf(IsMono(part.State));
+        ReadOnlySpan<char> icons = part.State.IconsLength > 0 ? source.AsSpan(part.State.IconsStart, part.State.IconsLength) : default;
+        int end = part.Start + part.Length, at = part.Start;
+        while (at < end)
+        {
+            int start = at, length = 0;
+            float width = 0;
+            while (at < end)
+            {
+                int next = System.Globalization.StringInfo.GetNextTextElementLength(source.AsSpan(at, end - at));
+                // An inline icon's markup is one visible item, never pieces of its spelling on different lines.
+                if (!part.State.Code && source[at] == '$' && UISymbols.TryRead(source.AsSpan(at, end - at), face.LineHeight * part.Scale,
+                    out _, out int symbolLength, out _, out _)) next = symbolLength;
+                if (!part.State.Code && source[at] == '['
+                    && face.TryReadIcon(source.AsSpan(at, end - at), part.Scale, icons, out _, out int iconLength, out _)) next = iconLength;
+                float measured = face.MeasureLine(source.AsSpan(start, length + next), part.Scale, part.State.Style, icons, markup: !part.State.Code);
+                if (penX + measured > lineRoom && (length > 0 || !OnlyMarkers())) break;
+                width = measured;
+                length += next;
+                at += next;
+            }
+            if (length > 0) AddPiece(start, length, width, part.State, part.Scale);
+            if (at < end)
+            {
+                FinishLine();
+                penX = lineIndent = wrapIndent;
+            }
+        }
     }
 
     // Whether the line has nothing on it but a bullet, which a word still goes next to rather than under

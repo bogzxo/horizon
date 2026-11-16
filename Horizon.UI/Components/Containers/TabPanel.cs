@@ -61,6 +61,13 @@ public class TabPanel : UIComponent
     /// </summary>
     public Action<bool>? OnFold { get; set; }
 
+    /// <summary>
+    /// Whether a click on the tab of the page that's showing folds the panel down to its tabs, the way a click on a tab
+    /// of a folded panel opens it: the name of what is up is the handle for putting it away and bringing it back. Off
+    /// unless asked for, and only with somebody listening for the fold (<see cref="OnFold"/>).
+    /// </summary>
+    public bool FoldOnSelectedTab { get; set; }
+
     /// <summary>What the chevron says under the pointer while the panel is open, nothing for nothing.</summary>
     public string FoldTip { get; set; } = string.Empty;
 
@@ -169,6 +176,12 @@ public class TabPanel : UIComponent
 
     /// <summary>The room between two tabs, and between the strip and the page.</summary>
     public float Spacing { get; set; } = 28.0f;
+
+    /// <summary>
+    /// Room inside each tab either side of its title, on top of the quarter of <see cref="Spacing"/> it always has, so
+    /// a lit tab's pill isn't tight round its words. Nothing extra by default.
+    /// </summary>
+    public float TabPadding { get; set; }
 
     /// <summary>Text (icons and all) written at the left end of the strip, the button that goes back a tab.</summary>
     public string PreviousHint { get; set; } = string.Empty;
@@ -299,7 +312,7 @@ public class TabPanel : UIComponent
         float scale = TextScaleOf(skin);
         float strip = 0.0f;
         for (int i = 0; i < ChildSpan.Length; i++)
-            strip += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
+            strip += skin.Font.Measure(TitleOf(i), scale).X + Spacing + TabPadding * 2.0f;
         strip += skin.Font.Measure(Resolve(PreviousHint), scale).X + skin.Font.Measure(Resolve(NextHint), scale).X;
 
         return new Vector2(MathF.Max(page.X, strip), page.Y + HeaderOf(skin) + Spacing * 0.5f) + Padding.Total;
@@ -355,14 +368,14 @@ public class TabPanel : UIComponent
 
         float total = 0.0f;
         for (int i = 0; i < ChildSpan.Length; i++)
-            total += skin.Font.Measure(TitleOf(i), scale).X + (i > 0 ? Spacing : 0.0f);
+            total += skin.Font.Measure(TitleOf(i), scale).X + TabPadding * 2.0f + (i > 0 ? Spacing : 0.0f);
 
         float left = header.Center.X - total * 0.5f
             + HeaderAlign.ToVector().X * MathF.Max(0.0f, header.Width - total - Spacing * 0.5f);
         for (int i = 0; i < index; i++)
-            left += skin.Font.Measure(TitleOf(i), scale).X + Spacing;
+            left += skin.Font.Measure(TitleOf(i), scale).X + TabPadding * 2.0f + Spacing;
 
-        float width = skin.Font.Measure(TitleOf(index), scale).X;
+        float width = skin.Font.Measure(TitleOf(index), scale).X + TabPadding * 2.0f;
         return new UIRect(new Vector2(left - Spacing * 0.25f, header.Min.Y), new Vector2(left + width + Spacing * 0.25f, header.Max.Y));
     }
 
@@ -439,6 +452,13 @@ public class TabPanel : UIComponent
         {
             if (Folded)
                 OnFold?.Invoke(false);
+            else if (FoldOnSelectedTab && index == Selected && OnFold is not null)
+            {
+                // The tab of what's already up, pressed again, puts the panel away under its tabs
+                OnFold(true);
+                return;
+            }
+
             Select(index);
         }
     }
@@ -454,6 +474,7 @@ public class TabPanel : UIComponent
         Expose("header_height", () => HeaderHeight, value => HeaderHeight = MathF.Max(0.0f, value));
         Expose("header_align", () => UIScript.FromEnum(HeaderAlign), value => HeaderAlign = UIScript.ToEnum<Origin>(value, "header_align"));
         Expose("spacing", () => Spacing, value => Spacing = MathF.Max(0.0f, value));
+        Expose("tab_padding", () => TabPadding, value => TabPadding = MathF.Max(0.0f, value));
         Expose("prev_hint", () => PreviousHint, value => PreviousHint = value);
         Expose("next_hint", () => NextHint, value => NextHint = value);
         Expose("accent", () => AccentColor ?? Vector4.Zero, value => AccentColor = value);

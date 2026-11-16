@@ -77,7 +77,7 @@ public sealed class TerminalApiDescription
         foreach (TerminalSettingInfo setting in Settings)
         {
             var about = new HIDLObject().Add("kind", setting.Kind).Add("default", setting.Default).Add("help", setting.Help);
-            if (setting.Choices is { Length: > 0 } choices)
+            if (setting.ChoicesNow is { Length: > 0 } choices)
                 about.Add("choices", Natives.List(choices));
             if (setting.Most > setting.Least)
                 about.Add("least", setting.Least).Add("most", setting.Most);

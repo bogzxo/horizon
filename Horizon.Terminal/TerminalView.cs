@@ -381,6 +381,8 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         lastDt = dt;
+        KeepMinimap();
+
         // Like the editor caret, a background terminal stays lit instead of waking the renderer to blink.
         blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
         if (IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
@@ -391,7 +393,9 @@ public partial class TerminalView : UIComponent, IDisposable
 
         // The compositor detects cursor blink changes in the painted list. Focus alone must not keep renewing
         // the frame deadline: doing so renders continuously even when the terminal has nothing new to show.
-        if (changed || screen.Version != drawnVersion || bell > 0.0f)
+        // A view that isn't shown (a tab behind another, a pane zoomed away) is never painted, so the version it drew
+        // never catches up: it asks once as its screen changes and not again every tick until somebody looks at it.
+        if (changed || bell > 0.0f || (screen.Version != drawnVersion && IsShownInHierarchy))
             RequestFrame();
     }
 

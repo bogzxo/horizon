@@ -66,6 +66,7 @@ public static class UIPropertyHelp
         ["pixel_sized"] = "whether its height, title and buttons are in the window's pixels, so it doesn't grow when the UI is drawn bigger",
         ["title_bar.height"] = "how tall the bar is when nothing in it is taller",
         ["title_bar.title"] = "what the bar says, the window's own title when it is left empty",
+        ["title_bar.icon_file"] = "an image in place of the icon, tinted with icon_color or the theme's accent",
         ["window.title"] = "what its title bar says",
         ["text_color"] = "the colour of the words on it, the skin's own if it is left at nothing",
         ["icon"] = "one of the icons every skin has, VS Code's Codicons by name (save, folder, git-branch, play), in front of the words or on its own with none. $(name) does the same in any text",
@@ -98,6 +99,7 @@ public static class UIPropertyHelp
         // ---- folding ----
 
         ["title"] = "what the bar over it says",
+        ["caption"] = "smaller quieter words after the title of a title bar, cut short and then left out when there isn't room",
         ["expanded"] = "whether what is below the bar is showing, a click on the bar folds it away and back out",
         ["collapse_time"] = "how many seconds it takes to fold away or out, 0 to snap",
         ["collapsible.header_height"] = "how tall the bar is, 0 for as tall as a line of text needs",
@@ -111,6 +113,7 @@ public static class UIPropertyHelp
         ["tabs.selected"] = "which page is open, counted from 0",
         ["header_height"] = "how tall the strip of tabs is, 0 for as tall as a line of text needs",
         ["header_align"] = "where the tabs sit across their strip, left, center or right, in the middle unless it says",
+        ["tab_padding"] = "room inside each tab either side of its title, so the pill under the open one isn't tight round its words",
         ["prev_hint"] = "text at the left end of the strip, the button that goes to the tab before (LB)",
         ["next_hint"] = "text at the right end of the strip, the button that goes to the next tab (RB)",
         ["accent"] = "the colour of the open tab's name and the line under it, nothing for the skin's accent",

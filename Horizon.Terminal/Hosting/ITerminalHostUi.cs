@@ -20,6 +20,12 @@ public interface ITerminalHostUi
     bool OpenFile(string path, int line);
 
     /// <summary>
+    /// Shows the program's own Settings window at the terminal settings. False for a program without one, which gets
+    /// settings.hor opened in an editor instead.
+    /// </summary>
+    bool ShowSettings() => false;
+
+    /// <summary>
     /// A file or a folder for Dawn, what the shells' dawn command asks for (dawn -open path, dawn -window path). In the
     /// Dawn that's running, or a new window of it, false when there's no Dawn to be had. A program that knows no Dawn
     /// opens a file the way it opens one to edit and nothing else.

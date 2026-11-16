@@ -672,6 +672,22 @@ public sealed partial class DebugSession : IDisposable
     // The program itself, by its process id, held from when the debugger says it started so its own exit code can be read
     private Process? debuggee;
 
+    /// <summary>The process id of the program being debugged once the debugger has said it, null before (or if it never does).</summary>
+    public int? ProcessId
+    {
+        get
+        {
+            try
+            {
+                return debuggee?.Id;
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+    }
+
     private void Follow(int processId)
     {
         if (processId <= 0 || debuggee is not null)

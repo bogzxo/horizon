@@ -24,7 +24,8 @@ public class SettingsSectionsTests
             Assert.True(SettingsSections.IsSectioned(all));
             Assert.Equal(1.5f, Assert.IsType<NumberValue>(SettingsSections.Section(all, SettingsSections.EDITOR)["code_zoom"]).Value, 3);
             Assert.Equal("midnight", Assert.IsType<StringValue>(SettingsSections.Section(all, SettingsSections.TERMINAL)["theme"]).Value);
-            Assert.Contains("#define dusk_settings", text);
+            Assert.Contains("#define hex_settings", text);
+            Assert.DoesNotContain("#define dusk_settings", text);
 
             // the editor writing its section again keeps the terminal's, its help over every key with it
             File.WriteAllText(file, SettingsSections.Write(file, (SettingsSections.EDITOR, new HIDLObject().Add("code_zoom", 2f))));

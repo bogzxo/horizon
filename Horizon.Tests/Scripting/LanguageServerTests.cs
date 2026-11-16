@@ -91,6 +91,8 @@ public partial class LanguageServerTests
         using var toClient = new AnonymousPipeServerStream(PipeDirection.Out);
         using var toClientRead = new AnonymousPipeClientStream(PipeDirection.In, toClient.ClientSafePipeHandle);
         using LanguageServer server = LanguageServer.Over("versions", "csharp", Path.GetTempPath(), toClientRead, toServer);
+        // Close the fake server's writer before disposing the client's pipe, including when an assertion fails.
+        using var serverOutput = toClient;
         JsonObject initialize = ReadMessage(toServerRead);
         Assert.True(initialize["params"]!["capabilities"]!["textDocument"]!["publishDiagnostics"]!["versionSupport"]!.GetValue<bool>());
         Write(toClient, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = initialize["id"]!.GetValue<int>(), ["result"] = new JsonObject { ["capabilities"] = new JsonObject() } }.ToJsonString());
@@ -121,6 +123,9 @@ public partial class LanguageServerTests
         Publish(null, "unversioned");
         Assert.True(server.TryTake(out _, out var compatible));
         Assert.Equal("unversioned", Assert.Single(compatible).Message);
+        Publish(null, string.Empty);
+        Assert.True(server.TryTake(out _, out var markerOnly));
+        Assert.Empty(markerOnly);
         Publish(2, "queued before close");
         server.Close(file);
         Assert.Equal("textDocument/didClose", ReadMessage(toServerRead)["method"]!.GetValue<string>());

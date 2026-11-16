@@ -268,6 +268,8 @@ public partial class DebugSessionTests
         }
         Assert.True(disabling.Wait(5000));
         Assert.False(session.BreaksOnException(selected));
+        // Let the session's background reader reach EOF before its stream is disposed on Unix.
+        fromAdapter.Dispose();
     }
 
     [Fact]

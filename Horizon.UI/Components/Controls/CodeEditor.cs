@@ -262,6 +262,10 @@ public partial class CodeEditor : UIComponent
     private double lastPress = -1.0;
     private UITextPosition lastPressAt;
 
+    // When a double click picked a word and on which line, for telling a third press straight after it, which is the line
+    private double wordPress = -1.0;
+    private int wordPressLine;
+
     // What the last paint was laid out with, for turning the pointer into a place in the text
     private UISkin? paintedSkin;
     private float paintedScale = 1.0f;
@@ -2331,6 +2335,21 @@ public partial class CodeEditor : UIComponent
     // The word a double click picked, while the press goes on dragging whole words from it, null otherwise
     private (UITextPosition From, UITextPosition To)? wordDrag;
 
+    // The line a triple click picked, while the press goes on dragging whole lines from it, null otherwise
+    private int? lineDrag;
+
+    // Whole lines from one to another, either way round, the caret left at the end the pointer is at
+    private void SelectLines(int from, int to)
+    {
+        int first = Math.Min(from, to), last = Math.Max(from, to);
+        var start = new UITextPosition(first, 0);
+        UITextPosition end = last + 1 < document.LineCount ? new UITextPosition(last + 1, 0) : new UITextPosition(last, document.LineAt(last).Length);
+        if (to < from)
+            document.Select(end, start);
+        else
+            document.Select(start, end);
+    }
+
     // Where on the thumb it was taken hold of, from its top, so it doesn't jump to put its middle under the pointer
     private float barGrab;
 
@@ -2391,6 +2410,7 @@ public partial class CodeEditor : UIComponent
 
         CloseCompletion();
         wordDrag = null;
+        lineDrag = null;
 
         // The minimap, its slider taken hold of or the code gone to where it was pressed
         if (PressMinimap(point))
@@ -2444,11 +2464,26 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        // A third press straight after a double click, on the line the word was on, is the whole line, and dragged on
+        // from there whole lines. Where in the line doesn't matter, the word a double click picked is under the pointer
+        // but the pointer needn't be on the very same letter three times running
+        if (wordPress >= 0.0 && now - wordPress < DOUBLE_CLICK && at.Line == wordPressLine)
+        {
+            SelectLine(at.Line);
+            wordDrag = null;
+            lineDrag = at.Line;
+            wordPress = lastPress = -1.0;
+            return;
+        }
+
+        wordPress = -1.0;
         if (now - lastPress < DOUBLE_CLICK && at == lastPressAt)
         {
             document.SelectWordAt(at);
             wordDrag = (document.Anchor, document.Caret);
             lastPress = -1.0;
+            wordPress = now;
+            wordPressLine = at.Line;
             return;
         }
 
@@ -2505,6 +2540,8 @@ public partial class CodeEditor : UIComponent
 
         if (columnFrom is { } column)
             document.SelectColumn(column, PositionAt(point));
+        else if (lineDrag is { } line)
+            SelectLines(line, PositionAt(point).Line);
         else if (wordDrag is { } word)
             document.SelectWordsTo(word.From, word.To, PositionAt(point));
         else if (!document.HasExtraCarets)
@@ -2519,6 +2556,7 @@ public partial class CodeEditor : UIComponent
         changePressed = false;
         pressTaken = false;
         wordDrag = null;
+        lineDrag = null;
         columnFrom = null;
     }
 

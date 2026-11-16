@@ -242,7 +242,7 @@ public partial class SettingsPage
         return menu;
     }
 
-    /// <summary>Every change in a part (Editor, Terminal) put back to what it comes as, how many that was.</summary>
+    /// <summary>Every change in a part (Editor, Terminal) reset to its default value, how many that was.</summary>
     public int ResetPart(string part)
     {
         string[] changed = ChangedKeys(part);
@@ -251,7 +251,7 @@ public partial class SettingsPage
         return changed.Length;
     }
 
-    /// <summary>Every change on the page put back to what it comes as, how many that was.</summary>
+    /// <summary>Every change on the page reset to its default value, how many that was.</summary>
     public int ResetAll()
     {
         string[] changed = ChangedKeys(null);
@@ -382,7 +382,7 @@ public partial class SettingsPage
             }
         }
 
-        /// <summary>Whether a setting in it isn't what it comes as, a dot of the accent at its right.</summary>
+        /// <summary>Whether a setting in it differs from its default value, a dot of the accent at its right.</summary>
         public bool Changed { get; set; }
 
         protected override bool HitTestVisible => true;

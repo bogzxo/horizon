@@ -3,8 +3,8 @@ using Horizon.HIDL.Runtime;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// The terminal's section, Dusk's settings and Dawn's terminal page's, put in force through the host that has them
-/// (applied to every terminal, written to the file) the moment one changes.
+/// The terminal section, Dusk's settings and those of Dawn's terminal page. A change is applied at once through the host
+/// that owns them, to every terminal, and written to the file.
 /// </summary>
 public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup = null) : ISettingsSource
 {
@@ -14,7 +14,7 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
 
     public IReadOnlyList<UISetting> Settings { get; } = Describe(host, themeGroup);
 
-    /// <summary>Called after a setting was put in force, for a program that does more with one (Dusk's theme and scale).</summary>
+    /// <summary>Called after a setting was applied, for a program that does more with one (Dusk's theme and scale).</summary>
     public Action? Changed { get; set; }
 
     public IRuntimeValue? Get(string key) => host.Settings.Get(key);
@@ -62,7 +62,7 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
                 "plain_profiles" => [.. host.Panel.Profiles.Select(profile => profile.Id)],
                 "font" => FontChoices(host.Settings.Font, out labels),
                 "profile" => ProfileChoices(host, out labels),
-                _ => setting.Choices
+                _ => setting.ChoicesNow
             };
             // The theme goes where the program says (Hex has Dusk's with Dawn's, under how Hex looks), the rest are the terminal's own
             bool theme = setting.Key == "theme";

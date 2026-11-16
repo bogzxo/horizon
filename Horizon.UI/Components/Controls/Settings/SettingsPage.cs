@@ -64,7 +64,7 @@ public sealed record UISetting(
 /// A page of settings the way VS Code has one, because it works. A search box over all of them, the sections down the
 /// left (a click scrolls to one), and a row a setting, its section and its name, a sentence saying what it does at the
 /// size the rest of the text is (not a tooltip), and what sets it, a toggle, a dropdown, a number, a line of text, or
-/// a button a choice for a list. A setting that is not what it comes as has a line in the accent down its edge and a
+/// a button a choice for a list. A setting that differs from its default value has a line in the accent down its edge and a
 /// reset beside its name. What the page shows is asked of whoever has the settings (<see cref="ValueOf"/>,
 /// <see cref="IsModified"/>) and what is changed is told to them (<see cref="OnChanged"/>, <see cref="OnReset"/>), who
 /// apply it, write the file and call <see cref="Refresh(string)"/>. Dawn's settings, Dusk's and an extension's are this.
@@ -219,7 +219,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>What a setting is now.</summary>
     public Func<string, IRuntimeValue?>? ValueOf { get; set; }
 
-    /// <summary>Whether a setting is not what it comes as.</summary>
+    /// <summary>Whether a setting differs from its default value.</summary>
     public Func<string, bool>? IsModified { get; set; }
 
     /// <summary>Where a section goes among the others, lower first, null for the order they came in. Equal ones keep that order.</summary>
@@ -228,7 +228,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>A setting changed on the page.</summary>
     public Action<string, IRuntimeValue>? OnChanged { get; set; }
 
-    /// <summary>A setting's reset pressed, back to what it comes as.</summary>
+    /// <summary>A setting's reset pressed, back to its default value.</summary>
     public Action<string>? OnReset { get; set; }
 
     /// <summary>One of a setting's <see cref="UISetting.Buttons"/> pressed, by its key and which.</summary>

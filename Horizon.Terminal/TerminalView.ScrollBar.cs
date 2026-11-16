@@ -69,7 +69,7 @@ public partial class TerminalView
     {
         float right = Bounds.Max.X - SideInset;
         barRoom = new UIRect(new Vector2(right - BAR_WIDTH, paintedArea.Min.Y), new Vector2(right, paintedArea.Max.Y));
-        minimapArea = Minimap ? new UIRect(new Vector2(barRoom.Min.X - MINIMAP_GAP - MINIMAP_WIDTH, paintedArea.Min.Y), new Vector2(barRoom.Min.X - MINIMAP_GAP, paintedArea.Max.Y)) : default;
+        minimapArea = MinimapUp ? new UIRect(new Vector2(barRoom.Min.X - MINIMAP_GAP - MINIMAP_WIDTH, paintedArea.Min.Y), new Vector2(barRoom.Min.X - MINIMAP_GAP, paintedArea.Max.Y)) : default;
     }
 
     /// <summary>Helper method for the thumb on a track, how long it is and where its top is.</summary>

@@ -6,7 +6,7 @@ namespace Horizon.UI.Components;
 /// <summary>
 /// The terminal's settings as a <see cref="FormPanel"/> takes them, a field a setting out of
 /// <see cref="TerminalSettings.Described"/>, in sections, the lists as flags of what there is to pick (the plugins, the
-/// profiles). Dusk's settings window and Hex's page for settings.hor are the same form.
+/// profiles). The terminal's text UI settings program (tui/settings.hor) shows this form.
 /// </summary>
 public static class TerminalSettingsForm
 {
@@ -30,7 +30,7 @@ public static class TerminalSettingsForm
             {
                 "disabled_plugins" => pluginIds,
                 "plain_profiles" => profileIds,
-                _ => setting.Choices
+                _ => setting.ChoicesNow
             };
             fields.Add(new UIFormField(setting.Key, setting.Key.Replace('_', ' '), kind, choices, null, $"{setting.Default} as it comes",
                 setting.Help, Group(setting.Key), Step: kind == UIFormKind.Number ? 0.01f : 1.0f));
@@ -80,10 +80,10 @@ public static class TerminalSettingsForm
         return value;
     }
 
-    /// <summary>What a setting comes as, for a field that is cleared.</summary>
+    /// <summary>A setting's default value, for a field that is cleared.</summary>
     public static IRuntimeValue? DefaultOf(string key) => new TerminalSettings(null).Get(key);
 
-    /// <summary>The form as a script takes it, <c>{ fields: [...], values: {...} }</c>, Hex's page for settings.hor.</summary>
+    /// <summary>The form as a script takes it, <c>{ fields: [...], values: {...} }</c>, for the text UI settings program.</summary>
     public static ObjectValue Script(IEnumerable<string> plugins, IEnumerable<string> profiles, Dictionary<string, IRuntimeValue> values)
     {
         var fields = new List<IRuntimeValue>();

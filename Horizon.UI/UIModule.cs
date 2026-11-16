@@ -316,6 +316,15 @@ namespace Horizon.UI
         /// <summary>Says something in it is sliding or folding, see <see cref="UIComponent.LaysOutMoving"/>.</summary>
         internal void NoteLayoutMoving() => layoutMoving = true;
 
+        // Whether something laid out came out another size than it measured for, a label wrapped to the width it had
+        private bool layoutStale;
+
+        /// <summary>Says the layout just done measured something for a width it didn't get, see <see cref="Label"/>.</summary>
+        internal void NoteLayoutStale() => layoutStale = true;
+
+        // How many times a frame it's laid out again for what came out another width, nested ones settle in two, and a label that never agrees can't cost more than that
+        private const int LAYOUT_AGAIN = 2;
+
         internal void Layout(UIRect screen, UISkin skin)
         {
             layoutMoved = layoutMoving;
@@ -333,7 +342,16 @@ namespace Horizon.UI
                 ? UIRect.FromCenter(seen.Center, design)
                 : seen;
 
+            layoutStale = false;
             Root.ArrangeTree(Frame);
+
+            // Text that wraps to its width found it out on the way, measured again it's the right height this frame
+            for (int again = 0; again < LAYOUT_AGAIN && layoutStale; again++)
+            {
+                layoutStale = false;
+                Root.MeasureTree(skin);
+                Root.ArrangeTree(Frame);
+            }
         }
 
         internal void Paint(UIDrawList list)

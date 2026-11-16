@@ -111,6 +111,39 @@ public class InBetweenTests
         return panel;
     }
 
+    [Theory]
+    [InlineData(-60.0f)]
+    [InlineData(60.0f)]
+    public void Overscroll_keeps_the_viewport_open_while_content_moves_past_it(float stretch)
+    {
+        var viewport = new UIRect(Vector2.Zero, new Vector2(200, 100));
+        var parentClip = new UIRect(new Vector2(10, 5), new Vector2(190, 95));
+        Painted Capture(float displacement)
+        {
+            var list = new UIDrawList();
+            list.Begin(Skin, 1, 1.0f / 60, 0);
+            list.PushClip(parentClip);
+            var spring = new UIOverscroll { Stretch = displacement };
+            spring.Begin(list, viewport);
+            // Still scrolled within a long document: content extends beyond both ends of the viewport.
+            list.Rect(new UIRect(new Vector2(-100, -200), new Vector2(300, 300)), Colour(1));
+            UIOverscroll.End(list);
+            list.PopClip();
+            list.End();
+            Assert.Null(list.FramesDiffer());
+            Painted painted = Kept(list);
+            Assert.Equal(parentClip, Drawn(painted.Items, Colour(1)));
+            return painted;
+        }
+        Painted first = Capture(stretch), next = Capture(stretch * 0.5f);
+        var between = new UIInBetween();
+        foreach (float alpha in new[] { 0, 0.25f, 0.5f, 1 })
+        {
+            between.Frames(first.Frames, next.Frames, alpha);
+            Assert.Equal(parentClip, Drawn(between.FramedQuads.ToArray(), Colour(1)));
+        }
+    }
+
     [Fact]
     public void A_picture_cut_by_the_edge_of_a_scroll_moves_with_the_rest()
     {

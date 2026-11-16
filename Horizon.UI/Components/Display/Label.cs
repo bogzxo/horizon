@@ -129,6 +129,9 @@ public class Label : UIComponent
     // Whether the lines are what the text is drawn as right now
     private bool wrapped;
 
+    // The width it filled across and wrapped to when it was last measured, -1 when it doesn't wrap to what it's given
+    private float measuredFill = -1.0f;
+
     public Label()
     { }
 
@@ -186,6 +189,7 @@ public class Label : UIComponent
     {
         float scale = ScaleOf(skin);
         float width = Wrap ? WrapWidth() : 0.0f;
+        measuredFill = Wrap && Size.X <= 0.0f && (Fill & UIFill.Horizontal) != 0 ? width : -1.0f;
 
         // What it says, a key in a layout being the text of it in the language that is loaded, see Localisation
         string text = Resolve(Text);
@@ -230,6 +234,18 @@ public class Label : UIComponent
 
         // As wide as it was told to be, which is what it was wrapped to
         return new Vector2(width, skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale).Y);
+    }
+
+    /// <summary>
+    /// Handed another width than it wrapped to, a label just made or one whose parent was resized, it has the module lay
+    /// out again this frame, where it would have shown a frame wrapped to the old width (or not at all) first. Dragging
+    /// a side bar of them flashed every row between the two on every step.
+    /// </summary>
+    protected override void Arrange(UIRect content)
+    {
+        base.Arrange(content);
+        if (measuredFill >= 0.0f && MathF.Abs(Bounds.Width - measuredFill) > 0.5f)
+            Module?.NoteLayoutStale();
     }
 
     // Where everything the text wraps round is, as a number that is something else whenever any of it moves, 0 for nothing

@@ -104,6 +104,11 @@ public sealed partial class LanguageServer : IDisposable
         try
         {
             var info = LanguageServerProgram.StartInfo(command, arguments);
+            // csharp-ls runs the analyzers referenced by MSBuild. Include the SDK's IDE code-style analyzers in its
+            // design-time projects as well as the regular .NET analyzers, without changing the project's build settings.
+            if (languageId == "csharp" && settings?["csharp"]?["analyzersEnabled"] is JsonValue analyzers
+                && analyzers.TryGetValue<bool>(out bool enabled) && enabled)
+                info.Environment.TryAdd("EnforceCodeStyleInBuild", "true");
             info.WorkingDirectory = Directory.Exists(rootDirectory) ? rootDirectory : Environment.CurrentDirectory;
             process = Process.Start(info);
 
@@ -699,6 +704,9 @@ public sealed partial class LanguageServer : IDisposable
                 // is red that isn't wrong. A code goes after what it says when there is one, an empty one said "()"
                 int severity = JsonNumbers.Int(diagnostic["severity"], 1);
                 string message = diagnostic["message"]?.GetValue<string>() ?? string.Empty;
+                // Roslyn also sends empty marker diagnostics for code fixes. Keep their raw data for Actions,
+                // but they have nothing to underline or list in Problems.
+                if (string.IsNullOrWhiteSpace(message)) continue;
                 if (diagnostic["code"] is { } code && code.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number
                     && code.ToString() is { Length: > 0 } said)
                     message = $"{message} ({said})";

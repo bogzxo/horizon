@@ -70,6 +70,38 @@ public class TitleBar : StackPanel
 
     /// <summary>What it says, the window's own title when it is left empty.</summary>
     public string Title { get; set; } = string.Empty;
+
+    /// <summary>
+    /// What is written after the title, smaller and quieter: the name of the program whose window this is, where the
+    /// title is what's open in it ("Program.cs" and then "Hex3"). Empty for none. It gives way first when room is short,
+    /// the title is what somebody is looking for.
+    /// </summary>
+    public string Caption { get; set; } = string.Empty;
+
+    // How much smaller than the title its caption is written, how see-through, and the gap between the two
+    private const float CAPTION_SCALE = 0.86f, CAPTION_ALPHA = 0.42f, CAPTION_GAP = 10.0f;
+
+    // The least room a caption is cut down to fit, in less it isn't written at all
+    private const float CAPTION_LEAST = 48.0f;
+
+    private (string Text, UIFont? Font, float Scale, float Room) captionFitFor;
+    private string fittedCaption = string.Empty;
+
+    // The caption cut to the room it has, kept for as long as nothing about it changes like the title's
+    private string FitCaption(string caption, UIFont font, float scale, float room)
+    {
+        var key = (caption, font, scale, room);
+        if (captionFitFor == key)
+            return fittedCaption;
+        captionFitFor = key;
+        float dots = font.Measure("…", scale, markup: false).X;
+        int length = caption.Length;
+        while (length > 0 && font.Measure(caption.AsSpan(0, length), scale, markup: false).X > room - dots)
+            length--;
+        if (length > 0 && char.IsHighSurrogate(caption[length - 1]))
+            length--;
+        return fittedCaption = length > 0 ? caption[..length].TrimEnd() + "…" : string.Empty;
+    }
     private (string Text, UIFont? Font, float Scale, float Room) titleFitFor;
     private string fittedTitle = string.Empty;
 
@@ -94,6 +126,9 @@ public class TitleBar : StackPanel
 
     /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) at the left end, empty for none.</summary>
     public string Icon { get; set; } = string.Empty;
+
+    /// <summary>An image used instead of the symbol, tinted with <see cref="IconColor"/> or the skin's accent.</summary>
+    public string IconFile { get; set; } = string.Empty;
 
     /// <summary>The colour of the icon, null for the skin's accent.</summary>
     public Vector4? IconColor { get; set; }
@@ -149,7 +184,7 @@ public class TitleBar : StackPanel
     private float ScaleOf(UISkin skin) => (TextScale > 0.0f ? TextScale : skin.TextScale) * Unit;
 
     // The room at the left for the icon, and at the right for the buttons
-    private float IconRoom => Icon.Length > 0 ? BarHeight : 0.0f;
+    private float IconRoom => Icon.Length > 0 || IconFile.Length > 0 ? BarHeight : 0.0f;
     private float ButtonsRoom => ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f;
 
     protected override Vector2 Measure(UISkin skin)
@@ -210,11 +245,18 @@ public class TitleBar : StackPanel
         list.BeginPart(-1);
         list.Rect(Bounds, Color ?? skin.PanelColor with { W = 1.0f });
 
-        if (Icon.Length > 0)
+        if (IconRoom > 0)
         {
             float side = MathF.Round(BarHeight * 0.5f);
             Vector2 middle = Vector2.Round(new Vector2(Bounds.Min.X + BarHeight * 0.5f, Bounds.Center.Y));
-            list.Symbol(Icon, new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f)), IconColor ?? skin.AccentColor);
+            var area = new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f));
+            Vector4 tint = IconColor ?? skin.AccentColor;
+            if (IconFile.Length > 0)
+            {
+                // A title-bar image is small even on a high-DPI screen; keep large source art out of the UI atlas.
+                if (skin.TryGetImage(IconFile, 128, out var image)) list.NineSlice(image, area, tint);
+            }
+            else list.Symbol(Icon, area, tint);
         }
 
         // The title in the middle of the window, or after what is in the bar when that runs past where the middle would put it
@@ -237,11 +279,36 @@ public class TitleBar : StackPanel
             }
 
             float start = contentEnd + 16.0f * Unit;
-            string shown = FitTitle(title, skin.Font, scale, MathF.Max(0, titleEnd - start));
+            float room = MathF.Max(0, titleEnd - start);
+
+            // The caption after it, when the two fit whole. The pair is centred as one, so the title sits a little left
+            // of the middle and reads as the first of two things and not as a title with something stuck to it
+            string caption = Caption.Length > 0 ? Resolve(Caption) : string.Empty;
+            float captionScale = scale * CAPTION_SCALE, gap = CAPTION_GAP * Unit;
+            Vector2 captionSize = caption.Length > 0 ? skin.Font.Measure(caption, captionScale, markup: false) : Vector2.Zero;
+
+            // The title has the room first. The caption gets what's left and is cut short with dots when that isn't
+            // all of it (a long note after the program's name), and goes altogether when there's hardly any
+            string shown = FitTitle(title, skin.Font, scale, room);
             size = skin.Font.Measure(shown, scale, markup: false);
-            float left = MathF.Max(start, MathF.Min(Bounds.Center.X - size.X * 0.5f, titleEnd - size.X));
+            float captionRoom = room - size.X - gap;
+            if (caption.Length > 0 && captionSize.X > captionRoom)
+            {
+                caption = captionRoom >= CAPTION_LEAST * Unit ? FitCaption(caption, skin.Font, captionScale, captionRoom) : string.Empty;
+                captionSize = caption.Length > 0 ? skin.Font.Measure(caption, captionScale, markup: false) : Vector2.Zero;
+            }
+
+            bool captioned = caption.Length > 0;
+            float whole = size.X + (captioned ? gap + captionSize.X : 0.0f);
+            float left = MathF.Max(start, MathF.Min(Bounds.Center.X - whole * 0.5f, titleEnd - whole));
             if (shown.Length > 0)
                 list.Text(shown, new UIRect(new Vector2(left, Bounds.Min.Y), new Vector2(left + size.X, Bounds.Max.Y)), Origin.Left, scale, skin.TextColor * new Vector4(1, 1, 1, 0.8f), markup: false);
+            if (captioned)
+            {
+                float at = left + size.X + gap;
+                list.Text(caption, new UIRect(new Vector2(at, Bounds.Min.Y), new Vector2(at + captionSize.X, Bounds.Max.Y)), Origin.Left, captionScale,
+                    skin.TextColor * new Vector4(1, 1, 1, CAPTION_ALPHA), markup: false);
+            }
         }
 
         if (ShowsWindowButtons)
@@ -347,7 +414,9 @@ public class TitleBar : StackPanel
         base.DefineScript();
 
         Expose("title", () => Title, value => Title = value);
+        Expose("caption", () => Caption, value => Caption = value);
         Expose("icon", () => Icon, value => Icon = value);
+        Expose("icon_file", () => IconFile, value => IconFile = value);
         Expose("icon_color", () => IconColor ?? Vector4.Zero, value => IconColor = value == Vector4.Zero ? null : value);
         Expose("window_buttons", () => WindowButtons, value => WindowButtons = value);
         Expose("height", () => Height, value => Height = MathF.Max(16.0f, value));

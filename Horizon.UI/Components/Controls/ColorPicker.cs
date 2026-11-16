@@ -7,32 +7,43 @@ using Horizon.UI.Skinning;
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// Picks a colour. A square of every shade of one hue (more colourful to the right, brighter to the top), a
-/// strip of the hues next to it and, unless told not to, a strip for how see-through the colour is. Press or
-/// drag in any of them. What is picked shows in the corner, over a checkerboard so its alpha can be seen.
+/// Picks a colour. A field of every shade of one hue across the top (more colourful to the right, brighter up), and
+/// under it a slider of the hues and, unless told not to, one for how see-through the colour is, each with a round
+/// handle. Beside the sliders the colour as it is now next to what it was (<see cref="Original"/>), a press on the old
+/// half puts it back. Press or drag anywhere in them, the pointer stays with what it was pressed on.
 /// </summary>
 public class ColorPicker : UIComponent
 {
-    private const float DEFAULT_WIDTH = 240.0f;
-    private const float DEFAULT_HEIGHT = 140.0f;
-    private const float STRIP_WIDTH = 18.0f;
-    private const float GAP = 6.0f;
+    private const float DEFAULT_WIDTH = 360.0f;
+    private const float DEFAULT_HEIGHT = 230.0f;
 
-    // The gradients are drawn as this many flat cells along each side, the draw list only does flat colours.
-    private const int SHADE_CELLS = 14;
-    private const int STRIP_CELLS = 24;
+    // How tall a slider is, the room between the parts, and how wide the comparing swatch is
+    private const float SLIDER = 12.0f;
+    private const float GAP = 10.0f;
+    private const float COMPARE_WIDTH = 52.0f;
+
+    // The draw list only does flat colours, so a gradient is cells this many pixels across, small enough to read as smooth
+    private const float CELL = 3.0f;
+
+    // How round the corners of the field, the sliders and the swatch are
+    private const float RADIUS = 3.0f;
+
+    // How big the handles are across
+    private const float FIELD_HANDLE = 14.0f;
+    private const float SLIDER_HANDLE = 16.0f;
 
     private enum Zone
     {
         None,
         Shade,
         Hue,
-        Alpha
+        Alpha,
+        Original
     }
 
     private IRuntimeValue? changedHandler;
 
-    // Kept as hue, saturation and value so the hue isn't lost on the way through black, white and grey.
+    // Kept as hue, saturation and value so the hue isn't lost on the way through black, white and grey
     private float hue, saturation = 0.0f, brightness = 1.0f, alpha = 1.0f;
     private Zone held;
 
@@ -42,7 +53,7 @@ public class ColorPicker : UIComponent
         get => new(ToRgb(hue, saturation, brightness), alpha);
         set
         {
-            // The same colour back leaves the hue alone, it may well be one this colour can't tell.
+            // The same colour back leaves the hue alone, it may well be one this colour can't tell
             if (Vector4.DistanceSquared(value, Color) < 1e-7f)
                 return;
 
@@ -57,7 +68,13 @@ public class ColorPicker : UIComponent
         }
     }
 
-    /// <summary>Whether there is a strip for the alpha. Without one it stays whatever it was set to.</summary>
+    /// <summary>
+    /// The colour it started from, shown beside the one picked so the two can be compared, and put back when its half is
+    /// pressed. Null for a picker that has nothing to compare with, the swatch is then the colour alone.
+    /// </summary>
+    public Vector4? Original { get; set; }
+
+    /// <summary>Whether there is a slider for the alpha. Without one it stays whatever it was set to.</summary>
     public bool ShowAlpha { get; set; } = true;
 
     /// <summary>Called with the new colour whenever the pointer changes it.</summary>
@@ -67,46 +84,69 @@ public class ColorPicker : UIComponent
 
     protected override Vector2 Measure(UISkin skin) => new(DEFAULT_WIDTH, DEFAULT_HEIGHT);
 
-    /* Where everything is, the square on the left, then the strips, then the swatch in what is left */
+    /* Where everything is. The layout's y goes up, so the field is at the top and the sliders under it */
 
-    private float StripsWidth => (ShowAlpha ? 2 : 1) * (STRIP_WIDTH + GAP);
+    // How tall the band of sliders is, one or two of them with a gap between
+    private float SlidersHeight => ShowAlpha ? SLIDER * 2.0f + GAP : SLIDER;
 
-    /// <summary>The square of shades.</summary>
-    public UIRect ShadeBounds
+    // The band under the field, as tall as the sliders or the swatch, whichever is taller
+    private float BandHeight => MathF.Max(SlidersHeight, 28.0f);
+
+    /// <summary>The field of shades, saturation across and brightness up.</summary>
+    public UIRect ShadeBounds => new(new Vector2(Bounds.Min.X, Bounds.Min.Y + BandHeight + GAP), Bounds.Max);
+
+    // The band the sliders and the swatch share, under the field
+    private UIRect Band => new(Bounds.Min, new Vector2(Bounds.Max.X, Bounds.Min.Y + BandHeight));
+
+    // Where the sliders go, the band less the swatch on its right, the handles' half widths in from each end
+    private UIRect Sliders
     {
         get
         {
-            float side = MathF.Max(1.0f, MathF.Min(Bounds.Height, Bounds.Width - StripsWidth));
-            return new UIRect(new Vector2(Bounds.Min.X, Bounds.Max.Y - side), new Vector2(Bounds.Min.X + side, Bounds.Max.Y));
+            UIRect band = Band;
+            float inset = SLIDER_HANDLE * 0.5f;
+            return new UIRect(new Vector2(band.Min.X + inset, band.Min.Y), new Vector2(band.Max.X - COMPARE_WIDTH - GAP - inset, band.Max.Y));
         }
     }
 
-    /// <summary>The strip of hues, red at the bottom and all the way around to red again at the top.</summary>
+    /// <summary>The slider of hues, red at the left and all the way round to red again at the right.</summary>
     public UIRect HueBounds
     {
         get
         {
-            UIRect shade = ShadeBounds;
-            return new UIRect(new Vector2(shade.Max.X + GAP, shade.Min.Y), new Vector2(shade.Max.X + GAP + STRIP_WIDTH, shade.Max.Y));
+            UIRect sliders = Sliders;
+            float top = sliders.Center.Y + SlidersHeight * 0.5f;
+            return new UIRect(new Vector2(sliders.Min.X, top - SLIDER), new Vector2(sliders.Max.X, top));
         }
     }
 
-    /// <summary>The strip of the alpha, see-through at the bottom.</summary>
+    /// <summary>The slider of the alpha, see-through at the left, under the hues.</summary>
     public UIRect AlphaBounds
     {
         get
         {
-            UIRect strip = HueBounds;
-            return new UIRect(new Vector2(strip.Max.X + GAP, strip.Min.Y), new Vector2(strip.Max.X + GAP + STRIP_WIDTH, strip.Max.Y));
+            UIRect hues = HueBounds;
+            return new UIRect(new Vector2(hues.Min.X, hues.Min.Y - GAP - SLIDER), new Vector2(hues.Max.X, hues.Min.Y - GAP));
         }
     }
 
-    private UIRect SwatchBounds
+    /// <summary>The swatch, the colour picked and, when there's one, the original beside it.</summary>
+    public UIRect SwatchBounds
     {
         get
         {
-            UIRect last = ShowAlpha ? AlphaBounds : HueBounds;
-            return new UIRect(new Vector2(last.Max.X + GAP, last.Min.Y), new Vector2(MathF.Max(last.Max.X + GAP, Bounds.Max.X), last.Max.Y));
+            UIRect band = Band;
+            return new UIRect(new Vector2(band.Max.X - COMPARE_WIDTH, band.Min.Y), band.Max);
+        }
+    }
+
+    // The original's half of the swatch, its right half
+    private UIRect OriginalBounds
+    {
+        get
+        {
+            UIRect swatch = SwatchBounds;
+            return new UIRect(new Vector2(swatch.Center.X, swatch.Min.Y), swatch.Max);
         }
     }
 
@@ -114,83 +154,101 @@ public class ColorPicker : UIComponent
     {
         UISkin skin = list.Skin;
         Vector4 tint = EnabledInHierarchy ? Vector4.One : skin.DisabledTint;
-
-        UIRect shade = ShadeBounds;
-        Vector2 cell = shade.Size / SHADE_CELLS;
-
-        for (int y = 0; y < SHADE_CELLS; y++)
-        {
-            for (int x = 0; x < SHADE_CELLS; x++)
-            {
-                Vector3 colour = ToRgb(hue, x / (SHADE_CELLS - 1.0f), y / (SHADE_CELLS - 1.0f));
-                Vector2 min = shade.Min + new Vector2(x, y) * cell;
-
-                list.Rect(new UIRect(min, min + cell), new Vector4(colour, 1.0f) * tint);
-            }
-        }
-
-        UIRect hues = HueBounds;
-        float step = hues.Height / STRIP_CELLS;
-
-        for (int i = 0; i < STRIP_CELLS; i++)
-        {
-            var min = new Vector2(hues.Min.X, hues.Min.Y + i * step);
-            list.Rect(new UIRect(min, min + new Vector2(hues.Width, step)), new Vector4(ToRgb(i / (float)STRIP_CELLS, 1.0f, 1.0f), 1.0f) * tint);
-        }
-
         Vector3 solid = ToRgb(hue, saturation, brightness);
+        Vector4 edge = skin.BorderColor.W > 0.0f ? skin.BorderColor : skin.TextColor * new Vector4(1, 1, 1, 0.2f);
+
+        // The field, its corners rounded by the frame drawn over the cells in the colour of what's behind it
+        UIRect shade = ShadeBounds;
+        Cells(list, shade, (x, y) => new Vector4(ToRgb(hue, x, y), 1.0f) * tint);
+        Rounded(list, shade, edge);
+
+        // The hues, then the alpha over a checkerboard in the colour picked
+        UIRect hues = HueBounds;
+        Cells(list, hues, (x, _) => new Vector4(ToRgb(x, 1.0f, 1.0f), 1.0f) * tint);
+        Rounded(list, hues, edge);
+        SliderHandle(list, hues, hue, new Vector4(ToRgb(hue, 1.0f, 1.0f), 1.0f) * tint);
 
         if (ShowAlpha)
         {
             UIRect alphas = AlphaBounds;
-            PaintCheckers(list, alphas, tint);
-
-            for (int i = 0; i < STRIP_CELLS; i++)
-            {
-                var min = new Vector2(alphas.Min.X, alphas.Min.Y + i * step);
-                list.Rect(new UIRect(min, min + new Vector2(alphas.Width, step)), new Vector4(solid, (i + 0.5f) / STRIP_CELLS) * tint);
-            }
-
-            PaintMark(list, alphas, alphas.Min.Y + alpha * alphas.Height, skin);
+            Checkers(list, alphas, tint);
+            Cells(list, alphas, (x, _) => new Vector4(solid, x) * tint, horizontalOnly: true);
+            Rounded(list, alphas, edge);
+            SliderHandle(list, alphas, alpha, new Vector4(solid, alpha) * tint);
         }
 
-        PaintMark(list, hues, hues.Min.Y + hue * hues.Height, skin);
-
-        // Where in the square the colour is, ringed twice so it shows on dark and on light.
+        // Where in the field the colour is, a ring filled with it, dark round the outside so it shows on white
         Vector2 at = shade.Min + new Vector2(saturation, brightness) * shade.Size;
-        list.Outline(UIRect.FromCenter(at, new Vector2(10.0f)), 2.0f, new Vector4(0.0f, 0.0f, 0.0f, 1.0f));
-        list.Outline(UIRect.FromCenter(at, new Vector2(6.0f)), 1.0f, Vector4.One);
+        UIRect ring = UIRect.FromCenter(at, new Vector2(FIELD_HANDLE));
+        list.RoundRect(By(ring, 1.0f), FIELD_HANDLE * 0.5f + 1.0f, new Vector4(0, 0, 0, 0.45f));
+        list.RoundRect(ring, FIELD_HANDLE * 0.5f, Vector4.One);
+        list.RoundRect(By(ring, -2.5f), FIELD_HANDLE * 0.5f - 2.5f, new Vector4(solid, 1.0f) * tint);
 
+        // The colour now, and what it was beside it
         UIRect swatch = SwatchBounds;
-        if (!swatch.IsEmpty)
+        Checkers(list, swatch, tint);
+        if (Original is { } was)
         {
-            PaintCheckers(list, swatch, tint);
+            UIRect now = new(swatch.Min, new Vector2(swatch.Center.X, swatch.Max.Y));
+            list.Rect(now, new Vector4(solid, alpha) * tint);
+            list.Rect(OriginalBounds, was * tint);
+        }
+        else
+        {
             list.Rect(swatch, new Vector4(solid, alpha) * tint);
-            list.Outline(swatch, 1.0f, skin.TextColor * tint);
+        }
+
+        Rounded(list, swatch, edge);
+    }
+
+    // A gradient over an area as cells, the colour of each from where its middle is across and up (0 to 1)
+    private static void Cells(UIDrawList list, UIRect area, Func<float, float, Vector4> colour, bool horizontalOnly = false)
+    {
+        int across = Math.Max(1, (int)MathF.Ceiling(area.Width / CELL));
+        int up = horizontalOnly || area.Height <= SLIDER ? 1 : Math.Max(1, (int)MathF.Ceiling(area.Height / CELL));
+        Vector2 cell = new(area.Width / across, area.Height / up);
+
+        for (int y = 0; y < up; y++)
+        {
+            float v = up == 1 ? 0.5f : y / (up - 1.0f);
+            for (int x = 0; x < across; x++)
+            {
+                Vector2 min = area.Min + new Vector2(x, y) * cell;
+                list.Rect(new UIRect(min, min + cell + new Vector2(0.5f)), colour(across == 1 ? 0.5f : x / (across - 1.0f), v));
+            }
         }
     }
 
-    private static void PaintMark(UIDrawList list, UIRect strip, float y, UISkin skin)
-    {
-        var mark = new UIRect(new Vector2(strip.Min.X - 2.0f, y - 2.0f), new Vector2(strip.Max.X + 2.0f, y + 2.0f));
+    // A thin rounded frame round an area, so the cells' square corners read as the edge of a part
+    private static void Rounded(UIDrawList list, UIRect area, Vector4 edge, float radius = RADIUS) =>
+        list.RoundOutline(area, MathF.Min(radius, MathF.Min(area.Width, area.Height) * 0.5f), 1.0f, edge);
 
-        list.Rect(mark, Vector4.One);
-        list.Outline(mark, 1.0f, new Vector4(0.0f, 0.0f, 0.0f, 1.0f));
+    // An area grown by so much each way, or shrunk for less than nothing
+    private static UIRect By(UIRect area, float much) => new(area.Min - new Vector2(much), area.Max + new Vector2(much));
+
+    // A slider's handle, a white ring filled with what it picks, at a fraction of the way along
+    private static void SliderHandle(UIDrawList list, UIRect slider, float at, Vector4 fill)
+    {
+        Vector2 middle = new(slider.Min.X + at * slider.Width, slider.Center.Y);
+        UIRect handle = UIRect.FromCenter(middle, new Vector2(SLIDER_HANDLE));
+        list.RoundRect(By(handle, 1.0f), SLIDER_HANDLE * 0.5f + 1.0f, new Vector4(0, 0, 0, 0.45f));
+        list.RoundRect(handle, SLIDER_HANDLE * 0.5f, Vector4.One);
+        Checkers(list, By(handle, -3.0f), Vector4.One, 3.0f);
+        list.RoundRect(By(handle, -3.0f), SLIDER_HANDLE * 0.5f - 3.0f, fill);
+        list.RoundOutline(By(handle, -2.0f), SLIDER_HANDLE * 0.5f - 2.0f, 1.5f, Vector4.One);
     }
 
-    private static void PaintCheckers(UIDrawList list, UIRect area, Vector4 tint)
+    private static void Checkers(UIDrawList list, UIRect area, Vector4 tint, float size = 6.0f)
     {
-        const float SIZE = 6.0f;
-
-        list.Rect(area, new Vector4(0.75f, 0.75f, 0.75f, 1.0f) * tint);
+        list.Rect(area, new Vector4(0.8f, 0.8f, 0.8f, 1.0f) * tint);
 
         int row = 0;
-        for (float y = area.Min.Y; y < area.Max.Y; y += SIZE, row++)
+        for (float y = area.Min.Y; y < area.Max.Y; y += size, row++)
         {
-            for (float x = area.Min.X + (row % 2) * SIZE; x < area.Max.X; x += SIZE * 2.0f)
+            for (float x = area.Min.X + (row % 2) * size; x < area.Max.X; x += size * 2.0f)
             {
-                var max = new Vector2(MathF.Min(x + SIZE, area.Max.X), MathF.Min(y + SIZE, area.Max.Y));
-                list.Rect(new UIRect(new Vector2(x, y), max), new Vector4(0.45f, 0.45f, 0.45f, 1.0f) * tint);
+                var max = new Vector2(MathF.Min(x + size, area.Max.X), MathF.Min(y + size, area.Max.Y));
+                list.Rect(new UIRect(new Vector2(x, y), max), new Vector4(0.55f, 0.55f, 0.55f, 1.0f) * tint);
             }
         }
     }
@@ -199,17 +257,24 @@ public class ColorPicker : UIComponent
 
     protected internal override void OnPointerDown(Vector2 point)
     {
-        // Whatever was pressed on keeps the pointer until it is let go of, wherever it wanders off to.
+        // Whatever was pressed on keeps the pointer until it is let go of, wherever it wanders off to. The sliders are
+        // a little taller to press than they're drawn, a handle hangs over their edges
+        float reach = (SLIDER_HANDLE - SLIDER) * 0.5f;
         held =
             ShadeBounds.Contains(point) ? Zone.Shade
-            : HueBounds.Contains(point) ? Zone.Hue
-            : ShowAlpha && AlphaBounds.Contains(point) ? Zone.Alpha
+            : By(HueBounds, reach).Contains(point) ? Zone.Hue
+            : ShowAlpha && By(AlphaBounds, reach).Contains(point) ? Zone.Alpha
+            : Original is not null && OriginalBounds.Contains(point) ? Zone.Original
             : Zone.None;
 
         MoveTo(point);
     }
 
-    protected internal override void OnPointerDrag(Vector2 point) => MoveTo(point);
+    protected internal override void OnPointerDrag(Vector2 point)
+    {
+        if (held != Zone.Original)
+            MoveTo(point);
+    }
 
     protected internal override void OnPointerUp(Vector2 point) => held = Zone.None;
 
@@ -227,12 +292,16 @@ public class ColorPicker : UIComponent
                 break;
 
             case Zone.Hue:
-                // Just short of all the way around, which would be red again and read back as the bottom.
-                hue = Math.Clamp((point.Y - HueBounds.Min.Y) / HueBounds.Height, 0.0f, 0.999f);
+                // Just short of all the way round, which would be red again and read back as the left end
+                hue = Math.Clamp((point.X - HueBounds.Min.X) / HueBounds.Width, 0.0f, 0.999f);
                 break;
 
             case Zone.Alpha:
-                alpha = Math.Clamp((point.Y - AlphaBounds.Min.Y) / AlphaBounds.Height, 0.0f, 1.0f);
+                alpha = Math.Clamp((point.X - AlphaBounds.Min.X) / AlphaBounds.Width, 0.0f, 1.0f);
+                break;
+
+            case Zone.Original when Original is { } was:
+                Color = was;
                 break;
 
             default:
@@ -240,10 +309,14 @@ public class ColorPicker : UIComponent
         }
 
         if (Color != before || hue != hueBefore)
-        {
-            OnChanged?.Invoke(Color);
-            InvokeScript(changedHandler, new Vector4Value(Color));
-        }
+            Changed();
+    }
+
+    /// <summary>Tells whoever listens that the colour changed, for a change made from outside (a value typed) as well.</summary>
+    public void Changed()
+    {
+        OnChanged?.Invoke(Color);
+        InvokeScript(changedHandler, new Vector4Value(Color));
     }
 
     /* Colours */
@@ -290,6 +363,27 @@ public class ColorPicker : UIComponent
         }
 
         return (hue / 6.0f, max > 0.0f ? chroma / max : 0.0f, max);
+    }
+
+    /// <summary>A colour as #RRGGBB, with AA on the end when it isn't opaque.</summary>
+    public static string ToHex(Vector4 colour)
+    {
+        static int Byte(float value) => (int)MathF.Round(Math.Clamp(value, 0.0f, 1.0f) * 255.0f);
+        string hex = $"#{Byte(colour.X):X2}{Byte(colour.Y):X2}{Byte(colour.Z):X2}";
+        return Byte(colour.W) == 255 ? hex : hex + $"{Byte(colour.W):X2}";
+    }
+
+    /// <summary>A colour out of #RGB, #RRGGBB or #RRGGBBAA (the # can be left off), null for text that isn't one.</summary>
+    public static Vector4? FromHex(string text)
+    {
+        string hex = text.Trim().TrimStart('#');
+        if (hex.Length == 3)
+            hex = string.Concat(hex.Select(c => new string(c, 2)));
+        if (hex.Length is not (6 or 8) || !hex.All(char.IsAsciiHexDigit))
+            return null;
+
+        float Part(int at) => Convert.ToInt32(hex.Substring(at, 2), 16) / 255.0f;
+        return new Vector4(Part(0), Part(2), Part(4), hex.Length == 8 ? Part(6) : 1.0f);
     }
 
     protected override void DefineScript()

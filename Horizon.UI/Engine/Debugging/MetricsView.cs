@@ -90,7 +90,7 @@ internal sealed class MetricsView : UIComponent
 
         var frame = device.Statistics.Last;
         lines.Add(("draws", $"{frame.DrawCalls} with {frame.Instances} instances, {frame.Dispatches} dispatches"));
-        lines.Add(("binds", $"{frame.PipelineBinds} pipelines, {frame.DescriptorSets} sets, {frame.RenderTargetBinds} targets, {frame.Barriers} barriers"));
+        lines.Add(("binds", $"{frame.PipelineBinds} pipelines, {frame.DescriptorSets} sets, {frame.DescriptorPushes} pushes, {frame.RenderTargetBinds} targets, {frame.Barriers} barriers"));
         lines.Add(("sent up", $"{(frame.BytesUploaded + frame.BytesStreamed) / 1024.0:0} KB this frame"));
         lines.Add(("GPU memory", $"{device.Statistics.MemoryInUse / (1024.0 * 1024.0):0.0} MB in {device.Statistics.MemoryBlocks} blocks"));
         lines.Add(("made", $"{device.Statistics.Textures} textures, {device.Statistics.Buffers} buffers, {device.Statistics.Pipelines} pipelines"));
