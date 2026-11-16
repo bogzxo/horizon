@@ -341,20 +341,18 @@ public sealed class HidlHighlighter : ICodeHighlighter
     }
 
     /// <summary>
-    /// Helper method to read the colour of a vec(r, g, b) or vec(r, g, b, a) that is given to something called a colour
-    /// (or a tint), for a swatch in front of it.
+    /// Helper method to read the colour of a vec(r, g, b) or vec(r, g, b, a), for a swatch in front of it. Any vec of three
+    /// or four parts that are all between 0 and 1 is taken for a colour, wherever it is (a theme's syntax: { keyword: vec(...) },
+    /// an argument), and one given to something called a colour or a tint is one whatever its parts, clamped.
     /// </summary>
     private static void ReadSwatch(Token[] tokens, int open, List<HidlSwatch> swatches)
     {
-        // What it is given to, key: vec( or name = vec(
+        // What it is given to, key: vec( or name = vec(, if anything
         int vector = open - 1;
-        if (vector < 2 || tokens[vector - 2].Type != TokenType.Identifier || tokens[vector - 1].Type is not (TokenType.Colon or TokenType.Equals))
+        if (vector < 0)
             return;
-
-        string target = tokens[vector - 2].Value;
-        if (!target.Contains("color", StringComparison.OrdinalIgnoreCase) && !target.Contains("colour", StringComparison.OrdinalIgnoreCase)
-            && !target.Contains("tint", StringComparison.OrdinalIgnoreCase))
-            return;
+        bool named = vector >= 2 && tokens[vector - 2].Type == TokenType.Identifier && tokens[vector - 1].Type is TokenType.Colon or TokenType.Equals
+            && IsColourName(tokens[vector - 2].Value);
 
         Span<float> numbers = stackalloc float[4];
         int count = 0;
@@ -378,6 +376,14 @@ public sealed class HidlHighlighter : ICodeHighlighter
                     break;
 
                 case TokenType.CloseParenthesis when count >= 3:
+                    if (!named)
+                    {
+                        for (int part = 0; part < count; part++)
+                        {
+                            if (numbers[part] is < 0.0f or > 1.0f) return;
+                        }
+                    }
+
                     Token vec = tokens[vector];
                     int line = vec.Line - 1;
                     int length = token.Line == vec.Line ? token.Index + token.Length - vec.Index : vec.Length;
@@ -390,4 +396,9 @@ public sealed class HidlHighlighter : ICodeHighlighter
             }
         }
     }
+
+    // Whether a name says it's a colour, or a set of them
+    private static bool IsColourName(string name) =>
+        name.Contains("color", StringComparison.OrdinalIgnoreCase) || name.Contains("colour", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("tint", StringComparison.OrdinalIgnoreCase);
 }

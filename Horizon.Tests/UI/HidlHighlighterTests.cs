@@ -195,6 +195,28 @@ public class HidlHighlighterTests
     }
 
     [Fact]
+    public void Any_vec_of_three_or_four_parts_between_0_and_1_is_a_colour_however_deep_it_is()
+    {
+        const string code = "let theme = { syntax: { keyword: vec(0.949, 0.561, 0.710, 1) }, padding: vec(8, 8, 8, 8), half: vec(0.5, 1.5, 0.5) };\n"
+            + "draw(vec(0.2, 0.3, 0.4), vec(0.5, 0.5));";
+        var swatches = new List<HidlSwatch>();
+        Hidl.Read(code, 2, swatches: swatches);
+
+        Assert.Equal(2, swatches.Count);
+        Assert.Equal((0, new Vector4(0.949f, 0.561f, 0.710f, 1.0f)), (swatches[0].Line, swatches[0].Color));
+        Assert.Equal((1, 5), (swatches[1].Line, swatches[1].Column));
+    }
+
+    [Fact]
+    public void A_vec_given_to_a_colour_is_one_even_out_of_range_and_is_clamped()
+    {
+        var swatches = new List<HidlSwatch>();
+        Hidl.Read("let p = { tint: vec(2, 0.5, -1) };", 1, swatches: swatches);
+
+        Assert.Equal(new Vector4(1.0f, 0.5f, 0.0f, 1.0f), Assert.Single(swatches).Color);
+    }
+
+    [Fact]
     public void Art_named_in_the_code_is_found_on_its_line_and_other_texts_are_not()
     {
         const string code = "let a = { text: \"$(play) go [icon:pad_a]\", icon: \"save\",\n"
