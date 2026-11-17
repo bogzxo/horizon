@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.UI.Drawing;
 using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
@@ -317,6 +318,19 @@ public partial class CodeEditor
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         int columns = wordWrap ? Math.Max(8, (int)((width - TEXT_PAD * 2.0f) / MathF.Max(1.0f, digit))) : int.MaxValue;
 
+        // A font whose letters aren't all as wide as a digit (a box for prose in the UI's font) is wrapped by how wide its
+        // letters really are. Counted in digits, a line of narrow letters wrapped a third of the way short of the edge
+        UIFont font = FontOf(skin);
+        if (!ReferenceEquals(font, wrapFont) || scale != wrapScale)
+        {
+            wrapFont = font;
+            wrapScale = scale;
+            wrapWidths.Clear();
+            wrapProportional = MathF.Abs(font.Measure("i", scale, markup: false).X - digit) > 0.01f
+                || MathF.Abs(font.Measure("W", scale, markup: false).X - digit) > 0.01f;
+            wrapTab = TabWidth(skin, scale);
+        }
+
         int lens = 0;
         lensRows = 0;
         for (int line = 0; line < count; line++)
@@ -354,9 +368,31 @@ public partial class CodeEditor
         }
     }
 
+    // The font and size the wrap's letter widths are for, whether that font's letters differ in width, and their widths
+    private UIFont? wrapFont;
+    private float wrapScale, wrapTab;
+    private bool wrapProportional;
+    private readonly Dictionary<char, float> wrapWidths = [];
+
+    // How wide a letter is drawn in the wrap's font, measured once a letter
+    private float LetterWidth(char letter)
+    {
+        if (letter == '\t')
+            return wrapTab;
+        if (!wrapWidths.TryGetValue(letter, out float width))
+            wrapWidths[letter] = width = wrapFont!.Measure(new ReadOnlySpan<char>(in letter), wrapScale, markup: false).X;
+        return width;
+    }
+
     // A line's rows, one when it isn't wrapped or fits, cut at the last space before the edge when it is and doesn't
     private void AddRows(int line, string text, int columns, float digit)
     {
+        if (wordWrap && wrapProportional)
+        {
+            AddMeasuredRows(line, text, columns, digit);
+            return;
+        }
+
         float at = 0.0f;
         if (!wordWrap || Columns(text, 0, text.Length) + InlayColumnsOf(line) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
         {
@@ -379,6 +415,53 @@ public partial class CodeEditor
             while (end < text.Length && used + (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end) <= room)
             {
                 used += (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end);
+                end++;
+            }
+
+            if (end < text.Length)
+            {
+                int space = text.LastIndexOf(' ', end - 1, end - start);
+                if (space > start)
+                    end = space + 1;
+            }
+
+            rows.Add(new CodeRow(line, start, Math.Max(end, start + 1), rowIndent));
+            start = Math.Max(end, start + 1);
+            firstRow = false;
+        }
+    }
+
+    // The same as AddRows for a font whose letters differ in width, a row taking letters while their widths fit the room
+    // rather than while their count does. The room is still said in digits (the shapes work in them), as wide as it was
+    private void AddMeasuredRows(int line, string text, int columns, float digit)
+    {
+        float whole = InlayColumnsOf(line) * digit;
+        foreach (char letter in text)
+            whole += LetterWidth(letter);
+        if (whole <= RoomOn(rows.Count, 0.0f, columns, digit, out float at) * digit)
+        {
+            rows.Add(new CodeRow(line, 0, text.Length, at));
+            return;
+        }
+
+        // Rows after the first start as far in as the line does, up to half the width
+        int indent = 0;
+        while (indent < text.Length && text[indent] is ' ' or '\t') indent++;
+        int indentColumns = Math.Min(Columns(text, 0, indent), columns / 2);
+
+        int start = 0;
+        bool firstRow = true;
+        while (start < text.Length)
+        {
+            int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
+            float fits = room * digit, used = 0.0f;
+            int end = start;
+            while (end < text.Length)
+            {
+                float next = LetterWidth(text[end]) + InlayColumnsAt(line, end) * digit;
+                if (used + next > fits)
+                    break;
+                used += next;
                 end++;
             }
 
