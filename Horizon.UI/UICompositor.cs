@@ -942,7 +942,10 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Where the pointer is right now, for a window that's being dragged (see UIComponent.FollowsPointer). Only the
         // mouse, a pointer of somebody else's (a recording, a test) is theirs to read on their own thread
-        Vector2? pointer = after.Frames.Follows && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
+        // Only while something of this UI is still being dragged. The list a drag left behind kept its frame that follows
+        // the pointer while nothing here painted again, and a press in another UI of the window (the editor's, under a
+        // window of the chrome's) took the window with it until the button came up
+        Vector2? pointer = after.Frames.Follows && pressed is { FollowsPointer: true } && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
             ? viewportCamera.ScreenToWorld(dragPointer) : null;
 
         int from = canBlend ? before.Painted : shown.Painted;
