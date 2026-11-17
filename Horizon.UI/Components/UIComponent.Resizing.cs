@@ -93,7 +93,8 @@ public abstract partial class UIComponent
     /// meet is both.
     /// </summary>
     public UIResize GripAt(Vector2 point) =>
-        Resizable == UIResize.None || !EnabledInHierarchy ? UIResize.None : EdgesAt(point, Resizable, GripSize, GripReach);
+        // One that isn't on screen has no edges, a side hidden under another view lit its grip where it would have been
+        Resizable == UIResize.None || !EnabledInHierarchy || !VisibleInHierarchy ? UIResize.None : EdgesAt(point, Resizable, GripSize, GripReach);
 
     /// <summary>
     /// Which of some edges of the component a point is on, whether they can be dragged or not. For an editor that

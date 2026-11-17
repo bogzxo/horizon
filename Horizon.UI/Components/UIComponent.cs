@@ -212,6 +212,20 @@ public abstract partial class UIComponent
     /// <summary>Whether this component is the one the keyboard types into.</summary>
     public bool IsFocused => Module?.Compositor.Focus == this;
 
+    /// <summary>Whether this component and everything above it is visible, so it's on screen at all.</summary>
+    public bool VisibleInHierarchy
+    {
+        get
+        {
+            for (UIComponent? component = this; component is not null; component = component.Parent)
+            {
+                if (!component.Visible)
+                    return false;
+            }
+            return true;
+        }
+    }
+
     /// <summary>Whether this component and everything above it is enabled.</summary>
     public bool EnabledInHierarchy
     {
