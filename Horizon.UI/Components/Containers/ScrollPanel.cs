@@ -166,6 +166,12 @@ public partial class ScrollPanel : Panel
         PaintBar(list, content);
     }
 
+    /// <summary>
+    /// Scrolled by a turn of the wheel that came to something else, a margin round a column of it passing on what was
+    /// turned over the margin. False when there's nothing to scroll.
+    /// </summary>
+    public bool Wheel(float delta) => OnScroll(delta);
+
     protected internal override bool OnScroll(float delta)
     {
         if (MaxOffset <= 0.0f)
