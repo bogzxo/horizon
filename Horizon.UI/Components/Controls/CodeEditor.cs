@@ -318,6 +318,12 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
 
+    /// <summary>
+    /// Whether the line the caret is on has a faint band behind it while the editor has the keyboard, as code does. A box
+    /// for a message has none, a one line box that's all band looked like a field of its own over the box.
+    /// </summary>
+    public bool CaretBand { get; set; } = true;
+
     // A soft keyboard comes up for an editor a finger focused, unless nothing can be typed into it
     protected internal override bool WantsTextInput => !ReadOnly;
 
@@ -2671,7 +2677,7 @@ public partial class CodeEditor : UIComponent
                 continue;
             list.BeginPart(RowPart(ROW_BEHIND, row));
 
-            if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
+            if (CaretBand && focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
 
             if (highlightedLines.Count > 0 && highlightedLines.TryGetValue(row.Line, out Vector4 highlight))
