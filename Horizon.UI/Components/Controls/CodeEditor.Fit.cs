@@ -15,13 +15,19 @@ public partial class CodeEditor
     /// </summary>
     public int FitRows { get; set; }
 
+    /// <summary>
+    /// The fewest rows it's as tall as, even with less in it, for a box whose room to type in should take a click
+    /// anywhere in it rather than only on its one line. 1, the usual.
+    /// </summary>
+    public int FitLeast { get; set; } = 1;
+
     // Helper method for the size an editor that fits its code asks for, as wide as it's given and as tall as its rows
     private Vector2 FittedSize(UISkin skin)
     {
         float scale = ScaleOf(skin);
         float lineHeight = FontOf(skin).LineHeight * scale;
         EnsureRows(skin, scale);
-        int shown = Math.Clamp(rows.Count, 1, FitRows);
+        int shown = Math.Clamp(rows.Count, Math.Clamp(FitLeast, 1, FitRows), FitRows);
         return new Vector2(480.0f, MathF.Ceiling(shown * lineHeight)) + Padding.Total;
     }
 
