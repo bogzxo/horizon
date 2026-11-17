@@ -29,6 +29,12 @@ public partial class TerminalView : UIComponent, IDisposable
     public const float DEFAULT_CURSOR_GLIDE = 0.036f;
     private const int MAX_PENDING_CHUNKS = 4096;
 
+    // How long a new size has to hold still before the screen and the shell are told it, and what it is and since when
+    private const long RESIZE_SETTLE_MS = 120;
+    private (int Columns, int Rows) sizeWanted;
+    private long sizeWantedSince;
+    private bool sizedOnce;
+
     private TerminalScreen screen = new(80, 24);
     private PseudoTerminal? process;
     private readonly ConcurrentQueue<byte[]> arrived = new();
@@ -846,10 +852,25 @@ public partial class TerminalView : UIComponent, IDisposable
         int columns = Math.Max(2, (int)(paintedArea.Width / cellWidth)), rows = Math.Max(1, (int)(paintedArea.Height / cellHeight));
         if (columns != screen.Columns || rows != screen.Rows)
         {
-            screen.Resize(columns, rows);
-            process?.Resize(columns, rows);
-            program?.Resize(columns, rows);
-            scrolled = Math.Min(scrolled, screen.Scrollback.Count);
+            // Once the size has held still a moment, the first time at once. Told on every frame of a panel being dragged,
+            // the shell drew its screen again for each step and the text flickered, wrapped and unwrapped as it went
+            long now = Environment.TickCount64;
+            if ((columns, rows) != sizeWanted)
+            {
+                sizeWanted = (columns, rows);
+                sizeWantedSince = now;
+            }
+
+            if (!sizedOnce || now - sizeWantedSince >= RESIZE_SETTLE_MS)
+            {
+                sizedOnce = true;
+                screen.Resize(columns, rows);
+                process?.Resize(columns, rows);
+                program?.Resize(columns, rows);
+                scrolled = Math.Min(scrolled, screen.Scrollback.Count);
+            }
+            else
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
         }
 
         TerminalPalette palette = Palette;
