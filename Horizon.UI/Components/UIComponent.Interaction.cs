@@ -476,4 +476,10 @@ public abstract partial class UIComponent
     /// </summary>
     protected internal virtual void OnPaste(string text)
     { }
+
+    /// <summary>
+    /// Whether a paste with no text comes here too, for a component that looks on the clipboard for more than text (a
+    /// picture). Everything else is never handed an empty one.
+    /// </summary>
+    protected internal virtual bool TakesEmptyPaste => false;
 }

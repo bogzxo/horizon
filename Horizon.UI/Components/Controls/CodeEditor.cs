@@ -2311,10 +2311,19 @@ public partial class CodeEditor : UIComponent
         list.EndParts();
     }
 
+    /// <summary>
+    /// Asked first with what control with V brought, true when it took the paste itself (a picture made an attachment of
+    /// a message), false to have the text put in as usual.
+    /// </summary>
+    public Func<string, bool>? OnPasting { get; set; }
+
+    protected internal override bool TakesEmptyPaste => OnPasting is not null;
+
     protected internal override void OnPaste(string text)
     {
-        if (!ReadOnly)
-            document.Insert(text);
+        if (ReadOnly || OnPasting?.Invoke(text) == true || text.Length == 0)
+            return;
+        document.Insert(text);
     }
 
     // What control with C takes, the selection (every caret's, a line each), or the caret's whole line without one, the

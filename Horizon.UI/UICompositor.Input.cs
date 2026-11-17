@@ -87,7 +87,7 @@ public partial class UICompositor
             {
                 while (UIKeyboard.TryRead(out char character))
                 {
-                    if (character == UIKeyboard.PASTE && UIKeyboard.TryTakePaste(out string text))
+                    if (character == UIKeyboard.PASTE && UIKeyboard.TryTakePaste(out string text) && text.Length > 0)
                         Pasted(text);
                 }
             }
@@ -105,7 +105,7 @@ public partial class UICompositor
         {
             if (character == UIKeyboard.PASTE)
             {
-                if (UIKeyboard.TryTakePaste(out string text))
+                if (UIKeyboard.TryTakePaste(out string text) && (text.Length > 0 || focus.TakesEmptyPaste))
                     focus.OnPaste(text);
                 continue;
             }
