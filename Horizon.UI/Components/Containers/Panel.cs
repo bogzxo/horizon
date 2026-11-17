@@ -104,8 +104,13 @@ public class Panel : UIComponent
 
     protected override void Paint(UIDrawList list)
     {
+        // An outline with nothing filled in under it is drawn on its own, a frame round what's in it
         if (!HasBackdrop)
+        {
+            if (Outline is { W: > 0.0f } alone)
+                list.RoundOutline(SurfaceBounds, Radius, 1.0f, alone);
             return;
+        }
 
         // On glass the background is see through, as much as the glass says
         UIRect surface = SurfaceBounds;
