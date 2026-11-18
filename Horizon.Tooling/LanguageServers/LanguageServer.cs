@@ -316,16 +316,81 @@ public sealed partial class LanguageServer : IDisposable
             return answer.Task;
         }
 
-        Later(() => rpc.Request(method, parameters).ContinueWith(asked =>
+        void Send() => rpc.Request(method, parameters).ContinueWith(asked =>
         {
             asking.TryRemove(answer, out _);
             if (propagateErrors && !asked.IsCompletedSuccessfully)
                 answer.TrySetException(asked.Exception?.GetBaseException() ?? new IOException("The language-server request was cancelled."));
             else
                 answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
-        }, TaskScheduler.Default));
+        }, TaskScheduler.Default);
 
+        if (BACKGROUND_METHODS.Contains(method) && HoldBackground(Send))
+            return answer.Task;
+
+        Later(Send);
         return answer.Task;
+    }
+
+    /* Keeping typing quick */
+
+    // What the editor asks for by itself after every change, the colours, the hints, the lenses, the folds. csharp-ls
+    // answers in turn, so a completion asked while typing waited behind all of them, 0.3 to 2 seconds a key on the
+    // engine's solution against 0.07 with nothing in front of it. They wait until typing stops instead.
+    private static readonly HashSet<string> BACKGROUND_METHODS = new(StringComparer.Ordinal)
+    {
+        "textDocument/semanticTokens/full", "textDocument/semanticTokens/range", "textDocument/inlayHint",
+        "textDocument/codeLens", "textDocument/foldingRange", "textDocument/documentSymbol", "textDocument/documentHighlight"
+    };
+
+    // How long after the last change or completion the held requests go out, and the longest they're held for
+    private const long QUIET_MS = 600, LONGEST_HOLD_MS = 4000;
+
+    private readonly Lock holding = new();
+    private readonly List<Action> held = [];
+    private Timer? releaseTimer;
+    private long busyAt, heldSince;
+    private int completing;
+
+    // Whether the user is typing or waiting on a completion, the moment of the last of either
+    private bool Busy => Volatile.Read(ref completing) > 0 || Environment.TickCount64 - Interlocked.Read(ref busyAt) < QUIET_MS;
+
+    // Helper method to say the user did something that wants answering quickly
+    private void Typing() => Interlocked.Exchange(ref busyAt, Environment.TickCount64);
+
+    // Helper method to keep a background request back while typing goes on, false to send it now
+    private bool HoldBackground(Action send)
+    {
+        lock (holding)
+        {
+            if (held.Count == 0 && !Busy)
+                return false;
+
+            if (held.Count == 0)
+                heldSince = Environment.TickCount64;
+            held.Add(send);
+            releaseTimer ??= new Timer(_ => ReleaseHeld());
+            releaseTimer.Change(100, 100);
+            return true;
+        }
+    }
+
+    // On the timer, what was held goes out in the order it was asked once typing has stopped (or it waited long enough)
+    private void ReleaseHeld()
+    {
+        Action[] going;
+        lock (holding)
+        {
+            if (held.Count == 0 || (Busy && Environment.TickCount64 - heldSince < LONGEST_HOLD_MS && Failure is null))
+                return;
+
+            going = [.. held];
+            held.Clear();
+            releaseTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+
+        foreach (Action send in going)
+            Later(send);
     }
 
     /// <summary>Tells the server a file is open, with its text as it is in the editor.</summary>
@@ -351,6 +416,7 @@ public sealed partial class LanguageServer : IDisposable
     public void Change(string path, string text)
     {
         string full = Path.GetFullPath(path);
+        Typing();
         Later(() =>
         {
             int version;
@@ -418,12 +484,24 @@ public sealed partial class LanguageServer : IDisposable
         if (trigger is { } typed && !again)
             context["triggerCharacter"] = typed.ToString();
 
-        JsonNode? answered = await Ask("textDocument/completion", new JsonObject
+        // What the editor asks for by itself waits while this is asked (HoldBackground)
+        Typing();
+        Interlocked.Increment(ref completing);
+        JsonNode? answered;
+        try
         {
-            ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
-            ["position"] = new JsonObject { ["line"] = line, ["character"] = character },
-            ["context"] = context
-        }).ConfigureAwait(false);
+            answered = await Ask("textDocument/completion", new JsonObject
+            {
+                ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
+                ["position"] = new JsonObject { ["line"] = line, ["character"] = character },
+                ["context"] = context
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref completing);
+            Typing();
+        }
 
         // Either a list of what can go there, or the list and whether that's all of it
         bool incomplete = false;
@@ -732,6 +810,12 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Asks the server to shut down and ends its process, waiting a moment for it to go by itself.</summary>
     public void Dispose()
     {
+        lock (holding)
+        {
+            releaseTimer?.Dispose();
+            releaseTimer = null;
+        }
+
         try
         {
             if (rpc is { IsClosed: false })
