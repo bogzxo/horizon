@@ -46,6 +46,9 @@ public class VirtualStack : ScrollPanel
     /// <summary>The most components of each kind kept for using again.</summary>
     public int MostKept { get; set; } = 16;
 
+    /// <summary>The most measured heights kept, by their keys.</summary>
+    public int MostHeights { get; set; } = 20_000;
+
     /// <summary>The gap between two rows.</summary>
     public float Spacing { get; set; }
 
@@ -102,6 +105,30 @@ public class VirtualStack : ScrollPanel
     /// <summary>The rows changed in number, the ones there were left as they were (rows put on at the end).</summary>
     public void ItemsChanged() => dirty = true;
 
+    /// <summary>A row's component asked for again as it's laid out next, the row having another now.</summary>
+    public void Refresh(int index)
+    {
+        if (realized.Remove(index, out UIComponent? component))
+            Release(index, component);
+        dirty = true;
+    }
+
+    /// <summary>
+    /// Every row's component asked for again, the heights kept by their keys, for rows put in or taken out above or among
+    /// the ones in sight, which moves what number each row is.
+    /// </summary>
+    public void Rebind()
+    {
+        foreach (var (index, component) in realized)
+        {
+            Remove(component);
+            Recycle?.Invoke(index, component);
+        }
+        realized.Clear();
+        Realized = (0, -1);
+        dirty = true;
+    }
+
     /// <summary>Every row made again from the start, the heights forgotten, for a list of other rows altogether.</summary>
     public void Reset()
     {
@@ -131,9 +158,10 @@ public class VirtualStack : ScrollPanel
     // A row's height as best known at a width, measured near it or estimated
     private float HeightOf(int index, float width)
     {
-        if (heights.TryGetValue(Key(index), out var known) && known.Bucket == BucketOf(width))
+        // Measured at another width it's taken as that until it's seen again, nearer than any estimate
+        if (heights.TryGetValue(Key(index), out var known))
             return known.Height;
-        return MathF.Max(1.0f, EstimateHeight?.Invoke(index, width) ?? Estimate);
+        return MathF.Max(0.0f, EstimateHeight?.Invoke(index, width) ?? Estimate);
     }
 
     // Where every row's top is, worked out again only when the rows, their heights or the width moved
@@ -145,11 +173,18 @@ public class VirtualStack : ScrollPanel
 
         if (tops.Length != ItemCount + 1)
             tops = new float[ItemCount + 1];
+        // A gap goes between two rows that take room, one of no height (a hidden one) has none either side of it, the way
+        // a stack leaves out a child that isn't visible
         float at = 0.0f;
+        bool any = false;
         for (int i = 0; i < ItemCount; i++)
         {
+            float height = HeightOf(i, width);
+            if (height > 0.0f && any)
+                at += Spacing;
             tops[i] = at;
-            at += HeightOf(i, width) + (i < ItemCount - 1 ? Spacing : 0.0f);
+            at += height;
+            any |= height > 0.0f;
         }
 
         tops[ItemCount] = at;
@@ -273,11 +308,14 @@ public class VirtualStack : ScrollPanel
         bool moved = false;
         foreach (var (index, component) in realized)
         {
-            float height = MathF.Max(1.0f, component.DesiredSize.Y);
+            float height = component.Visible ? MathF.Max(1.0f, component.DesiredSize.Y) : 0.0f;
             long key = Key(index);
             if (heights.TryGetValue(key, out var known) && known.Bucket == bucket && MathF.Abs(known.Height - height) < 0.5f)
                 continue;
             float was = HeightOf(index, width);
+            // Kept for every row ever seen, rows gone for good among them, so past the most they start again from estimates
+            if (heights.Count >= MostHeights && !heights.ContainsKey(key))
+                heights.Clear();
             heights[key] = (bucket, height);
             if (MathF.Abs(was - height) >= 0.5f)
                 moved = true;

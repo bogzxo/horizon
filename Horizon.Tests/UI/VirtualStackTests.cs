@@ -169,6 +169,46 @@ public class VirtualStackTests
     }
 
     [Fact]
+    public void A_hidden_row_takes_no_room_and_no_gap()
+    {
+        var stack = new VirtualStack
+        {
+            ItemCount = 10,
+            Estimate = 20,
+            Spacing = 8,
+            Padding = new UIEdges(0),
+            Make = index => new Panel { Size = new Vector2(0, 20), Visible = index % 2 == 0 }
+        };
+        Lay(stack);
+
+        // Five rows of 20 with four gaps between them, as a stack leaves out what isn't visible
+        Assert.Equal(5 * 20 + 4 * 8, stack.ContentHeight, 1);
+    }
+
+    [Fact]
+    public void A_row_given_another_component_is_shown_with_it()
+    {
+        var rows = Enumerable.Range(0, 20).Select(_ => (UIComponent)new Panel { Size = new Vector2(0, 20) }).ToList();
+        var stack = new VirtualStack { ItemCount = 20, Estimate = 20, Padding = new UIEdges(0), Make = index => rows[index] };
+        Lay(stack);
+        UIComponent was = rows[3];
+        rows[3] = new Panel { Size = new Vector2(0, 50) };
+        stack.Refresh(3);
+        Lay(stack);
+
+        Assert.Same(rows[3], stack.ComponentOf(3));
+        Assert.DoesNotContain(was, stack.Children);
+        Assert.Equal(19 * 20 + 50, stack.ContentHeight, 1);
+
+        // Every row asked for again keeps the heights it had
+        stack.Rebind();
+        Assert.Empty(stack.Children);
+        Assert.Equal(19 * 20 + 50, stack.ContentHeight, 1);
+        Lay(stack);
+        Assert.Same(rows[0], stack.ComponentOf(0));
+    }
+
+    [Fact]
     public void A_reset_lets_every_component_go()
     {
         int recycled = 0;
