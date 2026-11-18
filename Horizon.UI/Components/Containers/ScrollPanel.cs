@@ -13,9 +13,10 @@ namespace Horizon.UI.Components;
 /// </summary>
 public partial class ScrollPanel : Panel
 {
-    private float offset;
-    private float contentHeight;
-    private UIScrollEase ease;
+    // Kept by a list of its own that lays out only what's in sight (VirtualStack) as well
+    private protected float offset;
+    private protected float contentHeight;
+    private protected UIScrollEase ease;
 
     /// <summary>How far down the content is scrolled, 0 being the top.</summary>
     public float Offset
@@ -57,7 +58,7 @@ public partial class ScrollPanel : Panel
     public bool StickToEnd { get; set; }
 
     // How far down it could go the last time it was laid out, what at the end means while it sticks there
-    private float laidMax;
+    private protected float laidMax;
 
     /// <summary>
     /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
