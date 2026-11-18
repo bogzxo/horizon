@@ -182,7 +182,8 @@ public static partial class ShaderCompiler
 
     /// <summary>
     /// Helper method to get one module from wherever the options say. The pack alone when it's asked for, which
-    /// never falls back to the cache or the compiler, otherwise the cache, then Slang, then the pack if Slang isn't there.
+    /// never falls back to the cache or the compiler, otherwise the cache, then the pack when it has the module, then
+    /// Slang, then the pack alone if Slang isn't there.
     /// </summary>
     private static ShaderModule Resolve(in ShaderUnit unit, string fileName, ShaderOptions options, IContentFiles content)
     {
@@ -191,6 +192,13 @@ public static partial class ShaderCompiler
 
         if (options.CacheFolder is { } folder && TryLoadCached(folder, unit.Key, out var kept))
             return kept;
+
+        // A module the shipped pack already holds is taken from it rather than compiled again. Slang once loaded stays
+        // loaded for the rest of the run, its session a few hundred megabytes, which every first start after an install,
+        // an update or a cleared cache would otherwise carry for nothing. A shader changed since the pack was built has
+        // another key and is compiled as before
+        if (options.Sourcing == ShaderSourcing.Automatic && (options.Packs ?? ShaderPackSet.For(content)).TryFind(unit.Key, out var packed))
+            return packed.ToModule();
 
         ShaderModule made;
         try
@@ -212,7 +220,7 @@ public static partial class ShaderCompiler
 /// <summary>Where compiled programs come from.</summary>
 internal enum ShaderSourcing
 {
-    /// <summary>The cache and the compiler, and the pack once Slang turns out not to be there.</summary>
+    /// <summary>The cache, then a pack that has the module, then the compiler, and the pack alone once Slang turns out not to be there.</summary>
     Automatic,
 
     /// <summary>The cache and the compiler, never a pack.</summary>
