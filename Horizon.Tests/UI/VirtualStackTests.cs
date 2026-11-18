@@ -221,4 +221,34 @@ public class VirtualStackTests
         Assert.Equal(had, recycled);
         Assert.Equal((0, -1), stack.Realized);
     }
+
+    // The row at the top of the view, by where the rows are now
+    private static int TopRow(VirtualStack stack)
+    {
+        int row = 0;
+        while (row < stack.ItemCount - 1 && stack.TopOf(row + 1) <= stack.Offset)
+            row++;
+        return row;
+    }
+
+    [Fact]
+    public void The_wheel_goes_as_far_as_it_was_turned_through_rows_not_yet_measured()
+    {
+        // Estimated at 10, every row is 30 once it's made, the way a chat just opened is
+        VirtualStack stack = Rows(1000, 30, 10);
+        Lay(stack);
+        stack.Offset = 6000;
+        Lay(stack);
+        int from = TopRow(stack);
+
+        // Thirty notches up is 1440 pixels, 48 rows of 30, however much the rows above measure on the way
+        stack.Wheel(30);
+        for (int tick = 0; tick < 240; tick++)
+        {
+            stack.UpdateTree(1.0f / 60.0f);
+            Lay(stack);
+        }
+
+        Assert.InRange(from - TopRow(stack), 46, 50);
+    }
 }

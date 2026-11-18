@@ -49,7 +49,12 @@ public partial class ScrollPanel : Panel
     public float MaxOffset => MathF.Max(0.0f, contentHeight - Bounds.Shrink(Padding).Height);
 
     /// <summary>Scrolls all the way down, for content that grows at its end (a log).</summary>
-    public void ScrollToEnd() => offset = float.MaxValue;
+    public void ScrollToEnd()
+    {
+        // Said by somebody as well, a wheel still easing to a place in what was shown before would pull it back up
+        ease.Stop();
+        offset = float.MaxValue;
+    }
 
     /// <summary>
     /// Whether a panel scrolled to its end stays there as what's in it grows, a log's. Scrolled up it stays where it was

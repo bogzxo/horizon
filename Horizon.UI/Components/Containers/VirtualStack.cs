@@ -231,6 +231,7 @@ public class VirtualStack : ScrollPanel
             offset = MathF.Max(0.0f, tops[^1] - sight);
 
         // Twice at the most, the rows made the first time can measure other than they were estimated
+        float anchorTop = ItemCount > 0 ? tops[anchor] : 0.0f;
         for (int pass = 0; pass < 2; pass++)
         {
             Realize(width, sight);
@@ -242,6 +243,11 @@ public class VirtualStack : ScrollPanel
             else if (ItemCount > 0)
                 offset = tops[Math.Min(anchor, ItemCount - 1)] + into;
         }
+
+        // Where the wheel is easing to moves with the rows above it as well. Left behind, scrolling up through rows not yet
+        // measured (a chat just opened) pulled the list to the old place, which looked like it snapping up
+        if (!atEnd && ItemCount > 0 && ease.Goal is { } goal)
+            ease.Goal = goal + tops[Math.Min(anchor, ItemCount - 1)] - anchorTop;
 
         contentHeight = tops.Length == 0 ? 0.0f : tops[^1];
         float max = MathF.Max(0.0f, contentHeight - sight);
