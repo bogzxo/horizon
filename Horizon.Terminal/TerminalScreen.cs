@@ -496,7 +496,8 @@ public sealed partial class TerminalScreen : IVtHandler
             {
                 scrollback.Add(gone);
                 RowsScrolledOff++;
-                grid.Insert(to, new TerminalRow(Columns) { Cells = Blanks() });
+                // The row made with its erased cells, not made blank and then given them, two arrays a line of output
+                grid.Insert(to, new TerminalRow(Blanks(), false));
             }
             else
             {

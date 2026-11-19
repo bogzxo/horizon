@@ -296,7 +296,14 @@ public sealed class VtParser
         {
             case State.OscString:
                 if (osc.Length < MAX_OSC)
-                    osc.Append(char.ConvertFromUtf32(codePoint <= 0x10FFFF && codePoint is not (>= 0xD800 and <= 0xDFFF) ? codePoint : 0xFFFD));
+                {
+                    int character = codePoint <= 0x10FFFF && codePoint is not (>= 0xD800 and <= 0xDFFF) ? codePoint : 0xFFFD;
+                    // A string a character was made for each one of a title or a path, the plane's own chars written as they are
+                    if (character <= 0xFFFF)
+                        osc.Append((char)character);
+                    else
+                        osc.Append(char.ConvertFromUtf32(character));
+                }
                 break;
             case State.DcsPassthrough:
                 break;
