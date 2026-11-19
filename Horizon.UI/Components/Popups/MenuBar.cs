@@ -18,8 +18,10 @@ public sealed class MenuItem
     /// <summary>What is written at the far end of the item, which is where the keys that do the same thing go.</summary>
     public string Shortcut { get; set; } = string.Empty;
 
-    /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) in front of it. Empty for none.</summary>
-    public string Icon { get; set; } = string.Empty;
+    /// <summary>One of the icons every skin has (<see cref="UISymbols"/>) in front of it. Empty for none, null taken as none.</summary>
+    /// <remarks>Null got through from a caller with nullable warnings off and the menu threw drawing it, taking the program with it.</remarks>
+    public string Icon { get => icon; set => icon = value ?? string.Empty; }
+    private string icon = string.Empty;
 
     /// <summary>What picking the item does.</summary>
     public Action? OnPicked { get; set; }

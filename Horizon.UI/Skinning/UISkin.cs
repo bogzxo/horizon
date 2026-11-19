@@ -586,6 +586,11 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         if (Load(directory, file, theme) is not { } skin)
             return null;
 
+        // Its art packed on the pool from now, while the UI has its first updates. Packed on this thread by the first
+        // frame that drew it, it was a tenth of a second of an editor's start with the loading screen up. The frame that
+        // draws first sends up whatever's been packed by then (TextureAtlas.Update), the rest goes up on the next
+        _ = Task.Run(skin.Atlas.Pack);
+
         return shared[key] = skin;
     }
 

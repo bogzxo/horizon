@@ -737,8 +737,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         foreach (var module in snapshot)
         {
-            if (module.Enabled)
-                module.Update(dt);
+            if (!module.Enabled)
+                continue;
+            // The first update of every module weighed, with HORIZON_LOG_STARTUP, for what a program's start goes on
+            long allocated = Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady ? GC.GetAllocatedBytesForCurrentThread() : -1;
+            long started = allocated >= 0 ? Stopwatch.GetTimestamp() : 0;
+            module.Update(dt);
+            if (allocated >= 0)
+                Horizon.Logging.Log.Info($"[Startup] {StartupName(module)} updated in {UIStatistics.Since(started):0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - allocated) / 1024} KB");
         }
 
         // Laid out and painted once everything has had its update, at the end of the tick, see Capture. A UI
@@ -748,6 +754,9 @@ public partial class UICompositor : GameComponent, IDisposable
         if (!capturedBefore)
             PaintPending();
     }
+
+    // A module as the startup's weighing says it, by what's first in it and how many things it has
+    private static string StartupName(UIModule module) => $"module of {(module.Root.Children.Count > 0 ? module.Root.Children[0].GetType().Name : "nothing")} and {module.Root.Children.Count - 1} more";
 
     private readonly record struct PendingPaint(UIModule[] Modules, UIRect Screen, UISkin Skin, float Delta);
 
@@ -780,9 +789,13 @@ public partial class UICompositor : GameComponent, IDisposable
                 continue;
 
             long laying = Stopwatch.GetTimestamp();
+            long weighed = Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady ? GC.GetAllocatedBytesForCurrentThread() : -1;
             module.Layout(screen, skin);
             Statistics.LayoutMs += UIStatistics.Since(laying);
+            long painting = Stopwatch.GetTimestamp(), paintFrom = weighed >= 0 ? GC.GetAllocatedBytesForCurrentThread() : -1;
             module.Paint(back);
+            if (weighed >= 0)
+                Horizon.Logging.Log.Info($"[Startup] {StartupName(module)} laid out in {UIStatistics.Since(laying) - UIStatistics.Since(painting):0.0} ms, {(paintFrom - weighed) / 1024} KB, painted in {UIStatistics.Since(painting):0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - paintFrom) / 1024} KB");
             PaintMiddleScroll(back, module);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
@@ -1374,6 +1387,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public void Dispose()
     {
+        // The keyboard's owner is everybody's, a compositor thrown away while it had it was kept by it with its scene
+        if (focusOwner == this)
+            focusOwner = null;
         layer.Dispose();
         glassPass?.Dispose();
         glassPass = null;

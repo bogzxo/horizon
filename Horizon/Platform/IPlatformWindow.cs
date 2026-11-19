@@ -58,6 +58,15 @@ public interface IPlatformWindow
     void BringToFront();
 
     /// <summary>
+    /// The window taken off the screen and the taskbar while the program goes on, for one that stays running between
+    /// uses and comes back with BringToFront. Nothing where a window can't be hidden.
+    /// </summary>
+    void Hide() { }
+
+    /// <summary>The window's thread out of its wait on the system, to look again at how long it may wait. From any thread.</summary>
+    void WakeWindowThread() { }
+
+    /// <summary>
     /// Shows a window that was made hidden, once there's a picture in it. Platform thread, nothing for one that was
     /// shown all along.
     /// </summary>

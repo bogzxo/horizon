@@ -56,6 +56,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
         readsGamepads = request.ReadsGamepads;
         title = config.WindowTitle ?? string.Empty;
         windowIcon = config.WindowIcon;
+        DecodeIcon();
         CustomFrame = config.CustomFrame;
         ScalesToDisplay = config.ScaleToDisplay;
         maximizeWhenMade = config.Maximized && config.CustomFrame && OperatingSystem.IsWindows() && !config.Fullscreen;
@@ -395,13 +396,17 @@ public sealed partial class DesktopWindow : IPlatformWindow
     /// </summary>
     internal void RunUntilClosed()
     {
-        while (!_window.IsClosing)
+        while (true)
         {
             HandleEvents();
 
-            // Asked to close (its X, alt and F4), whoever said they want a say gets it, and the window stays if they say no
+            // Asked to close (its X, alt and F4), whoever said they want a say gets it, and the window stays if they say no.
+            // Looked at only here: a close the system said while the thread waited (WaitForEvents takes the system's
+            // messages too) used to end the loop by its condition, nobody asked, what wasn't saved gone with the window
             if (_window.IsClosing && !Events.MayClose())
                 _window.IsClosing = false;
+            if (_window.IsClosing)
+                break;
 
             // Woken up early for whatever the thread that draws needs done to the window. An application waits for the
             // system while nothing is happening instead, see DesktopWindow.Waiting

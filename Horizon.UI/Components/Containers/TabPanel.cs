@@ -406,7 +406,8 @@ public class TabPanel : UIComponent
         {
             list.BeginPart(i);
             UIRect tab = TabBounds(i);
-            bool open = i == Selected;
+            // Folded no page is showing, so none has the pill of the one open. It kept it and read as a page that was up
+            bool open = i == Selected && !Folded;
 
             // A pill under the open one, the same as a tab strip's and a picked row's, a fainter one under the pointer.
             // Always there, see-through when not lit, or the quads after it shift (ToggleButton has why)
@@ -427,7 +428,8 @@ public class TabPanel : UIComponent
             bool over = IsHovered && fold.Contains(pointer);
             list.Box(fold.Shrink(new UIEdges(2.0f, 3.0f)), skin.HoverColor with { W = over ? skin.HoverColor.W : 0.0f });
             float side = MathF.Round(fold.Height * 0.5f);
-            list.Symbol(Folded ? "chevron-up" : "chevron-down", UIRect.FromCenter(fold.Center, new Vector2(side)), over ? skin.TextColor : dim);
+            // In the quiet text's colour, not the disabled tint the unlit tabs have, it's a control and it was barely there
+            list.Symbol(Folded ? "chevron-up" : "chevron-down", UIRect.FromCenter(fold.Center, new Vector2(side)), over ? skin.TextColor : skin.Palette.DimText);
         }
 
         if (PreviousHint.Length > 0)

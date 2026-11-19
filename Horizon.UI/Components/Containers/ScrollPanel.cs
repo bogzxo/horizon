@@ -26,6 +26,7 @@ public partial class ScrollPanel : Panel
         {
             // Said by somebody, not eased to by the wheel
             ease.Stop();
+            held = -1.0f;
             offset = Math.Clamp(value, 0.0f, MaxOffset);
         }
     }
@@ -53,6 +54,7 @@ public partial class ScrollPanel : Panel
     {
         // Said by somebody as well, a wheel still easing to a place in what was shown before would pull it back up
         ease.Stop();
+        held = -1.0f;
         offset = float.MaxValue;
     }
 
@@ -64,6 +66,9 @@ public partial class ScrollPanel : Panel
 
     // How far down it could go the last time it was laid out, what at the end means while it sticks there
     private protected float laidMax;
+
+    // Where it was put before what's in it got too short to stay there, -1 for nowhere, see Arrange
+    private float held = -1.0f;
 
     /// <summary>
     /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
@@ -116,7 +121,10 @@ public partial class ScrollPanel : Panel
         float scrollDt = ScrollMotionDelta(dt);
         ease.Clamp(MaxOffset);
         if (ease.Goal is not null)
+        {
+            held = -1.0f;
             offset = Math.Clamp(ease.Step(offset, scrollDt), 0.0f, MaxOffset);
+        }
         ease.Over.Step(scrollDt, MotionSpeed);
     }
 
@@ -149,7 +157,12 @@ public partial class ScrollPanel : Panel
         // The content can have shrunk under us, or the panel grown. At its end it stays there, when it sticks to it
         float max = MathF.Max(0.0f, contentHeight - content.Height);
         bool atEnd = StickToEnd && offset >= laidMax - 0.5f;
-        offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
+        // Where it was put is kept while what's in it is shorter for a moment (its rows made again, a list refilled), and
+        // gone back to as it grows again. The rows of a list made anew were laid out short once and the list was left at
+        // its top for good
+        float wanted = held >= 0.0f ? held : offset;
+        offset = atEnd ? max : Math.Clamp(wanted, 0.0f, max);
+        held = !atEnd && offset < wanted - 0.5f ? wanted : -1.0f;
         laidMax = max;
 
         float width = MathF.Max(0.0f, content.Width - BarWidth - BarGap);

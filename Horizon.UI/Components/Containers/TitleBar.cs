@@ -81,8 +81,9 @@ public class TitleBar : StackPanel
     // How much smaller than the title its caption is written, how see-through, and the gap between the two
     private const float CAPTION_SCALE = 0.86f, CAPTION_ALPHA = 0.42f, CAPTION_GAP = 10.0f;
 
-    // The least room a caption is cut down to fit, in less it isn't written at all
-    private const float CAPTION_LEAST = 48.0f;
+    // The least room a caption is cut down to fit, in less it isn't written at all. At 48 a narrow window's caption was
+    // its first two letters and an ellipsis, which said nothing
+    private const float CAPTION_LEAST = 120.0f;
 
     private (string Text, UIFont? Font, float Scale, float Room) captionFitFor;
     private string fittedCaption = string.Empty;

@@ -183,6 +183,16 @@ public static class TerminalProfiles
     // Asked once a run, the distributions don't change while the program is up, and Dawn and Dusk both discover
     private static readonly Lazy<string?> wslAnswer = new(AskWsl);
 
+    /// <summary>
+    /// Starts asking WSL for its distributions on the pool, for a program to call as it starts so the answer is there by
+    /// the time its terminal is made. Asked on the thread that made the terminal it was a wait of 65 ms or more at launch.
+    /// </summary>
+    public static void Prefetch()
+    {
+        if (OperatingSystem.IsWindows())
+            _ = Task.Run(() => wslAnswer.Value);
+    }
+
     /// <summary>Runs wsl -l -q and gives back what it wrote, as the bytes it wrote read one to a char, null when it couldn't be run, failed or took too long.</summary>
     private static string? AskWsl()
     {

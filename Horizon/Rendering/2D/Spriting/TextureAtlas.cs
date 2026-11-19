@@ -348,10 +348,22 @@ public sealed class TextureAtlas : IDisposable
 
         foreach (var pending in batch)
         {
-            // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for
-            if (SpriteImages.Read(pending.File, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } part) continue;
-            if (pending.Most > 0 && (part.Width > pending.Most || part.Height > pending.Most))
-                part = Shrink(part, pending.Most);
+            // Out of the sheet, or out of the Aseprite file's frame, either way the part that was asked for. One brought
+            // down to fit is kept on the disk as it came out (ShrunkCache), the big picture behind it (a program's icon
+            // shown small) decoded and shrunk was a sixth of a second of an editor's first frame every launch
+            string? shrunkFile = pending.Most > 0 ? ShrunkCache.FileOf(pending.File, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer, pending.Most) : null;
+            SpritePixels part;
+            if (shrunkFile is not null && ShrunkCache.Read(shrunkFile) is { } kept)
+                part = kept;
+            else
+            {
+                if (SpriteImages.Read(pending.File, pending.X, pending.Y, pending.Width, pending.Height, pending.Layer) is not { } read) continue;
+                part = read;
+                if (pending.Most > 0 && (part.Width > pending.Most || part.Height > pending.Most))
+                    part = Shrink(part, pending.Most);
+                if (shrunkFile is not null)
+                    ShrunkCache.Write(shrunkFile, part);
+            }
 
             // Only the pixels that are anything, if asked. A frame of nothing at all keeps one clear texel so it's drawn as nothing
             int left = 0, top = 0, width = part.Width, height = part.Height;

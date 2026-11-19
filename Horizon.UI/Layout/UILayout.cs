@@ -308,6 +308,30 @@ public sealed class UILayout
     /// </summary>
     public static void Forget(string path) => programs.TryRemove(ContentFiles.CacheKey(path), out _);
 
+    /// <summary>
+    /// Reads layouts on the pool ahead of their first load, for a program to call as it starts while its window and
+    /// device are being made. Each is read once and kept as ever (and read again if its file changes after), so the
+    /// load itself finds it read, and the reader's code has been compiled off the thread that's waiting for the window.
+    /// A layout that can't be read is left for its load to say so.
+    /// </summary>
+    public static void Prewarm(IEnumerable<string> paths)
+    {
+        string[] all = [.. paths];
+        _ = Task.Run(() =>
+        {
+            foreach (string path in all)
+            {
+                try
+                {
+                    Compile(path);
+                }
+                catch (Exception)
+                {
+                }
+            }
+        });
+    }
+
     private static ProgramStatement Compile(string path)
     {
         FoundContent found = ContentFiles.Find(path);

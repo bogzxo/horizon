@@ -975,7 +975,23 @@ public partial class CodeEditor : UIComponent
 
     /* Measuring */
 
-    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
+    /// <summary>
+    /// The scale the code is drawn and measured at: the one asked for, a hair bigger or smaller so a character of a
+    /// fixed-width font is a whole number of the screen's pixels. A cell of 8.4 pixels put every column at another share
+    /// of a pixel, and the same letter came out crisp in one column and split over two in the next, a line of code
+    /// wobbling along. Everything of the editor goes by this scale, so the caret, the selection and the guides follow.
+    /// </summary>
+    private float ScaleOf(UISkin skin)
+    {
+        float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
+        UIFont font = FontOf(skin);
+        float cell = font.Measure("M", 1.0f, markup: false).X;
+        if (cell <= 0.0f || MathF.Abs(font.Measure("i", 1.0f, markup: false).X - cell) > 0.01f)
+            return scale;
+
+        float pixels = cell * scale * PixelsPerUnit;
+        return pixels < 3.0f ? scale : scale * MathF.Round(pixels) / pixels;
+    }
 
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
     private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
@@ -1041,9 +1057,18 @@ public partial class CodeEditor : UIComponent
             colouredWith = null;
             coloured = document.Version - 1;
         }
+        else if (Highlight && document.Text.Length == 0)
+        {
+            // Nothing to colour, and nothing asked of the grammar. An empty box made the grammar get going on the spot, the
+            // agents' box was Markdown's (and every language it can hold) at 70 ms and 24 MB of an editor's start for one empty line
+            spans = PlainSpans();
+        }
         else if (Highlight)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
+            if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
+                Horizon.Logging.Log.Info($"[Startup] {highlighter.Name} coloured {count} lines in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.0} ms");
         }
         else
         {

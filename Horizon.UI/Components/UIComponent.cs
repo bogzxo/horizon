@@ -660,7 +660,18 @@ public abstract partial class UIComponent
         if (slideWanted is not null)
             StepSlide(dt);
 
-        Update(dt);
+        // Until the first scene is up, with HORIZON_LOG_STARTUP, an update that takes a while says what it is, for what a
+        // program's start goes on
+        if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
+        {
+            long allocated = GC.GetAllocatedBytesForCurrentThread(), started = System.Diagnostics.Stopwatch.GetTimestamp();
+            Update(dt);
+            double took = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (took >= 3.0)
+                Horizon.Logging.Log.Info($"[Startup] a {GetType().Name} updated in {took:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - allocated) / 1024} KB");
+        }
+        else
+            Update(dt);
 
         foreach (var child in children)
             child.UpdateTree(dt);

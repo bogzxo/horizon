@@ -163,7 +163,9 @@ internal sealed unsafe class VulkanContext : IDisposable
         Vk = Vk.GetApi();
 
         presentsAhead = ahead;
-        StartVulkan([.. ahead.VulkanInstanceExtensions], () => { });
+        Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: loader configured");
+        StartVulkan([.. ahead.VulkanInstanceExtensions], () => Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: instance made"));
+        Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: card picked");
         CreateDevice();
     }
 

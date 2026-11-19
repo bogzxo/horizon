@@ -88,6 +88,10 @@ public class SceneManager : Entity
     // The most turns a scene that was just set gets to finish itself before it is shown as it is
     private const int MAX_WARM_UP = 8;
 
+    // How long after the first scene is shown the garbage of starting up is collected, and whether it has been
+    private const int FIRST_COLLECT_AFTER_MS = 3000;
+    private bool _collectedFirst;
+
     // The longest step a transition takes in one frame. Setting a scene up can take a while, and the fade shouldn't skip to its end because of it
     private const float MAX_TRANSITION_STEP = 1.0f / 30.0f;
 
@@ -715,7 +719,20 @@ public class SceneManager : Entity
         // then a game runs without making any, so the collector never comes round to it and the heap sits at the
         // size of the load for the rest of the run. A fight was 291 MB of heap with 80 MB of it alive. Taken here,
         // under the cover, with the simulation standing still, and given back to the machine
-        if (incoming is not null && CollectAfterChange)
+        // The very first scene, with nothing left behind it, has its collection a few seconds after it's on screen
+        // rather than before. Taken here it was the last 45 ms of a program's start, 8% of an editor's, for a few MB
+        if (incoming is not null && CollectAfterChange && left is null && !_collectedFirst)
+        {
+            _collectedFirst = true;
+            _ = Task.Delay(FIRST_COLLECT_AFTER_MS).ContinueWith(_ =>
+            {
+                long collecting = System.Diagnostics.Stopwatch.GetTimestamp();
+                long before = GC.GetTotalMemory(false);
+                GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                Log.Info($"[SceneManager] Collected {(before - GC.GetTotalMemory(false)) / (1024.0 * 1024.0):0} MB of starting up in {System.Diagnostics.Stopwatch.GetElapsedTime(collecting).TotalMilliseconds:0} ms, after the first scene was shown.");
+            }, TaskScheduler.Default);
+        }
+        else if (incoming is not null && CollectAfterChange)
         {
             long collecting = System.Diagnostics.Stopwatch.GetTimestamp();
             long before = GC.GetTotalMemory(false);
@@ -764,12 +781,14 @@ public class SceneManager : Entity
         {
             _unfinished = false;
             scene.Render(dt);
+            Horizon.Core.Diagnostics.StartupTrace.Mark($"warm-up turn {turn} drawn{(_unfinished ? ", unfinished" : string.Empty)}");
 
             if (!_unfinished && turn > 0)
                 break;
 
             scene.UpdateState(dt);
             scene.UpdatePhysics(dt);
+            Horizon.Core.Diagnostics.StartupTrace.Mark($"warm-up turn {turn} updated");
 
             // What those updates added is set up before it is drawn or updated, as it is while the game runs
             EntityLifecycle.Flush();

@@ -145,53 +145,25 @@ public sealed class DistanceFieldFont
             Base = MathF.Round(ascent * fieldScale * toEm);
             Spread = SPREAD * toEm;
 
-            // Every glyph's field, and the shelves they go on
-            var pictures = new List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)>();
+            // The characters the font has, then every glyph's field made side by side on the pool, in their order. One
+            // after another it was most of a first start: the code font's field alone was a second, and the terminal's
+            // half a second more. stb only reads the font's info, each glyph's field is a buffer of its own
+            var codepoints = new List<int>();
             foreach (var (from, to) in ranges)
             {
                 for (int codepoint = from; codepoint <= to; codepoint++)
                 {
-                    if (StbTrueType.stbtt_FindGlyphIndex(info, codepoint) == 0 && codepoint != ' ') continue;
-
-                    int advance, bearing;
-                    StbTrueType.stbtt_GetCodepointHMetrics(info, codepoint, &advance, &bearing);
-
-                    int width = 0, height = 0, xOff = 0, yOff = 0;
-                    byte[]? field = null;
-                    if (rasterizeTrueTypeForDistanceField)
-                    {
-                        byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(info, fieldScale, fieldScale, codepoint, &width, &height, &xOff, &yOff);
-                        if (bitmap != null && width > 0 && height > 0)
-                        {
-                            int paddedWidth = width + SPREAD * 2, paddedHeight = height + SPREAD * 2;
-                            var inside = new bool[paddedWidth * paddedHeight];
-                            for (int y = 0; y < height; y++)
-                            {
-                                for (int x = 0; x < width; x++)
-                                    inside[(y + SPREAD) * paddedWidth + x + SPREAD] = bitmap[y * width + x] > 127;
-                            }
-                            field = SignedField(inside, paddedWidth, paddedHeight, SPREAD);
-                            width = paddedWidth;
-                            height = paddedHeight;
-                            xOff -= SPREAD;
-                            yOff -= SPREAD;
-                            StbTrueType.stbtt_FreeBitmap(bitmap, null);
-                        }
-                    }
-                    else
-                    {
-                        byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
-                        if (sdf != null && width > 0 && height > 0)
-                        {
-                            field = new byte[width * height];
-                            new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
-                            StbTrueType.stbtt_FreeSDF(sdf, null);
-                        }
-                    }
-
-                    pictures.Add(((char)codepoint, width, height, xOff, yOff, advance * fieldScale, field));
+                    if (StbTrueType.stbtt_FindGlyphIndex(info, codepoint) != 0 || codepoint == ' ')
+                        codepoints.Add(codepoint);
                 }
             }
+
+            var made = new (char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[codepoints.Count];
+            Parallel.For(0, codepoints.Count, at =>
+            {
+                made[at] = Glyph(info, codepoints[at], fieldScale);
+            });
+            var pictures = new List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)>(made);
 
             // Kerning, for the pairs the font has
             foreach (var a in pictures)
@@ -205,36 +177,83 @@ public sealed class DistanceFieldFont
                 }
             }
 
-            // Shelves, tallest first, in a square that grows until everything fits
-            pictures.Sort((p, q) => q.Height.CompareTo(p.Height));
-            int side = 256;
-            while (!Fits(pictures, side, side)) side *= 2;
-            int atlasHeight = Pack(pictures, side, out var placed);
-            atlasHeight = Math.Max(1, (int)BitOperations.RoundUpToPowerOf2((uint)atlasHeight));
+            return Shelve(pictures, ascent, fieldScale, toEm);
+        }
+    }
 
-            var atlas = new byte[side * atlasHeight];
-            foreach (var (picture, x, y) in placed)
+    // One glyph's field and measures, for BuildFromTrueType. Any thread
+    private unsafe (char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field) Glyph(StbTrueType.stbtt_fontinfo info, int codepoint, float fieldScale)
+    {
+        int advance, bearing;
+        StbTrueType.stbtt_GetCodepointHMetrics(info, codepoint, &advance, &bearing);
+
+        int width = 0, height = 0, xOff = 0, yOff = 0;
+        byte[]? field = null;
+        if (rasterizeTrueTypeForDistanceField)
+        {
+            byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(info, fieldScale, fieldScale, codepoint, &width, &height, &xOff, &yOff);
+            if (bitmap != null && width > 0 && height > 0)
             {
-                if (picture.Field is { } field)
+                int paddedWidth = width + SPREAD * 2, paddedHeight = height + SPREAD * 2;
+                var inside = new bool[paddedWidth * paddedHeight];
+                for (int y = 0; y < height; y++)
                 {
-                    for (int row = 0; row < picture.Height; row++)
-                        Array.Copy(field, row * picture.Width, atlas, (y + row) * side + x, picture.Width);
+                    for (int x = 0; x < width; x++)
+                        inside[(y + SPREAD) * paddedWidth + x + SPREAD] = bitmap[y * width + x] > 127;
                 }
+                field = SignedField(inside, paddedWidth, paddedHeight, SPREAD);
+                width = paddedWidth;
+                height = paddedHeight;
+                xOff -= SPREAD;
+                yOff -= SPREAD;
+                StbTrueType.stbtt_FreeBitmap(bitmap, null);
+            }
+        }
+        else
+        {
+            byte* sdf = StbTrueType.stbtt_GetCodepointSDF(info, fieldScale, codepoint, SPREAD, 128, 128.0f / SPREAD, &width, &height, &xOff, &yOff);
+            if (sdf != null && width > 0 && height > 0)
+            {
+                field = new byte[width * height];
+                new ReadOnlySpan<byte>(sdf, field.Length).CopyTo(field);
+                StbTrueType.stbtt_FreeSDF(sdf, null);
+            }
+        }
 
-                // The top of the line is the ascent above the baseline, the picture's top is yOff below the baseline (up is negative)
-                Glyphs[picture.Id] = new CharDefinition
-                {
-                    Id = picture.Id,
-                    Position = new Vector2(x, y),
-                    TexelSize = new Vector2(picture.Width, picture.Height),
-                    Size = new Vector2(picture.Width, picture.Height) * toEm,
-                    Offset = new Vector2(picture.XOff, ascent * fieldScale + picture.YOff) * toEm,
-                    XAdvance = picture.Advance * toEm
-                };
+        return ((char)codepoint, width, height, xOff, yOff, advance * fieldScale, field);
+    }
+
+    // The glyphs on shelves, tallest first, in a square that grows until everything fits, and where each one went
+    private (int, int, byte[]) Shelve(List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)> pictures, int ascent, float fieldScale, float toEm)
+    {
+        pictures.Sort((p, q) => q.Height.CompareTo(p.Height));
+        int side = 256;
+        while (!Fits(pictures, side, side)) side *= 2;
+        int atlasHeight = Pack(pictures, side, out var placed);
+        atlasHeight = Math.Max(1, (int)BitOperations.RoundUpToPowerOf2((uint)atlasHeight));
+
+        var atlas = new byte[side * atlasHeight];
+        foreach (var (picture, x, y) in placed)
+        {
+            if (picture.Field is { } field)
+            {
+                for (int row = 0; row < picture.Height; row++)
+                    Array.Copy(field, row * picture.Width, atlas, (y + row) * side + x, picture.Width);
             }
 
-            return (side, atlasHeight, atlas);
+            // The top of the line is the ascent above the baseline, the picture's top is yOff below the baseline (up is negative)
+            Glyphs[picture.Id] = new CharDefinition
+            {
+                Id = picture.Id,
+                Position = new Vector2(x, y),
+                TexelSize = new Vector2(picture.Width, picture.Height),
+                Size = new Vector2(picture.Width, picture.Height) * toEm,
+                Offset = new Vector2(picture.XOff, ascent * fieldScale + picture.YOff) * toEm,
+                XAdvance = picture.Advance * toEm
+            };
         }
+
+        return (side, atlasHeight, atlas);
     }
 
     private static bool Fits(List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)> pictures, int width, int height)
@@ -417,13 +436,34 @@ public sealed class DistanceFieldFont
 
     /* The cache, next to the shaders' */
 
+    // The hashes of the font files read this run, by where they are, how long and when they were written. Each cache file
+    // asked for read and hashed its font's whole file, the code font three times as Hex started, a few megabytes for nothing
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, long Length, DateTime Written), string> fontHashes = new();
+
+    private static string FontHash(string path)
+    {
+        (string, long, DateTime) known = (path, -1, default);
+        try
+        {
+            var file = new FileInfo(path);
+            if (file.Exists)
+                known = (file.FullName, file.Length, file.LastWriteTimeUtc);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return known.Item2 < 0
+            ? Convert.ToHexString(SHA256.HashData(ContentFiles.ReadAllBytes(path)))[..24]
+            : fontHashes.GetOrAdd(known, _ => Convert.ToHexString(SHA256.HashData(ContentFiles.ReadAllBytes(path)))[..24]);
+    }
+
     private string? CacheFile(string path, int emSize)
     {
         string? shaders = ShaderCompiler.CacheDirectory();
         if (shaders is null) return null;
 
-        var hash = SHA256.HashData(ContentFiles.ReadAllBytes(path));
-        string key = Convert.ToHexString(hash)[..24] + "_" + emSize + "_" + CACHE_VERSION;
+        string key = FontHash(path) + "_" + emSize + "_" + CACHE_VERSION;
         if (rasterizeTrueTypeForDistanceField) key += "_bitmap";
 
         // Built with other characters it is another font as far as the cache goes

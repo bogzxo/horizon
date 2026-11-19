@@ -112,6 +112,12 @@ public interface IPlatformEvents
 
     /// <summary>Whether nothing is going on in the engine, so the platform's thread may wait for the system. From the platform's thread.</summary>
     bool MayWaitForEvents { get; }
+
+    /// <summary>
+    /// Whether the program is asleep with its window hidden (see WindowManager.Dormant), so the platform's thread may wait
+    /// on the system for as long as it likes, woken only by it or by somebody wanting something of the window.
+    /// </summary>
+    bool Dormant => false;
 }
 
 /// <summary>

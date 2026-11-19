@@ -109,9 +109,11 @@ public sealed partial class UIDrawList
         if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
+        // Slid and faded in, not grown as well. Grown from 96% every letter was a different size frame to frame, sampled
+        // afresh off the field each time, and a menu's words shimmered until it settled. Only moved, it goes by whole pixels
+        // (PushVisual) and its words are as crisp coming in as they are once it's there
         float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
-        float grown = 0.96f + 0.04f * eased;
-        PushVisual(from * (1.0f - eased), new Vector2(grown), pivot, eased);
+        PushVisual(from * (1.0f - eased), Vector2.One, pivot, eased);
         return true;
     }
 
@@ -135,8 +137,9 @@ public sealed partial class UIDrawList
         if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
+        // Slid back and faded, not shrunk, for the same crisp words as its entrance
         float eased = t * t;
-        PushVisual(to * eased, new Vector2(1.0f - 0.04f * eased), pivot, 1.0f - eased);
+        PushVisual(to * eased, Vector2.One, pivot, 1.0f - eased);
         return true;
     }
 
@@ -304,6 +307,16 @@ public sealed partial class UIDrawList
     internal void PushVisual(Vector2 offset, Vector2 scale, Vector2 pivot, float opacity)
     {
         visuals.Push((visualOffset, visualScale, this.opacity));
+
+        // Only moved (a row sliding in, the give at a scroll's end), it's moved by whole pixels of the screen, the way a
+        // scroll is (PushFrame). By a fraction the boxes glided while every line of text in them snapped to the pixels on
+        // its own, and as the spring at the end of a scroll settled the words wobbled against their rows
+        if (scale == Vector2.One)
+        {
+            Vector2 across = visualScale * this.scale;
+            if (across.X != 0.0f && across.Y != 0.0f)
+                offset = Vector2.Round(offset * across) / across;
+        }
 
         // A point p ends up at (p - pivot) * scale + pivot + offset, inside of whatever is around it already.
         visualOffset += (pivot * (Vector2.One - scale) + offset) * visualScale;

@@ -125,6 +125,7 @@ public sealed partial class UIDrawList
         // the lines sat off the screen's pixels and a scroll had the words wobble against the boxes under them
         position = OnScreenPixel(position);
         Vector2 pen = position;
+        int line = 0;
 
         // Bold is the field's edge further out, and room made for it. Italic leans every letter over about the line it sits on
         bool bold = (style & UITextStyle.Bold) != 0;
@@ -138,14 +139,21 @@ public sealed partial class UIDrawList
 
             if (character == '\n')
             {
-                pen = new Vector2(position.X, pen.Y - lineHeight);
+                // Every line on a whole pixel as the first is, counted from it rather than added on. A line height of so
+                // many pixels and a bit left each line after the first a different share of a pixel off, the letters of
+                // one line sharper or softer than the next and taller or shorter by a pixel row
+                line++;
+                pen = OnScreenPixel(new Vector2(position.X, position.Y - line * lineHeight));
                 continue;
             }
 
             // $(name), an icon of UISymbols, as tall as the line wants it
             if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth, out UIIconMotion motion))
             {
-                Symbol(symbol, UISymbols.InText(pen, lineHeight), color, motion);
+                // On a whole pixel, an icon's art is a picture and between two pixels it came out soft at its edges.
+                // Rounded to whole units of the layout that's whole pixels only at 100%, so its corners go on the screen's
+                UIRect room = UISymbols.InText(pen, lineHeight);
+                Symbol(symbol, new UIRect(OnScreenPixel(room.Min), OnScreenPixel(room.Max)), color, motion);
                 pen.X += symbolWidth;
                 i += symbolLength - 1;
                 continue;
@@ -174,8 +182,12 @@ public sealed partial class UIDrawList
 
             if (font.Resolve(character, out var glyph))
             {
-                // A glyph's offset is measured from the pen to its top left corner, downwards.
-                Vector2 topLeft = new(pen.X + glyph.Offset.X * scale, pen.Y - glyph.Offset.Y * scale);
+                // A glyph's offset is measured from the pen to its top left corner, downwards. Its left edge on a whole pixel
+                // of the screen, so a letter's stems fall the same way across the pixels wherever it is in the line: the
+                // pen at a different share of a pixel for every letter had one i crisp and the next split over two
+                // columns, the words uneven. The pen itself goes on by the exact advance, so nothing adds up along a line
+                float left = OnScreenPixel(new Vector2(pen.X + glyph.Offset.X * scale, pen.Y)).X;
+                Vector2 topLeft = new(left, pen.Y - glyph.Offset.Y * scale);
                 Vector2 glyphSize = glyph.Size * scale;
 
                 var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y));
@@ -227,6 +239,7 @@ public sealed partial class UIDrawList
             ReadOnlySpan<char> line = text.Slice(lines[i].Start, lines[i].Length);
             float width = font.Measure(line, scale, markup).X;
 
+            // Each line put on the screen's pixels by Text itself, the same as a line after a newline is
             Text(line, new Vector2(topLeft.X + (side + 0.5f) * (size.X - width), topLeft.Y - i * lineHeight), scale, color, markup);
         }
     }

@@ -256,6 +256,20 @@ public sealed partial class DesktopWindow
             _window.WindowState = Silk.NET.Windowing.WindowState.Normal;
         _window.IsVisible = true;
         Foreground();
+        // Out of hiding, an application draws again
+        if (host.HasEvents)
+            Events.MinimizedChanged(false);
+    });
+
+    /// <summary>
+    /// The window off the screen and the taskbar, the program going on behind it. An application holds its frames as it
+    /// does down on the taskbar, nobody sees them. From any thread.
+    /// </summary>
+    public void Hide() => PostToWindow(() =>
+    {
+        _window.IsVisible = false;
+        if (host.HasEvents)
+            Events.MinimizedChanged(true);
     });
 
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_WIN = 0x8, MOD_NOREPEAT = 0x4000, WM_HOTKEY = 0x0312;
