@@ -70,6 +70,10 @@ public partial class ScrollPanel : Panel
     // Where it was put before what's in it got too short to stay there, -1 for nowhere, see Arrange
     private float held = -1.0f;
 
+    // How many layouts more it's held for, and how many it's held for at all
+    private int heldLayouts;
+    private const int HELD_LAYOUTS = 2;
+
     /// <summary>
     /// Scrolls just far enough for a component inside the panel to be in view, by where it was last laid out. Nothing
     /// if it is in view already. For a list that is walked with a gamepad, or an editor showing what was picked.
@@ -160,9 +164,19 @@ public partial class ScrollPanel : Panel
         // Where it was put is kept while what's in it is shorter for a moment (its rows made again, a list refilled), and
         // gone back to as it grows again. The rows of a list made anew were laid out short once and the list was left at
         // its top for good
+        // Only for the layout or two a rebuild takes: a list filtered shorter for good starts from where that left it
+        if (held >= 0.0f && --heldLayouts < 0)
+            held = -1.0f;
         float wanted = held >= 0.0f ? held : offset;
         offset = atEnd ? max : Math.Clamp(wanted, 0.0f, max);
-        held = !atEnd && offset < wanted - 0.5f ? wanted : -1.0f;
+        if (!atEnd && offset < wanted - 0.5f)
+        {
+            if (held < 0.0f)
+                heldLayouts = HELD_LAYOUTS;
+            held = wanted;
+        }
+        else
+            held = -1.0f;
         laidMax = max;
 
         float width = MathF.Max(0.0f, content.Width - BarWidth - BarGap);
