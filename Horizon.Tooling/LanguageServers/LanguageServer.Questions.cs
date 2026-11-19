@@ -117,6 +117,11 @@ public sealed partial class LanguageServer
             SemanticsRefreshed();
             return null;
         }
+        if (method == "workspace/diagnostic/refresh")
+        {
+            DiagnosticsRefreshed();
+            return null;
+        }
 
         if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
             return null;

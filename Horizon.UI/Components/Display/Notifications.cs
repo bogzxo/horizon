@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Engine;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering;
 using Horizon.UI.Drawing;
@@ -56,6 +57,7 @@ public sealed class UINotification
     public void Renew()
     {
         Age = 0.0f;
+        Lit = 0.0f;
         if (!Closed)
             Alpha = 1.0f;
     }
@@ -66,6 +68,12 @@ public sealed class UINotification
 
     // How far in it has come since it was shown, 0 to 1, at a steady rate (eased where it's used)
     internal float In;
+
+    // How long ago it came or was renewed, in seconds, what its ring's two beats are timed by
+    internal float Lit;
+
+    // How far up from the bottom of the cards it's drawn, easing to where the cards under it put it, NaN until first placed
+    internal float Place = float.NaN;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
 }
@@ -91,6 +99,11 @@ public class Notifications : UIComponent
 
     // The detail line, as big as the text is
     private const float DETAIL = 0.85f;
+
+    // What has a card seen out of the corner of an eye. A bar down its left in its icon's colour for as long as it's up,
+    // how thick and how far in, and a ring round it in the same colour that beats twice as it comes and is gone, how
+    // thick and how long the two beats take. A card slid in quietly was read by whoever happened to be looking there
+    private const float STRIPE = 3.0f, STRIPE_INSET = 4.0f, RING = 2.0f, CALL = 1.5f;
 
     // The clock of the sweep
     private float sweep;
@@ -158,13 +171,30 @@ public class Notifications : UIComponent
         return new Vector2(Width, MathF.Max(0.0f, height - GAP));
     }
 
+    // How quickly a card glides to its place, the share of the way left it goes in a second's worth of frames
+    private const float GLIDE = 16.0f;
+
     protected override void Update(float dt)
     {
         sweep = (sweep + dt / SWEEP_SECONDS) % 1.0f;
         bool held = IsHovered;
+        float call = MotionTime(CALL);
+        bool calling = false;
+
+        // Anything moving wants every frame: an idle window ticks four times a second, and a card sliding in, fading out,
+        // making room or sweeping its bar went along in jumps
+        bool moving = false;
+        float soonest = float.MaxValue;
         for (int i = shown.Count - 1; i >= 0; i--)
         {
             UINotification card = shown[i];
+
+            // Its ring beating, which wants frames from a window that sleeps between keys
+            if (card.Lit < call)
+            {
+                card.Lit += dt;
+                calling = true;
+            }
 
             // The pointer on the cards holds them all, somebody is reading
             if (!held && card.Seconds > 0.0f)
@@ -180,17 +210,59 @@ public class Notifications : UIComponent
                 : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
             card.Alpha = card.Closed ? going : MathF.Min(going, 1.0f - (1.0f - card.In) * (1.0f - card.In) * (1.0f - card.In));
             if (card.Alpha <= 0.0f)
+            {
                 shown.RemoveAt(i);
+                moving = true;
+                continue;
+            }
+
+            if (card.In < 1.0f || card.Closed || card.Alpha < 1.0f || card.Progress is float.NaN)
+                moving = true;
+            else if (card.Seconds > 0.0f && !held)
+                soonest = MathF.Min(soonest, card.Seconds - FADE - card.Age);
         }
+
+        // Each card eased to where the ones under it put it, so one coming or going has the rest glide rather than jump
+        if (Module?.Compositor.Skin is { } skin)
+        {
+            float glide = 1.0f - MathF.Exp(-GLIDE * dt);
+            float bottom = 0.0f;
+            for (int i = shown.Count - 1; i >= 0; i--)
+            {
+                UINotification card = shown[i];
+                if (float.IsNaN(card.Place) || MotionTime(ARRIVE) <= 0.0f)
+                    card.Place = bottom;
+                else
+                    card.Place += (bottom - card.Place) * glide;
+                if (MathF.Abs(card.Place - bottom) < 0.25f)
+                    card.Place = bottom;
+                else
+                    moving = true;
+                bottom += (HeightOf(card, skin) + GAP) * card.Alpha;
+            }
+        }
+
+        var windows = GameEngine.Instance?.WindowManager;
+        if (calling || moving)
+            windows?.RequestFrames(0.1);
+        // A tick on time for the fade to start from its first frame, an idle window's next one could be a quarter second late
+        else if (soonest < float.MaxValue)
+            windows?.RequestTickIn(Math.Max(0.0f, soonest));
     }
 
     /// <summary>Helper method for where each card is, the newest at the bottom of the bounds.</summary>
     private UIRect CardBounds(int index, UISkin skin)
     {
-        float bottom = Bounds.Min.Y;
-        for (int i = shown.Count - 1; i > index; i--)
-            bottom += HeightOf(shown[i], skin) + GAP;
+        float bottom = 0.0f;
+        if (float.IsNaN(shown[index].Place))
+        {
+            for (int i = shown.Count - 1; i > index; i--)
+                bottom += HeightOf(shown[i], skin) + GAP;
+        }
+        else
+            bottom = MathF.Round(shown[index].Place);
 
+        bottom += Bounds.Min.Y;
         return new UIRect(new Vector2(Bounds.Min.X, bottom), new Vector2(Bounds.Max.X, bottom + HeightOf(shown[index], skin)));
     }
 
@@ -276,6 +348,21 @@ public class Notifications : UIComponent
             list.PushVisual(Vector2.Zero, Vector2.One, bounds.Center, card.Alpha);
             list.Popup(bounds, Module?.Compositor.PopupGlass);
             list.PopVisual();
+
+            // The bar down its left, in the colour its icon is (the accent, or an error's red), clear of the round corners
+            Vector4 mark = card.IconColor ?? skin.AccentColor;
+            float corner = MathF.Min(skin.PopupRadius, bounds.Height * 0.5f) * 0.75f;
+            list.RoundRect(new UIRect(new Vector2(bounds.Min.X + STRIPE_INSET, bounds.Min.Y + corner), new Vector2(bounds.Min.X + STRIPE_INSET + STRIPE, bounds.Max.Y - corner)),
+                STRIPE * 0.5f, mark * fade);
+
+            // And the ring, bright as it comes, down, up half as bright and gone. Not at all in a UI told not to move
+            float call = MotionTime(CALL);
+            if (!card.Closed && card.Lit < call)
+            {
+                float through = card.Lit / call;
+                float beat = (1.0f - through) * (0.5f + 0.5f * MathF.Cos(through * MathF.PI * 4.0f));
+                list.RoundOutline(bounds, skin.PopupRadius, RING, mark with { W = mark.W * beat * card.Alpha });
+            }
 
             float top = bounds.Max.Y - PADDING;
             float left = bounds.Min.X + PADDING;

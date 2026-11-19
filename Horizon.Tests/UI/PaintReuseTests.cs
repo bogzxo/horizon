@@ -63,6 +63,26 @@ public class PaintReuseTests
     }
 
     [Fact]
+    public void Spelling_marks_repaint_without_a_document_edit()
+    {
+        var (panel, code) = Scene();
+        var a = new UIDrawList();
+        var b = new UIDrawList();
+        Paint(a, null, panel, 1);
+        Paint(b, a, panel, 2);
+        Paint(a, b, panel, 3);
+        int withoutMarks = a.Items.Length;
+
+        code.SetSpellingMarks(code.Document.Version, [new UISpellingMark(0, 4, 5)]);
+        Paint(b, a, panel, 4);
+        Assert.True(b.Items.Length > withoutMarks, "Publishing spelling results should draw new marks.");
+
+        code.SetSpellingMarks(-1, []);
+        Paint(a, b, panel, 5);
+        Assert.Equal(withoutMarks, a.Items.Length);
+    }
+
+    [Fact]
     public void A_code_editor_scrolled_inside_what_it_is_in_is_painted_again()
     {
         var (panel, _) = Scene();

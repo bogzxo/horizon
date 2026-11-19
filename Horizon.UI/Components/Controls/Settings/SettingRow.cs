@@ -21,7 +21,7 @@ internal sealed partial class SettingRow : StackPanel
 
     // The column down the right what sets it goes in, the gap before it and the most the sentence on the left runs to.
     // Across the whole of a wide row a sentence was too long a line to read
-    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 560.0f;
+    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 640.0f;
 
     // The least the left column can be before the row gives up on two columns and puts what sets it under the sentence
     private const float LEAST_TEXT = 300.0f;
@@ -163,6 +163,10 @@ internal sealed partial class SettingRow : StackPanel
             Tooltip = page.Texts.ResetToDefault,
             OnPressed = () => page.ResetPressed(setting.Key)
         });
+
+        // Straight after the name, before the key: the key only shows while the row's looked at, and a reset after its
+        // empty room sat a gap away from the name it's for
+        top.MoveChild(reset, 1);
 
         // The note on a line of its own under the name, for a row too narrow to have it beside the name (see FitName)
         noteLine = text.Add(new Label { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
@@ -356,11 +360,15 @@ internal sealed partial class SettingRow : StackPanel
             return;
 
         lit = joined;
+        KeyLit = words.Any(word => word.Length > 0 && Setting.Key.Contains(word, StringComparison.OrdinalIgnoreCase));
         name.Text = $"[b]{SettingsPage.Highlighted(Setting.Title, words)}[/b]";
         key.Text = SettingsPage.Highlighted(Setting.Key, words);
         if (help is not null)
             help.Text = SettingsPage.Highlighted(Setting.Help, words);
     }
+
+    // Whether a word of the search is in its key, which shows the key whether it's looked at or not
+    private bool KeyLit;
 
     /// <summary>Whether it's still flashing from being gone to.</summary>
     public bool Flashing => flash > 0.001f;
@@ -382,6 +390,11 @@ internal sealed partial class SettingRow : StackPanel
 
     protected override void Update(float dt)
     {
+        // Its key only while it's being looked at (the pointer on it, the keyboard in it) or a search found it there. Down
+        // every row of hundreds it was a second name to read past. Its room stays, so the pills and reset don't move
+        if (!page.CompactRows)
+            key.Opacity = IsHovered || HasHoveredChild() || HasFocus(this) || KeyLit ? KEY_FAINT : 0.0f;
+
         if (typed is { } text)
         {
             typedFor += dt;
@@ -409,10 +422,12 @@ internal sealed partial class SettingRow : StackPanel
         // The flash of a row gone to over that, there and see-through the rest of the time for the same reason
         list.RoundRect(Bounds, ROUND, accent with { W = accent.W * FLASH_STRENGTH * flash });
 
-        // The line down its edge while it's changed, focused or not, inside the row and in from its edge as far as the
-        // row is, so marking it moves nothing. Always there and see-through while it's not, the same as the rest
-        float edge = Bounds.Min.X + indent + 2.0f;
-        list.Rect(new UIRect(new Vector2(edge, Bounds.Min.Y + 4.0f), new Vector2(edge + 3.0f, Bounds.Max.Y - 4.0f)), accent with { W = modified ? 1.0f : 0.0f });
+        // A dot of the accent in front of its name while it's changed, in the room the row keeps on its left so marking it
+        // moves nothing. It was a line down the row's whole edge, a stripe on one side that read as decoration. Always
+        // there and see-through while it's not, the same as the rest
+        float dot = 3.0f * page.ZoomNow;
+        var at = new Vector2(Bounds.Min.X + indent + 7.0f, name.Bounds.IsEmpty ? Bounds.Max.Y - PAD - dot * 3.0f : name.Bounds.Center.Y);
+        list.RoundRect(new UIRect(at - new Vector2(dot, dot), at + new Vector2(dot, dot)), dot, accent with { W = modified ? 1.0f : 0.0f });
         base.Paint(list);
     }
 

@@ -630,12 +630,14 @@ public sealed partial class UIRichText
                     // [a link](where), the words underlined in the link colour (the accent unless the theme says)
                     if (inline && close + 1 < end && source[close + 1] == '(')
                     {
-                        int closeUrl = source.IndexOf(')', close + 1);
-                        if (closeUrl > close && closeUrl < end)
+                        int startUrl = close + 2;
+                        var (endUrl, closeUrl) = LinkDestination(startUrl, end);
+                        if (closeUrl >= 0)
                         {
                             Take(segment, i - segment);
 
-                            links.Add((close + 2, closeUrl - close - 2));
+                            bool angle = source[startUrl] == '<';
+                            links.Add((startUrl + (angle ? 1 : 0), endUrl - startUrl - (angle ? 1 : 0)));
                             State outside = state;
                             state.Link = links.Count - 1;
                             state.Underline = !Document;
@@ -1246,6 +1248,33 @@ public sealed partial class UIRichText
         }
 
         return default;
+    }
+
+    private (int End, int Close) LinkDestination(int start, int end)
+    {
+        if (start >= end)
+            return (-1, -1);
+
+        if (source[start] == '<')
+        {
+            int angle = source.IndexOf('>', start + 1, end - start - 1);
+            return angle >= 0 && angle + 1 < end && source[angle + 1] == ')' ? (angle, angle + 1) : (-1, -1);
+        }
+
+        int depth = 0;
+        for (int at = start; at < end; at++)
+        {
+            if (source[at] == '(')
+                depth++;
+            else if (source[at] == ')')
+            {
+                if (depth == 0)
+                    return (at, at);
+                depth--;
+            }
+        }
+
+        return (-1, -1);
     }
 
     /// <summary>Whether any of it is a link.</summary>

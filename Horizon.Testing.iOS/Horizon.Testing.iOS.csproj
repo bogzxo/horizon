@@ -6,8 +6,8 @@
     Horizon.Testing.Android links them. Nothing desktop is referenced, no Horizon.Platform.Desktop, no SDL or GLFW.
     MoltenVK is linked into the app statically (Silk.NET.MoltenVK.Native's NativeReference), so Vulkan is the app's own.
 
-    Not in Horizon.sln or the workspace solution, a desktop build must never need the iOS workload, and it only builds
-    on a Mac with Xcode. See README.md for the commands.
+      The workspace solution lists this app for testing. Build it explicitly on a Mac with Xcode, as shown in README.md.
+      Horizon.sln stays desktop-only.
 
     The assembly is called Horizon.Testing on purpose, the examples see the engine's and the UI's internals under it.
   -->

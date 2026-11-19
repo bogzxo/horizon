@@ -84,6 +84,19 @@ public partial class ScrollPanel : Panel
             Offset += MathF.Min(content.Min.Y - target.Min.Y, content.Max.Y - target.Max.Y);
     }
 
+    /// <summary>Where it's scrolled to or easing to, what a list walked with the keys goes on from.</summary>
+    public float OffsetGoal => ease.Goal ?? offset;
+
+    /// <summary>
+    /// Eases to a place rather than jumping there, for a row walked to with the keys. A held key had the list jump a row a
+    /// repeat, and a row brought into sight by where it was last laid out was off by the repeats that came between two layouts.
+    /// </summary>
+    public void ScrollTo(float goal)
+    {
+        ease.Over.Stop();
+        ease.To(goal, MaxOffset);
+    }
+
     /// <summary>
     /// Scrolls a component inside the panel to the top of what's in view, or as near as the end of the content lets it,
     /// for a section gone to by its name (where <see cref="ScrollIntoView"/> stops as soon as it shows, at the bottom).

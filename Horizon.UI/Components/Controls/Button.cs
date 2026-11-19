@@ -39,6 +39,9 @@ public class Button : UIComponent
     /// </summary>
     public Vector4? IconColor { get; set; }
 
+    /// <summary>The label's colour, or null to use the skin's.</summary>
+    public Vector4? LabelColor { get; set; }
+
     /// <summary>
     /// Where on the button its icon and label sit, in the middle unless told. A grid of them (a toolbox) reads better
     /// from the left, their icons in a column, than each one centred on its own.
@@ -219,7 +222,7 @@ public class Button : UIComponent
         if (down)
             area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
         float scale = LabelScale > 0.0f ? LabelScale : skin.TextScale;
-        Vector4 colour = (primary ? OnFill(skin, FillOf(skin)) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint;
+        Vector4 colour = (LabelColor ?? (primary ? OnFill(skin, FillOf(skin)) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor)) * tint;
         string label = Resolve(Label);
         if (IconColor is { } iconColour && Icon.Length > 0 && label.Length > 0 && Align is Origin.Left or Origin.Center or Origin.Right)
         {

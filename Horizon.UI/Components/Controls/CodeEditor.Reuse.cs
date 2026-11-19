@@ -75,6 +75,8 @@ public partial class CodeEditor
             hash.Add(diagnostics);
             hash.Add(diagnostics.Count);
             hash.Add(moreErrors.Count);
+            hash.Add(spellingVersion);
+            hash.Add(spelling);
             hash.Add(inlineHints);
             hash.Add(inlineHints.Count);
             hash.Add(lenses);

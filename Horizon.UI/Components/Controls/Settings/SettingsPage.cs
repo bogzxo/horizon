@@ -77,8 +77,14 @@ public partial class SettingsPage : UIComponent
 
     // How wide a row gets on a wide window. Its sentence stops short of the whole of it and what sets it goes in a column
     // down the right, so a wide row is room for both rather than a line too long to read. It was 1120 and on a big screen
-    // the rows were a strip down the left of a window that was mostly empty
-    private const float MAX_ROW = 1600.0f;
+    // the rows were a strip down the left of a window that was mostly empty. At 1600 what set a row was a hand's width
+    // from what it said, so a row is its sentence's column, the gap and the control's column (SettingRow's HELP_MOST,
+    // COLUMN_GAP and CONTROL_COLUMN with its padding) and no more, and the rows sit in the middle of the room with the
+    // search over them
+    private const float MAX_ROW = 1000.0f;
+
+    // How far in the rows and the search are from the left of the room, half of what the rows leave of it
+    private float rowsLeft;
 
     /// <summary>
     /// How much bigger than the skin's the page draws its text and the controls and columns round it, 1 as it comes. A
@@ -369,6 +375,7 @@ public partial class SettingsPage : UIComponent
         search.OnChanged = Filter;
         search.OnKey = SearchKey;
         search.TakeKey = SearchTakeKey;
+        MakeChips();
 
         // How many the search found and the x that empties it, both over the right end of the box and only while it has
         // something in it
@@ -638,6 +645,7 @@ public partial class SettingsPage : UIComponent
         FindCurrent();
         UpdateKeys();
         ShowFocused();
+        UpdateChips(dt);
         if (navStale)
             UpdateNav();
 
@@ -650,12 +658,19 @@ public partial class SettingsPage : UIComponent
     {
         var titleArea = new UIRect(new Vector2(content.Min.X, content.Max.Y - SearchHeight), new Vector2(content.Min.X + NavWidth, content.Max.Y));
         float closeWidth = close.Visible ? SearchHeight + GAP : 0.0f;
-        var scrollArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Min.Y), new Vector2(content.Max.X, content.Max.Y - SearchHeight - GAP));
+        var scrollArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Min.Y), new Vector2(content.Max.X, content.Max.Y - SearchHeight - GAP - ChipsRoom));
 
         // The search ends where the rows do, so the box, the rows and the controls down their right share one edge. It ran
         // on to the window's edge past rows held to MAX_ROW and the two edges were a hand apart
-        float rowsEnd = scrollArea.Min.X + scroll.Padding.Left + RowWidth(scrollArea.Width - RowsInset);
-        var searchArea = new UIRect(new Vector2(content.Min.X + NavRoom, content.Max.Y - SearchHeight), new Vector2(MathF.Min(content.Max.X - GAP - closeWidth, rowsEnd), content.Max.Y));
+        float rowWidth = RowWidth(scrollArea.Width - RowsInset);
+        float left = MathF.Floor(MathF.Max(0.0f, (scrollArea.Width - RowsInset - rowWidth) * 0.5f));
+        if (MathF.Abs(left - rowsLeft) > 0.5f)
+        {
+            rowsLeft = left;
+            rows.Padding = new UIEdges(left, 0.0f, 0.0f, 0.0f);
+        }
+        float rowsEnd = scrollArea.Min.X + scroll.Padding.Left + rowsLeft + rowWidth;
+        var searchArea = new UIRect(new Vector2(content.Min.X + NavRoom + rowsLeft, content.Max.Y - SearchHeight), new Vector2(MathF.Min(content.Max.X - GAP - closeWidth, rowsEnd), content.Max.Y));
         title.ArrangeTree(titleArea);
         close.ArrangeTree(new UIRect(new Vector2(content.Max.X - SearchHeight, content.Max.Y - SearchHeight), content.Max));
         // With no title the sections go up to the top, beside the search
@@ -663,6 +678,13 @@ public partial class SettingsPage : UIComponent
         var navArea = new UIRect(new Vector2(content.Min.X, content.Min.Y), new Vector2(content.Min.X + NavWidth, navTop));
         search.ArrangeTree(searchArea);
         ArrangeSearchEnd(searchArea);
+
+        // The chips on a line of their own under the search, from its left edge
+        if (ShowChips)
+        {
+            float chipsTop = searchArea.Min.Y - GAP * 0.5f;
+            chips.ArrangeTree(new UIRect(new Vector2(searchArea.Min.X, chipsTop - ChipHeight), new Vector2(searchArea.Max.X, chipsTop)));
+        }
 
         // What a search that found nothing says, in the middle of where the rows would be
         var rowsArea = new UIRect(scrollArea.Min, new Vector2(MathF.Min(scrollArea.Max.X, rowsEnd), scrollArea.Max.Y));

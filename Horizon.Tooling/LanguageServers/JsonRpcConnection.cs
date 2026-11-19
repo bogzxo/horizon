@@ -48,12 +48,43 @@ public sealed class JsonRpcConnection : IDisposable
 
     /// <param name="input">What the other side writes, read from here.</param>
     /// <param name="output">What this side writes to the other.</param>
-    public JsonRpcConnection(Stream input, Stream output)
+    public JsonRpcConnection(Stream input, Stream output, string? traceName = null)
     {
         this.input = input;
         this.output = output;
+        trace = OpenTrace(traceName);
         reader = new Thread(Read) { IsBackground = true, Name = "json-rpc reader" };
         reader.Start();
+    }
+
+    // Every message both ways with the time it went, into a file of its own a connection in the folder HORIZON_LSP_TRACE
+    // names, for finding out what a server was asked and what it said back. Nothing without it
+    private readonly StreamWriter? trace;
+    private readonly long traceStart = Environment.TickCount64;
+
+    private static StreamWriter? OpenTrace(string? name)
+    {
+        if (Environment.GetEnvironmentVariable("HORIZON_LSP_TRACE") is not { Length: > 0 } folder)
+            return null;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            string file = Path.Combine(folder, $"{name ?? "lsp"}-{Environment.ProcessId}-{Environment.TickCount64}.log");
+            return new StreamWriter(file, append: false, Encoding.UTF8) { AutoFlush = true };
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private void Trace(string way, ReadOnlySpan<byte> body)
+    {
+        if (trace is null)
+            return;
+        string text = Encoding.UTF8.GetString(body);
+        lock (trace)
+            trace.WriteLine($"{(Environment.TickCount64 - traceStart) / 1000.0,9:0.000} {way} {(text.Length > 600 ? text[..600] + "..." : text)}");
     }
 
     /// <summary>Hands the notifications of a method to a handler, replacing any before it.</summary>
@@ -108,6 +139,7 @@ public sealed class JsonRpcConnection : IDisposable
         ReadOnlySpan<byte> body = buffer.WrittenSpan;
         byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
 
+        Trace(">>", body);
         lock (writing)
         {
             output.Write(header);
@@ -127,6 +159,7 @@ public sealed class JsonRpcConnection : IDisposable
                 byte[]? body = ReadMessage();
                 if (body is null)
                     break;
+                Trace("<<", body);
 
                 JsonNode? message;
                 try

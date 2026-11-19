@@ -62,6 +62,12 @@ public sealed class SettingsTexts
 
     public string FilterModified { get; init; } = "Modified settings";
 
+    /// <summary>The chip under the search that leaves only what's changed, {count} how many that is.</summary>
+    public string ChipModified { get; init; } = "Modified {count}";
+
+    /// <summary>The chip under the search that shows every setting again, the search's filters off.</summary>
+    public string ChipAll { get; init; } = "All";
+
     public string FilterId { get; init; } = "Setting by ID";
 
     public string FilterSection { get; init; } = "Settings in a section";

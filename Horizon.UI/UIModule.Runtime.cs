@@ -173,6 +173,7 @@ public partial class UIModule
         Register<Graph>("graph");
         Register<SegmentBar>("segments");
         Register<Symbol>("symbol");
+        Register<Badge>("badge");
         Register<StatusBar>("status_bar");
         Register<TabStrip>("tab_strip");
         Register<Breadcrumbs>("breadcrumbs");

@@ -39,6 +39,29 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>The language id the protocol knows the files by, csharp, python, json.</summary>
     public string LanguageId { get; }
 
+    /// <summary>The language id of a file by its extension where it isn't <see cref="LanguageId"/>, null for none (see <see cref="LanguageServers.Registration"/>).</summary>
+    public IReadOnlyDictionary<string, string>? LanguageIds { get; }
+
+    /// <summary>What it was told as it was initialized, null for nothing.</summary>
+    public JsonObject? InitializationOptions { get; }
+
+    /// <summary>Whether it was told the editor asks for what's wrong rather than being told (see <see cref="LanguageServers.Registration"/>).</summary>
+    public bool PullDiagnosticsWanted { get; }
+
+    /// <summary>The language id a file is opened with, by its extension, <see cref="LanguageId"/> when nothing says otherwise.</summary>
+    public string LanguageIdOf(string path)
+    {
+        if (LanguageIds is { Count: > 0 } ids)
+        {
+            string extension = Path.GetExtension(path);
+            foreach (var (known, id) in ids)
+                if (known.Equals(extension, StringComparison.OrdinalIgnoreCase))
+                    return id;
+        }
+
+        return LanguageId;
+    }
+
     /// <summary>The folder it was started in, the workspace as far as the server knows.</summary>
     public string RootDirectory { get; }
 
@@ -58,7 +81,18 @@ public sealed partial class LanguageServer : IDisposable
     /// (<c>{ d: { lintOnFileOpen: "always" } }</c> for serve-d), said once it's up and answered whenever it asks for a
     /// section. Null for a server left to its own, which isn't told the editor has any.
     /// </summary>
-    public JsonObject? Settings { get; }
+    public JsonObject? Settings { get; private set; }
+
+    /// <summary>
+    /// What it's told to be changed while it runs: said to it as a change of configuration, and what it's answered from
+    /// now on when it asks for a section. A server that was started with no settings said it can't be asked for them,
+    /// it's still told.
+    /// </summary>
+    public void ChangeSettings(JsonObject? settings)
+    {
+        Settings = settings;
+        Later(() => rpc.Notify("workspace/didChangeConfiguration", new JsonObject { ["settings"] = settings?.DeepClone() ?? new JsonObject() }));
+    }
 
     /// <summary>Whether initialize has been answered, after which what was asked goes straight out.</summary>
     public bool IsReady { get; private set; }
@@ -78,10 +112,14 @@ public sealed partial class LanguageServer : IDisposable
     // What has been asked of the server and not answered, answered with nothing when it stops
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
-    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null)
+    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false)
     {
         Name = name;
         LanguageId = languageId;
+        LanguageIds = languageIds;
+        InitializationOptions = initializationOptions;
+        PullDiagnosticsWanted = pullDiagnostics;
         RootDirectory = rootDirectory;
         Settings = settings;
         this.errorOutput = errorOutput;
@@ -98,7 +136,10 @@ public sealed partial class LanguageServer : IDisposable
     /// (the command isn't there), see <see cref="LanguageServers.IsAvailable"/> for asking first.
     /// </summary>
     /// <param name="settings">What it's told to be (see <see cref="Settings"/>), null for whatever it is by itself.</param>
-    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null)
+    /// <param name="initializationOptions">What it's told as it's initialized, null for nothing.</param>
+    /// <param name="languageIds">The language id of a file by its extension where it isn't <paramref name="languageId"/>.</param>
+    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false)
     {
         Process? process;
         try
@@ -127,12 +168,14 @@ public sealed partial class LanguageServer : IDisposable
         var errors = new LanguageServerOutput();
         _ = errors.Read(process.StandardError);
 
-        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings, errors);
+        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream, name), settings, errors,
+            initializationOptions, languageIds, pullDiagnostics);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
-    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null) =>
-        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings);
+    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false) =>
+        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings, null, initializationOptions, languageIds, pullDiagnostics);
 
     private async void Initialize()
     {
@@ -219,6 +262,13 @@ public sealed partial class LanguageServer : IDisposable
             }
         };
 
+        // Asking what's wrong, said only to a server that has to be asked (LanguageServer.PullDiagnostics)
+        if (PullDiagnosticsWanted)
+        {
+            ((JsonObject)capabilities["textDocument"]!)["diagnostic"] = new JsonObject { ["dynamicRegistration"] = false, ["relatedDocumentSupport"] = false };
+            ((JsonObject)capabilities["workspace"]!)["diagnostics"] = new JsonObject { ["refreshSupport"] = true };
+        }
+
         string rootUri = UriOf(RootDirectory);
         var parameters = new JsonObject
         {
@@ -229,6 +279,8 @@ public sealed partial class LanguageServer : IDisposable
             ["capabilities"] = capabilities,
             ["workspaceFolders"] = new JsonArray(new JsonObject { ["uri"] = rootUri, ["name"] = Path.GetFileName(RootDirectory) })
         };
+        if (InitializationOptions is not null)
+            parameters["initializationOptions"] = InitializationOptions.DeepClone();
 
         try
         {
@@ -340,7 +392,9 @@ public sealed partial class LanguageServer : IDisposable
     private static readonly HashSet<string> BACKGROUND_METHODS = new(StringComparer.Ordinal)
     {
         "textDocument/semanticTokens/full", "textDocument/semanticTokens/range", "textDocument/inlayHint",
-        "textDocument/codeLens", "textDocument/foldingRange", "textDocument/documentSymbol", "textDocument/documentHighlight"
+        "textDocument/codeLens", "textDocument/foldingRange", "textDocument/documentSymbol", "textDocument/documentHighlight",
+        // What's wrong, for a server that's asked (LanguageServer.PullDiagnostics), a whole file's worth of work
+        "textDocument/diagnostic"
     };
 
     // How long after the last change or completion the held requests go out, and the longest they're held for
@@ -407,8 +461,9 @@ public sealed partial class LanguageServer : IDisposable
             }
             rpc.Notify("textDocument/didOpen", new JsonObject
             {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageId, ["version"] = version, ["text"] = text }
+                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = text }
             });
+            PullSoon(full);
         });
     }
 
@@ -434,6 +489,7 @@ public sealed partial class LanguageServer : IDisposable
                 ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
                 ["contentChanges"] = new JsonArray(change)
             });
+            PullSoon(full);
         });
     }
 
@@ -466,6 +522,7 @@ public sealed partial class LanguageServer : IDisposable
                 synchronizedText.Remove(full);
             }
 
+            ForgetPulls(full);
             rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
         });
     }
@@ -628,8 +685,15 @@ public sealed partial class LanguageServer : IDisposable
         }
 
         string prose = markdown[..cut];
+        // A picture says nothing in text, VS Code's CSS docs started a line with "!Baseline icon"
+        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"!\[[^\]]*\]\([^)]*\)", string.Empty);
         prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\[([^\]]*)\]\([^)]*\)", "$1");
         prose = prose.Replace("**", string.Empty, StringComparison.Ordinal).Replace("`", string.Empty, StringComparison.Ordinal);
+        // _Emphasis_ the way the bold is, and a mark written escaped as itself, "elements\." was said with its backslash
+        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"(?<![\w\\])_(\S(?:[^_]*\S)?)_(?!\w)", "$1");
+        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\\([\\`*_{}\[\]()#+\-.!|~<>])", "$1");
+        // And what's written as an HTML entity as its character, CSS's syntax said "&lt;color&gt;"
+        prose = System.Net.WebUtility.HtmlDecode(prose);
 
         // A dash the fonts have, serve-d's long one came out as a question mark
         prose = prose.Replace('—', '-').Replace('–', '-');
@@ -658,7 +722,23 @@ public sealed partial class LanguageServer : IDisposable
             if ((at > 0 && Word(detail[at - 1])) || (after < detail.Length && Word(detail[after])))
                 continue;
 
-            string left = string.Join(' ', (detail[..at] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            // A name said with what it's a member of goes with it, csharp-ls's "Voice Mixer.Add(float ...)" was
+            // "Voice Mixer. (float ...)" and TypeScript's "(property) Track.title: string" was "Track. : string"
+            int from = at;
+            while (from > 0 && detail[from - 1] == '.')
+            {
+                from--;
+                while (from > 0 && (Word(detail[from - 1]) || detail[from - 1] is '<' or '>' or ','))
+                    from--;
+            }
+
+            string left = string.Join(' ', (detail[..from] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            // What kind it is in brackets in front, TypeScript's "(property)", is the icon's to say, and what's left of
+            // "x: string" is the type
+            left = System.Text.RegularExpressions.Regex.Replace(left, @"^\((?:[a-z]+ ?)+\)\s*", string.Empty);
+            left = left.Replace(" :", ":", StringComparison.Ordinal);
+            if (left.StartsWith(':'))
+                left = left[1..].TrimStart();
             return left.Length > 0 ? left : detail;
         }
 

@@ -815,6 +815,12 @@ public partial class CodeEditor : UIComponent
     /// <summary>Offered Enter after an open completion list; true submits a code prompt instead of inserting a line.</summary>
     public Func<bool>? OnEnter { get; set; }
 
+    /// <summary>
+    /// Offered Up (-1) and Down (1) before they move the caret, every repeat of a held key as well; true when it took the
+    /// key. For a list of the owner's over the box, which a shortcut moved once a press while the caret went too.
+    /// </summary>
+    public Func<int, bool>? OnUpDown { get; set; }
+
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
 
@@ -1748,6 +1754,10 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        // Up and down offered to whoever has a list over the box first (a chat's / commands), held keys repeating here
+        if (character is UIKeyboard.UP or UIKeyboard.DOWN && OnUpDown?.Invoke(character == UIKeyboard.UP ? -1 : 1) == true)
+            return;
+
         // Up and down go through a call's overloads while it has more than one, Visual Studio's way
         if (character is UIKeyboard.UP or UIKeyboard.DOWN && StepOverload(character == UIKeyboard.UP ? -1 : 1))
             return;
@@ -2246,14 +2256,15 @@ public partial class CodeEditor : UIComponent
             // The text in the middle of its row
             float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
+            Vector4 ink = colors.Of(UICompletionKinds.SyntaxOf(item.Kind));
             float iconRoom = CompletionIconRoom(lineHeight);
             if (iconRoom > 0.0f && UICompletionKinds.IconOf(item.Kind) is { Length: > 0 } icon)
             {
                 float side = iconRoom - COMPLETION_ICON_GAP;
                 float middle = MathF.Round(row.Center.Y);
-                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), skin.DimTextColor);
+                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), ink);
             }
-            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, colors.Name, markup: false);
+            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, ink, markup: false);
 
             if (item.Detail.Length > 0)
             {
@@ -2895,6 +2906,7 @@ public partial class CodeEditor : UIComponent
         for (int i = 0; i < diagnostics.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], firstLine, lastLine);
 
+        PaintSpelling(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // How the call being typed is called, over it
