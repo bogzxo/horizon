@@ -62,6 +62,9 @@ public sealed partial class UIDrawList
     internal void Uncacheable() => uncacheable++;
 
     /// <summary>Where a component is painted, as a number that's another whenever any of it is, see <see cref="TryReuse"/>.</summary>
+    // The skin's colours as one number, taken as the paint began
+    private int paletteFingerprint;
+
     internal int PaintContext(UIRect bounds)
     {
         var hash = new HashCode();
@@ -76,7 +79,7 @@ public sealed partial class UIDrawList
         hash.Add(laid);
         hash.Add(Skin);
         hash.Add(UISkins.Version);
-        hash.Add(Skin.Palette.Fingerprint());
+        hash.Add(paletteFingerprint);
         hash.Add(font);
         foreach (var (area, top, bottom) in fades)
         {

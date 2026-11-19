@@ -168,6 +168,8 @@ public sealed partial class UIDrawList
     internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, float? clock = null)
     {
         Skin = skin;
+        // Its colours hashed once a paint rather than for every component (see PaintContext), the theme only changes between
+        paletteFingerprint = skin.Palette.Fingerprint();
 
         this.frame = frame;
         deltaTime = dt;

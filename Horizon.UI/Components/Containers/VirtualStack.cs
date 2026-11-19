@@ -269,9 +269,13 @@ public class VirtualStack : ScrollPanel
     {
         if (ItemCount == 0 || Make is null)
         {
-            foreach (var (index, component) in realized.ToArray())
-                Release(index, component);
-            realized.Clear();
+            // Nothing to let go of is the usual, an empty list laid out every tick allocated a copy of none each time
+            if (realized.Count > 0)
+            {
+                foreach (var (index, component) in realized.ToArray())
+                    Release(index, component);
+                realized.Clear();
+            }
             Realized = (0, -1);
             return;
         }
