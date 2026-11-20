@@ -205,6 +205,20 @@ public partial class CodeEditor : UIComponent
     private string? freshText;
     private List<SyntaxSpan>? freshSpans;
 
+    // How many letters of a long line (see LongLineSpans) are read on the editor's thread a paint at most, a dozen ms or
+    // so in a Debug build, and how far past the last of it in sight it's read, room to scroll into before it's read on
+    private const int LONG_BUDGET = 8 * 1024;
+    private const int LONG_AHEAD = 4 * 1024;
+
+    // How far into each long line the rows the last paint drew go, by the line, what reading it aims for (LongColours)
+    private readonly Dictionary<int, int> longInSight = [];
+
+    // The paint a long line was last read on in (one read a paint), whether a read stopped short of what's in sight, and
+    // the last read of a long line by its line and the very string, what the next read of it goes on from
+    private int longReadPaint = -1;
+    private bool longReading;
+    private (int Line, string Text, List<SyntaxSpan> Spans)? longLast;
+
     // The parse going on off the editor's thread, what it found and for which version of the text
     private sealed record Checked(int Version, UICodeDiagnostic? Error, List<UICodeDiagnostic> More);
     private Task<Checked>? checking;
@@ -1082,14 +1096,21 @@ public partial class CodeEditor : UIComponent
         lineStarts = new CodeLineStart[count];
         colouredWith = Highlight ? highlighter : null;
 
-        if (Highlight && count > COLOUR_AT_ONCE)
+        int firstLong = Highlight ? FirstLongLine(Math.Min(count, COLOUR_AT_ONCE)) : -1;
+        if (Highlight && (count > COLOUR_AT_ONCE || firstLong >= 0))
         {
             // A big file has its top coloured now and the rest plain, all of it coloured on a thread of the pool and taken
             // in when it's done. Reading a 100,000 line file through the grammar on the spot held the window up for nine
-            // seconds before it showed a thing
-            List<SyntaxSpan>[] top = highlighter.Read(document.Text, COLOUR_AT_ONCE, lineStarts, swatches, art);
-            spans = PlainSpans();
-            Array.Copy(top, spans, Math.Min(top.Length, spans.Length));
+            // seconds before it showed a thing. A line too long to read on the spot stops the top there, what of it is
+            // in sight is read a paint at a time meanwhile (LongColours)
+            int now = firstLong >= 0 ? firstLong : COLOUR_AT_ONCE;
+            spans = PlainSpans(longLines: true);
+            if (now > 0)
+            {
+                List<SyntaxSpan>[] top = highlighter.Read(document.Text, now, lineStarts, swatches, art);
+                Array.Copy(top, spans, Math.Min(Math.Min(top.Length, now), spans.Length));
+            }
+
             colouredWith = null;
             coloured = document.Version - 1;
         }
@@ -1170,6 +1191,8 @@ public partial class CodeEditor : UIComponent
     {
         if (!Highlight || text.Length == 0)
             return null;
+        if (text.Length > TextMateHighlighter.LONG_LINE)
+            return LongColours(line, text);
 
         // The line asked for again as it was, every row of it in a paint. Looked up by its text it was hashed whole each
         // time, a long line's every row went through all of it
@@ -1206,21 +1229,101 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     private List<SyntaxSpan>? ColoursOf(int line, string text)
     {
+        List<SyntaxSpan>? found = null;
         if (line < colouredLines.Length && colouredLines[line] == text)
-            return spans[line];
+        {
+            found = spans[line];
+        }
+        else
+        {
+            int was = line - (document.LineCount - colouredLines.Length);
+            if (was >= 0 && was < colouredLines.Length && colouredLines[was] == text)
+                found = spans[was];
+        }
 
-        int was = line - (document.LineCount - colouredLines.Length);
-        return was >= 0 && was < colouredLines.Length && colouredLines[was] == text ? spans[was] : null;
+        // A long line not read to its end yet is read on by LongColours
+        return found is LongLineSpans { Whole: false } ? null : found;
     }
 
-    // Every line all one span, for text that isn't coloured as code
-    private List<SyntaxSpan>[] PlainSpans()
+    /// <summary>
+    /// The colours of a line too long to read whole on the spot (see <see cref="LongLineSpans"/>), read from its start a
+    /// piece at a time as far as a little past what of it is in sight, going on from the last read of it, LONG_BUDGET
+    /// letters a paint at most. Until it's that far the editor paints every tick (see PaintVersion), so what's in sight is
+    /// coloured a little more each one, and scrolled along it's read on again. Typed into, it's read again from just
+    /// before the edit and the rest taken over from the last read once the grammar is where it was (TextMateHighlighter).
+    /// The pool reads all of it meanwhile and that takes over when it's done.
+    /// </summary>
+    private List<SyntaxSpan>? LongColours(int line, string text)
+    {
+        List<SyntaxSpan>? have = ReferenceEquals(text, freshText) ? freshSpans : fresh.GetValueOrDefault(text);
+        int goal = longInSight.TryGetValue(line, out int seen) ? Math.Min(text.Length, seen + LONG_AHEAD) : 0;
+        if (have is not null && (have is not LongLineSpans { ReadTo: var readSoFar } || readSoFar >= goal || longReadPaint == flowPaint))
+        {
+            if (have is LongLineSpans { ReadTo: var shortOf } && shortOf < goal)
+                longReading = true;
+            (freshText, freshSpans) = (text, have);
+            return have;
+        }
+
+        // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
+        int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
+        if (was < 0 || was >= lineStarts.Length)
+            return have;
+
+        // Gone on from the read of this text so far, else (it was typed into) whichever got further of the line's last read
+        // here and the colouring's, which has all of it once the pool is done
+        var (from, fromText) = have is not null ? (have, text)
+            : was < colouredLines.Length && was < spans.Length ? (spans[was], colouredLines[was]) : ((List<SyntaxSpan>?)null, (string?)null);
+        if (have is null && longLast is { } last && last.Line == line && ReadSoFar(last.Spans) > ReadSoFar(from))
+            (from, fromText) = (last.Spans, last.Text);
+
+        // A highlighter that can't reads all of it, as any line
+        List<SyntaxSpan>? read = highlighter.ReadUpTo(text, lineStarts[was], goal, LONG_BUDGET, from, fromText);
+        if (read is null && (!highlighter.TryReadLine(text, lineStarts[was], out read) || read is null))
+        {
+            GameEngine.Instance?.WindowManager.RequestTickIn(0.016f);
+            return null;
+        }
+
+        longReadPaint = flowPaint;
+        if (read is LongLineSpans { ReadTo: var reached } && reached < goal)
+            longReading = true;
+
+        if (fresh.Count >= MAX_FRESH)
+            fresh.Clear();
+        fresh[text] = read;
+        (freshText, freshSpans) = (text, read);
+        longLast = (line, text, read);
+        return read;
+    }
+
+    // How far into its line a read of a long line got, -1 for colours that weren't read that way
+    private static int ReadSoFar(List<SyntaxSpan>? read) => read is LongLineSpans { ReadTo: var to } ? to : -1;
+
+    // Helper method for the first of so many lines too long to read on the spot, -1 for none
+    private int FirstLongLine(int count)
+    {
+        if (document.Text.Length <= TextMateHighlighter.LONG_LINE)
+            return -1;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (document.LineAt(i).Length > TextMateHighlighter.LONG_LINE)
+                return i;
+        }
+
+        return -1;
+    }
+
+    // Every line all one span, for text that isn't coloured as code, or a long line nothing of which is read yet
+    private List<SyntaxSpan>[] PlainSpans(bool longLines = false)
     {
         var plain = new List<SyntaxSpan>[document.LineCount];
         for (int i = 0; i < plain.Length; i++)
         {
             int length = document.LineAt(i).Length;
-            plain[i] = length > 0 ? [new SyntaxSpan(0, length, SyntaxKind.Name)] : [];
+            plain[i] = longLines && length > TextMateHighlighter.LONG_LINE ? new LongLineSpans(length)
+                : length > 0 ? [new SyntaxSpan(0, length, SyntaxKind.Name)] : [];
         }
 
         return plain;
@@ -2858,6 +2961,20 @@ public partial class CodeEditor : UIComponent
         // ticks. A row is drawn up to its right and only measured to its left, an unwrapped line of a fifth of a megabyte
         // (an agent's chat saved as JSON) was drawn whole every paint, every letter clipped, 50 ms a frame
         float drawnFrom = area.Min.X - area.Width, drawnTo = area.Max.X + area.Width;
+
+        // How far into each long line the rows painted go, what reading it goes on to (LongColours). Unwrapped, as far as
+        // the right edge is in digits along it
+        longInSight.Clear();
+        longReading = false;
+        for (int index = paintFrom; index <= paintTo; index++)
+        {
+            CodeRow row = rows[index];
+            if (row.Lens || document.LineAt(row.Line) is not { Length: > TextMateHighlighter.LONG_LINE } longLine)
+                continue;
+
+            int to = wordWrap ? row.End : row.Start + (int)((scrollX + area.Width) / MathF.Max(1.0f, digit)) + 1;
+            longInSight[row.Line] = Math.Max(longInSight.GetValueOrDefault(row.Line), Math.Min(to, longLine.Length));
+        }
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];

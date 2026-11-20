@@ -15,7 +15,8 @@ public partial class CodeEditor
     {
         get
         {
-            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar)
+            // A long line read a paint at a time is still short of what of it is in sight too (see LongColours)
+            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar || longReading)
                 return -1;
             if (caretSeen && CaretGlide > 0.0f && glideTime < CaretGlide)
                 return -1;

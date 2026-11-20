@@ -39,6 +39,14 @@ public interface ICodeHighlighter
     }
 
     /// <summary>
+    /// A line too long to read through the grammar whole on the spot (see <see cref="LongLineSpans"/>) read from its
+    /// start as far as <paramref name="goal"/>, no more than <paramref name="budget"/> letters of it this time, going on
+    /// from how it was read before (<paramref name="last"/>, of <paramref name="lastLine"/>, the line as it was then).
+    /// Null when the highlighter can't, the line is then read whole.
+    /// </summary>
+    List<SyntaxSpan>? ReadUpTo(string line, in CodeLineStart start, int goal, int budget, List<SyntaxSpan>? last, string? lastLine) => null;
+
+    /// <summary>
     /// Colours code again after it was edited, given the last colouring of it. What comes out is what <see cref="Read"/>
     /// would make, one that can do better reads from the first line that changed and stops once a line after the edit
     /// starts the way it did last time, the rest taken over from then. Typing into a file of twenty thousand lines read
