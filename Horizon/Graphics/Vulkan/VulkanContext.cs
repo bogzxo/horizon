@@ -289,8 +289,8 @@ internal sealed unsafe class VulkanContext : IDisposable
 #if !DEBUG
         wantLabels = string.Equals(labels, "on", StringComparison.OrdinalIgnoreCase) || labels == "1";
 #endif
-        // Read the once, the loader looks through every layer it knows of each time it's asked, which was a tenth of a
-        // second of every start asked twice
+        // Read the once, the loader looks through every layer it knows of each time it's asked, five to twenty
+        // milliseconds of every start for asking it a second time
         HashSet<string> available = InstanceExtensions();
         bool wantDebugUtils = (ValidationEnabled || wantLabels) && available.Contains(ExtDebugUtils.ExtensionName);
 
