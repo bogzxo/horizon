@@ -110,7 +110,7 @@ public static partial class UIChooser
 
             // the shorter one goes first between two as good, nothing typed keeps the list's own order
             if (query.Trim().Length > 0)
-                ordered = ordered.ThenBy(pair => Columns(pair.Text).Text.Length);
+                ordered = ordered.ThenBy(pair => SaidOf(pair.Text).Length);
             var left = ordered.Select(pair => pair.Text);
 
             string[] lead = showing == '\0' && recent is not null
@@ -410,6 +410,20 @@ public static partial class UIChooser
         return (quiet, text, keys);
     }
 
+    // What a choice says, the middle of its Columns, found in place for Rank, which asks it of every choice every key
+    private static ReadOnlySpan<char> SaidOf(string text)
+    {
+        ReadOnlySpan<char> said = text;
+        int open = text.LastIndexOf("   (", StringComparison.Ordinal);
+        if (open > 0 && text.EndsWith(')'))
+            said = said[..open];
+
+        int colon = said.IndexOf(": ", StringComparison.Ordinal);
+        if (colon > 0 && colon <= 32 && said[..colon].IndexOfAny('/', '\\') < 0)
+            said = said[(colon + 2)..];
+        return said;
+    }
+
     // The rank of a choice that only has the letters typed in a few pieces each starting a word, see Rank
     private const int LOOSE = 5;
 
@@ -427,14 +441,16 @@ public static partial class UIChooser
         if (query.Length == 0)
             return 0;
 
-        string said = Columns(text).Text;
+        ReadOnlySpan<char> said = SaidOf(text);
         if (said.StartsWith(query, StringComparison.OrdinalIgnoreCase))
             return 0;
 
-        for (int at = said.IndexOf(query, StringComparison.OrdinalIgnoreCase); at >= 0; at = said.IndexOf(query, at + 1, StringComparison.OrdinalIgnoreCase))
+        for (int at = said.IndexOf(query, StringComparison.OrdinalIgnoreCase); at >= 0;)
         {
             if (at == 0 || !char.IsLetterOrDigit(said[at - 1]))
                 return 1;
+            int further = said[(at + 1)..].IndexOf(query, StringComparison.OrdinalIgnoreCase);
+            at = further < 0 ? -1 : at + 1 + further;
         }
 
         if (said.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -492,26 +508,58 @@ public static partial class UIChooser
     // rest each starting a word. runs[t] is the fewest pieces it takes with the letter so far landing at t
     private static bool FewRuns(string text, string typed)
     {
-        string letters = string.Concat(typed.Where(letter => !char.IsWhiteSpace(letter)));
-        if (letters.Length == 0)
-            return true;
-        if (letters.Length > text.Length)
-            return false;
+        // Asked of every choice that doesn't have what was typed whole, every key, so nothing is allocated for a short
+        // choice: the letters, the text in capitals and the two rows of counts are on the stack, a long one borrows them.
+        // Each letter is put in capitals once here, rather than once for every letter typed in the walk below
+        int[]? rentedRuns = null;
+        char[]? rentedChars = null;
+        try
+        {
+            int chars = typed.Length + text.Length;
+            Span<char> buffer = chars <= 384 ? stackalloc char[chars] : rentedChars = System.Buffers.ArrayPool<char>.Shared.Rent(chars);
+            Span<char> letters = buffer[..typed.Length];
+            int count = 0;
+            foreach (char letter in typed)
+            {
+                if (!char.IsWhiteSpace(letter))
+                    letters[count++] = char.ToUpperInvariant(letter);
+            }
+            if (count == 0)
+                return true;
+            if (count > text.Length)
+                return false;
 
+            Span<char> upper = buffer.Slice(typed.Length, text.Length);
+            for (int t = 0; t < text.Length; t++)
+                upper[t] = char.ToUpperInvariant(text[t]);
+
+            Span<int> both = text.Length <= 256 ? stackalloc int[text.Length * 2] : rentedRuns = System.Buffers.ArrayPool<int>.Shared.Rent(text.Length * 2);
+            return FewRuns(text, upper, letters[..count], both[..text.Length], both.Slice(text.Length, text.Length));
+        }
+        finally
+        {
+            if (rentedRuns is not null)
+                System.Buffers.ArrayPool<int>.Shared.Return(rentedRuns);
+            if (rentedChars is not null)
+                System.Buffers.ArrayPool<char>.Shared.Return(rentedChars);
+        }
+    }
+
+    // The walk itself, the text and the letters typed both in capitals
+    private static bool FewRuns(string text, ReadOnlySpan<char> upper, ReadOnlySpan<char> letters, Span<int> runs, Span<int> next)
+    {
         const int NONE = int.MaxValue / 2;
-        var runs = new int[text.Length];
-        var next = new int[text.Length];
         for (int t = 0; t < text.Length; t++)
-            runs[t] = Same(text[t], letters[0]) ? 1 : NONE;
+            runs[t] = upper[t] == letters[0] ? 1 : NONE;
 
         for (int i = 1; i < letters.Length; i++)
         {
             // the fewest pieces for the last letter anywhere before t, for a new piece starting at t
-            int fewest = NONE;
+            int fewest = NONE, leastNext = NONE;
             for (int t = 0; t < text.Length; t++)
             {
                 int best = NONE;
-                if (Same(text[t], letters[i]))
+                if (upper[t] == letters[i])
                 {
                     if (t > 0)
                         best = runs[t - 1];
@@ -520,12 +568,22 @@ public static partial class UIChooser
                 }
 
                 next[t] = best;
+                leastNext = Math.Min(leastNext, best);
                 fewest = Math.Min(fewest, runs[t]);
             }
 
-            (runs, next) = (next, runs);
+            // A count is never fewer than the fewest of the letter before, so once every one is past the most it stays so
+            if (leastNext > MOST_RUNS)
+                return false;
+
+            Span<int> swap = runs;
+            runs = next;
+            next = swap;
         }
 
-        return runs.Min() <= MOST_RUNS;
+        int least = NONE;
+        foreach (int pieces in runs)
+            least = Math.Min(least, pieces);
+        return least <= MOST_RUNS;
     }
 }
