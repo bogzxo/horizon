@@ -97,6 +97,7 @@ internal sealed class UIRenderer
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
+        GroupSubpixels();
         FindBlends();
     }
 
@@ -125,6 +126,7 @@ internal sealed class UIRenderer
             glass.Add(pane);
 
         skin = listSkin;
+        GroupSubpixels();
         FindBlends();
     }
 
@@ -237,6 +239,72 @@ internal sealed class UIRenderer
         (flags & SpriteItem.SubpixelEraseFlag) != 0 ? SubpixelErase
         : (flags & SpriteItem.SubpixelInkFlag) != 0 ? SubpixelInk
         : BlendMode.Alpha;
+
+    // Where subpixel letters are partitioned, kept from one upload to the next
+    private SpriteItem[] grouping = [];
+
+    /// <summary>
+    /// Every subpixel letter is two quads drawn with two blends, and a text put each of its letters' halves down together,
+    /// so a screen of labels was three blends a label, erase, ink and back, each a draw of its own. Where the quads of
+    /// several texts follow each other with nothing else between them (labels painted one after another), all their
+    /// erasing halves go first and then all their ink, two draws for the lot. It only differs where two letters' ink
+    /// overlaps, which text doesn't. Never across a run (the textures it shows) or a pane of glass (drawn between them).
+    /// </summary>
+    private void GroupSubpixels()
+    {
+        const uint SUBPIXEL = SpriteItem.SubpixelEraseFlag | SpriteItem.SubpixelInkFlag;
+        foreach (var run in runs)
+        {
+            int end = Math.Min(run.First + run.Count, itemCount);
+            int at = Math.Max(0, run.First);
+            while (at < end)
+            {
+                if ((items[at].Flags & SUBPIXEL) == 0)
+                {
+                    at++;
+                    continue;
+                }
+
+                int start = at++;
+                while (at < end && (items[at].Flags & SUBPIXEL) != 0 && !GlassStartsAt(at))
+                    at++;
+                if (at - start > 2)
+                    Partition(start, at);
+            }
+        }
+    }
+
+    // Whether a pane of glass is put down before the item, which a block of letters mustn't be moved across
+    private bool GlassStartsAt(int item)
+    {
+        foreach (UIGlassPane pane in glass)
+        {
+            if (pane.Start == item)
+                return true;
+        }
+        return false;
+    }
+
+    // The erasing halves first and the ink after, each in the order they were painted
+    private void Partition(int from, int to)
+    {
+        int count = to - from;
+        if (grouping.Length < count)
+            grouping = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)count)];
+
+        int written = 0;
+        for (int i = from; i < to; i++)
+        {
+            if ((items[i].Flags & SpriteItem.SubpixelEraseFlag) != 0)
+                grouping[written++] = items[i];
+        }
+        for (int i = from; i < to; i++)
+        {
+            if ((items[i].Flags & SpriteItem.SubpixelEraseFlag) == 0)
+                grouping[written++] = items[i];
+        }
+        grouping.AsSpan(0, count).CopyTo(items.AsSpan(from, count));
+    }
 
     // The places the blend changes in what was handed over
     private void FindBlends()
