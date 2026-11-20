@@ -117,7 +117,7 @@ public sealed class GlyphAtlas
 
     // A key as one number, the font in the top half, then the letter, the size, the phase and the style
     private static ulong Pack(in GlyphKey key) =>
-        (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(key.Size & 0x3FF) << 6 | (ulong)(key.Phase & 0x3) << 4 | (ulong)((byte)key.Style & 0xF);
+        (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(uint)(key.Size & 0x3FF) << 6 | (ulong)(uint)(key.Phase & 0x3) << 4 | (ulong)(uint)((byte)key.Style & 0xF);
 
     /// <summary>The size a letter is made at for a font drawn so tall, in <see cref="SIZE_STEPS"/>, 0 when it's too big or small to be.</summary>
     public static ushort SizeOf(float pixelHeight)

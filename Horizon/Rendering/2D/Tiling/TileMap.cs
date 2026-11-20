@@ -776,9 +776,14 @@ public sealed class TileMap : GameObject
         // A run that is still growing downwards, by the column it starts at and how long it is
         var open = new Dictionary<(int Start, int Length), int>();
 
+        // The runs of a row and the open ones that ended at it, emptied for every row rather than made anew, a map of a
+        // thousand rows made two thousand of them
+        var runs = new HashSet<(int, int)>();
+        var ended = new List<((int Start, int Length) Run, int FirstRow)>();
+
         for (int row = 0; row <= Height; row++)
         {
-            var runs = new HashSet<(int, int)>();
+            runs.Clear();
 
             for (int column = 0; row < Height && column < Width; column++)
             {
@@ -793,7 +798,14 @@ public sealed class TileMap : GameObject
             }
 
             // What didn't carry on into this row is done
-            foreach (var (run, firstRow) in open.Where(pair => !runs.Contains(pair.Key)).ToArray())
+            ended.Clear();
+            foreach (var (run, firstRow) in open)
+            {
+                if (!runs.Contains(run))
+                    ended.Add((run, firstRow));
+            }
+
+            foreach (var (run, firstRow) in ended)
             {
                 open.Remove(run);
 
