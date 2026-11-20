@@ -349,7 +349,10 @@ public partial class SettingsPage
             {
                 float small = scale * 0.85f;
                 Vector4 accent = skin.AccentColor;
-                list.Text(count.ToString(System.Globalization.CultureInfo.InvariantCulture), new Vector2(at.X + width + 8.0f, band.Center.Y + skin.Font.LineHeight * small * 0.5f), small,
+                // Written into the stack, not a string made for it every frame
+                Span<char> written = stackalloc char[11];
+                count.TryFormat(written, out int length, provider: System.Globalization.CultureInfo.InvariantCulture);
+                list.Text(written[..length], new Vector2(at.X + width + 8.0f, band.Center.Y + skin.Font.LineHeight * small * 0.5f), small,
                     searched ? skin.DimTextColor : accent, false);
             }
 
