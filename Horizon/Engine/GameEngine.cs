@@ -202,6 +202,12 @@ public class GameEngine : Entity
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration, host));
         WindowManager.DeviceReady = ShowLoadingScreen;
 
+        // An application (an editor, a tool) is up in a fraction of a second, its loading screen a frame or two: the
+        // engine's picture was read, decoded and kept decoded in the cache for that, the colour alone does as well. A
+        // program that wants a picture still says so
+        if (Configuration.WindowConfiguration.Mode == RunMode.Application)
+            LoadingScreen.Image = null;
+
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {
             // file.png@3 for one at three seconds, file.png@3+8x0.5 for eight of them half a second apart from

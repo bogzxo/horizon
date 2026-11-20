@@ -78,6 +78,15 @@ public sealed class LoadingScreen
 
         graphics.BeginFrame((uint)viewport.X, (uint)viewport.Y);
         graphics.SetViewport(0, 0, (uint)viewport.X, (uint)viewport.Y);
+
+        // No picture, only its colour: a clear and nothing else, no shader made or picture read and decoded for it
+        if (Image is not { Length: > 0 })
+        {
+            ClearToColor(graphics);
+            graphics.EndFrame();
+            return;
+        }
+
         graphics.Clear(ClearTargets.All);
 
         CameraBlock.BeginFrame(viewport, 0.0f);
@@ -87,11 +96,26 @@ public sealed class LoadingScreen
         graphics.EndFrame();
     }
 
+    // The window filled with the screen's colour by a clear, the clear colour put back as it was
+    private void ClearToColor(GraphicsDevice graphics)
+    {
+        Vector4 was = graphics.ClearColor;
+        graphics.ClearColor = new Vector4(Color, 1.0f);
+        graphics.Clear(ClearTargets.All);
+        graphics.ClearColor = was;
+    }
+
     /// <summary>Helper method to draw the screen over the whole of the window. Render thread.</summary>
     internal void Draw(Vector2 viewport)
     {
         if (!Enabled)
             return;
+
+        if (Image is not { Length: > 0 })
+        {
+            ClearToColor(GraphicsDevice.Current);
+            return;
+        }
 
         if (!made)
         {
