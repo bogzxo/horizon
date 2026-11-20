@@ -48,13 +48,6 @@ public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f,
     public static UIGlass Lens(float blur, float clarity, float rim, float bend) =>
         new(Blur: Math.Clamp(blur, 0.0f, 64.0f), Clarity: Math.Clamp(clarity, 0.0f, 1.0f), Rim: Math.Clamp(rim, 0.0f, 1.0f), Bend: Math.Clamp(bend, 0.0f, 24.0f));
 
-    /// <summary>
-    /// The glass of a side panel out of the same sliders, a little more blur and a lot less rim and no bend. There's
-    /// nothing on most of a side but a tree, and a lens on that much glass looks like the window's melting.
-    /// </summary>
-    public static UIGlass Pane(float blur, float clarity, float rim) =>
-        new(Blur: Math.Clamp(blur * 1.2f, 0.0f, 64.0f), Clarity: Math.Clamp(clarity + 0.05f, 0.0f, 1.0f), Rim: Math.Clamp(rim * 0.35f, 0.0f, 1.0f), Bend: 0.0f);
-
     // How far towards white a background on glass that lets nothing through is lifted, frosted glass scatters the light.
     // A tenth was milk, a dark theme's popups came out grey
     private const float MILK = 0.05f;
