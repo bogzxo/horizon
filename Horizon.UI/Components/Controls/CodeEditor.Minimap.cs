@@ -47,7 +47,14 @@ public partial class CodeEditor
     private bool draggingMinimap;
     private float minimapGrab;
 
-    private float MinimapWidth => Minimap ? MINIMAP_WIDTH : 0.0f;
+    // How wide an editor has to be for the minimap, five of its widths. At 200% beside the side bar and the values the
+    // editor was a few hundred units across, and the minimap took a third of it from the code
+    private const float MINIMAP_ROOM = MINIMAP_WIDTH * 5.0f;
+
+    /// <summary>Whether the minimap is drawn, on (<see cref="Minimap"/>) and the editor wide enough for the code beside it.</summary>
+    public bool MinimapShown => Minimap && Bounds.Width >= MINIMAP_ROOM;
+
+    private float MinimapWidth => MinimapShown ? MINIMAP_WIDTH : 0.0f;
 
     /// <summary>Helper method for where the minimap is, between the text and the scroll bar.</summary>
     private UIRect MinimapArea(UISkin skin, float scale)
@@ -93,7 +100,7 @@ public partial class CodeEditor
 
     private void PaintMinimap(UIDrawList list, UISkin skin, float scale, UISyntaxColors colors, float lineHeight)
     {
-        if (!Minimap || rows.Count == 0)
+        if (!MinimapShown || rows.Count == 0)
             return;
 
         // Everything of it sits on whole pixels of the screen and a row is a whole number of them tall. A row was two
@@ -363,7 +370,7 @@ public partial class CodeEditor
     /// <summary>Helper method for a press on the minimap, the slider taken hold of, or the code gone to there and then held. False off it.</summary>
     private bool PressMinimap(Vector2 point)
     {
-        if (!Minimap || paintedSkin is not { } skin || rows.Count == 0)
+        if (!MinimapShown || paintedSkin is not { } skin || rows.Count == 0)
             return false;
 
         UIRect map = MinimapArea(skin, paintedScale);

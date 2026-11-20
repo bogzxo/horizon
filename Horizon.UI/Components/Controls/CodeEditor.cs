@@ -614,6 +614,8 @@ public partial class CodeEditor : UIComponent
     // The font the code is measured and written in
     private UIFont FontOf(UISkin skin) => Font ?? skin.Font;
 
+    protected internal override UIFont? TooltipCodeFont(UISkin skin) => FontOf(skin);
+
     /// <summary>Whether guides are drawn down the indentation.</summary>
     public bool IndentGuides { get; set; } = true;
 
@@ -1781,25 +1783,9 @@ public partial class CodeEditor : UIComponent
         UITextPosition at = PositionAt(pointer);
         string said = string.Empty;
 
-        if (SyntaxError is { } error && Covers(error, at))
-            said = error.Message;
-
-        for (int i = 0; i < moreErrors.Count && said.Length == 0; i++)
-        {
-            if (Covers(moreErrors[i], at))
-                said = moreErrors[i].Message;
-        }
-
-        // By index, a foreach over the interface is an enumerator made every tick the pointer is over the code
-        for (int i = 0; i < diagnostics.Count && said.Length == 0; i++)
-        {
-            if (Covers(diagnostics[i], at))
-                said = diagnostics[i].Message;
-        }
-
-        // Nothing wrong there, what the program has to say about the word, asked once a word
+        // What the program has to say about the word, asked once a word, under what's wrong there when something is
         bool hint = false;
-        if (said.Length == 0 && HoverSource is { } source)
+        if (HoverSource is { } source)
         {
             var (start, end) = document.WordAt(at);
 
@@ -1820,6 +1806,14 @@ public partial class CodeEditor : UIComponent
                 said = hoverText;
                 hint = said.Length > 0;
             }
+        }
+
+        // Something wrong there is a card of it, with what was said of the word under it (DiagnosticCard). By index in
+        // there, a foreach over the interface is an enumerator made every tick the pointer is over the code
+        if (WrongAt(at))
+        {
+            said = DiagnosticCard(at, said);
+            hint = true;
         }
 
         TooltipMarkdown = hint;
@@ -2900,9 +2894,11 @@ public partial class CodeEditor : UIComponent
 
         if (findQuery.Length > 0)
         {
-            // The one selected stronger, it's the one enter goes on from
-            Vector4 lit = skin.HighlightColor with { W = 0.18f };
-            Vector4 current = skin.HighlightColor with { W = 0.45f };
+            // The one selected stronger, it's the one enter goes on from. The rest were a fifth of the highlight and could
+            // hardly be told from the code round them on the plum, so each has a faint edge of it as well
+            Vector4 lit = skin.HighlightColor with { W = 0.26f };
+            Vector4 edge = skin.HighlightColor with { W = 0.55f };
+            Vector4 current = skin.HighlightColor with { W = 0.5f };
             for (int i = 0; i < found.Count; i++)
             {
                 UITextMatch at = found[i];
@@ -2911,8 +2907,7 @@ public partial class CodeEditor : UIComponent
                 bool selected = start.Line == at.Line && start.Column == at.Column && end.Line == at.Line && end.Column == at.Column + at.Length;
                 UIRect box = Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + at.Length);
                 list.Rect(box, selected ? current : lit);
-                if (selected)
-                    list.Outline(box, 1.0f, skin.HighlightColor with { W = 0.8f });
+                list.Outline(box, 1.0f, selected ? skin.HighlightColor : edge);
             }
         }
 
@@ -3127,7 +3122,9 @@ public partial class CodeEditor : UIComponent
         {
             bool gutterStretched = over.Begin(list, new UIRect(new Vector2(content.Min.X, area.Min.Y), area.Max));
             list.PushFrame(new Vector2(0.0f, scrollY));
-            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
+            // The gutter is the look's and not the language's, C# in Visual Studio's colours had teal numbers on Solstice
+            // Day's paper and a Markdown file beside it grey ones
+            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, skin.Palette.Syntax);
             list.PopFrame();
             if (gutterStretched)
                 UIOverscroll.End(list);
@@ -3315,62 +3312,6 @@ public partial class CodeEditor : UIComponent
         }
 
         return false;
-    }
-
-    // The signature in a box over the row of the call's name (under it when that's the top row), the argument the caret is
-    // on in bold
-    private void PaintSignature(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, UISignature said)
-    {
-        if (said.Text.Length == 0)
-            return;
-
-        list.BeginPart(PART_SIGNATURE);
-        float small = scale * 0.92f;
-        UIFont codeFont = FontOf(skin), proseFont = skin.Font;
-
-        // Which overload of how many in front of it, when it has others, the way Visual Studio says it
-        var (index, count) = SignatureOverload;
-        string counter = count > 1 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, OverloadCounter, index + 1, count) + "   " : string.Empty;
-        Vector2 size = SignaturePopupSize(said, counter, codeFont, proseFont, small, area.Size);
-        float width = size.X, height = size.Y;
-        int row = RowOf(signatureAt.Line, signatureAt.Column);
-        float top = RowTop(area, row, lineHeight);
-        float x = MathF.Max(area.Min.X, left + ColumnX(skin, scale, signatureAt.Line, signatureAt.Column) - TEXT_PAD);
-        x = Math.Clamp(x, area.Min.X, MathF.Max(area.Min.X, area.Max.X - width));
-        float bottom = row > first ? top : top - lineHeight - height;
-        if (bottom + height > area.Max.Y) bottom = top - lineHeight - height;
-        bottom = Math.Clamp(bottom, area.Min.Y, MathF.Max(area.Min.Y, area.Max.Y - height));
-
-        var box = new UIRect(new Vector2(x, bottom), new Vector2(x + width, bottom + height));
-        list.Popup(box, Module?.Compositor.PopupGlass);
-
-        int start = Math.Clamp(said.Start, 0, said.Text.Length), length = Math.Clamp(said.Length, 0, said.Text.Length - start);
-        start += counter.Length;
-        Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.75f };
-        float textTop = box.Max.Y - TEXT_PAD * 0.5f;
-        list.PushFont(codeFont);
-        foreach (var line in signatureLabelLines)
-        {
-            ReadOnlySpan<char> all = signaturePopupLabel.AsSpan(line.Start, line.Length);
-            int from = Math.Clamp(start - line.Start, 0, line.Length), to = Math.Clamp(start + length - line.Start, from, line.Length);
-            float pen = box.Min.X + TEXT_PAD;
-            list.Text(all[..from], new Vector2(pen, textTop), small, text, markup: false);
-            pen += codeFont.Measure(all[..from], small, markup: false).X;
-            list.Text(all[from..to], new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
-            pen += codeFont.Measure(all[from..to], small, markup: false).X + codeFont.BoldAdvance * small * (to - from);
-            list.Text(all[to..], new Vector2(pen, textTop), small, text, markup: false);
-            textTop -= codeFont.LineHeight * small;
-        }
-        list.PopFont();
-        if (signatureDocLines.Count > 0)
-        {
-            textTop -= TEXT_PAD;
-            var inside = new UIRect(new Vector2(box.Min.X + TEXT_PAD, box.Min.Y + TEXT_PAD * 0.5f), new Vector2(box.Max.X - TEXT_PAD, textTop));
-            list.PushFont(proseFont);
-            list.Text(signaturePopupDocs, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(signatureDocLines), inside,
-                Horizon.Rendering.Origin.TopLeft, small, skin.DimTextColor, markup: false);
-            list.PopFont();
-        }
     }
 
     // The part of a selection on a row, to the end of the row and a little past it on the rows it runs over
@@ -3667,7 +3608,7 @@ public partial class CodeEditor : UIComponent
 
             // The line's number where the gutter has it, a diff's the new version's
             if (LineNumbers)
-                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, colors.LineNumber);
+                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, skin.Palette.Syntax.LineNumber);
 
             if (DrawnColours(line, written) is { } colours)
             {

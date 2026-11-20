@@ -129,7 +129,7 @@ public partial class CodeEditor
 
             // What it's dressed in
             hash.Add(LineNumbers);
-            hash.Add(Minimap);
+            hash.Add(MinimapShown);
             hash.Add(StickyScroll);
             hash.Add(RenderWhitespace);
             hash.Add(IndentGuides);

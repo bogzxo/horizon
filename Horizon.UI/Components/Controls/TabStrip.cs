@@ -30,6 +30,12 @@ public sealed class StripTab
     /// <summary>Whether it has changes that aren't saved, a dot where its x is until the pointer comes for the x.</summary>
     public bool Modified { get; set; }
 
+    /// <summary>
+    /// Whether it's pinned, kept open and at the front, VS Code's pinned tabs. A pin where its x is, which unpins it
+    /// (<see cref="TabStrip.OnUnpin"/>), and the middle button doesn't close it. The program keeps the pinned ones first.
+    /// </summary>
+    public bool Pinned { get; set; }
+
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
 
@@ -78,6 +84,9 @@ public class TabStrip : UIComponent
 
     /// <summary>Called with the tab whose x was clicked, to close it (or ask first).</summary>
     public Action<int>? OnClose { get; set; }
+
+    /// <summary>Called with a pinned tab whose pin was clicked, to unpin it.</summary>
+    public Action<int>? OnUnpin { get; set; }
 
     /// <summary>
     /// A tab dragged to where another was, with where it was and where it is now, the strip's own list already moved.
@@ -223,7 +232,7 @@ public class TabStrip : UIComponent
         bool middle = mouse is not null && mouse.IsDown(Horizon.Input.MouseButton.Middle);
         if (middle && !middleWas)
             middleTab = over;
-        else if (!middle && middleWas && middleTab >= 0 && middleTab == over)
+        else if (!middle && middleWas && middleTab >= 0 && middleTab == over && middleTab < Tabs.Count && !Tabs[middleTab].Pinned)
             OnClose?.Invoke(middleTab);
         if (!middle)
             middleTab = -1;
@@ -315,15 +324,24 @@ public class TabStrip : UIComponent
             string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
             list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
 
-            // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise
+            // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise. A pinned
+            // one always has its pin there (with a dot in it when it has changes), which unpins it
             bool onClose = over && close.Contains(pointer);
             if (onClose)
                 list.Box(close, skin.HoverColor);
 
-            if (open || over)
+            if (tab.Pinned)
+                list.Symbol(tab.Modified && !onClose ? "pinned-dirty" : "pinned", close.Shrink(new UIEdges(side * 0.12f)), plain);
+            else if (open || over)
                 list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), plain);
             else if (tab.Modified)
                 list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), plain);
+
+            // A hairline after the last pinned one, between the ones kept and the rest. Always painted, clear elsewhere,
+            // so the quads after it don't shift
+            bool lastPinned = tab.Pinned && (i + 1 >= Tabs.Count || !Tabs[i + 1].Pinned);
+            float hair = MathF.Round(area.Height * 0.25f);
+            list.Rect(new UIRect(new Vector2(area.Max.X - 1.0f, area.Min.Y + hair), new Vector2(area.Max.X, area.Max.Y - hair)), skin.BorderColor with { W = lastPinned ? skin.BorderColor.W : 0.0f });
         }
 
         list.EndParts();
@@ -362,7 +380,12 @@ public class TabStrip : UIComponent
             return;
 
         if (close && CloseBounds(tab).Contains(Pointer))
-            OnClose?.Invoke(tab);
+        {
+            if (Tabs[tab].Pinned)
+                OnUnpin?.Invoke(tab);
+            else
+                OnClose?.Invoke(tab);
+        }
         else
             OnSelected?.Invoke(tab);
     }
