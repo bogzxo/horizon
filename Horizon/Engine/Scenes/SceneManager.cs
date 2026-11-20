@@ -704,6 +704,9 @@ public class SceneManager : Entity
                 graphics.BindWindow();
                 graphics.Clear(Horizon.Graphics.ClearTargets.All);
             }
+
+            // Whatever it did to get here, it's on screen from the next frame
+            incoming.OnShown();
         }
 
         // The scene that is left goes last, once the new one has everything it needs. What the two share by name

@@ -118,6 +118,14 @@ public abstract class Scene : GameObject
     protected internal virtual void OnResumed()
     { }
 
+    /// <summary>
+    /// Called as the scene is set and about to be drawn for everybody to see, once it's set up and warmed up (the unseen
+    /// turns it is drawn and updated for, which a scene can't tell from the real ones). Render thread, with the simulation
+    /// standing still. For what starts with the scene appearing, a UI fading in, not with its being made.
+    /// </summary>
+    protected internal virtual void OnShown()
+    { }
+
     public override void UpdateState(float dt)
     {
         Time += dt;
