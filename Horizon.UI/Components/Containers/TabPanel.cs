@@ -284,7 +284,7 @@ public class TabPanel : UIComponent
             if (at.Parent != this)
                 continue;
 
-            int index = Array.IndexOf(ChildSpan.ToArray(), at);
+            int index = ChildSpan.IndexOf(at, ReferenceEqualityComparer.Instance);
             if (index < 0)
                 return false;
 

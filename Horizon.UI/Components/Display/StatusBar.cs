@@ -169,9 +169,24 @@ public class StatusBar : UIComponent
         if (font.Measure(text, scale).X <= room + FIT_SLACK || text.Contains("$(", StringComparison.Ordinal))
             return text;
 
+        // Each try measured in one buffer with the dots written after the part kept, rather than a string made for each
         int length = text.Length;
-        while (length > 0 && font.Measure(string.Concat(text.AsSpan(0, length), CUT), scale).X > room + FIT_SLACK)
-            length--;
+        char[] buffer = System.Buffers.ArrayPool<char>.Shared.Rent(length + CUT.Length);
+        try
+        {
+            text.CopyTo(buffer);
+            while (length > 0)
+            {
+                CUT.CopyTo(buffer.AsSpan(length));
+                if (font.Measure(buffer.AsSpan(0, length + CUT.Length), scale).X <= room + FIT_SLACK)
+                    break;
+                length--;
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(buffer);
+        }
         return length == 0 ? string.Empty : string.Concat(text.AsSpan(0, length).TrimEnd(), CUT);
     }
 

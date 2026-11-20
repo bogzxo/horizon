@@ -51,6 +51,9 @@ public class Button : UIComponent
     // The icon and the label written as one text, made again only when either changes
     private string shownIcon = string.Empty, shownLabel = string.Empty, shown = string.Empty;
 
+    // The icon written on its own for a button whose icon has a colour of its own, made again only when the icon changes
+    private string iconOf = string.Empty, iconWritten = string.Empty;
+
     /// <summary>The scale of the label, or zero to use the skin's.</summary>
     public float LabelScale { get; set; }
 
@@ -227,7 +230,12 @@ public class Button : UIComponent
         if (IconColor is { } iconColour && Icon.Length > 0 && label.Length > 0 && Align is Origin.Left or Origin.Center or Origin.Right)
         {
             // The icon written on its own in its colour and the label after it, the two placed where the whole would be
-            string icon = $"$({Icon}) ";
+            if (!ReferenceEquals(Icon, iconOf))
+            {
+                iconOf = Icon;
+                iconWritten = $"$({Icon}) ";
+            }
+            string icon = iconWritten;
             float iconWidth = skin.Font.Measure(icon, scale).X;
             float whole = skin.Font.Measure(Written(), scale).X;
             float start = Align switch
