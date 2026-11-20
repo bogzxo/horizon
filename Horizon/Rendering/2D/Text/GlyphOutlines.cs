@@ -150,25 +150,42 @@ public sealed unsafe class GlyphOutlines
             into = new byte[Math.Max(size, into.Length * 2)];
 
         ReadOnlySpan<byte> filter = LcdFilter;
+        int f0 = filter[0], f1 = filter[1], f2 = filter[2], f3 = filter[3], f4 = filter[4];
         for (int y = 0; y < height; y++)
         {
             ReadOnlySpan<byte> row = work.AsSpan(y * across, across);
             Span<byte> pixels = into.AsSpan(y * width * 4, width * 4);
             for (int x = 0; x < width; x++)
             {
-                int r = 0, g = 0, b = 0;
-                for (int tap = 0; tap < 5; tap++)
+                int at = x * 3, r, g, b;
+                if (x > 0 && x < width - 1)
                 {
-                    int weight = filter[tap];
-                    r += weight * At(row, x * 3 + tap - 2);
-                    g += weight * At(row, x * 3 + 1 + tap - 2);
-                    b += weight * At(row, x * 3 + 2 + tap - 2);
+                    // Away from the ends all seven subpixels the three stripes reach are in the row, read once each
+                    // and with no end of the row to look out for, which halves what filtering a letter costs
+                    ReadOnlySpan<byte> taps = row.Slice(at - 2, 7);
+                    int t0 = taps[0], t1 = taps[1], t2 = taps[2], t3 = taps[3], t4 = taps[4], t5 = taps[5], t6 = taps[6];
+                    r = f0 * t0 + f1 * t1 + f2 * t2 + f3 * t3 + f4 * t4;
+                    g = f0 * t1 + f1 * t2 + f2 * t3 + f3 * t4 + f4 * t5;
+                    b = f0 * t2 + f1 * t3 + f2 * t4 + f3 * t5 + f4 * t6;
                 }
+                else
+                {
+                    r = g = b = 0;
+                    for (int tap = 0; tap < 5; tap++)
+                    {
+                        int weight = filter[tap];
+                        r += weight * At(row, at + tap - 2);
+                        g += weight * At(row, at + 1 + tap - 2);
+                        b += weight * At(row, at + 2 + tap - 2);
+                    }
+                }
+
                 byte first = (byte)Math.Min(255, r >> 8), second = (byte)Math.Min(255, g >> 8), third = (byte)Math.Min(255, b >> 8);
-                pixels[x * 4] = bgr ? third : first;
-                pixels[x * 4 + 1] = second;
-                pixels[x * 4 + 2] = bgr ? first : third;
-                pixels[x * 4 + 3] = Math.Max(first, Math.Max(second, third));
+                Span<byte> pixel = pixels.Slice(x * 4, 4);
+                pixel[3] = Math.Max(first, Math.Max(second, third));
+                pixel[0] = bgr ? third : first;
+                pixel[1] = second;
+                pixel[2] = bgr ? first : third;
             }
         }
 
