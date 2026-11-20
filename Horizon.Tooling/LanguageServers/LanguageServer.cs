@@ -730,20 +730,20 @@ public sealed partial class LanguageServer : IDisposable
 
         string prose = markdown[..cut];
         // A picture says nothing in text, VS Code's CSS docs started a line with "!Baseline icon"
-        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"!\[[^\]]*\]\([^)]*\)", string.Empty);
-        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\[([^\]]*)\]\([^)]*\)", "$1");
+        prose = Pictures().Replace(prose, string.Empty);
+        prose = Links().Replace(prose, "$1");
         prose = prose.Replace("**", string.Empty, StringComparison.Ordinal).Replace("`", string.Empty, StringComparison.Ordinal);
         // _Emphasis_ the way the bold is, and a mark written escaped as itself, "elements\." was said with its backslash
-        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"(?<![\w\\])_(\S(?:[^_]*\S)?)_(?!\w)", "$1");
-        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\\([\\`*_{}\[\]()#+\-.!|~<>])", "$1");
+        prose = Emphasis().Replace(prose, "$1");
+        prose = EscapedMarks().Replace(prose, "$1");
         // And what's written as an HTML entity as its character, CSS's syntax said "&lt;color&gt;"
         prose = System.Net.WebUtility.HtmlDecode(prose);
 
         // A dash the fonts have, serve-d's long one came out as a question mark
         prose = prose.Replace('—', '-').Replace('–', '-');
 
-        var paragraphs = System.Text.RegularExpressions.Regex.Split(prose.ReplaceLineEndings("\n"), @"\n\s*\n")
-            .Select(paragraph => System.Text.RegularExpressions.Regex.Replace(paragraph, @"\s+", " ").Trim())
+        var paragraphs = BlankLines().Split(prose.ReplaceLineEndings("\n"))
+            .Select(static paragraph => WhiteSpace().Replace(paragraph, " ").Trim())
             .Where(paragraph => paragraph.Length > 0);
         string plain = string.Join("\n", paragraphs);
         return plain.Length > MOST_DOCS ? string.Concat(plain.AsSpan(0, MOST_DOCS - 3), "...") : plain;
@@ -779,7 +779,7 @@ public sealed partial class LanguageServer : IDisposable
             string left = string.Join(' ', (detail[..from] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
             // What kind it is in brackets in front, TypeScript's "(property)", is the icon's to say, and what's left of
             // "x: string" is the type
-            left = System.Text.RegularExpressions.Regex.Replace(left, @"^\((?:[a-z]+ ?)+\)\s*", string.Empty);
+            left = KindInBrackets().Replace(left, string.Empty);
             left = left.Replace(" :", ":", StringComparison.Ordinal);
             if (left.StartsWith(':'))
                 left = left[1..].TrimStart();
@@ -991,4 +991,27 @@ public sealed partial class LanguageServer : IDisposable
             process.Dispose();
         }
     }
+
+    // What the docs and details of completions are made plain with, made when Hex is built rather than read from their
+    // pattern at the first completion
+    [System.Text.RegularExpressions.GeneratedRegex(@"!\[[^\]]*\]\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex Pictures();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[([^\]]*)\]\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex Links();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<![\w\\])_(\S(?:[^_]*\S)?)_(?!\w)")]
+    private static partial System.Text.RegularExpressions.Regex Emphasis();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\\([\\`*_{}\[\]()#+\-.!|~<>])")]
+    private static partial System.Text.RegularExpressions.Regex EscapedMarks();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\n\s*\n")]
+    private static partial System.Text.RegularExpressions.Regex BlankLines();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex WhiteSpace();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\((?:[a-z]+ ?)+\)\s*")]
+    private static partial System.Text.RegularExpressions.Regex KindInBrackets();
 }
