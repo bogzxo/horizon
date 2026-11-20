@@ -107,6 +107,11 @@ public sealed partial class LanguageServer : IDisposable
     private readonly Dictionary<string, int> versions = new(Horizon.Core.Platform.PlatformPaths.Comparer);
     private readonly ConcurrentQueue<(string Path, int? Version, IReadOnlyList<UICodeDiagnostic> Found)> arrived = new();
     private readonly Lock queue = new();
+
+    // Held from a document's version and text being worked out to its notification being written, so two threads (the
+    // editor's and the one that sends what waited for the server to start) can't send them the other way round: an
+    // incremental change put on text it wasn't worked out from garbles the server's copy of the file
+    private readonly Lock sending = new();
     private List<Action>? waiting = [];
 
     // What has been asked of the server and not answered, answered with nothing when it stops
@@ -300,16 +305,27 @@ public sealed partial class LanguageServer : IDisposable
             return;
         }
 
-        List<Action>? held;
-        lock (queue)
+        // What waited goes out first, in order, and only then is it ready: set ready before, a didChange from the
+        // editor's thread went straight out ahead of the didOpen still waiting here and the server never had the file
+        // the way the editor did. What's asked while these go out waits behind them
+        while (true)
         {
-            IsReady = true;
-            held = waiting;
-            waiting = null;
-        }
+            List<Action> held;
+            lock (queue)
+            {
+                if (waiting is null or { Count: 0 })
+                {
+                    waiting = null;
+                    IsReady = true;
+                    break;
+                }
+                held = waiting;
+                waiting = [];
+            }
 
-        foreach (Action action in held ?? [])
-            Run(action);
+            foreach (Action action in held)
+                Run(action);
+        }
     }
 
     // Helper method to do something now if the server is ready, or once it is, in the order things were asked
@@ -317,7 +333,7 @@ public sealed partial class LanguageServer : IDisposable
     {
         lock (queue)
         {
-            if (waiting is not null && !IsReady)
+            if (waiting is not null)
             {
                 waiting.Add(action);
                 return;
@@ -355,7 +371,7 @@ public sealed partial class LanguageServer : IDisposable
 
     // Helper method to ask the server something once it is ready, behind everything sent before. Null for an error, or
     // for a server that stopped before answering, nothing asked here throws
-    private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false)
+    private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false, bool urgent = false)
     {
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
         asking[answer] = 0;
@@ -377,7 +393,7 @@ public sealed partial class LanguageServer : IDisposable
                 answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
         }, TaskScheduler.Default);
 
-        if (BACKGROUND_METHODS.Contains(method) && HoldBackground(Send))
+        if (!urgent && BACKGROUND_METHODS.Contains(method) && HoldBackground(Send))
             return answer.Task;
 
         Later(Send);
@@ -453,16 +469,19 @@ public sealed partial class LanguageServer : IDisposable
         string full = Path.GetFullPath(path);
         Later(() =>
         {
-            int version;
-            lock (versions)
+            lock (sending)
             {
-                versions[full] = version = ++nextDocumentVersion;
-                if (IncrementalChanges) synchronizedText[full] = text;
+                int version;
+                lock (versions)
+                {
+                    versions[full] = version = ++nextDocumentVersion;
+                    if (IncrementalChanges) synchronizedText[full] = text;
+                }
+                rpc.Notify("textDocument/didOpen", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = text }
+                });
             }
-            rpc.Notify("textDocument/didOpen", new JsonObject
-            {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = text }
-            });
             PullSoon(full);
         });
     }
@@ -474,21 +493,24 @@ public sealed partial class LanguageServer : IDisposable
         Typing();
         Later(() =>
         {
-            int version;
-            JsonObject change;
-            lock (versions)
+            lock (sending)
             {
-                if (!versions.ContainsKey(full))
-                    return;
-                versions[full] = version = ++nextDocumentVersion;
-                change = ContentChange(full, text);
-            }
+                int version;
+                JsonObject change;
+                lock (versions)
+                {
+                    if (!versions.ContainsKey(full))
+                        return;
+                    versions[full] = version = ++nextDocumentVersion;
+                    change = ContentChange(full, text);
+                }
 
-            rpc.Notify("textDocument/didChange", new JsonObject
-            {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
-                ["contentChanges"] = new JsonArray(change)
-            });
+                rpc.Notify("textDocument/didChange", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
+                    ["contentChanges"] = new JsonArray(change)
+                });
+            }
             PullSoon(full);
         });
     }
@@ -502,11 +524,26 @@ public sealed partial class LanguageServer : IDisposable
         if (changes.Count == 0)
             return;
 
-        var list = new JsonArray();
-        foreach (var (path, change) in changes)
-            list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
+        Later(() =>
+        {
+            // A file open in the server is the client's, its text goes by didChange alone. csharp-ls reads one that was
+            // created or changed on the disk again (Handlers/Workspace.fs, tryReloadDocumentOnUri) whether it's open or
+            // not, and the incremental didChange for the same write that came next was put on top of the new text: an
+            // edit made twice ("sealed sealed class"), a line taken out twice ("arentOf"), errors at lines that are fine
+            var list = new JsonArray();
+            lock (sending)
+            {
+                foreach (var (path, change) in changes)
+                {
+                    if (change != LanguageServerFileChange.Deleted && DocumentVersion(path) is not null)
+                        continue;
+                    list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
+                }
 
-        Later(() => rpc.Notify("workspace/didChangeWatchedFiles", new JsonObject { ["changes"] = list }));
+                if (list.Count > 0)
+                    rpc.Notify("workspace/didChangeWatchedFiles", new JsonObject { ["changes"] = list });
+            }
+        });
     }
 
     /// <summary>Tells the server a file was closed, it says nothing more about it.</summary>
@@ -515,15 +552,18 @@ public sealed partial class LanguageServer : IDisposable
         string full = Path.GetFullPath(path);
         Later(() =>
         {
-            lock (versions)
+            lock (sending)
             {
-                if (!versions.Remove(full))
-                    return;
-                synchronizedText.Remove(full);
-            }
+                lock (versions)
+                {
+                    if (!versions.Remove(full))
+                        return;
+                    synchronizedText.Remove(full);
+                }
 
+                rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
+            }
             ForgetPulls(full);
-            rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
         });
     }
 
@@ -813,10 +853,32 @@ public sealed partial class LanguageServer : IDisposable
     // What sort of thing a completion item is, by the protocol's numbers, said when the server gives no detail
     private static string KindOf(int kind) => kind switch
     {
-        1 => "text", 2 => "method", 3 => "function", 4 => "constructor", 5 => "field", 6 => "variable", 7 => "class",
-        8 => "interface", 9 => "module", 10 => "property", 11 => "unit", 12 => "value", 13 => "enum", 14 => "keyword",
-        15 => "snippet", 16 => "colour", 17 => "file", 18 => "reference", 19 => "folder", 20 => "enum member",
-        21 => "constant", 22 => "struct", 23 => "event", 24 => "operator", 25 => "type parameter", _ => string.Empty
+        1 => "text",
+        2 => "method",
+        3 => "function",
+        4 => "constructor",
+        5 => "field",
+        6 => "variable",
+        7 => "class",
+        8 => "interface",
+        9 => "module",
+        10 => "property",
+        11 => "unit",
+        12 => "value",
+        13 => "enum",
+        14 => "keyword",
+        15 => "snippet",
+        16 => "colour",
+        17 => "file",
+        18 => "reference",
+        19 => "folder",
+        20 => "enum member",
+        21 => "constant",
+        22 => "struct",
+        23 => "event",
+        24 => "operator",
+        25 => "type parameter",
+        _ => string.Empty
     };
 
     /// <summary>Takes what the server last said about a file, oldest first, false when there is nothing waiting.</summary>
@@ -824,7 +886,7 @@ public sealed partial class LanguageServer : IDisposable
     {
         while (arrived.TryDequeue(out var next))
         {
-            if (next.Version is {} version && DocumentVersion(next.Path) is {} current && version < current) continue;
+            if (next.Version is { } version && DocumentVersion(next.Path) is { } current && version < current) continue;
             (path, found) = (next.Path, next.Found);
             return true;
         }
@@ -843,7 +905,7 @@ public sealed partial class LanguageServer : IDisposable
             return;
 
         int? version = published["version"] is JsonValue value && value.TryGetValue<int>(out int number) ? number : null;
-        if (version is {} sent && DocumentVersion(path) is {} current && sent < current) return;
+        if (version is { } sent && DocumentVersion(path) is { } current && sent < current) return;
 
         var found = new List<UICodeDiagnostic>();
         if (published["diagnostics"] is JsonArray diagnostics)

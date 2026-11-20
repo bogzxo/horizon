@@ -79,6 +79,27 @@ public sealed partial class LanguageServer
         }, TaskScheduler.Default);
     }
 
+    /// <summary>
+    /// What's wrong with an open file asked at once, for a server that offers it whether or not it's one that has to be
+    /// asked: what it says goes the way its own word does (TryTake), so a tool waiting on what a server says of a change
+    /// it just sent hears it as soon as the server has looked, rather than whenever its own timer publishes. False when
+    /// the server doesn't offer it or hasn't the file open.
+    /// </summary>
+    public bool AskDiagnosticsNow(string path)
+    {
+        string full = Path.GetFullPath(path);
+        if (!Offers("diagnosticProvider") || Failure is not null || DocumentVersion(full) is not { } version)
+            return false;
+
+        string uri = UriOf(full);
+        _ = Ask("textDocument/diagnostic", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }, urgent: true).ContinueWith(asked =>
+        {
+            if (asked.Result is JsonObject { } report && report["kind"]?.GetValue<string>() == "full")
+                Published(new JsonObject { ["uri"] = uri, ["version"] = version, ["diagnostics"] = report["items"]?.DeepClone() ?? new JsonArray() });
+        }, TaskScheduler.Default);
+        return true;
+    }
+
     // The server says what it knows changed, everything open asked again once things are still
     private void DiagnosticsRefreshed()
     {
