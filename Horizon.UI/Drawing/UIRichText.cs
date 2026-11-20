@@ -1162,14 +1162,18 @@ public sealed partial class UIRichText
         int syntaxBlock = -1;
         UISyntaxColors? syntax = null;
 
+        // Read where they are, a piece is a hundred bytes and more and was copied out of the list for each of the two
+        // passes whether it was painted in that one or not
+        ReadOnlySpan<Piece> all = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(pieces);
+
         // Behind the letters first, the back of the code and the bars, then the letters over them
         for (int pass = 0; pass < 2; pass++)
         {
             Kind kind = pass == 0 ? Kind.Box : Kind.Text;
 
-            for (int i = 0; i < pieces.Count; i++)
+            for (int i = 0; i < all.Length; i++)
             {
-                Piece piece = pieces[i];
+                ref readonly Piece piece = ref all[i];
                 if (piece.Kind != kind)
                     continue;
 
@@ -1232,7 +1236,7 @@ public sealed partial class UIRichText
         Vector2 topLeft = TopLeft(area, align);
         float side = align.ToVector().X;
 
-        foreach (var piece in pieces)
+        foreach (ref readonly Piece piece in System.Runtime.InteropServices.CollectionsMarshal.AsSpan(pieces))
         {
             if (piece.Kind != Kind.Text || piece.Link < 0)
                 continue;
