@@ -92,8 +92,7 @@ internal sealed class UIRenderer
         atlases.AddRange(list.Atlases);
 
         glass.Clear();
-        foreach (var pane in list.GlassPanes)
-            glass.Add(pane);
+        glass.AddRange(list.GlassPanes);
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
@@ -114,16 +113,13 @@ internal sealed class UIRenderer
         itemCount = source.Length;
 
         runs.Clear();
-        foreach (var run in sourceRuns)
-            runs.Add(run);
+        runs.AddRange(sourceRuns);
 
         atlases.Clear();
-        foreach (var atlas in listAtlases)
-            atlases.Add(atlas);
+        atlases.AddRange(listAtlases);
 
         glass.Clear();
-        foreach (var pane in listGlass)
-            glass.Add(pane);
+        glass.AddRange(listGlass);
 
         skin = listSkin;
         GroupSubpixels();

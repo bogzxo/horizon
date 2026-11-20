@@ -908,19 +908,16 @@ public partial class UICompositor : GameComponent, IDisposable
             into.Count = items.Length;
 
             into.Runs.Clear();
-            foreach (var run in front.Runs)
-                into.Runs.Add(run);
+            into.Runs.AddRange(front.Runs);
 
             into.Glass.Clear();
-            foreach (var pane in front.GlassPanes)
-                into.Glass.Add(pane);
+            into.Glass.AddRange(front.GlassPanes);
 
             // And as frames, which the frames between this tick and the next are put together from
             into.Frames.CopyFrom(front.FrameList);
 
             into.Atlases.Clear();
-            foreach (var atlas in front.Atlases)
-                into.Atlases.Add(atlas);
+            into.Atlases.AddRange(front.Atlases);
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
