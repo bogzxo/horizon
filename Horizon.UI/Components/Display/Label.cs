@@ -232,8 +232,9 @@ public class Label : UIComponent
             (wrappedText, wrappedScale, wrappedWidth) = (text, scale, width);
         }
 
-        // As wide as it was told to be, which is what it was wrapped to
-        return new Vector2(width, skin.Font.Measure(text, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(lines), scale).Y);
+        // As wide as it was told to be, which is what it was wrapped to, and as tall as its lines. Only the height of the
+        // lines is wanted, it was worked out by measuring every letter of every line again each layout
+        return new Vector2(width, Math.Max(1, lines.Count) * skin.Font.LineHeight * scale);
     }
 
     /// <summary>
