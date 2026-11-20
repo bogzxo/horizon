@@ -201,6 +201,10 @@ public partial class CodeEditor : UIComponent
     private readonly Dictionary<string, List<SyntaxSpan>> fresh = new(StringComparer.Ordinal);
     private const int MAX_FRESH = 256;
 
+    // The line the colours of FreshColours were last asked for, the very string, and them
+    private string? freshText;
+    private List<SyntaxSpan>? freshSpans;
+
     // The parse going on off the editor's thread, what it found and for which version of the text
     private sealed record Checked(int Version, UICodeDiagnostic? Error, List<UICodeDiagnostic> More);
     private Task<Checked>? checking;
@@ -1034,12 +1038,44 @@ public partial class CodeEditor : UIComponent
         return x;
     }
 
+    // How many letters of a row are drawn or measured at a time when it's longer, see DrawInSight
+    private const int DRAWN_PIECE = 512;
+
+    /// <summary>
+    /// Draws a piece of a row the way <see cref="DrawWithInlays"/> does, but only what is between two lefts on screen
+    /// (the code in sight and a width either side of it), and says where the piece ends as far as it got. A long piece goes
+    /// a few hundred letters at a time, measured while it's left of what's in sight and given up once it's past the right.
+    /// A line of a fifth of a megabyte was drawn whole every paint, every letter of it clipped.
+    /// </summary>
+    private float DrawInSight(UIDrawList list, UISkin skin, float scale, int line, int column, ReadOnlySpan<char> text, float x, float top, Vector4 color, float left, float origin, UISyntaxColors colors, float from, float to)
+    {
+        if (text.Length <= DRAWN_PIECE && x >= from)
+            return DrawWithInlays(list, skin, scale, line, column, text, x, top, color, left, origin, colors);
+
+        int at = 0;
+        while (at < text.Length && x <= to)
+        {
+            // Never between the two halves of a letter outside the basic plane
+            int end = Math.Min(text.Length, at + DRAWN_PIECE);
+            if (end < text.Length && char.IsHighSurrogate(text[end - 1]))
+                end--;
+
+            ReadOnlySpan<char> piece = text[at..end];
+            float past = x < from ? DrawWithInlays(list, skin, scale, line, column + at, piece, x, top, color, left, origin, colors, draw: false) : float.NaN;
+            x = past < from ? past : DrawWithInlays(list, skin, scale, line, column + at, piece, x, top, color, left, origin, colors);
+            at = end;
+        }
+
+        return x;
+    }
+
     /// <summary>The colours of every line worked out again on the editor's thread, and the lines kept to tell later which still fit them.</summary>
     private void Recolour()
     {
         coloured = changeSeen = document.Version;
         recolourNow = false;
         fresh.Clear();
+        freshText = null;
 
         // New arrays, a colouring going on in the background may be reading the last ones
         int count = document.LineCount;
@@ -1122,6 +1158,7 @@ public partial class CodeEditor : UIComponent
         TookArt();
         coloured = done.Version;
         fresh.Clear();
+        freshText = null;
         FindFoldable();
     }
 
@@ -1134,8 +1171,16 @@ public partial class CodeEditor : UIComponent
         if (!Highlight || text.Length == 0)
             return null;
 
+        // The line asked for again as it was, every row of it in a paint. Looked up by its text it was hashed whole each
+        // time, a long line's every row went through all of it
+        if (ReferenceEquals(text, freshText))
+            return freshSpans;
+
         if (fresh.TryGetValue(text, out var known))
+        {
+            (freshText, freshSpans) = (text, known);
             return known;
+        }
 
         // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
         int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
@@ -1151,6 +1196,7 @@ public partial class CodeEditor : UIComponent
             return null;
         }
         fresh[text] = read;
+        (freshText, freshSpans) = (text, read);
         return read;
     }
 
@@ -2807,6 +2853,11 @@ public partial class CodeEditor : UIComponent
         // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
         float origin = area.Max.Y + scrollY;
         BeginFlow(lineHeight);
+
+        // How far either side of the code in sight a row is drawn, a width of it, room for a scroll easing between two
+        // ticks. A row is drawn up to its right and only measured to its left, an unwrapped line of a fifth of a megabyte
+        // (an agent's chat saved as JSON) was drawn whole every paint, every letter clipped, 50 ms a frame
+        float drawnFrom = area.Min.X - area.Width, drawnTo = area.Max.X + area.Width;
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
@@ -2829,14 +2880,14 @@ public partial class CodeEditor : UIComponent
             // can't be (it starts inside a comment over several lines)
             if (DrawnColours(row.Line, written) is not { } colours)
             {
-                x = DrawWithInlays(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
+                x = DrawInSight(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
             }
             else
             {
                 int at = row.Start;
                 foreach (SyntaxSpan span in colours)
                 {
-                    if (span.Start + span.Length > written.Length)
+                    if (span.Start + span.Length > written.Length || x > drawnTo)
                         break;
 
                     // Only what of the span is on this row
@@ -2849,17 +2900,18 @@ public partial class CodeEditor : UIComponent
                     // round its keywords
                     ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
                     bool blank = gap.IsWhiteSpace();
-                    x = DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, blank ? default : colors.Of(SyntaxKind.Name), left, origin, colors, draw: !blank);
+                    x = blank ? DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, default, left, origin, colors, draw: false)
+                        : DrawInSight(list, skin, scale, row.Line, at, gap, x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
                     Vector4 colour = ColourOf(colors, span);
                     float started = x;
-                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);
+                    x = DrawInSight(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors, drawnFrom, drawnTo);
                     if (span.Modifiers != SyntaxModifiers.None)
                         DrawModifiers(list, span.Modifiers, started, x, top, lineHeight, StrikeY(skin, scale, top, lineHeight), colour);
                     at = to;
                 }
 
-                if (at < rowEnd)
-                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
+                if (at < rowEnd && x <= drawnTo)
+                    x = DrawInSight(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
             }
 
             // The hints after the end of the line, once its last row is drawn

@@ -20,6 +20,12 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     // How long one line may take before the grammar gives up on it, a pathological regex on a minified line
     private static readonly TimeSpan LINE_LIMIT = TimeSpan.FromMilliseconds(250);
 
+    // How much of a line the grammar reads, a screen of it wrapped, the rest of a longer one is left plain and the next line
+    // starts where this one did (VS Code's maxTokenizationLineLength). An agent's chat saved as JSON is one line of a fifth
+    // of a megabyte, read whole it ran into LINE_LIMIT on the editor's thread when it opened and at every letter typed
+    // into it, 250 ms. Ten thousand letters of JSON are 25 ms or so, sixteen thousand were 40
+    internal const int MAX_READ = 10_000;
+
     private readonly IGrammar grammar;
 
     public string Name { get; }
@@ -171,8 +177,13 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             return spans;
         }
 
+        IStateStack? started = state;
+        bool cut = text.Length > MAX_READ;
+        if (cut)
+            text = text[..(char.IsHighSurrogate(text.Span[MAX_READ - 1]) ? MAX_READ - 1 : MAX_READ)];
+
         ITokenizeLineResult result = grammar.TokenizeLine(new LineText(text), state!, LINE_LIMIT);
-        state = result.RuleStack;
+        state = cut ? started : result.RuleStack;
         ReadOnlySpan<char> line = text.Span;
 
         foreach (IToken token in result.Tokens)

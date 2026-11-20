@@ -85,6 +85,19 @@ public class TextMateHighlighterTests
     }
 
     [Fact]
+    public void A_line_too_long_is_coloured_only_at_its_start_and_the_next_line_still_is()
+    {
+        // An agent's chat saved as JSON, one line of a fifth of a megabyte
+        string line = "[" + string.Join(",", Enumerable.Repeat("{\"kind\":\"Tool\",\"seconds\":1.5}", 8000)) + "]";
+        var spans = Read(".json", line + "\n{\"next\": 2}\n");
+
+        Assert.All(spans[0], span => Assert.True(span.Start + span.Length <= TextMateHighlighter.MAX_READ));
+        Assert.Equal(SyntaxKind.Number, KindAt(spans, 0, line.IndexOf("1.5", StringComparison.Ordinal)));
+        Assert.Equal(SyntaxKind.Name, KindAt(spans, 0, line.LastIndexOf("1.5", StringComparison.Ordinal)));
+        Assert.Equal(SyntaxKind.Number, KindAt(spans, 1, 9));
+    }
+
+    [Fact]
     public void C_sharp_is_coloured()
     {
         var spans = Read(".cs", "using System;\n\nnamespace Demo;\n\n// a comment\npublic class Thing\n{\n    public int Count { get; set; } = 3;\n    private string name = \"hello\";\n}\n");
