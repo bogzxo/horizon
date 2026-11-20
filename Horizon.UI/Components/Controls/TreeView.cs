@@ -753,13 +753,17 @@ public partial class TreeView : UIComponent
             // The badge has its own room at the right end, and the buttons sit over the end of the text while they show
             float badge = BadgeWidth(item, skin, scale);
             float room = right - x - LEFT_PAD - badge;
+            // The text, the detail and the note each measured once a row, the text only when there's one of the others to
+            // fit beside it
             float detailWidth = item.Detail.Length > 0 ? skin.Font.Measure(item.Detail, scale, item.DetailMarkup).X + DETAIL_GAP : 0.0f;
-            if (detailWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth > room)
+            Vector2 noteSize = item.Note.Length > 0 ? skin.Font.Measure(item.Note, scale, markup: false) : default;
+            float textWidth = detailWidth > 0.0f || item.Note.Length > 0 ? skin.Font.Measure(item.Text, scale, markup: false).X : 0.0f;
+            if (detailWidth > 0.0f && textWidth + detailWidth > room)
                 detailWidth = MathF.Min(detailWidth, room * DETAIL_MOST);
 
             // The note goes between them while all of the text fits beside it, and is the first thing given up when it doesn't
-            float noteWidth = item.Note.Length > 0 ? skin.Font.Measure(item.Note, scale, markup: false).X + DETAIL_GAP : 0.0f;
-            if (noteWidth > 0.0f && skin.Font.Measure(item.Text, scale, markup: false).X + detailWidth + noteWidth > room)
+            float noteWidth = item.Note.Length > 0 ? noteSize.X + DETAIL_GAP : 0.0f;
+            if (noteWidth > 0.0f && textWidth + detailWidth + noteWidth > room)
                 noteWidth = 0.0f;
             string rowText = Fitted(item, skin, scale, room - detailWidth);
             Vector2 size = item.Bold
@@ -794,8 +798,7 @@ public partial class TreeView : UIComponent
 
             if (noteWidth > 0.0f)
             {
-                Vector2 note = skin.Font.Measure(item.Note, scale, markup: false);
-                list.Text(item.Note, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + note.Y * 0.5f)), scale, dim, markup: false);
+                list.Text(item.Note, new Vector2(x + size.X + DETAIL_GAP, MathF.Round(row.Center.Y + noteSize.Y * 0.5f)), scale, dim, markup: false);
             }
 
             if (item.Detail.Length > 0 && FittedDetail(item, skin, scale, right - LEFT_PAD - badge - (x + size.X + noteWidth + DETAIL_GAP)) is { Length: > 0 } said)
