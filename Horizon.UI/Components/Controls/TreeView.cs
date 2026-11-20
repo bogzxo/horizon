@@ -136,6 +136,9 @@ public partial class TreeView : UIComponent
     private const float ROW_PADDING = 8.0f, BAR_WIDTH = UIScrollBar.WIDTH, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
 
+    // How strong the guides down the levels are against the text, the faint ones and the lit one of the picked row's level
+    private const float GUIDE = 0.1f, GUIDE_LIT = 0.38f;
+
     // How far in from its top and bottom the rows fade while there are more past that edge, see ScrollPanel.Fade
     private const float FADE = 18.0f;
 
@@ -641,10 +644,21 @@ public partial class TreeView : UIComponent
 
         Vector4 text = skin.TextColor;
         Vector4 dim = text with { W = text.W * 0.55f };
-        Vector4 guide = text with { W = text.W * 0.12f };
-        Vector4 lit = text with { W = ListBox.PICKED };
+        Vector4 guide = text with { W = text.W * GUIDE };
+        Vector4 guideLit = text with { W = text.W * GUIDE_LIT };
         bool keyed = IsFocused && TakesKeys;
         bool ringed = Module?.Compositor.FocusVisible == true;
+
+        // What's picked is the theme's selection while the tree has the keyboard, and a quiet grey while it hasn't, so
+        // which of the side and the code the keys go to can be told from the rows, VS Code's active and inactive selection
+        Vector4 lit = keyed ? skin.Palette.Selection : text with { W = ListBox.PICKED };
+
+        // The guide of the level the picked row is on is lit, the rest stay faint, so where that level starts and ends
+        // can be followed down a long folder
+        UITreeItem? litLevel = selected?.Parent;
+        int litDepth = -1;
+        for (UITreeItem? up = litLevel; up is not null; up = up.Parent)
+            litDepth++;
 
         if (Color is { } behind)
         {
@@ -696,10 +710,20 @@ public partial class TreeView : UIComponent
             float x = bounds.Min.X + LEFT_PAD;
             if (Guides)
             {
+                // The row's own ancestor at the lit level, walked up to once a row and only for a row deep enough
+                UITreeItem? under = null;
+                if (litDepth >= 0 && depth > litDepth)
+                {
+                    under = item.Parent;
+                    for (int up = depth - 1; up > litDepth && under is not null; up--)
+                        under = under.Parent;
+                }
+
                 for (int level = 0; level < depth; level++)
                 {
                     float at = MathF.Round(x + level * Indent + icon * 0.5f);
-                    list.Rect(new UIRect(new Vector2(at, row.Min.Y), new Vector2(at + 1.0f, row.Max.Y)), guide);
+                    bool lights = level == litDepth && under is not null && under == litLevel;
+                    list.Rect(new UIRect(new Vector2(at, row.Min.Y), new Vector2(at + 1.0f, row.Max.Y)), lights ? guideLit : guide);
                 }
             }
 
