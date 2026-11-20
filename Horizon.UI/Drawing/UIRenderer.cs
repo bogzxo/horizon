@@ -55,6 +55,10 @@ internal sealed class UIRenderer
         // Everything the UI has on the GPU exists from here on, rather than from whenever it first has something to show.
         batch.PrepareItems();
 
+        // The letters made at the size they're drawn, there from the first paint so text isn't drawn out of its field
+        // first and then left that way by a UI with nothing to repaint
+        Horizon.Rendering.Text.GlyphAtlas.Shared.Upload();
+
         if (fontSampler != 0)
             return;
 
@@ -159,14 +163,20 @@ internal sealed class UIRenderer
         foreach (var atlas in atlases)
             atlas.Update();
 
+        // And the letters made since the last draw
+        var glyphs = Horizon.Rendering.Text.GlyphAtlas.Shared;
+        glyphs.Upload();
+
         if (batch is null || skin is null || itemCount == 0)
             return false;
 
-        // Every run shows the atlas and the font, in the slots the draw list gave them.
+        // Every run shows the atlas, the font and the letters, in the slots the draw list gave them. Nothing asks for the
+        // letters' slot before they have a texture, the font stands in to keep the slots after it where they are
         ReadOnlySpan<SpriteTexture> shared =
         [
             new SpriteTexture(skin.Atlas.Texture),
-            new SpriteTexture(skin.Font.Texture, fontSampler)
+            new SpriteTexture(skin.Font.Texture, fontSampler),
+            new SpriteTexture(glyphs.Ready ? glyphs.Texture : skin.Font.Texture, fontSampler)
         ];
 
         spriteRuns.Clear();

@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 
 using Horizon.Graphics;
 using Horizon.Rendering.Spriting;
+using Horizon.Rendering.Text;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Drawing;
@@ -133,6 +134,17 @@ public sealed partial class UIDrawList
         float boldAdvance = bold ? font.BoldAdvance * scale : 0.0f;
         float slant = (style & UITextStyle.Italic) != 0 ? UIFont.ITALIC_SLANT : 0.0f;
 
+        // Letters made at the size they're drawn when there's a size to make them at: a TrueType font, upright and
+        // unstretched on the screen and not in the middle of growing or shrinking, which would want a picture a frame
+        ushort madeSize = 0;
+        GlyphOutlines? outlines = font.Outlines;
+        GlyphAtlas glyphs = GlyphAtlas.Shared;
+        float pixels = this.scale.X;
+        if (outlines is not null && glyphs.Ready && !FieldTextOnly && visualScale == Vector2.One && this.scale.X == this.scale.Y && pixels > 0.0f)
+            madeSize = GlyphAtlas.SizeOf(font.Field.EmSize * scale * pixels);
+        byte glyphStyle = (byte)((bold ? 1 : 0) | (slant != 0.0f ? 2 : 0));
+        float glyphBold = bold ? font.BoldAdvance * scale * pixels : 0.0f;
+
         for (int i = 0; i < text.Length; i++)
         {
             char character = text[i];
@@ -180,7 +192,11 @@ public sealed partial class UIDrawList
                 continue;
             }
 
-            if (font.Resolve(character, out var glyph))
+            if (font.Resolve(character, out var glyph) && madeSize != 0 && Glyph(glyphs, outlines!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed))
+            {
+                // Made at its size, see Glyph
+            }
+            else if (glyph.Size.X > 0 && glyph.Size.Y > 0)
             {
                 // A glyph's offset is measured from the pen to its top left corner, downwards. Its left edge on a whole pixel
                 // of the screen, so a letter's stems fall the same way across the pixels wherever it is in the line: the
@@ -204,6 +220,42 @@ public sealed partial class UIDrawList
             pen.X += glyph.XAdvance * scale + boldAdvance;
             if (i + 1 < text.Length) pen.X += font.Kerning(character, text[i + 1]) * scale;
         }
+    }
+
+    // HORIZON_TEXT=field draws every letter out of its distance field as before the glyph atlas, to compare the two
+    private static readonly bool FieldTextOnly = string.Equals(Environment.GetEnvironmentVariable("HORIZON_TEXT"), "field", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A letter out of the glyph atlas, made at the size it is on the screen with the pen a quarter of a pixel at a time
+    /// and its baseline on a whole row of pixels, one texel to the pixel. False when there's no picture of it to be had
+    /// (the atlas is full until the next paint), and it's drawn out of its field instead. Only for a list with nothing
+    /// growing or shrinking it, see Text.
+    /// </summary>
+    /// <param name="baseline">How far down the line its baseline is, in the layout.</param>
+    private bool Glyph(GlyphAtlas glyphs, GlyphOutlines outlines, char character, ushort size, byte style, float bold, float slant, Vector2 pen, float baseline, uint color)
+    {
+        // The pen on the screen, which pixel and how far into it, and the baseline on the row nearest it
+        Vector2 screenPen = (pen + visualOffset) * scale + origin;
+        float column = MathF.Floor(screenPen.X);
+        int phase = (int)MathF.Round((screenPen.X - column) * GlyphAtlas.PHASES);
+        if (phase == GlyphAtlas.PHASES)
+        {
+            column += 1.0f;
+            phase = 0;
+        }
+        float row = MathF.Round(((pen.Y - baseline) + visualOffset.Y) * scale.Y + origin.Y);
+
+        if (!glyphs.TryGet(outlines, new GlyphKey(outlines.Id, character, size, (byte)phase, style), bold, slant, out GlyphSlot slot))
+            return false;
+
+        // The picture's rows go down from its top and the screen's up, its corners back into the layout for Quad
+        GlyphBox box = slot.Box;
+        Vector2 min = new(column + box.Left, row - box.Top - box.Height);
+        Vector2 max = new(column + box.Left + box.Width, row - box.Top);
+        var rect = new UIRect((min - origin) / scale - visualOffset, (max - origin) / scale - visualOffset);
+
+        Quad(rect, new Vector2(slot.X, slot.Y), new Vector2(slot.X + box.Width, slot.Y + box.Height), color, SpriteItem.GlyphFlag | GLYPH_SLOT);
+        return true;
     }
 
     /// <summary>

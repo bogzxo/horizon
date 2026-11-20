@@ -71,6 +71,11 @@ public struct SpriteItem
     // rather than anything about a texture. The sprite renderer draws one as the plain quad round it
     public const uint ShapeFlag = 0x2000000;
 
+    // Set in Flags for a letter made at the size it's drawn (see GlyphAtlas), its texture's red how much of each pixel the
+    // ink covers. The UI's shader makes it a little heavier or lighter by how light the colour is, the way DirectWrite
+    // does, as blending in sRGB leaves light letters on a dark ground too thin and dark ones on a light ground too heavy
+    public const uint GlyphFlag = 0x4000000;
+
     public const uint White = 0xFFFFFFFF;
 
     // The bottom left corner of the quad

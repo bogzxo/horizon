@@ -53,6 +53,24 @@ static const uint SOFT_FLAG = 0x1000000u;
 // is still measured from the middle of the whole of it
 static const uint SHAPE_FLAG = 0x2000000u;
 
+// A letter made at the size it's drawn, red is how much of the pixel its ink covers. Must match SpriteItem.cs
+static const uint GLYPH_FLAG = 0x4000000u;
+
+// How a letter's coverage is turned into how much of its colour goes over what's under it. Blended as sRGB numbers a
+// light letter on a dark ground comes out thinner than its ink and a dark one on a light ground heavier, so the edge is
+// lifted a little (DirectWrite's enhanced contrast) and bent by a gamma that goes from heavier for light colours to
+// lighter for dark ones
+static const float GLYPH_CONTRAST = 0.25;
+static const float GLYPH_GAMMA_DARK = 1.12;
+static const float GLYPH_GAMMA_LIGHT = 0.9;
+
+float glyphInk(float coverage, float3 colour)
+{
+    float light = dot(colour, float3(0.2126, 0.7152, 0.0722));
+    float lifted = coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0);
+    return pow(saturate(lifted), lerp(GLYPH_GAMMA_DARK, GLYPH_GAMMA_LIGHT, light));
+}
+
 // How far out into the field the edge of a bold glyph is, as a share of the field's value at the edge. Must match
 // UIFont.BOLD_GROWTH, which widens every bold letter by as much as the ink grows
 static const float BOLD_GROWTH = 0.2;
@@ -209,6 +227,9 @@ GBuffer fsMain(Varyings input)
 
     // The texture only says where the ink is (fonts), the colour is all the item's
     if ((input.flags & COVERAGE_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, tex.a);
+
+    // A letter made at its size, one texel to the pixel
+    if ((input.flags & GLYPH_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, glyphInk(tex.r, input.color.rgb));
 
     // Text out of a distance field, four samples to the pixel (see sprites.slang for why)
     float field = tex.r;

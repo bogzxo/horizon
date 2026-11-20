@@ -81,6 +81,8 @@ public sealed partial class UIDrawList
         hash.Add(UISkins.Version);
         hash.Add(paletteFingerprint);
         hash.Add(font);
+        // Letters kept from before the glyph atlas was emptied point at pictures that aren't there any more
+        hash.Add(Horizon.Rendering.Text.GlyphAtlas.Shared.Generation);
         foreach (var (area, top, bottom) in fades)
         {
             hash.Add(area);

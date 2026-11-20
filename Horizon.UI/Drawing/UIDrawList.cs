@@ -19,7 +19,9 @@ public sealed partial class UIDrawList
     // The slots of the textures every run shares. Custom images take the ones after.
     private const uint ATLAS_SLOT = 0;
     private const uint FONT_SLOT = 1;
-    private const uint IMAGE_SLOT = 2;
+    // The letters made at the size they're drawn, see GlyphAtlas
+    private const uint GLYPH_SLOT = 2;
+    private const uint IMAGE_SLOT = 3;
 
     // How much of an icon's height the label on it takes up.
     private const float ICON_LABEL_HEIGHT = 0.75f;
@@ -189,6 +191,9 @@ public sealed partial class UIDrawList
 
         fonts.Clear();
         font = null;
+
+        // Emptied before anything is painted if it filled up, never halfway through a paint
+        Horizon.Rendering.Text.GlyphAtlas.Shared.BeginPaint();
 
         origin = Vector2.Zero;
         scale = Vector2.One;
@@ -1017,7 +1022,7 @@ public sealed partial class UIDrawList
         // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
         // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
         // texture it hasn't got. The shader knew better, but it was still bollocks
-        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
+        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & (SpriteItem.CoverageFlag | SpriteItem.GlyphFlag)) == 0)
             flags |= SpriteItem.SmoothFlag;
 
         Vector2 min = (visible.Min * visualScale + visualOffset) * scale + origin;

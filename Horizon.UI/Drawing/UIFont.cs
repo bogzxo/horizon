@@ -49,6 +49,12 @@ public sealed class UIFont
     /// <summary>The font itself, the field and its numbers.</summary>
     public DistanceFieldFont Field { get; }
 
+    /// <summary>
+    /// The font's outlines, for letters made at the size they're drawn (see <see cref="GlyphAtlas"/>), null for a bitmap
+    /// font, which is drawn out of its field at every size.
+    /// </summary>
+    public GlyphOutlines? Outlines { get; }
+
     /// <summary>The glyph atlas, a distance field. Text takes its colour from whoever draws it.</summary>
     public Texture Texture => Field.Texture;
 
@@ -129,6 +135,7 @@ public sealed class UIFont
     public UIFont(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM, (int From, int To)[]? characters = null)
     {
         Field = DistanceFieldFont.Load(directory, file, emSize, characters);
+        Outlines = Field.Glyphs.Count > 0 ? GlyphOutlines.For(Path.Combine(directory, file)) : null;
         glyphs = Field.Glyphs;
         kerning = Field.Kerning;
 
