@@ -62,7 +62,7 @@ public sealed class SettingsWindow
             OnButton = (key, which) => SourceOf(key)?.Press(key, which),
 
             // Escape closes it the way the window's x does, so it goes the same way too rather than vanishing
-            OnClose = () => Window.Close(),
+            OnClose = () => Window!.Close(),
             GroupOrder = OrderOf
         };
         Page.HideClose = true;

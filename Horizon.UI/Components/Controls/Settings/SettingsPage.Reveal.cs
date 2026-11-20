@@ -94,7 +94,7 @@ public partial class SettingsPage
     /// Where the page is now, the section lit down the left, what's typed in the search and how far the rows are
     /// scrolled, for a program to open it there again the next time (<see cref="Restore"/>).
     /// </summary>
-    public (string? Group, string Query, float Offset) Place => (CurrentGroup, search.Text, scroll.Offset);
+    public new (string? Group, string Query, float Offset) Place => (CurrentGroup, search.Text, scroll.Offset);
 
     /// <summary>
     /// The page put back where it was (<see cref="Place"/>), the search typed again, its section gone to and the rows

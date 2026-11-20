@@ -176,7 +176,7 @@ public class TextBox : UIComponent
     // What's drawn of the text, itself or a star for each letter of a secret, kept while it's as long
     private string masked = string.Empty;
 
-    private string Shown
+    private new string Shown
     {
         get
         {

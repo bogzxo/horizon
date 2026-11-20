@@ -20,7 +20,7 @@ public partial class TreeView
     public Action<IReadOnlyList<UITreeItem>>? OnSelectionChanged { get; set; }
 
     /// <summary>Whether a row is one of the selected ones.</summary>
-    public bool IsSelected(UITreeItem item) => item == selected || alsoSelected.Contains(item);
+    public new bool IsSelected(UITreeItem item) => item == selected || alsoSelected.Contains(item);
 
     /// <summary>Rows selected together as a click with Ctrl on each would, the first of them the selected one. For a program or a test.</summary>
     public void SelectMany(IReadOnlyList<UITreeItem> items)

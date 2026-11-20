@@ -42,7 +42,7 @@ public partial class ListBox : UIComponent
     private UIOverscroll over;
 
     /// <summary>The first row as it's drawn this moment, part way to <see cref="Top"/> while the rows glide.</summary>
-    internal float Shown => shown;
+    internal new float Shown => shown;
 
     // How many rows a notch of the wheel goes, the rows glide there as quickly as everything else scrolls (UIScrollEase)
     private const int WHEEL_ROWS = 3;
@@ -602,7 +602,7 @@ public partial class ListBox : UIComponent
             string text = row.Text[..tab];
             list.Text(text, new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, ink, markup: false);
             left += skin.Font.Measure(text, scale, markup: false).X + KEY_PAD * 3.0f;
-            list.Text(row.Text[(tab + 1)..], new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
+            list.Text(row.Text.AsSpan(tab + 1), new UIRect(new Vector2(left, area.Min.Y), area.Max), Origin.Left, scale, quiet, markup: false);
         }
 
         list.PopClip();

@@ -284,7 +284,8 @@ public sealed partial class UIFileBrowser
     {
         try
         {
-            return DriveInfo.GetDrives().Where(drive => drive.IsReady);
+            // Gone through here, inside the try, a drive that fails when asked whether it is ready is caught with the rest
+            return [.. DriveInfo.GetDrives().Where(drive => drive.IsReady)];
         }
         catch (Exception)
         {
