@@ -724,6 +724,7 @@ public partial class WindowManager : GameComponent, IDisposable
                 DrawFrame(dt);
                 Scaling.EndFrame();
                 Graphics.EndFrame();
+                host.Window?.FramePresented();
                 if (StartupTrace.SceneReady)
                     StartupTrace.Finish("first frame of the scene shown");
 

@@ -254,8 +254,12 @@ public sealed partial class DesktopWindow
     {
         if (_window.WindowState == Silk.NET.Windowing.WindowState.Minimized)
             _window.WindowState = Silk.NET.Windowing.WindowState.Normal;
+
+        // Out of hiding it's shown covered until there are frames in it (see DesktopWindow.Reveal), and put in front then
+        bool cloaked = ShowCloaked();
         _window.IsVisible = true;
-        Foreground();
+        if (!cloaked)
+            Foreground();
         // Out of hiding, an application draws again
         if (host.HasEvents)
             Events.MinimizedChanged(false);

@@ -67,6 +67,12 @@ public interface IPlatformWindow
     void WakeWindowThread() { }
 
     /// <summary>
+    /// A frame was presented in the window, for one brought back from hiding that stays covered until there is a picture
+    /// in it (BringToFront). The thread that draws, after every frame.
+    /// </summary>
+    void FramePresented() { }
+
+    /// <summary>
     /// Shows a window that was made hidden, once there's a picture in it. Platform thread, nothing for one that was
     /// shown all along.
     /// </summary>
