@@ -41,25 +41,44 @@ public sealed class GlyphAtlas
     public static GlyphAtlas Shared { get; } = new();
 
     private readonly Lock gate = new();
-    private readonly Dictionary<GlyphKey, GlyphSlot> slots = [];
+    // By the key packed into a number, see Pack: a record struct's own hash mixes its five fields one at a time, for
+    // every letter of every line painted
+    private readonly Dictionary<ulong, GlyphSlot> slots = [];
     private byte[]? pixels;
     private byte[] scratch = new byte[64 * 64];
+
+    // The rows on their way up, copied out of pixels under the lock so the upload itself doesn't hold up painting
+    private byte[] staging = [];
 
     // The shelf being filled and how tall it is, the next picture goes to its right
     private int shelfX, shelfY, shelfHeight;
 
     // The rows that changed since they last went up, top in and bottom out, nothing when top isn't above bottom
     private int dirtyTop = int.MaxValue, dirtyBottom;
-    private bool full;
+
+    // Read outside the lock by every paint and set by another, see BeginPaint
+    private volatile bool full;
+
+    // Whether making the texture failed, it isn't tried again every frame
+    private bool failed;
 
     /// <summary>The texture, once the render thread has made it, see <see cref="Ready"/>.</summary>
     public Texture Texture { get; private set; } = Texture.Invalid;
 
+    // Written on the render thread after the texture, read on whatever thread paints: volatile so a weaker memory model
+    // (the phones' ARM) can't show it ready before the texture is there
+    private volatile bool ready;
+    private volatile int generation;
+
     /// <summary>Whether there's a texture to draw with. Until the first upload text is drawn out of its field.</summary>
-    public bool Ready { get; private set; }
+    public bool Ready => ready;
 
     /// <summary>Another number every time it's emptied, painting kept from before is no good after.</summary>
-    public int Generation { get; private set; }
+    public int Generation => generation;
+
+    // A key as one number, the font in the top half, then the letter, the size, the phase and the style
+    private static ulong Pack(in GlyphKey key) =>
+        (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(key.Size & 0x3FF) << 4 | (ulong)(key.Phase & 0x3) << 2 | (ulong)(key.Style & 0x3);
 
     /// <summary>The size a letter is made at for a font drawn so tall, in <see cref="SIZE_STEPS"/>, 0 when it's too big or small to be.</summary>
     public static ushort SizeOf(float pixelHeight)
@@ -88,7 +107,7 @@ public sealed class GlyphAtlas
             dirtyTop = 0;
             dirtyBottom = SIZE;
             full = false;
-            Generation++;
+            generation++;
         }
     }
 
@@ -100,9 +119,10 @@ public sealed class GlyphAtlas
     /// <param name="bold">How many pixels wider the ink is for bold, see <see cref="GlyphOutlines.Rasterize"/>.</param>
     public bool TryGet(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, out GlyphSlot slot)
     {
+        ulong packed = Pack(key);
         lock (gate)
         {
-            if (slots.TryGetValue(key, out slot))
+            if (slots.TryGetValue(packed, out slot))
                 return !slot.Box.IsEmpty;
             if (full)
                 return false;
@@ -113,7 +133,7 @@ public sealed class GlyphAtlas
             {
                 // Remembered as nothing, a space is asked about on every line
                 slot = default;
-                slots[key] = slot;
+                slots[packed] = slot;
                 return false;
             }
 
@@ -132,7 +152,7 @@ public sealed class GlyphAtlas
             dirtyBottom = Math.Max(dirtyBottom, y + box.Height);
 
             slot = new GlyphSlot((short)x, (short)y, box);
-            slots[key] = slot;
+            slots[packed] = slot;
             return true;
         }
     }
@@ -165,12 +185,19 @@ public sealed class GlyphAtlas
     /// </summary>
     public unsafe void Upload()
     {
-        if (!Ready)
+        if (!ready)
         {
-            using (AssetScope.EnterGlobal())
-                Texture = Texture.Create(SIZE, SIZE, new TextureDefinition(PixelFormat.R8, Smooth: true));
-            if (!Texture.IsValid)
+            if (failed)
                 return;
+
+            // Nearest, never smoothed: every letter is drawn a texel to the pixel, and a filter could only blur it
+            using (AssetScope.EnterGlobal())
+                Texture = Texture.Create(SIZE, SIZE, new TextureDefinition(PixelFormat.R8, Smooth: false));
+            if (!Texture.IsValid)
+            {
+                failed = true;
+                return;
+            }
             Texture.Name = "glyphs";
 
             // What it held before it was made isn't anything, it all goes up the once
@@ -180,18 +207,26 @@ public sealed class GlyphAtlas
                 dirtyTop = 0;
                 dirtyBottom = SIZE;
             }
-            Ready = true;
+            ready = true;
         }
 
+        // The rows copied out under the lock, which is a memory copy, and sent up after it, which can wait on the driver
+        int top, rows;
         lock (gate)
         {
             if (dirtyTop >= dirtyBottom || pixels is null)
                 return;
 
-            fixed (byte* texels = &pixels[dirtyTop * SIZE])
-                GraphicsDevice.Current.UploadTexels(Texture, 0, dirtyTop, SIZE, (uint)(dirtyBottom - dirtyTop), TexelFormat.R8, texels);
+            top = dirtyTop;
+            rows = dirtyBottom - dirtyTop;
+            if (staging.Length < rows * SIZE)
+                staging = new byte[rows * SIZE];
+            pixels.AsSpan(top * SIZE, rows * SIZE).CopyTo(staging);
             dirtyTop = int.MaxValue;
             dirtyBottom = 0;
         }
+
+        fixed (byte* texels = staging)
+            GraphicsDevice.Current.UploadTexels(Texture, 0, top, SIZE, (uint)rows, TexelFormat.R8, texels);
     }
 }

@@ -176,7 +176,8 @@ internal sealed class UIRenderer
         [
             new SpriteTexture(skin.Atlas.Texture),
             new SpriteTexture(skin.Font.Texture, fontSampler),
-            new SpriteTexture(glyphs.Ready ? glyphs.Texture : skin.Font.Texture, fontSampler)
+            // Read through its own sampler, nearest, a letter is a texel to the pixel
+            glyphs.Ready ? new SpriteTexture(glyphs.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler)
         ];
 
         spriteRuns.Clear();

@@ -60,9 +60,9 @@ static const uint GLYPH_FLAG = 0x4000000u;
 // light letter on a dark ground comes out thinner than its ink and a dark one on a light ground heavier, so the edge is
 // lifted a little (DirectWrite's enhanced contrast) and bent by a gamma that goes from heavier for light colours to
 // lighter for dark ones
-static const float GLYPH_CONTRAST = 0.25;
-static const float GLYPH_GAMMA_DARK = 1.12;
-static const float GLYPH_GAMMA_LIGHT = 0.9;
+static const float GLYPH_CONTRAST = 0.5;
+static const float GLYPH_GAMMA_DARK = 1.15;
+static const float GLYPH_GAMMA_LIGHT = 0.8;
 
 float glyphInk(float coverage, float3 colour)
 {

@@ -39,24 +39,30 @@ public sealed unsafe class GlyphOutlines
     // How tall an x is, in font units, 0 for a font without one (an icon font)
     private readonly float xHeight;
 
-    // Character to the font's glyph, looked up once
-    private readonly ConcurrentDictionary<char, int> indices = new();
+    // Character to the font's glyph, looked up once. Rasterize is only ever called under the glyph atlas's lock, so a
+    // plain dictionary, one lock guarding it rather than two schemes
+    private readonly Dictionary<char, int> indices = [];
 
     /// <summary>A number of its own, for keys.</summary>
     public int Id { get; }
 
     private static int made;
-    private static readonly ConcurrentDictionary<string, GlyphOutlines?> known = new(StringComparer.OrdinalIgnoreCase);
+    // Lazy so two threads asking for the same font at once read it once, a factory GetOrAdd ran twice left a copy behind
+    private static readonly ConcurrentDictionary<string, Lazy<GlyphOutlines?>> known = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>How far an italic letter leans, across for every unit up. The same as the field's, see UIFont.ITALIC_SLANT.</summary>
     public const float ITALIC_SLANT = 0.2f;
 
     private GlyphOutlines(byte[] bytes)
     {
+        // Kept for good once it reads, a font is drawn with for as long as Hex runs. Given back if it doesn't
         data = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
         bytes.CopyTo(new Span<byte>(data, bytes.Length));
         if (StbTrueType.stbtt_InitFont(info, data, StbTrueType.stbtt_GetFontOffsetForIndex(data, 0)) == 0)
+        {
+            NativeMemory.Free(data);
             throw new InvalidDataException("not a TrueType font stb_truetype can read");
+        }
 
         unitsPerHeight = StbTrueType.stbtt_ScaleForPixelHeight(info, 1.0f);
         int x0, y0, x1, y1;
@@ -72,18 +78,22 @@ public sealed unsafe class GlyphOutlines
         if (Path.GetExtension(path).ToLowerInvariant() is not (".ttf" or ".otf"))
             return null;
 
-        return known.GetOrAdd(ContentFiles.CacheKey(path), _ =>
+        // A file that isn't there yet is looked for again next time rather than remembered as missing
+        if (!ContentFiles.Exists(path))
+            return null;
+
+        return known.GetOrAdd(ContentFiles.CacheKey(path), _ => new Lazy<GlyphOutlines?>(() =>
         {
             try
             {
-                return ContentFiles.Exists(path) ? new GlyphOutlines(ContentFiles.ReadAllBytes(path)) : null;
+                return new GlyphOutlines(ContentFiles.ReadAllBytes(path));
             }
             catch (Exception e)
             {
                 Log.Error($"[GlyphOutlines] '{path}' would not load, {e.Message}");
                 return null;
             }
-        });
+        })).Value;
     }
 
     // How much taller or shorter the letters are made so the top of an x lands on a whole row of pixels. Rounded a little
@@ -97,7 +107,8 @@ public sealed unsafe class GlyphOutlines
     }
 
     /// <summary>
-    /// Fills a letter in, as many pixels of coverage as <paramref name="box"/> says, a row after another. The pixels go
+    /// Fills a letter in, as many pixels of coverage as <paramref name="box"/> says, a row after another. Not safe on two
+    /// threads at once, the glyph atlas calls it under its lock. The pixels go
     /// into <paramref name="into"/>, which is made bigger when it has to be.
     /// </summary>
     /// <param name="pixelHeight">How tall the font is drawn, ascent to descent, in pixels of the screen.</param>
@@ -108,7 +119,8 @@ public sealed unsafe class GlyphOutlines
     public bool Rasterize(char character, float pixelHeight, float shift, float bold, float slant, ref byte[] into, out GlyphBox box)
     {
         box = default;
-        int glyph = indices.GetOrAdd(character, static (c, font) => StbTrueType.stbtt_FindGlyphIndex(font.info, c), this);
+        if (!indices.TryGetValue(character, out int glyph))
+            indices[character] = glyph = StbTrueType.stbtt_FindGlyphIndex(info, character);
         if (glyph == 0 && character != '?')
             return false;
 
