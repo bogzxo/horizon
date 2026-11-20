@@ -22,6 +22,8 @@ public sealed class DebugAdapterConnection : IDisposable
     }
 
     private readonly Stream input, output;
+    private readonly ContentLengthReader framing;
+    private readonly ContentLengthWriter writer;
     private readonly Thread reader;
     private readonly Lock writing = new();
     private readonly ConcurrentDictionary<int, (string Command, TaskCompletionSource<JsonNode?> Waiting)> pending = new();
@@ -41,6 +43,8 @@ public sealed class DebugAdapterConnection : IDisposable
     {
         this.input = input;
         this.output = output;
+        framing = new ContentLengthReader(input);
+        writer = new ContentLengthWriter(output);
         reader = new Thread(Read) { IsBackground = true, Name = "debug adapter reader" };
         reader.Start();
     }
@@ -74,18 +78,19 @@ public sealed class DebugAdapterConnection : IDisposable
         if (closed)
             throw new InvalidOperationException("The debugger has gone.");
 
-        // Node by node, the serializer proper wants reflection a trimmed application hasn't got
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
-            message.WriteTo(writer);
-        ReadOnlySpan<byte> body = buffer.WrittenSpan;
-        byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
-
+        // Node by node (the serializer proper wants reflection a trimmed application hasn't got) into a buffer the
+        // writer keeps, so it's made under the lock that writes it
         lock (writing)
         {
-            output.Write(header);
-            output.Write(body);
-            output.Flush();
+            try
+            {
+                writer.Make(message);
+                writer.Write();
+            }
+            finally
+            {
+                writer.Settle();
+            }
         }
     }
 
@@ -96,14 +101,13 @@ public sealed class DebugAdapterConnection : IDisposable
         {
             while (!closed)
             {
-                byte[]? body = ReadMessage();
-                if (body is null)
+                if (ReadMessage() is not { } body)
                     break;
 
                 JsonNode? message;
                 try
                 {
-                    message = JsonNode.Parse(Utf8Only(body));
+                    message = JsonNode.Parse(Utf8Only(body.Span));
                 }
                 catch (JsonException)
                 {
@@ -140,52 +144,13 @@ public sealed class DebugAdapterConnection : IDisposable
     /// writes what a program printed in the console's code page, Horizon's "1600×900" came over as a lone 0xFF byte, and
     /// reading that string threw on the reading thread and ended the debug session with nothing said.
     /// </summary>
-    internal static byte[] Utf8Only(byte[] body) =>
+    internal static ReadOnlySpan<byte> Utf8Only(ReadOnlySpan<byte> body) =>
         System.Text.Unicode.Utf8.IsValid(body) ? body : Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(body));
 
-    // One framed message, null at the end of the stream
-    private byte[]? ReadMessage()
-    {
-        int length = -1;
-        var line = new StringBuilder();
-        while (true)
-        {
-            int b = input.ReadByte();
-            if (b < 0)
-                return null;
-
-            if (b == '\n')
-            {
-                string header = line.ToString().TrimEnd('\r');
-                line.Clear();
-                if (header.Length == 0)
-                {
-                    // a debugger that writes a line of its own before the first header (netcoredbg can) is let say it
-                    if (length < 0)
-                        continue;
-                    break;
-                }
-
-                if (header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) && int.TryParse(header.AsSpan(15).Trim(), out int parsed))
-                    length = parsed;
-                continue;
-            }
-
-            line.Append((char)b);
-        }
-
-        byte[] body = new byte[length];
-        int read = 0;
-        while (read < length)
-        {
-            int got = input.Read(body, read, length - read);
-            if (got <= 0)
-                return null;
-            read += got;
-        }
-
-        return body;
-    }
+    // One framed message, null at the end of the stream, good until the next is read. A debugger that writes a line of
+    // its own before the first header (netcoredbg can) is let say it
+    private ReadOnlyMemory<byte>? ReadMessage() =>
+        framing.ReadHeaders(overBlankLinesFirst: true) is int length ? framing.ReadBody(length) : null;
 
     private void Dispatch(JsonObject message)
     {

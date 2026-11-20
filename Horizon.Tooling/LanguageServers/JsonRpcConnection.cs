@@ -23,6 +23,8 @@ public sealed class JsonRpcConnection : IDisposable
     }
 
     private readonly Stream input, output;
+    private readonly ContentLengthReader framing;
+    private readonly ContentLengthWriter writer;
     private readonly Thread reader;
     private readonly Lock writing = new();
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonNode?>> pending = new();
@@ -52,6 +54,8 @@ public sealed class JsonRpcConnection : IDisposable
     {
         this.input = input;
         this.output = output;
+        framing = new ContentLengthReader(input);
+        writer = new ContentLengthWriter(output);
         trace = OpenTrace(traceName);
         reader = new Thread(Read) { IsBackground = true, Name = "json-rpc reader" };
         reader.Start();
@@ -132,19 +136,19 @@ public sealed class JsonRpcConnection : IDisposable
         if (closed)
             throw new InvalidOperationException("The other side has gone.");
 
-        // Written node by node, the serializer proper wants reflection, which a trimmed application hasn't got
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
-            message.WriteTo(writer);
-        ReadOnlySpan<byte> body = buffer.WrittenSpan;
-        byte[] header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
-
-        Trace(">>", body);
+        // Written node by node (the serializer proper wants reflection, which a trimmed application hasn't got) into a
+        // buffer the writer keeps, so it's made under the lock that writes it
         lock (writing)
         {
-            output.Write(header);
-            output.Write(body);
-            output.Flush();
+            try
+            {
+                Trace(">>", writer.Make(message));
+                writer.Write();
+            }
+            finally
+            {
+                writer.Settle();
+            }
         }
     }
 
@@ -156,15 +160,14 @@ public sealed class JsonRpcConnection : IDisposable
         {
             while (!closed)
             {
-                byte[]? body = ReadMessage();
-                if (body is null)
+                if (ReadMessage() is not { } body)
                     break;
-                Trace("<<", body);
+                Trace("<<", body.Span);
 
                 JsonNode? message;
                 try
                 {
-                    message = JsonNode.Parse(body);
+                    message = JsonNode.Parse(body.Span);
                 }
                 catch (JsonException)
                 {
@@ -187,48 +190,13 @@ public sealed class JsonRpcConnection : IDisposable
         Close(broke);
     }
 
-    /// <summary>Helper method to read one framed message, null at the end of the stream.</summary>
-    private byte[]? ReadMessage()
+    /// <summary>Helper method to read one framed message, null at the end of the stream, good until the next is read.</summary>
+    private ReadOnlyMemory<byte>? ReadMessage()
     {
-        int length = -1;
-        var line = new StringBuilder();
-
-        // The headers, a line each, to the blank line
-        while (true)
-        {
-            int b = input.ReadByte();
-            if (b < 0)
-                return null;
-
-            if (b == '\n')
-            {
-                string header = line.ToString().TrimEnd('\r');
-                line.Clear();
-                if (header.Length == 0)
-                    break;
-
-                if (header.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) && int.TryParse(header.AsSpan(15).Trim(), out int parsed))
-                    length = parsed;
-                continue;
-            }
-
-            line.Append((char)b);
-        }
-
-        if (length < 0)
-            return [];
-
-        byte[] body = new byte[length];
-        int read = 0;
-        while (read < length)
-        {
-            int got = input.Read(body, read, length - read);
-            if (got <= 0)
-                return null;
-            read += got;
-        }
-
-        return body;
+        // The headers, a line each, to the blank line, and a message without a length is an empty one
+        if (framing.ReadHeaders(overBlankLinesFirst: false) is not int length)
+            return null;
+        return length < 0 ? ReadOnlyMemory<byte>.Empty : framing.ReadBody(length);
     }
 
     // Helper method to answer one of the other side's requests, nothing if the connection has gone meanwhile
