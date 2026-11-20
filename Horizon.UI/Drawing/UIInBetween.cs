@@ -41,13 +41,14 @@ internal sealed class UIInBetween
     /// <param name="pointer">Where the pointer is now, for the frames that go where it goes (see <see cref="UIFrame.Follows"/>), null for them to stay where they were painted.</param>
     public void Frames(UIFrameList a, UIFrameList b, float alpha, Vector2? pointer = null)
     {
+        ReadOnlySpan<UIFrame> older = a.Span, newer = b.Span;
         framesBefore.Clear();
-        for (int i = 0; i < a.Frames.Count; i++)
-            framesBefore.TryAdd(a.Frames[i].Key, i);
+        for (int i = 0; i < older.Length; i++)
+            framesBefore.TryAdd(older[i].Key, i);
 
         between.Clear();
-        foreach (UIFrame frame in b.Frames)
-            between.Add(framesBefore.TryGetValue(frame.Key, out int was) ? Between(a.Frames[was], frame, alpha) : frame);
+        foreach (ref readonly UIFrame frame in newer)
+            between.Add(framesBefore.TryGetValue(frame.Key, out int was) ? Between(older[was], frame, alpha) : frame);
 
         if (pointer is { } now && b.Follows)
             Follow(b, now);
@@ -110,9 +111,10 @@ internal sealed class UIInBetween
             followed = new Vector2[(int)BitOperations.RoundUpToPowerOf2((uint)b.Frames.Count)];
 
         // Parents come before what's inside of them, so a frame's parent is worked out by the time it is
-        for (int i = 0; i < b.Frames.Count; i++)
+        ReadOnlySpan<UIFrame> frames = b.Span;
+        for (int i = 0; i < frames.Length; i++)
         {
-            UIFrame frame = b.Frames[i];
+            ref readonly UIFrame frame = ref frames[i];
             bool inside = frame.Parent >= 0 && frame.Parent < i && float.IsFinite(followed[frame.Parent].X);
             followed[i] = frame.Follows ? Vector2.Round(pointer - frame.FollowFrom) : inside ? followed[frame.Parent] : new Vector2(float.NaN);
             if (float.IsFinite(followed[i].X))
