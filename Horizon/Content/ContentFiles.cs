@@ -46,6 +46,30 @@ public static class ContentFiles
     public static byte[] ReadAllBytes(IContentFiles source, string path)
     {
         using Stream stream = source.OpenRead(path);
+
+        // A file on the disk (or an embedded one) says how long it is, so it is read straight into an array that size.
+        // Through a memory stream it was copied twice more, once each time the stream grew and once more out of it
+        if (stream.CanSeek && stream.Length - stream.Position is long length && length <= Array.MaxLength)
+        {
+            var exact = GC.AllocateUninitializedArray<byte>((int)length);
+            int read = stream.ReadAtLeast(exact, exact.Length, throwOnEndOfStream: false);
+
+            // Shorter than it said by the time it was read, what there was of it
+            if (read < exact.Length)
+                return exact[..read];
+
+            // Grown since it was measured, the rest comes the long way
+            int next = stream.ReadByte();
+            if (next < 0)
+                return exact;
+
+            using var grown = new MemoryStream();
+            grown.Write(exact);
+            grown.WriteByte((byte)next);
+            stream.CopyTo(grown);
+            return grown.ToArray();
+        }
+
         using var bytes = new MemoryStream();
         stream.CopyTo(bytes);
         return bytes.ToArray();
