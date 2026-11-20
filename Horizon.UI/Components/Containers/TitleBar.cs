@@ -150,6 +150,11 @@ public class TitleBar : StackPanel
     /// is drawn bigger (a bigger screen, <see cref="UICompositor.Scale"/>) doesn't have a title bar that grows with it, the
     /// system's never does. On a screen the system scales (<see cref="UICompositor.DisplayScale"/>) they're that much
     /// bigger, the same as the system's own title bars there. What is put in it is the program's to size.
+    /// <para>
+    /// The one thing of a UI that stays out of its interface size, which is what a game's player expects of a window's
+    /// frame. A program whose title bar is its own menus (an editor's) switches it off, or its menus are the only words
+    /// that don't grow when the person asks for everything bigger.
+    /// </para>
     /// </summary>
     public bool PixelSized { get; set; } = true;
 

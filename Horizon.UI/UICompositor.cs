@@ -76,8 +76,16 @@ public partial class UICompositor : GameComponent, IDisposable
     public Vector2? DesignSize { get; set; }
 
     /// <summary>
-    /// Makes the whole UI bigger or smaller by a factor, on top of what <see cref="DesignSize"/> does. For a
-    /// setting that lets the player decide how big they want things.
+    /// Makes the whole UI bigger or smaller by a factor, on top of what <see cref="DesignSize"/> and the screen's own
+    /// <see cref="DisplayScale"/> do: the interface size the player or the person using a program picks, 1 for 100%, the
+    /// size the system would have things on that screen.
+    /// <para>
+    /// It is the one scale of the UI's. Everything a module lays out, its boxes, its lines and every word, is in units of
+    /// the layout and comes out <see cref="UIScale"/> times as big, so a component that wants to stay the size the system's
+    /// own parts are whatever the setting (<see cref="TitleBar.PixelSized"/>) is the exception and says so. Text
+    /// stays sharp at any of it, letters are made at the size they come to on the screen. A zoom of a component's own (an
+    /// editor's code, a terminal's font) is a size of its text in those units and goes on top of this, not instead of it.
+    /// </para>
     /// </summary>
     public float Scale { get; set; } = 1.0f;
 
@@ -104,7 +112,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
     /// fitting the <see cref="DesignSize"/> comes to, times the <see cref="DisplayScale"/>. A unit of the layout is
-    /// this many units of the camera.
+    /// this many units of the camera, and of the window's pixels for a UI drawn straight into the window. Applied as the
+    /// transform of every module (<see cref="UIModule.UnitScale"/>), never by tweening a component's own size, which would
+    /// draw its letters out of a picture made at another size.
     /// </summary>
     public float UIScale { get; private set; } = 1.0f;
 
