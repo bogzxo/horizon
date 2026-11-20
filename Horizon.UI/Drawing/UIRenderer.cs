@@ -181,9 +181,11 @@ internal sealed class UIRenderer
         [
             new SpriteTexture(skin.Atlas.Texture),
             new SpriteTexture(skin.Font.Texture, fontSampler),
-            // Read through its own sampler, nearest, a letter is a texel to the pixel
-            glyphs.Ready ? new SpriteTexture(glyphs.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler),
-            subpixels.Ready ? new SpriteTexture(subpixels.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler)
+            // Read smoothly. At rest a letter is a texel to the pixel on whole pixels, where smooth and nearest read the same,
+            // but a frame between two ticks (a window sliding or fading in) puts it between pixels, where nearest stepped
+            // its edges, the text aliasing as it moved
+            new SpriteTexture(glyphs.Ready ? glyphs.Texture : skin.Font.Texture, fontSampler),
+            new SpriteTexture(subpixels.Ready ? subpixels.Texture : skin.Font.Texture, fontSampler)
         ];
 
         spriteRuns.Clear();

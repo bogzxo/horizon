@@ -143,8 +143,11 @@ public class Image : UIComponent
 
         if (File.Length > 0)
         {
-            // Asked for here the first time, there by the next frame
-            if (list.Skin.TryGetImage(File, out var whole))
+            // Asked for here the first time, there by the next frame. Brought down to twice the size it's shown at (a
+            // screen at 200%), a picture bigger than the atlas has room for, Hex's 1254 pixel icon on the About box, was
+            // never there at all
+            int most = Size.X > 0.0f && Size.Y > 0.0f ? Math.Clamp((int)MathF.Ceiling(MathF.Max(Size.X, Size.Y) * 2.0f), 16, 1024) : 0;
+            if (list.Skin.TryGetImage(File, most, out var whole))
                 list.NineSlice(whole, Bounds, Tint);
             return;
         }

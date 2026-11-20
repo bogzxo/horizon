@@ -64,8 +64,9 @@ public sealed class GlyphAtlas
     private readonly int texel;
     private readonly Lock gate = new();
     // By the key packed into a number, see Pack: a record struct's own hash mixes its five fields one at a time, for
-    // every letter of every line painted
-    private readonly Dictionary<ulong, GlyphSlot> slots = [];
+    // every letter of every line painted. Read without the lock, every letter of every paint looks one up and only a
+    // letter not made yet needs it: a lock a letter was the most of what painting a busy chat cost
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, GlyphSlot> slots = new();
     private byte[]? pixels;
     private byte[] scratch = new byte[64 * 64];
     private byte[] work = new byte[64 * 64 * 3];
@@ -146,6 +147,7 @@ public sealed class GlyphAtlas
             dirtyBottom = SIZE;
             full = false;
             generation++;
+            Horizon.Logging.Log.Info($"[GlyphAtlas] The {(subpixel ? "subpixel" : "grey")} letters filled their atlas and it was emptied, generation {generation}.");
         }
     }
 
@@ -157,6 +159,9 @@ public sealed class GlyphAtlas
     public bool TryGet(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, out GlyphSlot slot)
     {
         ulong packed = Pack(key);
+        if (slots.TryGetValue(packed, out slot))
+            return !slot.Box.IsEmpty;
+
         lock (gate)
         {
             if (slots.TryGetValue(packed, out slot))
