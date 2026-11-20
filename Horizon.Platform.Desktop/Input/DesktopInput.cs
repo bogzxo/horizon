@@ -34,12 +34,12 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
         add
         {
             source.EventReceived += value;
-            if (touch is not null) touch.EventReceived += value;
+            if (touch is not null && OperatingSystem.IsWindows()) touch.EventReceived += value;
         }
         remove
         {
             source.EventReceived -= value;
-            if (touch is not null) touch.EventReceived -= value;
+            if (touch is not null && OperatingSystem.IsWindows()) touch.EventReceived -= value;
         }
     }
 
@@ -72,7 +72,7 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     public IPlatformGamepads? OpenGamepads() => host.OpenGamepads(context);
 
     /// <summary>How many fingers are on a Windows touch screen right now, null where they aren't heard. For a check.</summary>
-    public int? TouchContacts => touch?.Installed == true ? touch.Contacts : null;
+    public int? TouchContacts => OperatingSystem.IsWindows() && touch?.Installed == true ? touch.Contacts : null;
 
     public void Dispose()
     {

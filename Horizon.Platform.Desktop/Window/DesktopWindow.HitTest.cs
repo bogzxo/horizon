@@ -84,11 +84,11 @@ public sealed partial class DesktopWindow
     {
         try
         {
-            return hitTested?.WhatIsAt(new Point(point->X, point->Y)) ?? HitTestResult.HittestNormal;
+            return hitTested?.WhatIsAt(new Point(point->X, point->Y)) ?? HitTestResult.Normal;
         }
         catch (Exception)
         {
-            return HitTestResult.HittestNormal;
+            return HitTestResult.Normal;
         }
     }
 
@@ -118,24 +118,24 @@ public sealed partial class DesktopWindow
             WindowEdges edges = EdgesAt(new System.Numerics.Vector2(at.X, at.Y), new System.Numerics.Vector2(size.X, size.Y), ScalesToDisplay ? WindowUnitScale : 1.0f);
             switch (edges)
             {
-                case WindowEdges.Top | WindowEdges.Left: return HitTestResult.HittestResizeTopleft;
-                case WindowEdges.Top | WindowEdges.Right: return HitTestResult.HittestResizeTopright;
-                case WindowEdges.Bottom | WindowEdges.Left: return HitTestResult.HittestResizeBottomleft;
-                case WindowEdges.Bottom | WindowEdges.Right: return HitTestResult.HittestResizeBottomright;
-                case WindowEdges.Top: return HitTestResult.HittestResizeTop;
-                case WindowEdges.Bottom: return HitTestResult.HittestResizeBottom;
-                case WindowEdges.Left: return HitTestResult.HittestResizeLeft;
-                case WindowEdges.Right: return HitTestResult.HittestResizeRight;
+                case WindowEdges.Top | WindowEdges.Left: return HitTestResult.ResizeTopleft;
+                case WindowEdges.Top | WindowEdges.Right: return HitTestResult.ResizeTopright;
+                case WindowEdges.Bottom | WindowEdges.Left: return HitTestResult.ResizeBottomleft;
+                case WindowEdges.Bottom | WindowEdges.Right: return HitTestResult.ResizeBottomright;
+                case WindowEdges.Top: return HitTestResult.ResizeTop;
+                case WindowEdges.Bottom: return HitTestResult.ResizeBottom;
+                case WindowEdges.Left: return HitTestResult.ResizeLeft;
+                case WindowEdges.Right: return HitTestResult.ResizeRight;
             }
         }
 
         if (frameArea is not { } area || !area.Bar.Contains(at))
-            return HitTestResult.HittestNormal;
+            return HitTestResult.Normal;
 
         foreach (RectangleF hole in area.Holes)
         {
             if (hole.Contains(at))
-                return HitTestResult.HittestNormal;
+                return HitTestResult.Normal;
         }
 
         // The second press of a double click goes to the UI's title bar, which maximises the window or brings it back
@@ -149,10 +149,10 @@ public sealed partial class DesktopWindow
             if (again)
             {
                 ToggleMaximized();
-                return HitTestResult.HittestNormal;
+                return HitTestResult.Normal;
             }
         }
 
-        return HitTestResult.HittestDraggable;
+        return HitTestResult.Draggable;
     }
 }
