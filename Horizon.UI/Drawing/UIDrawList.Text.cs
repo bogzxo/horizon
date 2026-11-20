@@ -254,6 +254,12 @@ public sealed partial class UIDrawList
         Vector2 max = new(column + box.Left + box.Width, row - box.Top);
         var rect = new UIRect((min - origin) / scale - visualOffset, (max - origin) / scale - visualOffset);
 
+        // Cut by a clip, a letter half under the edge of a scrolled list, Quad would trim the picture at whatever share
+        // of a texel the edge falls on. The field trims anywhere and still has an edge, so that letter goes to it
+        UIRect visible = rect.Intersect(clip);
+        if (!visible.IsEmpty && visible != rect)
+            return false;
+
         Quad(rect, new Vector2(slot.X, slot.Y), new Vector2(slot.X + box.Width, slot.Y + box.Height), color, SpriteItem.GlyphFlag | GLYPH_SLOT);
         return true;
     }
