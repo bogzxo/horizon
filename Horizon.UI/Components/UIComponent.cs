@@ -286,6 +286,81 @@ public abstract partial class UIComponent
     }
 
     /// <summary>
+    /// Puts several components inside this one at its end, in their order, each taken out of wherever it was before, the
+    /// way <see cref="Add"/> puts in each but with one new array of children for all of them. One at a time, a list
+    /// making a few dozen rows copied its children over once for every row. None of them may be in it twice.
+    /// </summary>
+    internal void AddRange(ReadOnlySpan<UIComponent> arriving)
+    {
+        if (arriving.IsEmpty)
+            return;
+
+        foreach (UIComponent child in arriving)
+        {
+            for (UIComponent? component = this; component is not null; component = component.Parent)
+            {
+                if (component == child)
+                    throw new InvalidOperationException("A component cannot be put inside itself.");
+            }
+
+            child.Parent?.Remove(child);
+        }
+
+        lock (childrenLock)
+        {
+            var grown = new UIComponent[children.Length + arriving.Length];
+            children.CopyTo(grown, 0);
+            arriving.CopyTo(grown.AsSpan(children.Length));
+            children = grown;
+        }
+
+        foreach (UIComponent child in arriving)
+        {
+            child.Parent = this;
+            child.OnParentChanged();
+        }
+    }
+
+    /// <summary>
+    /// Takes several children out at once, the way <see cref="Remove"/> takes out each but with one new array of children
+    /// for what's left. Any that aren't in it are passed over.
+    /// </summary>
+    internal void RemoveRange(ReadOnlySpan<UIComponent> going)
+    {
+        if (going.IsEmpty)
+            return;
+
+        int gone = 0;
+        lock (childrenLock)
+        {
+            foreach (UIComponent child in children)
+            {
+                if (going.IndexOf(child, ReferenceEqualityComparer.Instance) >= 0)
+                    gone++;
+            }
+            if (gone == 0)
+                return;
+
+            var left = new UIComponent[children.Length - gone];
+            int at = 0;
+            foreach (UIComponent child in children)
+            {
+                if (going.IndexOf(child, ReferenceEqualityComparer.Instance) < 0)
+                    left[at++] = child;
+            }
+            children = left;
+        }
+
+        foreach (UIComponent child in going)
+        {
+            if (child.Parent != this)
+                continue;
+            child.Parent = null;
+            child.OnParentChanged();
+        }
+    }
+
+    /// <summary>
     /// Puts a child somewhere else among its siblings, which is the order they are drawn and laid out in.
     /// </summary>
     /// <param name="index">Where it goes, counted from 0. Past the end is the end.</param>

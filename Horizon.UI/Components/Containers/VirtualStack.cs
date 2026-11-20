@@ -61,6 +61,10 @@ public class VirtualStack : ScrollPanel
     private readonly Dictionary<int, Stack<UIComponent>> kept = [];
     private readonly List<int> going = [];
 
+    // The components of the rows coming into sight and going out of it in one layout, put in and taken out of the list's
+    // children all at once, kept between layouts so a tick allocates nothing for them
+    private readonly List<UIComponent> arriving = [], leaving = [];
+
     // Each row's measured height by its key and the width it was measured at, and where each row's top is
     private readonly Dictionary<long, (int Bucket, float Height)> heights = [];
     private float[] tops = [];
@@ -119,11 +123,9 @@ public class VirtualStack : ScrollPanel
     /// </summary>
     public void Rebind()
     {
+        TakeOutAll();
         foreach (var (index, component) in realized)
-        {
-            Remove(component);
             Recycle?.Invoke(index, component);
-        }
         realized.Clear();
         Realized = (0, -1);
         dirty = true;
@@ -132,9 +134,7 @@ public class VirtualStack : ScrollPanel
     /// <summary>Every row made again from the start, the heights forgotten, for a list of other rows altogether.</summary>
     public void Reset()
     {
-        foreach (var (index, component) in realized.ToArray())
-            Release(index, component);
-        realized.Clear();
+        ReleaseAll();
         heights.Clear();
         Realized = (0, -1);
         dirty = true;
@@ -271,11 +271,7 @@ public class VirtualStack : ScrollPanel
         {
             // Nothing to let go of is the usual, an empty list laid out every tick allocated a copy of none each time
             if (realized.Count > 0)
-            {
-                foreach (var (index, component) in realized.ToArray())
-                    Release(index, component);
-                realized.Clear();
-            }
+                ReleaseAll();
             Realized = (0, -1);
             return;
         }
@@ -289,13 +285,20 @@ public class VirtualStack : ScrollPanel
             if (index < first || index > last || index >= ItemCount)
                 going.Add(index);
         }
+        // Taken out of the list together, then each let go of
+        leaving.Clear();
+        foreach (int index in going)
+            leaving.Add(realized[index]);
+        RemoveRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leaving));
+        leaving.Clear();
         foreach (int index in going)
         {
-            UIComponent component = realized[index];
-            realized.Remove(index);
-            Release(index, component);
+            realized.Remove(index, out UIComponent? component);
+            Let(index, component!);
         }
 
+        // Made in order and put in the list together, then measured
+        arriving.Clear();
         for (int i = first; i <= last; i++)
         {
             if (realized.ContainsKey(i))
@@ -303,10 +306,16 @@ public class VirtualStack : ScrollPanel
 
             UIComponent made = Take(i) ?? Make(i);
             realized[i] = made;
-            Add(made);
-            if (skin is not null)
+            arriving.Add(made);
+        }
+
+        AddRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(arriving));
+        if (skin is not null)
+        {
+            foreach (UIComponent made in arriving)
                 made.MeasureTree(skin);
         }
+        arriving.Clear();
 
         Realized = (first, last);
     }
@@ -346,10 +355,35 @@ public class VirtualStack : ScrollPanel
         return component;
     }
 
+    // Every row's component taken out of the list at once, still known by its row
+    private void TakeOutAll()
+    {
+        leaving.Clear();
+        foreach (var (_, component) in realized)
+            leaving.Add(component);
+        RemoveRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leaving));
+        leaving.Clear();
+    }
+
+    // Every row's component out of the list at once, each let go of as Release does
+    private void ReleaseAll()
+    {
+        TakeOutAll();
+        foreach (var (index, component) in realized)
+            Let(index, component);
+        realized.Clear();
+    }
+
     // A component out of the list, kept for its kind when there's room
     private void Release(int index, UIComponent component)
     {
         Remove(component);
+        Let(index, component);
+    }
+
+    // A component already out of the list told of and kept for its kind when there's room
+    private void Let(int index, UIComponent component)
+    {
         Recycle?.Invoke(index, component);
         if (KindOf is null || Bind is null || index >= ItemCount)
             return;
