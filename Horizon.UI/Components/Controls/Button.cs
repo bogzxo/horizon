@@ -298,7 +298,7 @@ public class Button : UIComponent
 
     protected override void Update(float dt)
     {
-        bool lit = EnabledInHierarchy && (IsHovered || Chosen);
+        bool lit = (IsHovered || Chosen) && EnabledInHierarchy;
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
         if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)

@@ -76,6 +76,13 @@ public sealed class UINotification
     internal float Place = float.NaN;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
+
+    // Its detail as it was last cut to the card, for which detail, in what font, at what scale and in what width, cut
+    // again only when one of them moved rather than every frame the card is up
+    internal string? FittedDetailOf;
+    internal object? FittedFont;
+    internal float FittedScale, FittedWidth;
+    internal string FittedDetail = string.Empty;
 }
 
 /// <summary>
@@ -384,7 +391,7 @@ public class Notifications : UIComponent
             if (card.Detail.Length > 0)
             {
                 float detailScale = scale * DETAIL;
-                list.Text(Fitted(card.Detail, skin, detailScale, right - textLeft), new Vector2(textLeft, MathF.Round(below)), detailScale,
+                list.Text(FittedDetail(card, skin, detailScale, right - textLeft), new Vector2(textLeft, MathF.Round(below)), detailScale,
                     skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.6f * card.Alpha), markup: false);
                 below -= line * DETAIL + GAP * 0.5f;
             }
@@ -426,6 +433,14 @@ public class Notifications : UIComponent
         }
 
         list.EndParts();
+    }
+
+    // A card's detail cut to its width, kept on the card until the detail, the font, the scale or the width changes
+    private static string FittedDetail(UINotification card, UISkin skin, float scale, float width)
+    {
+        if (!ReferenceEquals(card.FittedDetailOf, card.Detail) || !ReferenceEquals(card.FittedFont, skin.Font) || card.FittedScale != scale || card.FittedWidth != width)
+            (card.FittedDetailOf, card.FittedFont, card.FittedScale, card.FittedWidth, card.FittedDetail) = (card.Detail, skin.Font, scale, width, Fitted(card.Detail, skin, scale, width));
+        return card.FittedDetail;
     }
 
     // A line cut to a width with an ellipsis, the whole of it when it fits
