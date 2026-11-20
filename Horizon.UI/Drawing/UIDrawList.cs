@@ -21,7 +21,9 @@ public sealed partial class UIDrawList
     private const uint FONT_SLOT = 1;
     // The letters made at the size they're drawn, see GlyphAtlas
     private const uint GLYPH_SLOT = 2;
-    private const uint IMAGE_SLOT = 3;
+    // And the subpixel ones, see GlyphSmoothing
+    private const uint GLYPH_SUBPIXEL_SLOT = 3;
+    private const uint IMAGE_SLOT = 4;
 
     // How much of an icon's height the label on it takes up.
     private const float ICON_LABEL_HEIGHT = 0.75f;
@@ -194,6 +196,7 @@ public sealed partial class UIDrawList
 
         // Emptied before anything is painted if it filled up, never halfway through a paint
         Horizon.Rendering.Text.GlyphAtlas.Shared.BeginPaint();
+        Horizon.Rendering.Text.GlyphAtlas.Subpixel.BeginPaint();
 
         origin = Vector2.Zero;
         scale = Vector2.One;
@@ -1022,7 +1025,7 @@ public sealed partial class UIDrawList
         // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
         // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
         // texture it hasn't got. The shader knew better, but it was still bollocks
-        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & (SpriteItem.CoverageFlag | SpriteItem.GlyphFlag)) == 0)
+        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & (SpriteItem.CoverageFlag | SpriteItem.GlyphFlag | SpriteItem.SubpixelEraseFlag | SpriteItem.SubpixelInkFlag)) == 0)
             flags |= SpriteItem.SmoothFlag;
 
         Vector2 min = (visible.Min * visualScale + visualOffset) * scale + origin;

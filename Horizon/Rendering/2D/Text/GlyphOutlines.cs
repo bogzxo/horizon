@@ -107,18 +107,83 @@ public sealed unsafe class GlyphOutlines
     }
 
     /// <summary>
-    /// Fills a letter in, as many pixels of coverage as <paramref name="box"/> says, a row after another. Not safe on two
-    /// threads at once, the glyph atlas calls it under its lock. The pixels go
-    /// into <paramref name="into"/>, which is made bigger when it has to be.
+    /// Fills a letter in, as many pixels of coverage as <paramref name="box"/> says, a row after another, one byte each.
+    /// Not safe on two threads at once, the glyph atlas calls it under its lock. The pixels go into
+    /// <paramref name="into"/>, which is made bigger when it has to be.
     /// </summary>
     /// <param name="pixelHeight">How tall the font is drawn, ascent to descent, in pixels of the screen.</param>
     /// <param name="shift">How far into its first pixel the pen is, 0 to 1.</param>
     /// <param name="bold">How many pixels further across the ink is smeared, 0 for none.</param>
     /// <param name="slant">How far the letter leans across for every unit up, 0 for upright.</param>
+    /// <param name="hint">Whether the x height goes on a whole row of pixels. Off on a Retina screen, where a row is
+    /// so small that moving the letters to fit only changes their shape.</param>
     /// <returns>Whether there is anything to draw.</returns>
-    public bool Rasterize(char character, float pixelHeight, float shift, float bold, float slant, ref byte[] into, out GlyphBox box)
+    public bool Rasterize(char character, float pixelHeight, float shift, float bold, float slant, bool hint, ref byte[] into, out GlyphBox box)
     {
         box = default;
+        if (!Fill(character, pixelHeight, shift, bold, slant, hint, 1, ref into, out int left, out int top, out int width, out int height))
+            return false;
+        box = new GlyphBox(left, top, width, height);
+        return true;
+    }
+
+    // FreeType's default LCD filter, how much of each of five subpixels around one goes into it, out of 256. Without it
+    // every edge has a red or blue fringe a whole subpixel wide, with it the colour is spread so it reads as a sharper grey
+    private static ReadOnlySpan<byte> LcdFilter => [8, 77, 86, 77, 8];
+
+    /// <summary>
+    /// Fills a letter in for subpixel drawing, its coverage worked out at three times the width and each pixel's red,
+    /// green and blue stripes given their own, four bytes a pixel (red, green, blue, and the most of them as alpha).
+    /// The stripes are in the screen's order, <paramref name="bgr"/> for a panel whose blue is on the left.
+    /// </summary>
+    /// <param name="work">Room for the coverage at three times the width, made bigger when it has to be.</param>
+    public bool RasterizeSubpixel(char character, float pixelHeight, float shift, float bold, float slant, bool hint, bool bgr,
+        ref byte[] work, ref byte[] into, out GlyphBox box)
+    {
+        box = default;
+        if (!Fill(character, pixelHeight, shift, bold, slant, hint, 3, ref work, out int left, out int top, out int across, out int height))
+            return false;
+
+        int width = across / 3;
+        int size = width * height * 4;
+        if (into.Length < size)
+            into = new byte[Math.Max(size, into.Length * 2)];
+
+        ReadOnlySpan<byte> filter = LcdFilter;
+        for (int y = 0; y < height; y++)
+        {
+            ReadOnlySpan<byte> row = work.AsSpan(y * across, across);
+            Span<byte> pixels = into.AsSpan(y * width * 4, width * 4);
+            for (int x = 0; x < width; x++)
+            {
+                int r = 0, g = 0, b = 0;
+                for (int tap = 0; tap < 5; tap++)
+                {
+                    int weight = filter[tap];
+                    r += weight * At(row, x * 3 + tap - 2);
+                    g += weight * At(row, x * 3 + 1 + tap - 2);
+                    b += weight * At(row, x * 3 + 2 + tap - 2);
+                }
+                byte first = (byte)Math.Min(255, r >> 8), second = (byte)Math.Min(255, g >> 8), third = (byte)Math.Min(255, b >> 8);
+                pixels[x * 4] = bgr ? third : first;
+                pixels[x * 4 + 1] = second;
+                pixels[x * 4 + 2] = bgr ? first : third;
+                pixels[x * 4 + 3] = Math.Max(first, Math.Max(second, third));
+            }
+        }
+
+        box = new GlyphBox(left / 3, top, width, height);
+        return true;
+
+        static int At(ReadOnlySpan<byte> row, int at) => (uint)at < (uint)row.Length ? row[at] : 0;
+    }
+
+    // The outline filled in at so many samples across a pixel (1, or 3 for subpixels), the box in those samples across
+    // and pixels down. Three across is padded by the filter's reach and put on whole pixels, so the stripes line up
+    private bool Fill(char character, float pixelHeight, float shift, float bold, float slant, bool hint, int across,
+        ref byte[] into, out int left, out int top, out int width, out int height)
+    {
+        left = top = width = height = 0;
         if (!indices.TryGetValue(character, out int glyph))
             indices[character] = glyph = StbTrueType.stbtt_FindGlyphIndex(info, character);
         if (glyph == 0 && character != '?')
@@ -132,7 +197,8 @@ public sealed unsafe class GlyphOutlines
         try
         {
             float scale = unitsPerHeight * pixelHeight;
-            float scaleY = scale * Hinted(scale);
+            float scaleY = hint ? scale * Hinted(scale) : scale;
+            float scaleX = scale * across;
 
             // Leant over about the baseline, the outline's own numbers moved across, so it's filled in leaning
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
@@ -146,29 +212,29 @@ public sealed unsafe class GlyphOutlines
                     v.cx1 = (short)Math.Clamp(MathF.Round(v.cx1 + slant * v.cy1), short.MinValue, short.MaxValue);
                 }
 
-                Grow(v.x, v.y);
+                Grow(ref minX, ref minY, ref maxX, ref maxY, v.x, v.y);
                 if (v.type is 3 or 4)
-                    Grow(v.cx, v.cy);
+                    Grow(ref minX, ref minY, ref maxX, ref maxY, v.cx, v.cy);
                 if (v.type == 4)
-                    Grow(v.cx1, v.cy1);
-            }
-
-            void Grow(float x, float y)
-            {
-                minX = MathF.Min(minX, x);
-                maxX = MathF.Max(maxX, x);
-                minY = MathF.Min(minY, y);
-                maxY = MathF.Max(maxY, y);
+                    Grow(ref minX, ref minY, ref maxX, ref maxY, v.cx1, v.cy1);
             }
 
             if (minX > maxX || minY > maxY)
                 return false;
 
-            int left = (int)MathF.Floor(minX * scale + shift);
-            int right = (int)MathF.Ceiling(maxX * scale + shift + bold);
-            int top = (int)MathF.Floor(-maxY * scaleY);
+            float shifted = shift * across;
+            int pad = across == 1 ? 0 : 2;
+            left = (int)MathF.Floor(minX * scaleX + shifted) - pad;
+            int right = (int)MathF.Ceiling(maxX * scaleX + shifted + bold * across) + pad;
+            if (across > 1)
+            {
+                left = (int)MathF.Floor(left / (float)across) * across;
+                right = (int)MathF.Ceiling(right / (float)across) * across;
+            }
+            top = (int)MathF.Floor(-maxY * scaleY);
             int bottom = (int)MathF.Ceiling(-minY * scaleY);
-            int width = right - left, height = bottom - top;
+            width = right - left;
+            height = bottom - top;
             if (width <= 0 || height <= 0)
                 return false;
 
@@ -180,18 +246,24 @@ public sealed unsafe class GlyphOutlines
             fixed (byte* pixels = into)
             {
                 var bitmap = new StbTrueType.stbtt__bitmap { w = width, h = height, stride = width, pixels = pixels };
-                StbTrueType.stbtt_Rasterize(&bitmap, 0.35f, vertices, count, scale, scaleY, shift, 0.0f, left, top, 1, null, false);
+                StbTrueType.stbtt_Rasterize(&bitmap, 0.35f, vertices, count, scaleX, scaleY, shifted, 0.0f, left, top, 1, null, false);
             }
 
             if (bold > 0.0f)
-                Embolden(into.AsSpan(0, size), width, height, bold);
-
-            box = new GlyphBox(left, top, width, height);
+                Embolden(into.AsSpan(0, size), width, height, bold * across);
             return true;
         }
         finally
         {
             StbTrueType.stbtt_FreeShape(info, vertices);
+        }
+
+        static void Grow(ref float minX, ref float minY, ref float maxX, ref float maxY, float x, float y)
+        {
+            minX = MathF.Min(minX, x);
+            maxX = MathF.Max(maxX, x);
+            minY = MathF.Min(minY, y);
+            maxY = MathF.Max(maxY, y);
         }
     }
 

@@ -783,6 +783,11 @@ public partial class UICompositor : GameComponent, IDisposable
         back.MotionSpeed = AnimationSpeed;
         back.Begin(skin, paintFrame, dt, paintClock);
         backPainted++;
+
+        // Letters ClearType's way or grey, hinted or not, for the screen the window is on now (see GlyphSmoothing)
+        float density = GameEngine.Instance?.WindowManager?.DisplayScale ?? 1.0f;
+        bool subpixels = Horizon.Rendering.Text.GlyphSmoothing.Subpixels(density, drawnNative, out bool bgr);
+        back.UseSmoothing(subpixels, bgr, Horizon.Rendering.Text.GlyphSmoothing.Hints(density));
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
@@ -1097,12 +1102,21 @@ public partial class UICompositor : GameComponent, IDisposable
     /// Helper method to draw what was uploaded last, or lay the picture of it over the frame once more if it is still
     /// what the UI looks like.
     /// </summary>
+    // See DrawUploaded, written on the render thread and read by the paint. Taken to be so until a draw says otherwise
+    private volatile bool drawnNative = true;
+
     private void DrawUploaded(float dt)
     {
         // A UI drawn straight into the window is drawn at its own pixels over the scene blown up, unless the whole frame
         // is drawn small (see FrameScaler). One inside of a renderer is part of that renderer's picture
         if (Renderer2D.Current is null && (!renderer.IsEmpty || Cursor is { Visible: true }))
             GameEngine.Instance.WindowManager.Scaling.BeginOverlay();
+
+        // Whether it's drawn at the window's own pixels and nothing else's, which a subpixel letter has to be: blown up
+        // with a frame drawn small its stripes are no longer the screen's, and inside a renderer its blend would land
+        // on the renderer's other pictures too
+        drawnNative = Renderer2D.Current is null
+            && GameEngine.Instance.WindowManager.Scaling.Settings.Composition != Horizon.Rendering.Scaling.RenderComposition.WholeFrame;
 
         using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
 

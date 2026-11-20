@@ -138,12 +138,16 @@ public sealed partial class UIDrawList
         // unstretched on the screen and not in the middle of growing or shrinking, which would want a picture a frame
         ushort madeSize = 0;
         GlyphOutlines? outlines = font.Outlines;
-        GlyphAtlas glyphs = GlyphAtlas.Shared;
+        // ClearType's way when the compositor says this paint can be (see GlyphSmoothing), once its atlas is there
+        bool subpixels = subpixelText && GlyphAtlas.Subpixel.Ready;
+        GlyphAtlas glyphs = subpixels ? GlyphAtlas.Subpixel : GlyphAtlas.Shared;
         float pixels = this.scale.X;
         if (outlines is not null && glyphs.Ready && !FieldTextOnly && visualScale == Vector2.One && this.scale.X == this.scale.Y && pixels > 0.0f)
             madeSize = GlyphAtlas.SizeOf(font.Field.EmSize * scale * pixels);
-        byte glyphStyle = (byte)((bold ? 1 : 0) | (slant != 0.0f ? 2 : 0));
+        GlyphStyle glyphStyle = (bold ? GlyphStyle.Bold : 0) | (slant != 0.0f ? GlyphStyle.Italic : 0)
+            | (hintedText ? 0 : GlyphStyle.Unhinted) | (subpixels && subpixelBgr ? GlyphStyle.Bgr : 0);
         float glyphBold = bold ? font.BoldAdvance * scale * pixels : 0.0f;
+        uint glyphTexture = subpixels ? GLYPH_SUBPIXEL_SLOT : GLYPH_SLOT;
 
         for (int i = 0; i < text.Length; i++)
         {
@@ -192,7 +196,7 @@ public sealed partial class UIDrawList
                 continue;
             }
 
-            if (font.Resolve(character, out var glyph) && madeSize != 0 && Glyph(glyphs, outlines!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed))
+            if (font.Resolve(character, out var glyph) && madeSize != 0 && Glyph(glyphs, outlines!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed, glyphTexture, subpixels))
             {
                 // Made at its size, see Glyph
             }
@@ -220,6 +224,44 @@ public sealed partial class UIDrawList
             pen.X += glyph.XAdvance * scale + boldAdvance;
             if (i + 1 < text.Length) pen.X += font.Kerning(character, text[i + 1]) * scale;
         }
+
+        if (subpixelGlyphs.Count > 0)
+            FlushSubpixels(packed);
+    }
+
+    // The subpixel letters of the text being drawn, put down together once it's all been gone through, see FlushSubpixels
+    private readonly List<(UIRect Rect, Vector2 TexMin, Vector2 TexMax)> subpixelGlyphs = [];
+
+    // Whether this paint draws its letters ClearType's way and with which stripe first, and whether it hints them, as
+    // the compositor said for the screen it's on (see GlyphSmoothing and UseSmoothing)
+    private bool subpixelText, subpixelBgr, hintedText = true;
+
+    /// <summary>
+    /// How this paint's letters are smoothed, said by the compositor before it paints: ClearType's way only when it's
+    /// drawn straight into the window on a screen and a system that want it, unhinted on a Retina screen.
+    /// </summary>
+    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted)
+    {
+        subpixelText = subpixels;
+        subpixelBgr = bgr;
+        hintedText = hinted;
+        if (subpixels)
+            GlyphAtlas.Subpixel.Want();
+    }
+
+    /// <summary>
+    /// A text's subpixel letters, twice over: first what's under each is darkened by how much of each of its stripes the
+    /// ink covers, then the ink's colour added by as much. That's a blend with a weight for each of red, green and blue,
+    /// which one quad with one alpha can't be, done with two that any GPU can blend (UIRenderer draws each run of them
+    /// with its own blend). The letters of the text go down all at once each time so a line is two runs, not two a letter.
+    /// </summary>
+    private void FlushSubpixels(uint color)
+    {
+        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
+            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelEraseFlag | GLYPH_SUBPIXEL_SLOT);
+        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
+            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelInkFlag | GLYPH_SUBPIXEL_SLOT);
+        subpixelGlyphs.Clear();
     }
 
     // HORIZON_TEXT=field draws every letter out of its distance field as before the glyph atlas, to compare the two
@@ -232,7 +274,7 @@ public sealed partial class UIDrawList
     /// growing or shrinking it, see Text.
     /// </summary>
     /// <param name="baseline">How far down the line its baseline is, in the layout.</param>
-    private bool Glyph(GlyphAtlas glyphs, GlyphOutlines outlines, char character, ushort size, byte style, float bold, float slant, Vector2 pen, float baseline, uint color)
+    private bool Glyph(GlyphAtlas glyphs, GlyphOutlines outlines, char character, ushort size, GlyphStyle style, float bold, float slant, Vector2 pen, float baseline, uint color, uint texture, bool subpixels)
     {
         // The pen on the screen, which pixel and how far into it, and the baseline on the row nearest it
         Vector2 screenPen = (pen + visualOffset) * scale + origin;
@@ -260,7 +302,12 @@ public sealed partial class UIDrawList
         if (!visible.IsEmpty && visible != rect)
             return false;
 
-        Quad(rect, new Vector2(slot.X, slot.Y), new Vector2(slot.X + box.Width, slot.Y + box.Height), color, SpriteItem.GlyphFlag | GLYPH_SLOT);
+        var texMin = new Vector2(slot.X, slot.Y);
+        var texMax = new Vector2(slot.X + box.Width, slot.Y + box.Height);
+        if (subpixels)
+            subpixelGlyphs.Add((rect, texMin, texMax));
+        else
+            Quad(rect, texMin, texMax, color, SpriteItem.GlyphFlag | texture);
         return true;
     }
 

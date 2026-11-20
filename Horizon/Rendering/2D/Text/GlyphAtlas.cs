@@ -3,17 +3,34 @@ using Horizon.Graphics;
 
 namespace Horizon.Rendering.Text;
 
-/// <summary>Which picture of a letter, the font, the letter, how big, how far into its pixel and how it's styled.</summary>
-public readonly record struct GlyphKey(int Font, char Character, ushort Size, byte Phase, byte Style);
+/// <summary>Which picture of a letter, the font, the letter, how big, how far into its pixel and how it's made (<see cref="GlyphStyle"/>).</summary>
+public readonly record struct GlyphKey(int Font, char Character, ushort Size, byte Phase, GlyphStyle Style);
+
+/// <summary>How a letter's picture is made, part of its key.</summary>
+[Flags]
+public enum GlyphStyle : byte
+{
+    None = 0,
+    Bold = 1,
+    Italic = 2,
+    /// <summary>The x height left where it falls, on a Retina screen, see <see cref="GlyphOutlines.Rasterize"/>.</summary>
+    Unhinted = 4,
+    /// <summary>A subpixel picture for a screen whose blue stripe is on the left.</summary>
+    Bgr = 8
+}
 
 /// <summary>Where a letter's picture is in the <see cref="GlyphAtlas"/>, in texels, and how it sits on the pen.</summary>
 public readonly record struct GlyphSlot(short X, short Y, GlyphBox Box);
 
 /// <summary>
 /// The pictures of the letters as they are drawn, made at the size they are on the screen by <see cref="GlyphOutlines"/>
-/// the first time each is wanted and kept in one R8 texture every font shares, on shelves. A letter is made on whatever
+/// the first time each is wanted and kept in one texture every font shares, on shelves. A letter is made on whatever
 /// thread is painting, into a copy kept on this side, and the rows that changed go up to the GPU on the render thread
 /// before the draw that shows them (<see cref="Upload"/>), so a letter is there the first frame it's asked for.
+/// <para>
+/// Two of them: <see cref="Shared"/> of grey coverage, a byte a texel, and <see cref="Subpixel"/> of a coverage for each
+/// of a pixel's red, green and blue stripes, four bytes a texel, for text drawn ClearType's way (see <see cref="GlyphSmoothing"/>).
+/// </para>
 /// <para>
 /// Sizes are a quarter of a pixel apart and the pen a quarter of a pixel at a time, so a zoom or a font size setting is a
 /// few hundred letters more and no more. When it's full it's emptied at the start of the next paint and everything is
@@ -22,7 +39,7 @@ public readonly record struct GlyphSlot(short X, short Y, GlyphBox Box);
 /// </summary>
 public sealed class GlyphAtlas
 {
-    /// <summary>How many texels across and down. 4 MB, room for thousands of letters at the sizes a UI uses.</summary>
+    /// <summary>How many texels across and down. 4 MB of grey, 16 of subpixels, room for thousands of letters at the sizes a UI uses.</summary>
     public const int SIZE = 2048;
 
     /// <summary>How many places across a pixel the pen can be, a letter is made for each it's drawn at.</summary>
@@ -37,15 +54,21 @@ public sealed class GlyphAtlas
     // Between two pictures, so the filter never reads one's ink into the next
     private const int PADDING = 1;
 
-    /// <summary>The one every draw list uses.</summary>
-    public static GlyphAtlas Shared { get; } = new();
+    /// <summary>The grey one every draw list uses.</summary>
+    public static GlyphAtlas Shared { get; } = new(subpixel: false);
 
+    /// <summary>The one of subpixel pictures, used while <see cref="GlyphSmoothing"/> says to draw that way.</summary>
+    public static GlyphAtlas Subpixel { get; } = new(subpixel: true);
+
+    private readonly bool subpixel;
+    private readonly int texel;
     private readonly Lock gate = new();
     // By the key packed into a number, see Pack: a record struct's own hash mixes its five fields one at a time, for
     // every letter of every line painted
     private readonly Dictionary<ulong, GlyphSlot> slots = [];
     private byte[]? pixels;
     private byte[] scratch = new byte[64 * 64];
+    private byte[] work = new byte[64 * 64 * 3];
 
     // The rows on their way up, copied out of pixels under the lock so the upload itself doesn't hold up painting
     private byte[] staging = [];
@@ -62,6 +85,16 @@ public sealed class GlyphAtlas
     // Whether making the texture failed, it isn't tried again every frame
     private bool failed;
 
+    // Whether anything has asked it for a letter, a subpixel one nobody uses is never made
+    private volatile bool wanted;
+
+    private GlyphAtlas(bool subpixel)
+    {
+        this.subpixel = subpixel;
+        texel = subpixel ? 4 : 1;
+        wanted = !subpixel;
+    }
+
     /// <summary>The texture, once the render thread has made it, see <see cref="Ready"/>.</summary>
     public Texture Texture { get; private set; } = Texture.Invalid;
 
@@ -76,9 +109,14 @@ public sealed class GlyphAtlas
     /// <summary>Another number every time it's emptied, painting kept from before is no good after.</summary>
     public int Generation => generation;
 
+    /// <summary>
+    /// Says a subpixel atlas is wanted, so the render thread makes its texture. Until it's there letters are drawn grey.
+    /// </summary>
+    public void Want() => wanted = true;
+
     // A key as one number, the font in the top half, then the letter, the size, the phase and the style
     private static ulong Pack(in GlyphKey key) =>
-        (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(key.Size & 0x3FF) << 4 | (ulong)(key.Phase & 0x3) << 2 | (ulong)(key.Style & 0x3);
+        (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(key.Size & 0x3FF) << 6 | (ulong)(key.Phase & 0x3) << 4 | (ulong)((byte)key.Style & 0xF);
 
     /// <summary>The size a letter is made at for a font drawn so tall, in <see cref="SIZE_STEPS"/>, 0 when it's too big or small to be.</summary>
     public static ushort SizeOf(float pixelHeight)
@@ -115,7 +153,6 @@ public sealed class GlyphAtlas
     /// The picture of a letter, made now if it hasn't been. False when the letter has no ink (a space) or there's no room
     /// left, which draws it out of its field until the next paint has emptied the atlas.
     /// </summary>
-    /// <param name="pixelHeight">How tall the font is, ascent to descent, in pixels of the screen, see <see cref="SizeOf"/>.</param>
     /// <param name="bold">How many pixels wider the ink is for bold, see <see cref="GlyphOutlines.Rasterize"/>.</param>
     public bool TryGet(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, out GlyphSlot slot)
     {
@@ -129,7 +166,11 @@ public sealed class GlyphAtlas
 
             float pixelHeight = key.Size / (float)SIZE_STEPS;
             float shift = key.Phase / (float)PHASES;
-            if (!outlines.Rasterize(key.Character, pixelHeight, shift, bold, slant, ref scratch, out GlyphBox box))
+            bool hint = (key.Style & GlyphStyle.Unhinted) == 0;
+            bool made = subpixel
+                ? outlines.RasterizeSubpixel(key.Character, pixelHeight, shift, bold, slant, hint, (key.Style & GlyphStyle.Bgr) != 0, ref work, ref scratch, out GlyphBox box)
+                : outlines.Rasterize(key.Character, pixelHeight, shift, bold, slant, hint, ref scratch, out box);
+            if (!made)
             {
                 // Remembered as nothing, a space is asked about on every line
                 slot = default;
@@ -144,9 +185,10 @@ public sealed class GlyphAtlas
                 return false;
             }
 
-            pixels ??= new byte[SIZE * SIZE];
+            pixels ??= new byte[SIZE * SIZE * texel];
+            int rowBytes = box.Width * texel;
             for (int row = 0; row < box.Height; row++)
-                scratch.AsSpan(row * box.Width, box.Width).CopyTo(pixels.AsSpan((y + row) * SIZE + x, box.Width));
+                scratch.AsSpan(row * rowBytes, rowBytes).CopyTo(pixels.AsSpan(((y + row) * SIZE + x) * texel, rowBytes));
 
             dirtyTop = Math.Min(dirtyTop, y);
             dirtyBottom = Math.Max(dirtyBottom, y + box.Height);
@@ -181,29 +223,31 @@ public sealed class GlyphAtlas
     }
 
     /// <summary>
-    /// Makes the texture the first time and sends up the rows that changed. Render thread, before the draws that show them.
+    /// Makes the texture the first time it's wanted and sends up the rows that changed. Render thread, before the draws
+    /// that show them.
     /// </summary>
     public unsafe void Upload()
     {
         if (!ready)
         {
-            if (failed)
+            if (failed || !wanted)
                 return;
 
-            // Nearest, never smoothed: every letter is drawn a texel to the pixel, and a filter could only blur it
+            // Nearest, never smoothed: every letter is drawn a texel to the pixel, and a filter could only blur it. The
+            // subpixel stripes are coverage, not colour, so plain numbers and never taken for sRGB
             using (AssetScope.EnterGlobal())
-                Texture = Texture.Create(SIZE, SIZE, new TextureDefinition(PixelFormat.R8, Smooth: false));
+                Texture = Texture.Create(SIZE, SIZE, new TextureDefinition(subpixel ? PixelFormat.Rgba8 : PixelFormat.R8, Smooth: false));
             if (!Texture.IsValid)
             {
                 failed = true;
                 return;
             }
-            Texture.Name = "glyphs";
+            Texture.Name = subpixel ? "glyphs subpixel" : "glyphs";
 
             // What it held before it was made isn't anything, it all goes up the once
             lock (gate)
             {
-                pixels ??= new byte[SIZE * SIZE];
+                pixels ??= new byte[SIZE * SIZE * texel];
                 dirtyTop = 0;
                 dirtyBottom = SIZE;
             }
@@ -219,14 +263,15 @@ public sealed class GlyphAtlas
 
             top = dirtyTop;
             rows = dirtyBottom - dirtyTop;
-            if (staging.Length < rows * SIZE)
-                staging = new byte[rows * SIZE];
-            pixels.AsSpan(top * SIZE, rows * SIZE).CopyTo(staging);
+            int bytes = rows * SIZE * texel;
+            if (staging.Length < bytes)
+                staging = new byte[bytes];
+            pixels.AsSpan(top * SIZE * texel, bytes).CopyTo(staging);
             dirtyTop = int.MaxValue;
             dirtyBottom = 0;
         }
 
         fixed (byte* texels = staging)
-            GraphicsDevice.Current.UploadTexels(Texture, 0, top, SIZE, (uint)rows, TexelFormat.R8, texels);
+            GraphicsDevice.Current.UploadTexels(Texture, 0, top, SIZE, (uint)rows, subpixel ? TexelFormat.Rgba8 : TexelFormat.R8, texels);
     }
 }

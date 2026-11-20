@@ -56,6 +56,12 @@ static const uint SHAPE_FLAG = 0x2000000u;
 // A letter made at the size it's drawn, red is how much of the pixel its ink covers. Must match SpriteItem.cs
 static const uint GLYPH_FLAG = 0x4000000u;
 
+// The two halves of a subpixel letter, its texture a coverage for each of red, green and blue. The first is drawn with a
+// blend that takes what's there times one less what comes out, so it puts out the coverage, the second with one that
+// adds, so it puts out the colour by as much. Together a blend with a weight per channel. Must match SpriteItem.cs
+static const uint SUBPIXEL_ERASE_FLAG = 0x8000000u;
+static const uint SUBPIXEL_INK_FLAG = 0x10000000u;
+
 // How a letter's coverage is turned into how much of its colour goes over what's under it. Blended as sRGB numbers a
 // light letter on a dark ground comes out thinner than its ink and a dark one on a light ground heavier, so the edge is
 // lifted a little (DirectWrite's enhanced contrast) and bent by a gamma that goes from heavier for light colours to
@@ -223,6 +229,16 @@ GBuffer fsMain(Varyings input)
         tex = (input.flags & SMOOTH_FLAG) != 0u && (input.flags & FIELD_FLAG) == 0u
             ? smoothTexel(uTextures[NonUniformResourceIndex(texture)], input.texel, box)
             : uTextures[NonUniformResourceIndex(texture)].SampleGrad(uv, uvAcross, uvDown);
+    }
+
+    // A subpixel letter's half, each stripe's coverage bent the way a grey letter's is and faded with the item
+    if ((input.flags & (SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u)
+    {
+        float3 colour = input.color.rgb;
+        float3 ink = float3(glyphInk(tex.r, colour), glyphInk(tex.g, colour), glyphInk(tex.b, colour)) * input.color.a;
+        if (max(ink.r, max(ink.g, ink.b)) <= 0.0) discard;
+        float3 said = (input.flags & SUBPIXEL_ERASE_FLAG) != 0u ? ink : colour * ink;
+        return writeFlat(float4(said, 0.0), 0.0);
     }
 
     // The texture only says where the ink is (fonts), the colour is all the item's

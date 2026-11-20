@@ -97,6 +97,7 @@ internal sealed class UIRenderer
 
         // What the items show is in this skin's atlas, not in whichever skin is current by the time they are drawn.
         skin = list.Skin;
+        FindBlends();
     }
 
     /// <summary>
@@ -124,6 +125,7 @@ internal sealed class UIRenderer
             glass.Add(pane);
 
         skin = listSkin;
+        FindBlends();
     }
 
     /// <summary>
@@ -134,6 +136,7 @@ internal sealed class UIRenderer
         itemCount = 0;
         runs.Clear();
         glass.Clear();
+        blendChanges.Clear();
         skin = null;
     }
 
@@ -166,6 +169,8 @@ internal sealed class UIRenderer
         // And the letters made since the last draw
         var glyphs = Horizon.Rendering.Text.GlyphAtlas.Shared;
         glyphs.Upload();
+        var subpixels = Horizon.Rendering.Text.GlyphAtlas.Subpixel;
+        subpixels.Upload();
 
         if (batch is null || skin is null || itemCount == 0)
             return false;
@@ -177,7 +182,8 @@ internal sealed class UIRenderer
             new SpriteTexture(skin.Atlas.Texture),
             new SpriteTexture(skin.Font.Texture, fontSampler),
             // Read through its own sampler, nearest, a letter is a texel to the pixel
-            glyphs.Ready ? new SpriteTexture(glyphs.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler)
+            glyphs.Ready ? new SpriteTexture(glyphs.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler),
+            subpixels.Ready ? new SpriteTexture(subpixels.Texture) : new SpriteTexture(skin.Font.Texture, fontSampler)
         ];
 
         spriteRuns.Clear();
@@ -208,9 +214,69 @@ internal sealed class UIRenderer
         RenderState.BlendMode = BlendMode.Alpha;
         RenderState.DepthTest = false;
 
-        batch.DrawItems(from, to - from, camera);
+        if (blendChanges.Count == 0)
+            batch.DrawItems(from, to - from, camera);
+        else
+            DrawBlended(from, to, camera);
 
         RenderState.Restore(before);
+    }
+
+    // Subpixel letters' two halves, what's under them darkened by each stripe's coverage and then their colour added by as
+    // much (see SpriteItem.SubpixelEraseFlag). Blends every GPU has, the alpha left as it was
+    private static readonly BlendMode SubpixelErase = new(BlendFactor.Zero, BlendFactor.OneMinusSrcColor, BlendFactor.Zero, BlendFactor.One);
+    private static readonly BlendMode SubpixelInk = new(BlendFactor.One, BlendFactor.One, BlendFactor.Zero, BlendFactor.One);
+
+    // Where the blend the items want changes, the item and the blend from it on, found once as they're handed over.
+    // Empty for a UI without subpixel letters, which is drawn in one go as it always was
+    private readonly List<(int At, BlendMode Mode)> blendChanges = [];
+
+    private static BlendMode BlendOf(uint flags) =>
+        (flags & SpriteItem.SubpixelEraseFlag) != 0 ? SubpixelErase
+        : (flags & SpriteItem.SubpixelInkFlag) != 0 ? SubpixelInk
+        : BlendMode.Alpha;
+
+    // The places the blend changes in what was handed over
+    private void FindBlends()
+    {
+        blendChanges.Clear();
+        BlendMode current = BlendMode.Alpha;
+        bool any = false;
+        for (int i = 0; i < itemCount; i++)
+        {
+            BlendMode wanted = BlendOf(items[i].Flags);
+            if (wanted == current)
+                continue;
+            blendChanges.Add((i, wanted));
+            current = wanted;
+            any |= wanted != BlendMode.Alpha;
+        }
+        if (!any)
+            blendChanges.Clear();
+    }
+
+    // A stretch of items drawn a run of one blend at a time
+    private void DrawBlended(int from, int to, Camera camera)
+    {
+        // The blend in force at the start of the stretch, then a draw up to each change after it
+        BlendMode mode = BlendMode.Alpha;
+        int next = 0;
+        while (next < blendChanges.Count && blendChanges[next].At <= from)
+            mode = blendChanges[next++].Mode;
+
+        int start = from;
+        while (start < to)
+        {
+            int end = next < blendChanges.Count ? Math.Min(blendChanges[next].At, to) : to;
+            if (end > start)
+            {
+                RenderState.BlendMode = mode;
+                batch!.DrawItems(start, end - start, camera);
+            }
+            if (next < blendChanges.Count && blendChanges[next].At <= end)
+                mode = blendChanges[next++].Mode;
+            start = end;
+        }
     }
 
     /// <summary>Finishes what <see cref="Begin"/> started.</summary>
