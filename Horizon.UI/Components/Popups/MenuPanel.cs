@@ -363,6 +363,7 @@ internal sealed partial class MenuPanel
                 if (pass == 0 ? lit : childIndex == i)
                 {
                     target = area.Shrink(new UIEdges(HIGHLIGHT_INSET, 1.0f));
+                    litIndex = i;
                     any = true;
                 }
             }
@@ -371,6 +372,7 @@ internal sealed partial class MenuPanel
         if (!any)
         {
             highlighted = false;
+            litIndex = -1;
             return;
         }
 
@@ -387,8 +389,20 @@ internal sealed partial class MenuPanel
 
         highlighted = true;
         list.BeginPart(partBase + HIGHLIGHT_PART);
-        list.RoundRect(highlight, skin.CornerRadius, skin.HoverColor);
+        list.RoundRect(highlight, skin.CornerRadius, menu.Items[litIndex].IsDestructive ? DangerWash(skin) : skin.HoverColor);
     }
+
+    // The item the highlight is on, -1 for none, for its keys to be lit with it
+    private int litIndex = -1;
+
+    // The highlight under an item that throws something away, the error colour washed out as far as the hover colour is
+    private static Vector4 DangerWash(UISkin skin) => skin.ErrorColor with { W = MathF.Max(skin.HoverColor.W, 0.2f) * 0.9f };
+
+    // What an item's icon is painted in, a step quieter than what it says so the words lead and the icons only help find them
+    private static Vector4 IconTone(UISkin skin, Vector4 text) => Vector4.Lerp(text, skin.DimTextColor with { W = text.W }, 0.35f);
+
+    // The rules between groups, half as strong as the words that can't be picked, enough to group without striping the list
+    private static Vector4 RuleTone(Vector4 dim) => dim with { W = dim.W * 0.5f };
 
     public void Paint(UIDrawList list, Vector2 pointer, UIGlass? glass = null)
     {
@@ -434,14 +448,15 @@ internal sealed partial class MenuPanel
             if (item.IsSeparator)
             {
                 float middle = MathF.Round(area.Center.Y);
-                list.Rect(new UIRect(new Vector2(area.Min.X + HIGHLIGHT_INSET, middle), new Vector2(area.Max.X - HIGHLIGHT_INSET, middle + 1.0f)), dim);
+                list.Rect(new UIRect(new Vector2(area.Min.X + HIGHLIGHT_INSET, middle), new Vector2(area.Max.X - HIGHLIGHT_INSET, middle + 1.0f)), RuleTone(dim));
                 continue;
             }
 
             bool enabled = item.Enabled;
+            bool lit = highlighted && litIndex == i;
 
             UIRect content = area.Shrink(new UIEdges(ITEM_PADDING, 0.0f));
-            Vector4 color = enabled ? skin.TextColor : dim;
+            Vector4 color = !enabled ? dim : item.IsDestructive ? skin.ErrorColor : skin.TextColor;
             float side = MathF.Round(area.Height * 0.6f);
             UIRect mark = new(new Vector2(content.Min.X - 4.0f, MathF.Round(content.Center.Y - side * 0.5f)), new Vector2(content.Min.X - 4.0f + side, MathF.Round(content.Center.Y + side * 0.5f)));
 
@@ -449,17 +464,19 @@ internal sealed partial class MenuPanel
             if (item.IsChecked?.Invoke() == true)
                 list.Symbol("check", mark, skin.AccentColor);
             else if (item.Icon.Length > 0)
-                list.Symbol(item.Icon, mark, color);
+                list.Symbol(item.Icon, mark, enabled && !item.IsDestructive && !lit ? IconTone(skin, color) : color);
 
             UIRect text = new(new Vector2(content.Min.X + Lead(row), content.Min.Y), content.Max);
             // Cut short only in a list narrower than its longest item, the room its keys take measured only then
             string label = naturalWidth <= bounds.Width + 0.5f ? item.Label : Fitted(skin, item.Label, text.Width - EndWidth(skin, item, row));
             list.Text(label, text, Origin.Left, scale, color, markup: false);
 
+            // The keys and the arrow are quiet beside the words, lit with them under the highlight so they read there
+            Vector4 end = lit && enabled ? IconTone(skin, skin.TextColor) : dim;
             if (item.Submenu is not null)
-                list.Symbol(SUBMENU_ARROW, new UIRect(new Vector2(content.Max.X - side, mark.Min.Y), new Vector2(content.Max.X, mark.Max.Y)), dim);
+                list.Symbol(SUBMENU_ARROW, new UIRect(new Vector2(content.Max.X - side, mark.Min.Y), new Vector2(content.Max.X, mark.Max.Y)), end);
             else if (item.Shortcut.Length > 0)
-                list.Text(UIShortcutText.Shown(item.Shortcut), text, Origin.Right, scale, dim, markup: false);
+                list.Text(UIShortcutText.Shown(item.Shortcut), text, Origin.Right, scale, end, markup: false);
         }
 
         list.PopClip();

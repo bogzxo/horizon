@@ -42,6 +42,12 @@ public sealed class MenuItem
     public bool IsSeparator { get; init; }
 
     /// <summary>
+    /// Whether the item throws something away or can't be taken back (delete, discard, remove), written in the skin's
+    /// error colour so it reads as one before it's picked. It goes last in its menu, after a rule, by convention.
+    /// </summary>
+    public bool IsDestructive { get; set; }
+
+    /// <summary>
     /// Whether the item is left out of the menu it's in when that is drawn, for one that's rare enough to only want the
     /// command palette and its key. It is still in <see cref="Menu.Everything"/>, and its key still goes off.
     /// </summary>
@@ -126,10 +132,11 @@ public sealed class Menu(string title)
 
     /// <summary>Adds something to do at the end of the menu.</summary>
     /// <param name="icon">One of the icons every skin has (<see cref="UISymbols"/>) in front of it.</param>
+    /// <param name="destructive">Whether it throws something away, see <see cref="MenuItem.IsDestructive"/>.</param>
     /// <returns>The item, to say more about (when it can be picked, whether it is checked).</returns>
-    public MenuItem Add(string label, Action picked, string shortcut = "", string icon = "")
+    public MenuItem Add(string label, Action picked, string shortcut = "", string icon = "", bool destructive = false)
     {
-        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = shortcut, Icon = icon };
+        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = shortcut, Icon = icon, IsDestructive = destructive };
         items.Add(item);
         return item;
     }
