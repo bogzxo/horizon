@@ -205,7 +205,7 @@ public sealed partial class UIDrawList
         visualOffset = Vector2.Zero;
         visualScale = Vector2.One;
         opacity = 1.0f;
-        fades.Clear();
+        BeginFades();
 
         owners.Clear();
         owner = 0.0f;
@@ -627,8 +627,8 @@ public sealed partial class UIDrawList
 
         // Faded the way Quad fades, see there
         uint asked = color;
-        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
-        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        float fade = FadeOf(visible);
+        float shown = opacity * fade;
         if (shown < 1.0f)
         {
             uint alpha = (uint)((color >> 24) * shown + 0.5f);
@@ -1007,8 +1007,8 @@ public sealed partial class UIDrawList
 
         // Faded by the animation it's in and the edges it's near, see PushFade. Kept as it was asked for, its frame fades it
         uint asked = color;
-        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
-        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        float fade = FadeOf(visible);
+        float shown = opacity * fade;
         if (shown < 1.0f)
         {
             // Alpha is the top byte, see SpriteItem.PackColor.
