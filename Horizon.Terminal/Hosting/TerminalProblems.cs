@@ -12,7 +12,7 @@ public readonly record struct TerminalProblem(string File, int Line, int Column,
 /// lines (Rust says the message and then where on the line after) has a second pattern for the place, which takes the
 /// message of the line before.
 /// </summary>
-public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? Place = null)
+public sealed partial record TerminalProblemMatcher(string Name, Regex Pattern, Regex? Place = null)
 {
     public TerminalProblemMatcher(string name, string pattern, string? place = null)
         : this(name, new Regex(pattern, RegexOptions.Compiled), place is null ? null : new Regex(place, RegexOptions.Compiled)) { }
@@ -24,27 +24,71 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
     public static readonly TerminalProblemMatcher[] Shipped =
     [
         // A file of these has no > in it, which keeps a prompt that echoed one of these lines from being read as a file
-        new("dotnet", @"^\s*(?<file>[^\s(>][^(>]*?)\((?<line>\d+),(?<column>\d+)\)\s*:\s*(?<kind>error|warning)\s+(?<code>[A-Z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$"),
+        new("dotnet", DotnetPattern()),
         // A project's own, MSBuild's, NuGet's (a package with a hole in it) and the SDK's, the file a whole path with its drive or not
-        new("msbuild", @"^\s*(?<file>(?:[A-Za-z]:)?[^\s:>][^:>]*?)\s*:\s*(?<kind>error|warning)\s+(?<code>(?:MSB|NU|NETSDK)\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$"),
-        new("python", @"^(?<kind>[\w]+(?:\.[\w]+)*)(?:: (?<message>.*))?$", @"^\s*File ""(?<file>[^""]+)"", line (?<line>\d+)"),
-        new("gcc", @"^(?<file>(?:[A-Za-z]:)?[^:\s>][^:>]*?):(?<line>\d+)(?::(?<column>\d+))?: (?<kind>error|warning|fatal error): (?<message>.*)$"),
+        new("msbuild", MsbuildPattern()),
+        new("python", PythonPattern(), PythonPlace()),
+        new("gcc", GccPattern()),
         // MSVC and clang-cl, including MSBuild's numbered project prefix and Clang's code-less diagnostics.
-        new("msvc", @"^\s*(?:\d+>)?(?<file>[^\s>][^>]*?)\((?<line>\d+)(?:,(?<column>\d+))?\)\s*:\s*(?<kind>fatal error|error|warning)(?:\s+(?<code>[A-Z]+\d+))?\s*:\s*(?<message>.*)$"),
-        new("rust", @"^(?<kind>error|warning)(?:\[(?<code>E\d+)\])?: (?<message>.*)$", @"^\s*--> (?<file>[^:]+):(?<line>\d+):(?<column>\d+)"),
-        new("slang", @"^(?<file>[^\s(][^(]*?)\((?<line>\d+)\): (?<kind>error|warning) (?<code>\d+): (?<message>.*)$"),
+        new("msvc", MsvcPattern()),
+        new("rust", RustPattern(), RustPlace()),
+        new("slang", SlangPattern()),
 
         // dmd, ldc2 and gdc, with the column (-vcolumns) or without it, when the line of code it quotes after has a ^
         // under the place (TerminalProblemReader takes the column from that). A deprecation is a warning
-        new("d", @"^(?<file>[^\s(>][^(>]*?\.di?)\((?<line>\d+)(?:,(?<column>\d+))?\): (?<kind>Error|Warning|Deprecation): (?<message>.*)$"),
+        new("d", DPattern()),
 
         // A D program that stopped on what it threw, core.exception.ArrayIndexError@util.d(15), where it threw it
-        new("d-exception", @"^(?<kind>(?:\w+\.)*\w*(?:Exception|Error))@(?<file>[^\s(][^(]*?\.di?)\((?<line>\d+)\): (?<message>.*)$"),
+        new("d-exception", DExceptionPattern()),
 
         // A .NET program that stopped on an exception, what it was and then the first frame of it that has a file
-        new("dotnet-exception", @"^Unhandled exception\. (?<kind>[\w.]+): (?<message>.*)$", @"^\s+at .+ in (?<file>.+):line (?<line>\d+)\s*$"),
-        new("hidl", @"^(?<file>[^\s:][^:]*\.hor):(?<line>\d+):(?<column>\d+): (?<message>.*)$")
+        new("dotnet-exception", DotnetExceptionPattern(), DotnetExceptionPlace()),
+        new("hidl", HidlPattern())
     ];
+
+    // The shipped matchers' patterns, made when Hex is built. RegexOptions.Compiled is nothing to a trimmed Hex, which
+    // ran every one of them through the interpreter for every line a program printed
+    [GeneratedRegex(@"^\s*(?<file>[^\s(>][^(>]*?)\((?<line>\d+),(?<column>\d+)\)\s*:\s*(?<kind>error|warning)\s+(?<code>[A-Z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$")]
+    private static partial Regex DotnetPattern();
+
+    [GeneratedRegex(@"^\s*(?<file>(?:[A-Za-z]:)?[^\s:>][^:>]*?)\s*:\s*(?<kind>error|warning)\s+(?<code>(?:MSB|NU|NETSDK)\d+)\s*:\s*(?<message>.*?)(?:\s+\[[^\]]*\])?$")]
+    private static partial Regex MsbuildPattern();
+
+    [GeneratedRegex(@"^(?<kind>[\w]+(?:\.[\w]+)*)(?:: (?<message>.*))?$")]
+    private static partial Regex PythonPattern();
+
+    [GeneratedRegex(@"^\s*File ""(?<file>[^""]+)"", line (?<line>\d+)")]
+    private static partial Regex PythonPlace();
+
+    [GeneratedRegex(@"^(?<file>(?:[A-Za-z]:)?[^:\s>][^:>]*?):(?<line>\d+)(?::(?<column>\d+))?: (?<kind>error|warning|fatal error): (?<message>.*)$")]
+    private static partial Regex GccPattern();
+
+    [GeneratedRegex(@"^\s*(?:\d+>)?(?<file>[^\s>][^>]*?)\((?<line>\d+)(?:,(?<column>\d+))?\)\s*:\s*(?<kind>fatal error|error|warning)(?:\s+(?<code>[A-Z]+\d+))?\s*:\s*(?<message>.*)$")]
+    private static partial Regex MsvcPattern();
+
+    [GeneratedRegex(@"^(?<kind>error|warning)(?:\[(?<code>E\d+)\])?: (?<message>.*)$")]
+    private static partial Regex RustPattern();
+
+    [GeneratedRegex(@"^\s*--> (?<file>[^:]+):(?<line>\d+):(?<column>\d+)")]
+    private static partial Regex RustPlace();
+
+    [GeneratedRegex(@"^(?<file>[^\s(][^(]*?)\((?<line>\d+)\): (?<kind>error|warning) (?<code>\d+): (?<message>.*)$")]
+    private static partial Regex SlangPattern();
+
+    [GeneratedRegex(@"^(?<file>[^\s(>][^(>]*?\.di?)\((?<line>\d+)(?:,(?<column>\d+))?\): (?<kind>Error|Warning|Deprecation): (?<message>.*)$")]
+    private static partial Regex DPattern();
+
+    [GeneratedRegex(@"^(?<kind>(?:\w+\.)*\w*(?:Exception|Error))@(?<file>[^\s(][^(]*?\.di?)\((?<line>\d+)\): (?<message>.*)$")]
+    private static partial Regex DExceptionPattern();
+
+    [GeneratedRegex(@"^Unhandled exception\. (?<kind>[\w.]+): (?<message>.*)$")]
+    private static partial Regex DotnetExceptionPattern();
+
+    [GeneratedRegex(@"^\s+at .+ in (?<file>.+):line (?<line>\d+)\s*$")]
+    private static partial Regex DotnetExceptionPlace();
+
+    [GeneratedRegex(@"^(?<file>[^\s:][^:]*\.hor):(?<line>\d+):(?<column>\d+): (?<message>.*)$")]
+    private static partial Regex HidlPattern();
 
     /// <summary>A problem out of a line, null for a line this doesn't match. The kind out of the line, a warning when it says so.</summary>
     public TerminalProblem? Match(string line)
@@ -94,7 +138,10 @@ public sealed record TerminalProblemMatcher(string Name, Regex Pattern, Regex? P
 /// </summary>
 public sealed partial class TerminalProblemReader(IReadOnlyList<TerminalProblemMatcher> matchers, Action<TerminalProblem> found, Func<int>? columns = null, Func<string, bool>? exists = null)
 {
-    private static readonly Regex Escapes = new(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])", RegexOptions.Compiled);
+    // The escape sequences of a line, taken out before the matchers see it, made when Hex is built for the reason the
+    // matchers are
+    [GeneratedRegex(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\)|[@-Z\\-_])")]
+    private static partial Regex Escapes();
 
     private readonly StringBuilder pending = new();
     private readonly Decoder decoder = Encoding.UTF8.GetDecoder();
@@ -180,7 +227,7 @@ public sealed partial class TerminalProblemReader(IReadOnlyList<TerminalProblemM
     // Whether what's between two marks draws nothing, the end of the first mark and escape sequences aside
     private static bool IsBlank(ReadOnlySpan<char> between)
     {
-        string text = Escapes.Replace(between.ToString(), string.Empty);
+        string text = Escapes().Replace(between.ToString(), string.Empty);
         foreach (char c in text)
         {
             if (!char.IsWhiteSpace(c) && c != '\a')
@@ -193,7 +240,7 @@ public sealed partial class TerminalProblemReader(IReadOnlyList<TerminalProblemM
     private void Line(string raw)
     {
         // A shell without the marks has its prompt kept out by what it looks like (no > in a file, see Shipped)
-        string line = Escapes.Replace(WithoutPrompts(raw), string.Empty).TrimEnd();
+        string line = Escapes().Replace(WithoutPrompts(raw), string.Empty).TrimEnd();
         lineBefore = lastLine;
         lastLine = line;
 
