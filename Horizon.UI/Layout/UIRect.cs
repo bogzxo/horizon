@@ -15,6 +15,13 @@ public readonly record struct UIRect(Vector2 Min, Vector2 Max)
     public float Height => Max.Y - Min.Y;
     public bool IsEmpty => Max.X <= Min.X || Max.Y <= Min.Y;
 
+    // The same as the record's own, written out so it's inlined. Its own went through an equality comparer a call at a
+    // time, and every quad painted asks whether a clip cut it
+    public bool Equals(UIRect other) => Min.Equals(other.Min) && Max.Equals(other.Max);
+
+    // And the record's own hash, so nothing hashed by it comes out another
+    public override int GetHashCode() => Min.GetHashCode() * -1521134295 + Max.GetHashCode();
+
     public static UIRect FromCenter(Vector2 center, Vector2 size) =>
         new(center - size * 0.5f, center + size * 0.5f);
 
