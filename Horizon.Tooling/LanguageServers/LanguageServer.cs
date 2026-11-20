@@ -253,7 +253,7 @@ public sealed partial class LanguageServer : IDisposable
             ["experimental"] = new JsonObject { ["csharp"] = new JsonObject { ["metadataUris"] = true } },
 
             // The files of the workspace that change on the disk are said (FilesChanged), a project added, a branch checked
-            // out. A server asks for the ones it wants watched, and is told of every one, it takes what it wants of them
+            // out. A server asks for the ones it wants watched and is told of those alone, one that never asks of all of them
             ["workspace"] = new JsonObject
             {
                 ["workspaceFolders"] = false,
@@ -536,6 +536,10 @@ public sealed partial class LanguageServer : IDisposable
                 foreach (var (path, change) in changes)
                 {
                     if (change != LanguageServerFileChange.Deleted && DocumentVersion(path) is not null)
+                        continue;
+
+                    // Only what it asked for, when it asked (LanguageServer.Watchers)
+                    if (!Watches(path, change))
                         continue;
                     list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
                 }

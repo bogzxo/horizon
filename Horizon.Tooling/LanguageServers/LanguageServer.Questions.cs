@@ -123,10 +123,19 @@ public sealed partial class LanguageServer
             return null;
         }
 
+        if (method == "client/registerCapability")
+        {
+            Registered(parameters);
+            return null;
+        }
+        if (method == "client/unregisterCapability")
+        {
+            Unregistered(parameters);
+            return null;
+        }
+
         if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
             return null;
-
-
 
         var sections = new JsonArray();
         foreach (JsonNode? item in items)
