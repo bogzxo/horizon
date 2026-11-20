@@ -395,8 +395,9 @@ internal sealed partial class MenuPanel
     // The item the highlight is on, -1 for none, for its keys to be lit with it
     private int litIndex = -1;
 
-    // The highlight under an item that throws something away, the error colour washed out as far as the hover colour is
-    private static Vector4 DangerWash(UISkin skin) => skin.ErrorColor with { W = MathF.Max(skin.HoverColor.W, 0.2f) * 0.9f };
+    // The highlight under an item that throws something away, the error colour washed out to a tint whatever the hover
+    // colour is, a skin with a solid hover had the red words on solid red
+    private static Vector4 DangerWash(UISkin skin) => skin.ErrorColor with { W = Math.Clamp(skin.HoverColor.W, 0.12f, 0.22f) };
 
     // What an item's icon is painted in, a step quieter than what it says so the words lead and the icons only help find them
     private static Vector4 IconTone(UISkin skin, Vector4 text) => Vector4.Lerp(text, skin.DimTextColor with { W = text.W }, 0.35f);
