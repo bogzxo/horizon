@@ -297,10 +297,17 @@ public abstract partial class UIComponent
             if (from < 0)
                 return false;
 
-            var moved = new List<UIComponent>(children);
-            moved.RemoveAt(from);
-            moved.Insert(Math.Clamp(index, 0, moved.Count), child);
-            children = [.. moved];
+            // Moved within one new array, the others shifted along by one between where it was and where it goes
+            int to = Math.Clamp(index, 0, children.Length - 1);
+            if (to == from)
+                return true;
+            var moved = (UIComponent[])children.Clone();
+            if (to < from)
+                Array.Copy(children, to, moved, to + 1, from - to);
+            else
+                Array.Copy(children, from + 1, moved, from, to - from);
+            moved[to] = child;
+            children = moved;
         }
 
         return true;
@@ -324,7 +331,11 @@ public abstract partial class UIComponent
             if (index < 0)
                 return false;
 
-            children = [.. children[..index], .. children[(index + 1)..]];
+            // One array for what's left, rather than the two halves copied out first and then into it
+            var left = new UIComponent[children.Length - 1];
+            Array.Copy(children, 0, left, 0, index);
+            Array.Copy(children, index + 1, left, index, left.Length - index);
+            children = left;
         }
 
         child.Parent = null;
