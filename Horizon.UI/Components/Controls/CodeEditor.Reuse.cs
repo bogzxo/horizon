@@ -121,6 +121,8 @@ public partial class CodeEditor
             hash.Add(LineNote);
             hash.Add(lineNoteFor);
             hash.Add(ExecutionLine);
+            hash.Add(OnActionPressed is null ? -1 : ActionLine);
+            hash.Add(ActionPreferred);
             hash.Add(Breakpoints);
             hash.Add(Breakpoints?.Count ?? 0);
             hash.Add(BreakpointMarksVersion);

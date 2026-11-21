@@ -2649,7 +2649,10 @@ public partial class CodeEditor : UIComponent
 
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
-            // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
+            // The strip the marks go in, as wide as one of them, is the lightbulb's on its line and otherwise the
+            // breakpoints' when somebody wants it
+            if (PressAction(point))
+                return;
             if (OnGutterPressed is not null && point.X < BreakpointStripRight(painted))
             {
                 OnGutterPressed(at.Line);

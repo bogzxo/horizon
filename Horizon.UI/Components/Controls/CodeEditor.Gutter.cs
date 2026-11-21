@@ -129,6 +129,7 @@ public partial class CodeEditor
         Vector4 chevron = Vector4.Lerp(colors.LineNumber, colors.Name, 0.45f);
         Span<char> number = stackalloc char[12];
         int digits = NumberDigits();
+        ActionBounds = null;
 
         for (int index = first; index <= last; index++)
         {
@@ -164,6 +165,12 @@ public partial class CodeEditor
             if (breakpoint && mark != CodeBreakpointMark.Plain)
             {
                 list.Symbol(MarkSymbol(mark), slot, skin.ErrorColor);
+            }
+            else if (!breakpoint && ShowsAction(line))
+            {
+                // A fix for the line in place of what's wrong with it, the pointer's faint dot too, a press takes the fix
+                list.Symbol(ActionPreferred ? "lightbulb-autofix" : "lightbulb", slot, skin.WarningColor);
+                ActionBounds = slot;
             }
             else if (breakpoint || pointing)
             {
