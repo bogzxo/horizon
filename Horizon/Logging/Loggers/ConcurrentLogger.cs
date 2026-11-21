@@ -152,6 +152,11 @@ public class ConcurrentLogger : ILoggerDisposable
 
             Interlocked.Add(ref pending, -written);
         }
+
+        // The file is closed by this thread and no other, once it has written the last of the queue. Closed from Dispose
+        // when its wait ran out, a thread still at it (starved on a busy machine) wrote on to a closed file and the
+        // exception took the whole process down
+        writer?.Dispose();
     }
 
     /// <summary>
@@ -198,11 +203,13 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
 
-        // Whatever is still in the queue gets written before the thread stops
+        // Whatever is still in the queue gets written before the thread stops. It runs below normal so logging never
+        // takes from the rest, but closing waits on it, so it isn't left behind everything else on a busy machine then
         messages.CompleteAdding();
+        try { worker.Priority = ThreadPriority.Normal; }
+        catch (ThreadStateException) { /* Already finished */ }
         worker.Join(LONGEST_FLUSH);
 
-        writer?.Dispose();
         GC.SuppressFinalize(this);
     }
 }
