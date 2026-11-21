@@ -43,7 +43,10 @@ public class TextMateHighlighterTests
         try
         {
             Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
-            object? deferred = await Task.Run(() => freshColours.Invoke(editor, [0, changed])).WaitAsync(TimeSpan.FromSeconds(1));
+            // On a thread of its own, the pool's were all taken by the rest of the tests at once and a second went by
+            // before the paint even began. Five seconds is still half of the ten the grammar is held for, a paint
+            // that waited for it would take those
+            object? deferred = await Task.Factory.StartNew(() => freshColours.Invoke(editor, [0, changed]), TaskCreationOptions.LongRunning).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Null(deferred);
         }
         finally { release.Set(); await holding; }
