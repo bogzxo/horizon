@@ -15,6 +15,7 @@ internal static class LoopTiming
     // is the shortest there is, and it can run a little over
     private const double SPIN_MARGIN = 0.0018;
 
+    // How many keep time and want the system's timer sharp, see SharpenTimer
     private static int timerUsers;
 
     /// <summary>
@@ -96,10 +97,44 @@ internal static class LoopTiming
     {
         if (!OperatingSystem.IsWindows()) return;
 
+        lock (timerLock)
+        {
+            timerUsers += on ? 1 : -1;
+            ApplyTimer();
+        }
+    }
+
+    /// <summary>
+    /// Lets the system's timer go back to its usual pace whoever keeps time, for a program asleep (WindowManager.Sleep),
+    /// where nothing keeps time and the sharp timer only has every wait with a timeout in the process come round sooner.
+    /// Until it's said again with false.
+    /// </summary>
+    public static void RestTimer(bool resting)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        lock (timerLock)
+        {
+            timerResting = resting;
+            ApplyTimer();
+        }
+    }
+
+    private static readonly Lock timerLock = new();
+    private static bool timerResting, timerSharp;
+
+    // Helper method to have the system's timer as sharp as asked, under the lock
+    private static void ApplyTimer()
+    {
+        bool sharp = timerUsers > 0 && !timerResting;
+        if (sharp == timerSharp)
+            return;
+
         try
         {
-            if (on && Interlocked.Increment(ref timerUsers) == 1) timeBeginPeriod(1);
-            if (!on && Interlocked.Decrement(ref timerUsers) == 0) timeEndPeriod(1);
+            if (sharp) timeBeginPeriod(1);
+            else timeEndPeriod(1);
+            timerSharp = sharp;
         }
         catch (Exception)
         {
