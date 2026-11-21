@@ -103,10 +103,12 @@ public partial class MenuBar
     // The next menu that's on the bar from one, a step along and round past the ends, -1 for none
     private int NextShown(int from, int by)
     {
-        for (int i = 1; i <= menus.Count; i++)
+        if (Skin is { } skin)
+            Fold(skin);
+        for (int i = 1; i <= Count; i++)
         {
-            int at = (((from < 0 && by < 0 ? menus.Count : from) + by * i) % menus.Count + menus.Count) % menus.Count;
-            if (menus[at].Shown)
+            int at = (((from < 0 && by < 0 ? Count : from) + by * i) % Count + Count) % Count;
+            if (OnBar(at))
                 return at;
         }
 
@@ -120,7 +122,7 @@ public partial class MenuBar
         for (int i = 1; i <= menus.Count; i++)
         {
             int at = ((from < 0 ? -1 : from) + i + menus.Count) % menus.Count;
-            if (menus[at].Shown && MnemonicOf(menus[at]) == letter)
+            if (OnBar(at) && MnemonicOf(menus[at]) == letter)
                 return at;
         }
 

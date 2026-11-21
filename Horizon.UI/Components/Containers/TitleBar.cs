@@ -214,6 +214,23 @@ public class TitleBar : StackPanel
             child.ArrangeTree(UIRect.FromCenter(new Vector2(right - size.X * 0.5f, inside.Center.Y), size));
             right -= size.X + gap;
         }
+
+        // The menus have what's left before those, the ones that don't fit go into the bar's last menu. They were laid
+        // out as wide as all of them and ran under the buttons at the right end at 200%
+        if (Module?.Compositor.Skin is not { } skin)
+            return;
+
+        for (int i = 0; i < ChildSpan.Length; i++)
+        {
+            if (ChildSpan[i] is not MenuBar { Visible: true } bar || bar.Anchor.ToVector().X > 0)
+                continue;
+
+            UIRect at = bar.Bounds;
+            bar.Room = MathF.Max(1.0f, MathF.Floor(right - at.Min.X));
+            float width = MathF.Min(bar.ShownWidth(skin), bar.Room);
+            if (MathF.Abs(width - at.Width) > 0.5f)
+                bar.ArrangeTree(new UIRect(at.Min, new Vector2(at.Min.X + width, at.Max.Y)));
+        }
     }
 
     /// <summary>Where one of the window's buttons is, in the module's units.</summary>
