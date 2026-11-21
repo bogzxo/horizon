@@ -232,7 +232,7 @@ internal sealed partial class SettingRow : StackPanel
 
     // Whether a setting's control fits the column down the right, anything with buttons or a list of choices doesn't
     private static bool Sideways(UISetting setting) =>
-        setting.Kind is UIFormKind.Flag or UIFormKind.Choice or UIFormKind.Number or UIFormKind.Whole or UIFormKind.Text
+        setting.Kind is UIFormKind.Flag or UIFormKind.Choice or UIFormKind.Number or UIFormKind.Whole or UIFormKind.Text or UIFormKind.Secret
         && setting.Buttons is not { Length: > 0 } && !setting.ButtonsOnly;
 
     // About how wide a short text is written small after the name, the key and the pills, a little over so it isn't cut

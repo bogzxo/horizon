@@ -160,7 +160,7 @@ public partial class CodeEditor : UIComponent
     /// screen, so a row scrolled into sight or a selection a row longer had every one after it blended with another's for
     /// a frame, and the blank lines filled up with dots and guides on their way somewhere else.
     /// </summary>
-    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens) & 0x3FFFFFFF;
+    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens, row.Predicted) & 0x3FFFFFFF;
 
     private readonly UITextDocument document = new();
 
@@ -455,7 +455,14 @@ public partial class CodeEditor : UIComponent
 
     protected internal override bool OnEscape()
     {
-        // The hover asked for at the caret comes down first
+        // A prediction showing goes first, it's what was put in front of the code last
+        if (prediction is not null)
+        {
+            ClearPrediction();
+            return true;
+        }
+
+        // Then the hover asked for at the caret
         if (hoverPinnedFor is not null)
         {
             TakeHoverDown();
@@ -911,6 +918,7 @@ public partial class CodeEditor : UIComponent
             nativeFoldingRanges = null;
             checkIn = CHECK_DELAY;
             revealCaret = true;
+            PredictionTextChanged();
             OnChanged?.Invoke();
         };
         document.LinesMoved += MoveDiagnostics;
@@ -1357,6 +1365,10 @@ public partial class CodeEditor : UIComponent
         string text = document.LineAt(line);
         int rowEnd = Math.Min(row.End, text.Length);
 
+        // A row of a prediction's isn't in the text, a point on it is the end of the line it's under
+        if (row.Predicted > 0)
+            return new UITextPosition(line, text.Length);
+
         float wanted = point.X - (area.Min.X + TEXT_PAD - scrollX) - row.Indent;
         float before = 0.0f;
 
@@ -1413,6 +1425,7 @@ public partial class CodeEditor : UIComponent
         // The hover at the caret goes once the caret or the text moves on, or something else took it down
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
             TakeHoverDown();
+        UpdatePrediction();
 
         // How long the caret's been on the line the note is about, from nothing again every time it goes to another line
         int noted = LineNote is { } note && note.Line == document.Caret.Line ? note.Line : -1;
@@ -1908,6 +1921,10 @@ public partial class CodeEditor : UIComponent
         middleScroll.Cancel();
         blink = 0.0f;
         revealCaret = true;
+
+        // A prediction has Tab, Ctrl+Right and Escape before the rest (the completion list keeps them while it's open)
+        if (prediction is not null && PredictionKey(character))
+            return;
 
         if (CompletionOpen && CompletionKey(character))
             return;
@@ -2869,7 +2886,7 @@ public partial class CodeEditor : UIComponent
         {
             CodeRow row = rows[index];
             float top = RowTop(area, index, lineHeight);
-            if (row.Lens)
+            if (row.Virtual)
                 continue;
             list.BeginPart(RowPart(ROW_BEHIND, row));
 
@@ -2898,6 +2915,8 @@ public partial class CodeEditor : UIComponent
 
         list.BeginPart(PART_OVERLAY);
         PaintRanges(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
+        if (prediction is not null)
+            PaintPredictionStruck(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
         PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
         if (findQuery.Length > 0)
@@ -2972,7 +2991,7 @@ public partial class CodeEditor : UIComponent
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
-            if (row.Lens || document.LineAt(row.Line) is not { Length: > TextMateHighlighter.LONG_LINE } longLine)
+            if (row.Virtual || document.LineAt(row.Line) is not { Length: > TextMateHighlighter.LONG_LINE } longLine)
                 continue;
 
             int to = wordWrap ? row.End : row.Start + (int)((scrollX + area.Width) / MathF.Max(1.0f, digit)) + 1;
@@ -2981,8 +3000,13 @@ public partial class CodeEditor : UIComponent
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
-            if (row.Lens)
+            if (row.Virtual)
+            {
+                // A line of a prediction on a row of its own, the lens rows are painted after
+                if (row.Predicted > 0)
+                    PaintPredictedRow(list, skin, scale, row, RowTop(area, index, lineHeight), left, colors);
                 continue;
+            }
             list.BeginPart(HashCode.Combine(row.Line, row.Start) & 0x3FFFFFFF);
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
@@ -3034,7 +3058,9 @@ public partial class CodeEditor : UIComponent
                     x = DrawInSight(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
             }
 
-            // The hints after the end of the line, once its last row is drawn
+            // What a prediction puts after the end of the line, then the hints, once its last row is drawn
+            if (rowEnd == written.Length && prediction is not null)
+                x = DrawPredictedAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
             if (rowEnd == written.Length)
                 x = DrawInlaysAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
 
@@ -3478,7 +3504,7 @@ public partial class CodeEditor : UIComponent
         }
 
         int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
-        if (rows[top].Lens && top + 1 < rows.Count)
+        while (rows[top].Virtual && top + 1 < rows.Count)
             top++;
         zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
     }
@@ -3519,7 +3545,7 @@ public partial class CodeEditor : UIComponent
         int line = rows[index].Line;
         int from = index, to = index;
         while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens) from--;
-        while (to + 1 < rows.Count && rows[to + 1].Line == line) to++;
+        while (to + 1 < rows.Count && rows[to + 1].Line == line && rows[to + 1].Predicted == 0) to++;
 
         float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
         float bottom = top - (to - from + 1) * lineHeight;

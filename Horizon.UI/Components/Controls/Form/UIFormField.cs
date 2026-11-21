@@ -13,7 +13,8 @@ public enum UIFormKind
     Flags,   // a toggle a choice, the value "standing | crouching"
     Vec,     // a number box a component, two of them unless it says how many
     Pairs,   // a list of key = value lines, an object of texts by text (*.orig as csharp)
-    List     // a list of texts, a line each, globs to leave out say (**/node_modules, **/bin)
+    List,    // a list of texts, a line each, globs to leave out say (**/node_modules, **/bin)
+    Secret   // a text box that shows a star a letter and won't copy out, for a key or a password
 }
 
 /// <summary>
@@ -121,7 +122,7 @@ public sealed record UIFormField(
 
         string kind = Text("kind", "text");
         if (!Enum.TryParse(kind, ignoreCase: true, out UIFormKind parsed))
-            throw new HidlRuntimeException($"'{kind}' isn't a kind of field, number, whole, flag, text, choice, flags, vec, pairs or list.");
+            throw new HidlRuntimeException($"'{kind}' isn't a kind of field, number, whole, flag, text, choice, flags, vec, pairs, list or secret.");
 
         string[]? choices = properties.TryGetValue("choices", out var listed) && listed is ListValue list
             ? [.. list.Items.Select(item => item is StringValue text ? text.Value : item.ToString() ?? string.Empty)]

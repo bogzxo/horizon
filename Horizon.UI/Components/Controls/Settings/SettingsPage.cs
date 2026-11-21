@@ -474,14 +474,17 @@ public partial class SettingsPage : UIComponent
             menu.AddSeparator();
         }
 
+        // A secret's value is never copied out, the box it's typed in won't either
+        bool secret = row.Setting.Kind == UIFormKind.Secret;
         if (CopyValues)
         {
-            menu.Add(texts.CopyValue, () => UIClipboard.Copy(ValueText(key)), icon: "copy");
+            if (!secret)
+                menu.Add(texts.CopyValue, () => UIClipboard.Copy(ValueText(key)), icon: "copy");
             return menu;
         }
 
         menu.Add(texts.CopyId, () => UIClipboard.Copy(key), icon: "copy");
-        if (LineOf(key) is { } line)
+        if (!secret && LineOf(key) is { } line)
             menu.Add(texts.CopyLine, () => UIClipboard.Copy(line), icon: "copy");
         return menu;
     }

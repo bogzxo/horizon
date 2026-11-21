@@ -18,9 +18,14 @@ public partial class CodeEditor
 
     /// <summary>
     /// A row the code is drawn in, a piece of a line from one column to another, so far in from the left. A lens row has
-    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove).
+    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove). A predicted
+    /// row has none of it either, it's a line of a prediction under the line, counted from 1 (CodeEditor.Prediction).
     /// </summary>
-    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false);
+    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false, int Predicted = 0)
+    {
+        /// <summary>Whether none of the line's text is on it, a lens row or a predicted one.</summary>
+        public bool Virtual => Lens || Predicted > 0;
+    }
 
     private readonly List<CodeRow> rows = [];
 
@@ -29,7 +34,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int Predicted) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, -1);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -279,7 +284,7 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, predictionRowsVersion);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -289,13 +294,14 @@ public partial class CodeEditor
         shapedLeft = area.Min.X + TEXT_PAD;
         shapedLineHeight = lineHeight;
 
-        // Rows of lenses coming or going above what's in sight would push it about, so the line at the top of the view keeps
-        // its place. Gone to a reference, the counts came a moment after and the line went to was pushed off the bottom
+        // Rows of lenses or of a prediction coming or going above what's in sight would push it about, so the line at the
+        // top of the view keeps its place. Gone to a reference, the counts came a moment after and the line went to was
+        // pushed off the bottom
         (int Line, int Row)? anchor = null;
-        if (rowsFor.Lenses != lensRowsChanged && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != predictionRowsVersion) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
         {
             int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
-            while (top < rows.Count - 1 && rows[top].Lens)
+            while (top < rows.Count - 1 && rows[top].Virtual)
                 top++;
             int line = rows[top].Line;
 
@@ -331,7 +337,7 @@ public partial class CodeEditor
             wrapTab = TabWidth(skin, scale);
         }
 
-        int lens = 0;
+        int lens = 0, predicted = 0;
         lensRows = 0;
         for (int line = 0; line < count; line++)
         {
@@ -346,13 +352,18 @@ public partial class CodeEditor
             string text = document.LineAt(line);
             AddRows(line, text, columns, digit);
 
-            // A folded line's own rows, then every line it folds is drawn as it
+            // A folded line's own rows, then every line it folds is drawn as it. One that isn't has the rows of a
+            // prediction's lines under it after its own
             if (folded.Contains(line) && foldable.TryGetValue(line, out int end))
             {
                 int into = rows.Count - 1;
                 for (int hidden = line + 1; hidden <= end && hidden < count; hidden++)
                     lineRow[hidden] = into;
                 line = Math.Min(end, count - 1);
+            }
+            else if (predictedRows.Length > 0)
+            {
+                AddPredictedRows(line, ref predicted);
             }
         }
 
@@ -531,8 +542,9 @@ public partial class CodeEditor
         if (rows[row].Line != line)
             return row;
 
-        // Along the line's rows to the one the column is on, the end of one row being the start of the next
-        while (row + 1 < rows.Count && rows[row + 1].Line == line && column >= rows[row + 1].Start)
+        // Along the line's rows to the one the column is on, the end of one row being the start of the next, and never on
+        // to the rows of a prediction under it
+        while (row + 1 < rows.Count && rows[row + 1].Line == line && rows[row + 1].Predicted == 0 && column >= rows[row + 1].Start)
             row++;
         return row;
     }

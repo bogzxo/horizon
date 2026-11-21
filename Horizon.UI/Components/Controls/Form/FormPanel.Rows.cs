@@ -207,7 +207,7 @@ public partial class FormPanel
 
     private Action<IRuntimeValue?> TextEditor(UIFormField field, StackPanel row, float width)
     {
-        var box = row.Add(new TextBox { Size = new Vector2(width, ROW_HEIGHT), Enabled = !field.ReadOnly, TextScale = TextScale, Placeholder = field.Unset });
+        var box = row.Add(new TextBox { Size = new Vector2(width, ROW_HEIGHT), Enabled = !field.ReadOnly, TextScale = TextScale, Placeholder = field.Unset, Secret = field.Kind == UIFormKind.Secret });
         box.OnChanged = text =>
         {
             typing = (field, text);

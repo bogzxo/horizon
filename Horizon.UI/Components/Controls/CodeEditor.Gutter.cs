@@ -135,8 +135,8 @@ public partial class CodeEditor
         {
             CodeRow row = rows[index];
 
-            // A row of reference counts over a line has no number, no mark and no change of its own
-            if (row.Lens)
+            // A row of reference counts over a line, or of a prediction under it, has no number, no mark and no change of its own
+            if (row.Virtual)
                 continue;
 
             // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
