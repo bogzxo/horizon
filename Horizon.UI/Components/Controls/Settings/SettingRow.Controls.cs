@@ -220,9 +220,14 @@ internal sealed partial class SettingRow
         box.TakeKey = key => Offer(box, key);
 
         // One that's only read is there to select and copy, as long as it likes, with nothing to tell anybody about
+        // It's written as text under its name, no box and no rim, so it doesn't look like something to type into (a
+        // file's Properties had every value in a box like the settings' boxes). The keyboard and a drag still select it
         if (setting.ReadOnly)
         {
             box.ReadOnly = true;
+            box.Bare = true;
+            box.Style = READ_ONLY_STYLE;
+            box.Padding = box.Padding with { Left = 0.0f, Right = 0.0f };
             box.MaxLength = 4096;
             return value => box.Text = value switch
             {

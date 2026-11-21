@@ -19,6 +19,9 @@ internal sealed partial class SettingRow : StackPanel
 {
     private const float PAD = 10.0f, TYPED_AFTER = 0.6f, BUTTON_COLUMN = 440.0f;
 
+    // A style no skin has art for, so a value that is only read is never drawn in a box of the skin's
+    private const string READ_ONLY_STYLE = "textbox_read_only";
+
     // The column down the right what sets it goes in, the gap before it and the most the sentence on the left runs to.
     // Across the whole of a wide row a sentence was too long a line to read
     private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 640.0f;
