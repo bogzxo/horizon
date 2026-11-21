@@ -534,6 +534,9 @@ public partial class SettingsPage : UIComponent
         wentTo = group;
         wentToAt = float.NaN;
 
+        // Its part opened down the left if it was folded, so the section gone to is lit there rather than the one before
+        UnfoldPartOf(group);
+
         // Asked for before the page has been built and laid out (as it opens), gone to once it has
         if (dirty || !headerOf.TryGetValue(group, out Label? header) || header.Bounds.IsEmpty)
         {

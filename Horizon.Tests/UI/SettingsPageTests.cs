@@ -9,6 +9,15 @@ public class SettingsPageTests
 {
     private static UISetting Row(string key, string group, string help = "") => new(key, key, UIFormKind.Text, help, group);
 
+    // A row shows the first sentence of its help, a stop inside a name or a number doesn't end it
+    [Theory]
+    [InlineData("Wraps long lines", "Wraps long lines")]
+    [InlineData("How wide a tab is, 1 to 16. A project's .editorconfig wins.", "How wide a tab is, 1 to 16.")]
+    [InlineData("Uses .editorconfig and 1.5 spacing. More after.", "Uses .editorconfig and 1.5 spacing.")]
+    [InlineData("Ends at a question? Then more.", "Ends at a question?")]
+    [InlineData("Ends with a stop.", "Ends with a stop.")]
+    public void FirstSentenceOfHelp(string help, string first) => Assert.Equal(first, SettingRow.FirstSentence(help));
+
     // A page over a few settings, the changed ones by their keys, built the way its first update builds it
     private static (SettingsPage Page, Dictionary<string, IRuntimeValue> Values, List<string> Closed) Made(params string[] changed)
     {

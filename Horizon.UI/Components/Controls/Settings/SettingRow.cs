@@ -63,7 +63,7 @@ internal sealed partial class SettingRow : StackPanel
     // Its name, its key after it and the sentence under them, rewritten with what a search found lit in them
     private readonly RowTitle name;
     private readonly Label key;
-    private readonly Label? help;
+    private readonly HelpLabel? help;
 
     // The page's note under the name, when the row is too narrow for its pill beside the name
     private readonly Label noteLine;
@@ -171,12 +171,20 @@ internal sealed partial class SettingRow : StackPanel
         // empty room sat a gap away from the name it's for
         top.MoveChild(reset, 1);
 
+        // The pills after the name too, and the key last. Its room is kept while it's hidden, and a pill after the empty
+        // room floated off on its own a key's width from the row it was about
+        top.MoveChild(key, top.Children.Count - 1);
+
         // The note on a line of its own under the name, for a row too narrow to have it beside the name (see FitName)
         noteLine = text.Add(new Label { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
 
+        // Its first sentence, what it does in a line, and all it says when the pointer rests on it. Three lines of what wins
+        // over it and when, down every row, made the page a wall to read. A search that finds a word only in the rest
+        // shows the rest (see Highlight)
         if (setting.Help.Length > 0 && !page.CompactRows)
         {
-            help = text.Add(new Label { Text = UIRichText.Literal(setting.Help), Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
+            shortHelp = FirstSentence(setting.Help);
+            help = text.Add(new HelpLabel { Text = UIRichText.Literal(shortHelp), Tooltip = shortHelp.Length < setting.Help.Length ? setting.Help : string.Empty, Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
             faded.Add(help);
         }
 
@@ -296,7 +304,7 @@ internal sealed partial class SettingRow : StackPanel
         FitName();
     }
 
-    /// <summary>The keyword or choice a search found it by in its pill after the key, markup and all, null for none.</summary>
+    /// <summary>The keyword or choice a search found it by in its pill after the name, markup and all, null for none.</summary>
     public void ShowFoundBy(string? said)
     {
         if (said == foundByText)
@@ -367,7 +375,36 @@ internal sealed partial class SettingRow : StackPanel
         name.Text = $"[b]{SettingsPage.Highlighted(Setting.Title, words)}[/b]";
         key.Text = SettingsPage.Highlighted(Setting.Key, words);
         if (help is not null)
-            help.Text = SettingsPage.Highlighted(Setting.Help, words);
+        {
+            // All of it while a word typed is only in the rest, so whatever the search found it by is there to see
+            bool rest = words.Any(word => word.Length > 0 && !shortHelp.Contains(word, StringComparison.OrdinalIgnoreCase)
+                && Setting.Help.Contains(word, StringComparison.OrdinalIgnoreCase));
+            help.Text = SettingsPage.Highlighted(rest ? Setting.Help : shortHelp, words);
+        }
+    }
+
+    // The sentence under its name, under the pointer only while it has the rest of its help to say in its tooltip
+    private sealed class HelpLabel : Label
+    {
+        protected override bool HitTestVisible => Tooltip.Length > 0;
+    }
+
+    // What its sentence shows when nothing found it by the rest, the first sentence of its help
+    private readonly string shortHelp = string.Empty;
+
+    /// <summary>
+    /// The first sentence of a help text, up to a full stop with a space and a capital letter or a digit after it, all of
+    /// it when there's no such stop. A stop inside a name (.editorconfig, 1.5) has no space after it.
+    /// </summary>
+    internal static string FirstSentence(string said)
+    {
+        for (int i = 0; i + 2 < said.Length; i++)
+        {
+            if (said[i] is '.' or '?' or '!' && said[i + 1] == ' ' && (char.IsUpper(said[i + 2]) || char.IsDigit(said[i + 2])))
+                return said[..(i + 1)];
+        }
+
+        return said;
     }
 
     // Whether a word of the search is in its key, which shows the key whether it's looked at or not
