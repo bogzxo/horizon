@@ -34,7 +34,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int Predicted) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, -1);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int? Predicted) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, null);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -284,7 +284,8 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, predictionRowsVersion);
+        int? visiblePredictionRows = VisiblePredictionRowsVersion;
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -298,7 +299,7 @@ public partial class CodeEditor
         // top of the view keeps its place. Gone to a reference, the counts came a moment after and the line went to was
         // pushed off the bottom
         (int Line, int Row)? anchor = null;
-        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != predictionRowsVersion) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
         {
             int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
             while (top < rows.Count - 1 && rows[top].Virtual)
@@ -361,7 +362,7 @@ public partial class CodeEditor
                     lineRow[hidden] = into;
                 line = Math.Min(end, count - 1);
             }
-            else if (predictedRows.Length > 0)
+            else if (visiblePredictionRows.HasValue)
             {
                 AddPredictedRows(line, ref predicted);
             }

@@ -26,6 +26,10 @@ public sealed partial class DesktopWindow
     // The one window SDL asks about, its callback is static
     private static DesktopWindow? hitTested;
 
+    // Cocoa's SDL hit test consumes presses and relies on background dragging of its view.
+    // Use the UI titlebar press and desktop drag tracker on our Metal-backed window.
+    internal static bool UsesSdlDragArea => UsesSdl && !OperatingSystem.IsMacOS();
+
     // Whether SDL asks what the window is where it's pressed, which is then what moves and resizes it
     private bool hitTesting;
 
@@ -68,15 +72,16 @@ public sealed partial class DesktopWindow
         if (!CustomFrame || SdlWindow is var window && window == null)
             return;
 
+        // A borderless SDL window starts out fixed-size, including on the UI-driven resize path.
+        SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
+        if (!UsesSdlDragArea)
+            return;
+
         hitTested = this;
         hitTesting = SdlProvider.SDL.Value.SetWindowHitTest(window, new PfnHitTest(&HitTest), null) == 0;
         if (!hitTesting)
             Logging.Log.Warning($"[{Name}] SDL can't be asked to move the window, it is moved by hand.");
 
-        // Resizable as far as SDL's concerned, which a window with no frame isn't made as. SDL holds one that isn't to the
-        // size it is, its least and most both that on Wayland and X11, and takes no other size the compositor offers, so
-        // the edges said to resize it and did nothing at all
-        SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
     }
 
     /// <summary>

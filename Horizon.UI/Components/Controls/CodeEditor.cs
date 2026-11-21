@@ -2084,7 +2084,12 @@ public partial class CodeEditor : UIComponent
             default:
                 if (!UIKeyboard.IsEditingKey(character) && !char.IsControl(character))
                 {
+                    if (prediction is not null)
+                        PreparePredictionTyping(character);
+                    int version = document.Version;
                     document.Type(character);
+                    if (prediction is not null && document.Version == version)
+                        FinishPredictionTyping(steppedOver: true);
                     typed = character;
 
                     // A word being typed (or a member, or a key of a text) is offered what it could be
@@ -2901,6 +2906,7 @@ public partial class CodeEditor : UIComponent
 
             // The selection in a part apart from the line's band, a selection taken away puts the band back and the two were
             // one quad, the selection stretched out across the line into it
+            PaintRemoteSelections(list, skin, scale, left, top, lineHeight, digit, row);
             list.BeginPart(RowPart(ROW_SELECTED, row));
             if (document.HasSelection)
                 PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, start, end, selection);
@@ -3135,6 +3141,8 @@ public partial class CodeEditor : UIComponent
         // How the call being typed is called, over it
         if (focused && ShownSignature() is { } said)
             PaintSignature(list, skin, scale, area, left, lineHeight, first, said);
+
+        PaintRemoteCarets(list, skin, scale, area, left, lineHeight, first, last);
 
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
         if (focused && blink < BLINK)

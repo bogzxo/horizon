@@ -60,6 +60,8 @@ public partial class CodeEditor
             hash.Add(document.Caret);
             hash.Add(document.SelectionStart);
             hash.Add(document.SelectionEnd);
+            for (int i = 0; i < RemoteCarets.Count; i++)
+                hash.Add(RemoteCarets[i]);
             hash.Add(document.ExtraCarets.Count);
             for (int i = 0; i < document.ExtraCarets.Count; i++)
             {
@@ -89,6 +91,7 @@ public partial class CodeEditor
             hash.Add(agentHints.Count);
             hash.Add(lensesAbove);
             hash.Add(lensRowsChanged);
+            hash.Add(VisiblePredictionRowsVersion);
             hash.Add(lensHeldLine);
             hash.Add(inlaysVersion);
             hash.Add(agentHints);

@@ -82,6 +82,47 @@ public class CodeEditorPredictionTests
     }
 
     [Fact]
+    public void Taking_a_ghost_after_typing_nested_openers_keeps_one_copy_of_each_closer()
+    {
+        using var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));
+        var at = new UITextPosition(0, 4);
+        var editor = Made(compositor, "Call", at);
+        editor.SetPrediction(Ghost(at, "([42]);"));
+
+        editor.Type('(');
+        editor.Type('[');
+        Assert.Equal("Call([])", editor.Text);
+        Assert.True(editor.PredictionIsGhost);
+
+        Assert.True(editor.AcceptPrediction());
+        Assert.Equal("Call([42]);", editor.Text);
+        editor.Document.Undo();
+        Assert.Equal("Call([])", editor.Text);
+    }
+
+    [Fact]
+    public void Typing_over_an_auto_inserted_closer_keeps_the_ghost_without_editing()
+    {
+        using var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));
+        var at = new UITextPosition(0, 4);
+        var editor = Made(compositor, "Call", at);
+        editor.SetPrediction(Ghost(at, "();"));
+
+        editor.Type('(');
+        Assert.Equal("Call()", editor.Text);
+        Assert.True(editor.PredictionIsGhost);
+        int version = editor.Document.Version;
+
+        editor.Type(')');
+        editor.UpdateTree(1.0f / 60.0f);
+        Assert.Equal(version, editor.Document.Version);
+        Assert.Equal(new UITextPosition(0, 6), editor.Document.Caret);
+        Assert.Equal(";", editor.PredictionText());
+        Assert.True(editor.AcceptPrediction());
+        Assert.Equal("Call();", editor.Text);
+    }
+
+    [Fact]
     public void A_different_character_lets_go_of_it()
     {
         using var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));

@@ -46,8 +46,11 @@ public partial class CodeEditor
     // Goes up whenever the rows of predicted text change, the rows are made again for it
     private int predictionRowsVersion;
 
-    // The line and caret a character typed through the ghost text leaves when it's typed as it says, null for none
-    private (int Line, string Text, UITextPosition Caret)? predictionTyped;
+    // Offsets in the remaining ghost of closers already inserted by the document, in document order.
+    private int[] predictionClosers = [];
+
+    // The expected result of typing one matching character through the normal document input path.
+    private (char Character, string Before, string Inserted, UITextPosition Caret)? predictionTyped;
 
     // Set while the editor makes the edits itself (taking it, or a word of it), the text's change isn't the end of it
     private bool predictionApplying;
@@ -73,7 +76,7 @@ public partial class CodeEditor
     /// <summary>Called when it ends, true when it was taken and false when it was let go of (Escape, typing something else).</summary>
     public Action<bool>? OnPredictionEnded;
 
-    /// <summary>Called when a character typed was the next of the ghost text, which is shorter by it and still showing.</summary>
+    /// <summary>Called when a typed character shortens visible ghost text, including a closer stepped over without editing.</summary>
     public Action? OnPredictionTypedThrough;
 
     /// <summary>Whether Tab takes a prediction, before the snippets and the indent have it. The completion list keeps Tab while it's open.</summary>
@@ -94,6 +97,7 @@ public partial class CodeEditor
         Array.Sort(edits, static (a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
 
         this.prediction = prediction;
+        predictionClosers = [];
         predictionWentTo = false;
         predictionHadFocus = IsFocused;
         Show(edits, edits.Length == 1 && edits[0].Start == edits[0].End && edits[0].Start == document.Caret);
@@ -135,7 +139,9 @@ public partial class CodeEditor
         predictionApplying = true;
         try
         {
-            applied = document.ApplyEdits(edits);
+            applied = predictionGhost && predictionClosers.Length > 0
+                ? ApplyGhostPrefix(edits[0])
+                : document.ApplyEdits(edits);
         }
         finally
         {
@@ -168,11 +174,17 @@ public partial class CodeEditor
         if (length >= ghost.Text.Length)
             return AcceptPrediction();
 
+        int consumed = 0;
+        while (consumed < predictionClosers.Length && predictionClosers[consumed] < length)
+            consumed++;
+
+        UITextPosition end = ghost.Start with { Column = ghost.Start.Column + consumed };
         bool applied;
         predictionApplying = true;
         try
         {
-            applied = document.ApplyEdits([ghost with { Text = ghost.Text[..length] }]);
+            UITextEdit prefix = new(ghost.Start, end, ghost.Text[..length]);
+            applied = consumed > 0 ? ApplyGhostPrefix(prefix) : document.ApplyEdits([prefix]);
         }
         finally
         {
@@ -187,8 +199,29 @@ public partial class CodeEditor
 
         UITextPosition caret = document.Caret;
         revealCaret = true;
-        ShowRest(new UITextEdit(caret, caret, ghost.Text[length..]));
+        ShowRest(caret, ghost.Text[length..], AdvanceClosers(consumed, length));
         return true;
+    }
+
+    // A prefix already present in the document only advances the caret.
+    private bool ApplyGhostPrefix(UITextEdit edit)
+    {
+        if (edit.End.Column - edit.Start.Column == edit.Text.Length
+            && document.LineAt(edit.Start.Line).AsSpan(edit.Start.Column, edit.Text.Length).SequenceEqual(edit.Text.AsSpan()))
+        {
+            document.MoveTo(edit.End);
+            return true;
+        }
+
+        return document.ApplyCompletion(edit, []);
+    }
+
+    private int[] AdvanceClosers(int consumed, int length)
+    {
+        int[] remaining = predictionClosers[consumed..];
+        for (int i = 0; i < remaining.Length; i++)
+            remaining[i] -= length;
+        return remaining;
     }
 
     // Ends it, telling whoever listens if anything was showing
@@ -199,6 +232,7 @@ public partial class CodeEditor
 
         prediction = null;
         predictionEdits = [];
+        predictionClosers = [];
         predictedPieces = [];
         predictedWidths = [];
         predictionTyped = null;
@@ -229,7 +263,7 @@ public partial class CodeEditor
             string[] split = edit.Text.Split('\n');
             if (ghost)
             {
-                if (split[0].Length > 0)
+                if (split[0].Length > 0 || predictionClosers.Length > 0)
                     pieces.Add(new PredictedPiece(edit.Start.Line, edit.Start.Column, split[0], Ghost: true));
                 for (int i = 1; i < split.Length; i++)
                     lines.Add(new PredictedRow(edit.Start.Line, split[i], Ghost: true));
@@ -264,9 +298,11 @@ public partial class CodeEditor
 
     // What's left of ghost text once some of it was typed or taken, the prediction now (where the caret was to go is
     // the end of what's left)
-    private void ShowRest(UITextEdit rest)
+    private void ShowRest(UITextPosition caret, string rest, int[] closers)
     {
-        UITextEdit[] edits = [rest];
+        predictionClosers = closers;
+        UITextPosition end = caret with { Column = caret.Column + closers.Length };
+        UITextEdit[] edits = [new UITextEdit(caret, end, rest)];
         prediction = new UICodePrediction(edits);
         Show(edits, ghost: true);
     }
@@ -274,33 +310,123 @@ public partial class CodeEditor
     // Whether what's predicted is drawn now: it is for this text, and the completion list isn't over it
     private bool PredictionShown => prediction is not null && predictionFor == document.Version && !CompletionOpen;
 
-    // The document's text changed. A character typed through the ghost text shortens it, the editor's own edits are its
-    // own, anything else ends it
+    // Rebase the ghost before the editor forwards OnChanged.
     private void PredictionTextChanged()
     {
-        if (prediction is null || predictionApplying)
+        if (prediction is not null && !predictionApplying)
+            FinishPredictionTyping(steppedOver: false);
+    }
+
+    private void PreparePredictionTyping(char character)
+    {
+        CheckPredictionCaret();
+        if (prediction is null || !predictionGhost || predictionFor != document.Version
+            || predictionEdits[0].Text is not { Length: > 0 } ghost || ghost[0] != character)
             return;
 
-        if (predictionTyped is { } typed)
-        {
-            predictionTyped = null;
-            if (predictionGhost && document.Caret == typed.Caret && !document.HasSelection && typed.Line < document.LineCount
-                && string.Equals(document.LineAt(typed.Line), typed.Text, StringComparison.Ordinal))
-            {
-                string rest = predictionEdits[0].Text[1..];
-                if (rest.Length == 0)
-                {
-                    EndPrediction(taken: true);
-                    return;
-                }
+        UITextPosition at = document.Caret;
+        string line = document.LineAt(at.Line);
+        predictionTyped = (character, line, line.Insert(at.Column, character.ToString()), at with { Column = at.Column + 1 });
+    }
 
-                ShowRest(new UITextEdit(typed.Caret, typed.Caret, rest));
-                OnPredictionTypedThrough?.Invoke();
+    private void FinishPredictionTyping(bool steppedOver)
+    {
+        if (predictionTyped is not { } typed)
+        {
+            if (steppedOver)
+                CheckPredictionCaret();
+            else
+                ClearPrediction();
+            return;
+        }
+
+        predictionTyped = null;
+        UITextPosition caret = document.Caret;
+        if (caret != typed.Caret || document.HasSelection || document.HasExtraCarets)
+        {
+            ClearPrediction();
+            return;
+        }
+
+        string line = document.LineAt(caret.Line);
+        string rest = predictionEdits[0].Text[1..];
+        int consumed = 0, added = -1;
+        if (steppedOver && line == typed.Before && line[caret.Column - 1] == typed.Character)
+        {
+            if (predictionClosers.Length > 0)
+                consumed = 1;
+        }
+        else if (!steppedOver && line == typed.Inserted)
+        {
+            if (predictionClosers.Length > 0 && predictionClosers[0] == 0)
+            {
+                ClearPrediction();
                 return;
             }
         }
+        else if (!steppedOver && line.Length == typed.Inserted.Length + 1
+            && line.AsSpan(0, caret.Column).SequenceEqual(typed.Inserted.AsSpan(0, caret.Column))
+            && line.AsSpan(caret.Column + 1).SequenceEqual(typed.Inserted.AsSpan(caret.Column)))
+        {
+            int before = predictionClosers.Length == 0 ? rest.Length : predictionClosers[0] - 1;
+            added = PredictedCloser(rest, before, typed.Character, line[caret.Column]);
+            if (added < 0 && predictionClosers.Length > 0)
+            {
+                ClearPrediction();
+                return;
+            }
+        }
+        else
+        {
+            ClearPrediction();
+            return;
+        }
 
-        ClearPrediction();
+        if (rest.Length == 0)
+        {
+            EndPrediction(taken: true);
+            return;
+        }
+
+        int[] closers = AdvanceClosers(consumed, 1);
+        ShowRest(caret, rest, added < 0 ? closers : [added, .. closers]);
+        OnPredictionTypedThrough?.Invoke();
+    }
+
+    // Find the mate of the typed opener before any already matched enclosing closer.
+    private static int PredictedCloser(string rest, int before, char opening, char closing)
+    {
+        int nested = 0;
+        char quote = opening == closing ? opening : '\0';
+        for (int i = 0; i < before; i++)
+        {
+            char character = rest[i];
+            if (quote != '\0')
+            {
+                if (character == '\\')
+                    i++;
+                else if (character == quote)
+                {
+                    if (quote == closing)
+                        return i;
+                    quote = '\0';
+                }
+                continue;
+            }
+
+            if (character is '"' or '\'')
+                quote = character;
+            else if (character == closing)
+            {
+                if (nested == 0)
+                    return i;
+                nested--;
+            }
+            else if (character == opening)
+                nested++;
+        }
+
+        return -1;
     }
 
     // Every tick, ghost text goes once the caret leaves its place, and any prediction once the editor loses the keyboard
@@ -330,8 +456,7 @@ public partial class CodeEditor
 
     /// <summary>
     /// The keys a prediction takes before the completion list and everything else: Tab takes it (or goes to it when it's
-    /// out of sight), Ctrl+Right a word of ghost text, Escape lets go of it, and a character the ghost text goes on with
-    /// is let through to be typed and shortens it. True when the key was its.
+    /// out of sight), Ctrl+Right a word of ghost text, and Escape lets go of it. True when the key was its.
     /// </summary>
     private bool PredictionKey(char character)
     {
@@ -355,14 +480,6 @@ public partial class CodeEditor
 
             case UIKeyboard.WORD_RIGHT when !CompletionOpen && predictionGhost && plain:
                 return AcceptPredictionWord();
-        }
-
-        // Typed as the ghost text says, the line it leaves is known, and the change that follows checked against it
-        if (predictionGhost && plain && !UIKeyboard.IsEditingKey(character) && !char.IsControl(character)
-            && predictionEdits[0].Text is { Length: > 0 } ghost && ghost[0] == character)
-        {
-            UITextPosition at = document.Caret;
-            predictionTyped = (at.Line, document.LineAt(at.Line).Insert(at.Column, character.ToString()), at with { Column = at.Column + 1 });
         }
 
         return false;
@@ -441,6 +558,8 @@ public partial class CodeEditor
 
     /* Rows */
 
+    private int? VisiblePredictionRowsVersion => predictedRows.Length > 0 && PredictionShown ? predictionRowsVersion : null;
+
     // The rows of predicted text under a line, after its own, walking the rows in order with the line
     private void AddPredictedRows(int line, ref int next)
     {
@@ -484,7 +603,10 @@ public partial class CodeEditor
             return DrawWithHints(list, skin, scale, line, column, text, x, top, color, left, origin, colors, draw);
 
         MeasurePredicted(skin, scale);
-        int at = 0;
+        UITextEdit edit = predictionEdits[0];
+        bool replacesClosers = predictionGhost && predictionClosers.Length > 0 && edit.Start.Line == line;
+        int hiddenUntil = replacesClosers ? Math.Clamp(edit.End.Column - column, 0, text.Length) : 0;
+        int at = replacesClosers && column > edit.Start.Column ? hiddenUntil : 0;
         for (int i = 0; i < predictedPieces.Length; i++)
         {
             PredictedPiece piece = predictedPieces[i];
@@ -495,7 +617,7 @@ public partial class CodeEditor
             if (into > at)
                 x = DrawWithHints(list, skin, scale, line, column + at, text[at..into], x, top, color, left, origin, colors, draw);
             x = DrawPredicted(list, skin, scale, i, x, top, colors);
-            at = into;
+            at = replacesClosers ? hiddenUntil : into;
         }
 
         return at < text.Length || text.IsEmpty ? DrawWithHints(list, skin, scale, line, column + at, text[at..], x, top, color, left, origin, colors, draw) : x;
@@ -521,7 +643,8 @@ public partial class CodeEditor
     private float DrawPredicted(UIDrawList list, UISkin skin, float scale, int index, float x, float top, UISyntaxColors colors)
     {
         PredictedPiece piece = predictedPieces[index];
-        Draw(list, skin, scale, piece.Text, x, top, piece.Ghost ? GhostColour(colors) : AddedColour(skin));
+        if (piece.Text.Length > 0)
+            Draw(list, skin, scale, piece.Text, x, top, piece.Ghost ? GhostColour(colors) : AddedColour(skin));
         return x + predictedWidths[index];
     }
 
