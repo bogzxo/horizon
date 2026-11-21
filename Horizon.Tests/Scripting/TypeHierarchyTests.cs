@@ -22,7 +22,7 @@ public class TypeHierarchyTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("type-error", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("type-error", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.IsReady, server.Failure);
@@ -61,7 +61,7 @@ public class TypeHierarchyTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("type-hierarchy", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("type-hierarchy", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.IsReady, server.Failure);

@@ -7,7 +7,7 @@ public class CompletionDocumentationTests
     [Fact]
     public async Task ResolutionPreservesOpaqueDataAndCachesOneRequestWithoutChangingInsertion()
     {
-        if (!LanguageServers.IsAvailable("python")) return;
+        if (!LanguageServers.IsAvailable(LanguageServerTests.Python)) return;
         string script = LanguageServerTests.FAKE_SERVER
             .Replace("import sys, json, re", "import sys, json, re\nresolve_count = 0")
             .Replace("\"textDocumentSync\": 1", "\"textDocumentSync\": 1, \"completionProvider\": {\"resolveProvider\": True}")
@@ -28,7 +28,7 @@ public class CompletionDocumentationTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("resolve", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("resolve", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             string file = Path.Combine(Path.GetTempPath(), "resolve.fake");
             server.Open(file, "a");

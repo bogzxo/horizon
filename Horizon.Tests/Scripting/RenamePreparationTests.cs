@@ -16,7 +16,7 @@ public class RenamePreparationTests
     [InlineData("error", false, null)]
     public async Task HonorsNativePreparationResultsAndErrors(string response, bool accepted, string? placeholder)
     {
-        Assert.True(LanguageServers.IsAvailable("python"));
+        Assert.True(LanguageServers.IsAvailable(LanguageServerTests.Python));
         string script = LanguageServerTests.FAKE_SERVER
             .Replace("\"textDocumentSync\": 1", "\"textDocumentSync\": 1, \"renameProvider\": {\"prepareProvider\": True}")
             .Replace("    if method == \"initialize\":", """
@@ -41,7 +41,7 @@ public class RenamePreparationTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("rename-prepare", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("rename-prepare", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.PreparesRename, server.Failure);

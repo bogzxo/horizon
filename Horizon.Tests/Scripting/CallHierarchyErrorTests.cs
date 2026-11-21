@@ -24,7 +24,7 @@ public class CallHierarchyErrorTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("call-error", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("call-error", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.IsReady, server.Failure);

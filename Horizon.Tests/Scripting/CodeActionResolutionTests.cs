@@ -7,7 +7,7 @@ public class CodeActionResolutionTests
     [Fact]
     public async Task DeferredActionsPreserveDataResolveOnceAndRejectDisabledOrFailedResolutions()
     {
-        Assert.True(LanguageServers.IsAvailable("python"));
+        Assert.True(LanguageServers.IsAvailable(LanguageServerTests.Python));
         string script = LanguageServerTests.FAKE_SERVER
             .Replace("\"textDocumentSync\": 1", "\"textDocumentSync\": 1, \"codeActionProvider\": {\"resolveProvider\": True}")
             .Replace("    if method == \"initialize\":", """
@@ -42,7 +42,7 @@ public class CodeActionResolutionTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("action-resolve", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("action-resolve", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.IsReady, server.Failure);
