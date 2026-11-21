@@ -172,6 +172,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
     {
         _window.Initialize();
         SetUpFrame();
+        ListenForFileDrops();
 
         // Only now, a frameless window on Windows is maximised by SetUpFrame and the engine has to start from that
         // size, not the one it loaded at
@@ -421,6 +422,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
     private void HandleEvents()
     {
         _window.DoEvents();
+        HandOnFileDrops();
         host.SampleGamepads();
         Events.EventsProcessed();
 
@@ -449,6 +451,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
     /// <summary>Lets go of the input and the native window, last, once the GPU has let go of its surface. Thread of the window.</summary>
     internal void Dispose()
     {
+        StopListeningForFileDrops();
         StopListening();
         ReleaseFrame();
         if (ReferenceEquals(hitTested, this))

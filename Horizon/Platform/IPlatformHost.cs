@@ -118,6 +118,12 @@ public interface IPlatformEvents
     /// on the system for as long as it likes, woken only by it or by somebody wanting something of the window.
     /// </summary>
     bool Dormant => false;
+
+    /// <summary>
+    /// Files dragged from outside the program came over the window, moved, left or were dropped on it. From whichever
+    /// thread the platform hears it on. A platform with nothing to drag onto its window never says it.
+    /// </summary>
+    void FilesDragged(FileDrop drop) { }
 }
 
 /// <summary>

@@ -93,5 +93,7 @@ public partial class WindowManager
         public bool MayWaitForEvents => window.MayWaitForEvents;
 
         public bool Dormant => window.Dormant;
+
+        public void FilesDragged(FileDrop drop) => window.PostFileDrop(drop);
     }
 }
