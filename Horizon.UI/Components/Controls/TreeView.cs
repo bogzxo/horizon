@@ -403,7 +403,8 @@ public partial class TreeView : UIComponent
 
     private float Travel(UISkin skin) => MathF.Max(0.0f, rows.Count * LineHeight(skin) - RowsArea(skin).Height);
 
-    private UITreeItem? RowAt(Vector2 point)
+    /// <summary>The row at a point in the module's units, null for none (under the rows, or the titles of a table).</summary>
+    public UITreeItem? RowAt(Vector2 point)
     {
         if (Module?.Compositor.Skin is not { } skin)
             return null;
