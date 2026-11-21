@@ -341,7 +341,12 @@ public class SnapshotClockTests
     {
         var clock = new SnapshotClock();
         var state = new Snapshot<Pair>();
-        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+
+        // Raced for so many frames rather than for so long. Four tenths of a second was plenty on an idle machine and
+        // under a hundred frames on a busy one, the two threads hardly ever given the cores together. The time is only
+        // there so a clock that hangs fails rather than holding the run up forever
+        const long ENOUGH = 2000;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         long torn = 0, backwards = 0, frames = 0;
 
@@ -354,13 +359,18 @@ public class SnapshotClockTests
                 clock.BeginCapture();
                 state.Publish(clock, new Pair(tick, -tick));
                 clock.EndCapture(tick, tick, Stopwatch.GetTimestamp());
+
+                // A tick's work between publishes, a little. Publishing back to back with nothing between, the
+                // simulation had the clock's lock nearly all the time, and on a busy machine the renderer got it for
+                // two frames in half a second
+                Thread.SpinWait(100);
             }
         });
 
         var render = new Thread(() =>
         {
             long last = 0;
-            while (!stop.IsCancellationRequested)
+            while (!stop.IsCancellationRequested && frames < ENOUGH)
             {
                 RenderFrame frame = clock.Acquire(PresentationMode.Interpolated);
                 if (state.TryGet(frame, out Pair previous, out Pair current, out _))
@@ -381,6 +391,8 @@ public class SnapshotClockTests
 
                 clock.Release();
             }
+
+            stop.Cancel();
         });
 
         simulation.Start();
