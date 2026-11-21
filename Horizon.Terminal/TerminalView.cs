@@ -515,6 +515,15 @@ public partial class TerminalView : UIComponent, IDisposable
         Typed(TerminalKeys.Paste(text.Replace("\r\n", "\r").Replace('\n', '\r'), screen.BracketedPaste));
     }
 
+    /// <summary>Text pasted into the terminal as a paste from the clipboard is, between the marks of a bracketed paste when the program asked for them.</summary>
+    public void Paste(string text) => OnPaste(text);
+
+    /// <summary>
+    /// Files dropped on the terminal, their paths pasted as its shell reads them (see <see cref="TerminalDroppedPaths"/>),
+    /// the way Windows Terminal does with a drop.
+    /// </summary>
+    public void PastePaths(IEnumerable<string> paths) => OnPaste(TerminalDroppedPaths.Typed(paths, Profile));
+
     /// <summary>Text sent as if it had been typed, which is told to whoever follows what is typed, unlike <see cref="Send"/>.</summary>
     public void Type(string text) => Typed(text);
 
