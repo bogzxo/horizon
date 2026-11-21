@@ -218,6 +218,12 @@ public partial class ScrollPanel : Panel
     /// </summary>
     public bool Wheel(float delta) => OnScroll(delta);
 
+    /// <summary>
+    /// Moved by a pan that came to something else, a margin round a column of it passing on a finger's drag or the
+    /// middle button's autoscroll over the margin, to the fraction of a pixel. False at an end or with nothing to scroll.
+    /// </summary>
+    public bool Pan(Vector2 delta) => OnPan(delta);
+
     protected internal override bool OnScroll(float delta)
     {
         if (MaxOffset <= 0.0f)
