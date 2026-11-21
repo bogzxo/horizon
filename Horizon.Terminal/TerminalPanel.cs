@@ -122,8 +122,28 @@ public partial class TerminalPanel : UIComponent, IDisposable
     /// <summary>Where a new terminal starts, null for the process's own folder. The focused terminal's own folder isn't known, a shell doesn't say.</summary>
     public string? WorkingDirectory { get; set; }
 
-    /// <summary>The font every terminal writes in, null for the skin's. A monospaced one.</summary>
-    public UIFont? Font { get; set; }
+    /// <summary>
+    /// The font every terminal writes in, null for the skin's. A monospaced one. Set on the terminals there are as well:
+    /// one made before it was set (a task's, or the first shell, opened before the font was loaded) kept the skin's
+    /// proportional font, its columns every width but a cell's.
+    /// </summary>
+    public UIFont? Font
+    {
+        get => font;
+        set
+        {
+            font = value;
+            foreach (TerminalTab tab in tabs)
+            {
+                foreach (TerminalView view in tab.Views)
+                    view.Font = value;
+            }
+
+            RequestFrame();
+        }
+    }
+
+    private UIFont? font;
 
     /// <summary>The scale of the terminals' text, 0 for the skin's.</summary>
     public float TextScale { get; set; }
