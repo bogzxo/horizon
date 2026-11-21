@@ -48,15 +48,14 @@ public partial class WindowManager
     private const double IDLE_PERIOD_DORMANT = 3600.0;
 
     /// <summary>
-    /// Whether the program is asleep with its window hidden (see Hide), what a program that stays running between uses
-    /// keeps itself to: the device and the window kept, nothing else going on. The simulation doesn't tick, no frames are
-    /// drawn, not even the heartbeat, and the window's thread waits on the system, until Wake, input or BringToFront.
-    /// An application only. From any thread.
+    /// Whether the program is asleep with its window hidden, see <see cref="Sleep"/> and <see cref="Resume"/>. The
+    /// simulation doesn't tick, no frames are drawn, not even the heartbeat, and the window's thread waits on the system.
+    /// From any thread.
     /// </summary>
     public bool Dormant
     {
         get => dormant;
-        set
+        private set
         {
             dormant = value;
             UpdateIdlePeriod();
@@ -229,6 +228,10 @@ public partial class WindowManager
         while (!renderStopping)
         {
             bool hidden = Hidden;
+            // The surface going and coming back is done between frames, asleep as well (see Sleep)
+            if (!surfaceRequests.IsEmpty)
+                return;
+
             if (hidden ? exclusiveRequested || EntityLifecycle.HasWork : Stopwatch.GetTimestamp() < Volatile.Read(ref drawUntil))
                 return;
 
