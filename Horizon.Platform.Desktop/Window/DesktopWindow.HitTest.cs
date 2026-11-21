@@ -79,6 +79,27 @@ public sealed partial class DesktopWindow
         SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
     }
 
+    /// <summary>
+    /// Whether a point of the window, in its pixels, is on the title bar and not on anything of the bar's own (a menu, a
+    /// button), which is what moves the window.
+    /// </summary>
+    internal static bool OnBar(RectangleF bar, ReadOnlySpan<RectangleF> holes, System.Numerics.Vector2 pixel)
+    {
+        var at = new PointF(pixel.X, pixel.Y);
+        if (bar.IsEmpty || !bar.Contains(at))
+            return false;
+
+        foreach (RectangleF hole in holes)
+        {
+            if (hole.Contains(at))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool OnBar(FrameArea? area, System.Numerics.Vector2 pixel) => area is not null && OnBar(area.Bar, area.Holes, pixel);
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static unsafe HitTestResult HitTest(Silk.NET.SDL.Window* window, Silk.NET.SDL.Point* point, void* data)
     {
@@ -129,14 +150,12 @@ public sealed partial class DesktopWindow
             }
         }
 
-        if (frameArea is not { } area || !area.Bar.Contains(at))
+        // SDL says where in the window's points, the title bar said where it is in its pixels (the pointer's), two of them
+        // to a point each way on a Retina screen. Compared as they came, the bar reached twice as far down and across as
+        // it is drawn and its menus and buttons were looked for at twice where they are: a press on a menu moved the
+        // window, a press on the bar between them didn't, and the top of what's under the bar couldn't be clicked
+        if (!OnBar(frameArea, PointerToPixels(new System.Numerics.Vector2(at.X, at.Y))))
             return HitTestResult.Normal;
-
-        foreach (RectangleF hole in area.Holes)
-        {
-            if (hole.Contains(at))
-                return HitTestResult.Normal;
-        }
 
         // The second press of a double click goes to the UI's title bar, which maximises the window or brings it back
         if (pressed)
