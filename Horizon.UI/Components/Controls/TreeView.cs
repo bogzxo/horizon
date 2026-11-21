@@ -65,6 +65,12 @@ public sealed partial class UITreeItem
     public Vector4? Edge { get; set; }
 
     /// <summary>
+    /// A small dot where a row with nothing under it would have its chevron, null for none. A file that's open in the
+    /// explorer of an editor.
+    /// </summary>
+    public Vector4? Pip { get; set; }
+
+    /// <summary>
     /// Whether the row is drawn as a button, a box with an edge round it that lights under the pointer, so a row that
     /// does something reads as one (Source Control's Commit under a repository's heading).
     /// </summary>
@@ -443,6 +449,17 @@ public partial class TreeView : UIComponent
             return;
         }
 
+        // A press anywhere else in the tree is done with the row's name typed over (kept when it's all right) and with
+        // what was typed to find a row
+        if (edited is not null && editBox is not null)
+        {
+            editProblem = editCheck?.Invoke(editBox.Text) ?? string.Empty;
+            EndEdit(keep: editProblem.Length == 0);
+        }
+        ClearFind();
+        heldRow = null;
+        pendingToggle = null;
+
         // A title of a table pressed sorts by its column, the owner does the sorting
         if (PressHeader(point))
             return;
@@ -473,13 +490,38 @@ public partial class TreeView : UIComponent
             return;
 
         Select(at, notify: true);
-        if (at.HasChildren && (onChevron || ToggleOnClick))
+        HoldRow(at, point);
+
+        // A folder of a tree whose rows can be dragged opens as the press is let go, so one dragged off doesn't open
+        if (at.HasChildren && onChevron)
+            Toggle(at);
+        else if (at.HasChildren && ToggleOnClick && CanDrag)
+            pendingToggle = at;
+        else if (at.HasChildren && ToggleOnClick)
             Toggle(at);
     }
 
-    protected internal override void OnPointerDrag(Vector2 point) => DragScrollBar(point);
+    protected internal override void OnPointerDrag(Vector2 point)
+    {
+        DragScrollBar(point);
+        DragRows(point);
+    }
 
-    protected internal override void OnPointerUp(Vector2 point) => draggingBar = false;
+    protected internal override void OnPointerUp(Vector2 point)
+    {
+        draggingBar = false;
+        if (dragging)
+        {
+            DropRows();
+        }
+        else if (pendingToggle is { } folder && RowAt(point) == folder)
+        {
+            Toggle(folder);
+        }
+
+        heldRow = null;
+        pendingToggle = null;
+    }
 
     private UIRect ScrollBarGrabZone => scrollBarTrack.IsEmpty
         ? default
@@ -535,6 +577,9 @@ public partial class TreeView : UIComponent
         if (selected is { } picked && OnKey?.Invoke(picked, character) == true)
             return;
 
+        if (FindKey(character))
+            return;
+
         int at = IndexOf(selected);
         PressedByKey = true;
         try
@@ -574,7 +619,29 @@ public partial class TreeView : UIComponent
         }
     }
 
-    protected internal override bool OnEscape() => selected is { } item && OnKey?.Invoke(item, UIKeyboard.ESCAPE) == true;
+    protected internal override bool OnEscape()
+    {
+        // A drag, a name typed over and what's typed to find a row go first, one at a time
+        if (dragging)
+        {
+            CancelDrag();
+            return true;
+        }
+
+        if (edited is not null)
+        {
+            EndEdit(keep: false);
+            return true;
+        }
+
+        if (findShown.Length > 0)
+        {
+            ClearFind();
+            return true;
+        }
+
+        return selected is { } item && OnKey?.Invoke(item, UIKeyboard.ESCAPE) == true;
+    }
     protected internal override bool UsesScrollSpeed => true;
 
     protected internal override bool HasOverscroll => ease.Over.Active;
@@ -596,6 +663,9 @@ public partial class TreeView : UIComponent
         Tooltip = hovered?.Tooltip ?? string.Empty;
         UpdateActions(pointer);
         UpdateHeader(pointer);
+        UpdateFind();
+        UpdateEdit();
+        UpdateDrag(dt, pointer);
     }
 
     protected override Vector2 Measure(UISkin skin) => new(DEFAULT_WIDTH, LineHeight(skin) * DEFAULT_ROWS);
@@ -691,7 +761,13 @@ public partial class TreeView : UIComponent
             // row's of the tick before, and one that came and went with the pointer had the letters blended with the wrong
             // quads and smeared across the tree as the pointer swept over it
             UIRect pill = row.Shrink(new UIEdges(4.0f, 1.0f));
-            list.Box(pill, IsSelected(item) ? lit : item == hovered ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            // A row the rows dragged would go into is lit in the accent, and what's showing under it fainter
+            bool into = dragging && drop is { } aimed && aimed.Into == item;
+            Vector4 pillColor = IsSelected(item) && !into ? lit
+                : into ? skin.AccentColor with { W = 0.22f }
+                : InDrop(item) ? skin.AccentColor with { W = 0.09f }
+                : item == hovered && !dragging ? skin.HoverColor : skin.HoverColor with { W = 0.0f };
+            list.Box(pill, pillColor);
 
             // A row that's a button has a box of its own over that. A row is one or it isn't for as long as it's there, so
             // its quads don't come and go under the pointer
@@ -704,7 +780,7 @@ public partial class TreeView : UIComponent
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
             // Tab into the keys window's list had nothing on screen change. Only once the keys moved about, the click on
             // the explorer's icon that gave it the keyboard rang its first row. Always painted, see-through when not wanted
-            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, skin.Palette.Highlight with { W = item == selected && keyed && ringed ? 1.0f : 0.0f });
+            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, into ? skin.AccentColor : skin.Palette.Highlight with { W = item == selected && keyed && ringed ? 1.0f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -729,7 +805,16 @@ public partial class TreeView : UIComponent
 
             x += depth * Indent;
             if (item.HasChildren)
+            {
                 list.Symbol(item.Expanded ? chevronDown : chevronRight, new UIRect(new Vector2(x, row.Center.Y - icon * 0.5f), new Vector2(x + icon, row.Center.Y + icon * 0.5f)), dim);
+            }
+            else
+            {
+                // Where the chevron would be, the row's dot, always painted and see-through without one
+                float pip = MathF.Max(4.0f, MathF.Round(icon * 0.3f));
+                Vector2 middle = new(MathF.Round(x + icon * 0.5f), MathF.Round(row.Center.Y));
+                list.RoundRect(new UIRect(middle - new Vector2(pip * 0.5f), middle + new Vector2(pip * 0.5f)), pip * 0.5f, item.Pip ?? dim with { W = 0.0f });
+            }
             x += icon + ICON_GAP;
 
             if (item.Icon.Length > 0)
@@ -785,6 +870,9 @@ public partial class TreeView : UIComponent
                 list.RoundRect(found, 3.0f, skin.Palette.Selection);
             }
 
+            if (TypeToFind)
+                PaintFound(list, skin, rowText, x, row, scale, size.Y);
+
             if (item.Lit is { Count: > 0 } pieces)
                 PaintLit(list, rowText, pieces, new Vector2(x, baseline), scale, item.Color ?? text, item.LitColor ?? skin.AccentColor);
             else if (item.Bold)
@@ -822,6 +910,9 @@ public partial class TreeView : UIComponent
         list.PopClip();
 
         PaintHeader(list, skin, right, icon, scale);
+        PaintEdit(list, skin, bounds, scale);
+        PaintDrag(list, skin, bounds, right, scale);
+        PaintFindBox(list, skin, bounds, right, scale);
 
         // The keyboard's in it, in the colour the keyboard is everywhere, the accent's for what's picked
         if (FocusLine && IsFocused)
