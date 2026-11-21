@@ -623,6 +623,7 @@ public sealed partial class TerminalScreen : IVtHandler
         lastPrompt = inputRow = null;
         promptPending = inputPending = outputPending = false;
         exitPending = null;
+        commandSince = 0;
         promptHeight = 1;
         promptArrivedAt = -1;
         promptLearned = false;

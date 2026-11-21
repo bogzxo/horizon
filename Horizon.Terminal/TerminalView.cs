@@ -235,6 +235,7 @@ public partial class TerminalView : UIComponent, IDisposable
         screen.Reset();
         scrolled = 0;
         hasSelection = false;
+        ClearEnded();
 
         startedIn = folder;
         PseudoTerminal started = make();
@@ -255,6 +256,7 @@ public partial class TerminalView : UIComponent, IDisposable
         screen.Reset();
         scrolled = 0;
         hasSelection = false;
+        ClearEnded();
         startedIn = workingDirectory ?? Environment.CurrentDirectory;
         program = started;
         started.Attach(this);
@@ -383,6 +385,7 @@ public partial class TerminalView : UIComponent, IDisposable
         if (exitedWith is { } code)
         {
             exitedWith = null;
+            MarkEnded(code);
             OnExited?.Invoke(code);
         }
 
@@ -390,8 +393,10 @@ public partial class TerminalView : UIComponent, IDisposable
         KeepMinimap();
 
         // Like the editor caret, a background terminal stays lit instead of waking the renderer to blink.
-        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
-        if (IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
+        // With the motion off (the UI's animation at 0) it stays lit as well, the way the editor's caret does
+        bool steady = MotionSpeed <= 0.0f;
+        blink = steady || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (!steady && IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
             GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         if (bell > 0.0f)
@@ -454,10 +459,13 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /* Keys */
 
+    /// <summary>A key as though it were pressed with the pane focused, the application's keys first, for a test.</summary>
+    public void Press(in UIKeyPress press) => OnKeyDown(press);
+
     protected override void OnKeyDown(in UIKeyPress press)
     {
         blink = 0.0f;
-        if (CompletionKey(press) || Intercept?.Invoke(press) == true)
+        if (CompletionKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
             return;
 
         var modifiers = ModifiersOf(press);
@@ -843,7 +851,7 @@ public partial class TerminalView : UIComponent, IDisposable
         // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
         float pad = MathF.Max(PADDING, Radius * 0.85f);
         float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
-        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad));
+        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad + EndedHeight(skin)));
         PlaceSide();
         if (cellWidth <= 0.0f || cellHeight <= 0.0f)
             return;
@@ -910,7 +918,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
-        if (screen.CursorVisible && scrolled == 0)
+        if (screen.CursorVisible && scrolled == 0 && EndedWith is null)
         {
             Vector2 wanted = new(paintedArea.Min.X + screen.CursorX * cellWidth, top - (screen.CursorY + 1) * cellHeight);
             if (!cursorPlaced || !Animated || CursorGlide <= 0.0f)
@@ -965,6 +973,7 @@ public partial class TerminalView : UIComponent, IDisposable
         PaintMinimap(list, palette);
         PaintScrollBar(list, palette);
         PaintBadge(list, palette);
+        PaintEnded(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
     }

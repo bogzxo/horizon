@@ -70,7 +70,7 @@ public sealed class TerminalSettings
     /// <summary>Whether the WSL distributions are asked for as profiles (wsl -l takes a moment on a machine without it).</summary>
     public bool Wsl = true;
 
-    /// <summary>Whether a pane closes by itself when its shell ends.</summary>
+    /// <summary>Whether a pane closes by itself when its shell ends well, one that ended with an error always stays.</summary>
     public bool CloseOnExit = true;
 
     /// <summary>Whether Up and Down step through the program's own history of the lines run (history.txt), and how many lines it keeps.</summary>
@@ -141,7 +141,7 @@ public sealed class TerminalSettings
         new("cursor_glide", "number", "0.036", "How long the cursor takes to glide to where it goes, in seconds, 0 for it jumping there. It jumps anyway with the animations off.", Least: 0.0f, Most: 0.3f),
         new("font", "text", "\"hack\"", "The font the terminals write in, a folder of Assets/fonts, empty for the skin's."),
         new("wsl", "flag", "true", "Whether the WSL distributions are asked for as profiles."),
-        new("close_on_exit", "flag", "true", "Whether a pane closes by itself when its shell ends."),
+        new("close_on_exit", "flag", "true", "Whether a pane closes by itself when its shell ends well. One that ended with an error stays, to be read, and Enter starts it again."),
         new("history", "flag", "true", "Whether Up and Down step the history of the lines run in every shell, kept in history.txt. Off, they are the shell's own."),
         new("history_size", "whole", "1000", "How many lines the history keeps.", Least: 10, Most: 100000),
         new("restore_sessions", "flag", "true", "Whether the tabs that were open come back on the next start."),
