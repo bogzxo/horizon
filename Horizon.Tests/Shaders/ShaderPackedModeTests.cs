@@ -9,6 +9,7 @@ namespace Horizon.Tests.Shaders;
 /// even with Slang and a cache that has it right there. An ordinary run takes what the pack has too, after the cache.
 /// None of these compile anything.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderPackedModeTests
 {
     [Fact]

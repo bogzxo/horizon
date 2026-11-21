@@ -9,6 +9,7 @@ namespace Horizon.Tests.Shaders;
 /// The bytes of a shader pack. What goes in comes out, the same entries make the same bytes, and anything that isn't
 /// a whole pack of this format is a clear error and never a half read pack or a read that doesn't end.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderPackFormatTests
 {
     private static readonly string KeyA = new('A', 64), KeyB = new('B', 64), KeyC = new('C', 64);

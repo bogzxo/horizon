@@ -8,6 +8,7 @@ namespace Horizon.Tests.Shaders;
 /// Building a pack out of a manifest with Slang, the way Horizon.Shaders.Build does. These compile for real, so they
 /// want Slang's natives next to the tests the way every desktop build has them.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderPackBuilderTests
 {
     private static ShaderManifest ManifestOf(Horizon.Content.IContentFiles content, params string[] files)

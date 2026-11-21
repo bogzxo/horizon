@@ -3,6 +3,7 @@ using Horizon.Graphics;
 
 namespace Horizon.Tests.Shaders;
 
+[Collection(SlangCompiles.NAME)]
 public class ShaderPackUpscalerTests
 {
     [Theory]
