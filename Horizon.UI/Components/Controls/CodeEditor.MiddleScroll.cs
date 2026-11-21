@@ -36,7 +36,9 @@ public partial class CodeEditor
             if (scrollGoal is { } limit) scrollY = MathF.Min(scrollY, limit);
             scrollGoal = null;
         }
-        GameEngine.Instance?.WindowManager.RequestFrames(0.1);
+        // The simulation at its full rate while it's going, see UICompositor.RouteMiddleScroll: frames alone let an idle
+        // window tick four times a second and a slow scroll stepped
+        GameEngine.Instance?.WindowManager.NoteChange();
     }
 
     private void PaintMiddleScroll(UIDrawList list)
