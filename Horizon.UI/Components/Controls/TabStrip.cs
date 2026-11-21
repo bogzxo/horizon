@@ -20,7 +20,8 @@ public sealed class StripTab
 
     /// <summary>
     /// The colour of the title, null for the skin's (bright on the open one, dim on the rest). For saying something about
-    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter.
+    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter, and
+    /// the open one keeps the skin's text on its lit pill with this as a line under its title.
     /// </summary>
     public Vector4? TitleColor { get; set; }
 
@@ -280,6 +281,21 @@ public class TabStrip : UIComponent
     /// <summary>How wide the tabs are all together, as of the last tick, more than the strip is wide when they don't all fit.</summary>
     public float TabsWidth { get; private set; }
 
+    /// <summary>What the open tab's pill is filled with, the text's colour faintly, the one pick there is in lists and menus.</summary>
+    public static Vector4 OpenFill(UISkin skin) => skin.TextColor with { W = ListBox.PICKED };
+
+    /// <summary>
+    /// The colour a tab's title is written in: the skin's text on the open one whatever the tab's own colour (that's a
+    /// line under it), the tab's own colour a little fainter on the rest, or the skin's dim text without one.
+    /// </summary>
+    public Vector4 TitleColorOf(int index, UISkin skin)
+    {
+        if (index == Selected)
+            return skin.TextColor;
+
+        return index >= 0 && index < Tabs.Count && Tabs[index].TitleColor is { } own ? own with { W = own.W * 0.75f } : skin.DimTextColor;
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -303,13 +319,15 @@ public class TabStrip : UIComponent
             // A pill under the open one, the one pick there is in lists and menus, and a fainter one under the pointer. It
             // was a square of the panel with a stripe of the accent along its top, sharp corners in a window of round ones.
             // Always painted, see-through when not lit, so the quads after it don't shift
-            list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? OpenFill(skin) : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
             list.Rect(new UIRect(new Vector2(area.Min.X + 8.0f, area.Min.Y + 1.0f), new Vector2(area.Max.X - 8.0f, area.Min.Y + 3.0f)), skin.AccentColor with { W = open ? 1.0f : 0.0f });
 
-            // The title in its own colour (git's, say), the dot and the x in the strip's, so a file that's new to git and one
-            // with changes not saved can still be told apart. Both were the green of a new file
+            // The title in its own colour (git's, say) on the tabs that aren't lit, the dot and the x in the strip's, so a
+            // file that's new to git and one with changes not saved can still be told apart. The open one's title is the
+            // skin's text whatever its own colour, with that colour as a line under it: git's yellow on the lit pill was
+            // all but gone in a light look
             Vector4 plain = open ? skin.TextColor : dim;
-            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : plain;
+            Vector4 text = TitleColorOf(i, skin);
             float x = area.Min.X + TAB_PADDING;
             float side = MathF.Round(line);
 
@@ -323,6 +341,14 @@ public class TabStrip : UIComponent
             UIRect close = CloseBounds(i);
             string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
             list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
+
+            // The open one's own colour as a line under its title. Always painted, clear when there's none, so the quads
+            // after it don't shift
+            Vector4 underline = open && tab.TitleColor is { } marked ? marked : Vector4.Zero;
+            float thick = MathF.Max(2.0f, MathF.Round(line * 0.1f));
+            float under = MathF.Max(MathF.Round(area.Center.Y - line * 0.5f) - thick, area.Min.Y + 5.0f);
+            float wide = underline.W > 0.0f ? MathF.Min(skin.Font.Measure(title, scale, markup: false).X, MathF.Max(0.0f, close.Min.X - GAP - x)) : 0.0f;
+            list.Rect(new UIRect(new Vector2(x, under), new Vector2(x + wide, under + thick)), underline);
 
             // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise. A pinned
             // one always has its pin there (with a dot in it when it has changes), which unpins it
