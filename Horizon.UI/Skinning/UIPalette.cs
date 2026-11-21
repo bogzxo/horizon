@@ -176,8 +176,15 @@ public sealed partial class UIPalette
             if (!Given("hover_color")) Hover = text with { W = 0.08f };
         }
 
-        // The quiet text is the text seen through, whatever the text is, unless the theme has one of its own
-        if (!Given("dim_text_color")) DimText = Text with { W = Text.W * 0.62f };
+        // The quiet text is the text seen through, whatever the text is, unless the theme has one of its own. Seen through
+        // no further than it still reads at 4.5:1 on what floats over the window, the lightest ground it's on in the dark
+        // (a grey text at 62% was 4.4:1 on Graphite's popups)
+        if (!Given("dim_text_color"))
+        {
+            DimText = Text with { W = Text.W * 0.62f };
+            for (float seen = 0.66f; seen <= 1.0f && Contrast(DimText, Raised) < READS; seen += 0.04f)
+                DimText = Text with { W = Text.W * seen };
+        }
 
         if (given.TryGetValue("accent_color", out Vector4 accent))
         {
@@ -189,12 +196,14 @@ public sealed partial class UIPalette
         Vector4 panel = Vector4.Lerp(new Vector4(0.0f, 0.0f, 0.0f, 1.0f), Panel with { W = 1.0f }, Panel.W);
         bool lightPanel = Luminance(panel) > 0.18f;
 
-        // A link is the accent, pulled down towards black on a light panel, as far as it takes for it to read there
+        // A link is the accent, pulled towards black on a light panel and towards white on a dark one, as far as it takes
+        // for it to read there as words do, 4.5:1 (Graphite's blue was 3.7:1 on its panel)
         if (!Given("link_color"))
         {
             Link = Accent;
-            for (float share = 0.1f; lightPanel && share <= 0.71f && Contrast(Link, panel) < 3.0f; share += 0.1f)
-                Link = Towards(Accent, new Vector4(0.0f, 0.0f, 0.0f, 1.0f), share);
+            Vector4 away = lightPanel ? new Vector4(0.0f, 0.0f, 0.0f, 1.0f) : new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+            for (float share = 0.05f; share <= 0.71f && Contrast(Link, panel) < READS; share += 0.05f)
+                Link = Towards(Accent, away, share);
         }
 
         // What has gone wrong, right or nearly so, in colours that read on this palette, light ones on a dark panel
@@ -263,7 +272,22 @@ public sealed partial class UIPalette
     /// The text that reads on the accent, whichever of the text and the bar's text stands out on it more. Dark on Horizon's
     /// sunset, white on a blue.
     /// </summary>
-    public Vector4 OnAccent => Contrast(BarText, Accent with { W = 1.0f }) >= Contrast(Text, Accent with { W = 1.0f }) ? BarText : Text;
+    public Vector4 OnAccent
+    {
+        get
+        {
+            Vector4 accent = Accent with { W = 1.0f };
+            Vector4 best = Contrast(BarText, accent) >= Contrast(Text, accent) ? BarText : Text;
+
+            // Neither reading at 4.5:1 on a mid accent (white was 3.6:1 on Solstice's orange), the panel's own dark is
+            // the ink, which a dark palette's light text and white both aren't
+            Vector4 ink = Panel with { W = 1.0f };
+            return Contrast(best, accent) < READS && Contrast(ink, accent) > Contrast(best, accent) ? ink : best;
+        }
+    }
+
+    /// <summary>The contrast words read at, the web's guidelines' 4.5:1, what the colours worked out here are pushed to.</summary>
+    public const float READS = 4.5f;
 
     /// <summary>Whether the palette is a dark one, text lighter than its panel.</summary>
     public bool IsDark => Luminance(Text) > Luminance(Panel);

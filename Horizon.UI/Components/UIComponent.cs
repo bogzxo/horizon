@@ -553,6 +553,16 @@ public abstract partial class UIComponent
     /// <summary>How wide the ring round whatever has the keyboard is, the one width every ring is drawn at.</summary>
     internal const float FOCUS_RING_WIDTH = 1.5f;
 
+    /// <summary>
+    /// Says this component is being painted showing it has the keyboard, for one that draws its own sign of it rather
+    /// than the ring (see <see cref="UICompositor.FocusShownOn"/>). Called from its paint where it draws that sign.
+    /// </summary>
+    protected void ShowingFocus()
+    {
+        if (Module is { } owner && IsFocused)
+            owner.Compositor.FocusShownOn = this;
+    }
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
@@ -581,6 +591,11 @@ public abstract partial class UIComponent
         // PaintVersion. What PaintTree paints of its own (the focus ring, the grips, a lift) goes into the version. Only
         // a component with nothing in it, the version is its own and not its children's
         long version = children.Length == 0 ? PaintVersion : -1;
+
+        // The ring round a control the keyboard is on, said before the paint might be taken as it was, which has it in
+        bool ringed = TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible;
+        if (ringed)
+            Module!.Compositor.FocusShownOn = this;
         bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && Glass is null && !FollowsPointer && !list.LayoutMoves;
         int context = 0;
         if (recorded)
@@ -648,7 +663,7 @@ public abstract partial class UIComponent
         // The keyboard on a control a click doesn't give it to (a button Tab went to), a ring round it in the colour the
         // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes. Only once the
         // keys moved about, a click on it rings nothing
-        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible)
+        if (ringed)
         {
             list.BeginPart(FOCUS_RING_PART);
             float out_ = FOCUS_RING_GAP;

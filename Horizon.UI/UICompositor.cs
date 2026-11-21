@@ -851,6 +851,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 back.PopClip();
         }
         back.End();
+        Moved = back.Moving;
         Statistics.PaintMs += UIStatistics.Since(started);
         if (CheckFrames && back.FramesDiffer() is { } differs && differs != framesDiffered)
         {

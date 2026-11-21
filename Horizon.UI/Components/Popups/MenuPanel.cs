@@ -377,7 +377,7 @@ internal sealed partial class MenuPanel
         }
 
         // Onto the first item it's on at once, from one to the next eased
-        if (!highlighted || !UIDrawList.Motion)
+        if (!highlighted || !list.Moves)
             highlight = target;
         else
         {

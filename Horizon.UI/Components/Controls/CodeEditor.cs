@@ -1420,9 +1420,11 @@ public partial class CodeEditor : UIComponent
         lineNoteFor = noted;
 
         // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
-        // in the background isn't painted again twice a second for a caret nobody's typing at
-        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
-        if (IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+        // in the background isn't painted again twice a second for a caret nobody's typing at. Lit and still as well with
+        // the UI's motion turned off, a caret that blinks is motion too
+        bool still = MotionSpeed <= 0.0f;
+        blink = still || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (!still && IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
         if (waiting.Length > 0)
@@ -2839,7 +2841,10 @@ public partial class CodeEditor : UIComponent
         int beyond = over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / lineHeight) + 1;
         int paintFrom = Math.Max(0, first - ROWS_AROUND - beyond), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND + beyond);
 
+        // The caret is the sign that it has the keyboard, lit or between blinks
         bool focused = IsFocused;
+        if (focused)
+            ShowingFocus();
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
         Vector4 selection = skin.Palette.Selection;
         Vector4 band = skin.HoverColor with { W = skin.HoverColor.W * 0.35f };

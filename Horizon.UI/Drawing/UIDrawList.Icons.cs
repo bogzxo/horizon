@@ -26,7 +26,7 @@ public sealed partial class UIDrawList
     /// <summary>Frames asked for, once a paint, while something on it moves.</summary>
     private void KeepMoving()
     {
-        if (movingAsked || !Motion)
+        if (movingAsked || !Moves)
             return;
 
         UIAnimatedIcons.Used();

@@ -20,7 +20,7 @@ let theme = {
     dim_text_color: vec(0.616, 0.616, 0.616, 1.0),
     border_color: vec(0.247, 0.247, 0.275, 1.0),
     hover_color: vec(1.0, 1.0, 1.0, 0.07),
-    accent_color: vec(0.435, 0.435, 0.859, 1.0),
+    accent_color: vec(0.41, 0.41, 0.81, 1.0),
     highlight_color: vec(0.863, 0.863, 0.863, 1.0),
     selection_color: vec(0.149, 0.31, 0.471, 1.0),
     bar_text_color: vec(1.0, 1.0, 1.0, 1.0),

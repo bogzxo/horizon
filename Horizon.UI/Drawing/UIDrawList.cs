@@ -93,6 +93,13 @@ public sealed partial class UIDrawList
     internal float MotionSpeed { get; set; } = 1.0f;
 
     /// <summary>
+    /// Whether what's painted on this list moves at all, the icons that spin or hop and the knobs and highlights that
+    /// glide: <see cref="Motion"/> on and the UI's animation not turned down to 0. Still at 0, a spinner is drawn as its
+    /// icon and a switch is at its side at once.
+    /// </summary>
+    public bool Moves => Motion && MotionSpeed > 0.0f;
+
+    /// <summary>
     /// Starts the entrance of something that pops up (a menu, a list that drops down, a tooltip) when it's painted for the
     /// first time: grown from a little smaller than it is and faded in, slid in a few pixels from where it came from,
     /// eased out over <see cref="ENTRANCE_TIME"/>. Everything painted until <see cref="EndEntrance"/> goes with it, a pane
@@ -895,7 +902,7 @@ public sealed partial class UIDrawList
     {
         if (UIAnimatedIcons.IsDrawn(code))
         {
-            UIAnimatedIcons.Draw(this, code, rect, color, Motion);
+            UIAnimatedIcons.Draw(this, code, rect, color, Moves);
             KeepMoving();
             return;
         }
@@ -903,7 +910,7 @@ public sealed partial class UIDrawList
         if (!UISymbols.TryGetGlyph(code, out var symbol))
             return;
 
-        if (motion != UIIconMotion.None && Motion)
+        if (motion != UIIconMotion.None && Moves)
         {
             MovingSymbol(symbol, rect, color, motion);
             return;

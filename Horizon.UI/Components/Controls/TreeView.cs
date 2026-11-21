@@ -138,6 +138,9 @@ public partial class TreeView : UIComponent
     // How thick the line along the top is while it has the keyboard
     private const float FOCUS_LINE = 2.0f;
 
+    // The ring round the whole tree, with the keyboard and no row to ring, a part out of the way of the rows' numbers
+    private const int TREE_RING_PART = 0x7F0D;
+
     private const float DEFAULT_WIDTH = 260.0f, DEFAULT_ROWS = 10.0f;
     private const float ROW_PADDING = 8.0f, BAR_WIDTH = UIScrollBar.WIDTH, LEFT_PAD = 6.0f, ICON_GAP = 4.0f, DETAIL_GAP = 10.0f;
     private const float DOUBLE_CLICK = 0.4f;
@@ -716,7 +719,7 @@ public partial class TreeView : UIComponent
         Vector4 dim = text with { W = text.W * 0.55f };
         Vector4 guide = text with { W = text.W * GUIDE };
         Vector4 guideLit = text with { W = text.W * GUIDE_LIT };
-        bool keyed = IsFocused && TakesKeys;
+        bool keyed = IsFocused && TakesKeys && EnabledInHierarchy;
         bool ringed = Module?.Compositor.FocusVisible == true;
 
         // What's picked is the theme's selection while the tree has the keyboard, and a quiet grey while it hasn't, so
@@ -748,6 +751,7 @@ public partial class TreeView : UIComponent
         // The rows move by the scroll as one, on whole pixels, see UIDrawList.PushFrame
         bool stretched = ease.Over.Begin(list, bounds);
         list.PushFrame(new Vector2(0.0f, scroll));
+        bool rowRinged = false;
         for (int i = first; i <= last; i++)
         {
             var (item, depth) = rows[i];
@@ -780,7 +784,9 @@ public partial class TreeView : UIComponent
             // The picked row of a tree with the keyboard has a ring of what has the keyboard round it, the keys go there.
             // Tab into the keys window's list had nothing on screen change. Only once the keys moved about, the click on
             // the explorer's icon that gave it the keyboard rang its first row. Always painted, see-through when not wanted
-            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, into ? skin.AccentColor : skin.Palette.Highlight with { W = item == selected && keyed && ringed ? 1.0f : 0.0f });
+            bool rings = item == selected && keyed && ringed;
+            rowRinged |= rings;
+            list.RoundOutline(pill, skin.CornerRadius, FOCUS_RING_WIDTH, into ? skin.AccentColor : skin.Palette.Highlight with { W = rings ? 1.0f : 0.0f });
 
             // A line down every level this row is inside of, through the middle of where that level's chevron is
             float x = bounds.Min.X + LEFT_PAD;
@@ -908,6 +914,20 @@ public partial class TreeView : UIComponent
         list.EndParts();
         list.PopFade();
         list.PopClip();
+
+        // Tab into a tree with nothing picked, or its picked row scrolled away, rang nothing at all, so the tree itself is
+        // rung, inside its edge, until a row is picked to ring instead
+        if (keyed && ringed)
+        {
+            if (!rowRinged)
+            {
+                list.BeginPart(TREE_RING_PART);
+                list.RoundOutline(whole.Shrink(new UIEdges(FOCUS_RING_WIDTH)), skin.CornerRadius, FOCUS_RING_WIDTH, skin.Palette.Highlight);
+                list.EndParts();
+            }
+
+            ShowingFocus();
+        }
 
         PaintHeader(list, skin, right, icon, scale);
         PaintEdit(list, skin, bounds, scale);
