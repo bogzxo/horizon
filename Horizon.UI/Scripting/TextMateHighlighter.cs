@@ -17,8 +17,10 @@ namespace Horizon.UI.Scripting;
 /// </summary>
 public sealed class TextMateHighlighter : ICodeHighlighter
 {
-    // How long one line may take before the grammar gives up on it, a pathological regex on a minified line
-    private static readonly TimeSpan LINE_LIMIT = TimeSpan.FromMilliseconds(250);
+    // How long one line may take before the grammar gives up on it, a pathological regex on a minified line. It's time
+    // by the clock, a thread waiting for a core counts too, so the engine's tests (thousands at once on a busy machine)
+    // give it longer, and what they compare isn't a line cut short by how busy the machine was
+    internal static TimeSpan LineLimit { get; set; } = TimeSpan.FromMilliseconds(250);
 
     // A line longer than this is read a piece at a time (see LongLineSpans), each piece the grammar's line with the state
     // carried on from the one before, the lock taken a piece at a time. An agent's chat saved as JSON is one line of a
@@ -320,7 +322,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         if (text.Length == 0)
         {
             // An empty line still moves the state on, a block comment is still open after one
-            state = grammar.TokenizeLine(new LineText(text), state!, LINE_LIMIT).RuleStack;
+            state = grammar.TokenizeLine(new LineText(text), state!, LineLimit).RuleStack;
             return spans;
         }
 
@@ -333,7 +335,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     private void ReadInto(List<SyntaxSpan> spans, ReadOnlyMemory<char> text, int offset, ref IStateStack? state, ref int depth)
     {
         int first = spans.Count;
-        ITokenizeLineResult result = grammar.TokenizeLine(new LineText(text), state!, LINE_LIMIT);
+        ITokenizeLineResult result = grammar.TokenizeLine(new LineText(text), state!, LineLimit);
         state = result.RuleStack;
         ReadOnlySpan<char> line = text.Span;
 
