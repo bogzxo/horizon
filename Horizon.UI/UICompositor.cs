@@ -266,6 +266,18 @@ public partial class UICompositor : GameComponent, IDisposable
     private UIDrawList back = new();
     private UIDrawList front = new();
     private int paintedFrame;
+
+    // What each list was painted as (see TraceTag), swapped with them, and what the list on the GPU was, for FrameTrace
+    private object? backTag, frontTag, uploadedTag;
+    private long uploadedPainted = -1;
+    private UISkin? uploadedSkin;
+
+    /// <summary>
+    /// What this UI is painting as right now, a face of a program say, kept with every list painted from here on and
+    /// said of every frame drawn from one while <see cref="Horizon.Core.Diagnostics.FrameTrace"/> is on. Null (the usual)
+    /// leaves this UI out of the trace.
+    /// </summary>
+    public object? TraceTag { get; set; }
     private int uploadedFrame;
 
     private bool pointerWasDown;
@@ -371,6 +383,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public int Painted = -1;
         public UISkin? Skin;
         public bool Incomplete;
+        public object? Tag;
 
         public ReadOnlySpan<SpriteItem> Span => Items.AsSpan(0, Count);
     }
@@ -670,6 +683,81 @@ public partial class UICompositor : GameComponent, IDisposable
         }
     }
 
+    /// <summary>
+    /// Has a skin loaded ahead of being worn, on the render thread at the next frame, nothing on screen changing. For a
+    /// UI that's about to change its theme (a pointer over the button that does it), so the change finds it there and is
+    /// painted in it from the same tick. Art painted aside in it meanwhile (see <see cref="PaintAside"/>) goes into its
+    /// atlas as it would for the skin worn. From any thread, and nothing once it's loaded.
+    /// </summary>
+    public void WarmSkin(string directory, string file, string? theme = null)
+    {
+        if (UISkin.Known(directory, file, theme) is { } known)
+        {
+            if (!ReferenceEquals(known, Skin))
+                warmSkin = known;
+            return;
+        }
+
+        lock (skinLock)
+            warmRequest = (directory, file, theme);
+    }
+
+    /// <summary>A skin loaded ahead (see <see cref="WarmSkin"/>) and not worn yet, null while it isn't there. From any thread.</summary>
+    public UISkin? Warmed => warmSkin;
+
+    // A skin to be loaded ahead (WarmSkin), and one loaded and not worn yet, whose atlas takes the art painted aside
+    private (string Directory, string File, string? Theme)? warmRequest;
+    private volatile UISkin? warmSkin;
+
+    // The list the UI is painted into aside, never shown, and the screen the last update had
+    private readonly UIDrawList aside = new();
+    private UIRect lastScreen;
+
+    /// <summary>
+    /// Lays the UI out and paints it as it is right now into a list that's never shown, in a skin (the worn one when
+    /// null), so what that asks for (art put in the atlas, letters drawn, text measured) is there by the time it's shown.
+    /// For a UI about to change: the change made, painted aside and undone. What's on screen is untouched, the paint at the
+    /// end of the tick lays it out as it is again. Simulation thread, in an update.
+    /// </summary>
+    public void PaintAside(UISkin? skin = null)
+    {
+        if ((skin ?? Skin) is not { } painted || lastScreen.IsEmpty)
+            return;
+
+        aside.Previous = front;
+        aside.MotionSpeed = AnimationSpeed;
+        aside.Begin(painted, paintFrame, 0.0f, paintClock);
+        foreach (var module in modules)
+        {
+            if (!module.Enabled)
+                continue;
+            module.Layout(lastScreen, painted);
+            module.Paint(aside);
+        }
+        aside.End();
+    }
+
+    // Helper method for the skin that was asked for when it's been loaded before, leaving the request where it is
+    private UISkin? RequestedAndKnown()
+    {
+        lock (skinLock)
+            return requestedSkin is { } wanted ? UISkin.Known(wanted.Directory, wanted.File, wanted.Theme) : null;
+    }
+
+    // Helper method to load the skin asked to be warmed, render thread
+    private void LoadWarmSkin()
+    {
+        (string Directory, string File, string? Theme)? request;
+        lock (skinLock)
+        {
+            request = warmRequest;
+            warmRequest = null;
+        }
+
+        if (request is { } wanted && UISkin.Shared(wanted.Directory, wanted.File, wanted.Theme) is { } loaded && !ReferenceEquals(loaded, Skin))
+            warmSkin = loaded;
+    }
+
     private void LoadRequestedSkin()
     {
         (string Directory, string File, string? Theme)? request;
@@ -691,10 +779,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         (skinDirectory, skinFile, skinTheme) = wanted;
 
-        // What was painted so far shows art of the old skin's atlas, not of this one's
+        // What was uploaded is drawn on in the skin it was painted in (the renderer keeps that one's atlas, a shared skin
+        // is never let go of) until a list painted in this one is there. Cleared here, every change of theme was a frame
+        // or more of no UI at all, the ground flashing through, and the first change to a skin not drawn with before was
+        // a tenth of a second of it while its art was put together
         Skin = skin;
-        renderer.Clear();
         pictureCurrent = false;
+        if (ReferenceEquals(warmSkin, skin))
+            warmSkin = null;
 
         // And the first list painted with the new one goes up as soon as it is there, limit or no limit
         refreshedAt = 0;
@@ -705,6 +797,12 @@ public partial class UICompositor : GameComponent, IDisposable
         // A camera of its own is kept the size of the window, here on the simulation thread where it is read
         if (ownsCamera && GameEngine.Instance.WindowManager.ViewportSize is { X: > 0.0f, Y: > 0.0f } window && viewportCamera.ViewSize != window)
             viewportCamera.ViewSize = window;
+
+        // A skin asked for that's been loaded before is worn from this tick on, painted with and seen by the updates. Left
+        // for the frame that loads it, one more list went out in the old skin, which that frame threw away, and the change
+        // was a frame late at best
+        if (RequestedAndKnown() is { } asked && !ReferenceEquals(asked, Skin))
+            Skin = asked;
 
         if (Skin is not { } skin)
             return;
@@ -718,6 +816,7 @@ public partial class UICompositor : GameComponent, IDisposable
         var screen = new UIRect(
             new Vector2(bounds.X, bounds.Y),
             new Vector2(bounds.X + bounds.Width, bounds.Y + bounds.Height));
+        lastScreen = screen;
 
         // Worked out before anything else uses it. The pointer has to be scaled the same way the layout is.
         float fit = DesignSize is { X: > 0.0f, Y: > 0.0f } design && !screen.IsEmpty
@@ -786,12 +885,21 @@ public partial class UICompositor : GameComponent, IDisposable
         pending = null;
         var (snapshot, screen, skin, dt) = paint;
 
+        // Asked for in this tick after the update (a change of face, say), worn from this list on when it's there
+        if (RequestedAndKnown() is { } asked)
+        {
+            if (!ReferenceEquals(asked, Skin))
+                Skin = asked;
+            skin = asked;
+        }
+
         // One clock for both lists, see UIDrawList.Begin
         paintClock = (paintClock + dt) % 3600.0f;
         long started = Stopwatch.GetTimestamp();
         back.Previous = front;
         back.MotionSpeed = AnimationSpeed;
         back.Begin(skin, paintFrame, dt, paintClock);
+        backTag = TraceTag;
         backPainted++;
 
         // Letters ClearType's way or grey, hinted or not, for the screen the window is on now (see GlyphSmoothing)
@@ -877,6 +985,7 @@ public partial class UICompositor : GameComponent, IDisposable
         lock (frameLock)
         {
             (front, back) = (back, front);
+            (frontTag, backTag) = (backTag, frontTag);
             paintedFrame++;
         }
     }
@@ -922,6 +1031,7 @@ public partial class UICompositor : GameComponent, IDisposable
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
+            into.Tag = frontTag;
             into.Incomplete = front.Incomplete;
         }
     }
@@ -1001,6 +1111,7 @@ public partial class UICompositor : GameComponent, IDisposable
         }
 
         (shownBefore, shownAfter, shownAlpha, shownPointer) = (from, shown.Painted, alpha, pointer);
+        (uploadedTag, uploadedSkin, uploadedPainted) = ((canBlend && alpha < 1.0f ? after : shown).Tag, skin, shown.Painted);
         drawnAfter = after.Painted;
         drawnAlpha = canBlend ? alpha : 1.0f;
         pictureCurrent = false;
@@ -1051,9 +1162,14 @@ public partial class UICompositor : GameComponent, IDisposable
     public override void Render(float dt)
     {
         LoadRequestedSkin();
+        if (warmRequest is not null)
+            LoadWarmSkin();
 
         if (Skin is not { } skin)
             return;
+
+        // Art painted aside in a skin loaded ahead goes into its atlas as the worn one's does
+        warmSkin?.Update();
 
         RenderFrame frame = RenderFrame.Active;
         bool due = NoteFrame();
@@ -1081,11 +1197,15 @@ public partial class UICompositor : GameComponent, IDisposable
             // A new list that isn't due yet (see FrameRateLimit) waits here until it is, it is not forgotten
             if ((uploadedFrame != paintedFrame || shownAfter >= 0) && due)
             {
-                // A frame painted with a skin that has been swapped out since is skipped too.
+                // A frame painted with a skin that has been swapped out since is skipped too, the one before it staying
+                // up, and the change of skin isn't all there till one is
+                if (front.Skin != skin)
+                    GameEngine.Instance.SceneManager.ReportUnfinished();
                 if (front.Skin == skin && !front.Incomplete)
                 {
                     renderer.Upload(front);
                     CountUpload(front.Items.Length);
+                    (uploadedTag, uploadedSkin, uploadedPainted) = (frontTag, skin, paintedFrame);
                     pictureCurrent = false;
                     refreshedAt = renderedAt;
                 }
@@ -1131,6 +1251,8 @@ public partial class UICompositor : GameComponent, IDisposable
         long started = Stopwatch.GetTimestamp();
         DrawList(dt);
         DrawCursor();
+        if (Horizon.Core.Diagnostics.FrameTrace.On && TraceTag is not null)
+            Horizon.Core.Diagnostics.FrameTrace.Ui(uploadedTag, uploadedSkin is { } traced ? traced.Theme ?? string.Empty : null, renderer.IsEmpty, uploadedPainted);
         Statistics.DrawMs += UIStatistics.Since(started);
     }
 

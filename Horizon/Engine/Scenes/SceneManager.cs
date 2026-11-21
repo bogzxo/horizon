@@ -186,6 +186,18 @@ public class SceneManager : Entity
     // The transition that drew over the last frame, which is how it is known when one has stopped
     private SceneTransition? _drawn;
 
+    // What a change that keeps the scene does while the screen is covered, see Cover
+    private Action? _whileCovered;
+
+    // Whether the cover stays all the way on until the scene under it has been drawn whole from an update after the
+    // change, how long it has, and the snapshot that was the newest as the change was made
+    private bool _holding;
+    private float _held;
+    private long _changedAt, _newestDrawn;
+
+    // The longest the cover waits for that, a scene that never gets there is shown as it is
+    private const float MAX_HOLD = 0.5f;
+
     // How much of the screen is covered, 0 is none of it and 1 is all of it. And whether it is on its way to all of it
     private float _cover;
     private volatile bool _covering;
@@ -295,6 +307,28 @@ public class SceneManager : Entity
     /// left. For going back to the main menu from three screens deep. From any thread.
     /// </summary>
     public void ResetTo(Scene scene, SceneTransition? transition = null) => Set(scene, transition, Way.Reset, SceneBelow.Suspended);
+
+    /// <summary>
+    /// A change inside the scene on screen made through a transition as a change of scene would be: the scene is covered,
+    /// <paramref name="whileCovered"/> is done with the simulation standing still (render thread), and the scene comes out
+    /// from under the cover once it has been updated and drawn whole after it. For a scene that has faces of its own, an
+    /// editor's and a dashboard's say, to go between them as smoothly as between scenes. Without a scene on screen, or with
+    /// a change on its way already, it's done right away. From the simulation thread.
+    /// </summary>
+    public void Cover(SceneTransition transition, Action whileCovered)
+    {
+        lock (_changeLock)
+        {
+            if (CurrentInstance is { } scene && _incoming is null && !_covering && _whileCovered is null)
+            {
+                _whileCovered = whileCovered;
+                Set(scene, transition, Way.Swap, SceneBelow.Suspended);
+                return;
+            }
+        }
+
+        whileCovered();
+    }
 
     // Helper method for whether a scene is one of those kept underneath, with the lock held or not
     private bool IsBelow(Scene scene)
@@ -527,6 +561,7 @@ public class SceneManager : Entity
             _acting = null;
         }
 
+        Scene? drawnScene = null;
         if (CurrentInstance is { IsDisposed: false } scene && (!frame.IsDecoupled || scene.WasCaptured(frame)))
         {
             // Whatever is made while the scene is drawn (most things are only made when they are first needed)
@@ -535,9 +570,17 @@ public class SceneManager : Entity
                 scene.Render(dt);
 
             _shown = true;
+            drawnScene = scene;
         }
 
         base.Render(dt);
+
+        // A change under the cover waits for the scene to be there as it is now
+        if (_holding)
+            Release(drawnScene is not null, frame, dt);
+        _unfinished = false;
+        if (frame.HasSnapshot)
+            _newestDrawn = frame.CurrentSequence;
 
         // Whoever drew over the last frame and doesn't any more is done, and is told so it can let go of what it kept
         SceneTransition? drawing = _cover > 0.0f ? _running : null;
@@ -557,6 +600,10 @@ public class SceneManager : Entity
                 Log.Info($"[Transition] {drawing.GetType().Name} {(_arriving ? "in" : "out")} at {_cover:0.00}, {System.Diagnostics.Stopwatch.GetElapsedTime(_lastFrameAt, now).TotalMilliseconds:0.0} ms since the frame before.");
             _lastFrameAt = now;
         }
+
+        // What went out, for whoever is watching the frames (a test of a change on screen)
+        if (Horizon.Core.Diagnostics.FrameTrace.On)
+            Horizon.Core.Diagnostics.FrameTrace.End(drawnScene is null ? null : drawnScene.Name.Length > 0 ? drawnScene.Name : drawnScene.GetType().Name, drawing is null ? 0.0f : _cover);
 
         // That was the last frame of the old scene, the new one takes over at the start of the next
         if (_lastFrame)
@@ -583,12 +630,49 @@ public class SceneManager : Entity
             return;
         }
 
-        // From all the way covered, also for a scene that had nothing before it to cover up (the first one)
+        // From all the way covered, also for a scene that had nothing before it to cover up (the first one). Held there
+        // till the scene under it has been drawn from an update after the change, with all it shows (see Render). Taken
+        // off straight away, the frames before that were of no scene at all (it hadn't been published) or of the scene
+        // as it was before (a change inside it), the ground flashing through a swap between two scenes that were ready
+        _tweens.Kill(COVER_CHANNEL);
         _running = transition;
         _arriving = true;
         _cover = 1.0f;
+        _holding = true;
+        _held = 0.0f;
+        _changedAt = _newestDrawn;
+
+        // And the update that shows it is had now, not at the next slow tick of an application that had gone quiet
+        GameEngine.Instance?.WindowManager.Wake();
+    }
+
+    /// <summary>
+    /// Helper method to let the cover come off once the scene under it is there as it is now, or has had long enough.
+    /// Render thread, after the scene was drawn.
+    /// </summary>
+    private void Release(bool drawn, in RenderFrame frame, float dt)
+    {
+        bool ready = drawn && !_unfinished && (!frame.HasSnapshot || frame.CurrentSequence > _changedAt);
+        if (!ready && LogTransitions)
+            Log.Info($"[Transition] Held, drawn {drawn}, unfinished {_unfinished}, sequence {frame.CurrentSequence} of {_changedAt}.");
+        if (!ready && (_held += dt) < MAX_HOLD)
+        {
+            GameEngine.Instance?.WindowManager.Wake();
+            return;
+        }
+
+        _holding = false;
+        if (LogTransitions)
+            Log.Info($"[Transition] Let go of after {_held * 1000.0f:0} ms, {(ready ? "the scene there" : "the scene not there yet")}.");
+        if (_running is not { InTime: > 0.0f } transition)
+        {
+            // Nothing to see it come off, this frame is the scene as it is
+            _cover = 0.0f;
+            return;
+        }
+
         _tweens.Play(
-            Tween.To(() => _cover, cover => _cover = cover, 0.0f, MathF.Max(0.0f, transition.InTime)).SetEasing(transition.InEasing),
+            Tween.To(() => _cover, cover => _cover = cover, 0.0f, transition.InTime).SetEasing(transition.InEasing),
             COVER_CHANNEL);
     }
 
@@ -602,6 +686,7 @@ public class SceneManager : Entity
         SceneTransition? transition;
         Way change;
         SceneBelow how;
+        Action? covered;
         lock (_changeLock)
         {
             incoming = _incoming;
@@ -612,6 +697,21 @@ public class SceneManager : Entity
             _incomingTransition = null;
             _incomingChange = Way.Swap;
             _halt = false;
+            covered = _whileCovered;
+            _whileCovered = null;
+        }
+
+        if (LogTransitions)
+            Log.Info($"[Transition] Changing at sequence {_newestDrawn}{(_whileCovered is not null || covered is not null ? ", inside the scene" : string.Empty)}.");
+
+        // A change inside the scene that's on screen, made now that it's covered (see Cover)
+        try
+        {
+            covered?.Invoke();
+        }
+        catch (Exception exception)
+        {
+            Log.Error($"[SceneManager] What was to be done under the cover threw: {exception}");
         }
 
         Scene? left = CurrentInstance;
