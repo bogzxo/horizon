@@ -113,6 +113,21 @@ public sealed class InputScript
     }
 
     /// <summary>
+    /// Every key going down or coming up after one moment and up to another, a key held for less than the time between
+    /// the two down and up both.
+    /// </summary>
+    internal void KeyEdges(float after, float upTo, List<(float Time, Key Key, bool Down)> into)
+    {
+        into.Clear();
+        foreach (KeyStep step in _keySteps)
+        {
+            if (step.Until <= step.From) continue;
+            if (step.From > after && step.From <= upTo) into.Add((step.From, step.Key, true));
+            if (step.Until > after && step.Until <= upTo) into.Add((step.Until, step.Key, false));
+        }
+    }
+
+    /// <summary>
     /// Closes the game at a moment, which is how a script that checks something ends.
     /// </summary>
     public InputScript Quit(float at)

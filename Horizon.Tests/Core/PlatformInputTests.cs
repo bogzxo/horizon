@@ -63,6 +63,48 @@ public class PlatformInputTests
     }
 
     [Fact]
+    public void A_scripted_chord_between_two_slow_ticks_is_still_pressed_in_order()
+    {
+        // An idle program ticks four times a second, the whole chord (Ctrl from 0.05 to 0.23 s, F from 0.10 to 0.18 s)
+        // goes by inside the first tick, and was never pressed
+        var input = new InputManager();
+        var received = new List<InputEvent>();
+        input.EventReceived += received.Add;
+        input.Play(new InputScript().Chord(0.05f, Key.ControlLeft, Key.F));
+        input.UpdateState(0.25f);
+        Assert.True(input.Keyboard.WasPressed(Key.F));
+        Assert.True(input.Keyboard.WasPressed(Key.ControlLeft));
+        Assert.Equal([Key.ControlLeft, Key.F, Key.F, Key.ControlLeft], received.Select(e => e.Key));
+        Assert.Equal([true, true, false, false], received.Select(e => e.Kind == InputEventKind.KeyDown));
+        Assert.Equal(KeyModifiers.Control, received[1].Modifiers);
+        input.UpdateState(0.25f);
+        Assert.False(input.Keyboard.IsDown(Key.F));
+        Assert.False(input.Keyboard.IsDown(Key.ControlLeft));
+    }
+
+    [Fact]
+    public void A_scripted_chord_over_quick_ticks_holds_its_keys_while_they_are_held()
+    {
+        var input = new InputManager();
+        input.Play(new InputScript().Chord(0.05f, Key.ControlLeft, Key.F));
+        input.UpdateState(0.04f);
+        Assert.False(input.Keyboard.IsDown(Key.ControlLeft));
+        input.UpdateState(0.04f);
+        Assert.True(input.Keyboard.IsDown(Key.ControlLeft));
+        Assert.False(input.Keyboard.IsDown(Key.F));
+        input.UpdateState(0.04f);
+        Assert.True(input.Keyboard.WasPressed(Key.F));
+        input.UpdateState(0.04f);
+        Assert.True(input.Keyboard.IsDown(Key.F));
+        Assert.False(input.Keyboard.WasPressed(Key.F));
+        input.UpdateState(0.04f);
+        Assert.False(input.Keyboard.IsDown(Key.F));
+        Assert.True(input.Keyboard.IsDown(Key.ControlLeft));
+        input.UpdateState(0.04f);
+        Assert.False(input.Keyboard.IsDown(Key.ControlLeft));
+    }
+
+    [Fact]
     public void Mouse_live_state_updates_before_the_tick_and_short_click_survives()
     {
         var input = new InputManager();
