@@ -26,18 +26,18 @@ namespace Horizon.Testing.Examples.Game;
 /// </para>
 /// <para>
 /// In your own game.
-/// <code>
+/// <code><![CDATA[
 /// // Constructor, UI components own nothing on the GPU so the whole lot can be made right there
 /// ui = AddComponent(UICompositor.ForScreen());
 /// var hud = ui.CreateModule();
 /// health = hud.AddComponent(new ProgressBar { Anchor = Origin.TopLeft, Position = new Vector2(24, -48) });
 ///
 /// var menu = ui.CreateModule().LoadLayout("Assets/ui/menu.hor");
-/// menu.Get&lt;Button&gt;("play").OnPressed = StartGame;       // simulation thread, like everything about the UI
+/// menu.Get<Button>("play").OnPressed = StartGame;       // simulation thread, like everything about the UI
 ///
 /// // UpdateState
-/// if (mouse.WasPressed(MouseButton.Left) &amp;&amp; !ui.IsPointerOverUI) Shoot();
-/// </code>
+/// if (mouse.WasPressed(MouseButton.Left) && !ui.IsPointerOverUI) Shoot();
+/// ]]></code>
 /// </para>
 /// </summary>
 public class UIBasicsExample : Scene, ITestControls

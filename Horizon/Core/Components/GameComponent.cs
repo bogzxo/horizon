@@ -4,12 +4,12 @@ namespace Horizon.Core.Components;
 /// A component that does nothing until it is told what to do. It has the name, the parent and the switch every
 /// component needs, and every one of its turns is empty, so whoever makes a component from this only writes the
 /// turns it has something to do in.
-/// <code>
+/// <code><![CDATA[
 /// public sealed class Spinner : GameComponent
 /// {
-///     public override void UpdateState(float dt) => Parent.GetComponent&lt;TransformComponent2D&gt;()!.Rotation += 90.0f * dt;
+///     public override void UpdateState(float dt) => Parent.GetComponent<TransformComponent2D>()!.Rotation += 90.0f * dt;
 /// }
-/// </code>
+/// ]]></code>
 /// <see cref="IGameComponent"/> is still there for whatever has to descend from something else.
 /// </summary>
 public abstract class GameComponent : IGameComponent, ISnapshotSource

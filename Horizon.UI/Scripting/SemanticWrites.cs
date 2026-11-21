@@ -3,7 +3,7 @@ namespace Horizon.UI.Scripting;
 /// <summary>
 /// Which locals and parameters are written to again after they're made, for a server that doesn't say (csharp-ls never
 /// sends a modification modifier), so they can be underlined the way ReSharper underlines them. Worked out from the
-/// text round each name the server called a local or a parameter. A name followed by = (not == or =&gt;), a compound
+/// text round each name the server called a local or a parameter. A name followed by = (not == or =>), a compound
 /// assignment, ++ or --, or after ++, --, out or ref, is written there. One written more than once, or written anywhere
 /// but where it first turns up (its declaration), is mutable, everywhere it's used. Names are told apart by the method
 /// they're in, a method being from one method declaration to the next, near enough.

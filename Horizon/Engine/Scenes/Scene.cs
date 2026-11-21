@@ -7,7 +7,7 @@ namespace Horizon.Engine;
 /// <summary>
 /// One screen of a game. A menu, a level, a fight. It adds what it is made of in <see cref="Core.Entity.Initialize"/>
 /// and is updated and drawn for as long as it is the one the engine shows.
-/// <code>
+/// <code><![CDATA[
 /// internal sealed class TitleScene : Scene
 /// {
 ///     public override void Initialize()
@@ -19,10 +19,10 @@ namespace Horizon.Engine;
 ///     public override void UpdateState(float dt)
 ///     {
 ///         base.UpdateState(dt);
-///         if (!IsLeaving &amp;&amp; Engine.Input.Keyboard.AnyPressed) GoTo(new GameScene());
+///         if (!IsLeaving && Engine.Input.Keyboard.AnyPressed) GoTo(new GameScene());
 ///     }
 /// }
-/// </code>
+/// ]]></code>
 /// </summary>
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 public abstract class Scene : GameObject

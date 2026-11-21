@@ -14,10 +14,10 @@ namespace Horizon.UI;
 /// A piece of UI out of a layout file. The components a HIDL script made, by the names the script gave them.
 /// This is how a program gets its UI from files that can be changed (and drawn up in an editor) without
 /// touching the code.
-/// <code>
+/// <code><![CDATA[
 /// var layout = UILayout.Load(module, "Assets/ui/menu.hor");
-/// layout.Get&lt;Button&gt;("play").OnPressed = Play;
-/// </code>
+/// layout.Get<Button>("play").OnPressed = Play;
+/// ]]></code>
 /// Every layout runs in a scope of its own, so two files (or the same file twice) never trip over each
 /// other's names. That is also what makes a layout usable as a template. What isn't known until the program
 /// runs (a row per save game, a cell per character) is a container in the layout that names the file its
@@ -170,9 +170,9 @@ public sealed class UILayout
     /// <summary>
     /// Fills a container with an item per thing in a list, and has each one filled in. The usual loop, minus the
     /// bit everybody gets wrong.
-    /// <code>
-    /// layout.Populate("maps", maps, (item, map, i) => item.Get&lt;Label&gt;("name").Text = map.Name);
-    /// </code>
+    /// <code><![CDATA[
+    /// layout.Populate("maps", maps, (item, map, i) => item.Get<Label>("name").Text = map.Name);
+    /// ]]></code>
     /// </summary>
     public IReadOnlyList<UILayout> Populate<T>(Panel container, IReadOnlyList<T> data, Action<UILayout, T, int> fill)
     {

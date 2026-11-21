@@ -196,7 +196,6 @@ public partial class WindowManager
     private bool MayWaitForEvents => (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && !InputLately;
 
     /// <summary>
-    /// Sets the maximum idle sleep.    /// <summary>
     /// Sets the maximum idle sleep. Timed UI changes can request an earlier tick.
     /// An application only, a self test run as a game keeps its pace. Any thread.
     /// </summary>

@@ -46,7 +46,7 @@ public partial class MenuBar
 
     private bool PointerMovedSinceKeys => float.IsNaN(keysPointer.X) || Vector2.DistanceSquared(keysPointer, Pointer) > 4.0f;
 
-    /// <summary>The title as it's shown, without the & that marks its mnemonic.</summary>
+    /// <summary>The title as it's shown, without the <c>&amp;</c> that marks its mnemonic.</summary>
     internal static string TitleShown(string title)
     {
         int at = title.IndexOf('&');

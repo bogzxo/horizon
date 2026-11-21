@@ -38,7 +38,7 @@ public sealed class CompiledShader
 /// <see cref="ShaderPack"/>. <c>HORIZON_SHADERS=packed</c> makes a desktop run do that too and nothing else, no
 /// cache and no compiler, so a pack can be proven without a phone. <c>HORIZON_SHADERS=compile</c> never looks at a
 /// pack. Unset, the compiler is used and the pack only once Slang turns out not to be there.
-/// <c>HORIZON_SHADER_MANIFEST=&lt;file&gt;</c> writes down every program asked for, cache hits too, which is what
+/// <c>HORIZON_SHADER_MANIFEST=&lt;file></c> writes down every program asked for, cache hits too, which is what
 /// <c>Horizon.Shaders.Build</c> makes a pack out of.
 /// </para>
 /// </summary>

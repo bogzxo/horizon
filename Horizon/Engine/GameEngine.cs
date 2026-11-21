@@ -16,10 +16,10 @@ namespace Horizon.Engine;
 /// <summary>
 /// The engine. It opens the window, keeps the scene that is on screen updated and drawn, and has everything a game reaches for.
 /// A whole game starts like this.
-/// <code>
+/// <code><![CDATA[
 /// using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "My game" });
-/// engine.Run&lt;MainMenuScene&gt;();
-/// </code>
+/// engine.Run<MainMenuScene>();
+/// ]]></code>
 /// Everything in a scene gets at it through <see cref="GameObject.Engine"/>, everything else through <see cref="Instance"/>.
 /// </summary>
 public class GameEngine : Entity

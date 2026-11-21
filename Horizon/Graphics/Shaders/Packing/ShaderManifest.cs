@@ -44,12 +44,12 @@ public sealed record ShaderManifestEntry(
 /// Every program some runs asked for, which is what <c>Horizon.Shaders.Build</c> compiles into a pack. A text file,
 /// a line a program and a line an input under it, tab separated, sorted, with \n endings and nothing about the
 /// machine or the time, so it can be checked in and diffed.
-/// <code>
+/// <code><![CDATA[
 /// horizon-shader-manifest	1
-/// file	slang	4096	&lt;hash&gt;	shaders/post/blur.slang
-/// input	shaders/post/blur.slang	&lt;hash&gt;
-/// inline	slang	4096	&lt;hash&gt;	name	&lt;base64 source&gt;
-/// </code>
+/// file	slang	4096	<hash>	shaders/post/blur.slang
+/// input	shaders/post/blur.slang	<hash>
+/// inline	slang	4096	<hash>	name	<base64 source>
+/// ]]></code>
 /// </summary>
 public sealed class ShaderManifest
 {

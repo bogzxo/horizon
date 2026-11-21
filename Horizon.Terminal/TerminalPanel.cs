@@ -70,12 +70,12 @@ public sealed class TerminalTab
 /// application wants for itself (its tabs and splits) come through <see cref="OnKey"/> before the shell sees them.
 /// Everything that moves is a tween of <see cref="UIComponent.Tweens"/>, a split sliding open, a tab's room sliding
 /// over as another is opened, a tab folding away as it closes, all of it <see cref="AnimationTime"/> long and off at 0.
-/// <code>
+/// <code><![CDATA[
 /// var panel = module.AddComponent(new TerminalPanel { Fill = UIFill.Both });
 /// panel.Profiles.AddRange(TerminalProfiles.Discover());
 /// panel.NewTab();
-/// panel.OnKey = press => press.Control &amp;&amp; press.Shift &amp;&amp; press.Key == Key.T &amp;&amp; panel.NewTab() is not null;
-/// </code>
+/// panel.OnKey = press => press.Control && press.Shift && press.Key == Key.T && panel.NewTab() is not null;
+/// ]]></code>
 /// </summary>
 public partial class TerminalPanel : UIComponent, IDisposable
 {

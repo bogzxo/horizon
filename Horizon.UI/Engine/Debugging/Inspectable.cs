@@ -148,7 +148,7 @@ internal static class Inspectable
         !type.IsPrimitive && !type.IsEnum && type != typeof(string) && type != typeof(decimal) &&
         (typeof(IEnumerable).IsAssignableFrom(type) || MembersOf(type).Count > 0);
 
-    /// <summary>What a type is called by somebody who writes C#, List&lt;Light2D&gt; rather than List`1.</summary>
+    /// <summary>What a type is called by somebody who writes C#, List&lt;Light2D> rather than List`1.</summary>
     public static string NameOf(Type type)
     {
         if (Nullable.GetUnderlyingType(type) is { } inner)

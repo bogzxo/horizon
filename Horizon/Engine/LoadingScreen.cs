@@ -13,12 +13,12 @@ namespace Horizon.Engine;
 /// stretch was whatever the system had lying around in the window, which on a slow start (a scene with a lot to
 /// load, shaders compiled for the first time) is a good long look at garbage. It is a colour with a picture over
 /// it, the engine's own unless the game brings one. It doesn't move, nothing is updated while a scene is set up.
-/// <code>
+/// <code><![CDATA[
 /// using var engine = new GameEngine(window);
 /// engine.LoadingScreen.Image = "Assets/loading.png";
 /// engine.LoadingScreen.Color = new Vector3(0.02f, 0.02f, 0.03f);
-/// engine.Run&lt;MainMenuScene&gt;();
-/// </code>
+/// engine.Run<MainMenuScene>();
+/// ]]></code>
 /// It is drawn once before anything of the engine or the game is set up, the window is only shown once it is in
 /// it, and then under every frame until the first scene draws. All of it is set before <see cref="GameEngine.Run()"/>.
 /// </summary>
