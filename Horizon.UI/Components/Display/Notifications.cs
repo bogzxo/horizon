@@ -76,6 +76,11 @@ public sealed class UINotification
     internal float Place = float.NaN;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
+    internal object? WrappedFont;
+    internal float WrappedScale;
+    internal readonly List<(string Label, string Display, UIRect Bounds)> Buttons = [];
+    internal object? ButtonFont;
+    internal float ButtonScale, ButtonWidth, ButtonAreaHeight;
 
     // Its detail as it was last cut to the card, for which detail, in what font, at what scale and in what width, cut
     // again only when one of them moved rather than every frame the card is up
@@ -152,21 +157,28 @@ public class Notifications : UIComponent
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
+    private float CardWidth => Parent?.Bounds.Width is > 0.0f and var available
+        ? Math.Clamp(Width, 0.0f, MathF.Max(0.0f, available - MathF.Abs(Position.X)))
+        : Width;
+
     private float HeightOf(UINotification card, UISkin skin)
     {
         float scale = ScaleOf(skin);
-        float textWidth = Width - PADDING * 3.0f - ICON - CLOSE;
-        if (card.WrappedFor != textWidth)
+        float textWidth = MathF.Max(1.0f, CardWidth - PADDING * 3.0f - ICON - CLOSE);
+        if (card.WrappedFor != textWidth || card.WrappedFont != skin.Font || card.WrappedScale != scale)
         {
             card.Lines.Clear();
             skin.Font.Wrap(card.Text, scale, textWidth, card.Lines, markup: false);
             card.WrappedFor = textWidth;
+            card.WrappedFont = skin.Font;
+            card.WrappedScale = scale;
         }
 
         float text = MathF.Max(1, card.Lines.Count) * skin.Font.LineHeight * scale;
         float detail = card.Detail.Length > 0 ? skin.Font.LineHeight * scale * DETAIL + GAP * 0.5f : 0.0f;
         float bar = card.Progress is not null ? BAR + GAP : 0.0f;
-        return PADDING * 2.0f + MathF.Max(ICON, text) + detail + bar + (card.Actions.Count > 0 ? ACTION_HEIGHT + GAP : 0.0f);
+        LayoutActions(card, skin, CardWidth);
+        return PADDING * 2.0f + MathF.Max(ICON, text) + detail + bar + card.ButtonAreaHeight;
     }
 
     protected override Vector2 Measure(UISkin skin)
@@ -175,7 +187,7 @@ public class Notifications : UIComponent
         foreach (UINotification card in shown)
             height += HeightOf(card, skin) + GAP;
 
-        return new Vector2(Width, MathF.Max(0.0f, height - GAP));
+        return new Vector2(CardWidth, MathF.Max(0.0f, height - GAP));
     }
 
     // How quickly a card glides to its place, the share of the way left it goes in a second's worth of frames
@@ -276,20 +288,48 @@ public class Notifications : UIComponent
     private static UIRect CloseBounds(UIRect card) =>
         new(new Vector2(card.Max.X - PADDING - CLOSE, card.Max.Y - PADDING - CLOSE), new Vector2(card.Max.X - PADDING, card.Max.Y - PADDING));
 
-    // The first of them at the right end, it's the one to press as a dialog's is, the rest leftwards in the order given
-    private UIRect ActionBounds(UIRect card, UINotification notification, int action, UISkin skin)
+    // The primary action stays at the bottom right. Additional rows grow toward the text.
+    private void LayoutActions(UINotification card, UISkin skin, float width)
     {
-        float right = card.Max.X - PADDING;
         float scale = ScaleOf(skin);
-        for (int i = 0; i < notification.Actions.Count; i++)
+        if (card.ButtonWidth == width && card.ButtonFont == skin.Font && card.ButtonScale == scale && card.Buttons.Count == card.Actions.Count)
         {
-            float width = skin.Font.Measure(notification.Actions[i].Label, scale, markup: false).X + PADDING * 2.0f;
-            if (i == action)
-                return new UIRect(new Vector2(right - width, card.Min.Y + PADDING), new Vector2(right, card.Min.Y + PADDING + ACTION_HEIGHT));
-            right -= width + GAP;
+            int i = 0;
+            while (i < card.Actions.Count && card.Buttons[i].Label == card.Actions[i].Label)
+                i++;
+            if (i == card.Actions.Count)
+                return;
         }
 
-        return default;
+        card.Buttons.Clear();
+        card.ButtonWidth = width;
+        card.ButtonFont = skin.Font;
+        card.ButtonScale = scale;
+        float inset = MathF.Min(PADDING, width * 0.5f);
+        float edge = width - inset;
+        float right = edge;
+        float bottom = PADDING;
+        foreach (var (label, _) in card.Actions)
+        {
+            float natural = skin.Font.Measure(label, scale, markup: false).X + 2.0f * PADDING;
+            float buttonWidth = MathF.Min(natural, edge - inset);
+            if (right < edge && right - buttonWidth < inset)
+            {
+                right = edge;
+                bottom += ACTION_HEIGHT + GAP;
+            }
+            var bounds = new UIRect(new Vector2(right - buttonWidth, bottom), new Vector2(right, bottom + ACTION_HEIGHT));
+            string display = natural <= buttonWidth ? label : Fitted(label, skin, scale, buttonWidth - 2.0f * PADDING);
+            card.Buttons.Add((label, display, bounds));
+            right -= buttonWidth + GAP;
+        }
+        card.ButtonAreaHeight = card.Actions.Count == 0 ? 0.0f : bottom - PADDING + ACTION_HEIGHT + GAP;
+    }
+
+    private static UIRect ActionBounds(UIRect bounds, UINotification card, int action)
+    {
+        var button = card.Buttons[action].Bounds;
+        return new UIRect(bounds.Min + button.Min, bounds.Min + button.Max);
     }
 
     /// <summary>
@@ -301,8 +341,8 @@ public class Notifications : UIComponent
 
     /// <summary>Where a button of a card that's up is, empty for one that's gone or a button it hasn't got. See <see cref="CardBoundsOf"/>.</summary>
     public UIRect ActionBoundsOf(UINotification card, int action) =>
-        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds && Module?.Compositor.Skin is { } skin
-            ? ActionBounds(bounds, card, action, skin) : default;
+        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds
+            ? ActionBounds(bounds, card, action) : default;
 
     protected internal override void OnPointerUp(Vector2 point)
     {
@@ -324,7 +364,7 @@ public class Notifications : UIComponent
 
             for (int action = 0; action < card.Actions.Count; action++)
             {
-                if (ActionBounds(bounds, card, action, skin).Contains(point))
+                if (ActionBounds(bounds, card, action).Contains(point))
                 {
                     card.Close();
                     card.Actions[action].Pressed();
@@ -412,7 +452,7 @@ public class Notifications : UIComponent
 
             for (int action = 0; action < card.Actions.Count; action++)
             {
-                UIRect button = ActionBounds(bounds, card, action, skin);
+                UIRect button = ActionBounds(bounds, card, action);
                 bool lit = button.Contains(pointer);
 
                 // Only the first in the accent, the rest a quiet fill of the text's colour. Three gold buttons had none of
@@ -420,12 +460,12 @@ public class Notifications : UIComponent
                 if (action == 0)
                 {
                     list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
-                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+                    list.Text(card.Buttons[action].Display, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
                 }
                 else
                 {
                     list.RoundRect(button, skin.CornerRadius, skin.TextColor with { W = (lit ? 0.18f : 0.1f) * card.Alpha });
-                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
+                    list.Text(card.Buttons[action].Display, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
                 }
             }
 
@@ -446,11 +486,15 @@ public class Notifications : UIComponent
     // A line cut to a width with an ellipsis, the whole of it when it fits
     private static string Fitted(string line, UISkin skin, float scale, float width)
     {
-        if (width <= 0.0f || skin.Font.Measure(line, scale, markup: false).X <= width)
+        if (width <= 0.0f)
+            return string.Empty;
+        if (skin.Font.Measure(line, scale, markup: false).X <= width)
             return line;
 
+        if (skin.Font.Measure("\u2026", scale, markup: false).X > width)
+            return string.Empty;
         int keep = line.Length;
-        while (keep > 1 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
+        while (keep > 0 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
             keep = keep * 3 / 4;
         return string.Concat(line.AsSpan(0, keep), "\u2026");
     }
