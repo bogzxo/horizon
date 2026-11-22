@@ -252,6 +252,9 @@ public partial class SettingsPage : UIComponent
     /// </summary>
     public Func<string, string?>? NoteOf { get; set; }
 
+    /// <summary>Explains why a setting cannot be edited, or returns null when its controls are enabled.</summary>
+    public Func<string, string?>? DisabledReasonOf { get; set; }
+
     /// <summary>What a row's note says when the pointer rests on it, null for nothing.</summary>
     public Func<string, string?>? NoteTipOf { get; set; }
 
@@ -409,7 +412,7 @@ public partial class SettingsPage : UIComponent
         if (rowOf.TryGetValue(key, out SettingRow? row))
         {
             row.Show(ValueOf?.Invoke(key), IsModified?.Invoke(key) ?? false);
-            row.Dimmed = ParentOff(row.Setting);
+            row.Dimmed = !row.Enabled || ParentOff(row.Setting);
         }
 
         // The rows that hang off it fade or come back with it
@@ -441,7 +444,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>A setting set as if it had been changed on its row, for a test.</summary>
     public bool Enter(string key, IRuntimeValue value)
     {
-        if (!rowOf.ContainsKey(key))
+        if (!rowOf.ContainsKey(key) || DisabledReasonOf?.Invoke(key) is not null)
             return false;
         OnChanged?.Invoke(key, value);
         Refresh(key);
@@ -451,7 +454,7 @@ public partial class SettingsPage : UIComponent
     /// <summary>A setting's reset pressed, for a test.</summary>
     public bool Reset(string key)
     {
-        if (!rowOf.ContainsKey(key))
+        if (!rowOf.ContainsKey(key) || DisabledReasonOf?.Invoke(key) is not null)
             return false;
         OnReset?.Invoke(key);
         Refresh(key);
@@ -468,7 +471,7 @@ public partial class SettingsPage : UIComponent
             return null;
 
         var menu = new Menu(row.Setting.Title);
-        if (IsModified?.Invoke(key) == true)
+        if (DisabledReasonOf?.Invoke(key) is null && IsModified?.Invoke(key) == true)
         {
             menu.Add(texts.ResetSetting, () => ResetPressed(key), icon: "discard");
             menu.AddSeparator();
@@ -790,11 +793,16 @@ public partial class SettingsPage : UIComponent
 
     internal void Changed(string key, IRuntimeValue value)
     {
-        OnChanged?.Invoke(key, value);
+        if (DisabledReasonOf?.Invoke(key) is null)
+            OnChanged?.Invoke(key, value);
         Refresh(key);
     }
 
-    internal void ButtonPressed(string key, int which) => OnButton?.Invoke(key, which);
+    internal void ButtonPressed(string key, int which)
+    {
+        if (DisabledReasonOf?.Invoke(key) is null)
+            OnButton?.Invoke(key, which);
+    }
 
     internal void ResetPressed(string key)
     {

@@ -272,13 +272,15 @@ internal sealed partial class SettingRow : StackPanel
     public void Show(IRuntimeValue? value, bool isModified)
     {
         modified = isModified;
-        reset.Visible = isModified;
+        string? disabledReason = page.DisabledReasonOf?.Invoke(Setting.Key);
+        Enabled = disabledReason is null;
+        reset.Visible = isModified && Enabled;
 
         // What the reset puts back said on it, only asked for while there's a reset to rest the pointer on
         if (isModified)
             reset.Tooltip = page.ResetText(Setting.Key);
         show(value);
-        ShowNote(page.NoteOf?.Invoke(Setting.Key), page.NoteTipOf?.Invoke(Setting.Key));
+        ShowNote(disabledReason ?? page.NoteOf?.Invoke(Setting.Key), disabledReason ?? page.NoteTipOf?.Invoke(Setting.Key));
     }
 
     /// <summary>What its note says after its key, null for none.</summary>
