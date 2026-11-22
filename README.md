@@ -27,7 +27,7 @@ using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 wit
 engine.Run<MainScene>();
 ```
 
-`MainScene` is a `Scene`, or a `Scene2D` for a lit world with a camera, sprites, shapes and a UI already in it, the [guide](docs/guide/getting-started.md) goes from there.
+`MainScene` is a `Scene`, or a `Scene2D` for a lit world with a camera, sprites, shapes and a UI already in it, the [guide](docs/guide/getting-started.md) goes from there, and [`samples/ThreeBody`](samples/ThreeBody) is a whole small game made this way, the three body problem with glowing trails, presets and mouse controls, [read through in the guide](docs/guide/a-first-game.md).
 
 ## Desktop applications
 

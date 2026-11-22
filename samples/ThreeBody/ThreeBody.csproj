@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ThreeBody</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="bogzxo.Horizon.Engine" Version="1.5.0" />
+    <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.5.0" />
+    <PackageReference Include="bogzxo.Horizon.UI" Version="1.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Scenarios\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

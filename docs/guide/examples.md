@@ -2,6 +2,8 @@
 
 Every example in the selector, in the order the selector lists them, which is also the order Page Up and Page Down walk them in, each one only uses what the ones above it have shown. The id is what `dotnet run -- <id>` takes, the sources are under `Horizon.Testing/`, and the names in the last column are the parts of the engine the example is about, by the names they go by in code, so they can be searched for.
 
+Beside them, outside the selector, `samples/ThreeBody` is a whole small game on the engine's NuGet packages, read through in [A first game](a-first-game.md).
+
 ## First steps
 
 A window, something drawn in it, something read off the keyboard.
