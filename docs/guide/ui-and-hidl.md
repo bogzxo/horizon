@@ -2,7 +2,16 @@
 
 Horizon's UI is UIX, which lives in Horizon.UI, and its layouts are written in HIDL, the engine's scripting language. The same UI that draws a game's HUD draws the whole of the [Hex](https://github.com/bogzxo/hex) editor, its explorer, its code editor and its settings, so everything on this page holds as much for a desktop application as for a game, see [Desktop applications](desktop-applications.md) for the parts that are an application's alone.
 
-The examples for this page, in the order worth reading them, are `ui` (`Examples/Game/UIBasicsExample.cs`), `ui-layouts` (`Examples/Game/UILayoutsExample.cs`), `ui-controls` (`Examples/Game/UIControlsExample.cs`, with its layout `Assets/examples/ui/gallery.hor`), `ui-skin` and `touch-input`.
+The examples for this page, in the order worth reading them, are `ui` (`Examples/Game/UIBasicsExample.cs`), `ui-layouts` (`Examples/Game/UILayoutsExample.cs`), `ui-controls` (`Examples/Game/UIControlsExample.cs`, with its layout `Assets/examples/ui/gallery.hor`), `ui-skin` and `touch-input`. The screenshots on this page are those examples and checks as they run, taken with `HORIZON_SCREENSHOT` in the Dead Revolver skin at 1600 by 900, with the list of keys folded away (F1).
+
+| | |
+|---|---|
+| ![The ui example, the same panel written as a script on the left and built in C# on the right, with two HUD bars pinned to the top corners](images/ui-basics.png) | ![The ui-controls example, the Pick page of tabs with a dropdown, a selector, a slider, a progress bar, a number box and a toggle](images/ui-controls.png) |
+| `ui`, the same panel as a script and in C#, and a HUD pinned to the corners | `ui-controls`, one of everything, a page at a time |
+| ![The ui-skin example, the Dead Revolver pack as a skin, with buttons, bars, a slider, toggles, a text box and pad and key icons in the middle of text](images/ui-skin.png) | ![The ui-layouts example, a settings screen with Sound, Video and Mates tabs loaded from settings.hor, and a HUD in the corner](images/ui-layouts.png) |
+| `ui-skin`, a pack of art as a skin, icons in text | `ui-layouts`, a settings screen out of a `.hor` file |
+
+The HIDL on this page is shown in `js` code fences. GitHub has no highlighter for HIDL, it only highlights languages Linguist knows, and a language is only added to Linguist once hundreds of public repositories use it, of the ones it does know JavaScript reads HIDL best, its comments, `let`, strings, numbers and calls all come out right and nothing is marked as an error, only `#define` and `func` stay plain. The engine's `.gitattributes` has `.hor` files shown the same way on GitHub, and Hex colours HIDL properly, with the language's own lexer.
 
 ## A UI is a component
 
@@ -53,7 +62,7 @@ bars.OnPressed = () => _health.Visible = _stamina.Visible = bars.State;
 
 The script is `Assets/examples/ui/scripted_panel.hor`, a layout is a script in which everything it makes is a variable, and the program finds them by those names with `layout.Get<Button>("more")`, what a button does can be said right in the layout, for anything that only touches the UI, or left for the program to say.
 
-```
+```js
 #define layout
 
 let panel = compositor.stack({ color: vec(0.1, 0.12, 0.17, 0.92), radius: 10, padding: 24, spacing: 16 });
@@ -78,7 +87,7 @@ A module loaded from a layout is still a module, so it moves and scales as one, 
 
 The pattern that scales is the one `ui-controls` uses, the layout says what there is and where it sits, and the C# says what each thing does, which for most controls is a line. This is the top of its layout, trimmed.
 
-```
+```js
 #define layout
 
 compositor.design({ size: vec(1600, 900), fit: "contain" });
@@ -145,6 +154,10 @@ for (int i = 0; i < rows.Count; i++)
 }
 ```
 
+![The check-ui-layout check, a grid of buttons, a scroll panel of rows, a number box and a selector on the left, and items made from a template out of a layout file on the right](images/check-ui-layout.png)
+
+*`check-ui-layout`, a grid, a scroll panel filled from a template and a number box on the left, and items out of a layout file on the right, each pressed and read back by the check itself.*
+
 For a list that keeps changing, `UILayout.Bind` fills a container from the list and keeps it filled, only what is new gets made and makes an entrance, the rest is kept and filled in again, `ui-layouts` binds a list of mates that grows and shrinks with + and -. For hundreds of rows, the explorer of an editor or a list of search results, a `TreeView` paints its rows itself and only the ones in sight, rather than a component for every row, see [Desktop applications](desktop-applications.md).
 
 ## Dialogs, menus and tooltips
@@ -183,6 +196,10 @@ var notes = module.AddComponent(new Label
     OnLink = where => OpenGuide(where)
 });
 ```
+
+![The check-ui-text check, styled text out of tags on the left, markdown with headings, lists, a quote, code and a link in the middle, and text wrapping round a box on the right](images/check-ui-text.png)
+
+*`check-ui-text`, the check that drives all of it, tags on the left, markdown in the middle, a code editor under it and wrapped text on the right.*
 
 A label given a width and told to wrap breaks its own lines between words and grows downwards to fit them. Text that holds a name somebody typed goes through `UIRichText.Literal` first, so a name with brackets in it is shown as written rather than read as a tag.
 
@@ -235,4 +252,12 @@ A skin is the art and colours every control is drawn in, a folder under `Assets/
 | `ui-skin` | a pack of art as a skin in every theme it has, icons in text, sprites from the same pack |
 | `touch-input` | taps, double clicks, holding for a menu and scrolling by a finger, with every pointer read out |
 
-Hex opens the same `.hor` files and lays them out with a mouse for whoever would rather click than type, and the `check-ui-*` checks click through all of the above by themselves, see [Checks](checks.md).
+The `check-ui-*` checks click through all of the above by themselves, see [Checks](checks.md).
+
+## Designing layouts in Hex
+
+Hex opens the same `.hor` files in its designer, for whoever would rather click than type. The toolbox on the left has every component a layout can make, the canvas in the middle shows the layout in the game's skin at the size it was designed for, the tree under the toolbox is the layout's components by name, and the properties on the right are the selected component's, every one of them the same field the layout's script sets. Design, Code and Play switch between the designer, the script it writes and the layout running with its handlers.
+
+![Hex's designer with its own welcome screen open, the toolbox of components on the left, the layout on the canvas with the Open Folder button selected, the tree of components under the toolbox and the button's properties on the right](images/hex-designer.webp)
+
+*Hex's designer with Hex's own welcome screen open, which is a layout like any other, the Open Folder button selected.*

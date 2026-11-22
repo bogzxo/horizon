@@ -35,6 +35,8 @@ The same engine runs high performance desktop GUI applications, with `RunMode.Ap
 
 [Hex](https://github.com/bogzxo/hex) is the proof, an editor drawn by Horizon with no browser underneath, 450 ms from launch to its first frame, 56 ms to wake from its background sleep and about 2% of one core at rest, by its own published measurements. [Desktop applications](docs/guide/desktop-applications.md) shows how a program of your own does the same.
 
+![Hex's editor, drawn entirely by Horizon, with the explorer, semantic colours, reference counts, git blame and the minimap](docs/guide/images/hex-editor.webp)
+
 ```csharp
 using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with
 {

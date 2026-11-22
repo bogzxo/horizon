@@ -6,3 +6,6 @@
 *.fish text eol=lf
 *.sh text eol=lf
 Horizon/Assets/terminal/shell/zsh/.* text eol=lf
+
+# HIDL has no highlighter of its own on GitHub, JavaScript reads it best. Not counted as JavaScript in the language bar
+*.hor linguist-language=JavaScript linguist-detectable=false

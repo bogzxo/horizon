@@ -13,6 +13,17 @@ Hex is C# compiled ahead of time with NativeAOT and drawn through Vulkan by Hori
 
 The method, every launch's numbers and how to reproduce them are in [Hex's benchmarks](https://github.com/bogzxo/hex/blob/master/docs/benchmarks.md). The rest of this page is what an application does differently from a game, all of it in the engine and none of it Hex's alone.
 
+![Hex's editor in the Solstice theme with a small C# synthesiser open, the explorer, semantic colours, reference counts, git blame on the current line and the minimap](images/hex-editor.webp)
+
+*Hex's editor, every pixel of it drawn by Horizon and UIX, a frameless window with its own title bar and menus, a `TreeView` explorer and the `CodeEditor`, with the colours and reference counts coming from csharp-ls. Taken from Hex 3.3.0.*
+
+| | |
+|---|---|
+| ![Hex's settings over the editor, a searchable page of settings in sections, with toggles and a number box](images/hex-settings.webp) | ![Hex's workspace search for Peak, 15 results in 3 files grouped by file](images/hex-search.webp) |
+| A `SettingsPage` in a `WindowPanel` over the editor, sections on the left, search over the top | Search across the workspace, its results in a `TreeView` grouped by file |
+| ![Hex's Agentic view, a chat at work with its card, its tool calls, the Changes and Plan tabs and its model, tokens, cost and context](images/hex-agentic.webp) | ![Hex's designer with its welcome screen open, the toolbox, the canvas, the tree of components and the properties](images/hex-designer.webp) |
+| Agentic, chats side by side, each card a part of its own | The designer, laying out a `.hor` file, see [UI and HIDL](ui-and-hidl.md#designing-layouts-in-hex) |
+
 ## Running as an application
 
 A game draws every frame the screen shows and ticks at its rate whatever is going on, an application wants the opposite, to cost next to nothing while nobody is using it, and saying so is one line of the window's configuration.
@@ -77,7 +88,7 @@ The rule is the one from [Threads, entities and components](threads-and-entities
 
 With `CustomFrame` the window has no title bar or border of the system's, and the UI draws its own, a `TitleBar` with the window's icon, title and minimise, maximise and close at the right end, dragged to move the window and double clicked to maximise it, with whatever a layout puts in it in between, the way VS Code puts its menus in its title bar.
 
-```
+```js
 #define layout
 
 let bar = compositor.title_bar({ title: "Notes", icon: "notebook" });
