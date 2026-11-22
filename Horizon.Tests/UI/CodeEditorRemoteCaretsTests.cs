@@ -4,11 +4,12 @@ using Horizon.UI;
 using Horizon.UI.Components;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
+using Xunit.Abstractions;
 
 namespace Horizon.Tests.UI;
 
 [Collection("UI focus restoration")]
-public class CodeEditorRemoteCaretsTests
+public class CodeEditorRemoteCaretsTests(ITestOutputHelper output)
 {
     [Fact]
     public void Sixteen_carets_paint_in_a_shared_editor()
@@ -38,7 +39,7 @@ public class CodeEditorRemoteCaretsTests
         double empty = Measure(count);
         editor.RemoteCarets = carets;
         double populated = Measure(count);
-        Console.WriteLine($"link carets paint, ms/frame ({count} frames): empty {empty:F3}, 16 painters {populated:F3}");
+        output.WriteLine($"link carets paint, ms/frame ({count} frames): empty {empty:F3}, 16 remote carets {populated:F3}");
 
         double Measure(int turns)
         {
