@@ -333,7 +333,7 @@ Self-contained, deterministic-step, runs in `UpdatePhysics` (sim thread). Not a 
 ## 11. Dependencies and build
 
 - `horizon/global.json`: SDK `11.0.100-rc.2.26504.105`, `rollForward: latestMajor`, prerelease allowed.
-- `horizon/Directory.Build.props`: imports the nearest parent `Directory.Build.props` (workspace root) and sets `Version 1.4.0` for projects named `Horizon*`.
+- `horizon/Directory.Build.props`: imports the nearest parent `Directory.Build.props` (workspace root) and sets `Version 1.5.0` for projects named `Horizon*`.
 - Horizon.csproj NuGet: `DotTiled 1.0.0` (Tiled maps), `NVorbis 0.10.5` (ogg), `Slangc.NET 2026.19.0` (Slang shader compiler), `Silk.NET.Vulkan(+EXT,+KHR) 2.23.0`,
   `StbImageSharp`, `StbImageWriteSharp`, `StbTrueTypeSharp`. ProjectReference: `Horizon.HIDL`.
   Windowing/input/SDL (`Silk.NET.Windowing/Input/SDL`, `MoltenVK.Native`) are in `Horizon.Platform.Desktop`, not core.

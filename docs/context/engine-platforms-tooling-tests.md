@@ -30,7 +30,7 @@ looks stale (unclear which is intended, the sln line is authoritative for what `
 
 Shared build config:
 - `Directory.Build.props` (engine root) imports any parent `Directory.Build.props` (workspace's `../Directory.Build.props`
-  sets `HorizonRoot`/`HidlRoot`) and sets `<Version>1.4.0</Version>` for every project whose name starts with `Horizon`
+  sets `HorizonRoot`/`HidlRoot`) and sets `<Version>1.5.0</Version>` for every project whose name starts with `Horizon`
   (AutoVoxel gets no version).
 - `global.json`: SDK `11.0.100-rc.2.26504.105`, `rollForward: latestMajor`, `allowPrerelease: true`.
 - Libraries use `LangVersion preview`, `Nullable enable`, `AllowUnsafeBlocks`, `InvariantGlobalization` (iOS test app turns
@@ -367,7 +367,7 @@ Mirror Android/iOS: `IPlatform` + `IPlatformHost` + `IPlatformSurface` + `IPlatf
 - Real-process pty tests are flaky under parallelism: keep them in the serialized collection. DAP tests have a 15 s read timeout because Linux/macOS runners once hung silently.
 - `Horizon.Tests` depends on the Debug/Release split: Skyline-related tests only exist in Debug.
 - iOS README says controllers are unread but `IosGamepads.cs` exists: verify before relying on either.
-- Version 1.4.0 applies to projects whose *name* starts with `Horizon`.
+- Version 1.5.0 applies to projects whose *name* starts with `Horizon`.
 - `Horizon.Testing.csproj.user` and `.DS_Store` files sit in the Testing folder (not meaningful).
 - `docs` mentioned in comments but not present in checkout: `notes/android-plan.md`, `android-host-results.md`, workspace `artifacts/android-platform-baseline/*` (unclear where they live).
 
