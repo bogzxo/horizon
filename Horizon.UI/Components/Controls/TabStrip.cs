@@ -77,6 +77,8 @@ public class TabStrip : UIComponent
     private const float TAB_PADDING = 10.0f;
     private const float GAP = 6.0f;
     private const float WHEEL_STEP = 60.0f;
+    private const float PRESENCE_DOT = 6.0f;
+    private const float PRESENCE_STEP = PRESENCE_DOT + 2.0f;
 
     private float scroll;
     private int revealedSelection = -1;
@@ -165,7 +167,7 @@ public class TabStrip : UIComponent
     private static float PresenceWidth(StripTab tab, UISkin skin, float scale)
     {
         int count = tab.PresenceColors.Count;
-        return count == 0 ? 0 : 4 + Math.Min(3, count) * 7 +
+        return count == 0 ? 0 : 4 + Math.Min(3, count) * PRESENCE_STEP +
             (count > 3 ? skin.Font.Measure(tab.PresenceOverflow, scale * 0.8f, markup: false).X : 0);
     }
 
@@ -376,9 +378,10 @@ public class TabStrip : UIComponent
 
             int dots = Math.Min(3, tab.PresenceColors.Count);
             float mark = x + titleWidth + 4;
-            for (int person = 0; person < dots && mark + 5 <= close.Min.X; person++, mark += 7)
-                list.Symbol("circle-filled", new UIRect(new(mark, area.Center.Y - 2.5f), new(mark + 5, area.Center.Y + 2.5f)),
-                    tab.PresenceColors[person]);
+            float radius = PRESENCE_DOT * 0.5f;
+            for (int person = 0; person < dots && mark + PRESENCE_DOT <= close.Min.X; person++, mark += PRESENCE_STEP)
+                list.RoundRect(new UIRect(new(mark, area.Center.Y - radius), new(mark + PRESENCE_DOT, area.Center.Y + radius)),
+                    radius, tab.PresenceColors[person]);
             if (tab.PresenceColors.Count > dots && mark < close.Min.X)
                 list.Text(tab.PresenceOverflow,
                     new UIRect(new(mark, area.Min.Y), new(close.Min.X, area.Max.Y)), Origin.Left, scale * 0.8f, plain, markup: false);

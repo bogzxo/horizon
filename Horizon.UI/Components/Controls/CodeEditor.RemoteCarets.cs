@@ -87,13 +87,11 @@ public partial class CodeEditor
                     float small = scale * 0.65f;
                     float width = Width(skin, small, label) + 4;
                     float x = Math.Clamp(caret.X, area.Min.X, Math.Max(area.Min.X, area.Max.X - width));
-                    float bottom = Math.Min(area.Max.Y, caret.Y + lineHeight * 0.65f);
-                    float top = bottom - lineHeight * 0.65f;
-                    if (remote.Line == document.Caret.Line && top < caret.Y)
-                    {
-                        bottom = caret.Y - lineHeight;
-                        top = bottom - lineHeight * 0.65f;
-                    }
+                    float height = lineHeight * 0.65f;
+                    float bottom = caret.Y - lineHeight;
+                    if (bottom - height < area.Min.Y)
+                        bottom = Math.Min(area.Max.Y, caret.Y + height);
+                    float top = bottom - height;
                     var foreground = UIPalette.Contrast(skin.TextColor, remote.Colour) >= UIPalette.Contrast(skin.BarTextColor, remote.Colour)
                         ? skin.TextColor : skin.BarTextColor;
                     list.Rect(new UIRect(new(x, top), new(x + width, bottom)), remote.Colour with { W = alpha });

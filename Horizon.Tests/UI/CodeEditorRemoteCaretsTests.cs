@@ -74,7 +74,10 @@ public class CodeEditorRemoteCaretsTests(ITestOutputHelper output)
         var previous = Paint(null, 1);
         Assert.True(editor.RowCount > editor.Document.LineCount);
         Assert.True(In(previous, peach with { W = 0.20f }).Length > 1);
-        Assert.True(In(previous, mint).Length > 0, $"Bob at {editor.PlaceOf(new(2, 4))}, editor {editor.Bounds}, rows {editor.RowCount}");
+        var bobMarks = In(previous, mint);
+        var bobCaret = Assert.Single(bobMarks, item => item.AxisX.X == 2);
+        var bobTag = Assert.Single(bobMarks, item => item.AxisX.X > 2);
+        Assert.Equal(bobCaret.Origin.Y, bobTag.Origin.Y + bobTag.AxisY.Y, 3);
         var withMouse = In(previous, peach);
         editor.RemoteCarets = [alice with { PointerLine = null, PointerColumn = null }, bob];
         var withoutMouse = Paint(previous, 2);
