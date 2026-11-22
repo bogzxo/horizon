@@ -36,6 +36,7 @@ public static partial class CodeLanguages
         { ".gitignore", ["ignore", "properties"] },
         { ".gitattributes", ["ignore", "properties"] },
         { ".dockerignore", ["ignore", "properties"] },
+        { ".hex-link-ignore", ["ignore", "properties"] },
         { ".editorconfig", ["ini", "properties"] },
         { ".env", ["dotenv", "properties", "shellscript"] },
         { ".bashrc", ["shellscript"] },
