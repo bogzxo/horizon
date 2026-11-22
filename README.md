@@ -1,6 +1,6 @@
 # Horizon
 
-Horizon is a 2D game engine for .NET 11, built around a Vulkan renderer with deferred and path traced lighting, tile maps straight out of Tiled, physics with fluids, particles on the CPU or in a compute shader, a UI framework called UIX, and HIDL, a scripting language of its own that the UI layouts, skins and bindings are written in. It runs on Windows, macOS and Linux, with Android and iOS heads alongside, and it is the engine under the Hex editor and the games built next to it.
+Horizon is a 2D game engine for .NET 11, built around a Vulkan renderer with deferred and path traced lighting, tile maps straight out of Tiled, physics with fluids, particles on the CPU or in a compute shader, a UI framework called UIX, and HIDL, a scripting language of its own that the UI layouts, skins and bindings are written in. It runs on Windows, macOS and Linux, with Android and iOS heads alongside, and it builds desktop applications as readily as games, [Hex](https://github.com/bogzxo/hex), a code editor, terminal and agent workspace, is drawn entirely by it.
 
 A game runs on three threads, the window and input on one, the GPU on another and the simulation on a third, ticking at a fixed rate while frames are drawn between the last two ticks, so things move smoothly at any frame rate, and the engine stays out of the way of the game's own code, a scene is a tree of entities and components with a turn for each thread, and nothing more is asked of it.
 
@@ -29,6 +29,23 @@ engine.Run<MainScene>();
 
 `MainScene` is a `Scene`, or a `Scene2D` for a lit world with a camera, sprites, shapes and a UI already in it, the [guide](docs/guide/getting-started.md) goes from there.
 
+## Desktop applications
+
+The same engine runs high performance desktop GUI applications, with `RunMode.Application` a window draws a frame only when something on it changed, ticks a few times a second while nobody is using it and waits on the system rather than polling it, and its UI is painted then compared, so a tick that changed nothing costs the GPU nothing. A frameless window with a title bar and menus of its own, tree views that paint only the rows in sight, a code editor, settings pages, a real terminal and NativeAOT publishing all come with it.
+
+[Hex](https://github.com/bogzxo/hex) is the proof, an editor drawn by Horizon with no browser underneath, 450 ms from launch to its first frame, 56 ms to wake from its background sleep and about 2% of one core at rest, by its own published measurements. [Desktop applications](docs/guide/desktop-applications.md) shows how a program of your own does the same.
+
+```csharp
+using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with
+{
+    WindowTitle = "Notes",
+    Mode = RunMode.Application,
+    CustomFrame = true,
+    ScaleToDisplay = true
+});
+engine.Run<NotesScene>();
+```
+
 ## The examples
 
 Horizon.Testing is the engine's examples, one scene per thing the engine can do, in an order, simplest first, with a selector to pick one and keys to flick between them, every example is a plain scene, the same kind a game is made of, so they double as the tutorial.
@@ -47,6 +64,8 @@ They go from a bouncing ball with a lamp on it, through sprites, cameras, input,
 | | |
 |---|---|
 | [The guide](docs/guide/README.md) | Horizon by way of its examples, from a first scene to the checks |
+| [UI and HIDL](docs/guide/ui-and-hidl.md) | UIX, layouts, controls, dialogs, styled text and components of your own |
+| [Desktop applications](docs/guide/desktop-applications.md) | Horizon for desktop GUI programs, the way Hex uses it |
 | [HIDL reference](Horizon.HIDL/docs/reference.md) | The scripting language |
 | [Publishing the packages](docs/nuget-publishing.md) | How the NuGet packages are made and published |
 | [`docs/context/`](docs/context/) | Maps of the code, for finding your way round the engine itself |

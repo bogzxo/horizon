@@ -116,4 +116,4 @@ using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 wit
 engine.Run<MainScene>();
 ```
 
-`WindowManagerConfiguration` is a record, so anything else about the window and the loops is changed with the same `with`, `UpdatesPerSecond`, `PhysicsUpdatesPerSecond`, `Presentation` and `VSync` among them, Horizon.Testing turns VSync off and ticks at 120 a second, or 240 for a run of the checks, which goes by updates with nobody watching and is done in half the time.
+`WindowManagerConfiguration` is a struct of `init` properties, so anything else about the window and the loops is changed with the same `with`, `UpdatesPerSecond`, `PhysicsUpdatesPerSecond`, `Presentation` and `VSync` among them, Horizon.Testing turns VSync off and ticks at 120 a second, or 240 for a run of the checks, which goes by updates with nobody watching and is done in half the time.

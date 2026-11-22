@@ -9,9 +9,12 @@ Every example is a plain Scene, the same kind you would write for your own game,
 1. [Getting started](getting-started.md), running the examples, the keys that work in all of them, and a first scene of your own.
 2. [Threads, entities and components](threads-and-entities.md), how Horizon runs, the one thing that will catch you out if you skip it.
 3. [Drawing, input and the world](drawing-and-input.md), shapes, sprites, cameras, the keyboard, the mouse and gamepads.
-4. [UI and HIDL](ui-and-hidl.md), a HUD, a panel built in C#, the same panel written as a script, and menus out of layout files.
-5. [The examples, one by one](examples.md), every example in the selector, what it shows and where its source is.
-6. [Checks and adding your own](checks.md), the scenes that test the engine by themselves, and how to add an example or a check.
+4. [Making a game](making-a-game.md), tweens, scenes and transitions, tile maps, particles, physics and a bit of 3D.
+5. [Light and effects](light-and-effects.md), deferred and path traced lighting, post processing and render scale.
+6. [UI and HIDL](ui-and-hidl.md), a HUD, a panel in C# and as a script, screens out of layout files, lists, dialogs, styled text and components of your own.
+7. [Desktop applications](desktop-applications.md), Horizon as the engine of high performance desktop GUI programs, the way [Hex](https://github.com/bogzxo/hex) is built on it.
+8. [The examples, one by one](examples.md), every example in the selector, what it shows and where its source is.
+9. [Checks and adding your own](checks.md), the scenes that test the engine by themselves, and how to add an example or a check.
 
 ## Where things are
 
