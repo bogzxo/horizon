@@ -51,11 +51,11 @@ No API key is stored anywhere. Each run gets one from nuget.org that lasts an ho
 2. Tag that commit `v` and the version, and push the tag:
 
 ```
-git tag -a v1.2.0 -m "Horizon 1.2.0"
-git push origin v1.2.0
+git tag -a v1.4.0 -m "Horizon 1.4.0"
+git push origin v1.4.0
 ```
 
-The workflow checks the tag against the version, packs the four packages and pushes them. A version that is already on nuget.org is passed over, so a run that failed half way can be run again.
+The workflow checks the tag against the version, packs the four packages and pushes them. A version nuget.org already has, or once had, fails the push with 409 Conflict and fails the run: raise the version and tag again.
 
 A published version cannot be replaced, only unlisted. To publish a change, raise the version.
 
@@ -73,9 +73,9 @@ To upload by hand instead, use https://www.nuget.org/packages/manage/upload, in 
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Horizon.Engine" Version="1.2.0" />
-  <PackageReference Include="Horizon.Platform.Desktop" Version="1.2.0" />
-  <PackageReference Include="Horizon.UI" Version="1.2.0" />
+  <PackageReference Include="Horizon.Engine" Version="1.4.0" />
+  <PackageReference Include="Horizon.Platform.Desktop" Version="1.4.0" />
+  <PackageReference Include="Horizon.UI" Version="1.4.0" />
 </ItemGroup>
 ```
 

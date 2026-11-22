@@ -1,6 +1,6 @@
 ﻿# Every push to master, the engine's programs (the AutoVoxel example and the Horizon.Testing scenes) published for
 # Windows, Linux and macOS, self-contained so .NET needn't be on the machine, a zip for each kept with the run
-# (Actions, the run, Artifacts). A version tag (v1.2.0) is the NuGet workflow's and builds none of this: a release
+# (Actions, the run, Artifacts). A version tag (v1.4.0) is the NuGet workflow's and builds none of this: a release
 # of the engine is its packages, and nothing else goes on it.
 
 name: Build
