@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 
 using Horizon.Graphics;
 using Horizon.Rendering.Spriting;
+using Horizon.Rendering.Text;
 using Horizon.UI.Skinning;
 
 namespace Horizon.UI.Drawing;
@@ -125,6 +126,7 @@ public sealed partial class UIDrawList
         // the lines sat off the screen's pixels and a scroll had the words wobble against the boxes under them
         position = OnScreenPixel(position);
         Vector2 pen = position;
+        int line = 0;
 
         // Bold is the field's edge further out, and room made for it. Italic leans every letter over about the line it sits on
         bool bold = (style & UITextStyle.Bold) != 0;
@@ -132,20 +134,42 @@ public sealed partial class UIDrawList
         float boldAdvance = bold ? font.BoldAdvance * scale : 0.0f;
         float slant = (style & UITextStyle.Italic) != 0 ? UIFont.ITALIC_SLANT : 0.0f;
 
+        // Letters made at the size they're drawn when there's a size to make them at: a TrueType font, upright and
+        // unstretched on the screen and not in the middle of growing or shrinking, which would want a picture a frame
+        ushort madeSize = 0;
+        GlyphOutlines? outlines = font.Outlines;
+        // ClearType's way when the compositor says this paint can be (see GlyphSmoothing), once its atlas is there
+        bool subpixels = subpixelText && GlyphAtlas.Subpixel.Ready;
+        GlyphAtlas glyphs = subpixels ? GlyphAtlas.Subpixel : GlyphAtlas.Shared;
+        float pixels = this.scale.X;
+        if (outlines is not null && glyphs.Ready && !FieldTextOnly && visualScale == Vector2.One && this.scale.X == this.scale.Y && pixels > 0.0f)
+            madeSize = GlyphAtlas.SizeOf(font.Field.EmSize * scale * pixels);
+        GlyphStyle glyphStyle = (bold ? GlyphStyle.Bold : 0) | (slant != 0.0f ? GlyphStyle.Italic : 0)
+            | (hintedText ? 0 : GlyphStyle.Unhinted) | (subpixels && subpixelBgr ? GlyphStyle.Bgr : 0);
+        float glyphBold = bold ? font.BoldAdvance * scale * pixels : 0.0f;
+        uint glyphTexture = subpixels ? GLYPH_SUBPIXEL_SLOT : GLYPH_SLOT;
+
         for (int i = 0; i < text.Length; i++)
         {
             char character = text[i];
 
             if (character == '\n')
             {
-                pen = new Vector2(position.X, pen.Y - lineHeight);
+                // Every line on a whole pixel as the first is, counted from it rather than added on. A line height of so
+                // many pixels and a bit left each line after the first a different share of a pixel off, the letters of
+                // one line sharper or softer than the next and taller or shorter by a pixel row
+                line++;
+                pen = OnScreenPixel(new Vector2(position.X, position.Y - line * lineHeight));
                 continue;
             }
 
             // $(name), an icon of UISymbols, as tall as the line wants it
             if (markup && character == '$' && UISymbols.TryRead(text[i..], lineHeight, out char symbol, out int symbolLength, out float symbolWidth, out UIIconMotion motion))
             {
-                Symbol(symbol, UISymbols.InText(pen, lineHeight), color, motion);
+                // On a whole pixel, an icon's art is a picture and between two pixels it came out soft at its edges.
+                // Rounded to whole units of the layout that's whole pixels only at 100%, so its corners go on the screen's
+                UIRect room = UISymbols.InText(pen, lineHeight);
+                Symbol(symbol, new UIRect(OnScreenPixel(room.Min), OnScreenPixel(room.Max)), color, motion);
                 pen.X += symbolWidth;
                 i += symbolLength - 1;
                 continue;
@@ -172,10 +196,18 @@ public sealed partial class UIDrawList
                 continue;
             }
 
-            if (font.Resolve(character, out var glyph))
+            if (font.Resolve(character, out var glyph) && madeSize != 0 && Glyph(glyphs, outlines!, glyph.Id, madeSize, glyphStyle, glyphBold, slant, pen, font.Baseline * scale, packed, glyphTexture, subpixels))
             {
-                // A glyph's offset is measured from the pen to its top left corner, downwards.
-                Vector2 topLeft = new(pen.X + glyph.Offset.X * scale, pen.Y - glyph.Offset.Y * scale);
+                // Made at its size, see Glyph
+            }
+            else if (glyph.Size.X > 0 && glyph.Size.Y > 0)
+            {
+                // A glyph's offset is measured from the pen to its top left corner, downwards. Its left edge on a whole pixel
+                // of the screen, so a letter's stems fall the same way across the pixels wherever it is in the line: the
+                // pen at a different share of a pixel for every letter had one i crisp and the next split over two
+                // columns, the words uneven. The pen itself goes on by the exact advance, so nothing adds up along a line
+                float left = OnScreenPixel(new Vector2(pen.X + glyph.Offset.X * scale, pen.Y)).X;
+                Vector2 topLeft = new(left, pen.Y - glyph.Offset.Y * scale);
                 Vector2 glyphSize = glyph.Size * scale;
 
                 var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - glyphSize.Y), new Vector2(topLeft.X + glyphSize.X, topLeft.Y));
@@ -192,6 +224,91 @@ public sealed partial class UIDrawList
             pen.X += glyph.XAdvance * scale + boldAdvance;
             if (i + 1 < text.Length) pen.X += font.Kerning(character, text[i + 1]) * scale;
         }
+
+        if (subpixelGlyphs.Count > 0)
+            FlushSubpixels(packed);
+    }
+
+    // The subpixel letters of the text being drawn, put down together once it's all been gone through, see FlushSubpixels
+    private readonly List<(UIRect Rect, Vector2 TexMin, Vector2 TexMax)> subpixelGlyphs = [];
+
+    // Whether this paint draws its letters ClearType's way and with which stripe first, and whether it hints them, as
+    // the compositor said for the screen it's on (see GlyphSmoothing and UseSmoothing)
+    private bool subpixelText, subpixelBgr, hintedText = true;
+
+    /// <summary>
+    /// How this paint's letters are smoothed, said by the compositor before it paints: ClearType's way only when it's
+    /// drawn straight into the window on a screen and a system that want it, unhinted on a Retina screen.
+    /// </summary>
+    internal void UseSmoothing(bool subpixels, bool bgr, bool hinted)
+    {
+        subpixelText = subpixels;
+        subpixelBgr = bgr;
+        hintedText = hinted;
+        if (subpixels)
+            GlyphAtlas.Subpixel.Want();
+    }
+
+    /// <summary>
+    /// A text's subpixel letters, twice over: first what's under each is darkened by how much of each of its stripes the
+    /// ink covers, then the ink's colour added by as much. That's a blend with a weight for each of red, green and blue,
+    /// which one quad with one alpha can't be, done with two that any GPU can blend (UIRenderer draws each run of them
+    /// with its own blend). The letters of the text go down all at once each time so a line is two runs, not two a letter.
+    /// </summary>
+    private void FlushSubpixels(uint color)
+    {
+        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
+            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelEraseFlag | GLYPH_SUBPIXEL_SLOT);
+        foreach (var (rect, texMin, texMax) in subpixelGlyphs)
+            Quad(rect, texMin, texMax, color, SpriteItem.SubpixelInkFlag | GLYPH_SUBPIXEL_SLOT);
+        subpixelGlyphs.Clear();
+    }
+
+    // HORIZON_TEXT=field draws every letter out of its distance field as before the glyph atlas, to compare the two
+    private static readonly bool FieldTextOnly = string.Equals(Environment.GetEnvironmentVariable("HORIZON_TEXT"), "field", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A letter out of the glyph atlas, made at the size it is on the screen with the pen a quarter of a pixel at a time
+    /// and its baseline on a whole row of pixels, one texel to the pixel. False when there's no picture of it to be had
+    /// (the atlas is full until the next paint), and it's drawn out of its field instead. Only for a list with nothing
+    /// growing or shrinking it, see Text.
+    /// </summary>
+    /// <param name="baseline">How far down the line its baseline is, in the layout.</param>
+    private bool Glyph(GlyphAtlas glyphs, GlyphOutlines outlines, char character, ushort size, GlyphStyle style, float bold, float slant, Vector2 pen, float baseline, uint color, uint texture, bool subpixels)
+    {
+        // The pen on the screen, which pixel and how far into it, and the baseline on the row nearest it
+        Vector2 screenPen = (pen + visualOffset) * scale + origin;
+        float column = MathF.Floor(screenPen.X);
+        int phase = (int)MathF.Round((screenPen.X - column) * GlyphAtlas.PHASES);
+        if (phase == GlyphAtlas.PHASES)
+        {
+            column += 1.0f;
+            phase = 0;
+        }
+        float row = MathF.Round(((pen.Y - baseline) + visualOffset.Y) * scale.Y + origin.Y);
+
+        if (!glyphs.TryGet(outlines, new GlyphKey(outlines.Id, character, size, (byte)phase, style), bold, slant, out GlyphSlot slot))
+            return false;
+
+        // The picture's rows go down from its top and the screen's up, its corners back into the layout for Quad
+        GlyphBox box = slot.Box;
+        Vector2 min = new(column + box.Left, row - box.Top - box.Height);
+        Vector2 max = new(column + box.Left + box.Width, row - box.Top);
+        var rect = new UIRect((min - origin) / scale - visualOffset, (max - origin) / scale - visualOffset);
+
+        // Cut by a clip, a letter half under the edge of a scrolled list, Quad would trim the picture at whatever share
+        // of a texel the edge falls on. The field trims anywhere and still has an edge, so that letter goes to it
+        UIRect visible = rect.Intersect(clip);
+        if (!visible.IsEmpty && visible != rect)
+            return false;
+
+        var texMin = new Vector2(slot.X, slot.Y);
+        var texMax = new Vector2(slot.X + box.Width, slot.Y + box.Height);
+        if (subpixels)
+            subpixelGlyphs.Add((rect, texMin, texMax));
+        else
+            Quad(rect, texMin, texMax, color, SpriteItem.GlyphFlag | texture);
+        return true;
     }
 
     /// <summary>
@@ -227,6 +344,7 @@ public sealed partial class UIDrawList
             ReadOnlySpan<char> line = text.Slice(lines[i].Start, lines[i].Length);
             float width = font.Measure(line, scale, markup).X;
 
+            // Each line put on the screen's pixels by Text itself, the same as a line after a newline is
             Text(line, new Vector2(topLeft.X + (side + 0.5f) * (size.X - width), topLeft.Y - i * lineHeight), scale, color, markup);
         }
     }

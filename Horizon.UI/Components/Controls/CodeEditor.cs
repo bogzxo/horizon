@@ -160,7 +160,7 @@ public partial class CodeEditor : UIComponent
     /// screen, so a row scrolled into sight or a selection a row longer had every one after it blended with another's for
     /// a frame, and the blank lines filled up with dots and guides on their way somewhere else.
     /// </summary>
-    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens) & 0x3FFFFFFF;
+    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens, row.Predicted) & 0x3FFFFFFF;
 
     private readonly UITextDocument document = new();
 
@@ -200,6 +200,24 @@ public partial class CodeEditor : UIComponent
     private Task<Colouring>? colouring;
     private readonly Dictionary<string, List<SyntaxSpan>> fresh = new(StringComparer.Ordinal);
     private const int MAX_FRESH = 256;
+
+    // The line the colours of FreshColours were last asked for, the very string, and them
+    private string? freshText;
+    private List<SyntaxSpan>? freshSpans;
+
+    // How many letters of a long line (see LongLineSpans) are read on the editor's thread a paint at most, a dozen ms or
+    // so in a Debug build, and how far past the last of it in sight it's read, room to scroll into before it's read on
+    private const int LONG_BUDGET = 8 * 1024;
+    private const int LONG_AHEAD = 4 * 1024;
+
+    // How far into each long line the rows the last paint drew go, by the line, what reading it aims for (LongColours)
+    private readonly Dictionary<int, int> longInSight = [];
+
+    // The paint a long line was last read on in (one read a paint), whether a read stopped short of what's in sight, and
+    // the last read of a long line by its line and the very string, what the next read of it goes on from
+    private int longReadPaint = -1;
+    private bool longReading;
+    private (int Line, string Text, List<SyntaxSpan> Spans)? longLast;
 
     // The parse going on off the editor's thread, what it found and for which version of the text
     private sealed record Checked(int Version, UICodeDiagnostic? Error, List<UICodeDiagnostic> More);
@@ -318,6 +336,12 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether it can only be read, the caret and the selection still go about it.</summary>
     public bool ReadOnly { get; set; }
 
+    /// <summary>
+    /// Whether the line the caret is on has a faint band behind it while the editor has the keyboard, as code does. A box
+    /// for a message has none, a one line box that's all band looked like a field of its own over the box.
+    /// </summary>
+    public bool CaretBand { get; set; } = true;
+
     // A soft keyboard comes up for an editor a finger focused, unless nothing can be typed into it
     protected internal override bool WantsTextInput => !ReadOnly;
 
@@ -431,7 +455,14 @@ public partial class CodeEditor : UIComponent
 
     protected internal override bool OnEscape()
     {
-        // The hover asked for at the caret comes down first
+        // A prediction showing goes first, it's what was put in front of the code last
+        if (prediction is not null)
+        {
+            ClearPrediction();
+            return true;
+        }
+
+        // Then the hover asked for at the caret
         if (hoverPinnedFor is not null)
         {
             TakeHoverDown();
@@ -589,6 +620,8 @@ public partial class CodeEditor : UIComponent
 
     // The font the code is measured and written in
     private UIFont FontOf(UISkin skin) => Font ?? skin.Font;
+
+    protected internal override UIFont? TooltipCodeFont(UISkin skin) => FontOf(skin);
 
     /// <summary>Whether guides are drawn down the indentation.</summary>
     public bool IndentGuides { get; set; } = true;
@@ -809,6 +842,12 @@ public partial class CodeEditor : UIComponent
     /// <summary>Offered Enter after an open completion list; true submits a code prompt instead of inserting a line.</summary>
     public Func<bool>? OnEnter { get; set; }
 
+    /// <summary>
+    /// Offered Up (-1) and Down (1) before they move the caret, every repeat of a held key as well; true when it took the
+    /// key. For a list of the owner's over the box, which a shortcut moved once a press while the caret went too.
+    /// </summary>
+    public Func<int, bool>? OnUpDown { get; set; }
+
     /// <summary>Called after every change of the text.</summary>
     public Action? OnChanged { get; set; }
 
@@ -879,6 +918,7 @@ public partial class CodeEditor : UIComponent
             nativeFoldingRanges = null;
             checkIn = CHECK_DELAY;
             revealCaret = true;
+            PredictionTextChanged();
             OnChanged?.Invoke();
         };
         document.LinesMoved += MoveDiagnostics;
@@ -963,7 +1003,23 @@ public partial class CodeEditor : UIComponent
 
     /* Measuring */
 
-    private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
+    /// <summary>
+    /// The scale the code is drawn and measured at: the one asked for, a hair bigger or smaller so a character of a
+    /// fixed-width font is a whole number of the screen's pixels. A cell of 8.4 pixels put every column at another share
+    /// of a pixel, and the same letter came out crisp in one column and split over two in the next, a line of code
+    /// wobbling along. Everything of the editor goes by this scale, so the caret, the selection and the guides follow.
+    /// </summary>
+    private float ScaleOf(UISkin skin)
+    {
+        float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
+        UIFont font = FontOf(skin);
+        float cell = font.Measure("M", 1.0f, markup: false).X;
+        if (cell <= 0.0f || MathF.Abs(font.Measure("i", 1.0f, markup: false).X - cell) > 0.01f)
+            return scale;
+
+        float pixels = cell * scale * PixelsPerUnit;
+        return pixels < 3.0f ? scale : scale * MathF.Round(pixels) / pixels;
+    }
 
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
     private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
@@ -1006,32 +1062,80 @@ public partial class CodeEditor : UIComponent
         return x;
     }
 
+    // How many letters of a row are drawn or measured at a time when it's longer, see DrawInSight
+    private const int DRAWN_PIECE = 512;
+
+    /// <summary>
+    /// Draws a piece of a row the way <see cref="DrawWithInlays"/> does, but only what is between two lefts on screen
+    /// (the code in sight and a width either side of it), and says where the piece ends as far as it got. A long piece goes
+    /// a few hundred letters at a time, measured while it's left of what's in sight and given up once it's past the right.
+    /// A line of a fifth of a megabyte was drawn whole every paint, every letter of it clipped.
+    /// </summary>
+    private float DrawInSight(UIDrawList list, UISkin skin, float scale, int line, int column, ReadOnlySpan<char> text, float x, float top, Vector4 color, float left, float origin, UISyntaxColors colors, float from, float to)
+    {
+        if (text.Length <= DRAWN_PIECE && x >= from)
+            return DrawWithInlays(list, skin, scale, line, column, text, x, top, color, left, origin, colors);
+
+        int at = 0;
+        while (at < text.Length && x <= to)
+        {
+            // Never between the two halves of a letter outside the basic plane
+            int end = Math.Min(text.Length, at + DRAWN_PIECE);
+            if (end < text.Length && char.IsHighSurrogate(text[end - 1]))
+                end--;
+
+            ReadOnlySpan<char> piece = text[at..end];
+            float past = x < from ? DrawWithInlays(list, skin, scale, line, column + at, piece, x, top, color, left, origin, colors, draw: false) : float.NaN;
+            x = past < from ? past : DrawWithInlays(list, skin, scale, line, column + at, piece, x, top, color, left, origin, colors);
+            at = end;
+        }
+
+        return x;
+    }
+
     /// <summary>The colours of every line worked out again on the editor's thread, and the lines kept to tell later which still fit them.</summary>
     private void Recolour()
     {
         coloured = changeSeen = document.Version;
         recolourNow = false;
         fresh.Clear();
+        freshText = null;
 
         // New arrays, a colouring going on in the background may be reading the last ones
         int count = document.LineCount;
         lineStarts = new CodeLineStart[count];
         colouredWith = Highlight ? highlighter : null;
 
-        if (Highlight && count > COLOUR_AT_ONCE)
+        int firstLong = Highlight ? FirstLongLine(Math.Min(count, COLOUR_AT_ONCE)) : -1;
+        if (Highlight && (count > COLOUR_AT_ONCE || firstLong >= 0))
         {
             // A big file has its top coloured now and the rest plain, all of it coloured on a thread of the pool and taken
             // in when it's done. Reading a 100,000 line file through the grammar on the spot held the window up for nine
-            // seconds before it showed a thing
-            List<SyntaxSpan>[] top = highlighter.Read(document.Text, COLOUR_AT_ONCE, lineStarts, swatches, art);
-            spans = PlainSpans();
-            Array.Copy(top, spans, Math.Min(top.Length, spans.Length));
+            // seconds before it showed a thing. A line too long to read on the spot stops the top there, what of it is
+            // in sight is read a paint at a time meanwhile (LongColours)
+            int now = firstLong >= 0 ? firstLong : COLOUR_AT_ONCE;
+            spans = PlainSpans(longLines: true);
+            if (now > 0)
+            {
+                List<SyntaxSpan>[] top = highlighter.Read(document.Text, now, lineStarts, swatches, art);
+                Array.Copy(top, spans, Math.Min(Math.Min(top.Length, now), spans.Length));
+            }
+
             colouredWith = null;
             coloured = document.Version - 1;
         }
+        else if (Highlight && document.Text.Length == 0)
+        {
+            // Nothing to colour, and nothing asked of the grammar. An empty box made the grammar get going on the spot, the
+            // agents' box was Markdown's (and every language it can hold) at 70 ms and 24 MB of an editor's start for one empty line
+            spans = PlainSpans();
+        }
         else if (Highlight)
         {
+            long started = System.Diagnostics.Stopwatch.GetTimestamp();
             spans = highlighter.Read(document.Text, count, lineStarts, swatches, art);
+            if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
+                Horizon.Logging.Log.Info($"[Startup] {highlighter.Name} coloured {count} lines in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:0.0} ms");
         }
         else
         {
@@ -1085,6 +1189,7 @@ public partial class CodeEditor : UIComponent
         TookArt();
         coloured = done.Version;
         fresh.Clear();
+        freshText = null;
         FindFoldable();
     }
 
@@ -1096,9 +1201,19 @@ public partial class CodeEditor : UIComponent
     {
         if (!Highlight || text.Length == 0)
             return null;
+        if (text.Length > TextMateHighlighter.LONG_LINE)
+            return LongColours(line, text);
+
+        // The line asked for again as it was, every row of it in a paint. Looked up by its text it was hashed whole each
+        // time, a long line's every row went through all of it
+        if (ReferenceEquals(text, freshText))
+            return freshSpans;
 
         if (fresh.TryGetValue(text, out var known))
+        {
+            (freshText, freshSpans) = (text, known);
             return known;
+        }
 
         // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
         int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
@@ -1114,6 +1229,7 @@ public partial class CodeEditor : UIComponent
             return null;
         }
         fresh[text] = read;
+        (freshText, freshSpans) = (text, read);
         return read;
     }
 
@@ -1123,21 +1239,101 @@ public partial class CodeEditor : UIComponent
     /// </summary>
     private List<SyntaxSpan>? ColoursOf(int line, string text)
     {
+        List<SyntaxSpan>? found = null;
         if (line < colouredLines.Length && colouredLines[line] == text)
-            return spans[line];
+        {
+            found = spans[line];
+        }
+        else
+        {
+            int was = line - (document.LineCount - colouredLines.Length);
+            if (was >= 0 && was < colouredLines.Length && colouredLines[was] == text)
+                found = spans[was];
+        }
 
-        int was = line - (document.LineCount - colouredLines.Length);
-        return was >= 0 && was < colouredLines.Length && colouredLines[was] == text ? spans[was] : null;
+        // A long line not read to its end yet is read on by LongColours
+        return found is LongLineSpans { Whole: false } ? null : found;
     }
 
-    // Every line all one span, for text that isn't coloured as code
-    private List<SyntaxSpan>[] PlainSpans()
+    /// <summary>
+    /// The colours of a line too long to read whole on the spot (see <see cref="LongLineSpans"/>), read from its start a
+    /// piece at a time as far as a little past what of it is in sight, going on from the last read of it, LONG_BUDGET
+    /// letters a paint at most. Until it's that far the editor paints every tick (see PaintVersion), so what's in sight is
+    /// coloured a little more each one, and scrolled along it's read on again. Typed into, it's read again from just
+    /// before the edit and the rest taken over from the last read once the grammar is where it was (TextMateHighlighter).
+    /// The pool reads all of it meanwhile and that takes over when it's done.
+    /// </summary>
+    private List<SyntaxSpan>? LongColours(int line, string text)
+    {
+        List<SyntaxSpan>? have = ReferenceEquals(text, freshText) ? freshSpans : fresh.GetValueOrDefault(text);
+        int goal = longInSight.TryGetValue(line, out int seen) ? Math.Min(text.Length, seen + LONG_AHEAD) : 0;
+        if (have is not null && (have is not LongLineSpans { ReadTo: var readSoFar } || readSoFar >= goal || longReadPaint == flowPaint))
+        {
+            if (have is LongLineSpans { ReadTo: var shortOf } && shortOf < goal)
+                longReading = true;
+            (freshText, freshSpans) = (text, have);
+            return have;
+        }
+
+        // Where the line was in the last colouring, or where the lines added or taken out above it moved it from
+        int was = line < colouredLines.Length ? line : line - (document.LineCount - colouredLines.Length);
+        if (was < 0 || was >= lineStarts.Length)
+            return have;
+
+        // Gone on from the read of this text so far, else (it was typed into) whichever got further of the line's last read
+        // here and the colouring's, which has all of it once the pool is done
+        var (from, fromText) = have is not null ? (have, text)
+            : was < colouredLines.Length && was < spans.Length ? (spans[was], colouredLines[was]) : ((List<SyntaxSpan>?)null, (string?)null);
+        if (have is null && longLast is { } last && last.Line == line && ReadSoFar(last.Spans) > ReadSoFar(from))
+            (from, fromText) = (last.Spans, last.Text);
+
+        // A highlighter that can't reads all of it, as any line
+        List<SyntaxSpan>? read = highlighter.ReadUpTo(text, lineStarts[was], goal, LONG_BUDGET, from, fromText);
+        if (read is null && (!highlighter.TryReadLine(text, lineStarts[was], out read) || read is null))
+        {
+            GameEngine.Instance?.WindowManager.RequestTickIn(0.016f);
+            return null;
+        }
+
+        longReadPaint = flowPaint;
+        if (read is LongLineSpans { ReadTo: var reached } && reached < goal)
+            longReading = true;
+
+        if (fresh.Count >= MAX_FRESH)
+            fresh.Clear();
+        fresh[text] = read;
+        (freshText, freshSpans) = (text, read);
+        longLast = (line, text, read);
+        return read;
+    }
+
+    // How far into its line a read of a long line got, -1 for colours that weren't read that way
+    private static int ReadSoFar(List<SyntaxSpan>? read) => read is LongLineSpans { ReadTo: var to } ? to : -1;
+
+    // Helper method for the first of so many lines too long to read on the spot, -1 for none
+    private int FirstLongLine(int count)
+    {
+        if (document.Text.Length <= TextMateHighlighter.LONG_LINE)
+            return -1;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (document.LineAt(i).Length > TextMateHighlighter.LONG_LINE)
+                return i;
+        }
+
+        return -1;
+    }
+
+    // Every line all one span, for text that isn't coloured as code, or a long line nothing of which is read yet
+    private List<SyntaxSpan>[] PlainSpans(bool longLines = false)
     {
         var plain = new List<SyntaxSpan>[document.LineCount];
         for (int i = 0; i < plain.Length; i++)
         {
             int length = document.LineAt(i).Length;
-            plain[i] = length > 0 ? [new SyntaxSpan(0, length, SyntaxKind.Name)] : [];
+            plain[i] = longLines && length > TextMateHighlighter.LONG_LINE ? new LongLineSpans(length)
+                : length > 0 ? [new SyntaxSpan(0, length, SyntaxKind.Name)] : [];
         }
 
         return plain;
@@ -1168,6 +1364,10 @@ public partial class CodeEditor : UIComponent
         int line = row.Line;
         string text = document.LineAt(line);
         int rowEnd = Math.Min(row.End, text.Length);
+
+        // A row of a prediction's isn't in the text, a point on it is the end of the line it's under
+        if (row.Predicted > 0)
+            return new UITextPosition(line, text.Length);
 
         float wanted = point.X - (area.Min.X + TEXT_PAD - scrollX) - row.Indent;
         float before = 0.0f;
@@ -1225,6 +1425,7 @@ public partial class CodeEditor : UIComponent
         // The hover at the caret goes once the caret or the text moves on, or something else took it down
         if (hoverPinnedFor is { } pinnedAt && (pinnedAt != (document.Version, document.Caret) || Module?.Compositor.Pinned(this) != true))
             TakeHoverDown();
+        UpdatePrediction();
 
         // How long the caret's been on the line the note is about, from nothing again every time it goes to another line
         int noted = LineNote is { } note && note.Line == document.Caret.Line ? note.Line : -1;
@@ -1232,9 +1433,11 @@ public partial class CodeEditor : UIComponent
         lineNoteFor = noted;
 
         // The caret blinks only while the window has the keyboard, out of it the caret stays lit and still, so a window left
-        // in the background isn't painted again twice a second for a caret nobody's typing at
-        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
-        if (IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+        // in the background isn't painted again twice a second for a caret nobody's typing at. Lit and still as well with
+        // the UI's motion turned off, a caret that blinks is motion too
+        bool still = MotionSpeed <= 0.0f;
+        blink = still || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (!still && IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
         if (waiting.Length > 0)
@@ -1595,25 +1798,9 @@ public partial class CodeEditor : UIComponent
         UITextPosition at = PositionAt(pointer);
         string said = string.Empty;
 
-        if (SyntaxError is { } error && Covers(error, at))
-            said = error.Message;
-
-        for (int i = 0; i < moreErrors.Count && said.Length == 0; i++)
-        {
-            if (Covers(moreErrors[i], at))
-                said = moreErrors[i].Message;
-        }
-
-        // By index, a foreach over the interface is an enumerator made every tick the pointer is over the code
-        for (int i = 0; i < diagnostics.Count && said.Length == 0; i++)
-        {
-            if (Covers(diagnostics[i], at))
-                said = diagnostics[i].Message;
-        }
-
-        // Nothing wrong there, what the program has to say about the word, asked once a word
+        // What the program has to say about the word, asked once a word, under what's wrong there when something is
         bool hint = false;
-        if (said.Length == 0 && HoverSource is { } source)
+        if (HoverSource is { } source)
         {
             var (start, end) = document.WordAt(at);
 
@@ -1634,6 +1821,14 @@ public partial class CodeEditor : UIComponent
                 said = hoverText;
                 hint = said.Length > 0;
             }
+        }
+
+        // Something wrong there is a card of it, with what was said of the word under it (DiagnosticCard). By index in
+        // there, a foreach over the interface is an enumerator made every tick the pointer is over the code
+        if (WrongAt(at))
+        {
+            said = DiagnosticCard(at, said);
+            hint = true;
         }
 
         TooltipMarkdown = hint;
@@ -1727,6 +1922,10 @@ public partial class CodeEditor : UIComponent
         blink = 0.0f;
         revealCaret = true;
 
+        // A prediction has Tab, Ctrl+Right and Escape before the rest (the completion list keeps them while it's open)
+        if (prediction is not null && PredictionKey(character))
+            return;
+
         if (CompletionOpen && CompletionKey(character))
             return;
 
@@ -1741,6 +1940,10 @@ public partial class CodeEditor : UIComponent
             ShowSignature();
             return;
         }
+
+        // Up and down offered to whoever has a list over the box first (a chat's / commands), held keys repeating here
+        if (character is UIKeyboard.UP or UIKeyboard.DOWN && OnUpDown?.Invoke(character == UIKeyboard.UP ? -1 : 1) == true)
+            return;
 
         // Up and down go through a call's overloads while it has more than one, Visual Studio's way
         if (character is UIKeyboard.UP or UIKeyboard.DOWN && StepOverload(character == UIKeyboard.UP ? -1 : 1))
@@ -1881,7 +2084,12 @@ public partial class CodeEditor : UIComponent
             default:
                 if (!UIKeyboard.IsEditingKey(character) && !char.IsControl(character))
                 {
+                    if (prediction is not null)
+                        PreparePredictionTyping(character);
+                    int version = document.Version;
                     document.Type(character);
+                    if (prediction is not null && document.Version == version)
+                        FinishPredictionTyping(steppedOver: true);
                     typed = character;
 
                     // A word being typed (or a member, or a key of a text) is offered what it could be
@@ -2240,14 +2448,15 @@ public partial class CodeEditor : UIComponent
             // The text in the middle of its row
             float top = MathF.Round(rowTop - (rowHeight - lineHeight) * 0.5f);
             var item = completions[i];
+            Vector4 ink = colors.Of(UICompletionKinds.SyntaxOf(item.Kind));
             float iconRoom = CompletionIconRoom(lineHeight);
             if (iconRoom > 0.0f && UICompletionKinds.IconOf(item.Kind) is { Length: > 0 } icon)
             {
                 float side = iconRoom - COMPLETION_ICON_GAP;
                 float middle = MathF.Round(row.Center.Y);
-                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), skin.DimTextColor);
+                list.Symbol(icon, new UIRect(new Vector2(row.Min.X + TEXT_PAD, middle - side * 0.5f), new Vector2(row.Min.X + TEXT_PAD + side, middle + side * 0.5f)), ink);
             }
-            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, colors.Name, markup: false);
+            list.Text(item.Text, new Vector2(row.Min.X + TEXT_PAD + iconRoom, top), scale, ink, markup: false);
 
             if (item.Detail.Length > 0)
             {
@@ -2305,10 +2514,19 @@ public partial class CodeEditor : UIComponent
         list.EndParts();
     }
 
+    /// <summary>
+    /// Asked first with what control with V brought, true when it took the paste itself (a picture made an attachment of
+    /// a message), false to have the text put in as usual.
+    /// </summary>
+    public Func<string, bool>? OnPasting { get; set; }
+
+    protected internal override bool TakesEmptyPaste => OnPasting is not null;
+
     protected internal override void OnPaste(string text)
     {
-        if (!ReadOnly)
-            document.Insert(text);
+        if (ReadOnly || OnPasting?.Invoke(text) == true || text.Length == 0)
+            return;
+        document.Insert(text);
     }
 
     // What control with C takes, the selection (every caret's, a line each), or the caret's whole line without one, the
@@ -2453,7 +2671,10 @@ public partial class CodeEditor : UIComponent
 
         if (paintedSkin is { } painted && point.X < TextArea(painted, paintedScale).Min.X)
         {
-            // The strip the marks go in, as wide as one of them, is the breakpoints' when somebody wants it
+            // The strip the marks go in, as wide as one of them, is the lightbulb's on its line and otherwise the
+            // breakpoints' when somebody wants it
+            if (PressAction(point))
+                return;
             if (OnGutterPressed is not null && point.X < BreakpointStripRight(painted))
             {
                 OnGutterPressed(at.Line);
@@ -2645,7 +2866,10 @@ public partial class CodeEditor : UIComponent
         int beyond = over.Stretch == 0.0f ? 0 : (int)(MathF.Abs(over.Stretch) / lineHeight) + 1;
         int paintFrom = Math.Max(0, first - ROWS_AROUND - beyond), paintTo = Math.Min(rows.Count - 1, last + ROWS_AROUND + beyond);
 
+        // The caret is the sign that it has the keyboard, lit or between blinks
         bool focused = IsFocused;
+        if (focused)
+            ShowingFocus();
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
         Vector4 selection = skin.Palette.Selection;
         Vector4 band = skin.HoverColor with { W = skin.HoverColor.W * 0.35f };
@@ -2667,11 +2891,11 @@ public partial class CodeEditor : UIComponent
         {
             CodeRow row = rows[index];
             float top = RowTop(area, index, lineHeight);
-            if (row.Lens)
+            if (row.Virtual)
                 continue;
             list.BeginPart(RowPart(ROW_BEHIND, row));
 
-            if (focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
+            if (CaretBand && focused && !document.HasSelection && !document.HasExtraCarets && row.Line == document.Caret.Line)
                 list.Rect(new UIRect(new Vector2(area.Min.X, top - lineHeight), new Vector2(area.Max.X, top)), band);
 
             if (highlightedLines.Count > 0 && highlightedLines.TryGetValue(row.Line, out Vector4 highlight))
@@ -2682,6 +2906,7 @@ public partial class CodeEditor : UIComponent
 
             // The selection in a part apart from the line's band, a selection taken away puts the band back and the two were
             // one quad, the selection stretched out across the line into it
+            PaintRemoteSelections(list, skin, scale, left, top, lineHeight, digit, row);
             list.BeginPart(RowPart(ROW_SELECTED, row));
             if (document.HasSelection)
                 PaintSelected(list, skin, scale, left, top, lineHeight, digit, row, start, end, selection);
@@ -2696,13 +2921,17 @@ public partial class CodeEditor : UIComponent
 
         list.BeginPart(PART_OVERLAY);
         PaintRanges(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
+        if (prediction is not null)
+            PaintPredictionStruck(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
         PaintTodos(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
 
         if (findQuery.Length > 0)
         {
-            // The one selected stronger, it's the one enter goes on from
-            Vector4 lit = skin.HighlightColor with { W = 0.18f };
-            Vector4 current = skin.HighlightColor with { W = 0.45f };
+            // The one selected stronger, it's the one enter goes on from. The rest were a fifth of the highlight and could
+            // hardly be told from the code round them on the plum, so each has a faint edge of it as well
+            Vector4 lit = skin.HighlightColor with { W = 0.26f };
+            Vector4 edge = skin.HighlightColor with { W = 0.55f };
+            Vector4 current = skin.HighlightColor with { W = 0.5f };
             for (int i = 0; i < found.Count; i++)
             {
                 UITextMatch at = found[i];
@@ -2711,8 +2940,7 @@ public partial class CodeEditor : UIComponent
                 bool selected = start.Line == at.Line && start.Column == at.Column && end.Line == at.Line && end.Column == at.Column + at.Length;
                 UIRect box = Piece(skin, scale, area, left, lineHeight, at.Line, at.Column, at.Column + at.Length);
                 list.Rect(box, selected ? current : lit);
-                if (selected)
-                    list.Outline(box, 1.0f, skin.HighlightColor with { W = 0.8f });
+                list.Outline(box, 1.0f, selected ? skin.HighlightColor : edge);
             }
         }
 
@@ -2756,11 +2984,35 @@ public partial class CodeEditor : UIComponent
         // with the same letter of that row wherever it was, the text a jumble of flying letters for a frame
         float origin = area.Max.Y + scrollY;
         BeginFlow(lineHeight);
+
+        // How far either side of the code in sight a row is drawn, a width of it, room for a scroll easing between two
+        // ticks. A row is drawn up to its right and only measured to its left, an unwrapped line of a fifth of a megabyte
+        // (an agent's chat saved as JSON) was drawn whole every paint, every letter clipped, 50 ms a frame
+        float drawnFrom = area.Min.X - area.Width, drawnTo = area.Max.X + area.Width;
+
+        // How far into each long line the rows painted go, what reading it goes on to (LongColours). Unwrapped, as far as
+        // the right edge is in digits along it
+        longInSight.Clear();
+        longReading = false;
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
-            if (row.Lens)
+            if (row.Virtual || document.LineAt(row.Line) is not { Length: > TextMateHighlighter.LONG_LINE } longLine)
                 continue;
+
+            int to = wordWrap ? row.End : row.Start + (int)((scrollX + area.Width) / MathF.Max(1.0f, digit)) + 1;
+            longInSight[row.Line] = Math.Max(longInSight.GetValueOrDefault(row.Line), Math.Min(to, longLine.Length));
+        }
+        for (int index = paintFrom; index <= paintTo; index++)
+        {
+            CodeRow row = rows[index];
+            if (row.Virtual)
+            {
+                // A line of a prediction on a row of its own, the lens rows are painted after
+                if (row.Predicted > 0)
+                    PaintPredictedRow(list, skin, scale, row, RowTop(area, index, lineHeight), left, colors);
+                continue;
+            }
             list.BeginPart(HashCode.Combine(row.Line, row.Start) & 0x3FFFFFFF);
             float top = RowTop(area, index, lineHeight);
             string written = document.LineAt(row.Line);
@@ -2778,14 +3030,14 @@ public partial class CodeEditor : UIComponent
             // can't be (it starts inside a comment over several lines)
             if (DrawnColours(row.Line, written) is not { } colours)
             {
-                x = DrawWithInlays(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
+                x = DrawInSight(list, skin, scale, row.Line, row.Start, written.AsSpan(row.Start, rowEnd - row.Start), x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
             }
             else
             {
                 int at = row.Start;
                 foreach (SyntaxSpan span in colours)
                 {
-                    if (span.Start + span.Length > written.Length)
+                    if (span.Start + span.Length > written.Length || x > drawnTo)
                         break;
 
                     // Only what of the span is on this row
@@ -2798,20 +3050,23 @@ public partial class CodeEditor : UIComponent
                     // round its keywords
                     ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
                     bool blank = gap.IsWhiteSpace();
-                    x = DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, blank ? default : colors.Of(SyntaxKind.Name), left, origin, colors, draw: !blank);
+                    x = blank ? DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, default, left, origin, colors, draw: false)
+                        : DrawInSight(list, skin, scale, row.Line, at, gap, x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
                     Vector4 colour = ColourOf(colors, span);
                     float started = x;
-                    x = DrawWithInlays(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors);
+                    x = DrawInSight(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors, drawnFrom, drawnTo);
                     if (span.Modifiers != SyntaxModifiers.None)
                         DrawModifiers(list, span.Modifiers, started, x, top, lineHeight, StrikeY(skin, scale, top, lineHeight), colour);
                     at = to;
                 }
 
-                if (at < rowEnd)
-                    x = DrawWithInlays(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors);
+                if (at < rowEnd && x <= drawnTo)
+                    x = DrawInSight(list, skin, scale, row.Line, at, written.AsSpan(at, rowEnd - at), x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
             }
 
-            // The hints after the end of the line, once its last row is drawn
+            // What a prediction puts after the end of the line, then the hints, once its last row is drawn
+            if (rowEnd == written.Length && prediction is not null)
+                x = DrawPredictedAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
             if (rowEnd == written.Length)
                 x = DrawInlaysAtEnd(list, skin, scale, row.Line, written.Length, x, top, colors);
 
@@ -2880,11 +3135,14 @@ public partial class CodeEditor : UIComponent
         for (int i = 0; i < diagnostics.Count; i++)
             PaintDiagnostic(list, skin, scale, area, left, lineHeight, diagnostics[i], firstLine, lastLine);
 
+        PaintSpelling(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // How the call being typed is called, over it
         if (focused && ShownSignature() is { } said)
             PaintSignature(list, skin, scale, area, left, lineHeight, first, said);
+
+        PaintRemoteCarets(list, skin, scale, area, left, lineHeight, first, last);
 
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
         if (focused && blink < BLINK)
@@ -2906,7 +3164,9 @@ public partial class CodeEditor : UIComponent
         {
             bool gutterStretched = over.Begin(list, new UIRect(new Vector2(content.Min.X, area.Min.Y), area.Max));
             list.PushFrame(new Vector2(0.0f, scrollY));
-            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, colors);
+            // The gutter is the look's and not the language's, C# in Visual Studio's colours had teal numbers on Solstice
+            // Day's paper and a Markdown file beside it grey ones
+            PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, skin.Palette.Syntax);
             list.PopFrame();
             if (gutterStretched)
                 UIOverscroll.End(list);
@@ -3096,62 +3356,6 @@ public partial class CodeEditor : UIComponent
         return false;
     }
 
-    // The signature in a box over the row of the call's name (under it when that's the top row), the argument the caret is
-    // on in bold
-    private void PaintSignature(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, UISignature said)
-    {
-        if (said.Text.Length == 0)
-            return;
-
-        list.BeginPart(PART_SIGNATURE);
-        float small = scale * 0.92f;
-        UIFont codeFont = FontOf(skin), proseFont = skin.Font;
-
-        // Which overload of how many in front of it, when it has others, the way Visual Studio says it
-        var (index, count) = SignatureOverload;
-        string counter = count > 1 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, OverloadCounter, index + 1, count) + "   " : string.Empty;
-        Vector2 size = SignaturePopupSize(said, counter, codeFont, proseFont, small, area.Size);
-        float width = size.X, height = size.Y;
-        int row = RowOf(signatureAt.Line, signatureAt.Column);
-        float top = RowTop(area, row, lineHeight);
-        float x = MathF.Max(area.Min.X, left + ColumnX(skin, scale, signatureAt.Line, signatureAt.Column) - TEXT_PAD);
-        x = Math.Clamp(x, area.Min.X, MathF.Max(area.Min.X, area.Max.X - width));
-        float bottom = row > first ? top : top - lineHeight - height;
-        if (bottom + height > area.Max.Y) bottom = top - lineHeight - height;
-        bottom = Math.Clamp(bottom, area.Min.Y, MathF.Max(area.Min.Y, area.Max.Y - height));
-
-        var box = new UIRect(new Vector2(x, bottom), new Vector2(x + width, bottom + height));
-        list.Popup(box, Module?.Compositor.PopupGlass);
-
-        int start = Math.Clamp(said.Start, 0, said.Text.Length), length = Math.Clamp(said.Length, 0, said.Text.Length - start);
-        start += counter.Length;
-        Vector4 text = skin.TextColor with { W = skin.TextColor.W * 0.75f };
-        float textTop = box.Max.Y - TEXT_PAD * 0.5f;
-        list.PushFont(codeFont);
-        foreach (var line in signatureLabelLines)
-        {
-            ReadOnlySpan<char> all = signaturePopupLabel.AsSpan(line.Start, line.Length);
-            int from = Math.Clamp(start - line.Start, 0, line.Length), to = Math.Clamp(start + length - line.Start, from, line.Length);
-            float pen = box.Min.X + TEXT_PAD;
-            list.Text(all[..from], new Vector2(pen, textTop), small, text, markup: false);
-            pen += codeFont.Measure(all[..from], small, markup: false).X;
-            list.Text(all[from..to], new Vector2(pen, textTop), small, skin.HighlightColor, false, UITextStyle.Bold, default);
-            pen += codeFont.Measure(all[from..to], small, markup: false).X + codeFont.BoldAdvance * small * (to - from);
-            list.Text(all[to..], new Vector2(pen, textTop), small, text, markup: false);
-            textTop -= codeFont.LineHeight * small;
-        }
-        list.PopFont();
-        if (signatureDocLines.Count > 0)
-        {
-            textTop -= TEXT_PAD;
-            var inside = new UIRect(new Vector2(box.Min.X + TEXT_PAD, box.Min.Y + TEXT_PAD * 0.5f), new Vector2(box.Max.X - TEXT_PAD, textTop));
-            list.PushFont(proseFont);
-            list.Text(signaturePopupDocs, System.Runtime.InteropServices.CollectionsMarshal.AsSpan(signatureDocLines), inside,
-                Horizon.Rendering.Origin.TopLeft, small, skin.DimTextColor, markup: false);
-            list.PopFont();
-        }
-    }
-
     // The part of a selection on a row, to the end of the row and a little past it on the rows it runs over
     private void PaintSelected(UIDrawList list, UISkin skin, float scale, float left, float top, float lineHeight, float digit, CodeRow row, UITextPosition start, UITextPosition end, Vector4 color)
     {
@@ -3308,7 +3512,7 @@ public partial class CodeEditor : UIComponent
         }
 
         int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
-        if (rows[top].Lens && top + 1 < rows.Count)
+        while (rows[top].Virtual && top + 1 < rows.Count)
             top++;
         zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
     }
@@ -3349,7 +3553,7 @@ public partial class CodeEditor : UIComponent
         int line = rows[index].Line;
         int from = index, to = index;
         while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens) from--;
-        while (to + 1 < rows.Count && rows[to + 1].Line == line) to++;
+        while (to + 1 < rows.Count && rows[to + 1].Line == line && rows[to + 1].Predicted == 0) to++;
 
         float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
         float bottom = top - (to - from + 1) * lineHeight;
@@ -3446,7 +3650,7 @@ public partial class CodeEditor : UIComponent
 
             // The line's number where the gutter has it, a diff's the new version's
             if (LineNumbers)
-                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, colors.LineNumber);
+                Number(list, number, diffNumbers is var (_, news) ? (line < news.Length ? news[line] : 0) : line + FirstLineNumber, area.Min.X - digit * GUTTER_GAP, top, scale, digit, skin.Palette.Syntax.LineNumber);
 
             if (DrawnColours(line, written) is { } colours)
             {

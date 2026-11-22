@@ -129,13 +129,14 @@ public partial class CodeEditor
         Vector4 chevron = Vector4.Lerp(colors.LineNumber, colors.Name, 0.45f);
         Span<char> number = stackalloc char[12];
         int digits = NumberDigits();
+        ActionBounds = null;
 
         for (int index = first; index <= last; index++)
         {
             CodeRow row = rows[index];
 
-            // A row of reference counts over a line has no number, no mark and no change of its own
-            if (row.Lens)
+            // A row of reference counts over a line, or of a prediction under it, has no number, no mark and no change of its own
+            if (row.Virtual)
                 continue;
 
             // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
@@ -164,6 +165,12 @@ public partial class CodeEditor
             if (breakpoint && mark != CodeBreakpointMark.Plain)
             {
                 list.Symbol(MarkSymbol(mark), slot, skin.ErrorColor);
+            }
+            else if (!breakpoint && ShowsAction(line))
+            {
+                // A fix for the line in place of what's wrong with it, the pointer's faint dot too, a press takes the fix
+                list.Symbol(ActionPreferred ? "lightbulb-autofix" : "lightbulb", slot, skin.WarningColor);
+                ActionBounds = slot;
             }
             else if (breakpoint || pointing)
             {

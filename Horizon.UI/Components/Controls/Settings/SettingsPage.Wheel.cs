@@ -21,5 +21,9 @@ public partial class SettingsPage
     }
 
     protected internal override bool OnScroll(float delta) => scroll.Visible && scroll.OnScroll(delta);
+
+    // A drag or the middle button's autoscroll over a part that can't scroll moves the rows smoothly with it, where
+    // turning it into whole notches of the wheel had them jump a notch at a time at slow speeds
+    protected internal override bool OnPan(System.Numerics.Vector2 delta) => scroll.Visible && scroll.OnPan(delta);
     protected internal override bool UsesScrollSpeed => true;
 }

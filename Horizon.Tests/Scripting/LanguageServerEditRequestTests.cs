@@ -33,7 +33,7 @@ public sealed class LanguageServerEditRequestTests
     [InlineData(false)]
     public async Task ApplyEditRpcWaitsForEditorAndReturnsItsActualResult(bool applied)
     {
-        Assert.True(LanguageServers.IsAvailable("python"), "Python is required for the real protocol fixture.");
+        Assert.True(LanguageServers.IsAvailable(LanguageServerTests.Python), "Python is required for the real protocol fixture.");
         string folder = Directory.CreateTempSubdirectory("horizon-edit-rpc-").FullName;
         string script = Path.Combine(folder, "server.py"), ack = Path.Combine(folder, "ack.json");
         string source = LanguageServerTests.FAKE_SERVER.ReplaceLineEndings("\n");
@@ -61,7 +61,7 @@ public sealed class LanguageServerEditRequestTests
         File.WriteAllText(script, source);
         try
         {
-            using var server = LanguageServer.Start("edit-rpc", "python", [script], "fake", folder);
+            using var server = LanguageServer.Start("edit-rpc", LanguageServerTests.Python, [script], "fake", folder);
             Assert.NotNull(server);
             string file = Path.Combine(folder, "source.fake");
             server.Open(file, "x");

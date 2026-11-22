@@ -61,7 +61,10 @@ public sealed class TerminalOutputRule
 public sealed class TerminalOutputHighlighter
 {
     /// <summary>The rules a terminal comes with.</summary>
-    public static TerminalOutputRule[] Shipped =>
+    /// <remarks>Made once, a dozen patterns parsed for every terminal opened were a few milliseconds of each; a rule is never changed, only replaced.</remarks>
+    public static TerminalOutputRule[] Shipped => shipped.Value;
+
+    private static readonly Lazy<TerminalOutputRule[]> shipped = new(() =>
     [
         new("diff_added", @"^\+(?!\+\+ ).*", TerminalOutputColour.Green),
         new("diff_removed", @"^-(?!-- ).*", TerminalOutputColour.Red),
@@ -76,7 +79,7 @@ public sealed class TerminalOutputHighlighter
         new("error", @"\b(error|errors|fatal|failed|failure|fail|exception|panic(ked)?)\b", TerminalOutputColour.Red, ignoreCase: true),
         new("path", @"(?<![\w/])(?:[A-Za-z]:\\|\.{0,2}/|~/)[^\s:""'<>|*?()]+(?::\d+(?::\d+)?|\(\d+(,\d+)?\))?", TerminalOutputColour.Cyan, underline: true),
         new("url", @"\bhttps?://[^\s""'<>]+", TerminalOutputColour.Blue, underline: true)
-    ];
+    ]);
 
     public List<TerminalOutputRule> Rules { get; } = [.. Shipped];
 

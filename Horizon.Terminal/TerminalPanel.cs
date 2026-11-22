@@ -45,6 +45,12 @@ public sealed class TerminalTab
     /// <summary>The pane over the whole of the tab, null while none is (see <see cref="TerminalPanel.ToggleZoom"/>).</summary>
     public SplitNode<TerminalView>? Zoomed { get; internal set; }
 
+    /// <summary>What its tab in the strip says of it, worked out every tick from its panes, see <see cref="TerminalTabState"/>.</summary>
+    public TerminalTabState State { get; internal set; }
+
+    // The bells its panes had rung when it was last open, more than these while it isn't is a bell nobody saw
+    internal int BellsSeen;
+
     internal void Refresh()
     {
         Leaves.Clear();
@@ -64,12 +70,12 @@ public sealed class TerminalTab
 /// application wants for itself (its tabs and splits) come through <see cref="OnKey"/> before the shell sees them.
 /// Everything that moves is a tween of <see cref="UIComponent.Tweens"/>, a split sliding open, a tab's room sliding
 /// over as another is opened, a tab folding away as it closes, all of it <see cref="AnimationTime"/> long and off at 0.
-/// <code>
+/// <code><![CDATA[
 /// var panel = module.AddComponent(new TerminalPanel { Fill = UIFill.Both });
 /// panel.Profiles.AddRange(TerminalProfiles.Discover());
 /// panel.NewTab();
-/// panel.OnKey = press => press.Control &amp;&amp; press.Shift &amp;&amp; press.Key == Key.T &amp;&amp; panel.NewTab() is not null;
-/// </code>
+/// panel.OnKey = press => press.Control && press.Shift && press.Key == Key.T && panel.NewTab() is not null;
+/// ]]></code>
 /// </summary>
 public partial class TerminalPanel : UIComponent, IDisposable
 {
@@ -116,8 +122,28 @@ public partial class TerminalPanel : UIComponent, IDisposable
     /// <summary>Where a new terminal starts, null for the process's own folder. The focused terminal's own folder isn't known, a shell doesn't say.</summary>
     public string? WorkingDirectory { get; set; }
 
-    /// <summary>The font every terminal writes in, null for the skin's. A monospaced one.</summary>
-    public UIFont? Font { get; set; }
+    /// <summary>
+    /// The font every terminal writes in, null for the skin's. A monospaced one. Set on the terminals there are as well:
+    /// one made before it was set (a task's, or the first shell, opened before the font was loaded) kept the skin's
+    /// proportional font, its columns every width but a cell's.
+    /// </summary>
+    public UIFont? Font
+    {
+        get => font;
+        set
+        {
+            font = value;
+            foreach (TerminalTab tab in tabs)
+            {
+                foreach (TerminalView view in tab.Views)
+                    view.Font = value;
+            }
+
+            RequestFrame();
+        }
+    }
+
+    private UIFont? font;
 
     /// <summary>The scale of the terminals' text, 0 for the skin's.</summary>
     public float TextScale { get; set; }
@@ -227,8 +253,18 @@ public partial class TerminalPanel : UIComponent, IDisposable
     /// <summary>A terminal whose process ended, with the view and the code, before the pane is closed. Return false to keep the pane.</summary>
     public Func<TerminalView, int, bool>? OnExited { get; set; }
 
-    /// <summary>Whether a pane closes by itself when its shell ends, as a terminal does.</summary>
+    /// <summary>
+    /// Whether a pane closes by itself when its shell ends well, as a terminal does. One that ended with an error stays
+    /// whatever this says, with what it wrote and how it ended, and Enter starts it again (Windows Terminal's "graceful").
+    /// A shell that failed to start, or crashed, went with the tab and nobody saw why.
+    /// </summary>
     public bool CloseOnExit { get; set; } = true;
+
+    /// <summary>What an ended pane says of its code, "Exited with code 1", see <see cref="TerminalView.EndedWords"/>. Null for the engine's words.</summary>
+    public Func<int, string>? EndedWords { get; set; }
+
+    /// <summary>What an ended pane says starts it again, see <see cref="TerminalView.RestartHint"/>.</summary>
+    public string RestartHint { get; set; } = "Press Enter to restart";
 
     protected override bool HitTestVisible => true;
 
@@ -680,6 +716,9 @@ public partial class TerminalPanel : UIComponent, IDisposable
         view.OnResized = size => Dragged(view, size);
         view.OnPaneDropped = PaneDropped;
         view.OnExited = code => Exited(view, code);
+        view.EndedWords = EndedWords;
+        view.RestartHint = RestartHint;
+        view.OnRestart = view => Restart(view);
         view.OnTitle = _ =>
         {
             stripDirty = true;
@@ -712,12 +751,62 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
     private void Exited(TerminalView view, int code)
     {
-        if (OnExited?.Invoke(view, code) == false || !CloseOnExit)
+        stripDirty = true;
+        if (OnExited?.Invoke(view, code) == false || !CloseOnExit || code != 0)
             return;
 
         if (TabOf(view) is not null)
             ClosePane(view);
     }
+
+    /// <summary>
+    /// An ended pane's profile started in it again, in the folder its shell was last in, the way Enter does it in the pane.
+    /// False for a pane that isn't one of this panel's or whose program still runs.
+    /// </summary>
+    public bool Restart(TerminalView view)
+    {
+        if (TabOf(view) is null || view.EndedWith is null)
+            return false;
+
+        string? folder = view.WorkingDirectory is { } there && Directory.Exists(there) ? there : null;
+        StartIn(view, view.Profile, folder);
+        stripDirty = true;
+        OnChanged?.Invoke();
+        RequestFrame();
+        return true;
+    }
+
+    /// <summary>What a tab's panes come to, the worst of them first: ended badly, ended, rang unseen, running a command.</summary>
+    private static TerminalTabState StateOf(TerminalTab tab, bool open)
+    {
+        var leaves = tab.Leaves;
+        bool ended = false, busy = false, failed = false;
+        int bells = 0;
+        for (int i = 0; i < leaves.Count; i++)
+        {
+            if (leaves[i].Content is not { } view)
+                continue;
+            if (view.EndedWith is { } code)
+            {
+                failed |= code != 0;
+                ended = true;
+            }
+
+            busy |= view.Screen.CommandRunning;
+            bells += view.Bells;
+        }
+
+        if (open || bells < tab.BellsSeen)
+            tab.BellsSeen = bells;
+        return failed ? TerminalTabState.Failed
+            : ended ? TerminalTabState.Ended
+            : bells > tab.BellsSeen ? TerminalTabState.Rang
+            : busy ? TerminalTabState.Busy
+            : TerminalTabState.Idle;
+    }
+
+    // The skin the strip's colours of the states were taken from, a skin put on takes them again
+    private UISkin? stateSkin;
 
     /* Every tick */
 
@@ -795,6 +884,23 @@ public partial class TerminalPanel : UIComponent, IDisposable
 
         ShowBackdrop();
 
+        // How every tab's panes are, the strip read again when one changed or the skin did
+        if (Module?.Compositor.Skin is { } skin && skin != stateSkin)
+        {
+            stateSkin = skin;
+            stripDirty = true;
+        }
+
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            TerminalTabState state = StateOf(tabs[i], tabs[i] == current);
+            if (state != tabs[i].State)
+            {
+                tabs[i].State = state;
+                stripDirty = true;
+            }
+        }
+
         // A title the program sets changes as it goes, the strip is read again when any does
         for (int i = 0; i < tabs.Count; i++)
         {
@@ -821,14 +927,43 @@ public partial class TerminalPanel : UIComponent, IDisposable
         for (int i = 0; i < tabs.Count; i++)
         {
             StripTab shown = strip.Tabs[i];
-            shown.Title = tabs[i].Title;
-            shown.Icon = tabs[i].Profile?.Icon ?? "terminal";
-            shown.Tooltip = tabs[i].Profile?.Command ?? string.Empty;
-            shown.Tag = tabs[i];
+            TerminalTab tab = tabs[i];
+            shown.Title = tab.Title;
+            shown.Tag = tab;
+
+            // The profile's icon, or what's become of its panes in its place: a cross in the error's colour for one that
+            // ended badly, a tick for one that ended, a bell for one that rang while the tab was shut, and the icon in the
+            // accent while a command runs. A state that changes the icon has an icon of its own, the colour never says it alone
+            string icon = tab.Profile?.Icon ?? "terminal";
+            (shown.Icon, shown.IconColor) = tab.State switch
+            {
+                TerminalTabState.Failed => ("error", stateSkin?.ErrorColor),
+                TerminalTabState.Ended => ("pass", stateSkin?.SuccessColor),
+                TerminalTabState.Rang => ("bell-dot", stateSkin?.WarningColor),
+                TerminalTabState.Busy => (icon, stateSkin?.AccentColor),
+                _ => (icon, (Vector4?)null)
+            };
+            shown.Tooltip = tab.State is TerminalTabState.Failed or TerminalTabState.Ended && EndedView(tab) is { } ended
+                ? ended.EndedSaid
+                : tab.Profile?.Command ?? string.Empty;
         }
 
         strip.Selected = CurrentIndex;
         RequestFrame();
+    }
+
+    // The ended pane a tab's tooltip speaks of, one that ended badly before one that ended well
+    private static TerminalView? EndedView(TerminalTab tab)
+    {
+        var leaves = tab.Leaves;
+        TerminalView? found = null;
+        for (int i = 0; i < leaves.Count; i++)
+        {
+            if (leaves[i].Content is { EndedWith: { } code } view && (found is null || code != 0))
+                found = view;
+        }
+
+        return found;
     }
 
     private void SetEdges(TerminalTab tab)
@@ -903,13 +1038,13 @@ public partial class TerminalPanel : UIComponent, IDisposable
         profilePicker.ArrangeTree(profilePicker.Visible ? new UIRect(new Vector2(controls, content.Max.Y - stripHeight), content.Max).Shrink(new UIEdges(2.0f, 3.0f)) : default);
         more?.ArrangeTree(TabsOverflow ? new UIRect(new Vector2(controls - stripHeight - listing, content.Max.Y - stripHeight), new Vector2(controls - stripHeight, content.Max.Y)) : default);
         float paneTop = content.Max.Y - stripHeight - 2.0f;
-        ArrangeFind(content, paneTop);
-        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, paneTop - (Finding ? FIND_HEIGHT : 0.0f))).Shrink(RoomPadding);
+        var roomArea = new UIRect(content.Min, new Vector2(content.Max.X, paneTop)).Shrink(RoomPadding);
         strip.ArrangeTree(stripArea);
 
         // In from the strip's edges as far as a tab's pill is, so the plus lights the shape the tabs do
         add.ArrangeTree(addArea.Shrink(new UIEdges(2.0f, 3.0f)));
         room.ArrangeTree(roomArea);
+        ArrangeFind();
     }
 
     /// <summary>The panes of the open tab laid out by its tree, the others out of sight where they were.</summary>
@@ -1039,4 +1174,23 @@ public partial class TerminalPanel : UIComponent, IDisposable
     {
         protected override void Arrange(UIRect content) => owner.ArrangeRoom(content);
     }
+}
+
+/// <summary>What a tab's panes come to, which its icon in the strip says, see <see cref="TerminalTab.State"/>.</summary>
+public enum TerminalTabState : byte
+{
+    /// <summary>Its shells at their prompts, or nothing known of them.</summary>
+    Idle,
+
+    /// <summary>A command typed at a prompt is running, as its shell's marks say.</summary>
+    Busy,
+
+    /// <summary>A program in it rang the bell while the tab wasn't open, until it is.</summary>
+    Rang,
+
+    /// <summary>A program in it ended well and its pane stayed.</summary>
+    Ended,
+
+    /// <summary>A program in it ended with an error, its pane kept to read.</summary>
+    Failed
 }

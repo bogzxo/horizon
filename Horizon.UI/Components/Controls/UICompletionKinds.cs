@@ -1,8 +1,9 @@
+using Horizon.UI.Scripting;
+
 namespace Horizon.UI.Components;
 
 /// <summary>
-/// The Codicon in front of a completion, by what kind of thing it is (<see cref="UICompletion.Kind"/>, a language
-/// server's kind as a word), VS Code's symbol icons. The list was words alone, a keyword and a method looked the same.
+/// The icon and syntax colour of a completion, based on its kind (<see cref="UICompletion.Kind"/>).
 /// </summary>
 public static class UICompletionKinds
 {
@@ -37,5 +38,32 @@ public static class UICompletionKinds
         "type parameter" => "symbol-type-parameter",
         "string" => "symbol-string",
         _ => "symbol-misc"
+    };
+
+    /// <summary>The syntax colour used for a completion's name and icon.</summary>
+    public static SyntaxKind SyntaxOf(string kind) => kind switch
+    {
+        "method" or "function" => SyntaxKind.Method,
+        "extension method" => SyntaxKind.ExtensionMethod,
+        "constructor" => SyntaxKind.Type,
+        "property" => SyntaxKind.Property,
+        "field" => SyntaxKind.Field,
+        "event" => SyntaxKind.Event,
+        "variable" => SyntaxKind.Local,
+        "parameter" => SyntaxKind.Parameter,
+        "class" => SyntaxKind.Class,
+        "struct" => SyntaxKind.Struct,
+        "interface" => SyntaxKind.Interface,
+        "enum" => SyntaxKind.Enum,
+        "enum member" => SyntaxKind.EnumMember,
+        "module" or "namespace" => SyntaxKind.Namespace,
+        "type parameter" => SyntaxKind.TypeParameter,
+        "constant" => SyntaxKind.NamedConstant,
+        "keyword" => SyntaxKind.Keyword,
+        "operator" => SyntaxKind.Operator,
+        "string" => SyntaxKind.Text,
+        "unit" or "value" or "colour" or "color" => SyntaxKind.Constant,
+        "reference" => SyntaxKind.Reference,
+        _ => SyntaxKind.Name
     };
 }

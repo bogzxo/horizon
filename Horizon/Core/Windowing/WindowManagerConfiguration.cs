@@ -57,6 +57,12 @@ public readonly struct WindowManagerConfiguration
     public readonly bool Maximized { get; init; }
 
     /// <summary>
+    /// Whether the window is made and left hidden, not even the loading screen shown, for a program that starts in the
+    /// background (with the system, say) and shows its window later with BringToFront.
+    /// </summary>
+    public readonly bool StartHidden { get; init; }
+
+    /// <summary>
     /// Whether the window is made without the system's frame, no title bar and no border, so the UI can draw its own
     /// (<c>TitleBar</c>, with the window's buttons and dragged to move it) the way VS Code does. The edges are dragged by
     /// a compositor that says <c>ResizesWindow</c>.

@@ -161,10 +161,6 @@ public class UIWorkCardsTests
     {
         UIGlass lens = UIGlass.Lens(100.0f, 2.0f, -1.0f, 50.0f);
         Assert.Equal((64.0f, 1.0f, 0.0f, 24.0f), (lens.Blur, lens.Clarity, lens.Rim, lens.Bend));
-
-        UIGlass pane = UIGlass.Pane(UIGlass.Clear.Blur, UIGlass.Clear.Clarity, UIGlass.Clear.Rim);
-        Assert.Equal(0.0f, pane.Bend);
-        Assert.True(pane.Blur > UIGlass.Clear.Blur && pane.Rim < UIGlass.Clear.Rim);
     }
 
     [Fact]

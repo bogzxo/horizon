@@ -24,6 +24,10 @@ public partial class WindowManager
     // still keep time. Carets request an earlier tick for their next blink; input and queued work wake immediately.
     private const double IDLE_PERIOD = 0.25;
 
+    // The same minimised or hidden, where a caret's blink or a spinner is seen by nobody. Their early ticks aren't taken
+    // either (see RequestTickIn), timers keep slower time
+    private const double IDLE_PERIOD_MINIMISED = 2.0;
+
     // How long frames are still drawn after the window is minimised, enough for the one that sizes everything down
     private const double FRAMES_MINIMISED = 0.25;
 
@@ -36,6 +40,29 @@ public partial class WindowManager
 
     /// <summary>Whether the window is down to the taskbar, or the app is in the background on a phone. A fight pauses on it. From any thread.</summary>
     public bool IsMinimized => windowMinimised;
+
+    // Asleep with the window hidden, see Dormant
+    private volatile bool dormant;
+
+    // The longest the simulation sleeps while dormant, an hour, Wake is what it's waiting for
+    private const double IDLE_PERIOD_DORMANT = 3600.0;
+
+    /// <summary>
+    /// Whether the program is asleep with its window hidden, see <see cref="Sleep"/> and <see cref="Resume"/>. The
+    /// simulation doesn't tick, no frames are drawn, not even the heartbeat, and the window's thread waits on the system.
+    /// From any thread.
+    /// </summary>
+    public bool Dormant
+    {
+        get => dormant;
+        private set
+        {
+            dormant = value;
+            UpdateIdlePeriod();
+            host.Window?.WakeWindowThread();
+            Wake();
+        }
+    }
 
     /// <summary>What the window is run for, see <see cref="WindowManagerConfiguration.Mode"/>.</summary>
     public RunMode Mode { get; }
@@ -93,7 +120,7 @@ public partial class WindowManager
     /// <summary>Schedules the next timed UI change without requesting unchanged frames. Simulation thread only.</summary>
     public void RequestTickIn(double seconds)
     {
-        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
+        if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0 && !windowMinimised)
             simulation?.RequestTickIn(seconds);
     }
 
@@ -168,7 +195,6 @@ public partial class WindowManager
     private bool MayWaitForEvents => (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && !InputLately;
 
     /// <summary>
-    /// Sets the maximum idle sleep.    /// <summary>
     /// Sets the maximum idle sleep. Timed UI changes can request an earlier tick.
     /// An application only, a self test run as a game keeps its pace. Any thread.
     /// </summary>
@@ -177,7 +203,9 @@ public partial class WindowManager
         if (simulation is not { } loop || Mode != RunMode.Application)
             return;
 
-        loop.IdlePeriod = IDLE_PERIOD;
+        // Minimised or hidden, nothing on screen, it looks in now and then. What wakes it (input, queued work, Wake)
+        // still does at once
+        loop.IdlePeriod = dormant ? IDLE_PERIOD_DORMANT : windowMinimised ? IDLE_PERIOD_MINIMISED : IDLE_PERIOD;
     }
 
     /// <summary>
@@ -200,10 +228,15 @@ public partial class WindowManager
         while (!renderStopping)
         {
             bool hidden = Hidden;
+            // The surface going and coming back is done between frames, asleep as well (see Sleep)
+            if (!surfaceRequests.IsEmpty)
+                return;
+
             if (hidden ? exclusiveRequested || EntityLifecycle.HasWork : Stopwatch.GetTimestamp() < Volatile.Read(ref drawUntil))
                 return;
 
-            if (!frameWanted.WaitOne(HEARTBEAT_MS) && !hidden)
+            // Dormant there's no heartbeat either, only somebody asking for a frame wakes it
+            if (!frameWanted.WaitOne(hidden && dormant ? Timeout.Infinite : HEARTBEAT_MS) && !hidden)
                 return;
         }
     }

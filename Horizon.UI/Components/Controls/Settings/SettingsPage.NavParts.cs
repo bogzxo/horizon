@@ -28,6 +28,26 @@ public partial class SettingsPage
         UpdateNav();
     }
 
+    // The part a section is in opened down the left, a section gone to (Appearance · Profiles from the status bar, a link
+    // to a setting) left the links folded and the one before it lit
+    private void UnfoldPartOf(string group)
+    {
+        foreach (var (part, _, _) in navParts)
+        {
+            if (InPart(group, part) && collapsedParts.TryRemove(part, out _))
+            {
+                searchOpened.Remove(part);
+                navStale = true;
+            }
+        }
+    }
+
+    // Whether a section is in a part, its name the part's with " · " after it, or the part's name alone. Asked as the
+    // headings paint, so it cuts nothing out of the name
+    private static bool InPart(string group, string part) =>
+        group.StartsWith(part, StringComparison.Ordinal)
+        && (group.Length == part.Length || group.AsSpan(part.Length).StartsWith(" · ", StringComparison.Ordinal));
+
     /// <summary>A part folded if it's open and opened if it's folded, what a click on its heading does.</summary>
     public void TogglePart(string part) => SetPartCollapsed(part, !IsPartCollapsed(part));
 
@@ -336,6 +356,7 @@ public partial class SettingsPage
             UIRect pill = band.Shrink(new UIEdges(0.0f, 1.0f));
             float hover = lit * (2.0f - lit);
             list.Box(pill, text with { W = 0.05f * hover });
+
             Vector4 ring = skin.Palette.Highlight;
             list.RoundOutline(pill, skin.CornerRadius, 1.5f, ring with { W = IsFocused ? ring.W : 0.0f });
 
@@ -344,12 +365,18 @@ public partial class SettingsPage
             float height = skin.Font.LineHeight * scale;
             float width = skin.Font.MeasureLine(Part, scale, UITextStyle.Bold, default);
             var at = new Vector2(band.Min.X, band.Center.Y + height * 0.5f);
-            list.Text(Part, at, scale, text, false, UITextStyle.Bold, default);
+            // In the accent while it's folded with the section on screen in it, so the rows are always somewhere down the
+            // left. Its links would have had the lit one
+            bool current = Collapsed && page.CurrentGroup is { } group && InPart(group, Part);
+            list.Text(Part, at, scale, current ? skin.AccentColor : text, false, UITextStyle.Bold, default);
             if (count > 0)
             {
                 float small = scale * 0.85f;
                 Vector4 accent = skin.AccentColor;
-                list.Text(count.ToString(System.Globalization.CultureInfo.InvariantCulture), new Vector2(at.X + width + 8.0f, band.Center.Y + skin.Font.LineHeight * small * 0.5f), small,
+                // Written into the stack, not a string made for it every frame
+                Span<char> written = stackalloc char[11];
+                count.TryFormat(written, out int length, provider: System.Globalization.CultureInfo.InvariantCulture);
+                list.Text(written[..length], new Vector2(at.X + width + 8.0f, band.Center.Y + skin.Font.LineHeight * small * 0.5f), small,
                     searched ? skin.DimTextColor : accent, false);
             }
 

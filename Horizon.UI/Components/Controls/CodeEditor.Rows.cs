@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.UI.Drawing;
 using Horizon.UI.Scripting;
 using Horizon.UI.Skinning;
 
@@ -17,9 +18,14 @@ public partial class CodeEditor
 
     /// <summary>
     /// A row the code is drawn in, a piece of a line from one column to another, so far in from the left. A lens row has
-    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove).
+    /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove). A predicted
+    /// row has none of it either, it's a line of a prediction under the line, counted from 1 (CodeEditor.Prediction).
     /// </summary>
-    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false);
+    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false, int Predicted = 0)
+    {
+        /// <summary>Whether none of the line's text is on it, a lens row or a predicted one.</summary>
+        public bool Virtual => Lens || Predicted > 0;
+    }
 
     private readonly List<CodeRow> rows = [];
 
@@ -28,7 +34,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int? Predicted) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, null);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -278,7 +284,8 @@ public partial class CodeEditor
             scrolled = (int)MathF.Round(scrollY);
         }
 
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged);
+        int? visiblePredictionRows = VisiblePredictionRowsVersion;
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -288,13 +295,14 @@ public partial class CodeEditor
         shapedLeft = area.Min.X + TEXT_PAD;
         shapedLineHeight = lineHeight;
 
-        // Rows of lenses coming or going above what's in sight would push it about, so the line at the top of the view keeps
-        // its place. Gone to a reference, the counts came a moment after and the line went to was pushed off the bottom
+        // Rows of lenses or of a prediction coming or going above what's in sight would push it about, so the line at the
+        // top of the view keeps its place. Gone to a reference, the counts came a moment after and the line went to was
+        // pushed off the bottom
         (int Line, int Row)? anchor = null;
-        if (rowsFor.Lenses != lensRowsChanged && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
         {
             int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
-            while (top < rows.Count - 1 && rows[top].Lens)
+            while (top < rows.Count - 1 && rows[top].Virtual)
                 top++;
             int line = rows[top].Line;
 
@@ -317,7 +325,20 @@ public partial class CodeEditor
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
         int columns = wordWrap ? Math.Max(8, (int)((width - TEXT_PAD * 2.0f) / MathF.Max(1.0f, digit))) : int.MaxValue;
 
-        int lens = 0;
+        // A font whose letters aren't all as wide as a digit (a box for prose in the UI's font) is wrapped by how wide its
+        // letters really are. Counted in digits, a line of narrow letters wrapped a third of the way short of the edge
+        UIFont font = FontOf(skin);
+        if (!ReferenceEquals(font, wrapFont) || scale != wrapScale)
+        {
+            wrapFont = font;
+            wrapScale = scale;
+            wrapWidths.Clear();
+            wrapProportional = MathF.Abs(font.Measure("i", scale, markup: false).X - digit) > 0.01f
+                || MathF.Abs(font.Measure("W", scale, markup: false).X - digit) > 0.01f;
+            wrapTab = TabWidth(skin, scale);
+        }
+
+        int lens = 0, predicted = 0;
         lensRows = 0;
         for (int line = 0; line < count; line++)
         {
@@ -332,13 +353,18 @@ public partial class CodeEditor
             string text = document.LineAt(line);
             AddRows(line, text, columns, digit);
 
-            // A folded line's own rows, then every line it folds is drawn as it
+            // A folded line's own rows, then every line it folds is drawn as it. One that isn't has the rows of a
+            // prediction's lines under it after its own
             if (folded.Contains(line) && foldable.TryGetValue(line, out int end))
             {
                 int into = rows.Count - 1;
                 for (int hidden = line + 1; hidden <= end && hidden < count; hidden++)
                     lineRow[hidden] = into;
                 line = Math.Min(end, count - 1);
+            }
+            else if (visiblePredictionRows.HasValue)
+            {
+                AddPredictedRows(line, ref predicted);
             }
         }
 
@@ -354,9 +380,31 @@ public partial class CodeEditor
         }
     }
 
+    // The font and size the wrap's letter widths are for, whether that font's letters differ in width, and their widths
+    private UIFont? wrapFont;
+    private float wrapScale, wrapTab;
+    private bool wrapProportional;
+    private readonly Dictionary<char, float> wrapWidths = [];
+
+    // How wide a letter is drawn in the wrap's font, measured once a letter
+    private float LetterWidth(char letter)
+    {
+        if (letter == '\t')
+            return wrapTab;
+        if (!wrapWidths.TryGetValue(letter, out float width))
+            wrapWidths[letter] = width = wrapFont!.Measure(new ReadOnlySpan<char>(in letter), wrapScale, markup: false).X;
+        return width;
+    }
+
     // A line's rows, one when it isn't wrapped or fits, cut at the last space before the edge when it is and doesn't
     private void AddRows(int line, string text, int columns, float digit)
     {
+        if (wordWrap && wrapProportional)
+        {
+            AddMeasuredRows(line, text, columns, digit);
+            return;
+        }
+
         float at = 0.0f;
         if (!wordWrap || Columns(text, 0, text.Length) + InlayColumnsOf(line) <= RoomOn(rows.Count, 0.0f, columns, digit, out at))
         {
@@ -379,6 +427,53 @@ public partial class CodeEditor
             while (end < text.Length && used + (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end) <= room)
             {
                 used += (text[end] == '\t' ? TabSize : 1) + InlayColumnsAt(line, end);
+                end++;
+            }
+
+            if (end < text.Length)
+            {
+                int space = text.LastIndexOf(' ', end - 1, end - start);
+                if (space > start)
+                    end = space + 1;
+            }
+
+            rows.Add(new CodeRow(line, start, Math.Max(end, start + 1), rowIndent));
+            start = Math.Max(end, start + 1);
+            firstRow = false;
+        }
+    }
+
+    // The same as AddRows for a font whose letters differ in width, a row taking letters while their widths fit the room
+    // rather than while their count does. The room is still said in digits (the shapes work in them), as wide as it was
+    private void AddMeasuredRows(int line, string text, int columns, float digit)
+    {
+        float whole = InlayColumnsOf(line) * digit;
+        foreach (char letter in text)
+            whole += LetterWidth(letter);
+        if (whole <= RoomOn(rows.Count, 0.0f, columns, digit, out float at) * digit)
+        {
+            rows.Add(new CodeRow(line, 0, text.Length, at));
+            return;
+        }
+
+        // Rows after the first start as far in as the line does, up to half the width
+        int indent = 0;
+        while (indent < text.Length && text[indent] is ' ' or '\t') indent++;
+        int indentColumns = Math.Min(Columns(text, 0, indent), columns / 2);
+
+        int start = 0;
+        bool firstRow = true;
+        while (start < text.Length)
+        {
+            int room = RoomOn(rows.Count, firstRow ? 0.0f : indentColumns * digit, firstRow ? columns : columns - indentColumns, digit, out float rowIndent);
+            float fits = room * digit, used = 0.0f;
+            int end = start;
+            while (end < text.Length)
+            {
+                float next = LetterWidth(text[end]) + InlayColumnsAt(line, end) * digit;
+                if (used + next > fits)
+                    break;
+                used += next;
                 end++;
             }
 
@@ -448,8 +543,9 @@ public partial class CodeEditor
         if (rows[row].Line != line)
             return row;
 
-        // Along the line's rows to the one the column is on, the end of one row being the start of the next
-        while (row + 1 < rows.Count && rows[row + 1].Line == line && column >= rows[row + 1].Start)
+        // Along the line's rows to the one the column is on, the end of one row being the start of the next, and never on
+        // to the rows of a prediction under it
+        while (row + 1 < rows.Count && rows[row + 1].Line == line && rows[row + 1].Predicted == 0 && column >= rows[row + 1].Start)
             row++;
         return row;
     }

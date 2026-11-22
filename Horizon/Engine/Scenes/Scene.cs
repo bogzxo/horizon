@@ -7,7 +7,7 @@ namespace Horizon.Engine;
 /// <summary>
 /// One screen of a game. A menu, a level, a fight. It adds what it is made of in <see cref="Core.Entity.Initialize"/>
 /// and is updated and drawn for as long as it is the one the engine shows.
-/// <code>
+/// <code><![CDATA[
 /// internal sealed class TitleScene : Scene
 /// {
 ///     public override void Initialize()
@@ -19,10 +19,10 @@ namespace Horizon.Engine;
 ///     public override void UpdateState(float dt)
 ///     {
 ///         base.UpdateState(dt);
-///         if (!IsLeaving &amp;&amp; Engine.Input.Keyboard.AnyPressed) GoTo(new GameScene());
+///         if (!IsLeaving && Engine.Input.Keyboard.AnyPressed) GoTo(new GameScene());
 ///     }
 /// }
-/// </code>
+/// ]]></code>
 /// </summary>
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 public abstract class Scene : GameObject
@@ -116,6 +116,14 @@ public abstract class Scene : GameObject
     /// standing still, so what it changed in the meantime (the options, the size of the window) can be seen to here.
     /// </summary>
     protected internal virtual void OnResumed()
+    { }
+
+    /// <summary>
+    /// Called as the scene is set and about to be drawn for everybody to see, once it's set up and warmed up (the unseen
+    /// turns it is drawn and updated for, which a scene can't tell from the real ones). Render thread, with the simulation
+    /// standing still. For what starts with the scene appearing, a UI fading in, not with its being made.
+    /// </summary>
+    protected internal virtual void OnShown()
     { }
 
     public override void UpdateState(float dt)

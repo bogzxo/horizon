@@ -70,7 +70,7 @@ public sealed class TerminalSettings
     /// <summary>Whether the WSL distributions are asked for as profiles (wsl -l takes a moment on a machine without it).</summary>
     public bool Wsl = true;
 
-    /// <summary>Whether a pane closes by itself when its shell ends.</summary>
+    /// <summary>Whether a pane closes by itself when its shell ends well, one that ended with an error always stays.</summary>
     public bool CloseOnExit = true;
 
     /// <summary>Whether Up and Down step through the program's own history of the lines run (history.txt), and how many lines it keeps.</summary>
@@ -133,7 +133,7 @@ public sealed class TerminalSettings
             ["horizon", "dark", "graphite", "light", "midnight", "slate", "sunset", "visual_studio"]),
         new("profile", "text", "\"\"", "The id of the shell a new tab opens with (pwsh, powershell, cmd, git_bash, wsl:Ubuntu), empty for the first one found."),
         new("text_scale", "number", "0.16", "How big the terminals' text is, Ctrl+Shift+= and - change it.", Least: 0.06f, Most: 0.6f),
-        new("scale", "number", "1", "How big Dusk's own parts, the tabs and the bars, are drawn.", Least: 0.5f, Most: 3.0f),
+        new("scale", "number", "1", "Dusk's interface size, how big the whole window is drawn, its title bar, tabs and bars, on top of the scale the system has for the screen. 1 for 100%. The terminals' text has its own size on top of it.", Least: 0.5f, Most: 3.0f),
         new("scrollback", "whole", "5000", "How many rows every terminal keeps of what went off the top.", Least: 0, Most: 100000),
         new("terminal_minimap", "flag", "true", "Whether every terminal has its rows drawn small down its right, the code editor's minimap for what went off the top. The rows in sight are under a slider that's dragged to scroll, a click anywhere else goes there, and the prompts are marked by how their commands ended."),
         new("animations", "flag", "true", "Whether anything moves, splits sliding open, tabs sliding over, a tab folding away, the cursor's glide."),
@@ -141,7 +141,7 @@ public sealed class TerminalSettings
         new("cursor_glide", "number", "0.036", "How long the cursor takes to glide to where it goes, in seconds, 0 for it jumping there. It jumps anyway with the animations off.", Least: 0.0f, Most: 0.3f),
         new("font", "text", "\"hack\"", "The font the terminals write in, a folder of Assets/fonts, empty for the skin's."),
         new("wsl", "flag", "true", "Whether the WSL distributions are asked for as profiles."),
-        new("close_on_exit", "flag", "true", "Whether a pane closes by itself when its shell ends."),
+        new("close_on_exit", "flag", "true", "Whether a pane closes by itself when its shell ends well. One that ended with an error stays, to be read, and Enter starts it again."),
         new("history", "flag", "true", "Whether Up and Down step the history of the lines run in every shell, kept in history.txt. Off, they are the shell's own."),
         new("history_size", "whole", "1000", "How many lines the history keeps.", Least: 10, Most: 100000),
         new("restore_sessions", "flag", "true", "Whether the tabs that were open come back on the next start."),

@@ -76,8 +76,16 @@ public partial class UICompositor : GameComponent, IDisposable
     public Vector2? DesignSize { get; set; }
 
     /// <summary>
-    /// Makes the whole UI bigger or smaller by a factor, on top of what <see cref="DesignSize"/> does. For a
-    /// setting that lets the player decide how big they want things.
+    /// Makes the whole UI bigger or smaller by a factor, on top of what <see cref="DesignSize"/> and the screen's own
+    /// <see cref="DisplayScale"/> do: the interface size the player or the person using a program picks, 1 for 100%, the
+    /// size the system would have things on that screen.
+    /// <para>
+    /// It is the one scale of the UI's. Everything a module lays out, its boxes, its lines and every word, is in units of
+    /// the layout and comes out <see cref="UIScale"/> times as big, so a component that wants to stay the size the system's
+    /// own parts are whatever the setting (<see cref="TitleBar.PixelSized"/>) is the exception and says so. Text
+    /// stays sharp at any of it, letters are made at the size they come to on the screen. A zoom of a component's own (an
+    /// editor's code, a terminal's font) is a size of its text in those units and goes on top of this, not instead of it.
+    /// </para>
     /// </summary>
     public float Scale { get; set; } = 1.0f;
 
@@ -104,7 +112,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// <summary>
     /// How much bigger than it was laid out the UI is drawn right now, <see cref="Scale"/> times whatever
     /// fitting the <see cref="DesignSize"/> comes to, times the <see cref="DisplayScale"/>. A unit of the layout is
-    /// this many units of the camera.
+    /// this many units of the camera, and of the window's pixels for a UI drawn straight into the window. Applied as the
+    /// transform of every module (<see cref="UIModule.UnitScale"/>), never by tweening a component's own size, which would
+    /// draw its letters out of a picture made at another size.
     /// </summary>
     public float UIScale { get; private set; } = 1.0f;
 
@@ -256,6 +266,18 @@ public partial class UICompositor : GameComponent, IDisposable
     private UIDrawList back = new();
     private UIDrawList front = new();
     private int paintedFrame;
+
+    // What each list was painted as (see TraceTag), swapped with them, and what the list on the GPU was, for FrameTrace
+    private object? backTag, frontTag, uploadedTag;
+    private long uploadedPainted = -1;
+    private UISkin? uploadedSkin;
+
+    /// <summary>
+    /// What this UI is painting as right now, a face of a program say, kept with every list painted from here on and
+    /// said of every frame drawn from one while <see cref="Horizon.Core.Diagnostics.FrameTrace"/> is on. Null (the usual)
+    /// leaves this UI out of the trace.
+    /// </summary>
+    public object? TraceTag { get; set; }
     private int uploadedFrame;
 
     private bool pointerWasDown;
@@ -361,6 +383,7 @@ public partial class UICompositor : GameComponent, IDisposable
         public int Painted = -1;
         public UISkin? Skin;
         public bool Incomplete;
+        public object? Tag;
 
         public ReadOnlySpan<SpriteItem> Span => Items.AsSpan(0, Count);
     }
@@ -660,6 +683,81 @@ public partial class UICompositor : GameComponent, IDisposable
         }
     }
 
+    /// <summary>
+    /// Has a skin loaded ahead of being worn, on the render thread at the next frame, nothing on screen changing. For a
+    /// UI that's about to change its theme (a pointer over the button that does it), so the change finds it there and is
+    /// painted in it from the same tick. Art painted aside in it meanwhile (see <see cref="PaintAside"/>) goes into its
+    /// atlas as it would for the skin worn. From any thread, and nothing once it's loaded.
+    /// </summary>
+    public void WarmSkin(string directory, string file, string? theme = null)
+    {
+        if (UISkin.Known(directory, file, theme) is { } known)
+        {
+            if (!ReferenceEquals(known, Skin))
+                warmSkin = known;
+            return;
+        }
+
+        lock (skinLock)
+            warmRequest = (directory, file, theme);
+    }
+
+    /// <summary>A skin loaded ahead (see <see cref="WarmSkin"/>) and not worn yet, null while it isn't there. From any thread.</summary>
+    public UISkin? Warmed => warmSkin;
+
+    // A skin to be loaded ahead (WarmSkin), and one loaded and not worn yet, whose atlas takes the art painted aside
+    private (string Directory, string File, string? Theme)? warmRequest;
+    private volatile UISkin? warmSkin;
+
+    // The list the UI is painted into aside, never shown, and the screen the last update had
+    private readonly UIDrawList aside = new();
+    private UIRect lastScreen;
+
+    /// <summary>
+    /// Lays the UI out and paints it as it is right now into a list that's never shown, in a skin (the worn one when
+    /// null), so what that asks for (art put in the atlas, letters drawn, text measured) is there by the time it's shown.
+    /// For a UI about to change: the change made, painted aside and undone. What's on screen is untouched, the paint at the
+    /// end of the tick lays it out as it is again. Simulation thread, in an update.
+    /// </summary>
+    public void PaintAside(UISkin? skin = null)
+    {
+        if ((skin ?? Skin) is not { } painted || lastScreen.IsEmpty)
+            return;
+
+        aside.Previous = front;
+        aside.MotionSpeed = AnimationSpeed;
+        aside.Begin(painted, paintFrame, 0.0f, paintClock);
+        foreach (var module in modules)
+        {
+            if (!module.Enabled)
+                continue;
+            module.Layout(lastScreen, painted);
+            module.Paint(aside);
+        }
+        aside.End();
+    }
+
+    // Helper method for the skin that was asked for when it's been loaded before, leaving the request where it is
+    private UISkin? RequestedAndKnown()
+    {
+        lock (skinLock)
+            return requestedSkin is { } wanted ? UISkin.Known(wanted.Directory, wanted.File, wanted.Theme) : null;
+    }
+
+    // Helper method to load the skin asked to be warmed, render thread
+    private void LoadWarmSkin()
+    {
+        (string Directory, string File, string? Theme)? request;
+        lock (skinLock)
+        {
+            request = warmRequest;
+            warmRequest = null;
+        }
+
+        if (request is { } wanted && UISkin.Shared(wanted.Directory, wanted.File, wanted.Theme) is { } loaded && !ReferenceEquals(loaded, Skin))
+            warmSkin = loaded;
+    }
+
     private void LoadRequestedSkin()
     {
         (string Directory, string File, string? Theme)? request;
@@ -681,10 +779,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         (skinDirectory, skinFile, skinTheme) = wanted;
 
-        // What was painted so far shows art of the old skin's atlas, not of this one's
+        // What was uploaded is drawn on in the skin it was painted in (the renderer keeps that one's atlas, a shared skin
+        // is never let go of) until a list painted in this one is there. Cleared here, every change of theme was a frame
+        // or more of no UI at all, the ground flashing through, and the first change to a skin not drawn with before was
+        // a tenth of a second of it while its art was put together
         Skin = skin;
-        renderer.Clear();
         pictureCurrent = false;
+        if (ReferenceEquals(warmSkin, skin))
+            warmSkin = null;
 
         // And the first list painted with the new one goes up as soon as it is there, limit or no limit
         refreshedAt = 0;
@@ -695,6 +797,12 @@ public partial class UICompositor : GameComponent, IDisposable
         // A camera of its own is kept the size of the window, here on the simulation thread where it is read
         if (ownsCamera && GameEngine.Instance.WindowManager.ViewportSize is { X: > 0.0f, Y: > 0.0f } window && viewportCamera.ViewSize != window)
             viewportCamera.ViewSize = window;
+
+        // A skin asked for that's been loaded before is worn from this tick on, painted with and seen by the updates. Left
+        // for the frame that loads it, one more list went out in the old skin, which that frame threw away, and the change
+        // was a frame late at best
+        if (RequestedAndKnown() is { } asked && !ReferenceEquals(asked, Skin))
+            Skin = asked;
 
         if (Skin is not { } skin)
             return;
@@ -708,6 +816,7 @@ public partial class UICompositor : GameComponent, IDisposable
         var screen = new UIRect(
             new Vector2(bounds.X, bounds.Y),
             new Vector2(bounds.X + bounds.Width, bounds.Y + bounds.Height));
+        lastScreen = screen;
 
         // Worked out before anything else uses it. The pointer has to be scaled the same way the layout is.
         float fit = DesignSize is { X: > 0.0f, Y: > 0.0f } design && !screen.IsEmpty
@@ -737,8 +846,14 @@ public partial class UICompositor : GameComponent, IDisposable
 
         foreach (var module in snapshot)
         {
-            if (module.Enabled)
-                module.Update(dt);
+            if (!module.Enabled)
+                continue;
+            // The first update of every module weighed, with HORIZON_LOG_STARTUP, for what a program's start goes on
+            long allocated = Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady ? GC.GetAllocatedBytesForCurrentThread() : -1;
+            long started = allocated >= 0 ? Stopwatch.GetTimestamp() : 0;
+            module.Update(dt);
+            if (allocated >= 0)
+                Horizon.Logging.Log.Info($"[Startup] {StartupName(module)} updated in {UIStatistics.Since(started):0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - allocated) / 1024} KB");
         }
 
         // Laid out and painted once everything has had its update, at the end of the tick, see Capture. A UI
@@ -748,6 +863,9 @@ public partial class UICompositor : GameComponent, IDisposable
         if (!capturedBefore)
             PaintPending();
     }
+
+    // A module as the startup's weighing says it, by what's first in it and how many things it has
+    private static string StartupName(UIModule module) => $"module of {(module.Root.Children.Count > 0 ? module.Root.Children[0].GetType().Name : "nothing")} and {module.Root.Children.Count - 1} more";
 
     private readonly record struct PendingPaint(UIModule[] Modules, UIRect Screen, UISkin Skin, float Delta);
 
@@ -767,22 +885,40 @@ public partial class UICompositor : GameComponent, IDisposable
         pending = null;
         var (snapshot, screen, skin, dt) = paint;
 
+        // Asked for in this tick after the update (a change of face, say), worn from this list on when it's there
+        if (RequestedAndKnown() is { } asked)
+        {
+            if (!ReferenceEquals(asked, Skin))
+                Skin = asked;
+            skin = asked;
+        }
+
         // One clock for both lists, see UIDrawList.Begin
         paintClock = (paintClock + dt) % 3600.0f;
         long started = Stopwatch.GetTimestamp();
         back.Previous = front;
         back.MotionSpeed = AnimationSpeed;
         back.Begin(skin, paintFrame, dt, paintClock);
+        backTag = TraceTag;
         backPainted++;
+
+        // Letters ClearType's way or grey, hinted or not, for the screen the window is on now (see GlyphSmoothing)
+        float density = GameEngine.Instance?.WindowManager?.DisplayScale ?? 1.0f;
+        bool subpixels = Horizon.Rendering.Text.GlyphSmoothing.Subpixels(density, drawnNative, out bool bgr);
+        back.UseSmoothing(subpixels, bgr, Horizon.Rendering.Text.GlyphSmoothing.Hints(density));
         foreach (var module in snapshot)
         {
             if (!module.Enabled)
                 continue;
 
             long laying = Stopwatch.GetTimestamp();
+            long weighed = Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady ? GC.GetAllocatedBytesForCurrentThread() : -1;
             module.Layout(screen, skin);
             Statistics.LayoutMs += UIStatistics.Since(laying);
+            long painting = Stopwatch.GetTimestamp(), paintFrom = weighed >= 0 ? GC.GetAllocatedBytesForCurrentThread() : -1;
             module.Paint(back);
+            if (weighed >= 0)
+                Horizon.Logging.Log.Info($"[Startup] {StartupName(module)} laid out in {UIStatistics.Since(laying) - UIStatistics.Since(painting):0.0} ms, {(paintFrom - weighed) / 1024} KB, painted in {UIStatistics.Since(painting):0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - paintFrom) / 1024} KB");
             PaintMiddleScroll(back, module);
 
             // What is drawn about a module is cut off where the module is. A layout in an editor's canvas is, and
@@ -823,6 +959,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 back.PopClip();
         }
         back.End();
+        Moved = back.Moving;
         Statistics.PaintMs += UIStatistics.Since(started);
         if (CheckFrames && back.FramesDiffer() is { } differs && differs != framesDiffered)
         {
@@ -848,6 +985,7 @@ public partial class UICompositor : GameComponent, IDisposable
         lock (frameLock)
         {
             (front, back) = (back, front);
+            (frontTag, backTag) = (backTag, frontTag);
             paintedFrame++;
         }
     }
@@ -880,22 +1018,20 @@ public partial class UICompositor : GameComponent, IDisposable
             into.Count = items.Length;
 
             into.Runs.Clear();
-            foreach (var run in front.Runs)
-                into.Runs.Add(run);
+            into.Runs.AddRange(front.Runs);
 
             into.Glass.Clear();
-            foreach (var pane in front.GlassPanes)
-                into.Glass.Add(pane);
+            into.Glass.AddRange(front.GlassPanes);
 
             // And as frames, which the frames between this tick and the next are put together from
             into.Frames.CopyFrom(front.FrameList);
 
             into.Atlases.Clear();
-            foreach (var atlas in front.Atlases)
-                into.Atlases.Add(atlas);
+            into.Atlases.AddRange(front.Atlases);
 
             into.Painted = paintedFrame;
             into.Skin = front.Skin;
+            into.Tag = frontTag;
             into.Incomplete = front.Incomplete;
         }
     }
@@ -942,7 +1078,10 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Where the pointer is right now, for a window that's being dragged (see UIComponent.FollowsPointer). Only the
         // mouse, a pointer of somebody else's (a recording, a test) is theirs to read on their own thread
-        Vector2? pointer = after.Frames.Follows && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
+        // Only while something of this UI is still being dragged. The list a drag left behind kept its frame that follows
+        // the pointer while nothing here painted again, and a press in another UI of the window (the editor's, under a
+        // window of the chrome's) took the window with it until the button came up
+        Vector2? pointer = after.Frames.Follows && pressed is { FollowsPointer: true } && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
             ? viewportCamera.ScreenToWorld(dragPointer) : null;
 
         int from = canBlend ? before.Painted : shown.Painted;
@@ -972,6 +1111,7 @@ public partial class UICompositor : GameComponent, IDisposable
         }
 
         (shownBefore, shownAfter, shownAlpha, shownPointer) = (from, shown.Painted, alpha, pointer);
+        (uploadedTag, uploadedSkin, uploadedPainted) = ((canBlend && alpha < 1.0f ? after : shown).Tag, skin, shown.Painted);
         drawnAfter = after.Painted;
         drawnAlpha = canBlend ? alpha : 1.0f;
         pictureCurrent = false;
@@ -1022,9 +1162,14 @@ public partial class UICompositor : GameComponent, IDisposable
     public override void Render(float dt)
     {
         LoadRequestedSkin();
+        if (warmRequest is not null)
+            LoadWarmSkin();
 
         if (Skin is not { } skin)
             return;
+
+        // Art painted aside in a skin loaded ahead goes into its atlas as the worn one's does
+        warmSkin?.Update();
 
         RenderFrame frame = RenderFrame.Active;
         bool due = NoteFrame();
@@ -1052,11 +1197,15 @@ public partial class UICompositor : GameComponent, IDisposable
             // A new list that isn't due yet (see FrameRateLimit) waits here until it is, it is not forgotten
             if ((uploadedFrame != paintedFrame || shownAfter >= 0) && due)
             {
-                // A frame painted with a skin that has been swapped out since is skipped too.
+                // A frame painted with a skin that has been swapped out since is skipped too, the one before it staying
+                // up, and the change of skin isn't all there till one is
+                if (front.Skin != skin)
+                    GameEngine.Instance.SceneManager.ReportUnfinished();
                 if (front.Skin == skin && !front.Incomplete)
                 {
                     renderer.Upload(front);
                     CountUpload(front.Items.Length);
+                    (uploadedTag, uploadedSkin, uploadedPainted) = (frontTag, skin, paintedFrame);
                     pictureCurrent = false;
                     refreshedAt = renderedAt;
                 }
@@ -1081,6 +1230,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// Helper method to draw what was uploaded last, or lay the picture of it over the frame once more if it is still
     /// what the UI looks like.
     /// </summary>
+    // See DrawUploaded, written on the render thread and read by the paint. Taken to be so until a draw says otherwise
+    private volatile bool drawnNative = true;
+
     private void DrawUploaded(float dt)
     {
         // A UI drawn straight into the window is drawn at its own pixels over the scene blown up, unless the whole frame
@@ -1088,11 +1240,19 @@ public partial class UICompositor : GameComponent, IDisposable
         if (Renderer2D.Current is null && (!renderer.IsEmpty || Cursor is { Visible: true }))
             GameEngine.Instance.WindowManager.Scaling.BeginOverlay();
 
+        // Whether it's drawn at the window's own pixels and nothing else's, which a subpixel letter has to be: blown up
+        // with a frame drawn small its stripes are no longer the screen's, and inside a renderer its blend would land
+        // on the renderer's other pictures too
+        drawnNative = Renderer2D.Current is null
+            && GameEngine.Instance.WindowManager.Scaling.Settings.Composition != Horizon.Rendering.Scaling.RenderComposition.WholeFrame;
+
         using var scope = GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GPU_SCOPE);
 
         long started = Stopwatch.GetTimestamp();
         DrawList(dt);
         DrawCursor();
+        if (Horizon.Core.Diagnostics.FrameTrace.On && TraceTag is not null)
+            Horizon.Core.Diagnostics.FrameTrace.Ui(uploadedTag, uploadedSkin is { } traced ? traced.Theme ?? string.Empty : null, renderer.IsEmpty, uploadedPainted);
         Statistics.DrawMs += UIStatistics.Since(started);
     }
 
@@ -1371,6 +1531,9 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public void Dispose()
     {
+        // The keyboard's owner is everybody's, a compositor thrown away while it had it was kept by it with its scene
+        if (focusOwner == this)
+            focusOwner = null;
         layer.Dispose();
         glassPass?.Dispose();
         glassPass = null;

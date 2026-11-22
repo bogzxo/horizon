@@ -13,12 +13,12 @@ namespace Horizon.UI.Components;
 /// <code>
 /// let frames = compositor.graph({ parent: card, size: vec(400, 54), bars: 120, unit: "ms" });
 /// </code>
-/// <code>
+/// <code><![CDATA[
 /// graph.Count = filled;                        // how many of its bars there is something for yet
-/// for (int i = 0; i &lt; graph.Bars; i++)
+/// for (int i = 0; i < graph.Bars; i++)
 ///     graph.Set(i, average[i], worst[i]);
 /// graph.Top = Graph.RoundUp(usual * 2.5f);     // what the top of it stands for
-/// </code>
+/// ]]></code>
 /// The top is what whoever feeds it says it is (<see cref="Top"/>) and not the tallest bar there is, one freak
 /// value would squash everything else flat. A bar that goes off the top is cut off there. A <see cref="Line"/> is
 /// drawn across where something is meant to stay under, and a bar that is over the <see cref="Budget"/> is the

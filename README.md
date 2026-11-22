@@ -10,9 +10,9 @@ Horizon is on nuget.org, a game needs three packages, HIDL comes along with them
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="bogzxo.Horizon.Engine" Version="1.4.0" />
-  <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.4.0" />
-  <PackageReference Include="bogzxo.Horizon.UI" Version="1.4.0" />
+  <PackageReference Include="bogzxo.Horizon.Engine" Version="1.5.0" />
+  <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.5.0" />
+  <PackageReference Include="bogzxo.Horizon.UI" Version="1.5.0" />
 </ItemGroup>
 ```
 
@@ -70,7 +70,7 @@ They go from a bouncing ball with a lamp on it, through sprites, cameras, input,
 | [Desktop applications](docs/guide/desktop-applications.md) | Horizon for desktop GUI programs, the way Hex uses it |
 | [HIDL reference](Horizon.HIDL/docs/reference.md) | The scripting language |
 | [Publishing the packages](docs/nuget-publishing.md) | How the NuGet packages are made and published |
-| [`docs/context/`](https://github.com/bogzxo/horizon/tree/development/docs/context) (on development) | Maps of the code, for finding your way round the engine itself |
+| [`docs/context/`](docs/context/) | Maps of the code, for finding your way round the engine itself |
 
 ## What is in here
 

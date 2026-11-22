@@ -67,13 +67,13 @@ public readonly struct VertexLayoutDescription
 
 /// <summary>
 /// A struct that can say how it is laid out for the GPU, so a vertex array can be set up from the type alone.
-/// <code>
-/// public static ReadOnlySpan&lt;VertexLayoutDescription&gt; GetLayout() =>
+/// <code><![CDATA[
+/// public static ReadOnlySpan<VertexLayoutDescription> GetLayout() =>
 /// [
 ///     VertexLayoutDescription.Float(0, 2, 0),
 ///     VertexLayoutDescription.Float(1, 2, sizeof(float) * 2)
 /// ];
-/// </code>
+/// ]]></code>
 /// </summary>
 public interface IVertex
 {

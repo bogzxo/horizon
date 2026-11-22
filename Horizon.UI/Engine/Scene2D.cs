@@ -13,7 +13,7 @@ namespace Horizon.Engine;
 /// up first. It comes with a camera the size of the window (a unit a pixel, the middle of the world in the middle
 /// of the screen), a renderer that follows the window, a sprite batch and a primitive renderer inside of that, and a
 /// UI over the top. Lit or not, and with the fancy lighting or not, is a flag each.
-/// <code>
+/// <code><![CDATA[
 /// sealed class Pong : Scene2D
 /// {
 ///     public Pong() : base(lit: true, fancy: true) { }
@@ -26,8 +26,8 @@ namespace Horizon.Engine;
 ///     }
 /// }
 ///
-/// engine.Run&lt;Pong&gt;();
-/// </code>
+/// engine.Run<Pong>();
+/// ]]></code>
 /// Everything is there to be reached for and nothing has to be used, a scene that only wants the camera takes the camera.
 /// </summary>
 public abstract class Scene2D : Scene

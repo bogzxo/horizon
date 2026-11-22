@@ -17,6 +17,23 @@ public partial class UICompositor
     public bool FocusVisible { get; private set; }
 
     /// <summary>
+    /// Whether the last paint drew an icon that moves (a spinner turning, a bell shaking), which it doesn't with the
+    /// motion off (<see cref="UIDrawList.Moves"/>), for a test that the UI is still when it's told to be.
+    /// </summary>
+    public bool Moved { get; private set; }
+
+    /// <summary>
+    /// The last component painted showing that it has the keyboard, the ring round a button Tab went to or a control's
+    /// own sign of it (a box's lit edge and caret, a tree's ringed row). A test of where Tab goes clears it with
+    /// <see cref="ForgetFocusShown"/> and looks after a frame whether what has the keyboard was shown having it, which
+    /// it isn't when it's out of sight or nothing marks it. One field written a paint, nothing made.
+    /// </summary>
+    public UIComponent? FocusShownOn { get; internal set; }
+
+    /// <summary>Forgets what was shown with the keyboard, for <see cref="FocusShownOn"/> to say afresh what the next paint shows.</summary>
+    public void ForgetFocusShown() => FocusShownOn = null;
+
+    /// <summary>
     /// Whether a menu that is open takes the keys right now (see <see cref="UIComponent.TakesPopupKeys"/>), for a program
     /// whose own shortcuts keep out of the way meanwhile.
     /// </summary>

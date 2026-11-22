@@ -16,10 +16,10 @@ namespace Horizon.Engine;
 /// <summary>
 /// The engine. It opens the window, keeps the scene that is on screen updated and drawn, and has everything a game reaches for.
 /// A whole game starts like this.
-/// <code>
+/// <code><![CDATA[
 /// using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 with { WindowTitle = "My game" });
-/// engine.Run&lt;MainMenuScene&gt;();
-/// </code>
+/// engine.Run<MainMenuScene>();
+/// ]]></code>
 /// Everything in a scene gets at it through <see cref="GameObject.Engine"/>, everything else through <see cref="Instance"/>.
 /// </summary>
 public class GameEngine : Entity
@@ -201,6 +201,12 @@ public class GameEngine : Entity
         // The window manager bootstraps the lot. It calls Initialize(), Render(), UpdateState() and UpdatePhysics()
         WindowManager = AddComponent<WindowManager>(new(Configuration.WindowConfiguration, host));
         WindowManager.DeviceReady = ShowLoadingScreen;
+
+        // An application (an editor, a tool) is up in a fraction of a second, its loading screen a frame or two: the
+        // engine's picture was read, decoded and kept decoded in the cache for that, the colour alone does as well. A
+        // program that wants a picture still says so
+        if (Configuration.WindowConfiguration.Mode == RunMode.Application)
+            LoadingScreen.Image = null;
 
         if (Environment.GetEnvironmentVariable(SCREENSHOT_VARIABLE) is { Length: > 0 } wanted)
         {

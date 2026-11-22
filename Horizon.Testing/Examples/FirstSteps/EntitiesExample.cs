@@ -30,13 +30,13 @@ namespace Horizon.Testing.Examples.FirstSteps;
 /// </para>
 /// <para>
 /// In your own game:
-/// <code>
+/// <code><![CDATA[
 /// public sealed class Spin : GameComponent
 /// {
 ///     private TransformComponent2D transform = null!;
 ///
 ///     // Render thread, once, before its first turn. Parent is set by now
-///     public override void Initialize() => transform = Parent.GetComponent&lt;TransformComponent2D&gt;()!;
+///     public override void Initialize() => transform = Parent.GetComponent<TransformComponent2D>()!;
 ///
 ///     // Simulation thread, the same dt every step
 ///     public override void UpdatePhysics(float dt) => transform.Rotation += 90.0f * dt;
@@ -47,7 +47,7 @@ namespace Horizon.Testing.Examples.FirstSteps;
 /// crate.ConfigureAtlas(atlas, sheet, "star");
 /// crate.AddComponent(new Spin());
 /// batch.Add(crate);
-/// </code>
+/// ]]></code>
 /// </para>
 /// </summary>
 public class EntitiesExample : Scene, ITestControls

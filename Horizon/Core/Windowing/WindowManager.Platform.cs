@@ -53,6 +53,9 @@ public partial class WindowManager
     /// </summary>
     public void BringToFront() => host.Window?.BringToFront();
 
+    /// <summary>The window off the screen and the taskbar while the program goes on, see BringToFront. From any thread.</summary>
+    public void Hide() => host.Window?.Hide();
+
     /// <summary>Helper method to take in how big things are now. Platform thread.</summary>
     private void TakeDisplay(PlatformDisplay now, bool resized)
     {
@@ -88,5 +91,9 @@ public partial class WindowManager
         public bool MayClose() => window.MayClose();
 
         public bool MayWaitForEvents => window.MayWaitForEvents;
+
+        public bool Dormant => window.Dormant;
+
+        public void FilesDragged(FileDrop drop) => window.PostFileDrop(drop);
     }
 }

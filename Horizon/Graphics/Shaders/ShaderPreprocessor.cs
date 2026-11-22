@@ -8,7 +8,7 @@ namespace Horizon.Graphics;
 /// handful of macros every shader is written with in front of it.
 /// <list type="bullet">
 /// <item><c>#include "file.slang"</c> brings in a file next to the one being compiled (or next to the include that asks for it).</item>
-/// <item><c>#include &lt;common/camera.slang&gt;</c> brings in a file from the root of the shaders (<see cref="Root"/>), from anywhere.</item>
+/// <item><c>#include &lt;common/camera.slang></c> brings in a file from the root of the shaders (<see cref="Root"/>), from anywhere.</item>
 /// </list>
 /// Includes include in turn, and a file that is asked for twice in one program only comes in once, so a shader and
 /// an include it uses can both ask for the camera block without doubling it up. Every <c>#include</c> is replaced
@@ -21,8 +21,8 @@ namespace Horizon.Graphics;
 /// </para>
 /// <para>
 /// The macros say where things are bound, so a shader never spells out a descriptor set.
-/// <c>BIND_UNIFORM(1) ConstantBuffer&lt;Params&gt; params</c>, <c>BIND_BUFFER(2) StructuredBuffer&lt;Light&gt; lights</c>,
-/// <c>BIND_TEXTURE(0) Sampler2D uSource</c>, <c>BIND_IMAGE(0) RWTexture2D&lt;float4&gt; uOut</c>.
+/// <c>BIND_UNIFORM(1) ConstantBuffer&lt;Params> params</c>, <c>BIND_BUFFER(2) StructuredBuffer&lt;Light> lights</c>,
+/// <c>BIND_TEXTURE(0) Sampler2D uSource</c>, <c>BIND_IMAGE(0) RWTexture2D&lt;float4> uOut</c>.
 /// Set 0 holds the buffers (0 the camera, 1 the params of the draw, 2 and up storage), set 1 the textures (0 to 7),
 /// the images (8 to 11) and the samplers on their own (12 to 19, the sampler of the texture unit of the same number).
 /// Set 2 is the bindless table, <c>BINDLESS_TEXTURES(name)</c> declares it and an item's texture index goes straight in.
@@ -30,7 +30,7 @@ namespace Horizon.Graphics;
 /// </summary>
 public sealed class ShaderPreprocessor : IDisposable
 {
-    /// <summary>Where <c>#include &lt;...&gt;</c> looks, relative to the working directory of the game.</summary>
+    /// <summary>Where <c>#include &lt;...></c> looks, relative to the working directory of the game.</summary>
     public static string Root { get; set; } = "shaders";
 
     /// <summary>How many storage buffers a shader can have bound at once, on bindings 2 and up of set 0.</summary>

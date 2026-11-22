@@ -116,7 +116,7 @@ public class ToggleButton : UIComponent
     private UIRect PaintSwitch(UIDrawList list, UISkin skin, float side, Vector4 tint)
     {
         float wanted = State ? 1.0f : 0.0f;
-        knob = knob < 0.0f || !UIDrawList.Motion ? wanted : knob + (wanted - knob) * (1.0f - MathF.Exp(-KNOB_RATE * list.Delta));
+        knob = knob < 0.0f || !list.Moves ? wanted : knob + (wanted - knob) * (1.0f - MathF.Exp(-KNOB_RATE * list.Delta));
         if (MathF.Abs(knob - wanted) < 0.01f)
             knob = wanted;
 

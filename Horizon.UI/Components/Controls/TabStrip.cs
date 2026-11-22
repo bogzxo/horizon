@@ -20,7 +20,8 @@ public sealed class StripTab
 
     /// <summary>
     /// The colour of the title, null for the skin's (bright on the open one, dim on the rest). For saying something about
-    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter.
+    /// the file at a glance, changed since the last commit say. The one that isn't open is drawn a little fainter, and
+    /// the open one keeps the skin's text on its lit pill with this as a line under its title.
     /// </summary>
     public Vector4? TitleColor { get; set; }
 
@@ -29,6 +30,26 @@ public sealed class StripTab
 
     /// <summary>Whether it has changes that aren't saved, a dot where its x is until the pointer comes for the x.</summary>
     public bool Modified { get; set; }
+
+    /// <summary>
+    /// Whether it's pinned, kept open and at the front, VS Code's pinned tabs. A pin where its x is, which unpins it
+    /// (<see cref="TabStrip.OnUnpin"/>), and the middle button doesn't close it. The program keeps the pinned ones first.
+    /// </summary>
+    public bool Pinned { get; set; }
+
+    /// <summary>Colours of participants in this tab, drawn after its title.</summary>
+    public IReadOnlyList<Vector4> PresenceColors
+    {
+        get => presenceColors;
+        set
+        {
+            presenceColors = value;
+            PresenceOverflow = value.Count > 3 ? $"+{value.Count - 3}" : string.Empty;
+        }
+    }
+
+    private IReadOnlyList<Vector4> presenceColors = [];
+    internal string PresenceOverflow { get; private set; } = string.Empty;
 
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
@@ -56,6 +77,8 @@ public class TabStrip : UIComponent
     private const float TAB_PADDING = 10.0f;
     private const float GAP = 6.0f;
     private const float WHEEL_STEP = 60.0f;
+    private const float PRESENCE_DOT = 6.0f;
+    private const float PRESENCE_STEP = PRESENCE_DOT + 2.0f;
 
     private float scroll;
     private int revealedSelection = -1;
@@ -78,6 +101,9 @@ public class TabStrip : UIComponent
 
     /// <summary>Called with the tab whose x was clicked, to close it (or ask first).</summary>
     public Action<int>? OnClose { get; set; }
+
+    /// <summary>Called with a pinned tab whose pin was clicked, to unpin it.</summary>
+    public Action<int>? OnUnpin { get; set; }
 
     /// <summary>
     /// A tab dragged to where another was, with where it was and where it is now, the strip's own list already moved.
@@ -132,9 +158,17 @@ public class TabStrip : UIComponent
     {
         float line = Line(skin);
         float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
-        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X
+            + PresenceWidth(tab, skin, ScaleOf(skin)) + GAP + line);
         width = MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
         return HideClippedTabs && Bounds.Width > 0 ? MathF.Min(width, Bounds.Width) : width;
+    }
+
+    private static float PresenceWidth(StripTab tab, UISkin skin, float scale)
+    {
+        int count = tab.PresenceColors.Count;
+        return count == 0 ? 0 : 4 + Math.Min(3, count) * PRESENCE_STEP +
+            (count > 3 ? skin.Font.Measure(tab.PresenceOverflow, scale * 0.8f, markup: false).X : 0);
     }
 
     // The dots a title cut short has in its middle
@@ -223,7 +257,7 @@ public class TabStrip : UIComponent
         bool middle = mouse is not null && mouse.IsDown(Horizon.Input.MouseButton.Middle);
         if (middle && !middleWas)
             middleTab = over;
-        else if (!middle && middleWas && middleTab >= 0 && middleTab == over)
+        else if (!middle && middleWas && middleTab >= 0 && middleTab == over && middleTab < Tabs.Count && !Tabs[middleTab].Pinned)
             OnClose?.Invoke(middleTab);
         if (!middle)
             middleTab = -1;
@@ -271,6 +305,21 @@ public class TabStrip : UIComponent
     /// <summary>How wide the tabs are all together, as of the last tick, more than the strip is wide when they don't all fit.</summary>
     public float TabsWidth { get; private set; }
 
+    /// <summary>What the open tab's pill is filled with, the text's colour faintly, the one pick there is in lists and menus.</summary>
+    public static Vector4 OpenFill(UISkin skin) => skin.TextColor with { W = ListBox.PICKED };
+
+    /// <summary>
+    /// The colour a tab's title is written in: the skin's text on the open one whatever the tab's own colour (that's a
+    /// line under it), the tab's own colour a little fainter on the rest, or the skin's dim text without one.
+    /// </summary>
+    public Vector4 TitleColorOf(int index, UISkin skin)
+    {
+        if (index == Selected)
+            return skin.TextColor;
+
+        return index >= 0 && index < Tabs.Count && Tabs[index].TitleColor is { } own ? own with { W = own.W * 0.75f } : skin.DimTextColor;
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -294,13 +343,15 @@ public class TabStrip : UIComponent
             // A pill under the open one, the one pick there is in lists and menus, and a fainter one under the pointer. It
             // was a square of the panel with a stripe of the accent along its top, sharp corners in a window of round ones.
             // Always painted, see-through when not lit, so the quads after it don't shift
-            list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? skin.TextColor with { W = ListBox.PICKED } : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
+            list.Box(area.Shrink(new UIEdges(2.0f, 3.0f)), open ? OpenFill(skin) : over ? skin.HoverColor : skin.HoverColor with { W = 0.0f });
             list.Rect(new UIRect(new Vector2(area.Min.X + 8.0f, area.Min.Y + 1.0f), new Vector2(area.Max.X - 8.0f, area.Min.Y + 3.0f)), skin.AccentColor with { W = open ? 1.0f : 0.0f });
 
-            // The title in its own colour (git's, say), the dot and the x in the strip's, so a file that's new to git and one
-            // with changes not saved can still be told apart. Both were the green of a new file
+            // The title in its own colour (git's, say) on the tabs that aren't lit, the dot and the x in the strip's, so a
+            // file that's new to git and one with changes not saved can still be told apart. The open one's title is the
+            // skin's text whatever its own colour, with that colour as a line under it: git's yellow on the lit pill was
+            // all but gone in a light look
             Vector4 plain = open ? skin.TextColor : dim;
-            Vector4 text = tab.TitleColor is { } own ? (open ? own : own with { W = own.W * 0.75f }) : plain;
+            Vector4 text = TitleColorOf(i, skin);
             float x = area.Min.X + TAB_PADDING;
             float side = MathF.Round(line);
 
@@ -312,18 +363,47 @@ public class TabStrip : UIComponent
 
             // Up to the x, cut in the middle with dots once the tab is at its most
             UIRect close = CloseBounds(i);
-            string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
+            float titleRoom = MathF.Max(0.0f, close.Min.X - GAP - x - PresenceWidth(tab, skin, scale));
+            string title = Fitted(tab, skin, scale, titleRoom);
             list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
 
-            // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise
+            // The open one's own colour as a line under its title. Always painted, clear when there's none, so the quads
+            // after it don't shift
+            Vector4 underline = open && tab.TitleColor is { } marked ? marked : Vector4.Zero;
+            float thick = MathF.Max(2.0f, MathF.Round(line * 0.1f));
+            float under = MathF.Max(MathF.Round(area.Center.Y - line * 0.5f) - thick, area.Min.Y + 5.0f);
+            float titleWidth = tab.PresenceColors.Count > 0 || underline.W > 0.0f
+                ? MathF.Min(skin.Font.Measure(title, scale, markup: false).X, titleRoom) : 0.0f;
+            list.Rect(new UIRect(new Vector2(x, under), new Vector2(x + (underline.W > 0 ? titleWidth : 0), under + thick)), underline);
+
+            int dots = Math.Min(3, tab.PresenceColors.Count);
+            float mark = x + titleWidth + 4;
+            float radius = PRESENCE_DOT * 0.5f;
+            for (int person = 0; person < dots && mark + PRESENCE_DOT <= close.Min.X; person++, mark += PRESENCE_STEP)
+                list.RoundRect(new UIRect(new(mark, area.Center.Y - radius), new(mark + PRESENCE_DOT, area.Center.Y + radius)),
+                    radius, tab.PresenceColors[person]);
+            if (tab.PresenceColors.Count > dots && mark < close.Min.X)
+                list.Text(tab.PresenceOverflow,
+                    new UIRect(new(mark, area.Min.Y), new(close.Min.X, area.Max.Y)), Origin.Left, scale * 0.8f, plain, markup: false);
+
+            // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise. A pinned
+            // one always has its pin there (with a dot in it when it has changes), which unpins it
             bool onClose = over && close.Contains(pointer);
             if (onClose)
                 list.Box(close, skin.HoverColor);
 
-            if (open || over)
+            if (tab.Pinned)
+                list.Symbol(tab.Modified && !onClose ? "pinned-dirty" : "pinned", close.Shrink(new UIEdges(side * 0.12f)), plain);
+            else if (open || over)
                 list.Symbol(tab.Modified && !onClose ? "circle-filled" : "close", close.Shrink(new UIEdges(side * 0.12f)), plain);
             else if (tab.Modified)
                 list.Symbol("circle-filled", close.Shrink(new UIEdges(side * 0.12f)), plain);
+
+            // A hairline after the last pinned one, between the ones kept and the rest. Always painted, clear elsewhere,
+            // so the quads after it don't shift
+            bool lastPinned = tab.Pinned && (i + 1 >= Tabs.Count || !Tabs[i + 1].Pinned);
+            float hair = MathF.Round(area.Height * 0.25f);
+            list.Rect(new UIRect(new Vector2(area.Max.X - 1.0f, area.Min.Y + hair), new Vector2(area.Max.X, area.Max.Y - hair)), skin.BorderColor with { W = lastPinned ? skin.BorderColor.W : 0.0f });
         }
 
         list.EndParts();
@@ -362,7 +442,12 @@ public class TabStrip : UIComponent
             return;
 
         if (close && CloseBounds(tab).Contains(Pointer))
-            OnClose?.Invoke(tab);
+        {
+            if (Tabs[tab].Pinned)
+                OnUnpin?.Invoke(tab);
+            else
+                OnClose?.Invoke(tab);
+        }
         else
             OnSelected?.Invoke(tab);
     }

@@ -132,6 +132,10 @@ internal sealed class UIFrameList
     // Clips worked out by Resolve, every one once
     private UIRect[] resolvedClips = [];
 
+    // How far every frame's content has moved from where it was painted, worked out by Resolve once a frame rather than
+    // once a quad, see Moved
+    private Vector2[] resolvedMoves = [];
+
     /// <summary>
     /// The quads, runs and glass the frames come to on screen, as the list painted them. With the frames as they were
     /// painted that's what the list has already (see <see cref="UIDrawList.FramesDiffer"/>), with frames moved between two ticks
@@ -143,16 +147,23 @@ internal sealed class UIFrameList
         runsInto.Clear();
         glassInto.Clear();
 
+        if (resolvedMoves.Length < at.Length)
+            resolvedMoves = new Vector2[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)at.Length)];
+        ReadOnlySpan<UIFrame> painted = Span;
+        for (int i = 0; i < at.Length && i < painted.Length; i++)
+            resolvedMoves[i] = Moved(at[i], painted[i]);
+
         if (resolvedClips.Length < Clips.Count)
             resolvedClips = new UIRect[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Clips.Count)];
-        for (int i = 0; i < Clips.Count; i++)
+        ReadOnlySpan<UIFrameClip> clips = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Clips);
+        for (int i = 0; i < clips.Length; i++)
         {
-            UIFrameClip cut = Clips[i];
-            UIRect rect = Shifted(cut.Rect, Moved(at, cut.Frame));
+            ref readonly UIFrameClip cut = ref clips[i];
+            UIRect rect = Shifted(cut.Rect, resolvedMoves[cut.Frame]);
             UIRect parent = cut.Parent < 0 ? Unclipped : resolvedClips[cut.Parent];
             if (cut.StationaryParentFrame is { } outside)
             {
-                UIFrame frame = at[cut.Frame];
+                ref readonly UIFrame frame = ref at[cut.Frame];
                 Vector2 translation = frame.VisualScale.X != 0 && frame.VisualScale.Y != 0
                     ? (frame.VisualOffset - at[outside].VisualOffset) / frame.VisualScale : Vector2.Zero;
                 rect = Shifted(rect, -translation);
@@ -178,8 +189,8 @@ internal sealed class UIFrameList
                 break;
 
             ref readonly UIFrameQuad quad = ref Quads[i];
-            UIFrame frame = at[quad.Frame];
-            Vector2 moved = Moved(at, quad.Frame);
+            ref readonly UIFrame frame = ref at[quad.Frame];
+            Vector2 moved = resolvedMoves[quad.Frame];
             UIRect rect = Shifted(quad.Rect, moved);
             UIRect cut = quad.Clip < 0 ? Unclipped : resolvedClips[quad.Clip];
             UIRect visible = rect.Intersect(cut);
@@ -255,8 +266,8 @@ internal sealed class UIFrameList
     // Helper method for a pane of glass on screen, the way Glass puts it down
     private void ResolveGlass(in UIFrameGlass pane, ReadOnlySpan<UIFrame> at, int start, List<UIGlassPane> into)
     {
-        UIFrame frame = at[pane.Frame];
-        UIRect rect = Shifted(pane.Rect, Moved(at, pane.Frame));
+        ref readonly UIFrame frame = ref at[pane.Frame];
+        UIRect rect = Shifted(pane.Rect, resolvedMoves[pane.Frame]);
         UIRect cut = pane.Clip < 0 ? Unclipped : resolvedClips[pane.Clip];
         if (rect.Intersect(cut).IsEmpty)
             return;
@@ -267,7 +278,7 @@ internal sealed class UIFrameList
     }
 
     // Helper method for how far a frame's content has moved from where it was painted, nothing for the frames as painted
-    private Vector2 Moved(ReadOnlySpan<UIFrame> at, int frame) => at[frame].Shift - Frames[frame].Shift + (at[frame].Laid - Frames[frame].Laid);
+    private static Vector2 Moved(in UIFrame at, in UIFrame painted) => at.Shift - painted.Shift + (at.Laid - painted.Laid);
 
     private static UIRect Shifted(UIRect rect, Vector2 by) =>
         by == Vector2.Zero || !float.IsFinite(rect.Min.X) ? rect : new UIRect(rect.Min + by, rect.Max + by);
@@ -369,8 +380,7 @@ public sealed partial class UIDrawList
     {
         // By who opened it and how many they had opened before it, never by how many quads they'd painted, a highlight
         // painted before a list's rows would have had its rows' frame taken for another
-        int opened = framesOpened.GetValueOrDefault(owner);
-        framesOpened[owner] = opened + 1;
+        int opened = System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(framesOpened, owner, out _)++;
         frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity });
         frameAt = frameList.Frames.Count - 1;
     }

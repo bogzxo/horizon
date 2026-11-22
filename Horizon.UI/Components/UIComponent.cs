@@ -212,6 +212,20 @@ public abstract partial class UIComponent
     /// <summary>Whether this component is the one the keyboard types into.</summary>
     public bool IsFocused => Module?.Compositor.Focus == this;
 
+    /// <summary>Whether this component and everything above it is visible, so it's on screen at all.</summary>
+    public bool VisibleInHierarchy
+    {
+        get
+        {
+            for (UIComponent? component = this; component is not null; component = component.Parent)
+            {
+                if (!component.Visible)
+                    return false;
+            }
+            return true;
+        }
+    }
+
     /// <summary>Whether this component and everything above it is enabled.</summary>
     public bool EnabledInHierarchy
     {
@@ -272,6 +286,81 @@ public abstract partial class UIComponent
     }
 
     /// <summary>
+    /// Puts several components inside this one at its end, in their order, each taken out of wherever it was before, the
+    /// way <see cref="Add"/> puts in each but with one new array of children for all of them. One at a time, a list
+    /// making a few dozen rows copied its children over once for every row. None of them may be in it twice.
+    /// </summary>
+    internal void AddRange(ReadOnlySpan<UIComponent> arriving)
+    {
+        if (arriving.IsEmpty)
+            return;
+
+        foreach (UIComponent child in arriving)
+        {
+            for (UIComponent? component = this; component is not null; component = component.Parent)
+            {
+                if (component == child)
+                    throw new InvalidOperationException("A component cannot be put inside itself.");
+            }
+
+            child.Parent?.Remove(child);
+        }
+
+        lock (childrenLock)
+        {
+            var grown = new UIComponent[children.Length + arriving.Length];
+            children.CopyTo(grown, 0);
+            arriving.CopyTo(grown.AsSpan(children.Length));
+            children = grown;
+        }
+
+        foreach (UIComponent child in arriving)
+        {
+            child.Parent = this;
+            child.OnParentChanged();
+        }
+    }
+
+    /// <summary>
+    /// Takes several children out at once, the way <see cref="Remove"/> takes out each but with one new array of children
+    /// for what's left. Any that aren't in it are passed over.
+    /// </summary>
+    internal void RemoveRange(ReadOnlySpan<UIComponent> going)
+    {
+        if (going.IsEmpty)
+            return;
+
+        int gone = 0;
+        lock (childrenLock)
+        {
+            foreach (UIComponent child in children)
+            {
+                if (going.IndexOf(child, ReferenceEqualityComparer.Instance) >= 0)
+                    gone++;
+            }
+            if (gone == 0)
+                return;
+
+            var left = new UIComponent[children.Length - gone];
+            int at = 0;
+            foreach (UIComponent child in children)
+            {
+                if (going.IndexOf(child, ReferenceEqualityComparer.Instance) < 0)
+                    left[at++] = child;
+            }
+            children = left;
+        }
+
+        foreach (UIComponent child in going)
+        {
+            if (child.Parent != this)
+                continue;
+            child.Parent = null;
+            child.OnParentChanged();
+        }
+    }
+
+    /// <summary>
     /// Puts a child somewhere else among its siblings, which is the order they are drawn and laid out in.
     /// </summary>
     /// <param name="index">Where it goes, counted from 0. Past the end is the end.</param>
@@ -283,10 +372,17 @@ public abstract partial class UIComponent
             if (from < 0)
                 return false;
 
-            var moved = new List<UIComponent>(children);
-            moved.RemoveAt(from);
-            moved.Insert(Math.Clamp(index, 0, moved.Count), child);
-            children = [.. moved];
+            // Moved within one new array, the others shifted along by one between where it was and where it goes
+            int to = Math.Clamp(index, 0, children.Length - 1);
+            if (to == from)
+                return true;
+            var moved = (UIComponent[])children.Clone();
+            if (to < from)
+                Array.Copy(children, to, moved, to + 1, from - to);
+            else
+                Array.Copy(children, from + 1, moved, from, to - from);
+            moved[to] = child;
+            children = moved;
         }
 
         return true;
@@ -310,7 +406,11 @@ public abstract partial class UIComponent
             if (index < 0)
                 return false;
 
-            children = [.. children[..index], .. children[(index + 1)..]];
+            // One array for what's left, rather than the two halves copied out first and then into it
+            var left = new UIComponent[children.Length - 1];
+            Array.Copy(children, 0, left, 0, index);
+            Array.Copy(children, index + 1, left, index, left.Length - index);
+            children = left;
         }
 
         child.Parent = null;
@@ -453,6 +553,16 @@ public abstract partial class UIComponent
     /// <summary>How wide the ring round whatever has the keyboard is, the one width every ring is drawn at.</summary>
     internal const float FOCUS_RING_WIDTH = 1.5f;
 
+    /// <summary>
+    /// Says this component is being painted showing it has the keyboard, for one that draws its own sign of it rather
+    /// than the ring (see <see cref="UICompositor.FocusShownOn"/>). Called from its paint where it draws that sign.
+    /// </summary>
+    protected void ShowingFocus()
+    {
+        if (Module is { } owner && IsFocused)
+            owner.Compositor.FocusShownOn = this;
+    }
+
     internal void PaintTree(UIDrawList list)
     {
         if (!Visible || Opacity <= 0.0f || IsOnHiddenLayer)
@@ -481,6 +591,11 @@ public abstract partial class UIComponent
         // PaintVersion. What PaintTree paints of its own (the focus ring, the grips, a lift) goes into the version. Only
         // a component with nothing in it, the version is its own and not its children's
         long version = children.Length == 0 ? PaintVersion : -1;
+
+        // The ring round a control the keyboard is on, said before the paint might be taken as it was, which has it in
+        bool ringed = TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible;
+        if (ringed)
+            Module!.Compositor.FocusShownOn = this;
         bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && Glass is null && !FollowsPointer && !list.LayoutMoves;
         int context = 0;
         if (recorded)
@@ -548,7 +663,7 @@ public abstract partial class UIComponent
         // The keyboard on a control a click doesn't give it to (a button Tab went to), a ring round it in the colour the
         // keyboard is everywhere, as a part of its own so nothing else's quads shift as it comes and goes. Only once the
         // keys moved about, a click on it rings nothing
-        if (TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible)
+        if (ringed)
         {
             list.BeginPart(FOCUS_RING_PART);
             float out_ = FOCUS_RING_GAP;
@@ -646,7 +761,18 @@ public abstract partial class UIComponent
         if (slideWanted is not null)
             StepSlide(dt);
 
-        Update(dt);
+        // Until the first scene is up, with HORIZON_LOG_STARTUP, an update that takes a while says what it is, for what a
+        // program's start goes on
+        if (Horizon.Core.Diagnostics.StartupTrace.On && !Horizon.Core.Diagnostics.StartupTrace.SceneReady)
+        {
+            long allocated = GC.GetAllocatedBytesForCurrentThread(), started = System.Diagnostics.Stopwatch.GetTimestamp();
+            Update(dt);
+            double took = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (took >= 3.0)
+                Horizon.Logging.Log.Info($"[Startup] a {GetType().Name} updated in {took:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - allocated) / 1024} KB");
+        }
+        else
+            Update(dt);
 
         foreach (var child in children)
             child.UpdateTree(dt);

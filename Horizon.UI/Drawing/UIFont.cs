@@ -49,6 +49,12 @@ public sealed class UIFont
     /// <summary>The font itself, the field and its numbers.</summary>
     public DistanceFieldFont Field { get; }
 
+    /// <summary>
+    /// The font's outlines, for letters made at the size they're drawn (see <see cref="GlyphAtlas"/>), null for a bitmap
+    /// font, which is drawn out of its field at every size.
+    /// </summary>
+    public GlyphOutlines? Outlines { get; }
+
     /// <summary>The glyph atlas, a distance field. Text takes its colour from whoever draws it.</summary>
     public Texture Texture => Field.Texture;
 
@@ -101,8 +107,14 @@ public sealed class UIFont
         var key = (ContentFiles.CacheKey(Path.Combine(directory, file)), emSize, terminal);
         lock (shared)
         {
-            if (shared.TryGetValue(key, out UIFont? known))
+            // One whose field was freed after all (made before fonts were kept for everybody) is made again
+            if (shared.TryGetValue(key, out UIFont? known) && known.Field.Texture.IsValid)
                 return known;
+
+            // Kept for good and handed to whoever asks next, so it is nobody's, least of all the scene that asked
+            // first: made in its scope the field went with it and every later scene drew from a freed texture (Hex
+            // asleep between uses lost its icons and its code font on waking)
+            using var nobody = Horizon.Content.AssetScope.EnterGlobal();
 
             try
             {
@@ -129,6 +141,7 @@ public sealed class UIFont
     public UIFont(string directory, string file, int emSize = DistanceFieldFont.DEFAULT_EM, (int From, int To)[]? characters = null)
     {
         Field = DistanceFieldFont.Load(directory, file, emSize, characters);
+        Outlines = Field.Glyphs.Count > 0 ? GlyphOutlines.For(Path.Combine(directory, file)) : null;
         glyphs = Field.Glyphs;
         kerning = Field.Kerning;
 

@@ -32,12 +32,12 @@ namespace Horizon.Testing.Examples.Game;
 /// </para>
 /// <para>
 /// In your own game:
-/// <code>
+/// <code><![CDATA[
 /// // Make your transitions once and keep them, they hang on to their GPU bits between uses
 /// var fade = new FadeTransition { OutTime = 0.3f, InTime = 0.45f };
 ///
 /// // Simulation thread, e.g. in your scene's UpdateState. IsLeaving stops a mashed button setting it twice
-/// if (!IsLeaving &amp;&amp; Engine.Input.Keyboard.WasPressed(Key.Enter))
+/// if (!IsLeaving && Engine.Input.Keyboard.WasPressed(Key.Enter))
 ///     Engine.SetScene(new LevelScene(), fade);        // null for a hard cut, or GoTo(scene, fade) from a scene
 ///
 /// // Know what's coming? Set it up ahead, then setting it later swaps straight away
@@ -46,7 +46,7 @@ namespace Horizon.Testing.Examples.Game;
 ///
 /// // A scene that's kept between visits (a hub, a world map) instead of thrown away when it's left
 /// public override bool Persistent => true;
-/// </code>
+/// ]]></code>
 /// </para>
 /// </summary>
 public sealed class TransitionsExample : Scene, ITestControls

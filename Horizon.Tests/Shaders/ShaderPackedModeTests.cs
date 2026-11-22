@@ -6,8 +6,10 @@ namespace Horizon.Tests.Shaders;
 
 /// <summary>
 /// A run told to use the pack. Programs come out of it whole, and one that isn't in it is an error that says which,
-/// even with Slang and a cache that has it right there. None of these compile anything.
+/// even with Slang and a cache that has it right there. An ordinary run takes what the pack has too, after the cache.
+/// None of these compile anything.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderPackedModeTests
 {
     [Fact]
@@ -57,6 +59,35 @@ public class ShaderPackedModeTests
 
         Assert.Null(compiled);
         Assert.Contains($"No usable shader pack was found in {ShaderPack.FOLDER}", error);
+    }
+
+    [Fact]
+    public void AnOrdinaryRunTakesWhatThePackHasRatherThanCompilingIt()
+    {
+        // The fake module isn't SPIR-V Slang could make, so getting it back means Slang was never asked
+        var sources = Sources();
+        string key = UnitsOf(sources, "shaders/test/compute.slang")[0].Key;
+        var content = WithPack(sources, Pack([FakeEntry(key, "shaders/test/compute.slang", mark: 7)]));
+
+        var compiled = ShaderCompiler.Compile(FileProgram("shaders/test/compute.slang"), "compute", Options(content, ShaderSourcing.Automatic), out string error);
+
+        Assert.True(compiled is not null, error);
+        Assert.Equal(FakeSpirv(7), Assert.Single(compiled.Stages).Spirv);
+    }
+
+    [Fact]
+    public void AnOrdinaryRunLooksInTheCacheBeforeThePack()
+    {
+        var sources = Sources();
+        string key = UnitsOf(sources, "shaders/test/compute.slang")[0].Key;
+        var content = WithPack(sources, Pack([FakeEntry(key, "shaders/test/compute.slang", mark: 7)]));
+        using var cache = new TempFolder();
+        ShaderCompiler.KeepCached(cache.Path, key, FakeEntry(key, "cached", mark: 3).ToModule());
+
+        var compiled = ShaderCompiler.Compile(FileProgram("shaders/test/compute.slang"), "compute", Options(content, ShaderSourcing.Automatic, cache: cache.Path), out string error);
+
+        Assert.True(compiled is not null, error);
+        Assert.Equal(FakeSpirv(3), Assert.Single(compiled.Stages).Spirv);
     }
 
     [Fact]

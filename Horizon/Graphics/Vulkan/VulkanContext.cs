@@ -163,7 +163,9 @@ internal sealed unsafe class VulkanContext : IDisposable
         Vk = Vk.GetApi();
 
         presentsAhead = ahead;
-        StartVulkan([.. ahead.VulkanInstanceExtensions], () => { });
+        Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: loader configured");
+        StartVulkan([.. ahead.VulkanInstanceExtensions], () => Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: instance made"));
+        Horizon.Core.Diagnostics.StartupTrace.Mark("vulkan: card picked");
         CreateDevice();
     }
 
@@ -287,7 +289,10 @@ internal sealed unsafe class VulkanContext : IDisposable
 #if !DEBUG
         wantLabels = string.Equals(labels, "on", StringComparison.OrdinalIgnoreCase) || labels == "1";
 #endif
-        bool wantDebugUtils = (ValidationEnabled || wantLabels) && HasInstanceExtension(ExtDebugUtils.ExtensionName);
+        // Read the once, the loader looks through every layer it knows of each time it's asked, five to twenty
+        // milliseconds of every start for asking it a second time
+        HashSet<string> available = InstanceExtensions();
+        bool wantDebugUtils = (ValidationEnabled || wantLabels) && available.Contains(ExtDebugUtils.ExtensionName);
 
         var extensions = new List<string>(windowExtensions);
         instanceExtensions = windowExtensions;
@@ -296,7 +301,7 @@ internal sealed unsafe class VulkanContext : IDisposable
         // A Mac's Vulkan is MoltenVK, which the loader keeps out of sight as a "portability" driver unless it is
         // asked for by name. Without this a Mac says it has no GPU at all
         var flags = InstanceCreateFlags.None;
-        if (HasInstanceExtension(PORTABILITY_ENUMERATION))
+        if (available.Contains(PORTABILITY_ENUMERATION))
         {
             extensions.Add(PORTABILITY_ENUMERATION);
             flags |= InstanceCreateFlags.EnumeratePortabilityBitKhr;
@@ -407,6 +412,14 @@ internal sealed unsafe class VulkanContext : IDisposable
     {
         var utf8 = System.Text.Encoding.UTF8;
         int chars = name.Length;
+
+        // Nearly every name is a few words, which fits however it's encoded, and has nothing to count
+        if (utf8.GetMaxByteCount(chars) < labelBytes.Length)
+        {
+            labelBytes[utf8.GetBytes(name.AsSpan(), labelBytes)] = 0;
+            return;
+        }
+
         while (chars > 0 && utf8.GetByteCount(name.AsSpan(0, chars)) >= labelBytes.Length) chars--;
         int written = utf8.GetBytes(name.AsSpan(0, chars), labelBytes);
         labelBytes[written] = 0;
@@ -427,22 +440,27 @@ internal sealed unsafe class VulkanContext : IDisposable
         return Vk.False;
     }
 
-    private bool HasInstanceExtension(string name)
+    // The names of the extensions an instance can be made with
+    private HashSet<string> InstanceExtensions()
     {
         uint count = 0;
         Vk.EnumerateInstanceExtensionProperties((byte*)null, &count, null);
-        if (count == 0) return false;
+        var names = new HashSet<string>((int)count, StringComparer.Ordinal);
+        if (count == 0) return names;
 
         var properties = new ExtensionProperties[count];
         fixed (ExtensionProperties* pointer = properties)
             Vk.EnumerateInstanceExtensionProperties((byte*)null, &count, pointer);
 
-        foreach (var property in properties)
+        for (int i = 0; i < count; i++)
         {
-            if (Marshal.PtrToStringAnsi((nint)property.ExtensionName) == name) return true;
+            fixed (byte* name = properties[i].ExtensionName)
+            {
+                if (Marshal.PtrToStringAnsi((nint)name) is { } text) names.Add(text);
+            }
         }
 
-        return false;
+        return names;
     }
 
     private HashSet<string> DeviceExtensionsOf(PhysicalDevice device)

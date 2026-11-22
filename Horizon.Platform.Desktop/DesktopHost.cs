@@ -28,7 +28,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
             PlatformFeatures.Clipboard | PlatformFeatures.FileSystem |
             (request.ReadsGamepads ? PlatformFeatures.Gamepads : 0) |
             (request.Window.CustomFrame ? PlatformFeatures.WindowFrame | PlatformFeatures.CornerRadius : 0) |
-            (request.Window.CustomFrame && DesktopWindow.UsesSdl ? PlatformFeatures.DragArea : 0) |
+            (request.Window.CustomFrame && DesktopWindow.UsesSdlDragArea ? PlatformFeatures.DragArea : 0) |
             (request.Window.CustomFrame && OperatingSystem.IsWindows() ? PlatformFeatures.HotKeys : 0) |
             PlatformFeatures.DropDown;
 

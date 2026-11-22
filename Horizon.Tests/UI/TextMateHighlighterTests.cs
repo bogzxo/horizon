@@ -43,7 +43,10 @@ public class TextMateHighlighterTests
         try
         {
             Assert.True(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(5))));
-            object? deferred = await Task.Run(() => freshColours.Invoke(editor, [0, changed])).WaitAsync(TimeSpan.FromSeconds(1));
+            // On a thread of its own, the pool's were all taken by the rest of the tests at once and a second went by
+            // before the paint even began. Five seconds is still half of the ten the grammar is held for, a paint
+            // that waited for it would take those
+            object? deferred = await Task.Factory.StartNew(() => freshColours.Invoke(editor, [0, changed]), TaskCreationOptions.LongRunning).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Null(deferred);
         }
         finally { release.Set(); await holding; }
@@ -82,6 +85,84 @@ public class TextMateHighlighterTests
 
         // The same one every time, a grammar is loaded once
         Assert.Same(CodeLanguages.ForFile("A.cs"), CodeLanguages.ForFile("B.CS"));
+    }
+
+    // An agent's chat saved as JSON, one line of a fifth of a megabyte, strings with commas and escaped quotes in them
+    private static readonly string LongJson = "[" + string.Join(",", Enumerable.Range(0, 4000).Select(i =>
+        $"{{\"kind\":\"Tool\",\"seconds\":{i}.5,\"text\":\"a, b and \\\"c\\\", {i}\",\"stopped\":false}}")) + "]";
+
+    // What every letter of a line is coloured as
+    private static SyntaxKind[] Kinds(List<SyntaxSpan> spans, int length)
+    {
+        var kinds = new SyntaxKind[length];
+        Array.Fill(kinds, SyntaxKind.Name);
+        foreach (SyntaxSpan span in spans)
+            kinds.AsSpan(span.Start, span.Length).Fill(span.Kind);
+        return kinds;
+    }
+
+    [Fact]
+    public void A_line_too_long_to_read_at_once_is_read_in_pieces_to_its_end_and_the_next_line_goes_on_from_it()
+    {
+        var spans = Read(".json", LongJson + "\n{\"next\": 2}\n");
+
+        LongLineSpans read = Assert.IsType<LongLineSpans>(spans[0]);
+        Assert.True(read.Whole);
+        Assert.Equal(SyntaxKind.Number, KindAt(spans, 0, LongJson.LastIndexOf("3999.5", StringComparison.Ordinal)));
+        Assert.Equal(KindAt(spans, 0, LongJson.IndexOf("false", StringComparison.Ordinal)), KindAt(spans, 0, LongJson.LastIndexOf("false", StringComparison.Ordinal)));
+        Assert.Equal(KindAt(spans, 0, LongJson.IndexOf("a, b", StringComparison.Ordinal)), KindAt(spans, 0, LongJson.LastIndexOf("a, b", StringComparison.Ordinal)));
+        Assert.Equal(SyntaxKind.Number, KindAt(spans, 1, 9));
+    }
+
+    [Fact]
+    public void A_long_line_read_as_far_as_what_is_in_sight_is_read_on_from_there_and_comes_out_as_read_whole()
+    {
+        var highlighter = (TextMateHighlighter)CodeLanguages.ForExtension(".json")!;
+        var whole = Assert.IsType<LongLineSpans>(highlighter.ReadLine(LongJson, CodeLineStart.First));
+
+        // As far as a place, no further than a piece or two past it, then on to the end from there
+        var some = Assert.IsType<LongLineSpans>(highlighter.ReadUpTo(LongJson, CodeLineStart.First, 30_000, int.MaxValue, null, null));
+        Assert.InRange(some.ReadTo, 30_000, 30_000 + TextMateHighlighter.PIECE * 2);
+        Assert.DoesNotContain(some, span => span.Start >= some.ReadTo);
+
+        var budgeted = Assert.IsType<LongLineSpans>(highlighter.ReadUpTo(LongJson, CodeLineStart.First, LongJson.Length, 10_000, some, LongJson));
+        Assert.InRange(budgeted.ReadTo, some.ReadTo + 10_000, some.ReadTo + 10_000 + TextMateHighlighter.PIECE * 2);
+
+        var rest = Assert.IsType<LongLineSpans>(highlighter.ReadUpTo(LongJson, CodeLineStart.First, LongJson.Length, int.MaxValue, budgeted, LongJson));
+        Assert.True(rest.Whole);
+        Assert.Equal(Kinds(whole, LongJson.Length), Kinds(rest, LongJson.Length));
+    }
+
+    [Theory]
+    [InlineData("x")]
+    [InlineData("\"")]
+    [InlineData("[{")]
+    [InlineData("")]
+    public void A_long_line_typed_into_is_read_again_from_the_edit_and_comes_out_as_read_whole(string typed)
+    {
+        var highlighter = (TextMateHighlighter)CodeLanguages.ForExtension(".json")!;
+        var before = Assert.IsType<LongLineSpans>(highlighter.ReadLine(LongJson, CodeLineStart.First));
+
+        // Typed into the middle, or a letter taken out there
+        int at = LongJson.Length / 2;
+        string edited = typed.Length > 0 ? LongJson.Insert(at, typed) : LongJson.Remove(at, 1);
+        var again = Assert.IsType<LongLineSpans>(highlighter.ReadUpTo(edited, CodeLineStart.First, edited.Length, int.MaxValue, before, LongJson));
+        var whole = Assert.IsType<LongLineSpans>(highlighter.ReadLine(edited, CodeLineStart.First));
+
+        Assert.True(again.Whole);
+        Assert.Equal(Kinds(whole, edited.Length), Kinds(again, edited.Length));
+    }
+
+    [Fact]
+    public void A_letter_typed_into_a_long_line_reads_a_piece_or_two_again_not_all_of_it()
+    {
+        var highlighter = (TextMateHighlighter)CodeLanguages.ForExtension(".json")!;
+        var before = Assert.IsType<LongLineSpans>(highlighter.ReadLine(LongJson, CodeLineStart.First));
+
+        // With no more letters to read than a few pieces it still gets to the end, the rest is the last read moved along
+        string edited = LongJson.Insert(LongJson.Length / 2, "x");
+        var again = Assert.IsType<LongLineSpans>(highlighter.ReadUpTo(edited, CodeLineStart.First, edited.Length, TextMateHighlighter.PIECE * 4, before, LongJson));
+        Assert.True(again.Whole);
     }
 
     [Fact]

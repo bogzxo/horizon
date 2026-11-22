@@ -214,6 +214,12 @@ public abstract partial class UIComponent
     public bool TooltipMarkdown { get; set; }
 
     /// <summary>
+    /// The font the code in a markdown tooltip is written in, inline and in blocks, null for the skin's. A code editor's
+    /// hover has the signature of what's under the pointer in the editor's own font, it was in the UI's and read as prose.
+    /// </summary>
+    protected internal virtual Horizon.UI.Drawing.UIFont? TooltipCodeFont(Horizon.UI.Skinning.UISkin skin) => null;
+
+    /// <summary>
     /// Helper method to draw the rim that says "this one" around a component a navigator is on. Called by the
     /// components that have no look of their own for it, after they have painted themselves.
     /// </summary>
@@ -476,4 +482,10 @@ public abstract partial class UIComponent
     /// </summary>
     protected internal virtual void OnPaste(string text)
     { }
+
+    /// <summary>
+    /// Whether a paste with no text comes here too, for a component that looks on the clipboard for more than text (a
+    /// picture). Everything else is never handed an empty one.
+    /// </summary>
+    protected internal virtual bool TakesEmptyPaste => false;
 }

@@ -156,6 +156,12 @@ public sealed partial class TerminalScreen
     // When the running command's output started, by the tick count, 0 for none running
     private long commandSince;
 
+    /// <summary>
+    /// Whether a command typed at the prompt is running, as the marks have it (its output started, C, and it isn't done,
+    /// D). False for a shell that never says its marks, nothing is known of its commands.
+    /// </summary>
+    public bool CommandRunning => commandSince != 0;
+
     private void Mark(ReadOnlySpan<char> rest)
     {
         if (rest.IsEmpty)

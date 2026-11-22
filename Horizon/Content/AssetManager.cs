@@ -337,13 +337,22 @@ public class AssetManager<AssetType, AssetFactoryType, AssetDescriptionType, Ass
             owners.Remove(asset.Handle);
             shared.Remove(asset.Handle);
 
-            var named = NamedAssets.Where((item) => item.Value.Handle == asset.Handle).ToArray();
-            AssetDisposerType.Dispose(asset);
-            if (named.Length == 1)
+            // The name it goes by, if it goes by exactly one. Looked for before it is disposed of, which may clear the handle
+            string? name = null;
+            int names = 0;
+            foreach (var (key, value) in NamedAssets)
             {
-                _ = NamedAssets.TryRemove(named.FirstOrDefault().Key, out _);
-                users.Remove(named[0].Key);
-                pinned.Remove(named[0].Key);
+                if (value.Handle != asset.Handle) continue;
+                name = key;
+                names++;
+            }
+
+            AssetDisposerType.Dispose(asset);
+            if (names == 1)
+            {
+                _ = NamedAssets.TryRemove(name!, out _);
+                users.Remove(name!);
+                pinned.Remove(name!);
             }
 
             return OwnedAssets.Remove(asset);

@@ -15,9 +15,9 @@ A game needs the first three. `bogzxo.Horizon.HIDL` comes with them.
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="bogzxo.Horizon.Engine" Version="1.4.0" />
-  <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.4.0" />
-  <PackageReference Include="bogzxo.Horizon.UI" Version="1.4.0" />
+  <PackageReference Include="bogzxo.Horizon.Engine" Version="1.5.0" />
+  <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.5.0" />
+  <PackageReference Include="bogzxo.Horizon.UI" Version="1.5.0" />
 </ItemGroup>
 ```
 

@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Engine;
 using Horizon.HIDL.Runtime;
 using Horizon.Rendering;
 using Horizon.UI.Drawing;
@@ -56,6 +57,7 @@ public sealed class UINotification
     public void Renew()
     {
         Age = 0.0f;
+        Lit = 0.0f;
         if (!Closed)
             Alpha = 1.0f;
     }
@@ -66,8 +68,26 @@ public sealed class UINotification
 
     // How far in it has come since it was shown, 0 to 1, at a steady rate (eased where it's used)
     internal float In;
+
+    // How long ago it came or was renewed, in seconds, what its ring's two beats are timed by
+    internal float Lit;
+
+    // How far up from the bottom of the cards it's drawn, easing to where the cards under it put it, NaN until first placed
+    internal float Place = float.NaN;
     internal readonly List<(int Start, int Length)> Lines = [];
     internal float WrappedFor = -1.0f;
+    internal object? WrappedFont;
+    internal float WrappedScale;
+    internal readonly List<(string Label, string Display, UIRect Bounds)> Buttons = [];
+    internal object? ButtonFont;
+    internal float ButtonScale, ButtonWidth, ButtonAreaHeight;
+
+    // Its detail as it was last cut to the card, for which detail, in what font, at what scale and in what width, cut
+    // again only when one of them moved rather than every frame the card is up
+    internal string? FittedDetailOf;
+    internal object? FittedFont;
+    internal float FittedScale, FittedWidth;
+    internal string FittedDetail = string.Empty;
 }
 
 /// <summary>
@@ -91,6 +111,11 @@ public class Notifications : UIComponent
 
     // The detail line, as big as the text is
     private const float DETAIL = 0.85f;
+
+    // What has a card seen out of the corner of an eye. A bar down its left in its icon's colour for as long as it's up,
+    // how thick and how far in, and a ring round it in the same colour that beats twice as it comes and is gone, how
+    // thick and how long the two beats take. A card slid in quietly was read by whoever happened to be looking there
+    private const float STRIPE = 3.0f, STRIPE_INSET = 4.0f, RING = 2.0f, CALL = 1.5f;
 
     // The clock of the sweep
     private float sweep;
@@ -132,21 +157,28 @@ public class Notifications : UIComponent
 
     private float ScaleOf(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale;
 
+    private float CardWidth => Parent?.Bounds.Width is > 0.0f and var available
+        ? Math.Clamp(Width, 0.0f, MathF.Max(0.0f, available - MathF.Abs(Position.X)))
+        : Width;
+
     private float HeightOf(UINotification card, UISkin skin)
     {
         float scale = ScaleOf(skin);
-        float textWidth = Width - PADDING * 3.0f - ICON - CLOSE;
-        if (card.WrappedFor != textWidth)
+        float textWidth = MathF.Max(1.0f, CardWidth - PADDING * 3.0f - ICON - CLOSE);
+        if (card.WrappedFor != textWidth || card.WrappedFont != skin.Font || card.WrappedScale != scale)
         {
             card.Lines.Clear();
             skin.Font.Wrap(card.Text, scale, textWidth, card.Lines, markup: false);
             card.WrappedFor = textWidth;
+            card.WrappedFont = skin.Font;
+            card.WrappedScale = scale;
         }
 
         float text = MathF.Max(1, card.Lines.Count) * skin.Font.LineHeight * scale;
         float detail = card.Detail.Length > 0 ? skin.Font.LineHeight * scale * DETAIL + GAP * 0.5f : 0.0f;
         float bar = card.Progress is not null ? BAR + GAP : 0.0f;
-        return PADDING * 2.0f + MathF.Max(ICON, text) + detail + bar + (card.Actions.Count > 0 ? ACTION_HEIGHT + GAP : 0.0f);
+        LayoutActions(card, skin, CardWidth);
+        return PADDING * 2.0f + MathF.Max(ICON, text) + detail + bar + card.ButtonAreaHeight;
     }
 
     protected override Vector2 Measure(UISkin skin)
@@ -155,16 +187,33 @@ public class Notifications : UIComponent
         foreach (UINotification card in shown)
             height += HeightOf(card, skin) + GAP;
 
-        return new Vector2(Width, MathF.Max(0.0f, height - GAP));
+        return new Vector2(CardWidth, MathF.Max(0.0f, height - GAP));
     }
+
+    // How quickly a card glides to its place, the share of the way left it goes in a second's worth of frames
+    private const float GLIDE = 16.0f;
 
     protected override void Update(float dt)
     {
         sweep = (sweep + dt / SWEEP_SECONDS) % 1.0f;
         bool held = IsHovered;
+        float call = MotionTime(CALL);
+        bool calling = false;
+
+        // Anything moving wants every frame: an idle window ticks four times a second, and a card sliding in, fading out,
+        // making room or sweeping its bar went along in jumps
+        bool moving = false;
+        float soonest = float.MaxValue;
         for (int i = shown.Count - 1; i >= 0; i--)
         {
             UINotification card = shown[i];
+
+            // Its ring beating, which wants frames from a window that sleeps between keys
+            if (card.Lit < call)
+            {
+                card.Lit += dt;
+                calling = true;
+            }
 
             // The pointer on the cards holds them all, somebody is reading
             if (!held && card.Seconds > 0.0f)
@@ -180,37 +229,107 @@ public class Notifications : UIComponent
                 : card.Seconds > 0.0f ? Math.Clamp((card.Seconds - card.Age) / FADE, 0.0f, 1.0f) : 1.0f;
             card.Alpha = card.Closed ? going : MathF.Min(going, 1.0f - (1.0f - card.In) * (1.0f - card.In) * (1.0f - card.In));
             if (card.Alpha <= 0.0f)
+            {
                 shown.RemoveAt(i);
+                moving = true;
+                continue;
+            }
+
+            if (card.In < 1.0f || card.Closed || card.Alpha < 1.0f || card.Progress is float.NaN)
+                moving = true;
+            else if (card.Seconds > 0.0f && !held)
+                soonest = MathF.Min(soonest, card.Seconds - FADE - card.Age);
         }
+
+        // Each card eased to where the ones under it put it, so one coming or going has the rest glide rather than jump
+        if (Module?.Compositor.Skin is { } skin)
+        {
+            float glide = 1.0f - MathF.Exp(-GLIDE * dt);
+            float bottom = 0.0f;
+            for (int i = shown.Count - 1; i >= 0; i--)
+            {
+                UINotification card = shown[i];
+                if (float.IsNaN(card.Place) || MotionTime(ARRIVE) <= 0.0f)
+                    card.Place = bottom;
+                else
+                    card.Place += (bottom - card.Place) * glide;
+                if (MathF.Abs(card.Place - bottom) < 0.25f)
+                    card.Place = bottom;
+                else
+                    moving = true;
+                bottom += (HeightOf(card, skin) + GAP) * card.Alpha;
+            }
+        }
+
+        var windows = GameEngine.Instance?.WindowManager;
+        if (calling || moving)
+            windows?.RequestFrames(0.1);
+        // A tick on time for the fade to start from its first frame, an idle window's next one could be a quarter second late
+        else if (soonest < float.MaxValue)
+            windows?.RequestTickIn(Math.Max(0.0f, soonest));
     }
 
     /// <summary>Helper method for where each card is, the newest at the bottom of the bounds.</summary>
     private UIRect CardBounds(int index, UISkin skin)
     {
-        float bottom = Bounds.Min.Y;
-        for (int i = shown.Count - 1; i > index; i--)
-            bottom += HeightOf(shown[i], skin) + GAP;
+        float bottom = 0.0f;
+        if (float.IsNaN(shown[index].Place))
+        {
+            for (int i = shown.Count - 1; i > index; i--)
+                bottom += HeightOf(shown[i], skin) + GAP;
+        }
+        else
+            bottom = MathF.Round(shown[index].Place);
 
+        bottom += Bounds.Min.Y;
         return new UIRect(new Vector2(Bounds.Min.X, bottom), new Vector2(Bounds.Max.X, bottom + HeightOf(shown[index], skin)));
     }
 
     private static UIRect CloseBounds(UIRect card) =>
         new(new Vector2(card.Max.X - PADDING - CLOSE, card.Max.Y - PADDING - CLOSE), new Vector2(card.Max.X - PADDING, card.Max.Y - PADDING));
 
-    // The first of them at the right end, it's the one to press as a dialog's is, the rest leftwards in the order given
-    private UIRect ActionBounds(UIRect card, UINotification notification, int action, UISkin skin)
+    // The primary action stays at the bottom right. Additional rows grow toward the text.
+    private void LayoutActions(UINotification card, UISkin skin, float width)
     {
-        float right = card.Max.X - PADDING;
         float scale = ScaleOf(skin);
-        for (int i = 0; i < notification.Actions.Count; i++)
+        if (card.ButtonWidth == width && card.ButtonFont == skin.Font && card.ButtonScale == scale && card.Buttons.Count == card.Actions.Count)
         {
-            float width = skin.Font.Measure(notification.Actions[i].Label, scale, markup: false).X + PADDING * 2.0f;
-            if (i == action)
-                return new UIRect(new Vector2(right - width, card.Min.Y + PADDING), new Vector2(right, card.Min.Y + PADDING + ACTION_HEIGHT));
-            right -= width + GAP;
+            int i = 0;
+            while (i < card.Actions.Count && card.Buttons[i].Label == card.Actions[i].Label)
+                i++;
+            if (i == card.Actions.Count)
+                return;
         }
 
-        return default;
+        card.Buttons.Clear();
+        card.ButtonWidth = width;
+        card.ButtonFont = skin.Font;
+        card.ButtonScale = scale;
+        float inset = MathF.Min(PADDING, width * 0.5f);
+        float edge = width - inset;
+        float right = edge;
+        float bottom = PADDING;
+        foreach (var (label, _) in card.Actions)
+        {
+            float natural = skin.Font.Measure(label, scale, markup: false).X + 2.0f * PADDING;
+            float buttonWidth = MathF.Min(natural, edge - inset);
+            if (right < edge && right - buttonWidth < inset)
+            {
+                right = edge;
+                bottom += ACTION_HEIGHT + GAP;
+            }
+            var bounds = new UIRect(new Vector2(right - buttonWidth, bottom), new Vector2(right, bottom + ACTION_HEIGHT));
+            string display = natural <= buttonWidth ? label : Fitted(label, skin, scale, buttonWidth - 2.0f * PADDING);
+            card.Buttons.Add((label, display, bounds));
+            right -= buttonWidth + GAP;
+        }
+        card.ButtonAreaHeight = card.Actions.Count == 0 ? 0.0f : bottom - PADDING + ACTION_HEIGHT + GAP;
+    }
+
+    private static UIRect ActionBounds(UIRect bounds, UINotification card, int action)
+    {
+        var button = card.Buttons[action].Bounds;
+        return new UIRect(bounds.Min + button.Min, bounds.Min + button.Max);
     }
 
     /// <summary>
@@ -222,8 +341,8 @@ public class Notifications : UIComponent
 
     /// <summary>Where a button of a card that's up is, empty for one that's gone or a button it hasn't got. See <see cref="CardBoundsOf"/>.</summary>
     public UIRect ActionBoundsOf(UINotification card, int action) =>
-        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds && Module?.Compositor.Skin is { } skin
-            ? ActionBounds(bounds, card, action, skin) : default;
+        action >= 0 && action < card.Actions.Count && CardBoundsOf(card) is { Width: > 0.0f } bounds
+            ? ActionBounds(bounds, card, action) : default;
 
     protected internal override void OnPointerUp(Vector2 point)
     {
@@ -245,7 +364,7 @@ public class Notifications : UIComponent
 
             for (int action = 0; action < card.Actions.Count; action++)
             {
-                if (ActionBounds(bounds, card, action, skin).Contains(point))
+                if (ActionBounds(bounds, card, action).Contains(point))
                 {
                     card.Close();
                     card.Actions[action].Pressed();
@@ -277,6 +396,21 @@ public class Notifications : UIComponent
             list.Popup(bounds, Module?.Compositor.PopupGlass);
             list.PopVisual();
 
+            // The bar down its left, in the colour its icon is (the accent, or an error's red), clear of the round corners
+            Vector4 mark = card.IconColor ?? skin.AccentColor;
+            float corner = MathF.Min(skin.PopupRadius, bounds.Height * 0.5f) * 0.75f;
+            list.RoundRect(new UIRect(new Vector2(bounds.Min.X + STRIPE_INSET, bounds.Min.Y + corner), new Vector2(bounds.Min.X + STRIPE_INSET + STRIPE, bounds.Max.Y - corner)),
+                STRIPE * 0.5f, mark * fade);
+
+            // And the ring, bright as it comes, down, up half as bright and gone. Not at all in a UI told not to move
+            float call = MotionTime(CALL);
+            if (!card.Closed && card.Lit < call)
+            {
+                float through = card.Lit / call;
+                float beat = (1.0f - through) * (0.5f + 0.5f * MathF.Cos(through * MathF.PI * 4.0f));
+                list.RoundOutline(bounds, skin.PopupRadius, RING, mark with { W = mark.W * beat * card.Alpha });
+            }
+
             float top = bounds.Max.Y - PADDING;
             float left = bounds.Min.X + PADDING;
             list.Symbol(card.Icon, new UIRect(new Vector2(left, top - ICON), new Vector2(left + ICON, top)), (card.IconColor ?? skin.AccentColor) * fade);
@@ -297,7 +431,7 @@ public class Notifications : UIComponent
             if (card.Detail.Length > 0)
             {
                 float detailScale = scale * DETAIL;
-                list.Text(Fitted(card.Detail, skin, detailScale, right - textLeft), new Vector2(textLeft, MathF.Round(below)), detailScale,
+                list.Text(FittedDetail(card, skin, detailScale, right - textLeft), new Vector2(textLeft, MathF.Round(below)), detailScale,
                     skin.TextColor * new Vector4(1.0f, 1.0f, 1.0f, 0.6f * card.Alpha), markup: false);
                 below -= line * DETAIL + GAP * 0.5f;
             }
@@ -318,7 +452,7 @@ public class Notifications : UIComponent
 
             for (int action = 0; action < card.Actions.Count; action++)
             {
-                UIRect button = ActionBounds(bounds, card, action, skin);
+                UIRect button = ActionBounds(bounds, card, action);
                 bool lit = button.Contains(pointer);
 
                 // Only the first in the accent, the rest a quiet fill of the text's colour. Three gold buttons had none of
@@ -326,12 +460,12 @@ public class Notifications : UIComponent
                 if (action == 0)
                 {
                     list.RoundRect(button, skin.CornerRadius, (lit ? skin.AccentColor : skin.AccentColor with { W = skin.AccentColor.W * 0.75f }) * fade);
-                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
+                    list.Text(card.Buttons[action].Display, button, Origin.Center, scale, skin.BarTextColor * fade, markup: false);
                 }
                 else
                 {
                     list.RoundRect(button, skin.CornerRadius, skin.TextColor with { W = (lit ? 0.18f : 0.1f) * card.Alpha });
-                    list.Text(card.Actions[action].Label, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
+                    list.Text(card.Buttons[action].Display, button, Origin.Center, scale, skin.TextColor * fade, markup: false);
                 }
             }
 
@@ -341,14 +475,26 @@ public class Notifications : UIComponent
         list.EndParts();
     }
 
+    // A card's detail cut to its width, kept on the card until the detail, the font, the scale or the width changes
+    private static string FittedDetail(UINotification card, UISkin skin, float scale, float width)
+    {
+        if (!ReferenceEquals(card.FittedDetailOf, card.Detail) || !ReferenceEquals(card.FittedFont, skin.Font) || card.FittedScale != scale || card.FittedWidth != width)
+            (card.FittedDetailOf, card.FittedFont, card.FittedScale, card.FittedWidth, card.FittedDetail) = (card.Detail, skin.Font, scale, width, Fitted(card.Detail, skin, scale, width));
+        return card.FittedDetail;
+    }
+
     // A line cut to a width with an ellipsis, the whole of it when it fits
     private static string Fitted(string line, UISkin skin, float scale, float width)
     {
-        if (width <= 0.0f || skin.Font.Measure(line, scale, markup: false).X <= width)
+        if (width <= 0.0f)
+            return string.Empty;
+        if (skin.Font.Measure(line, scale, markup: false).X <= width)
             return line;
 
+        if (skin.Font.Measure("\u2026", scale, markup: false).X > width)
+            return string.Empty;
         int keep = line.Length;
-        while (keep > 1 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
+        while (keep > 0 && skin.Font.Measure(string.Concat(line.AsSpan(0, keep), "\u2026"), scale, markup: false).X > width)
             keep = keep * 3 / 4;
         return string.Concat(line.AsSpan(0, keep), "\u2026");
     }

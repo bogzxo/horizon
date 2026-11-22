@@ -68,6 +68,9 @@ public partial class UICompositor
         float distance = middleScroll.Step(point, pointer.MiddleDown, target is not null, cancel, dt, MiddleScrollSpeed);
         if (!middleScroll.Active) { middleScrollTarget = null; return; }
         if (distance != 0) target!.OnPan(new Vector2(0, distance));
-        GameEngine.Instance?.WindowManager.RequestFrames(0.1);
+        // The simulation kept at its full rate, not only frames asked for: a slow scroll moves less than a pixel a frame,
+        // paints nothing new, and an idle window then ticked four times a second, each tick moving a twentieth of a
+        // second's worth, so the view stepped along at fixed intervals instead of gliding
+        GameEngine.Instance?.WindowManager.NoteChange();
     }
 }

@@ -19,9 +19,12 @@ internal sealed partial class SettingRow : StackPanel
 {
     private const float PAD = 10.0f, TYPED_AFTER = 0.6f, BUTTON_COLUMN = 440.0f;
 
+    // A style no skin has art for, so a value that is only read is never drawn in a box of the skin's
+    private const string READ_ONLY_STYLE = "textbox_read_only";
+
     // The column down the right what sets it goes in, the gap before it and the most the sentence on the left runs to.
     // Across the whole of a wide row a sentence was too long a line to read
-    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 560.0f;
+    private const float CONTROL_COLUMN = 300.0f, COLUMN_GAP = 24.0f, HELP_MOST = 640.0f;
 
     // The least the left column can be before the row gives up on two columns and puts what sets it under the sentence
     private const float LEAST_TEXT = 300.0f;
@@ -60,7 +63,7 @@ internal sealed partial class SettingRow : StackPanel
     // Its name, its key after it and the sentence under them, rewritten with what a search found lit in them
     private readonly RowTitle name;
     private readonly Label key;
-    private readonly Label? help;
+    private readonly HelpLabel? help;
 
     // The page's note under the name, when the row is too narrow for its pill beside the name
     private readonly Label noteLine;
@@ -164,12 +167,24 @@ internal sealed partial class SettingRow : StackPanel
             OnPressed = () => page.ResetPressed(setting.Key)
         });
 
+        // Straight after the name, before the key: the key only shows while the row's looked at, and a reset after its
+        // empty room sat a gap away from the name it's for
+        top.MoveChild(reset, 1);
+
+        // The pills after the name too, and the key last. Its room is kept while it's hidden, and a pill after the empty
+        // room floated off on its own a key's width from the row it was about
+        top.MoveChild(key, top.Children.Count - 1);
+
         // The note on a line of its own under the name, for a row too narrow to have it beside the name (see FitName)
         noteLine = text.Add(new Label { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
 
+        // Its first sentence, what it does in a line, and all it says when the pointer rests on it. Three lines of what wins
+        // over it and when, down every row, made the page a wall to read. A search that finds a word only in the rest
+        // shows the rest (see Highlight)
         if (setting.Help.Length > 0 && !page.CompactRows)
         {
-            help = text.Add(new Label { Text = UIRichText.Literal(setting.Help), Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
+            shortHelp = FirstSentence(setting.Help);
+            help = text.Add(new HelpLabel { Text = UIRichText.Literal(shortHelp), Tooltip = shortHelp.Length < setting.Help.Length ? setting.Help : string.Empty, Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
             faded.Add(help);
         }
 
@@ -217,7 +232,7 @@ internal sealed partial class SettingRow : StackPanel
 
     // Whether a setting's control fits the column down the right, anything with buttons or a list of choices doesn't
     private static bool Sideways(UISetting setting) =>
-        setting.Kind is UIFormKind.Flag or UIFormKind.Choice or UIFormKind.Number or UIFormKind.Whole or UIFormKind.Text
+        setting.Kind is UIFormKind.Flag or UIFormKind.Choice or UIFormKind.Number or UIFormKind.Whole or UIFormKind.Text or UIFormKind.Secret
         && setting.Buttons is not { Length: > 0 } && !setting.ButtonsOnly;
 
     // About how wide a short text is written small after the name, the key and the pills, a little over so it isn't cut
@@ -257,13 +272,15 @@ internal sealed partial class SettingRow : StackPanel
     public void Show(IRuntimeValue? value, bool isModified)
     {
         modified = isModified;
-        reset.Visible = isModified;
+        string? disabledReason = page.DisabledReasonOf?.Invoke(Setting.Key);
+        Enabled = disabledReason is null;
+        reset.Visible = isModified && Enabled;
 
         // What the reset puts back said on it, only asked for while there's a reset to rest the pointer on
         if (isModified)
             reset.Tooltip = page.ResetText(Setting.Key);
         show(value);
-        ShowNote(page.NoteOf?.Invoke(Setting.Key), page.NoteTipOf?.Invoke(Setting.Key));
+        ShowNote(disabledReason ?? page.NoteOf?.Invoke(Setting.Key), disabledReason ?? page.NoteTipOf?.Invoke(Setting.Key));
     }
 
     /// <summary>What its note says after its key, null for none.</summary>
@@ -289,7 +306,7 @@ internal sealed partial class SettingRow : StackPanel
         FitName();
     }
 
-    /// <summary>The keyword or choice a search found it by in its pill after the key, markup and all, null for none.</summary>
+    /// <summary>The keyword or choice a search found it by in its pill after the name, markup and all, null for none.</summary>
     public void ShowFoundBy(string? said)
     {
         if (said == foundByText)
@@ -356,11 +373,44 @@ internal sealed partial class SettingRow : StackPanel
             return;
 
         lit = joined;
+        KeyLit = words.Any(word => word.Length > 0 && Setting.Key.Contains(word, StringComparison.OrdinalIgnoreCase));
         name.Text = $"[b]{SettingsPage.Highlighted(Setting.Title, words)}[/b]";
         key.Text = SettingsPage.Highlighted(Setting.Key, words);
         if (help is not null)
-            help.Text = SettingsPage.Highlighted(Setting.Help, words);
+        {
+            // All of it while a word typed is only in the rest, so whatever the search found it by is there to see
+            bool rest = words.Any(word => word.Length > 0 && !shortHelp.Contains(word, StringComparison.OrdinalIgnoreCase)
+                && Setting.Help.Contains(word, StringComparison.OrdinalIgnoreCase));
+            help.Text = SettingsPage.Highlighted(rest ? Setting.Help : shortHelp, words);
+        }
     }
+
+    // The sentence under its name, under the pointer only while it has the rest of its help to say in its tooltip
+    private sealed class HelpLabel : Label
+    {
+        protected override bool HitTestVisible => Tooltip.Length > 0;
+    }
+
+    // What its sentence shows when nothing found it by the rest, the first sentence of its help
+    private readonly string shortHelp = string.Empty;
+
+    /// <summary>
+    /// The first sentence of a help text, up to a full stop with a space and a capital letter or a digit after it, all of
+    /// it when there's no such stop. A stop inside a name (.editorconfig, 1.5) has no space after it.
+    /// </summary>
+    internal static string FirstSentence(string said)
+    {
+        for (int i = 0; i + 2 < said.Length; i++)
+        {
+            if (said[i] is '.' or '?' or '!' && said[i + 1] == ' ' && (char.IsUpper(said[i + 2]) || char.IsDigit(said[i + 2])))
+                return said[..(i + 1)];
+        }
+
+        return said;
+    }
+
+    // Whether a word of the search is in its key, which shows the key whether it's looked at or not
+    private bool KeyLit;
 
     /// <summary>Whether it's still flashing from being gone to.</summary>
     public bool Flashing => flash > 0.001f;
@@ -382,6 +432,11 @@ internal sealed partial class SettingRow : StackPanel
 
     protected override void Update(float dt)
     {
+        // Its key only while it's being looked at (the pointer on it, the keyboard in it) or a search found it there. Down
+        // every row of hundreds it was a second name to read past. Its room stays, so the pills and reset don't move
+        if (!page.CompactRows)
+            key.Opacity = IsHovered || HasHoveredChild() || HasFocus(this) || KeyLit ? KEY_FAINT : 0.0f;
+
         if (typed is { } text)
         {
             typedFor += dt;
@@ -409,10 +464,12 @@ internal sealed partial class SettingRow : StackPanel
         // The flash of a row gone to over that, there and see-through the rest of the time for the same reason
         list.RoundRect(Bounds, ROUND, accent with { W = accent.W * FLASH_STRENGTH * flash });
 
-        // The line down its edge while it's changed, focused or not, inside the row and in from its edge as far as the
-        // row is, so marking it moves nothing. Always there and see-through while it's not, the same as the rest
-        float edge = Bounds.Min.X + indent + 2.0f;
-        list.Rect(new UIRect(new Vector2(edge, Bounds.Min.Y + 4.0f), new Vector2(edge + 3.0f, Bounds.Max.Y - 4.0f)), accent with { W = modified ? 1.0f : 0.0f });
+        // A dot of the accent in front of its name while it's changed, in the room the row keeps on its left so marking it
+        // moves nothing. It was a line down the row's whole edge, a stripe on one side that read as decoration. Always
+        // there and see-through while it's not, the same as the rest
+        float dot = 3.0f * page.ZoomNow;
+        var at = new Vector2(Bounds.Min.X + indent + 7.0f, name.Bounds.IsEmpty ? Bounds.Max.Y - PAD - dot * 3.0f : name.Bounds.Center.Y);
+        list.RoundRect(new UIRect(at - new Vector2(dot, dot), at + new Vector2(dot, dot)), dot, accent with { W = modified ? 1.0f : 0.0f });
         base.Paint(list);
     }
 

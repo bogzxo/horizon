@@ -5,10 +5,18 @@ name: CI
 
 on:
   workflow_dispatch:
+  # Not master: it's only ever development merged, tested as it was pushed. Nor a push of only docs or notes
   push:
-    branches: [ "master", "development", "platform" ]
+    branches: [ "development", "platform" ]
+    paths-ignore: [ "docs/**", "**/*.md" ]
   pull_request:
     branches: [ "master", "development" ]
+    paths-ignore: [ "docs/**", "**/*.md" ]
+
+# A newer push to the same branch takes the place of a run still going on an older one
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   android-probe:

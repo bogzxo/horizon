@@ -94,10 +94,11 @@ public sealed class UICommands
     /// them are a chord, the first pressed and then the second ("Ctrl+K Z").
     /// </param>
     /// <param name="use">Whether pressing the key picks the command, and while typing too.</param>
+    /// <param name="destructive">Whether it throws something away, see <see cref="MenuItem.IsDestructive"/>.</param>
     /// <returns>The item, to say more about (when it can be picked, whether it is checked).</returns>
-    public MenuItem Add(string where, string label, Action picked, string key = "", string icon = "", UIKeyUse use = UIKeyUse.Shown)
+    public MenuItem Add(string where, string label, Action picked, string key = "", string icon = "", UIKeyUse use = UIKeyUse.Shown, bool destructive = false)
     {
-        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = key, Icon = icon };
+        var item = new MenuItem { Label = label, OnPicked = picked, Shortcut = key, Icon = icon, IsDestructive = destructive };
         GroupAt(where).Add(item);
         Declared menu = BarMenuOf(where);
         added[item] = (menu, use);

@@ -122,7 +122,7 @@ public class DispatcherTests
         using IPlatformHost framed = DesktopPlatform.Instance.CreateHost(request with { Window = request.Window with { CustomFrame = true }, ReadsGamepads = true });
         Assert.True((framed.Features & PlatformFeatures.WindowFrame) != 0);
         Assert.True((framed.Features & PlatformFeatures.Gamepads) != 0);
-        Assert.Equal(DesktopWindow.UsesSdl, (framed.Features & PlatformFeatures.DragArea) != 0);
+        Assert.Equal(DesktopWindow.UsesSdl && !OperatingSystem.IsMacOS(), (framed.Features & PlatformFeatures.DragArea) != 0);
 
         // Nothing native before the engine attaches, and nothing published before the window loads
         Assert.Throws<InvalidOperationException>(() => first.Surface);

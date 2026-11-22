@@ -61,10 +61,11 @@ public sealed partial class InputManager : GameComponent, IDisposable
     /// </summary>
     public void Play(InputScript? script)
     {
-        foreach (var key in _scriptKeys) Post(InputEvent.KeyChange(key, false));
+        foreach (var key in _scriptKeys.Keys) Post(InputEvent.KeyChange(key, false));
         _scriptKeys.Clear();
         _script = script;
         _scriptTime = 0.0f;
+        _scriptKeysStarted = false;
 
         // In the first slot nothing is plugged into, so it is player one whatever a bindings file had saved there
         if (script is { HasButtons: true }) _scriptPad ??= Gamepads.AddVirtualGamepad("Script", takeFreeSlot: true);
@@ -99,9 +100,11 @@ public sealed partial class InputManager : GameComponent, IDisposable
     {
         if (_script is null) return;
 
+        float from = _scriptTime;
         _scriptTime += dt;
         _scriptPad?.Update(_script.At(_scriptTime));
-        PlayScriptKeys();
+        PlayScriptKeys(_scriptKeysStarted ? from : float.NegativeInfinity, _scriptTime);
+        _scriptKeysStarted = true;
 
         if (_script.WantsQuit(_scriptTime))
         {
@@ -110,34 +113,47 @@ public sealed partial class InputManager : GameComponent, IDisposable
         }
     }
 
-    // The keys the script held on the last update, and the ones it holds on this one
-    private HashSet<Key> _scriptKeys = [], _scriptKeysNow = [];
+    // The keys the script holds down on the keyboard, by how many of its steps hold each, the keys going down and up
+    // since the last update in the order they do, and whether an update has played any of it yet (one at the very start
+    // of the script goes down on the first)
+    private readonly Dictionary<Key, int> _scriptKeys = [];
+    private readonly List<(float Time, Key Key, bool Down)> _scriptEdges = [];
+    private bool _scriptKeysStarted;
 
     /// <summary>
-    /// Helper method to play the keys of the script on the real keyboard, the ones that went down and the ones that came
-    /// up since the last update. Modifiers go down first and come up last, so a chord keeps its meaning.
+    /// Helper method to play the keys of the script on the real keyboard, every one that went down or came up since the
+    /// last update in the order the script has them, modifiers down first and up last where they go at once, so a chord
+    /// keeps its meaning. Not just the keys held now: an idle program updates four times a second, and a key tapped
+    /// between two of them (the F of a Ctrl+F, held 0.08 s) was never pressed at all. Down and up in the one update is a
+    /// tap, which the keyboard has pressed for that update and let go of at the next.
     /// </summary>
-    private void PlayScriptKeys()
+    private void PlayScriptKeys(float after, float upTo)
     {
-        _script!.KeysAt(_scriptTime, _scriptKeysNow);
+        _script!.KeyEdges(after, upTo, _scriptEdges);
+        _scriptEdges.Sort(static (a, b) => a.Time != b.Time ? a.Time.CompareTo(b.Time) : Order(a).CompareTo(Order(b)));
 
-        for (int pass = 0; pass < 2; pass++)
+        foreach (var (_, key, down) in _scriptEdges)
         {
-            foreach (var key in _scriptKeys)
+            int holds = _scriptKeys.GetValueOrDefault(key);
+            if (down)
             {
-                if (IsModifier(key) == (pass != 0) && !_scriptKeysNow.Contains(key)) Keyboard.Hear(key, false);
+                _scriptKeys[key] = holds + 1;
+                if (holds == 0) Keyboard.Hear(key, true);
+            }
+            else if (holds > 0)
+            {
+                if (holds == 1)
+                {
+                    _scriptKeys.Remove(key);
+                    Keyboard.Hear(key, false);
+                }
+                else _scriptKeys[key] = holds - 1;
             }
         }
 
-        for (int pass = 0; pass < 2; pass++)
-        {
-            foreach (var key in _scriptKeysNow)
-            {
-                if (IsModifier(key) == (pass == 0) && !_scriptKeys.Contains(key)) Keyboard.Hear(key, true);
-            }
-        }
-
-        (_scriptKeys, _scriptKeysNow) = (_scriptKeysNow, _scriptKeys);
+        // At the same moment, what comes up before what goes down (a key held from when another is let go of isn't
+        // pressed with it), modifiers up after the other keys and down before them
+        static int Order((float Time, Key Key, bool Down) edge) => edge.Down ? (IsModifier(edge.Key) ? 2 : 3) : (IsModifier(edge.Key) ? 1 : 0);
     }
 
     public override void Initialize()

@@ -13,12 +13,12 @@ namespace Horizon.Engine;
 /// stretch was whatever the system had lying around in the window, which on a slow start (a scene with a lot to
 /// load, shaders compiled for the first time) is a good long look at garbage. It is a colour with a picture over
 /// it, the engine's own unless the game brings one. It doesn't move, nothing is updated while a scene is set up.
-/// <code>
+/// <code><![CDATA[
 /// using var engine = new GameEngine(window);
 /// engine.LoadingScreen.Image = "Assets/loading.png";
 /// engine.LoadingScreen.Color = new Vector3(0.02f, 0.02f, 0.03f);
-/// engine.Run&lt;MainMenuScene&gt;();
-/// </code>
+/// engine.Run<MainMenuScene>();
+/// ]]></code>
 /// It is drawn once before anything of the engine or the game is set up, the window is only shown once it is in
 /// it, and then under every frame until the first scene draws. All of it is set before <see cref="GameEngine.Run()"/>.
 /// </summary>
@@ -78,6 +78,15 @@ public sealed class LoadingScreen
 
         graphics.BeginFrame((uint)viewport.X, (uint)viewport.Y);
         graphics.SetViewport(0, 0, (uint)viewport.X, (uint)viewport.Y);
+
+        // No picture, only its colour: a clear and nothing else, no shader made or picture read and decoded for it
+        if (Image is not { Length: > 0 })
+        {
+            ClearToColor(graphics);
+            graphics.EndFrame();
+            return;
+        }
+
         graphics.Clear(ClearTargets.All);
 
         CameraBlock.BeginFrame(viewport, 0.0f);
@@ -87,11 +96,26 @@ public sealed class LoadingScreen
         graphics.EndFrame();
     }
 
+    // The window filled with the screen's colour by a clear, the clear colour put back as it was
+    private void ClearToColor(GraphicsDevice graphics)
+    {
+        Vector4 was = graphics.ClearColor;
+        graphics.ClearColor = new Vector4(Color, 1.0f);
+        graphics.Clear(ClearTargets.All);
+        graphics.ClearColor = was;
+    }
+
     /// <summary>Helper method to draw the screen over the whole of the window. Render thread.</summary>
     internal void Draw(Vector2 viewport)
     {
         if (!Enabled)
             return;
+
+        if (Image is not { Length: > 0 })
+        {
+            ClearToColor(GraphicsDevice.Current);
+            return;
+        }
 
         if (!made)
         {
@@ -170,8 +194,17 @@ public sealed class LoadingScreen
 
             if (Horizon.Rendering.Spriting.AsepriteDocument.IsAseprite(path))
             {
+                // Its first frame as it was put together the last time, kept with the shaders' and fonts' cache. Put
+                // together from its layers it was a seventh of a second of every launch before anything was on screen
+                string? kept = KeptFrame(path);
+                if (kept is not null && ReadKept(kept) is { } cached)
+                    return Texture.FromPixels(cached.Width, cached.Height, cached.Pixels, definition);
+
                 var document = Horizon.Rendering.Spriting.AsepriteDocument.Open(path);
-                Texture picture = Texture.FromPixels((uint)document.Width, (uint)document.Height, document.ReadFrame(0), definition);
+                byte[] frame = document.ReadFrame(0).ToArray();
+                Texture picture = Texture.FromPixels((uint)document.Width, (uint)document.Height, frame, definition);
+                if (kept is not null)
+                    Keep(kept, (uint)document.Width, (uint)document.Height, frame);
 
                 // A whole screen of pixels, which the file would otherwise keep for the run
                 document.DropRendered();
@@ -186,6 +219,71 @@ public sealed class LoadingScreen
         {
             Log.Warning($"[LoadingScreen] '{path}' couldn't be read ({e.Message}), the loading screen goes without a picture.");
             return null;
+        }
+    }
+
+    // What a kept first frame starts with, and the version of how it's written
+    private const uint KEPT_MAGIC = 0x4C534352;
+
+    /// <summary>Where a picture's put together first frame is kept, by its file and when it was written, null with no cache.</summary>
+    private static string? KeptFrame(string path)
+    {
+        if (ShaderCompiler.CacheDirectory() is not { } shaders)
+            return null;
+        try
+        {
+            var file = new FileInfo(ContentFiles.Find(path).Path);
+            if (!file.Exists)
+                return null;
+            string said = $"{file.FullName.ToLowerInvariant()}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+            string key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(said)))[..24];
+            return Path.Combine(Path.GetDirectoryName(shaders) ?? shaders, "Loading", key + ".rgba");
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static (uint Width, uint Height, byte[] Pixels)? ReadKept(string file)
+    {
+        try
+        {
+            if (!File.Exists(file))
+                return null;
+            using var reader = new BinaryReader(File.OpenRead(file));
+            if (reader.ReadUInt32() != KEPT_MAGIC)
+                return null;
+            uint width = reader.ReadUInt32(), height = reader.ReadUInt32();
+            byte[] pixels = reader.ReadBytes((int)(width * height * 4));
+            return pixels.Length == width * height * 4 ? (width, height, pixels) : null;
+        }
+        catch (Exception)
+        {
+            // A kept frame that doesn't read is put together again and kept over
+            return null;
+        }
+    }
+
+    // Written to a file of its own and moved into place, so one being read never finds half of it
+    private static void Keep(string file, uint width, uint height, byte[] pixels)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            string writing = file + "." + Environment.ProcessId + ".tmp";
+            using (var writer = new BinaryWriter(File.Create(writing)))
+            {
+                writer.Write(KEPT_MAGIC);
+                writer.Write(width);
+                writer.Write(height);
+                writer.Write(pixels);
+            }
+            File.Move(writing, file, overwrite: true);
+        }
+        catch (Exception)
+        {
+            // Not kept, put together again the next time
         }
     }
 }

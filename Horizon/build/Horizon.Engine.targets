@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    What the engine needs next to a program at run time, its shaders, the fonts the UI comes with and the UI skins, at
+    the paths it looks for them at. A project that references the engine's project gets them copied from there; one
+    that references the package gets them from the package's horizon folder, here, into its output and what it
+    publishes. In buildTransitive as well, so a game that only names Horizon.UI or the desktop platform has them too.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\horizon\**\*.*"
+          Link="%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Visible="false"
+          Pack="false" />
+  </ItemGroup>
+</Project>

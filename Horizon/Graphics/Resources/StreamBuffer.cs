@@ -12,13 +12,13 @@ namespace Horizon.Graphics;
 /// moves on. Writing into the span is writing straight into memory the GPU reads, so it is write only, reading it
 /// back is slow and reads whatever the GPU is doing.
 /// </para>
-/// <code>
-/// Span&lt;SpriteItem&gt; items = stream.Begin(count);
+/// <code><![CDATA[
+/// Span<SpriteItem> items = stream.Begin(count);
 /// // fill it in
 /// stream.BindRange(3);
 /// // draw
 /// stream.End();
-/// </code>
+/// ]]></code>
 /// The region of the frame is bound as a range, so a shader indexes it from zero, and a draw's instances start at
 /// <see cref="Offset"/> for whoever draws with instanced attributes out of it instead. The buffer grows when a frame
 /// needs more than fits, which waits for the GPU and makes a new one, see <see cref="Capacity"/>.

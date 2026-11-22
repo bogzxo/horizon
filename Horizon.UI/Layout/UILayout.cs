@@ -14,10 +14,10 @@ namespace Horizon.UI;
 /// A piece of UI out of a layout file. The components a HIDL script made, by the names the script gave them.
 /// This is how a program gets its UI from files that can be changed (and drawn up in an editor) without
 /// touching the code.
-/// <code>
+/// <code><![CDATA[
 /// var layout = UILayout.Load(module, "Assets/ui/menu.hor");
-/// layout.Get&lt;Button&gt;("play").OnPressed = Play;
-/// </code>
+/// layout.Get<Button>("play").OnPressed = Play;
+/// ]]></code>
 /// Every layout runs in a scope of its own, so two files (or the same file twice) never trip over each
 /// other's names. That is also what makes a layout usable as a template. What isn't known until the program
 /// runs (a row per save game, a cell per character) is a container in the layout that names the file its
@@ -170,9 +170,9 @@ public sealed class UILayout
     /// <summary>
     /// Fills a container with an item per thing in a list, and has each one filled in. The usual loop, minus the
     /// bit everybody gets wrong.
-    /// <code>
-    /// layout.Populate("maps", maps, (item, map, i) => item.Get&lt;Label&gt;("name").Text = map.Name);
-    /// </code>
+    /// <code><![CDATA[
+    /// layout.Populate("maps", maps, (item, map, i) => item.Get<Label>("name").Text = map.Name);
+    /// ]]></code>
     /// </summary>
     public IReadOnlyList<UILayout> Populate<T>(Panel container, IReadOnlyList<T> data, Action<UILayout, T, int> fill)
     {
@@ -307,6 +307,30 @@ public sealed class UILayout
     /// one) and can't wait the second it would otherwise be taken to be what it was.
     /// </summary>
     public static void Forget(string path) => programs.TryRemove(ContentFiles.CacheKey(path), out _);
+
+    /// <summary>
+    /// Reads layouts on the pool ahead of their first load, for a program to call as it starts while its window and
+    /// device are being made. Each is read once and kept as ever (and read again if its file changes after), so the
+    /// load itself finds it read, and the reader's code has been compiled off the thread that's waiting for the window.
+    /// A layout that can't be read is left for its load to say so.
+    /// </summary>
+    public static void Prewarm(IEnumerable<string> paths)
+    {
+        string[] all = [.. paths];
+        _ = Task.Run(() =>
+        {
+            foreach (string path in all)
+            {
+                try
+                {
+                    Compile(path);
+                }
+                catch (Exception)
+                {
+                }
+            }
+        });
+    }
 
     private static ProgramStatement Compile(string path)
     {

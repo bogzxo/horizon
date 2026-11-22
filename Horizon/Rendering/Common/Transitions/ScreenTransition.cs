@@ -82,6 +82,25 @@ public abstract class ScreenTransition : SceneTransition, IDisposable
     }
 
     /// <summary>
+    /// Takes a copy of the frame as it is right now into a picture of the transition's own, made (again) when there's
+    /// none or the window is another size, for one it keeps while it takes others (the old scene's last frame, say).
+    /// </summary>
+    protected static PostTarget Grab(ref PostTarget? into)
+    {
+        Vector2 size = ScreenSize;
+        uint width = (uint)size.X, height = (uint)size.Y;
+
+        if (into is null || !into.Fits(width, height))
+        {
+            into?.Dispose();
+            into = new PostTarget(width, height);
+        }
+
+        into.CopyFromWindow();
+        return into;
+    }
+
+    /// <summary>
     /// Draws over the whole of the window with whatever technique is bound, replacing what is there.
     /// </summary>
     protected static void DrawToScreen()

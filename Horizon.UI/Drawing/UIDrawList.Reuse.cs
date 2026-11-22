@@ -62,6 +62,9 @@ public sealed partial class UIDrawList
     internal void Uncacheable() => uncacheable++;
 
     /// <summary>Where a component is painted, as a number that's another whenever any of it is, see <see cref="TryReuse"/>.</summary>
+    // The skin's colours as one number, taken as the paint began
+    private int paletteFingerprint;
+
     internal int PaintContext(UIRect bounds)
     {
         var hash = new HashCode();
@@ -76,8 +79,15 @@ public sealed partial class UIDrawList
         hash.Add(laid);
         hash.Add(Skin);
         hash.Add(UISkins.Version);
-        hash.Add(Skin.Palette.Fingerprint());
+        hash.Add(paletteFingerprint);
         hash.Add(font);
+        // Letters kept from before the glyph atlas was emptied point at pictures that aren't there any more
+        hash.Add(Horizon.Rendering.Text.GlyphAtlas.Shared.Generation);
+        hash.Add(Horizon.Rendering.Text.GlyphAtlas.Subpixel.Generation);
+        // And letters smoothed another way, or kept from before the subpixel atlas was there
+        hash.Add(subpixelText && Horizon.Rendering.Text.GlyphAtlas.Subpixel.Ready);
+        hash.Add(subpixelBgr);
+        hash.Add(hintedText);
         foreach (var (area, top, bottom) in fades)
         {
             hash.Add(area);

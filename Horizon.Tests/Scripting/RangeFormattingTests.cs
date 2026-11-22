@@ -7,7 +7,7 @@ public class RangeFormattingTests
     [Fact]
     public async Task SendsTheSelectionAndIndentationOptionsAndReturnsNativeEdits()
     {
-        Assert.True(LanguageServers.IsAvailable("python"));
+        Assert.True(LanguageServers.IsAvailable(LanguageServerTests.Python));
         string script = LanguageServerTests.FAKE_SERVER
             .Replace("\"textDocumentSync\": 1", "\"textDocumentSync\": 1, \"documentRangeFormattingProvider\": True")
             .Replace("    elif method == \"textDocument/completion\":", """
@@ -23,7 +23,7 @@ public class RangeFormattingTests
         File.WriteAllText(path, script);
         try
         {
-            using var server = LanguageServer.Start("range-format", "python", [path], "fake", Path.GetTempPath());
+            using var server = LanguageServer.Start("range-format", LanguageServerTests.Python, [path], "fake", Path.GetTempPath());
             Assert.NotNull(server);
             Assert.True(SpinWait.SpinUntil(() => server.IsReady || server.Failure is not null, TimeSpan.FromSeconds(10)));
             Assert.True(server.IsReady, server.Failure);

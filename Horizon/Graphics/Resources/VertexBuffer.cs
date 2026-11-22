@@ -3,12 +3,12 @@ namespace Horizon.Graphics;
 /// <summary>
 /// A vertex array with the buffers most things want by name, the vertices, the indices, and if asked for a buffer of
 /// instances. Drawing with it is binding it and drawing.
-/// <code>
+/// <code><![CDATA[
 /// var mesh = VertexBuffer.Create();
-/// mesh.SetLayout&lt;Vertex2D&gt;();
+/// mesh.SetLayout<Vertex2D>();
 /// mesh.Vertices.Upload(vertices);
 /// mesh.Indices.Upload(indices);
-/// </code>
+/// ]]></code>
 /// </summary>
 public class VertexBuffer
 {

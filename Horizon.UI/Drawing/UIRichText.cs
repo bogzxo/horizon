@@ -630,12 +630,14 @@ public sealed partial class UIRichText
                     // [a link](where), the words underlined in the link colour (the accent unless the theme says)
                     if (inline && close + 1 < end && source[close + 1] == '(')
                     {
-                        int closeUrl = source.IndexOf(')', close + 1);
-                        if (closeUrl > close && closeUrl < end)
+                        int startUrl = close + 2;
+                        var (endUrl, closeUrl) = LinkDestination(startUrl, end);
+                        if (closeUrl >= 0)
                         {
                             Take(segment, i - segment);
 
-                            links.Add((close + 2, closeUrl - close - 2));
+                            bool angle = source[startUrl] == '<';
+                            links.Add((startUrl + (angle ? 1 : 0), endUrl - startUrl - (angle ? 1 : 0)));
                             State outside = state;
                             state.Link = links.Count - 1;
                             state.Underline = !Document;
@@ -1160,14 +1162,18 @@ public sealed partial class UIRichText
         int syntaxBlock = -1;
         UISyntaxColors? syntax = null;
 
+        // Read where they are, a piece is a hundred bytes and more and was copied out of the list for each of the two
+        // passes whether it was painted in that one or not
+        ReadOnlySpan<Piece> all = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(pieces);
+
         // Behind the letters first, the back of the code and the bars, then the letters over them
         for (int pass = 0; pass < 2; pass++)
         {
             Kind kind = pass == 0 ? Kind.Box : Kind.Text;
 
-            for (int i = 0; i < pieces.Count; i++)
+            for (int i = 0; i < all.Length; i++)
             {
-                Piece piece = pieces[i];
+                ref readonly Piece piece = ref all[i];
                 if (piece.Kind != kind)
                     continue;
 
@@ -1230,7 +1236,7 @@ public sealed partial class UIRichText
         Vector2 topLeft = TopLeft(area, align);
         float side = align.ToVector().X;
 
-        foreach (var piece in pieces)
+        foreach (ref readonly Piece piece in System.Runtime.InteropServices.CollectionsMarshal.AsSpan(pieces))
         {
             if (piece.Kind != Kind.Text || piece.Link < 0)
                 continue;
@@ -1246,6 +1252,33 @@ public sealed partial class UIRichText
         }
 
         return default;
+    }
+
+    private (int End, int Close) LinkDestination(int start, int end)
+    {
+        if (start >= end)
+            return (-1, -1);
+
+        if (source[start] == '<')
+        {
+            int angle = source.IndexOf('>', start + 1, end - start - 1);
+            return angle >= 0 && angle + 1 < end && source[angle + 1] == ')' ? (angle, angle + 1) : (-1, -1);
+        }
+
+        int depth = 0;
+        for (int at = start; at < end; at++)
+        {
+            if (source[at] == '(')
+                depth++;
+            else if (source[at] == ')')
+            {
+                if (depth == 0)
+                    return (at, at);
+                depth--;
+            }
+        }
+
+        return (-1, -1);
     }
 
     /// <summary>Whether any of it is a link.</summary>

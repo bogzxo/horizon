@@ -83,7 +83,7 @@ public sealed partial class TerminalScreen : IVtHandler
     public IReadOnlyList<string> Links => links;
 
     private readonly VtParser parser;
-    private readonly List<TerminalRow> scrollback = [];
+    private readonly ScrollbackRows scrollback = new();
     private List<TerminalRow> main = [], alternate = [];
     private readonly List<string> links = [string.Empty];
     private readonly Stack<int> keyboardFlags = new();
@@ -317,7 +317,7 @@ public sealed partial class TerminalScreen : IVtHandler
     private void TrimScrollback()
     {
         if (scrollback.Count > MaxScrollback)
-            scrollback.RemoveRange(0, scrollback.Count - MaxScrollback);
+            scrollback.RemoveOldest(scrollback.Count - MaxScrollback);
     }
 
     /* Printing */
@@ -496,12 +496,13 @@ public sealed partial class TerminalScreen : IVtHandler
             {
                 scrollback.Add(gone);
                 RowsScrolledOff++;
-                grid.Insert(to, new TerminalRow(Columns) { Cells = Blanks() });
+                // The row made with its erased cells, not made blank and then given them, two arrays a line of output
+                grid.Insert(to, new TerminalRow(BlanksOfOldest(), false));
             }
             else
             {
                 gone.Wrapped = false;
-                gone.Cells = Blanks();
+                Erase(gone);
                 grid.Insert(to, gone);
             }
         }
@@ -518,7 +519,7 @@ public sealed partial class TerminalScreen : IVtHandler
             TerminalRow gone = grid[to];
             grid.RemoveAt(to);
             gone.Wrapped = false;
-            gone.Cells = Blanks();
+            Erase(gone);
             grid.Insert(from, gone);
         }
     }
@@ -528,6 +529,37 @@ public sealed partial class TerminalScreen : IVtHandler
         var cells = new TerminalCell[Columns];
         Array.Fill(cells, TerminalCell.Erased(Style));
         return cells;
+    }
+
+    // A row of the grid made blank in the cells it has, a new array only for a row that isn't as wide as the screen
+    private void Erase(TerminalRow row)
+    {
+        if (row.Cells.Length == Columns)
+            Array.Fill(row.Cells, TerminalCell.Erased(Style));
+        else
+            row.Cells = Blanks();
+    }
+
+    // The cells of a new row off the bottom, the oldest row's of a full scrollback made blank where it is the one to go,
+    // as it would at the end of the scroll anyway. A new array of a whole row for every line of output kept the
+    // collector at it once the scrollback was full, a third of the time of a long build's output. The rows the shell
+    // integration still holds (the last prompt, the line being typed) go the old way, they are read after they've gone
+    private TerminalCell[] BlanksOfOldest()
+    {
+        if (scrollback.Count > MaxScrollback)
+        {
+            TerminalRow oldest = scrollback[0];
+            if (oldest != lastPrompt && oldest != inputRow && oldest.Cells.Length == Columns)
+            {
+                scrollback.RemoveOldest(1);
+                TerminalCell[] cells = oldest.Cells;
+                oldest.Cells = [];
+                Array.Fill(cells, TerminalCell.Erased(Style));
+                return cells;
+            }
+        }
+
+        return Blanks();
     }
 
     /* Escapes */
@@ -591,6 +623,7 @@ public sealed partial class TerminalScreen : IVtHandler
         lastPrompt = inputRow = null;
         promptPending = inputPending = outputPending = false;
         exitPending = null;
+        commandSince = 0;
         promptHeight = 1;
         promptArrivedAt = -1;
         promptLearned = false;

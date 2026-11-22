@@ -21,6 +21,10 @@ internal sealed unsafe class GlfwKeyboard : IKeyboard
     {
         this.glfw = glfw;
         this.window = window;
+
+        // GLFW has no pictures on its clipboard, Windows' own is asked for them
+        if (OperatingSystem.IsWindows())
+            Horizon.Input.ClipboardPicture.Reader ??= WindowsClipboard.Png;
     }
 
     public string Name => "Keyboard (GLFW)";

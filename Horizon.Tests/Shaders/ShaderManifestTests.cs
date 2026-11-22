@@ -8,6 +8,7 @@ namespace Horizon.Tests.Shaders;
 /// The manifest a run writes. Every program asked for goes in, the ones that came out of a cache or a pack too, the
 /// text is the same whatever order they were asked in, and a builder can tell when the sources moved on without it.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderManifestTests
 {
     [Fact]

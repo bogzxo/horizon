@@ -316,9 +316,35 @@ public sealed partial class TerminalHost : IDisposable
         if (options.ApiFile is not { } path)
             return;
 
+        // What the program has, read here on its thread; the file read, laid over and written on the pool, nothing
+        // waits on it and it was a few milliseconds of every start
+        TerminalApiDescription ours;
         try
         {
-            TerminalApiDescription ours = TerminalApiDescription.Of(this, options.ApiFunctions);
+            ours = TerminalApiDescription.Of(this, options.ApiFunctions);
+        }
+        catch (Exception e)
+        {
+            Say($"api.hor couldn't be written, {e.Message}", true);
+            return;
+        }
+
+        _ = Task.Run(() => WriteApi(path, ours));
+    }
+
+    // One write of api.hor at a time, a plugin changed while the start's was going would have both writing the file
+    private readonly Lock apiWriting = new();
+
+    private void WriteApi(string path, TerminalApiDescription ours)
+    {
+        lock (apiWriting)
+            WriteApiNow(path, ours);
+    }
+
+    private static void WriteApiNow(string path, TerminalApiDescription ours)
+    {
+        try
+        {
             string? existing = File.Exists(path) ? File.ReadAllText(path) : null;
             TerminalApiDescription written = existing is not null && TerminalApiDescription.Read(existing) is { } before ? before : TerminalApiDescription.Engine();
             written.Settings.Clear();
@@ -333,7 +359,8 @@ public sealed partial class TerminalHost : IDisposable
         }
         catch (Exception e)
         {
-            Say($"api.hor couldn't be written, {e.Message}", true);
+            // On the pool, where the program's own way of saying things can't be called
+            Console.WriteLine($"[Terminal] api.hor couldn't be written, {e.Message}");
         }
     }
 

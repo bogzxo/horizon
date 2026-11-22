@@ -81,8 +81,9 @@ public class TitleBar : StackPanel
     // How much smaller than the title its caption is written, how see-through, and the gap between the two
     private const float CAPTION_SCALE = 0.86f, CAPTION_ALPHA = 0.42f, CAPTION_GAP = 10.0f;
 
-    // The least room a caption is cut down to fit, in less it isn't written at all
-    private const float CAPTION_LEAST = 48.0f;
+    // The least room a caption is cut down to fit, in less it isn't written at all. At 48 a narrow window's caption was
+    // its first two letters and an ellipsis, which said nothing
+    private const float CAPTION_LEAST = 120.0f;
 
     private (string Text, UIFont? Font, float Scale, float Room) captionFitFor;
     private string fittedCaption = string.Empty;
@@ -149,6 +150,11 @@ public class TitleBar : StackPanel
     /// is drawn bigger (a bigger screen, <see cref="UICompositor.Scale"/>) doesn't have a title bar that grows with it, the
     /// system's never does. On a screen the system scales (<see cref="UICompositor.DisplayScale"/>) they're that much
     /// bigger, the same as the system's own title bars there. What is put in it is the program's to size.
+    /// <para>
+    /// The one thing of a UI that stays out of its interface size, which is what a game's player expects of a window's
+    /// frame. A program whose title bar is its own menus (an editor's) switches it off, or its menus are the only words
+    /// that don't grow when the person asks for everything bigger.
+    /// </para>
     /// </summary>
     public bool PixelSized { get; set; } = true;
 
@@ -207,6 +213,23 @@ public class TitleBar : StackPanel
             var size = child.DesiredSize;
             child.ArrangeTree(UIRect.FromCenter(new Vector2(right - size.X * 0.5f, inside.Center.Y), size));
             right -= size.X + gap;
+        }
+
+        // The menus have what's left before those, the ones that don't fit go into the bar's last menu. They were laid
+        // out as wide as all of them and ran under the buttons at the right end at 200%
+        if (Module?.Compositor.Skin is not { } skin)
+            return;
+
+        for (int i = 0; i < ChildSpan.Length; i++)
+        {
+            if (ChildSpan[i] is not MenuBar { Visible: true } bar || bar.Anchor.ToVector().X > 0)
+                continue;
+
+            UIRect at = bar.Bounds;
+            bar.Room = MathF.Max(1.0f, MathF.Floor(right - at.Min.X));
+            float width = MathF.Min(bar.ShownWidth(skin), bar.Room);
+            if (MathF.Abs(width - at.Width) > 0.5f)
+                bar.ArrangeTree(new UIRect(at.Min, new Vector2(at.Min.X + width, at.Max.Y)));
         }
     }
 

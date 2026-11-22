@@ -577,8 +577,11 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
     public static UISkin? Shared(string directory, string file, string? theme = null)
     {
         var key = (ContentFiles.CacheKey(Path.Combine(directory, file)), theme);
-        if (shared.TryGetValue(key, out UISkin? known))
-            return known;
+        lock (shared)
+        {
+            if (shared.TryGetValue(key, out UISkin? known))
+                return known;
+        }
 
         // Whatever it makes on the GPU stays for good, whichever scene is being set up right now
         using var nobody = Horizon.Content.AssetScope.EnterGlobal();
@@ -586,7 +589,24 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         if (Load(directory, file, theme) is not { } skin)
             return null;
 
-        return shared[key] = skin;
+        // Its art packed on the pool from now, while the UI has its first updates. Packed on this thread by the first
+        // frame that drew it, it was a tenth of a second of an editor's start with the loading screen up. The frame that
+        // draws first sends up whatever's been packed by then (TextureAtlas.Update), the rest goes up on the next
+        _ = Task.Run(skin.Atlas.Pack);
+
+        lock (shared)
+            return shared[key] = skin;
+    }
+
+    /// <summary>
+    /// The skin of a file and a theme if it has been loaded already (see <see cref="Shared"/>), null if it hasn't, which
+    /// loads nothing. From any thread, for whoever wants to paint with a skin straight away when it's there.
+    /// </summary>
+    public static UISkin? Known(string directory, string file, string? theme = null)
+    {
+        var key = (ContentFiles.CacheKey(Path.Combine(directory, file)), theme);
+        lock (shared)
+            return shared.TryGetValue(key, out UISkin? known) ? known : null;
     }
 
     /// <summary>

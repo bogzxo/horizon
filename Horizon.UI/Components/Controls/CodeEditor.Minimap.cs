@@ -47,7 +47,14 @@ public partial class CodeEditor
     private bool draggingMinimap;
     private float minimapGrab;
 
-    private float MinimapWidth => Minimap ? MINIMAP_WIDTH : 0.0f;
+    // How wide an editor has to be for the minimap, five of its widths. At 200% beside the side bar and the values the
+    // editor was a few hundred units across, and the minimap took a third of it from the code
+    private const float MINIMAP_ROOM = MINIMAP_WIDTH * 5.0f;
+
+    /// <summary>Whether the minimap is drawn, on (<see cref="Minimap"/>) and the editor wide enough for the code beside it.</summary>
+    public bool MinimapShown => Minimap && Bounds.Width >= MINIMAP_ROOM;
+
+    private float MinimapWidth => MinimapShown ? MINIMAP_WIDTH : 0.0f;
 
     /// <summary>Helper method for where the minimap is, between the text and the scroll bar.</summary>
     private UIRect MinimapArea(UISkin skin, float scale)
@@ -93,7 +100,7 @@ public partial class CodeEditor
 
     private void PaintMinimap(UIDrawList list, UISkin skin, float scale, UISyntaxColors colors, float lineHeight)
     {
-        if (!Minimap || rows.Count == 0)
+        if (!MinimapShown || rows.Count == 0)
             return;
 
         // Everything of it sits on whole pixels of the screen and a row is a whole number of them tall. A row was two
@@ -133,32 +140,43 @@ public partial class CodeEditor
             minimapWords.Clear();
             minimapTodos.Clear();
             minimapColoursFor = colors;
+            minimapWordsLast = null;
         }
 
         // A gap of a pixel between rows once they're three or more tall
         float gap = UIMinimap.Gap(row, pixels);
         float left = OnPixel(new Vector2(map.Min.X + 4.0f, 0.0f)).X;
+
+        // Where the row before ended, in its line and in columns, a wrapped line's rows each counted on from there. Every
+        // row of a line of a fifth of a megabyte counted its columns from the start of the line, and again for every word
+        int countedLine = -1, countedAt = 0, countedColumn = 0;
         for (int index = first; index <= last; index++)
         {
             CodeRow shown = rows[index];
             float rowTop = top - (index - scrolledRows) * row;
             minimapRowTops.Add(ScreenY(rowTop));
 
-            // A lens row is a gap in the minimap, its line is drawn on the row after it
-            if (shown.Lens)
+            // A lens row is a gap in the minimap, its line is drawn on the row after it, and so is a prediction's row
+            if (shown.Virtual)
                 continue;
             string text = document.LineAt(shown.Line);
             MinimapWord[] words = WordsOf(shown.Line, text, colors);
 
             // A wrapped row starts its columns again where it starts in the line
-            int rowColumn = shown.Start == 0 ? 0 : Column(text, 0, shown.Start);
-            foreach (MinimapWord word in words)
-            {
-                if (word.End <= shown.Start || word.Start >= shown.End)
-                    continue;
+            if (countedLine != shown.Line || countedAt > shown.Start)
+                (countedLine, countedAt, countedColumn) = (shown.Line, 0, 0);
+            int rowColumn = countedColumn + Column(text, countedAt, shown.Start);
+            int endColumn = shown.End >= text.Length ? int.MaxValue : rowColumn + Column(text, shown.Start, shown.End);
+            (countedAt, countedColumn) = (Math.Min(shown.End, text.Length), endColumn == int.MaxValue ? 0 : endColumn);
+            if (endColumn == int.MaxValue)
+                countedLine = -1;
 
+            // From the first word that reaches into the row, they're in the order of the line
+            for (int w = FirstWordTo(words, shown.Start); w < words.Length && words[w].Start < shown.End; w++)
+            {
+                MinimapWord word = words[w];
                 int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
-                int to = Math.Min(word.EndColumn, shown.End >= text.Length ? word.EndColumn : Column(text, 0, shown.End)) - rowColumn;
+                int to = Math.Min(word.EndColumn, endColumn) - rowColumn;
                 UIMinimap.Bar(list, left, character, rowTop, row, gap, from, to, MINIMAP_COLUMNS, word.Colour);
             }
         }
@@ -196,12 +214,23 @@ public partial class CodeEditor
     /// </summary>
     private MinimapWord[] WordsOf(int line, string text, UISyntaxColors colors)
     {
-        if (minimapWords.TryGetValue(text, out MinimapWord[]? known))
-            return known;
+        // The line of the row before again, every row of a wrapped line asks for it, by its text it was hashed whole each
+        // time. Words not kept (the line isn't coloured yet) are only for the rows of this paint
+        if (ReferenceEquals(text, minimapWordsText) && minimapWordsLast is { } last && (minimapWordsKept || minimapWordsPaint == flowPaint))
+            return last;
 
-        List<SyntaxSpan>? spans = ColoursOf(line, text);
+        if (minimapWords.TryGetValue(text, out MinimapWord[]? known))
+        {
+            (minimapWordsText, minimapWordsLast, minimapWordsKept) = (text, known, true);
+            return known;
+        }
+
+        // Typed into, the line's colours are the ones worked out for it alone. Without them every row of a long line went
+        // through all of it again every paint until the colouring came back, a second a paint for a fifth of a megabyte.
+        // Those are only for this paint, the colouring may yet start the line otherwise
+        List<SyntaxSpan>? coloured = ColoursOf(line, text), spans = coloured ?? FreshColours(line, text);
         var words = new List<MinimapWord>();
-        int at = 0, column = 0;
+        int at = 0, column = 0, span = 0;
         while (at < text.Length)
         {
             while (at < text.Length && char.IsWhiteSpace(text[at]))
@@ -213,31 +242,57 @@ public partial class CodeEditor
                 column++;
             }
             if (at > start)
-                words.Add(new MinimapWord(start, at, startColumn, column, Faded(KindAt(spans, start, at), colors)));
+                words.Add(new MinimapWord(start, at, startColumn, column, Faded(KindAt(spans, ref span, start, at), colors)));
         }
 
         MinimapWord[] made = [.. words];
 
         // Lines not coloured yet aren't kept, they'd stay plain once they are
-        if (spans is not null)
+        if (coloured is not null)
         {
             if (minimapWords.Count > 20000)
                 minimapWords.Clear();
             minimapWords[text] = made;
         }
 
+        (minimapWordsText, minimapWordsLast, minimapWordsKept, minimapWordsPaint) = (text, made, coloured is not null, flowPaint);
         return made;
     }
 
-    // The kind of the first piece of a word that isn't punctuation, a name for one that's all punctuation or not coloured
-    private static SyntaxKind KindAt(List<SyntaxSpan>? spans, int start, int end)
+    // The words WordsOf last gave, the very string they're of, whether they're kept and the paint they were worked out in
+    private string? minimapWordsText;
+    private MinimapWord[]? minimapWordsLast;
+    private bool minimapWordsKept;
+    private int minimapWordsPaint;
+
+    // Helper method for the first of a line's words that ends after a place in it
+    private static int FirstWordTo(MinimapWord[] words, int at)
+    {
+        int low = 0, high = words.Length;
+        while (low < high)
+        {
+            int middle = (low + high) >>> 1;
+            if (words[middle].End <= at) low = middle + 1;
+            else high = middle;
+        }
+
+        return low;
+    }
+
+    // The kind of the first piece of a word that isn't punctuation, a name for one that's all punctuation or not coloured.
+    // The words are asked for in order, so the spans before the word's are stepped over once and not for every word
+    private static SyntaxKind KindAt(List<SyntaxSpan>? spans, ref int from, int start, int end)
     {
         if (spans is null)
             return SyntaxKind.Name;
 
+        while (from < spans.Count && spans[from].Start + spans[from].Length <= start)
+            from++;
+
         SyntaxKind? punctuation = null;
-        foreach (SyntaxSpan span in spans)
+        for (int i = from; i < spans.Count; i++)
         {
+            SyntaxSpan span = spans[i];
             if (span.Start + span.Length <= start) continue;
             if (span.Start >= end) break;
             if (span.Kind != SyntaxKind.Punctuation) return span.Kind;
@@ -293,7 +348,7 @@ public partial class CodeEditor
         {
             CodeRow shown = rows[index];
             float top = map.Max.Y - (index - scrolledRows) * row;
-            if (shown.Lens)
+            if (shown.Virtual)
                 continue;
 
             if (changedLines.TryGetValue(shown.Line, out UILineChangeKind kind))
@@ -315,7 +370,7 @@ public partial class CodeEditor
     /// <summary>Helper method for a press on the minimap, the slider taken hold of, or the code gone to there and then held. False off it.</summary>
     private bool PressMinimap(Vector2 point)
     {
-        if (!Minimap || paintedSkin is not { } skin || rows.Count == 0)
+        if (!MinimapShown || paintedSkin is not { } skin || rows.Count == 0)
             return false;
 
         UIRect map = MinimapArea(skin, paintedScale);

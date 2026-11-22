@@ -113,11 +113,19 @@ public sealed partial class DesktopWindow
             return;
         }
 
+        // Dormant (WindowManager.Dormant) it waits as long as the system has nothing to say, whoever wants the window
+        // wakes it (WakeWindow)
+        double wait = Events.Dormant ? DORMANT_WAIT : EVENT_WAIT;
         if (sdlWaiting)
-            WaitForSdl((int)(EVENT_WAIT * 1000.0));
+            WaitForSdl((int)(wait * 1000.0));
         else
-            glfw!.WaitEventsTimeout(EVENT_WAIT);
+            glfw!.WaitEventsTimeout(wait);
     }
+
+    // How long the window's thread waits for the system while the program is dormant
+    private const double DORMANT_WAIT = 60.0;
+
+    public void WakeWindowThread() => WakeWindow();
 
     /// <summary>Helper method to wait for work for the window's thread and nothing else, for a moment. Thread of the window.</summary>
     internal void WaitForWork() => windowWake.WaitOne(EVENT_POLL);

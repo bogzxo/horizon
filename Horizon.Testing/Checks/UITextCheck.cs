@@ -68,8 +68,35 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         base.PostInit();
         Engine.Graphics.ClearColor = new Vector4(0.12f, 0.13f, 0.17f, 1.0f);
 
+        SleepAndWake();
         Build();
         Script(_test);
+    }
+
+    // What's shared by every scene as the scene that made it first is left (Hex asleep between uses throws its editor
+    // away and makes another): whether its textures are still there, and whether asking again hands back a working one
+    private bool _sharedFontKept, _sharedFontAgain, _symbolsKept;
+
+    /// <summary>
+    /// Helper method to make a shared font (at a size nobody else asks for, so it's made here) inside a scope of its own,
+    /// the way a scene being set up has one, let that scope go the way leaving the scene does, and look at what's left.
+    /// Render thread, where scopes mean anything.
+    /// </summary>
+    private void SleepAndWake()
+    {
+        var leaving = new Horizon.Content.AssetScope("scene left behind");
+        UIFont? font;
+        using (leaving.Enter())
+        {
+            font = UIFont.Shared("Assets/fonts/hack/", "hack.ttf", 61);
+            UISymbols.EnsureLoaded();
+        }
+
+        Engine.ObjectManager.Release(leaving);
+
+        _sharedFontKept = font is { Field.Texture.IsValid: true };
+        _sharedFontAgain = UIFont.Shared("Assets/fonts/hack/", "hack.ttf", 61) is { Field.Texture.IsValid: true };
+        _symbolsKept = UISymbols.Texture.IsValid;
     }
 
     private Label Add(StackPanel column, string text, bool markdown = false, float width = 0.0f) =>
@@ -177,6 +204,8 @@ internal sealed class UITextCheck : Scene, ISelfCheck
         test.Click(() => _link.Module!.ToWorld(new Vector2(_link.Bounds.Min.X + 20.0f, _link.Bounds.Center.Y)));
         test.Check("link: a click on one says where it goes", () => _clicked == "somewhere");
 
+        test.Check("shared: a shared font and the icons outlive the scope of the scene that made them first", () =>
+            _sharedFontKept && _sharedFontAgain && _symbolsKept);
         test.Check("symbols: the icons loaded, both spellings of a name", () =>
             UISymbols.IsLoaded && UISymbols.Names.Count > 500 && UISymbols.TryGet("git-branch", out char dashed) && UISymbols.TryGet("git_branch", out char underscored) && dashed == underscored);
         test.Check("symbols: $(name) is an icon about as wide as a line is tall, one there isn't is written as it is", () =>

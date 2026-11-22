@@ -23,6 +23,12 @@ public sealed partial class UITreeItem
     /// <summary>The colour of the badge, null for the dim one.</summary>
     public Vector4? BadgeColor { get; set; }
 
+    /// <summary>
+    /// A small round mark at the row's right end in this colour, left of the badge, null for none. A folder with a change
+    /// or a problem somewhere under it, which has no letter of its own to say so.
+    /// </summary>
+    public Vector4? Dot { get; set; }
+
     /// <summary>The buttons at the row's right end, left of the badge, null for none.</summary>
     public IReadOnlyList<UITreeAction>? Actions { get; set; }
 }
@@ -59,7 +65,11 @@ public partial class TreeView
 
     // How much of the row's right end its badge takes, the gap before it included
     private static float BadgeWidth(UITreeItem item, UISkin skin, float scale) =>
-        item.Badge.Length > 0 ? skin.Font.Measure(item.Badge, scale, markup: false).X + DETAIL_GAP : 0.0f;
+        (item.Badge.Length > 0 ? skin.Font.Measure(item.Badge, scale, markup: false).X + DETAIL_GAP : 0.0f)
+        + (item.Dot is not null ? DotSize(skin, scale) + DETAIL_GAP : 0.0f);
+
+    // How wide a row's dot is, a little under half the height of its letters
+    private static float DotSize(UISkin skin, float scale) => MathF.Max(4.0f, MathF.Round(skin.Font.LineHeight * scale * 0.38f));
 
     // Whether a row's buttons show, the row under the pointer or the picked one of a tree with the keyboard
     private bool ShowsActions(UITreeItem item) => item.Actions is { Count: > 0 } && (item == hovered || item == selected && IsFocused && TakesKeys);
@@ -113,12 +123,22 @@ public partial class TreeView
     // The badge at the right end of a row, in its colour
     private static void PaintBadge(UIDrawList list, UITreeItem item, UIRect row, float scale, Vector4 dim)
     {
-        if (item.Badge.Length == 0)
-            return;
-
         UISkin skin = list.Skin;
-        Vector2 size = skin.Font.Measure(item.Badge, scale, markup: false);
-        list.Text(item.Badge, new Vector2(row.Max.X - LEFT_PAD - size.X, MathF.Round(row.Center.Y + size.Y * 0.5f)), scale, item.BadgeColor ?? dim, markup: false);
+        float right = row.Max.X - LEFT_PAD;
+        if (item.Badge.Length > 0)
+        {
+            Vector2 size = skin.Font.Measure(item.Badge, scale, markup: false);
+            list.Text(item.Badge, new Vector2(right - size.X, MathF.Round(row.Center.Y + size.Y * 0.5f)), scale, item.BadgeColor ?? dim, markup: false);
+            right -= size.X + DETAIL_GAP;
+        }
+
+        // The dot left of the letter, round and on whole pixels so it stays round at every size
+        if (item.Dot is { } dot)
+        {
+            float size = DotSize(skin, scale), top = MathF.Round(row.Center.Y - size * 0.5f);
+            var at = new UIRect(new Vector2(MathF.Round(right - size), top), new Vector2(MathF.Round(right - size) + size, top + size));
+            list.RoundRect(at, size * 0.5f, dot);
+        }
     }
 
     // A row's buttons. Painted on every row that has them, see-through where they don't show, so a row's quads are the

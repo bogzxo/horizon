@@ -412,6 +412,8 @@ namespace Horizon.UI
             if (tooltip is { Length: > 0 } text)
             {
                 list.PushOwner(text);
+                if (tooltipMarkdown)
+                    Compositor.TooltipRich.CodeFont = Compositor.TooltipOf?.TooltipCodeFont(list.Skin);
                 tooltipBox = UITooltip.Paint(list, this, text, tooltipAt, Compositor.TooltipLines, tooltipMarkdown ? Compositor.TooltipRich : null, ref tooltipOpenedAt);
                 list.PopOwner();
             }

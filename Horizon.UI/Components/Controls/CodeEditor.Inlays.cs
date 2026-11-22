@@ -199,9 +199,10 @@ public partial class CodeEditor
 
     /// <summary>
     /// Draws a piece of a row with the hints in it where they go, each just before the character at its column, and says
-    /// where the piece ends. Draw false only makes the room (a gap the colours skip over).
+    /// where the piece ends. Draw false only makes the room (a gap the colours skip over). DrawWithInlays (CodeEditor.Prediction)
+    /// puts the text of a prediction in among it first.
     /// </summary>
-    private float DrawWithInlays(UIDrawList list, UISkin skin, float scale, int line, int column, ReadOnlySpan<char> text, float x, float top, Vector4 color, float left, float origin, UISyntaxColors colors, bool draw = true)
+    private float DrawWithHints(UIDrawList list, UISkin skin, float scale, int line, int column, ReadOnlySpan<char> text, float x, float top, Vector4 color, float left, float origin, UISyntaxColors colors, bool draw = true)
     {
         if (InlaysOn(line) is not { } on)
             return draw ? DrawFlowing(list, skin, scale, line, column, text, x, top, color, left, origin) : x + Width(skin, scale, text);

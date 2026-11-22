@@ -26,6 +26,10 @@ public sealed partial class DesktopWindow
     // The one window SDL asks about, its callback is static
     private static DesktopWindow? hitTested;
 
+    // Cocoa's SDL hit test consumes presses and relies on background dragging of its view.
+    // Use the UI titlebar press and desktop drag tracker on our Metal-backed window.
+    internal static bool UsesSdlDragArea => UsesSdl && !OperatingSystem.IsMacOS();
+
     // Whether SDL asks what the window is where it's pressed, which is then what moves and resizes it
     private bool hitTesting;
 
@@ -68,27 +72,49 @@ public sealed partial class DesktopWindow
         if (!CustomFrame || SdlWindow is var window && window == null)
             return;
 
+        // A borderless SDL window starts out fixed-size, including on the UI-driven resize path.
+        SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
+        if (!UsesSdlDragArea)
+            return;
+
         hitTested = this;
         hitTesting = SdlProvider.SDL.Value.SetWindowHitTest(window, new PfnHitTest(&HitTest), null) == 0;
         if (!hitTesting)
             Logging.Log.Warning($"[{Name}] SDL can't be asked to move the window, it is moved by hand.");
 
-        // Resizable as far as SDL's concerned, which a window with no frame isn't made as. SDL holds one that isn't to the
-        // size it is, its least and most both that on Wayland and X11, and takes no other size the compositor offers, so
-        // the edges said to resize it and did nothing at all
-        SdlProvider.SDL.Value.SetWindowResizable(window, SdlBool.True);
     }
+
+    /// <summary>
+    /// Whether a point of the window, in its pixels, is on the title bar and not on anything of the bar's own (a menu, a
+    /// button), which is what moves the window.
+    /// </summary>
+    internal static bool OnBar(RectangleF bar, ReadOnlySpan<RectangleF> holes, System.Numerics.Vector2 pixel)
+    {
+        var at = new PointF(pixel.X, pixel.Y);
+        if (bar.IsEmpty || !bar.Contains(at))
+            return false;
+
+        foreach (RectangleF hole in holes)
+        {
+            if (hole.Contains(at))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static bool OnBar(FrameArea? area, System.Numerics.Vector2 pixel) => area is not null && OnBar(area.Bar, area.Holes, pixel);
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static unsafe HitTestResult HitTest(Silk.NET.SDL.Window* window, Silk.NET.SDL.Point* point, void* data)
     {
         try
         {
-            return hitTested?.WhatIsAt(new Point(point->X, point->Y)) ?? HitTestResult.HittestNormal;
+            return hitTested?.WhatIsAt(new Point(point->X, point->Y)) ?? HitTestResult.Normal;
         }
         catch (Exception)
         {
-            return HitTestResult.HittestNormal;
+            return HitTestResult.Normal;
         }
     }
 
@@ -118,25 +144,23 @@ public sealed partial class DesktopWindow
             WindowEdges edges = EdgesAt(new System.Numerics.Vector2(at.X, at.Y), new System.Numerics.Vector2(size.X, size.Y), ScalesToDisplay ? WindowUnitScale : 1.0f);
             switch (edges)
             {
-                case WindowEdges.Top | WindowEdges.Left: return HitTestResult.HittestResizeTopleft;
-                case WindowEdges.Top | WindowEdges.Right: return HitTestResult.HittestResizeTopright;
-                case WindowEdges.Bottom | WindowEdges.Left: return HitTestResult.HittestResizeBottomleft;
-                case WindowEdges.Bottom | WindowEdges.Right: return HitTestResult.HittestResizeBottomright;
-                case WindowEdges.Top: return HitTestResult.HittestResizeTop;
-                case WindowEdges.Bottom: return HitTestResult.HittestResizeBottom;
-                case WindowEdges.Left: return HitTestResult.HittestResizeLeft;
-                case WindowEdges.Right: return HitTestResult.HittestResizeRight;
+                case WindowEdges.Top | WindowEdges.Left: return HitTestResult.ResizeTopleft;
+                case WindowEdges.Top | WindowEdges.Right: return HitTestResult.ResizeTopright;
+                case WindowEdges.Bottom | WindowEdges.Left: return HitTestResult.ResizeBottomleft;
+                case WindowEdges.Bottom | WindowEdges.Right: return HitTestResult.ResizeBottomright;
+                case WindowEdges.Top: return HitTestResult.ResizeTop;
+                case WindowEdges.Bottom: return HitTestResult.ResizeBottom;
+                case WindowEdges.Left: return HitTestResult.ResizeLeft;
+                case WindowEdges.Right: return HitTestResult.ResizeRight;
             }
         }
 
-        if (frameArea is not { } area || !area.Bar.Contains(at))
-            return HitTestResult.HittestNormal;
-
-        foreach (RectangleF hole in area.Holes)
-        {
-            if (hole.Contains(at))
-                return HitTestResult.HittestNormal;
-        }
+        // SDL says where in the window's points, the title bar said where it is in its pixels (the pointer's), two of them
+        // to a point each way on a Retina screen. Compared as they came, the bar reached twice as far down and across as
+        // it is drawn and its menus and buttons were looked for at twice where they are: a press on a menu moved the
+        // window, a press on the bar between them didn't, and the top of what's under the bar couldn't be clicked
+        if (!OnBar(frameArea, PointerToPixels(new System.Numerics.Vector2(at.X, at.Y))))
+            return HitTestResult.Normal;
 
         // The second press of a double click goes to the UI's title bar, which maximises the window or brings it back
         if (pressed)
@@ -149,10 +173,10 @@ public sealed partial class DesktopWindow
             if (again)
             {
                 ToggleMaximized();
-                return HitTestResult.HittestNormal;
+                return HitTestResult.Normal;
             }
         }
 
-        return HitTestResult.HittestDraggable;
+        return HitTestResult.Draggable;
     }
 }

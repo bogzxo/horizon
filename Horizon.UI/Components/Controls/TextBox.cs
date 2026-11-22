@@ -176,7 +176,7 @@ public class TextBox : UIComponent
     // What's drawn of the text, itself or a star for each letter of a secret, kept while it's as long
     private string masked = string.Empty;
 
-    private string Shown
+    private new string Shown
     {
         get
         {
@@ -553,8 +553,10 @@ public class TextBox : UIComponent
 
     protected override void Update(float dt)
     {
-        blink = Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK_INTERVAL * 2.0f);
-        if (IsFocused && Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
+        // Lit and still with the UI's motion turned off, a caret that blinks is motion too
+        bool still = MotionSpeed <= 0.0f;
+        blink = still || Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK_INTERVAL * 2.0f);
+        if (!still && IsFocused && Horizon.Engine.GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK_INTERVAL - blink % BLINK_INTERVAL);
     }
 
@@ -570,6 +572,8 @@ public class TextBox : UIComponent
 
         bool enabled = EnabledInHierarchy;
         bool focused = enabled && IsFocused;
+        if (focused)
+            ShowingFocus();
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
 

@@ -48,7 +48,7 @@ public partial class SettingsPage
         foreach (SettingRow row in rowOf.Values)
         {
             if (row.Setting.DependsOn == key)
-                row.Dimmed = ParentOff(row.Setting);
+                row.Dimmed = !row.Enabled || ParentOff(row.Setting);
         }
     }
 }

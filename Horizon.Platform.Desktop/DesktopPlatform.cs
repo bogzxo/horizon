@@ -3,11 +3,11 @@ namespace Horizon.Platform.Desktop;
 /// <summary>
 /// The desktop as a platform the engine runs on, Windows, a Mac and Linux. A program says so first thing in its Main,
 /// before it makes its engine.
-/// <code>
+/// <code><![CDATA[
 /// DesktopPlatform.Install();
 /// using var engine = new GameEngine(config);
-/// engine.Run&lt;MainMenuScene&gt;();
-/// </code>
+/// engine.Run<MainMenuScene>();
+/// ]]></code>
 /// Every engine gets a host of its own, nothing is shared between two.
 /// </summary>
 public sealed class DesktopPlatform : IPlatform

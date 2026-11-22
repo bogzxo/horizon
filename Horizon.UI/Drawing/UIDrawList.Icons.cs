@@ -14,6 +14,9 @@ public sealed partial class UIDrawList
     // How long a moving icon keeps frames coming after the paint it was in, in seconds
     private const double MOVING_FRAMES = 0.25;
 
+    // How much of a moving icon has to be inside its clip for it to be drawn whole and moving rather than trimmed and still
+    private const float MOSTLY_INSIDE = 0.75f;
+
     // Whether this paint has asked for frames for a moving icon already, once a paint is plenty
     private bool movingAsked;
 
@@ -23,7 +26,7 @@ public sealed partial class UIDrawList
     /// <summary>Frames asked for, once a paint, while something on it moves.</summary>
     private void KeepMoving()
     {
-        if (movingAsked || !Motion)
+        if (movingAsked || !Moves)
             return;
 
         UIAnimatedIcons.Used();
@@ -35,7 +38,8 @@ public sealed partial class UIDrawList
     /// <summary>
     /// An icon of the font drawn where its motion has it now. Grown about its middle, moved, faded, and turned by
     /// turning the two sides of its quad (a quad of the sprite batch is a parallelogram, an origin and two axes, which is
-    /// how italics lean). One that a clip cuts is drawn as it is, unturned, a turned quad can't be trimmed square.
+    /// how italics lean). One that a clip cuts is drawn as it is, unturned, a turned quad can't be trimmed square, unless
+    /// the clip only nicks it, when it's drawn whole.
     /// </summary>
     private void MovingSymbol(in UISymbolGlyph symbol, UIRect rect, Vector4 color, UIIconMotion motion)
     {
@@ -53,9 +57,21 @@ public sealed partial class UIDrawList
         var box = new UIRect(new Vector2(topLeft.X, topLeft.Y - size.Y), new Vector2(topLeft.X + size.X, topLeft.Y));
 
         int before = itemCount;
-        bool whole = box.Intersect(clip) == box;
+        UIRect inside = box.Intersect(clip);
+        bool whole = inside == box;
+
+        // One the clip only nicks (a row's icon on the very edge of its scroll panel) is drawn whole and turning, a pixel
+        // or two over the edge, rather than still. One mostly cut away stays still and trimmed
+        UIRect kept = clip;
+        if (!whole && box.Width * box.Height > 0.0f && inside.Width * inside.Height >= box.Width * box.Height * MOSTLY_INSIDE)
+        {
+            clip = new UIRect(Vector2.Min(clip.Min, box.Min), Vector2.Max(clip.Max, box.Max));
+            whole = true;
+        }
+
         Quad(box, glyph.Position, glyph.Position + glyph.TexelSize, SpriteItem.PackColor(color with { W = color.W * alpha }),
             ImageSlot(symbol.Texture) | SpriteItem.FieldFlag, symbol.FieldSlope);
+        clip = kept;
 
         if (turn != 0.0f)
             TurnFrameQuad(turn, middle);

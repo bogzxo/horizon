@@ -24,7 +24,21 @@ public static class LanguageServers
     /// is the folder the server is started in, for a server that wants its import folders said (serve-d's
     /// d.projectImportPaths, a lone file's folder it knew nothing of).
     /// </param>
-    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions, System.Text.Json.Nodes.JsonObject? Settings = null);
+    /// <param name="InitializationOptions">
+    /// What it's told as it's initialized, before any settings, null for nothing. VS Code's HTML and CSS servers only
+    /// format, and only look into a page's styles and scripts, when told to here.
+    /// </param>
+    /// <param name="LanguageIds">
+    /// The language id of a file by its extension where it isn't <paramref name="LanguageId"/>, ".js" javascript and
+    /// ".tsx" typescriptreact for the TypeScript server, which reads a file by the id it's opened with. Null for none.
+    /// </param>
+    /// <param name="PullDiagnostics">
+    /// Whether the editor says it asks for what's wrong (pull diagnostics) rather than being told. Only for a server that
+    /// says nothing otherwise (TypeScript 7's): told the editor asks, csharp-ls stopped saying and was only asked, and
+    /// an answer caught as it reloaded its project was empty, the underlines coming and going.
+    /// </param>
+    public sealed record Registration(string Name, string Command, string[] Arguments, string LanguageId, string[] Extensions, System.Text.Json.Nodes.JsonObject? Settings = null,
+        System.Text.Json.Nodes.JsonObject? InitializationOptions = null, IReadOnlyDictionary<string, string>? LanguageIds = null, bool PullDiagnostics = false);
 
     private static readonly Lock gate = new();
     private static readonly List<Registration> registrations = [];
@@ -53,13 +67,14 @@ public static class LanguageServers
     /// server, if it was running, stopped off the caller's thread: what's handed back is that stop, done once the
     /// process is gone (for whoever wants to write over its program).
     /// </summary>
-    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions, System.Text.Json.Nodes.JsonObject? settings = null)
+    public static Task Register(string name, string command, string[] arguments, string languageId, string[] extensions, System.Text.Json.Nodes.JsonObject? settings = null,
+        System.Text.Json.Nodes.JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false)
     {
         Task stopping = Task.CompletedTask;
         lock (gate)
         {
             registrations.RemoveAll(other => other.Name == name);
-            registrations.Add(new Registration(name, command, arguments, languageId, extensions, settings));
+            registrations.Add(new Registration(name, command, arguments, languageId, extensions, settings, initializationOptions, languageIds, pullDiagnostics));
             // Every one of its folders, asked to shut down and given a couple of seconds for it, off the caller's thread,
             // which is the UI's
             var going = new List<LanguageServer>();
@@ -77,6 +92,20 @@ public static class LanguageServers
         }
 
         return stopping;
+    }
+
+    /// <summary>
+    /// What a registration's servers are told from now on, without stopping the ones running (whoever changed it tells
+    /// those, <see cref="LanguageServer.ChangeSettings"/>). Nothing for a name nobody registered.
+    /// </summary>
+    public static void UpdateSettings(string name, System.Text.Json.Nodes.JsonObject? settings)
+    {
+        lock (gate)
+        {
+            int at = registrations.FindIndex(entry => entry.Name == name);
+            if (at >= 0)
+                registrations[at] = registrations[at] with { Settings = settings };
+        }
     }
 
     /// <summary>The registration that lints a file, by its extension, null for none.</summary>
@@ -113,13 +142,34 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            string[] arguments = [.. ArgumentsIn(entry.Arguments, rootDirectory, solution), .. additionalArguments ?? []];
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, arguments, entry.LanguageId, rootDirectory, SettingsIn(settingsOverride ?? entry.Settings, rootDirectory)) : null;
+            LanguageServer? server = StartRegistered(entry, rootDirectory, solution, additionalArguments, settingsOverride, allowWorkspaceEdits: true);
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
         }
+    }
+
+    /// <summary>
+    /// Starts a private server with the registration's normal project configuration. Its caller owns disposal.
+    /// The instance is independent of shared servers and cannot apply workspace edits.
+    /// </summary>
+    public static LanguageServer? StartIsolated(Registration entry, string rootDirectory, string? selectedSolution = null,
+        IReadOnlyList<string>? additionalArguments = null, System.Text.Json.Nodes.JsonObject? settingsOverride = null)
+    {
+        Horizon.Core.Processes.ProcessEnvironment.WaitForLoginShell();
+        return StartRegistered(entry, rootDirectory, selectedSolution, additionalArguments, settingsOverride, allowWorkspaceEdits: false);
+    }
+
+    private static LanguageServer? StartRegistered(Registration entry, string rootDirectory, string? solution,
+        IReadOnlyList<string>? additionalArguments, System.Text.Json.Nodes.JsonObject? settingsOverride, bool allowWorkspaceEdits)
+    {
+        if (!IsAvailable(entry.Command))
+            return null;
+        string[] arguments = [.. ArgumentsIn(entry.Arguments, rootDirectory, solution), .. additionalArguments ?? []];
+        return LanguageServer.Start(entry.Name, entry.Command, arguments, entry.LanguageId, rootDirectory,
+            SettingsIn(settingsOverride ?? entry.Settings, rootDirectory), SettingsIn(entry.InitializationOptions, rootDirectory),
+            entry.LanguageIds, entry.PullDiagnostics, allowWorkspaceEdits);
     }
 
     /// <summary>

@@ -77,7 +77,18 @@ public sealed partial class DesktopWindow
     private IMouse? FrameMouse => _input is { Mice.Count: > 0 } input ? input.Mice[0] : null;
 
     // Where the cursor is on the screen, which is where the window is and where in it the cursor is
-    private Vector2 CursorOnScreen(IMouse mouse) => new Vector2(_window.Position.X, _window.Position.Y) + mouse.Position;
+    private unsafe Vector2 CursorOnScreen(IMouse mouse)
+    {
+        if (OperatingSystem.IsMacOS() && UsesSdl)
+        {
+            // Moving the window invalidates the last window-relative mouse position.
+            int x, y;
+            Silk.NET.SDL.SdlProvider.SDL.Value.GetGlobalMouseState(&x, &y);
+            return new Vector2(x, y);
+        }
+
+        return new Vector2(_window.Position.X, _window.Position.Y) + mouse.Position;
+    }
 
     private void StartMove()
     {

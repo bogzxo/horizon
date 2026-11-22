@@ -81,7 +81,13 @@ public partial class LanguageServerTests
                 send({"jsonrpc": "2.0", "id": message["id"], "result": {"isIncomplete": dotted, "items": items}})
         """;
 
-    private static bool HasPython => LanguageServers.IsAvailable("python");
+    /// <summary>
+    /// The Python the fake servers run under, python where there is one and python3 where that is all there is (a
+    /// Mac has only python3, and every test of a server failed there for want of python).
+    /// </summary>
+    internal static string Python => LanguageServers.IsAvailable("python") ? "python" : "python3";
+
+    private static bool HasPython => LanguageServers.IsAvailable(Python);
 
     [Fact]
     public void VersionedDiagnosticsRejectLateAndQueuedOldResultsButAcceptUnversionedServers()
@@ -147,7 +153,7 @@ public partial class LanguageServerTests
     public void StartupFailureRetainsBoundedErrorOutputWithoutLineBreaks()
     {
         if (!HasPython) return;
-        using var server = LanguageServer.Start("startup-error", "python",
+        using var server = LanguageServer.Start("startup-error", LanguageServerTests.Python,
             ["-c", "import sys; sys.stderr.write('discarded-prefix' + 'x'*100000 + 'missing runtime fixture'); sys.stderr.flush(); sys.exit(3)"],
             "python", Path.GetTempPath());
         Assert.NotNull(server);
@@ -162,7 +168,7 @@ public partial class LanguageServerTests
     {
         if (!HasPython) return;
         string folder = Path.GetTempPath();
-        using LanguageServer? server = LanguageServer.Start("ranges", "python", [WriteFakeServer()], "fake", folder);
+        using LanguageServer? server = LanguageServer.Start("ranges", LanguageServerTests.Python, [WriteFakeServer()], "fake", folder);
         Assert.NotNull(server);
         string file = Path.Combine(folder, "ranges.fake");
         server.Open(file, "ansxxx");
@@ -292,7 +298,7 @@ public partial class LanguageServerTests
         Directory.CreateDirectory(folder);
         string file = Path.Combine(folder, "notes.fake");
 
-        using LanguageServer? server = LanguageServer.Start("fake", "python", [script], "fake", folder);
+        using LanguageServer? server = LanguageServer.Start("fake", LanguageServerTests.Python, [script], "fake", folder);
         Assert.NotNull(server);
 
         int woken = 0;
@@ -328,7 +334,7 @@ public partial class LanguageServerTests
             return;
 
         string script = WriteFakeServer();
-        LanguageServers.Register("fake-test", "python", [script], "fake", [".faketest"]);
+        LanguageServers.Register("fake-test", LanguageServerTests.Python, [script], "fake", [".faketest"]);
 
         Assert.Null(LanguageServers.For("notes.txt", Path.GetTempPath()));
         Assert.Equal("fake-test", LanguageServers.RegistrationFor("a.FAKETEST")?.Name);
@@ -358,7 +364,7 @@ public partial class LanguageServerTests
         Directory.CreateDirectory(folder);
         string file = Path.Combine(folder, "complete.fake");
 
-        using LanguageServer? server = LanguageServer.Start("fake", "python", [script], "fake", folder);
+        using LanguageServer? server = LanguageServer.Start("fake", LanguageServerTests.Python, [script], "fake", folder);
         Assert.NotNull(server);
 
         // Asked before initialize is answered, behind the file being opened

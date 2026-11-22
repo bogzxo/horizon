@@ -19,7 +19,11 @@ public sealed partial class UIDrawList
     // The slots of the textures every run shares. Custom images take the ones after.
     private const uint ATLAS_SLOT = 0;
     private const uint FONT_SLOT = 1;
-    private const uint IMAGE_SLOT = 2;
+    // The letters made at the size they're drawn, see GlyphAtlas
+    private const uint GLYPH_SLOT = 2;
+    // And the subpixel ones, see GlyphSmoothing
+    private const uint GLYPH_SUBPIXEL_SLOT = 3;
+    private const uint IMAGE_SLOT = 4;
 
     // How much of an icon's height the label on it takes up.
     private const float ICON_LABEL_HEIGHT = 0.75f;
@@ -89,6 +93,13 @@ public sealed partial class UIDrawList
     internal float MotionSpeed { get; set; } = 1.0f;
 
     /// <summary>
+    /// Whether what's painted on this list moves at all, the icons that spin or hop and the knobs and highlights that
+    /// glide: <see cref="Motion"/> on and the UI's animation not turned down to 0. Still at 0, a spinner is drawn as its
+    /// icon and a switch is at its side at once.
+    /// </summary>
+    public bool Moves => Motion && MotionSpeed > 0.0f;
+
+    /// <summary>
     /// Starts the entrance of something that pops up (a menu, a list that drops down, a tooltip) when it's painted for the
     /// first time: grown from a little smaller than it is and faded in, slid in a few pixels from where it came from,
     /// eased out over <see cref="ENTRANCE_TIME"/>. Everything painted until <see cref="EndEntrance"/> goes with it, a pane
@@ -109,9 +120,11 @@ public sealed partial class UIDrawList
         if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
+        // Slid and faded in, not grown as well. Grown from 96% every letter was a different size frame to frame, sampled
+        // afresh off the field each time, and a menu's words shimmered until it settled. Only moved, it goes by whole pixels
+        // (PushVisual) and its words are as crisp coming in as they are once it's there
         float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
-        float grown = 0.96f + 0.04f * eased;
-        PushVisual(from * (1.0f - eased), new Vector2(grown), pivot, eased);
+        PushVisual(from * (1.0f - eased), Vector2.One, pivot, eased);
         return true;
     }
 
@@ -135,8 +148,9 @@ public sealed partial class UIDrawList
         if (!Motion || MotionSpeed <= 0.0f || t >= 1.0f || t < 0.0f)
             return false;
 
+        // Slid back and faded, not shrunk, for the same crisp words as its entrance
         float eased = t * t;
-        PushVisual(to * eased, new Vector2(1.0f - 0.04f * eased), pivot, 1.0f - eased);
+        PushVisual(to * eased, Vector2.One, pivot, 1.0f - eased);
         return true;
     }
 
@@ -165,6 +179,8 @@ public sealed partial class UIDrawList
     internal void Begin(UISkin skin, int frame = 0, float dt = 0.0f, float? clock = null)
     {
         Skin = skin;
+        // Its colours hashed once a paint rather than for every component (see PaintContext), the theme only changes between
+        paletteFingerprint = skin.Palette.Fingerprint();
 
         this.frame = frame;
         deltaTime = dt;
@@ -185,6 +201,10 @@ public sealed partial class UIDrawList
         fonts.Clear();
         font = null;
 
+        // Emptied before anything is painted if it filled up, never halfway through a paint
+        Horizon.Rendering.Text.GlyphAtlas.Shared.BeginPaint();
+        Horizon.Rendering.Text.GlyphAtlas.Subpixel.BeginPaint();
+
         origin = Vector2.Zero;
         scale = Vector2.One;
 
@@ -192,7 +212,7 @@ public sealed partial class UIDrawList
         visualOffset = Vector2.Zero;
         visualScale = Vector2.One;
         opacity = 1.0f;
-        fades.Clear();
+        BeginFades();
 
         owners.Clear();
         owner = 0.0f;
@@ -304,6 +324,16 @@ public sealed partial class UIDrawList
     internal void PushVisual(Vector2 offset, Vector2 scale, Vector2 pivot, float opacity)
     {
         visuals.Push((visualOffset, visualScale, this.opacity));
+
+        // Only moved (a row sliding in, the give at a scroll's end), it's moved by whole pixels of the screen, the way a
+        // scroll is (PushFrame). By a fraction the boxes glided while every line of text in them snapped to the pixels on
+        // its own, and as the spring at the end of a scroll settled the words wobbled against their rows
+        if (scale == Vector2.One)
+        {
+            Vector2 across = visualScale * this.scale;
+            if (across.X != 0.0f && across.Y != 0.0f)
+                offset = Vector2.Round(offset * across) / across;
+        }
 
         // A point p ends up at (p - pivot) * scale + pivot + offset, inside of whatever is around it already.
         visualOffset += (pivot * (Vector2.One - scale) + offset) * visualScale;
@@ -604,8 +634,8 @@ public sealed partial class UIDrawList
 
         // Faded the way Quad fades, see there
         uint asked = color;
-        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
-        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        float fade = FadeOf(visible);
+        float shown = opacity * fade;
         if (shown < 1.0f)
         {
             uint alpha = (uint)((color >> 24) * shown + 0.5f);
@@ -872,7 +902,7 @@ public sealed partial class UIDrawList
     {
         if (UIAnimatedIcons.IsDrawn(code))
         {
-            UIAnimatedIcons.Draw(this, code, rect, color, Motion);
+            UIAnimatedIcons.Draw(this, code, rect, color, Moves);
             KeepMoving();
             return;
         }
@@ -880,7 +910,7 @@ public sealed partial class UIDrawList
         if (!UISymbols.TryGetGlyph(code, out var symbol))
             return;
 
-        if (motion != UIIconMotion.None && Motion)
+        if (motion != UIIconMotion.None && Moves)
         {
             MovingSymbol(symbol, rect, color, motion);
             return;
@@ -984,8 +1014,8 @@ public sealed partial class UIDrawList
 
         // Faded by the animation it's in and the edges it's near, see PushFade. Kept as it was asked for, its frame fades it
         uint asked = color;
-        float fade = fades.Count > 0 ? FadeOf(visible) : 1.0f;
-        float shown = fades.Count > 0 ? opacity * fade : opacity;
+        float fade = FadeOf(visible);
+        float shown = opacity * fade;
         if (shown < 1.0f)
         {
             // Alpha is the top byte, see SpriteItem.PackColor.
@@ -1002,7 +1032,7 @@ public sealed partial class UIDrawList
         // By the whole of the texture bits. This masked eight of the sixteen and compared them with all
         // sixteen set, which can't ever be equal, so every flat box in a scaled UI was told to smooth a
         // texture it hasn't got. The shader knew better, but it was still bollocks
-        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & SpriteItem.CoverageFlag) == 0)
+        if (!whole && SpriteItem.TextureOf(flags) != SpriteItem.NoTexture && (flags & (SpriteItem.CoverageFlag | SpriteItem.GlyphFlag | SpriteItem.SubpixelEraseFlag | SpriteItem.SubpixelInkFlag)) == 0)
             flags |= SpriteItem.SmoothFlag;
 
         Vector2 min = (visible.Min * visualScale + visualOffset) * scale + origin;

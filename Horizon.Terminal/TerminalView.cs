@@ -29,6 +29,12 @@ public partial class TerminalView : UIComponent, IDisposable
     public const float DEFAULT_CURSOR_GLIDE = 0.036f;
     private const int MAX_PENDING_CHUNKS = 4096;
 
+    // How long a new size has to hold still before the screen and the shell are told it, and what it is and since when
+    private const long RESIZE_SETTLE_MS = 120;
+    private (int Columns, int Rows) sizeWanted;
+    private long sizeWantedSince;
+    private bool sizedOnce;
+
     private TerminalScreen screen = new(80, 24);
     private PseudoTerminal? process;
     private readonly ConcurrentQueue<byte[]> arrived = new();
@@ -229,6 +235,7 @@ public partial class TerminalView : UIComponent, IDisposable
         screen.Reset();
         scrolled = 0;
         hasSelection = false;
+        ClearEnded();
 
         startedIn = folder;
         PseudoTerminal started = make();
@@ -249,6 +256,7 @@ public partial class TerminalView : UIComponent, IDisposable
         screen.Reset();
         scrolled = 0;
         hasSelection = false;
+        ClearEnded();
         startedIn = workingDirectory ?? Environment.CurrentDirectory;
         program = started;
         started.Attach(this);
@@ -377,6 +385,7 @@ public partial class TerminalView : UIComponent, IDisposable
         if (exitedWith is { } code)
         {
             exitedWith = null;
+            MarkEnded(code);
             OnExited?.Invoke(code);
         }
 
@@ -384,8 +393,10 @@ public partial class TerminalView : UIComponent, IDisposable
         KeepMinimap();
 
         // Like the editor caret, a background terminal stays lit instead of waking the renderer to blink.
-        blink = GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
-        if (IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
+        // With the motion off (the UI's animation at 0) it stays lit as well, the way the editor's caret does
+        bool steady = MotionSpeed <= 0.0f;
+        blink = steady || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        if (!steady && IsFocused && screen.CursorVisible && scrolled == 0 && screen.CursorShape is not (2 or 4 or 6) &&
             GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         if (bell > 0.0f)
@@ -448,10 +459,13 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /* Keys */
 
+    /// <summary>A key as though it were pressed with the pane focused, the application's keys first, for a test.</summary>
+    public void Press(in UIKeyPress press) => OnKeyDown(press);
+
     protected override void OnKeyDown(in UIKeyPress press)
     {
         blink = 0.0f;
-        if (CompletionKey(press) || Intercept?.Invoke(press) == true)
+        if (CompletionKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
             return;
 
         var modifiers = ModifiersOf(press);
@@ -500,6 +514,15 @@ public partial class TerminalView : UIComponent, IDisposable
         // A paste is never a run of commands by accident, the newlines are the shell's to take
         Typed(TerminalKeys.Paste(text.Replace("\r\n", "\r").Replace('\n', '\r'), screen.BracketedPaste));
     }
+
+    /// <summary>Text pasted into the terminal as a paste from the clipboard is, between the marks of a bracketed paste when the program asked for them.</summary>
+    public void Paste(string text) => OnPaste(text);
+
+    /// <summary>
+    /// Files dropped on the terminal, their paths pasted as its shell reads them (see <see cref="TerminalDroppedPaths"/>),
+    /// the way Windows Terminal does with a drop.
+    /// </summary>
+    public void PastePaths(IEnumerable<string> paths) => OnPaste(TerminalDroppedPaths.Typed(paths, Profile));
 
     /// <summary>Text sent as if it had been typed, which is told to whoever follows what is typed, unlike <see cref="Send"/>.</summary>
     public void Type(string text) => Typed(text);
@@ -837,7 +860,7 @@ public partial class TerminalView : UIComponent, IDisposable
         // keeps its cells clear of them. The scroll bar and the minimap have room of their own down the right
         float pad = MathF.Max(PADDING, Radius * 0.85f);
         float header = ShowPaneTitle ? HeaderHeight(skin) : 0.0f;
-        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad));
+        paintedArea = Bounds.Shrink(new UIEdges(screen.MarksSeen ? pad + GUTTER : pad, pad + header, pad + SideWidth, pad + EndedHeight(skin)));
         PlaceSide();
         if (cellWidth <= 0.0f || cellHeight <= 0.0f)
             return;
@@ -846,10 +869,25 @@ public partial class TerminalView : UIComponent, IDisposable
         int columns = Math.Max(2, (int)(paintedArea.Width / cellWidth)), rows = Math.Max(1, (int)(paintedArea.Height / cellHeight));
         if (columns != screen.Columns || rows != screen.Rows)
         {
-            screen.Resize(columns, rows);
-            process?.Resize(columns, rows);
-            program?.Resize(columns, rows);
-            scrolled = Math.Min(scrolled, screen.Scrollback.Count);
+            // Once the size has held still a moment, the first time at once. Told on every frame of a panel being dragged,
+            // the shell drew its screen again for each step and the text flickered, wrapped and unwrapped as it went
+            long now = Environment.TickCount64;
+            if ((columns, rows) != sizeWanted)
+            {
+                sizeWanted = (columns, rows);
+                sizeWantedSince = now;
+            }
+
+            if (!sizedOnce || now - sizeWantedSince >= RESIZE_SETTLE_MS)
+            {
+                sizedOnce = true;
+                screen.Resize(columns, rows);
+                process?.Resize(columns, rows);
+                program?.Resize(columns, rows);
+                scrolled = Math.Min(scrolled, screen.Scrollback.Count);
+            }
+            else
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
         }
 
         TerminalPalette palette = Palette;
@@ -889,7 +927,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
-        if (screen.CursorVisible && scrolled == 0)
+        if (screen.CursorVisible && scrolled == 0 && EndedWith is null)
         {
             Vector2 wanted = new(paintedArea.Min.X + screen.CursorX * cellWidth, top - (screen.CursorY + 1) * cellHeight);
             if (!cursorPlaced || !Animated || CursorGlide <= 0.0f)
@@ -944,6 +982,7 @@ public partial class TerminalView : UIComponent, IDisposable
         PaintMinimap(list, palette);
         PaintScrollBar(list, palette);
         PaintBadge(list, palette);
+        PaintEnded(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
     }

@@ -15,7 +15,8 @@ public partial class CodeEditor
     {
         get
         {
-            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar)
+            // A long line read a paint at a time is still short of what of it is in sight too (see LongColours)
+            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar || longReading)
                 return -1;
             if (caretSeen && CaretGlide > 0.0f && glideTime < CaretGlide)
                 return -1;
@@ -59,6 +60,8 @@ public partial class CodeEditor
             hash.Add(document.Caret);
             hash.Add(document.SelectionStart);
             hash.Add(document.SelectionEnd);
+            for (int i = 0; i < RemoteCarets.Count; i++)
+                hash.Add(RemoteCarets[i]);
             hash.Add(document.ExtraCarets.Count);
             for (int i = 0; i < document.ExtraCarets.Count; i++)
             {
@@ -75,6 +78,8 @@ public partial class CodeEditor
             hash.Add(diagnostics);
             hash.Add(diagnostics.Count);
             hash.Add(moreErrors.Count);
+            hash.Add(spellingVersion);
+            hash.Add(spelling);
             hash.Add(inlineHints);
             hash.Add(inlineHints.Count);
             hash.Add(lenses);
@@ -86,6 +91,7 @@ public partial class CodeEditor
             hash.Add(agentHints.Count);
             hash.Add(lensesAbove);
             hash.Add(lensRowsChanged);
+            hash.Add(VisiblePredictionRowsVersion);
             hash.Add(lensHeldLine);
             hash.Add(inlaysVersion);
             hash.Add(agentHints);
@@ -118,6 +124,8 @@ public partial class CodeEditor
             hash.Add(LineNote);
             hash.Add(lineNoteFor);
             hash.Add(ExecutionLine);
+            hash.Add(OnActionPressed is null ? -1 : ActionLine);
+            hash.Add(ActionPreferred);
             hash.Add(Breakpoints);
             hash.Add(Breakpoints?.Count ?? 0);
             hash.Add(BreakpointMarksVersion);
@@ -126,7 +134,7 @@ public partial class CodeEditor
 
             // What it's dressed in
             hash.Add(LineNumbers);
-            hash.Add(Minimap);
+            hash.Add(MinimapShown);
             hash.Add(StickyScroll);
             hash.Add(RenderWhitespace);
             hash.Add(IndentGuides);

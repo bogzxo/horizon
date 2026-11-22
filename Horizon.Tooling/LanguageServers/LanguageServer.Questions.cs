@@ -117,11 +117,25 @@ public sealed partial class LanguageServer
             SemanticsRefreshed();
             return null;
         }
+        if (method == "workspace/diagnostic/refresh")
+        {
+            DiagnosticsRefreshed();
+            return null;
+        }
+
+        if (method == "client/registerCapability")
+        {
+            Registered(parameters);
+            return null;
+        }
+        if (method == "client/unregisterCapability")
+        {
+            Unregistered(parameters);
+            return null;
+        }
 
         if (method != "workspace/configuration" || parameters?["items"] is not JsonArray items)
             return null;
-
-
 
         var sections = new JsonArray();
         foreach (JsonNode? item in items)
@@ -149,7 +163,9 @@ public sealed partial class LanguageServer
     private Task<JsonNode?>? Asked(string method, JsonNode? parameters)
     {
         if (method == "workspace/applyEdit")
-            return ApplyAsked(parameters);
+            return allowWorkspaceEdits
+                ? ApplyAsked(parameters)
+                : Task.FromResult<JsonNode?>(new JsonObject { ["applied"] = false, ["failureReason"] = "This language server session cannot edit workspace files." });
 
         if (method != "window/showMessageRequest" || parameters is not JsonObject asked)
             return null;

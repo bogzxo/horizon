@@ -39,6 +39,29 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>The language id the protocol knows the files by, csharp, python, json.</summary>
     public string LanguageId { get; }
 
+    /// <summary>The language id of a file by its extension where it isn't <see cref="LanguageId"/>, null for none (see <see cref="LanguageServers.Registration"/>).</summary>
+    public IReadOnlyDictionary<string, string>? LanguageIds { get; }
+
+    /// <summary>What it was told as it was initialized, null for nothing.</summary>
+    public JsonObject? InitializationOptions { get; }
+
+    /// <summary>Whether it was told the editor asks for what's wrong rather than being told (see <see cref="LanguageServers.Registration"/>).</summary>
+    public bool PullDiagnosticsWanted { get; }
+
+    /// <summary>The language id a file is opened with, by its extension, <see cref="LanguageId"/> when nothing says otherwise.</summary>
+    public string LanguageIdOf(string path)
+    {
+        if (LanguageIds is { Count: > 0 } ids)
+        {
+            string extension = Path.GetExtension(path);
+            foreach (var (known, id) in ids)
+                if (known.Equals(extension, StringComparison.OrdinalIgnoreCase))
+                    return id;
+        }
+
+        return LanguageId;
+    }
+
     /// <summary>The folder it was started in, the workspace as far as the server knows.</summary>
     public string RootDirectory { get; }
 
@@ -49,6 +72,7 @@ public sealed partial class LanguageServer : IDisposable
     public string ErrorOutput => errorOutput?.Text ?? string.Empty;
 
     private readonly LanguageServerOutput? errorOutput;
+    private readonly bool allowWorkspaceEdits;
 
     /// <summary>Whether its process is up and the connection open.</summary>
     public bool IsRunning => rpc is { IsClosed: false } && process is { HasExited: false };
@@ -58,10 +82,22 @@ public sealed partial class LanguageServer : IDisposable
     /// (<c>{ d: { lintOnFileOpen: "always" } }</c> for serve-d), said once it's up and answered whenever it asks for a
     /// section. Null for a server left to its own, which isn't told the editor has any.
     /// </summary>
-    public JsonObject? Settings { get; }
+    public JsonObject? Settings { get; private set; }
+
+    /// <summary>
+    /// What it's told to be changed while it runs: said to it as a change of configuration, and what it's answered from
+    /// now on when it asks for a section. A server that was started with no settings said it can't be asked for them,
+    /// it's still told.
+    /// </summary>
+    public void ChangeSettings(JsonObject? settings)
+    {
+        Settings = settings;
+        Later(() => rpc.Notify("workspace/didChangeConfiguration", new JsonObject { ["settings"] = settings?.DeepClone() ?? new JsonObject() }));
+    }
 
     /// <summary>Whether initialize has been answered, after which what was asked goes straight out.</summary>
-    public bool IsReady { get; private set; }
+    public bool IsReady => ready;
+    private volatile bool ready;
 
     /// <summary>Called on the server's reading thread when diagnostics arrive, for the editor's thread to be woken.</summary>
     public Action? Woken { get; set; }
@@ -73,15 +109,25 @@ public sealed partial class LanguageServer : IDisposable
     private readonly Dictionary<string, int> versions = new(Horizon.Core.Platform.PlatformPaths.Comparer);
     private readonly ConcurrentQueue<(string Path, int? Version, IReadOnlyList<UICodeDiagnostic> Found)> arrived = new();
     private readonly Lock queue = new();
+
+    // Held from a document's version and text being worked out to its notification being written, so two threads (the
+    // editor's and the one that sends what waited for the server to start) can't send them the other way round: an
+    // incremental change put on text it wasn't worked out from garbles the server's copy of the file
+    private readonly Lock sending = new();
     private List<Action>? waiting = [];
 
     // What has been asked of the server and not answered, answered with nothing when it stops
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
-    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null)
+    private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true)
     {
         Name = name;
         LanguageId = languageId;
+        LanguageIds = languageIds;
+        InitializationOptions = initializationOptions;
+        PullDiagnosticsWanted = pullDiagnostics;
+        this.allowWorkspaceEdits = allowWorkspaceEdits;
         RootDirectory = rootDirectory;
         Settings = settings;
         this.errorOutput = errorOutput;
@@ -98,7 +144,10 @@ public sealed partial class LanguageServer : IDisposable
     /// (the command isn't there), see <see cref="LanguageServers.IsAvailable"/> for asking first.
     /// </summary>
     /// <param name="settings">What it's told to be (see <see cref="Settings"/>), null for whatever it is by itself.</param>
-    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null)
+    /// <param name="initializationOptions">What it's told as it's initialized, null for nothing.</param>
+    /// <param name="languageIds">The language id of a file by its extension where it isn't <paramref name="languageId"/>.</param>
+    public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true)
     {
         Process? process;
         try
@@ -127,12 +176,14 @@ public sealed partial class LanguageServer : IDisposable
         var errors = new LanguageServerOutput();
         _ = errors.Read(process.StandardError);
 
-        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream), settings, errors);
+        return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream, name), settings, errors,
+            initializationOptions, languageIds, pullDiagnostics, allowWorkspaceEdits);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
-    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null) =>
-        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings);
+    public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null,
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true) =>
+        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings, null, initializationOptions, languageIds, pullDiagnostics, allowWorkspaceEdits);
 
     private async void Initialize()
     {
@@ -205,12 +256,12 @@ public sealed partial class LanguageServer : IDisposable
             ["experimental"] = new JsonObject { ["csharp"] = new JsonObject { ["metadataUris"] = true } },
 
             // The files of the workspace that change on the disk are said (FilesChanged), a project added, a branch checked
-            // out. A server asks for the ones it wants watched, and is told of every one, it takes what it wants of them
+            // out. A server asks for the ones it wants watched and is told of those alone, one that never asks of all of them
             ["workspace"] = new JsonObject
             {
                 ["workspaceFolders"] = false,
                 ["configuration"] = Settings is not null,
-                ["applyEdit"] = true,
+                ["applyEdit"] = allowWorkspaceEdits,
                 ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true },
                 ["semanticTokens"] = new JsonObject { ["refreshSupport"] = true },
@@ -218,6 +269,13 @@ public sealed partial class LanguageServer : IDisposable
                 ["inlayHint"] = new JsonObject { ["refreshSupport"] = true }
             }
         };
+
+        // Asking what's wrong, said only to a server that has to be asked (LanguageServer.PullDiagnostics)
+        if (PullDiagnosticsWanted)
+        {
+            ((JsonObject)capabilities["textDocument"]!)["diagnostic"] = new JsonObject { ["dynamicRegistration"] = false, ["relatedDocumentSupport"] = false };
+            ((JsonObject)capabilities["workspace"]!)["diagnostics"] = new JsonObject { ["refreshSupport"] = true };
+        }
 
         string rootUri = UriOf(RootDirectory);
         var parameters = new JsonObject
@@ -229,6 +287,8 @@ public sealed partial class LanguageServer : IDisposable
             ["capabilities"] = capabilities,
             ["workspaceFolders"] = new JsonArray(new JsonObject { ["uri"] = rootUri, ["name"] = Path.GetFileName(RootDirectory) })
         };
+        if (InitializationOptions is not null)
+            parameters["initializationOptions"] = InitializationOptions.DeepClone();
 
         try
         {
@@ -248,16 +308,28 @@ public sealed partial class LanguageServer : IDisposable
             return;
         }
 
-        List<Action>? held;
-        lock (queue)
+        // What waited goes out first, in order, and only then is it ready: set ready before, a didChange from the
+        // editor's thread went straight out ahead of the didOpen still waiting here and the server never had the file
+        // the way the editor did. What's asked while these go out waits behind them
+        while (true)
         {
-            IsReady = true;
-            held = waiting;
-            waiting = null;
-        }
+            List<Action> held;
+            lock (queue)
+            {
+                if (waiting is null or { Count: 0 })
+                {
+                    waiting = null;
+                    ready = true;
+                    break;
+                }
+                held = waiting;
+                waiting = [];
+            }
 
-        foreach (Action action in held ?? [])
-            Run(action);
+            foreach (Action action in held)
+                Run(action);
+        }
+        Woken?.Invoke();
     }
 
     // Helper method to do something now if the server is ready, or once it is, in the order things were asked
@@ -265,7 +337,7 @@ public sealed partial class LanguageServer : IDisposable
     {
         lock (queue)
         {
-            if (waiting is not null && !IsReady)
+            if (waiting is not null)
             {
                 waiting.Add(action);
                 return;
@@ -294,6 +366,7 @@ public sealed partial class LanguageServer : IDisposable
     private void Fail(string why)
     {
         Failure ??= why;
+        Woken?.Invoke();
         foreach (var answer in asking.Keys)
         {
             asking.TryRemove(answer, out _);
@@ -303,7 +376,7 @@ public sealed partial class LanguageServer : IDisposable
 
     // Helper method to ask the server something once it is ready, behind everything sent before. Null for an error, or
     // for a server that stopped before answering, nothing asked here throws
-    private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false)
+    private Task<JsonNode?> Ask(string method, JsonNode parameters, bool propagateErrors = false, bool urgent = false)
     {
         var answer = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
         asking[answer] = 0;
@@ -316,16 +389,83 @@ public sealed partial class LanguageServer : IDisposable
             return answer.Task;
         }
 
-        Later(() => rpc.Request(method, parameters).ContinueWith(asked =>
+        void Send() => rpc.Request(method, parameters).ContinueWith(asked =>
         {
             asking.TryRemove(answer, out _);
             if (propagateErrors && !asked.IsCompletedSuccessfully)
                 answer.TrySetException(asked.Exception?.GetBaseException() ?? new IOException("The language-server request was cancelled."));
             else
                 answer.TrySetResult(asked.IsCompletedSuccessfully ? asked.Result : null);
-        }, TaskScheduler.Default));
+        }, TaskScheduler.Default);
 
+        if (!urgent && BACKGROUND_METHODS.Contains(method) && HoldBackground(Send))
+            return answer.Task;
+
+        Later(Send);
         return answer.Task;
+    }
+
+    /* Keeping typing quick */
+
+    // What the editor asks for by itself after every change, the colours, the hints, the lenses, the folds. csharp-ls
+    // answers in turn, so a completion asked while typing waited behind all of them, 0.3 to 2 seconds a key on the
+    // engine's solution against 0.07 with nothing in front of it. They wait until typing stops instead.
+    private static readonly HashSet<string> BACKGROUND_METHODS = new(StringComparer.Ordinal)
+    {
+        "textDocument/semanticTokens/full", "textDocument/semanticTokens/range", "textDocument/inlayHint",
+        "textDocument/codeLens", "textDocument/foldingRange", "textDocument/documentSymbol", "textDocument/documentHighlight",
+        // What's wrong, for a server that's asked (LanguageServer.PullDiagnostics), a whole file's worth of work
+        "textDocument/diagnostic"
+    };
+
+    // How long after the last change or completion the held requests go out, and the longest they're held for
+    private const long QUIET_MS = 600, LONGEST_HOLD_MS = 4000;
+
+    private readonly Lock holding = new();
+    private readonly List<Action> held = [];
+    private Timer? releaseTimer;
+    private long busyAt, heldSince;
+    private int completing;
+
+    // Whether the user is typing or waiting on a completion, the moment of the last of either
+    private bool Busy => Volatile.Read(ref completing) > 0 || Environment.TickCount64 - Interlocked.Read(ref busyAt) < QUIET_MS;
+
+    // Helper method to say the user did something that wants answering quickly
+    private void Typing() => Interlocked.Exchange(ref busyAt, Environment.TickCount64);
+
+    // Helper method to keep a background request back while typing goes on, false to send it now
+    private bool HoldBackground(Action send)
+    {
+        lock (holding)
+        {
+            if (held.Count == 0 && !Busy)
+                return false;
+
+            if (held.Count == 0)
+                heldSince = Environment.TickCount64;
+            held.Add(send);
+            releaseTimer ??= new Timer(_ => ReleaseHeld());
+            releaseTimer.Change(100, 100);
+            return true;
+        }
+    }
+
+    // On the timer, what was held goes out in the order it was asked once typing has stopped (or it waited long enough)
+    private void ReleaseHeld()
+    {
+        Action[] going;
+        lock (holding)
+        {
+            if (held.Count == 0 || (Busy && Environment.TickCount64 - heldSince < LONGEST_HOLD_MS && Failure is null))
+                return;
+
+            going = [.. held];
+            held.Clear();
+            releaseTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+
+        foreach (Action send in going)
+            Later(send);
     }
 
     /// <summary>Tells the server a file is open, with its text as it is in the editor.</summary>
@@ -334,16 +474,20 @@ public sealed partial class LanguageServer : IDisposable
         string full = Path.GetFullPath(path);
         Later(() =>
         {
-            int version;
-            lock (versions)
+            lock (sending)
             {
-                versions[full] = version = ++nextDocumentVersion;
-                if (IncrementalChanges) synchronizedText[full] = text;
+                int version;
+                lock (versions)
+                {
+                    versions[full] = version = ++nextDocumentVersion;
+                    if (IncrementalChanges) synchronizedText[full] = text;
+                }
+                rpc.Notify("textDocument/didOpen", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageIdOf(full), ["version"] = version, ["text"] = text }
+                });
             }
-            rpc.Notify("textDocument/didOpen", new JsonObject
-            {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["languageId"] = LanguageId, ["version"] = version, ["text"] = text }
-            });
+            PullSoon(full);
         });
     }
 
@@ -351,23 +495,28 @@ public sealed partial class LanguageServer : IDisposable
     public void Change(string path, string text)
     {
         string full = Path.GetFullPath(path);
+        Typing();
         Later(() =>
         {
-            int version;
-            JsonObject change;
-            lock (versions)
+            lock (sending)
             {
-                if (!versions.ContainsKey(full))
-                    return;
-                versions[full] = version = ++nextDocumentVersion;
-                change = ContentChange(full, text);
-            }
+                int version;
+                JsonObject change;
+                lock (versions)
+                {
+                    if (!versions.ContainsKey(full))
+                        return;
+                    versions[full] = version = ++nextDocumentVersion;
+                    change = ContentChange(full, text);
+                }
 
-            rpc.Notify("textDocument/didChange", new JsonObject
-            {
-                ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
-                ["contentChanges"] = new JsonArray(change)
-            });
+                rpc.Notify("textDocument/didChange", new JsonObject
+                {
+                    ["textDocument"] = new JsonObject { ["uri"] = UriOf(full), ["version"] = version },
+                    ["contentChanges"] = new JsonArray(change)
+                });
+            }
+            PullSoon(full);
         });
     }
 
@@ -380,11 +529,30 @@ public sealed partial class LanguageServer : IDisposable
         if (changes.Count == 0)
             return;
 
-        var list = new JsonArray();
-        foreach (var (path, change) in changes)
-            list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
+        Later(() =>
+        {
+            // A file open in the server is the client's, its text goes by didChange alone. csharp-ls reads one that was
+            // created or changed on the disk again (Handlers/Workspace.fs, tryReloadDocumentOnUri) whether it's open or
+            // not, and the incremental didChange for the same write that came next was put on top of the new text: an
+            // edit made twice ("sealed sealed class"), a line taken out twice ("arentOf"), errors at lines that are fine
+            var list = new JsonArray();
+            lock (sending)
+            {
+                foreach (var (path, change) in changes)
+                {
+                    if (change != LanguageServerFileChange.Deleted && DocumentVersion(path) is not null)
+                        continue;
 
-        Later(() => rpc.Notify("workspace/didChangeWatchedFiles", new JsonObject { ["changes"] = list }));
+                    // Only what it asked for, when it asked (LanguageServer.Watchers)
+                    if (!Watches(path, change))
+                        continue;
+                    list.Add((JsonNode)new JsonObject { ["uri"] = UriOf(path), ["type"] = (int)change });
+                }
+
+                if (list.Count > 0)
+                    rpc.Notify("workspace/didChangeWatchedFiles", new JsonObject { ["changes"] = list });
+            }
+        });
     }
 
     /// <summary>Tells the server a file was closed, it says nothing more about it.</summary>
@@ -393,14 +561,18 @@ public sealed partial class LanguageServer : IDisposable
         string full = Path.GetFullPath(path);
         Later(() =>
         {
-            lock (versions)
+            lock (sending)
             {
-                if (!versions.Remove(full))
-                    return;
-                synchronizedText.Remove(full);
-            }
+                lock (versions)
+                {
+                    if (!versions.Remove(full))
+                        return;
+                    synchronizedText.Remove(full);
+                }
 
-            rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
+                rpc.Notify("textDocument/didClose", new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = UriOf(full) } });
+            }
+            ForgetPulls(full);
         });
     }
 
@@ -418,12 +590,24 @@ public sealed partial class LanguageServer : IDisposable
         if (trigger is { } typed && !again)
             context["triggerCharacter"] = typed.ToString();
 
-        JsonNode? answered = await Ask("textDocument/completion", new JsonObject
+        // What the editor asks for by itself waits while this is asked (HoldBackground)
+        Typing();
+        Interlocked.Increment(ref completing);
+        JsonNode? answered;
+        try
         {
-            ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
-            ["position"] = new JsonObject { ["line"] = line, ["character"] = character },
-            ["context"] = context
-        }).ConfigureAwait(false);
+            answered = await Ask("textDocument/completion", new JsonObject
+            {
+                ["textDocument"] = new JsonObject { ["uri"] = UriOf(path) },
+                ["position"] = new JsonObject { ["line"] = line, ["character"] = character },
+                ["context"] = context
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref completing);
+            Typing();
+        }
 
         // Either a list of what can go there, or the list and whether that's all of it
         bool incomplete = false;
@@ -550,14 +734,21 @@ public sealed partial class LanguageServer : IDisposable
         }
 
         string prose = markdown[..cut];
-        prose = System.Text.RegularExpressions.Regex.Replace(prose, @"\[([^\]]*)\]\([^)]*\)", "$1");
+        // A picture says nothing in text, VS Code's CSS docs started a line with "!Baseline icon"
+        prose = Pictures().Replace(prose, string.Empty);
+        prose = Links().Replace(prose, "$1");
         prose = prose.Replace("**", string.Empty, StringComparison.Ordinal).Replace("`", string.Empty, StringComparison.Ordinal);
+        // _Emphasis_ the way the bold is, and a mark written escaped as itself, "elements\." was said with its backslash
+        prose = Emphasis().Replace(prose, "$1");
+        prose = EscapedMarks().Replace(prose, "$1");
+        // And what's written as an HTML entity as its character, CSS's syntax said "&lt;color&gt;"
+        prose = System.Net.WebUtility.HtmlDecode(prose);
 
         // A dash the fonts have, serve-d's long one came out as a question mark
         prose = prose.Replace('—', '-').Replace('–', '-');
 
-        var paragraphs = System.Text.RegularExpressions.Regex.Split(prose.ReplaceLineEndings("\n"), @"\n\s*\n")
-            .Select(paragraph => System.Text.RegularExpressions.Regex.Replace(paragraph, @"\s+", " ").Trim())
+        var paragraphs = BlankLines().Split(prose.ReplaceLineEndings("\n"))
+            .Select(static paragraph => WhiteSpace().Replace(paragraph, " ").Trim())
             .Where(paragraph => paragraph.Length > 0);
         string plain = string.Join("\n", paragraphs);
         return plain.Length > MOST_DOCS ? string.Concat(plain.AsSpan(0, MOST_DOCS - 3), "...") : plain;
@@ -580,7 +771,23 @@ public sealed partial class LanguageServer : IDisposable
             if ((at > 0 && Word(detail[at - 1])) || (after < detail.Length && Word(detail[after])))
                 continue;
 
-            string left = string.Join(' ', (detail[..at] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            // A name said with what it's a member of goes with it, csharp-ls's "Voice Mixer.Add(float ...)" was
+            // "Voice Mixer. (float ...)" and TypeScript's "(property) Track.title: string" was "Track. : string"
+            int from = at;
+            while (from > 0 && detail[from - 1] == '.')
+            {
+                from--;
+                while (from > 0 && (Word(detail[from - 1]) || detail[from - 1] is '<' or '>' or ','))
+                    from--;
+            }
+
+            string left = string.Join(' ', (detail[..from] + " " + detail[after..]).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            // What kind it is in brackets in front, TypeScript's "(property)", is the icon's to say, and what's left of
+            // "x: string" is the type
+            left = KindInBrackets().Replace(left, string.Empty);
+            left = left.Replace(" :", ":", StringComparison.Ordinal);
+            if (left.StartsWith(':'))
+                left = left[1..].TrimStart();
             return left.Length > 0 ? left : detail;
         }
 
@@ -655,10 +862,32 @@ public sealed partial class LanguageServer : IDisposable
     // What sort of thing a completion item is, by the protocol's numbers, said when the server gives no detail
     private static string KindOf(int kind) => kind switch
     {
-        1 => "text", 2 => "method", 3 => "function", 4 => "constructor", 5 => "field", 6 => "variable", 7 => "class",
-        8 => "interface", 9 => "module", 10 => "property", 11 => "unit", 12 => "value", 13 => "enum", 14 => "keyword",
-        15 => "snippet", 16 => "colour", 17 => "file", 18 => "reference", 19 => "folder", 20 => "enum member",
-        21 => "constant", 22 => "struct", 23 => "event", 24 => "operator", 25 => "type parameter", _ => string.Empty
+        1 => "text",
+        2 => "method",
+        3 => "function",
+        4 => "constructor",
+        5 => "field",
+        6 => "variable",
+        7 => "class",
+        8 => "interface",
+        9 => "module",
+        10 => "property",
+        11 => "unit",
+        12 => "value",
+        13 => "enum",
+        14 => "keyword",
+        15 => "snippet",
+        16 => "colour",
+        17 => "file",
+        18 => "reference",
+        19 => "folder",
+        20 => "enum member",
+        21 => "constant",
+        22 => "struct",
+        23 => "event",
+        24 => "operator",
+        25 => "type parameter",
+        _ => string.Empty
     };
 
     /// <summary>Takes what the server last said about a file, oldest first, false when there is nothing waiting.</summary>
@@ -666,7 +895,7 @@ public sealed partial class LanguageServer : IDisposable
     {
         while (arrived.TryDequeue(out var next))
         {
-            if (next.Version is {} version && DocumentVersion(next.Path) is {} current && version < current) continue;
+            if (next.Version is { } version && DocumentVersion(next.Path) is { } current && version < current) continue;
             (path, found) = (next.Path, next.Found);
             return true;
         }
@@ -685,7 +914,7 @@ public sealed partial class LanguageServer : IDisposable
             return;
 
         int? version = published["version"] is JsonValue value && value.TryGetValue<int>(out int number) ? number : null;
-        if (version is {} sent && DocumentVersion(path) is {} current && sent < current) return;
+        if (version is { } sent && DocumentVersion(path) is { } current && sent < current) return;
 
         var found = new List<UICodeDiagnostic>();
         if (published["diagnostics"] is JsonArray diagnostics)
@@ -732,6 +961,12 @@ public sealed partial class LanguageServer : IDisposable
     /// <summary>Asks the server to shut down and ends its process, waiting a moment for it to go by itself.</summary>
     public void Dispose()
     {
+        lock (holding)
+        {
+            releaseTimer?.Dispose();
+            releaseTimer = null;
+        }
+
         try
         {
             if (rpc is { IsClosed: false })
@@ -761,4 +996,27 @@ public sealed partial class LanguageServer : IDisposable
             process.Dispose();
         }
     }
+
+    // What the docs and details of completions are made plain with, made when Hex is built rather than read from their
+    // pattern at the first completion
+    [System.Text.RegularExpressions.GeneratedRegex(@"!\[[^\]]*\]\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex Pictures();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[([^\]]*)\]\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex Links();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<![\w\\])_(\S(?:[^_]*\S)?)_(?!\w)")]
+    private static partial System.Text.RegularExpressions.Regex Emphasis();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\\([\\`*_{}\[\]()#+\-.!|~<>])")]
+    private static partial System.Text.RegularExpressions.Regex EscapedMarks();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\n\s*\n")]
+    private static partial System.Text.RegularExpressions.Regex BlankLines();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex WhiteSpace();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\((?:[a-z]+ ?)+\)\s*")]
+    private static partial System.Text.RegularExpressions.Regex KindInBrackets();
 }

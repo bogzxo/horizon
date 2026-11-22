@@ -18,6 +18,33 @@ public class TerminalScrollTests
     }
 
     [Fact]
+    public void A_full_scrollback_keeps_the_newest_rows_in_order_and_the_rows_it_lets_go_of_come_back_blank()
+    {
+        // Well past full and past the ring's first size, with a colour that the rows let go of must not carry
+        var screen = new TerminalScreen(20, 5) { MaxScrollback = 100 };
+        for (int i = 0; i < 1000; i++)
+            screen.Feed($"\u001b[41mrow {i}\u001b[0m\r\n");
+
+        Assert.Equal(100, screen.Scrollback.Count);
+        for (int i = 0; i < 100; i++)
+            Assert.Equal($"row {896 + i}", screen.Scrollback[i].Text());
+        Assert.Equal("row 999", screen.Grid[3].Text());
+        Assert.Equal(string.Empty, screen.Grid[4].Text());
+        Assert.True(screen.Grid[4].Cells[0].Style.Background.IsDefault);
+
+        // Taken down to fewer, and up again past what it had
+        screen.MaxScrollback = 10;
+        screen.Feed("more\r\n");
+        Assert.Equal(10, screen.Scrollback.Count);
+        Assert.Equal("row 996", screen.Scrollback[9].Text());
+        screen.MaxScrollback = 300;
+        for (int i = 0; i < 200; i++)
+            screen.Feed($"again {i}\r\n");
+        Assert.Equal(210, screen.Scrollback.Count);
+        Assert.Equal("again 195", screen.Scrollback[209].Text());
+    }
+
+    [Fact]
     public void A_program_with_the_whole_screen_scrolls_nothing_off()
     {
         var screen = new TerminalScreen(20, 5);

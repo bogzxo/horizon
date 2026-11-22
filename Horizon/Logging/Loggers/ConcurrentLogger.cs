@@ -14,6 +14,9 @@ public class ConcurrentLogger : ILoggerDisposable
     // How long (in milliseconds) closing the logger waits for the last messages to be written
     private const int LONGEST_FLUSH = 2000;
 
+    // The most lines written to a file shared with other processes on one turn of it, so they get theirs in a burst too
+    private const int MOST_AT_ONCE = 256;
+
     private static readonly Lazy<ConcurrentLogger> _logger = new(() => new ConcurrentLogger(DEFAULT_FILE), true);
 
     public static ConcurrentLogger Instance => _logger.Value;
@@ -23,6 +26,9 @@ public class ConcurrentLogger : ILoggerDisposable
     private readonly Thread worker;
     private readonly Mutex? fileGate;
     private int disposed;
+
+    // Messages logged and not written yet, the ones on their way out of the queue among them, which is what Flush waits for
+    private int pending;
 
     /// <summary>
     /// The file the log ends up in, empty if it only goes to the console.
@@ -92,6 +98,7 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         if (level < MinimumLevel || Volatile.Read(ref disposed) != 0) return;
 
+        Interlocked.Increment(ref pending);
         try
         {
             messages.Add(new LogMessage(message, level));
@@ -99,6 +106,7 @@ public class ConcurrentLogger : ILoggerDisposable
         catch (InvalidOperationException)
         {
             // Closed between the test above and here, the message is too late
+            Interlocked.Decrement(ref pending);
         }
     }
 
@@ -111,11 +119,8 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         foreach (LogMessage message in messages.GetConsumingEnumerable())
         {
-            string line = $"[{message.Level}] {message.Message}";
-
-            Console.ForegroundColor = ColorOf(message.Level);
-            Console.WriteLine(line);
-            Console.ResetColor();
+            string line = Show(message);
+            int written = 1;
 
             if (fileGate is null)
             {
@@ -130,11 +135,42 @@ public class ConcurrentLogger : ILoggerDisposable
                     // Another instance may have reset or appended to the same file since this process last wrote.
                     writer.BaseStream.Seek(0, SeekOrigin.End);
                     writer.WriteLine(line);
+
+                    // Whatever else has come in by now goes in on the same turn of the file. Taking the lock between
+                    // processes, seeking and flushing for every single line made a burst of the log (a program
+                    // starting) a few system calls a line
+                    while (written < MOST_AT_ONCE && messages.TryTake(out LogMessage next))
+                    {
+                        writer.WriteLine(Show(next));
+                        written++;
+                    }
+
                     writer.Flush();
                 }
                 finally { fileGate.ReleaseMutex(); }
             }
+
+            Interlocked.Add(ref pending, -written);
         }
+
+        // The file is closed by this thread and no other, once it has written the last of the queue. Closed from Dispose
+        // when its wait ran out, a thread still at it (starved on a busy machine) wrote on to a closed file and the
+        // exception took the whole process down
+        writer?.Dispose();
+    }
+
+    /// <summary>
+    /// Helper method to write a message to the console in its colour, and make the line it is in the file.
+    /// </summary>
+    private static string Show(in LogMessage message)
+    {
+        string line = $"[{message.Level}] {message.Message}";
+
+        Console.ForegroundColor = ColorOf(message.Level);
+        Console.WriteLine(line);
+        Console.ResetColor();
+
+        return line;
     }
 
     private void EnterFile()
@@ -159,7 +195,7 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         long started = Stopwatch.GetTimestamp();
 
-        while (messages.Count > 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds < LONGEST_FLUSH)
+        while (Volatile.Read(ref pending) > 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds < LONGEST_FLUSH)
             Thread.Sleep(1);
     }
 
@@ -167,11 +203,13 @@ public class ConcurrentLogger : ILoggerDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
 
-        // Whatever is still in the queue gets written before the thread stops
+        // Whatever is still in the queue gets written before the thread stops. It runs below normal so logging never
+        // takes from the rest, but closing waits on it, so it isn't left behind everything else on a busy machine then
         messages.CompleteAdding();
+        try { worker.Priority = ThreadPriority.Normal; }
+        catch (ThreadStateException) { /* Already finished */ }
         worker.Join(LONGEST_FLUSH);
 
-        writer?.Dispose();
         GC.SuppressFinalize(this);
     }
 }

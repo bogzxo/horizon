@@ -111,10 +111,11 @@ internal sealed partial class MenuPanel
         }
 
         contentHeight = height;
-        naturalWidth = MathF.Max(width, minWidth) + BORDER * 2.0f;
+        naturalWidth = MathF.Max(MathF.Max(width, minWidth), MinWidth(skin)) + BORDER * 2.0f;
 
-        // Never wider or taller than the window, a bar's list no taller than the room under the bar
-        float roomX = MathF.Max(frame.Width - MARGIN * 2.0f, 1.0f);
+        // Never wider or taller than the window, a bar's list no taller than the room under the bar, and never wider
+        // than a list can be read across, a long file name in an item is cut short with dots rather than stretching it
+        float roomX = MathF.Max(MathF.Min(frame.Width - MARGIN * 2.0f, MaxWidth(skin)), 1.0f);
         float roomY = placement == MenuPlacement.Below ? anchor.Min.Y - frame.Min.Y - MARGIN : frame.Height - MARGIN * 2.0f;
         roomY = MathF.Max(roomY, row * 3.0f);
 
@@ -152,6 +153,18 @@ internal sealed partial class MenuPanel
         bounds = new UIRect(new Vector2(left, top - size.Y), new Vector2(left + size.X, top));
         scroll = Math.Clamp(scroll, 0.0f, MaxScroll(skin));
     }
+
+    // How narrow and how wide a list is at the most, in lines of its text, so a menu of two short items still has a
+    // comfortable width to aim at and one with a path in it doesn't run across half the window
+    private const float MIN_WIDTH_LINES = 11.0f, MAX_WIDTH_LINES = 34.0f;
+
+    private float LineOf(UISkin skin) => MathF.Max(skin.Font.LineHeight * ScaleOf(skin), 1.0f);
+
+    /// <summary>The narrowest a list is, borders left out.</summary>
+    internal float MinWidth(UISkin skin) => MathF.Round(LineOf(skin) * MIN_WIDTH_LINES);
+
+    /// <summary>The widest a list is, borders and all.</summary>
+    internal float MaxWidth(UISkin skin) => MathF.Round(LineOf(skin) * MAX_WIDTH_LINES);
 
     // The room at the end of an item for its keys or the arrow of a menu of its own
     private float EndWidth(UISkin skin, MenuItem item, float row) =>

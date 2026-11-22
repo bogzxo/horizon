@@ -93,8 +93,12 @@ public partial class TerminalView
     /// <summary>Where the badge is, nothing while it isn't drawn, for a test.</summary>
     public UIRect PaneBadge => ShowPaneTitle ? badge : default;
 
+    /// <summary>How many times the program has rung the bell, for the panel to mark a tab that rang while it wasn't open.</summary>
+    public int Bells { get; private set; }
+
     private void Rang()
     {
+        Bells++;
         switch (Bell)
         {
             case TerminalBell.Flash:

@@ -426,7 +426,8 @@ public static class UIKeyboard
 
     private static void EnqueuePaste(string text)
     {
-        if (text.Length == 0 || typed.Count >= MAX_PENDING)
+        // An empty one goes on too, the clipboard may hold a picture for a box that takes them (UIComponent.TakesEmptyPaste)
+        if (typed.Count >= MAX_PENDING)
             return;
 
         pasted.Enqueue(text);

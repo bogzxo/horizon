@@ -9,6 +9,7 @@ namespace Horizon.Tests.Shaders;
 /// What a shader is kept and shipped under. The same sources have to give the same key on Windows and out of an APK,
 /// and anything that changes the module (the bindless table size baked into the prelude, an include) has to change it.
 /// </summary>
+[Collection(SlangCompiles.NAME)]
 public class ShaderSourceIdentityTests
 {
     [Fact]

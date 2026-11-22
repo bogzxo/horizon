@@ -34,6 +34,15 @@ public class Button : UIComponent
     public string Icon { get; set; } = string.Empty;
 
     /// <summary>
+    /// The colour of the icon alone, the label keeping the button's own, as a file's icon has the colour of its kind in a
+    /// list of files. Null for the label's colour.
+    /// </summary>
+    public Vector4? IconColor { get; set; }
+
+    /// <summary>The label's colour, or null to use the skin's.</summary>
+    public Vector4? LabelColor { get; set; }
+
+    /// <summary>
     /// Where on the button its icon and label sit, in the middle unless told. A grid of them (a toolbox) reads better
     /// from the left, their icons in a column, than each one centred on its own.
     /// </summary>
@@ -41,6 +50,9 @@ public class Button : UIComponent
 
     // The icon and the label written as one text, made again only when either changes
     private string shownIcon = string.Empty, shownLabel = string.Empty, shown = string.Empty;
+
+    // The icon written on its own for a button whose icon has a colour of its own, made again only when the icon changes
+    private string iconOf = string.Empty, iconWritten = string.Empty;
 
     /// <summary>The scale of the label, or zero to use the skin's.</summary>
     public float LabelScale { get; set; }
@@ -212,12 +224,31 @@ public class Button : UIComponent
         UIRect area = Bounds.Shrink(hasArt ? region.ContentOr(skin.ButtonPadding) : skin.ButtonPadding);
         if (down)
             area = new UIRect(area.Min - Vector2.UnitY * 2.0f, area.Max - Vector2.UnitY * 2.0f);
-        list.Text(
-            Written(),
-            area,
-            Align,
-            LabelScale > 0.0f ? LabelScale : skin.TextScale,
-            (primary ? OnFill(skin, FillOf(skin)) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor) * tint);
+        float scale = LabelScale > 0.0f ? LabelScale : skin.TextScale;
+        Vector4 colour = (LabelColor ?? (primary ? OnFill(skin, FillOf(skin)) : hasArt ? region.TextOr(skin.ControlTextColor) : skin.ControlTextColor)) * tint;
+        string label = Resolve(Label);
+        if (IconColor is { } iconColour && Icon.Length > 0 && label.Length > 0 && Align is Origin.Left or Origin.Center or Origin.Right)
+        {
+            // The icon written on its own in its colour and the label after it, the two placed where the whole would be
+            if (!ReferenceEquals(Icon, iconOf))
+            {
+                iconOf = Icon;
+                iconWritten = $"$({Icon}) ";
+            }
+            string icon = iconWritten;
+            float iconWidth = skin.Font.Measure(icon, scale).X;
+            float whole = skin.Font.Measure(Written(), scale).X;
+            float start = Align switch
+            {
+                Origin.Left => area.Min.X,
+                Origin.Right => area.Max.X - whole,
+                _ => area.Min.X + (area.Size.X - whole) * 0.5f
+            };
+            list.Text(icon, new UIRect(new Vector2(start, area.Min.Y), new Vector2(start + iconWidth, area.Max.Y)), Origin.Left, scale, iconColour * tint);
+            list.Text(label, new UIRect(new Vector2(start + iconWidth, area.Min.Y), area.Max with { X = MathF.Max(area.Max.X, start + iconWidth) }), Origin.Left, scale, colour);
+        }
+        else
+            list.Text(Written(), area, Align, scale, colour);
         list.EndParts();
     }
 
@@ -267,7 +298,7 @@ public class Button : UIComponent
 
     protected override void Update(float dt)
     {
-        bool lit = EnabledInHierarchy && (IsHovered || Chosen);
+        bool lit = (IsHovered || Chosen) && EnabledInHierarchy;
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
         if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)

@@ -276,6 +276,9 @@ public partial class WindowManager : GameComponent, IDisposable
     // How big the window was asked to be
     private readonly Vector2 requestedSize;
 
+    // The window made and left hidden, see WindowManagerConfiguration.StartHidden
+    private readonly bool startHidden;
+
     /// <summary>A window manager on the platform the program installed, see <see cref="PlatformInstallation"/>.</summary>
     public WindowManager(in WindowManagerConfiguration config)
         : this(config, PlatformInstallation.CreateHost(PlatformInstallation.Resolve(null), new PlatformHostRequest(config, BehaviourOf(config), ReadsGamepads: true)))
@@ -290,6 +293,7 @@ public partial class WindowManager : GameComponent, IDisposable
         ArgumentNullException.ThrowIfNull(host);
         this.host = host;
         events = new HostEvents(this);
+        startHidden = config.StartHidden;
 
         Name = "Window Manager";
 
@@ -380,7 +384,7 @@ public partial class WindowManager : GameComponent, IDisposable
         // The first thing in the window, before anything of the engine or the game is set up (the engine's loading
         // screen), and only then is there a window to see
         DeviceReady?.Invoke();
-        if (host.Window is { } window)
+        if (host.Window is { } window && !startHidden)
             OnWindowThread(window.Show);
         StartupTrace.Mark("window shown with the loading screen");
 
@@ -389,6 +393,10 @@ public partial class WindowManager : GameComponent, IDisposable
         // Everything that was added to the engine before the window opened is set up now, before the first frame,
         // so whatever listens for that frame's exclusive work (the scene manager) is listening by then
         Parent.InitializeAll();
+
+        // And the first frame asked for now. The frames asked for before had run out by here, and the first one waited
+        // for the next heartbeat, a second with the loading screen up and nothing to wait for
+        RequestFrames();
     }
 
     /// <summary>
@@ -716,6 +724,7 @@ public partial class WindowManager : GameComponent, IDisposable
                 DrawFrame(dt);
                 Scaling.EndFrame();
                 Graphics.EndFrame();
+                host.Window?.FramePresented();
                 if (StartupTrace.SceneReady)
                     StartupTrace.Finish("first frame of the scene shown");
 

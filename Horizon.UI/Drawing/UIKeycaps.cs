@@ -22,9 +22,9 @@ internal static class UIKeycaps
         if (keys.Length == 0)
             return right;
 
-        List<string> caps = Caps(keys);
+        string[] caps = Caps(keys);
         float height = Height(list.Skin, area, scale);
-        for (int c = caps.Count - 1; c >= 0; c--)
+        for (int c = caps.Length - 1; c >= 0; c--)
         {
             float width = Width(list.Skin, caps[c], scale, height);
             Paint(list, caps[c], new UIRect(new Vector2(right - width, area.Center.Y - height * 0.5f), new Vector2(right, area.Center.Y + height * 0.5f)), scale, ink, chosen);
@@ -65,7 +65,23 @@ internal static class UIKeycaps
 
     // The caps of some keys, a chord split at its spaces and each part at its pluses, a plus that is the key itself kept
     // ("Ctrl++" is Ctrl and +). It was split at every plus and Ctrl++ came out as Ctrl alone
-    private static List<string> Caps(string keys)
+    private static string[] Caps(string keys)
+    {
+        // Split once a keys string, a list of commands painted them anew every frame. The strings are the commands' own
+        // and few, the cache is let go of if it ever gets big
+        if (split.TryGetValue(keys, out string[]? known))
+            return known;
+        if (split.Count > MOST_SPLIT)
+            split.Clear();
+        return split[keys] = Split(keys);
+    }
+
+    private const int MOST_SPLIT = 1024;
+
+    // Painted on the UI's thread only
+    private static readonly Dictionary<string, string[]> split = new(StringComparer.Ordinal);
+
+    private static string[] Split(string keys)
     {
         var caps = new List<string>();
         foreach (string chord in keys.Split(' ', StringSplitOptions.RemoveEmptyEntries))
@@ -77,6 +93,6 @@ internal static class UIKeycaps
                 caps.Add("+");
         }
 
-        return caps;
+        return [.. caps];
     }
 }
