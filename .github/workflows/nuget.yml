@@ -1,6 +1,7 @@
 name: NuGet
 
-# The engine's packages on nuget.org: Horizon.HIDL, Horizon.Engine, Horizon.Platform.Desktop and Horizon.UI. A tag
+# The engine's packages on nuget.org: bogzxo.Horizon.HIDL, bogzxo.Horizon.Engine, bogzxo.Horizon.Platform.Desktop and
+# bogzxo.Horizon.UI. A tag
 # named for the version (v1.4.0) packs and publishes them. Run by hand it only packs, and the packages are the run's
 # artifact, unless publish is ticked.
 #

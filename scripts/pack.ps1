@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Makes the engine's four NuGet packages (Horizon.HIDL, Horizon.Engine, Horizon.Platform.Desktop, Horizon.UI) into
+# Makes the engine's four NuGet packages (bogzxo.Horizon.HIDL, bogzxo.Horizon.Engine, bogzxo.Horizon.Platform.Desktop, bogzxo.Horizon.UI) into
 # artifacts/nuget, or the folder given. The version is the one Directory.Build.props says. Used by hand and by the
 # NuGet workflow, which is what publishes them.
 param(

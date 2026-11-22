@@ -4,12 +4,12 @@ The engine goes out as four packages of one version, made by `scripts/pack.ps1` 
 
 | Package | Project | Depends on |
 |---|---|---|
-| `Horizon.HIDL` | `Horizon.HIDL/Horizon.HIDL.csproj` | nothing |
-| `Horizon.Engine` | `Horizon/Horizon.csproj` | `Horizon.HIDL` |
-| `Horizon.Platform.Desktop` | `Horizon.Platform.Desktop/Horizon.Platform.Desktop.csproj` | `Horizon.Engine` |
-| `Horizon.UI` | `Horizon.UI/Horizon.UI.csproj` | `Horizon.Engine`, `Horizon.HIDL` |
+| `bogzxo.Horizon.HIDL` | `Horizon.HIDL/Horizon.HIDL.csproj` | nothing |
+| `bogzxo.Horizon.Engine` | `Horizon/Horizon.csproj` | `bogzxo.Horizon.HIDL` |
+| `bogzxo.Horizon.Platform.Desktop` | `Horizon.Platform.Desktop/Horizon.Platform.Desktop.csproj` | `bogzxo.Horizon.Engine` |
+| `bogzxo.Horizon.UI` | `Horizon.UI/Horizon.UI.csproj` | `bogzxo.Horizon.Engine`, `bogzxo.Horizon.HIDL` |
 
-The engine's package is `Horizon.Engine` because `Horizon` on nuget.org is somebody else's. Its assembly is still `Horizon.dll`. The packages depend on each other at exactly their own version.
+The IDs start with `bogzxo.` because somebody else has reserved the `Horizon` prefix on nuget.org (a push under it is refused with 409 "The package ID is reserved"). The engine's assembly is still `Horizon.dll`. The packages depend on each other at exactly their own version.
 
 ## One-time setup
 
@@ -73,13 +73,13 @@ To upload by hand instead, use https://www.nuget.org/packages/manage/upload, in 
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Horizon.Engine" Version="1.4.0" />
-  <PackageReference Include="Horizon.Platform.Desktop" Version="1.4.0" />
-  <PackageReference Include="Horizon.UI" Version="1.4.0" />
+  <PackageReference Include="bogzxo.Horizon.Engine" Version="1.4.0" />
+  <PackageReference Include="bogzxo.Horizon.Platform.Desktop" Version="1.4.0" />
+  <PackageReference Include="bogzxo.Horizon.UI" Version="1.4.0" />
 </ItemGroup>
 ```
 
-`Horizon.Engine` copies its shaders, fonts and UI skins next to the program when it is built and published, at the paths the engine looks for them at (`shaders/`, `Assets/global/`, `Assets/fonts/`, `Assets/uix/`).
+`bogzxo.Horizon.Engine` copies its shaders, fonts and UI skins next to the program when it is built and published, at the paths the engine looks for them at (`shaders/`, `Assets/global/`, `Assets/fonts/`, `Assets/uix/`).
 
 ## What is not decided
 
