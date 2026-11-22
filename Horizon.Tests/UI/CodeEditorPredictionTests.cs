@@ -66,7 +66,8 @@ public class CodeEditorPredictionTests
         var editor = Made(compositor, "prefix\nint x = \nsuffix", new UITextPosition(1, 8));
         editor.SetPrediction(Ghost(new UITextPosition(1, 8), "42;"));
         editor.ApplySharedText("remote\nprefix\nint x = \nchanged", (_, _, _) => null,
-            position => position with { Line = position.Line + 1 });
+            position => position with { Line = position.Line + 1 },
+            [new UITextEdit(new(0, 0), new(0, 0), "remote\n"), new UITextEdit(new(2, 0), new(2, 6), "changed")]);
         Assert.True(editor.PredictionIsGhost);
         Assert.Equal(new UITextPosition(2, 8), editor.Document.Caret);
         Assert.True(editor.AcceptPrediction());

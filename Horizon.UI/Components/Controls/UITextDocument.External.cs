@@ -8,7 +8,7 @@ public sealed partial class UITextDocument
 
     /// <summary>Apply shared text and move selections using the replica's exact position map.</summary>
     public void ApplyExternal(string text, Func<string, string, string, string?> rebase,
-        Func<UITextPosition, UITextPosition>? moveSelection)
+        Func<UITextPosition, UITextPosition>? moveSelection, IReadOnlyList<UITextEdit>? changes = null)
     {
         string before = Text;
         if (before == text)
@@ -16,11 +16,24 @@ public sealed partial class UITextDocument
         RebaseHistory(undo);
         RebaseHistory(redo);
         moveSelection ??= new ExternalPositionMap(before, text).Move;
-        Caret = moveSelection(Caret);
-        Anchor = moveSelection(Anchor);
+        UITextPosition movedCaret = moveSelection(Caret), movedAnchor = moveSelection(Anchor);
         for (int i = 0; i < extras.Count; i++)
             extras[i] = new(moveSelection(extras[i].Caret), moveSelection(extras[i].Anchor));
-        SetLines(text);
+        if (changes is null)
+            SetLines(text);
+        else
+        {
+            for (int i = changes.Count - 1; i >= 0; i--)
+            {
+                UITextEdit edit = changes[i];
+                if (edit.Start != edit.End)
+                    DeleteRaw(edit.Start, edit.End);
+                if (edit.Text.Length != 0)
+                    InsertRaw(edit.Start, edit.Text);
+            }
+        }
+        Caret = Clamp(movedCaret);
+        Anchor = Clamp(movedAnchor);
         preferredColumn = Caret.Column;
         lastKind = EditKind.Other;
         Touched();

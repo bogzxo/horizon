@@ -105,13 +105,13 @@ public partial class CodeEditor
 
     /// <summary>Apply a remote revision and translate any prediction still valid at its mapped positions.</summary>
     public void ApplySharedText(string text, Func<string, string, string, string?> rebase,
-        Func<UITextPosition, UITextPosition>? move)
+        Func<UITextPosition, UITextPosition>? move, IReadOnlyList<UITextEdit>? changes = null)
     {
         if (document.Text == text)
             return;
         if (move is null || prediction is not { } existing)
         {
-            document.ApplyExternal(text, rebase, move);
+            document.ApplyExternal(text, rebase, move, changes);
             return;
         }
 
@@ -125,7 +125,7 @@ public partial class CodeEditor
         }
         UITextPosition? after = existing.CaretAfter is { } caret ? move(caret) : null;
         predictionApplying = true;
-        try { document.ApplyExternal(text, rebase, move); }
+        try { document.ApplyExternal(text, rebase, move, changes); }
         finally { predictionApplying = false; }
         if (!document.CanApplyEdits(mapped))
         {

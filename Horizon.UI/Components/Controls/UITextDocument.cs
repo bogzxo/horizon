@@ -1061,8 +1061,30 @@ public sealed partial class UITextDocument
 
     /* The history */
 
+    private Action<bool>? sharedUndo;
+
+    /// <summary>Handles Undo and Redo (true) using the active shared document's own operation history.</summary>
+    public Action<bool>? SharedUndo
+    {
+        get => sharedUndo;
+        set
+        {
+            if (sharedUndo == value)
+                return;
+            undo.Clear();
+            redo.Clear();
+            lastKind = EditKind.Other;
+            sharedUndo = value;
+        }
+    }
+
     public void Undo()
     {
+        if (SharedUndo is { } shared)
+        {
+            shared(false);
+            return;
+        }
         extras.Clear();
         if (undo.Count == 0)
             return;
@@ -1075,6 +1097,11 @@ public sealed partial class UITextDocument
 
     public void Redo()
     {
+        if (SharedUndo is { } shared)
+        {
+            shared(true);
+            return;
+        }
         extras.Clear();
         if (redo.Count == 0)
             return;
@@ -1143,8 +1170,8 @@ public sealed partial class UITextDocument
     /// </summary>
     private void Record(EditKind kind)
     {
-        // Going round every caret, the step was noted once before the first of them
-        if (batching)
+        // Shared documents record operation identities. Multi-caret edits record only before the first caret.
+        if (sharedUndo is not null || batching)
         {
             joined = null;
             return;
