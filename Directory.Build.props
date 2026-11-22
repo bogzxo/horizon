@@ -9,4 +9,40 @@
   <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
     <Version>1.2.0</Version>
   </PropertyGroup>
+
+  <!--
+    The NuGet packages: the scripting language, the engine, the desktop platform and the UI, which is what a game needs
+    to be built against the engine without a checkout of it beside it. scripts/pack.ps1 makes them. Nothing else in
+    here is a package. The engine's assembly is Horizon and so is its project, its package is Horizon.Engine, as
+    somebody else's Horizon is on nuget.org already. Horizon.HIDL is a submodule with no props of its own, so it gets
+    its package from here as well.
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon' or '$(MSBuildProjectName)' == 'Horizon.HIDL' or '$(MSBuildProjectName)' == 'Horizon.UI' or '$(MSBuildProjectName)' == 'Horizon.Platform.Desktop'">
+    <IsPackable>true</IsPackable>
+    <Authors>bogzxo</Authors>
+    <RepositoryUrl>https://github.com/bogzxo/horizon</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/bogzxo/horizon</PackageProjectUrl>
+    <PackageTags>horizon;game-engine;vulkan;ui;hidl</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <HorizonPackageReadme>$(MSBuildThisFileDirectory)docs\nuget-readme.md</HorizonPackageReadme>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon'">
+    <PackageId>Horizon.Engine</PackageId>
+    <Description>The Horizon engine's runtime: the Vulkan renderer, content, input, audio, entities and physics, with the shaders, fonts and UI skins it needs beside a program at run time.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.HIDL'">
+    <RepositoryUrl>https://github.com/bogzxo/hidl</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/bogzxo/hidl</PackageProjectUrl>
+    <Description>HIDL, the Horizon engine's scripting language: its lexer, parser, compiler and virtual machine, with nothing of the engine in it.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.UI'">
+    <Description>The Horizon engine's UI: the compositor, components and controls, skins, layouts and the scripts that build them, the code editor and Scene2D.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Platform.Desktop'">
+    <Description>The Horizon engine on Windows, macOS and Linux: the window, keyboard, mouse and controllers, audio, and MoltenVK for a Mac.</Description>
+  </PropertyGroup>
 </Project>

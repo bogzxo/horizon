@@ -1,0 +1,23 @@
+<Project>
+  <!-- A consuming repository's targets, as its props are brought in by Directory.Build.props -->
+  <PropertyGroup>
+    <HorizonParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)..'))</HorizonParentTargets>
+  </PropertyGroup>
+  <Import Project="$(HorizonParentTargets)" Condition="'$(HorizonParentTargets)' != '' and Exists('$(HorizonParentTargets)')" />
+
+  <!-- Every package says the same few lines about itself -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true' and '$(HorizonPackageReadme)' != ''">
+    <None Include="$(HorizonPackageReadme)" Pack="true" PackagePath="README.md" Visible="false" />
+  </ItemGroup>
+
+  <!--
+    The UI and the desktop platform are built on the engine's insides (InternalsVisibleTo), so a package only works with
+    the engine of the very version it was built against. A project reference becomes "this version or later" in a
+    package, here it is made "this version and no other".
+  -->
+  <Target Name="HorizonExactPackageDependencies" AfterTargets="_GetProjectReferenceVersions" Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_ProjectReferencesWithVersions Update="@(_ProjectReferencesWithVersions)" ProjectVersion="[%(ProjectVersion)]" />
+    </ItemGroup>
+  </Target>
+</Project>

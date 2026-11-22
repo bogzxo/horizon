@@ -65,6 +65,16 @@
     </None>
   </ItemGroup>
 
+  <!--
+    The same files in the package (Horizon.Engine), under horizon/ at the paths they have here, with the targets that
+    copy them next to whatever references the package (build/Horizon.Engine.targets)
+  -->
+  <ItemGroup>
+    <None Update="shaders\**\*.*;Assets\global\**\*.*;Assets\fonts\**\*.*;Assets\uix\**\*.aseprite;Assets\uix\**\*.hor;Assets\uix\**\README.txt"
+          Pack="true" PackagePath="horizon\" />
+    <None Update="build\Horizon.Engine.targets" Pack="true" PackagePath="build\Horizon.Engine.targets;buildTransitive\Horizon.Engine.targets" />
+  </ItemGroup>
+
   <!-- The windowing, the input devices and SDL are the platform's, Horizon.Platform.Desktop has them -->
 
   <ItemGroup>
