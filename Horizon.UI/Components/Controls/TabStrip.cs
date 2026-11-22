@@ -37,6 +37,20 @@ public sealed class StripTab
     /// </summary>
     public bool Pinned { get; set; }
 
+    /// <summary>Colours of participants in this tab, drawn after its title.</summary>
+    public IReadOnlyList<Vector4> PresenceColors
+    {
+        get => presenceColors;
+        set
+        {
+            presenceColors = value;
+            PresenceOverflow = value.Count > 3 ? $"+{value.Count - 3}" : string.Empty;
+        }
+    }
+
+    private IReadOnlyList<Vector4> presenceColors = [];
+    internal string PresenceOverflow { get; private set; } = string.Empty;
+
     /// <summary>Whatever the program wants to know the tab by.</summary>
     public object? Tag { get; set; }
 
@@ -142,9 +156,17 @@ public class TabStrip : UIComponent
     {
         float line = Line(skin);
         float icon = tab.Icon.Length > 0 ? line + GAP : 0.0f;
-        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X + GAP + line);
+        float width = MathF.Round(TAB_PADDING * 2.0f + icon + skin.Font.Measure(tab.Title, ScaleOf(skin), markup: false).X
+            + PresenceWidth(tab, skin, ScaleOf(skin)) + GAP + line);
         width = MaxTabWidth > 0.0f ? MathF.Min(width, MaxTabWidth) : width;
         return HideClippedTabs && Bounds.Width > 0 ? MathF.Min(width, Bounds.Width) : width;
+    }
+
+    private static float PresenceWidth(StripTab tab, UISkin skin, float scale)
+    {
+        int count = tab.PresenceColors.Count;
+        return count == 0 ? 0 : 4 + Math.Min(3, count) * 7 +
+            (count > 3 ? skin.Font.Measure(tab.PresenceOverflow, scale * 0.8f, markup: false).X : 0);
     }
 
     // The dots a title cut short has in its middle
@@ -339,7 +361,8 @@ public class TabStrip : UIComponent
 
             // Up to the x, cut in the middle with dots once the tab is at its most
             UIRect close = CloseBounds(i);
-            string title = Fitted(tab, skin, scale, MathF.Max(0.0f, close.Min.X - GAP - x));
+            float titleRoom = MathF.Max(0.0f, close.Min.X - GAP - x - PresenceWidth(tab, skin, scale));
+            string title = Fitted(tab, skin, scale, titleRoom);
             list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
 
             // The open one's own colour as a line under its title. Always painted, clear when there's none, so the quads
@@ -347,8 +370,18 @@ public class TabStrip : UIComponent
             Vector4 underline = open && tab.TitleColor is { } marked ? marked : Vector4.Zero;
             float thick = MathF.Max(2.0f, MathF.Round(line * 0.1f));
             float under = MathF.Max(MathF.Round(area.Center.Y - line * 0.5f) - thick, area.Min.Y + 5.0f);
-            float wide = underline.W > 0.0f ? MathF.Min(skin.Font.Measure(title, scale, markup: false).X, MathF.Max(0.0f, close.Min.X - GAP - x)) : 0.0f;
-            list.Rect(new UIRect(new Vector2(x, under), new Vector2(x + wide, under + thick)), underline);
+            float titleWidth = tab.PresenceColors.Count > 0 || underline.W > 0.0f
+                ? MathF.Min(skin.Font.Measure(title, scale, markup: false).X, titleRoom) : 0.0f;
+            list.Rect(new UIRect(new Vector2(x, under), new Vector2(x + (underline.W > 0 ? titleWidth : 0), under + thick)), underline);
+
+            int dots = Math.Min(3, tab.PresenceColors.Count);
+            float mark = x + titleWidth + 4;
+            for (int person = 0; person < dots && mark + 5 <= close.Min.X; person++, mark += 7)
+                list.Symbol("circle-filled", new UIRect(new(mark, area.Center.Y - 2.5f), new(mark + 5, area.Center.Y + 2.5f)),
+                    tab.PresenceColors[person]);
+            if (tab.PresenceColors.Count > dots && mark < close.Min.X)
+                list.Text(tab.PresenceOverflow,
+                    new UIRect(new(mark, area.Min.Y), new(close.Min.X, area.Max.Y)), Origin.Left, scale * 0.8f, plain, markup: false);
 
             // The x on the one that is open and the one under the pointer, a dot on one with changes otherwise. A pinned
             // one always has its pin there (with a dot in it when it has changes), which unpins it

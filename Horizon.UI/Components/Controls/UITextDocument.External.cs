@@ -3,18 +3,23 @@ namespace Horizon.UI.Components;
 public sealed partial class UITextDocument
 {
     /// <summary>Apply another writer's revision. Retain each undo or redo step that can still be applied independently.</summary>
-    public void ApplyExternal(string text, Func<string, string, string, string?> rebase)
+    public void ApplyExternal(string text, Func<string, string, string, string?> rebase) =>
+        ApplyExternal(text, rebase, null);
+
+    /// <summary>Apply shared text and move selections using the replica's exact position map.</summary>
+    public void ApplyExternal(string text, Func<string, string, string, string?> rebase,
+        Func<UITextPosition, UITextPosition>? moveSelection)
     {
         string before = Text;
         if (before == text)
             return;
         RebaseHistory(undo);
         RebaseHistory(redo);
-        var map = new ExternalPositionMap(before, text);
-        Caret = map.Move(Caret);
-        Anchor = map.Move(Anchor);
+        moveSelection ??= new ExternalPositionMap(before, text).Move;
+        Caret = moveSelection(Caret);
+        Anchor = moveSelection(Anchor);
         for (int i = 0; i < extras.Count; i++)
-            extras[i] = new(map.Move(extras[i].Caret), map.Move(extras[i].Anchor));
+            extras[i] = new(moveSelection(extras[i].Caret), moveSelection(extras[i].Anchor));
         SetLines(text);
         preferredColumn = Caret.Column;
         lastKind = EditKind.Other;

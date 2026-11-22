@@ -11,6 +11,54 @@ namespace Horizon.Tests.UI;
 public class CodeEditorRemoteCaretsTests
 {
     [Fact]
+    public void Sixteen_carets_paint_in_a_shared_editor()
+    {
+        var font = new UIFont(Path.Combine(AppContext.BaseDirectory, "Assets", "fonts", "cascadia_mono"), "cascadia_mono.ttf");
+        var skin = new UISkin(font);
+        var root = new ScrollPanel();
+        var editor = root.Add(new CodeEditor(string.Join('\n', Enumerable.Repeat(new string('w', 90), 120)))
+        {
+            Size = new(720, 660), WordWrap = true, Minimap = false
+        });
+        UICodeRemoteCaret[] carets = [.. Enumerable.Range(0, 16).Select(i => new UICodeRemoteCaret(
+            $"{i}", $"Peer {i}", i / 4, 12 + i, i / 4, i, new Vector4(i / 17f, 0.53f, 0.75f, 1)))];
+        var bounds = new UIRect(Vector2.Zero, new Vector2(720, 700));
+        root.MeasureTree(skin);
+        root.ArrangeTree(bounds);
+        var front = new UIDrawList();
+        var back = new UIDrawList();
+        int frame = 0;
+
+        Sample();
+        editor.RemoteCarets = carets;
+        Sample();
+        Assert.All(carets, caret => Assert.Contains(front.Items.ToArray(), item => item.Color == SpriteItem.PackColor(caret.Colour)));
+        int count = Environment.GetEnvironmentVariable("HEX_LINK_CARETS_PERF") == "1" ? 256 : 16;
+        editor.RemoteCarets = [];
+        double empty = Measure(count);
+        editor.RemoteCarets = carets;
+        double populated = Measure(count);
+        Console.WriteLine($"link carets paint, ms/frame ({count} frames): empty {empty:F3}, 16 painters {populated:F3}");
+
+        double Measure(int turns)
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int i = 0; i < turns; i++)
+                Sample();
+            return System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds / turns;
+        }
+
+        void Sample()
+        {
+            back.Previous = front;
+            back.Begin(skin, ++frame, 1f / 120, frame / 120f);
+            root.PaintTree(back);
+            back.End();
+            (front, back) = (back, front);
+        }
+    }
+
+    [Fact]
     public void Wrapped_selection_carets_and_pointer_paint_and_clear_independently()
     {
         var font = new UIFont(Path.Combine(AppContext.BaseDirectory, "Assets", "fonts", "cascadia_mono"), "cascadia_mono.ttf");

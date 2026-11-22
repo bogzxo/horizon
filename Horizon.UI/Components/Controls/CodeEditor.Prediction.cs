@@ -103,6 +103,52 @@ public partial class CodeEditor
         Show(edits, edits.Length == 1 && edits[0].Start == edits[0].End && edits[0].Start == document.Caret);
     }
 
+    /// <summary>Apply a remote revision and translate any prediction still valid at its mapped positions.</summary>
+    public void ApplySharedText(string text, Func<string, string, string, string?> rebase,
+        Func<UITextPosition, UITextPosition>? move)
+    {
+        if (document.Text == text)
+            return;
+        if (move is null || prediction is not { } existing)
+        {
+            document.ApplyExternal(text, rebase, move);
+            return;
+        }
+
+        var mapped = new UITextEdit[predictionEdits.Length];
+        var replaced = new string[mapped.Length];
+        for (int i = 0; i < mapped.Length; i++)
+        {
+            UITextEdit edit = predictionEdits[i];
+            replaced[i] = document.TextBetween(edit.Start, edit.End);
+            mapped[i] = edit with { Start = move(edit.Start), End = move(edit.End) };
+        }
+        UITextPosition? after = existing.CaretAfter is { } caret ? move(caret) : null;
+        predictionApplying = true;
+        try { document.ApplyExternal(text, rebase, move); }
+        finally { predictionApplying = false; }
+        if (!document.CanApplyEdits(mapped))
+        {
+            ClearPrediction();
+            return;
+        }
+        for (int i = 0; i < mapped.Length; i++)
+        {
+            if (document.TextBetween(mapped[i].Start, mapped[i].End) != replaced[i])
+            {
+                ClearPrediction();
+                return;
+            }
+        }
+        if (predictionGhost && mapped[0].Start != document.Caret)
+        {
+            ClearPrediction();
+            return;
+        }
+        prediction = new UICodePrediction(mapped, after);
+        Show(mapped, predictionGhost);
+    }
+
     /// <summary>Lets go of what's showing, OnPredictionEnded(false) if anything was.</summary>
     public void ClearPrediction() => EndPrediction(taken: false);
 

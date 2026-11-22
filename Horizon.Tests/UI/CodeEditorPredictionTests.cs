@@ -60,6 +60,20 @@ public class CodeEditorPredictionTests
     }
 
     [Fact]
+    public void Shared_text_moves_the_caret_and_ghost_together()
+    {
+        using var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));
+        var editor = Made(compositor, "prefix\nint x = \nsuffix", new UITextPosition(1, 8));
+        editor.SetPrediction(Ghost(new UITextPosition(1, 8), "42;"));
+        editor.ApplySharedText("remote\nprefix\nint x = \nchanged", (_, _, _) => null,
+            position => position with { Line = position.Line + 1 });
+        Assert.True(editor.PredictionIsGhost);
+        Assert.Equal(new UITextPosition(2, 8), editor.Document.Caret);
+        Assert.True(editor.AcceptPrediction());
+        Assert.Equal("remote\nprefix\nint x = 42;\nchanged", editor.Text);
+    }
+
+    [Fact]
     public void Typing_what_the_ghost_text_says_shortens_it_and_says_so()
     {
         using var compositor = new UICompositor(new Camera2D(new Vector2(800, 600)));

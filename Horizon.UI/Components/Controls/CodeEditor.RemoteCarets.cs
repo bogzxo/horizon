@@ -10,8 +10,30 @@ public readonly record struct UICodeRemoteCaret(string Id, string Label, int Lin
 
 public partial class CodeEditor
 {
+    private IReadOnlyList<UICodeRemoteCaret> remoteCarets = [];
+    private readonly Dictionary<string, long> remoteCaretMoved = new(StringComparer.Ordinal);
+
     /// <summary>The participants visible in this document. Replace this snapshot to update or remove them.</summary>
-    public IReadOnlyList<UICodeRemoteCaret> RemoteCarets { get; set; } = [];
+    public IReadOnlyList<UICodeRemoteCaret> RemoteCarets
+    {
+        get => remoteCarets;
+        set
+        {
+            long now = Environment.TickCount64;
+            if (value.Count == 0)
+                remoteCaretMoved.Clear();
+            else
+            {
+                foreach (UICodeRemoteCaret previous in remoteCarets)
+                    if (!value.Any(next => next.Id == previous.Id))
+                        remoteCaretMoved.Remove(previous.Id);
+                foreach (UICodeRemoteCaret next in value)
+                    if (!remoteCarets.Contains(next))
+                        remoteCaretMoved[next.Id] = now;
+            }
+            remoteCarets = value;
+        }
+    }
 
     /// <summary>The text position under the mouse, or null when the pointer is outside this editor's text surface.</summary>
     public UITextPosition? PointerTextPosition
@@ -45,6 +67,10 @@ public partial class CodeEditor
 
     private void PaintRemoteCarets(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last)
     {
+        if (RemoteCarets.Count == 0)
+            return;
+        long now = Environment.TickCount64;
+        Vector2? pointer = IsHovered && Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : null;
         for (int i = 0; i < RemoteCarets.Count; i++)
         {
             UICodeRemoteCaret remote = RemoteCarets[i];
@@ -53,22 +79,33 @@ public partial class CodeEditor
             {
                 list.Rect(new UIRect(caret - new Vector2(0, lineHeight), caret + new Vector2(2, 0)), remote.Colour);
                 string label = string.IsNullOrEmpty(remote.Label) ? remote.Id : remote.Label;
-                if (!string.IsNullOrEmpty(label))
+                var mark = new UIRect(caret - new Vector2(5, lineHeight), caret + new Vector2(7, 0));
+                float alpha = pointer is { } hover && mark.Contains(hover) ? 1 :
+                    1 - Math.Clamp((now - remoteCaretMoved.GetValueOrDefault(remote.Id) - 1750) / 500f, 0, 1);
+                if (label.Length != 0 && alpha > 0)
                 {
                     float small = scale * 0.65f;
                     float width = Width(skin, small, label) + 4;
                     float x = Math.Clamp(caret.X, area.Min.X, Math.Max(area.Min.X, area.Max.X - width));
-                    float top = Math.Min(area.Max.Y, caret.Y + lineHeight * 0.65f);
-                    list.Rect(new UIRect(new(x, top - lineHeight * 0.65f), new(x + width, top)), remote.Colour);
-                    list.Text(label, new Vector2(x + 2, top), small, new Vector4(0, 0, 0, 1), markup: false);
+                    float bottom = Math.Min(area.Max.Y, caret.Y + lineHeight * 0.65f);
+                    float top = bottom - lineHeight * 0.65f;
+                    if (remote.Line == document.Caret.Line && top < caret.Y)
+                    {
+                        bottom = caret.Y - lineHeight;
+                        top = bottom - lineHeight * 0.65f;
+                    }
+                    var foreground = UIPalette.Contrast(skin.TextColor, remote.Colour) >= UIPalette.Contrast(skin.BarTextColor, remote.Colour)
+                        ? skin.TextColor : skin.BarTextColor;
+                    list.Rect(new UIRect(new(x, top), new(x + width, bottom)), remote.Colour with { W = alpha });
+                    list.Text(label, new Vector2(x + 2, bottom), small, foreground with { W = alpha }, markup: false);
                 }
             }
 
-            if (remote.PointerLine is { } line && remote.PointerColumn is { } column && RemotePoint(line, column) is { } pointer)
+            if (remote.PointerLine is { } line && remote.PointerColumn is { } column && RemotePoint(line, column) is { } remotePointer)
             {
                 list.BeginPart(HashCode.Combine(nameof(RemoteCarets), remote.Id, nameof(remote.PointerColumn)));
                 // A triangular pointer tip stays distinguishable when the caret and mouse share a column.
-                Vector2 tip = pointer - new Vector2(0, lineHeight * 0.5f);
+                Vector2 tip = remotePointer - new Vector2(0, lineHeight * 0.5f);
                 for (int strip = 0; strip < 8; strip++)
                 {
                     Vector2 bottom = tip - new Vector2(0, strip + 1);
