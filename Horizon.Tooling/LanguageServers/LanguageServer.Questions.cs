@@ -163,7 +163,9 @@ public sealed partial class LanguageServer
     private Task<JsonNode?>? Asked(string method, JsonNode? parameters)
     {
         if (method == "workspace/applyEdit")
-            return ApplyAsked(parameters);
+            return allowWorkspaceEdits
+                ? ApplyAsked(parameters)
+                : Task.FromResult<JsonNode?>(new JsonObject { ["applied"] = false, ["failureReason"] = "This language server session cannot edit workspace files." });
 
         if (method != "window/showMessageRequest" || parameters is not JsonObject asked)
             return null;

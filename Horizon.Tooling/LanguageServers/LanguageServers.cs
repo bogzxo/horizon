@@ -142,14 +142,34 @@ public static class LanguageServers
             if (running.TryGetValue(key, out LanguageServer? known))
                 return known is { Failure: null } ? known : null;
 
-            string[] arguments = [.. ArgumentsIn(entry.Arguments, rootDirectory, solution), .. additionalArguments ?? []];
-            LanguageServer? server = IsAvailable(entry.Command) ? LanguageServer.Start(entry.Name, entry.Command, arguments, entry.LanguageId, rootDirectory, SettingsIn(settingsOverride ?? entry.Settings, rootDirectory),
-                    SettingsIn(entry.InitializationOptions, rootDirectory), entry.LanguageIds, entry.PullDiagnostics) : null;
+            LanguageServer? server = StartRegistered(entry, rootDirectory, solution, additionalArguments, settingsOverride, allowWorkspaceEdits: true);
             running[key] = server;
             if (server is not null)
                 started = [.. running.Values.OfType<LanguageServer>()];
             return server;
         }
+    }
+
+    /// <summary>
+    /// Starts a private server with the registration's normal project configuration. Its caller owns disposal.
+    /// The instance is independent of shared servers and cannot apply workspace edits.
+    /// </summary>
+    public static LanguageServer? StartIsolated(Registration entry, string rootDirectory, string? selectedSolution = null,
+        IReadOnlyList<string>? additionalArguments = null, System.Text.Json.Nodes.JsonObject? settingsOverride = null)
+    {
+        Horizon.Core.Processes.ProcessEnvironment.WaitForLoginShell();
+        return StartRegistered(entry, rootDirectory, selectedSolution, additionalArguments, settingsOverride, allowWorkspaceEdits: false);
+    }
+
+    private static LanguageServer? StartRegistered(Registration entry, string rootDirectory, string? solution,
+        IReadOnlyList<string>? additionalArguments, System.Text.Json.Nodes.JsonObject? settingsOverride, bool allowWorkspaceEdits)
+    {
+        if (!IsAvailable(entry.Command))
+            return null;
+        string[] arguments = [.. ArgumentsIn(entry.Arguments, rootDirectory, solution), .. additionalArguments ?? []];
+        return LanguageServer.Start(entry.Name, entry.Command, arguments, entry.LanguageId, rootDirectory,
+            SettingsIn(settingsOverride ?? entry.Settings, rootDirectory), SettingsIn(entry.InitializationOptions, rootDirectory),
+            entry.LanguageIds, entry.PullDiagnostics, allowWorkspaceEdits);
     }
 
     /// <summary>

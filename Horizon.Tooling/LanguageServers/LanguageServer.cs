@@ -72,6 +72,7 @@ public sealed partial class LanguageServer : IDisposable
     public string ErrorOutput => errorOutput?.Text ?? string.Empty;
 
     private readonly LanguageServerOutput? errorOutput;
+    private readonly bool allowWorkspaceEdits;
 
     /// <summary>Whether its process is up and the connection open.</summary>
     public bool IsRunning => rpc is { IsClosed: false } && process is { HasExited: false };
@@ -95,7 +96,8 @@ public sealed partial class LanguageServer : IDisposable
     }
 
     /// <summary>Whether initialize has been answered, after which what was asked goes straight out.</summary>
-    public bool IsReady { get; private set; }
+    public bool IsReady => ready;
+    private volatile bool ready;
 
     /// <summary>Called on the server's reading thread when diagnostics arrive, for the editor's thread to be woken.</summary>
     public Action? Woken { get; set; }
@@ -118,13 +120,14 @@ public sealed partial class LanguageServer : IDisposable
     private readonly ConcurrentDictionary<TaskCompletionSource<JsonNode?>, byte> asking = new();
 
     private LanguageServer(string name, string languageId, string rootDirectory, Process? process, JsonRpcConnection rpc, JsonObject? settings = null, LanguageServerOutput? errorOutput = null,
-        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false)
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true)
     {
         Name = name;
         LanguageId = languageId;
         LanguageIds = languageIds;
         InitializationOptions = initializationOptions;
         PullDiagnosticsWanted = pullDiagnostics;
+        this.allowWorkspaceEdits = allowWorkspaceEdits;
         RootDirectory = rootDirectory;
         Settings = settings;
         this.errorOutput = errorOutput;
@@ -144,7 +147,7 @@ public sealed partial class LanguageServer : IDisposable
     /// <param name="initializationOptions">What it's told as it's initialized, null for nothing.</param>
     /// <param name="languageIds">The language id of a file by its extension where it isn't <paramref name="languageId"/>.</param>
     public static LanguageServer? Start(string name, string command, IReadOnlyList<string> arguments, string languageId, string rootDirectory, JsonObject? settings = null,
-        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false)
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true)
     {
         Process? process;
         try
@@ -174,13 +177,13 @@ public sealed partial class LanguageServer : IDisposable
         _ = errors.Read(process.StandardError);
 
         return new LanguageServer(name, languageId, rootDirectory, process, new JsonRpcConnection(process.StandardOutput.BaseStream, process.StandardInput.BaseStream, name), settings, errors,
-            initializationOptions, languageIds, pullDiagnostics);
+            initializationOptions, languageIds, pullDiagnostics, allowWorkspaceEdits);
     }
 
     /// <summary>A server over streams that are already open, for a test, or a server in the same process.</summary>
     public static LanguageServer Over(string name, string languageId, string rootDirectory, Stream input, Stream output, JsonObject? settings = null,
-        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false) =>
-        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings, null, initializationOptions, languageIds, pullDiagnostics);
+        JsonObject? initializationOptions = null, IReadOnlyDictionary<string, string>? languageIds = null, bool pullDiagnostics = false, bool allowWorkspaceEdits = true) =>
+        new(name, languageId, rootDirectory, null, new JsonRpcConnection(input, output), settings, null, initializationOptions, languageIds, pullDiagnostics, allowWorkspaceEdits);
 
     private async void Initialize()
     {
@@ -258,7 +261,7 @@ public sealed partial class LanguageServer : IDisposable
             {
                 ["workspaceFolders"] = false,
                 ["configuration"] = Settings is not null,
-                ["applyEdit"] = true,
+                ["applyEdit"] = allowWorkspaceEdits,
                 ["workspaceEdit"] = new JsonObject { ["documentChanges"] = true },
                 ["didChangeWatchedFiles"] = new JsonObject { ["dynamicRegistration"] = true },
                 ["semanticTokens"] = new JsonObject { ["refreshSupport"] = true },
@@ -316,7 +319,7 @@ public sealed partial class LanguageServer : IDisposable
                 if (waiting is null or { Count: 0 })
                 {
                     waiting = null;
-                    IsReady = true;
+                    ready = true;
                     break;
                 }
                 held = waiting;
@@ -326,6 +329,7 @@ public sealed partial class LanguageServer : IDisposable
             foreach (Action action in held)
                 Run(action);
         }
+        Woken?.Invoke();
     }
 
     // Helper method to do something now if the server is ready, or once it is, in the order things were asked
@@ -362,6 +366,7 @@ public sealed partial class LanguageServer : IDisposable
     private void Fail(string why)
     {
         Failure ??= why;
+        Woken?.Invoke();
         foreach (var answer in asking.Keys)
         {
             asking.TryRemove(answer, out _);
