@@ -364,6 +364,19 @@ public partial class CodeEditor
                 list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
         }
 
+        // A remote caret's line, a bar across the map in its device's colour, never thinner than three pixels
+        foreach (UICodeRemoteCaret remote in RemoteCarets)
+        {
+            if ((uint)remote.Line >= document.LineCount)
+                continue;
+            int at = RowOf(remote.Line, Math.Clamp(remote.Column, 0, document.LineAt(remote.Line).Length));
+            if (at < first || at > last)
+                continue;
+            float top = map.Max.Y - (at - scrolledRows) * row;
+            float height = MathF.Max(row, 3.0f * pixel);
+            list.Rect(new UIRect(new Vector2(map.Min.X, top - height), new Vector2(map.Max.X, top)), remote.Colour with { W = 0.85f });
+        }
+
         // What was found and what's wrong are ticked on the scroll bar's track (PaintTicks), they ran into its thumb here
     }
 

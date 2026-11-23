@@ -122,6 +122,7 @@ public partial class CodeEditor
             hash.Add(overloadStep);
             hash.Add(signatureHidden);
             hash.Add(LineNote);
+        hash.Add(prediction is not null);
             hash.Add(lineNoteFor);
             hash.Add(ExecutionLine);
             hash.Add(OnActionPressed is null ? -1 : ActionLine);

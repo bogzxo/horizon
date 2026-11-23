@@ -76,7 +76,8 @@ public class CodeEditorRemoteCaretsTests(ITestOutputHelper output)
         Assert.True(In(previous, peach with { W = 0.20f }).Length > 1);
         var bobMarks = In(previous, mint);
         var bobCaret = Assert.Single(bobMarks, item => item.AxisX.X == 2);
-        var bobTag = Assert.Single(bobMarks, item => item.AxisX.X > 2);
+        Assert.Single(bobMarks, item => item.AxisX.X == 3); // the gutter bar
+        var bobTag = Assert.Single(bobMarks, item => item.AxisX.X > 3);
         Assert.Equal(bobCaret.Origin.Y, bobTag.Origin.Y + bobTag.AxisY.Y, 3);
         var withMouse = In(previous, peach);
         editor.RemoteCarets = [alice with { PointerLine = null, PointerColumn = null }, bob];

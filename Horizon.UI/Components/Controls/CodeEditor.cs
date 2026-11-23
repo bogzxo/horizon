@@ -1795,6 +1795,9 @@ public partial class CodeEditor : UIComponent
             return;
         }
 
+        // Who is on the line, in the gutter; said with whatever else there is to say there, not instead of it
+        string remoteNames = RemoteGutterTooltip(pointer);
+
         UITextPosition at = PositionAt(pointer);
         string said = string.Empty;
 
@@ -1829,6 +1832,15 @@ public partial class CodeEditor : UIComponent
         {
             said = DiagnosticCard(at, said);
             hint = true;
+        }
+
+        if (remoteNames.Length > 0)
+        {
+            string combined = said.Length > 0 ? remoteNames + "\n\n" + said : remoteNames;
+            TooltipMarkdown = hint;
+            if (!string.Equals(Tooltip, combined, StringComparison.Ordinal))
+                Tooltip = combined;
+            return;
         }
 
         TooltipMarkdown = hint;
@@ -3114,7 +3126,8 @@ public partial class CodeEditor : UIComponent
         // The caret line's note, after its hint if it has one, fainter, and only while the caret is on its line. Well clear
         // of the code, a bracket lit at the end of the line and the note read as one thing
         float noteShown = Math.Clamp((lineNoteAge - LineNoteDelay) / LINE_NOTE_FADE, 0.0f, 1.0f);
-        if (noteShown > 0.0f && LineNote is { } note && note.Line == lineNoteFor && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
+        // Not while a prediction shows, its ghost text and the note would be drawn over each other
+        if (noteShown > 0.0f && prediction is null && LineNote is { } note && note.Line == lineNoteFor && note.Line == document.Caret.Line && note.Line >= firstLine && note.Line <= lastLine && note.Line < document.LineCount && !IsHidden(note.Line, out _))
         {
             int length = document.LineAt(note.Line).Length;
             float x = left + EndX(skin, scale, note.Line, length) + digit * (SwatchesOn(note.Line) * 2 + LINE_NOTE_GAP) + ArtWidthOn(note.Line) + LensWidthOn(note.Line, digit);

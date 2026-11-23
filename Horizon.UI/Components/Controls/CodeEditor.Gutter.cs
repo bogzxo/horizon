@@ -211,6 +211,7 @@ public partial class CodeEditor
             }
         }
 
+        PaintRemoteGutter(list, content, lineHeight, first, last, area);
         list.PopClip();
     }
 }
