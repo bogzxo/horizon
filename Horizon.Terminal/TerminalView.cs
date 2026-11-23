@@ -465,7 +465,7 @@ public partial class TerminalView : UIComponent, IDisposable
     protected override void OnKeyDown(in UIKeyPress press)
     {
         blink = 0.0f;
-        if (CompletionKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
+        if (CompletionKey(press) || GhostKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
             return;
 
         var modifiers = ModifiersOf(press);
@@ -970,6 +970,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         PaintCompletion(list, scale, top, palette);
+        PaintGhost(list, scale, top, palette);
 
         // The link under the pointer with control held, underlined in the cursor's colour
         if (underlined.Row >= offset && underlined.Row < offset + rows)

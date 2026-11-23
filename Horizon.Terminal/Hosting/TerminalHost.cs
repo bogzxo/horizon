@@ -754,20 +754,46 @@ public sealed partial class TerminalHost : IDisposable
 
         // Somebody typing is a shell at its prompt, all of it drawn, the marks that wait are where they belong now
         view.Screen.SettleMarks();
-        Broadcast(view, bytes);
 
         LineState state = StateOf(view);
+
+        // What is typed at a prompt for a password, or to a program that doesn't echo it, is nobody's but the program's: it
+        // isn't passed on to other tabs, kept in the history or told to a plugin, and nothing of it is remembered here
+        if (!view.Screen.AlternateScreen && view.RowAsksForSecret(view.RowBeforeCursor(), state.Typed.ToString()))
+        {
+            if (bytes is "\r" or "\n")
+            {
+                view.Screen.GuessPrompt();
+                state.Typed.Clear();
+                state.Cursor.Reset();
+            }
+            else if (bytes[0] >= ' ' && bytes[0] != '\u007f')
+            {
+                state.Typed.Clear();
+            }
+            return;
+        }
+
+        Broadcast(view, bytes);
         switch (bytes)
         {
             case "\r" or "\n":
                 // The line as the shell has it, the keys alone lost an arrow back into the middle or a Tab completing a
                 // word, and the history had the words out of order. They're kept for a shell whose prompt can't be found
-                string line = view.TypedLine() ?? state.Typed.ToString();
+                string keys = state.Typed.ToString();
+                // (a line the shell hasn't drawn yet, echo is late, is the keys too)
+                string line = view.TypedLine() is { Length: > 0 } drawn ? drawn : keys;
+                bool secret = view.AtSecretPrompt(keys);
                 view.Screen.GuessPrompt();
                 options.ProblemsCleared?.Invoke(view);
-                History.Add(line);
                 state.Typed.Clear();
                 state.Cursor.Reset();
+
+                // Keys that weren't echoed back are a password for a program, not a line that was run
+                if (secret)
+                    return;
+
+                History.Add(line);
                 Raise("on_line", new StringValue(line.Trim()));
                 return;
 
@@ -804,6 +830,10 @@ public sealed partial class TerminalHost : IDisposable
             return false;
 
         if (Panel.FocusedView is not { Screen.AlternateScreen: false, Process.IsRunning: true } view || !AtShellPrompt(view.Screen))
+            return false;
+
+        // At a prompt for a password the arrows are the program's, not a line of what was run
+        if (view.RowAsksForSecret(view.RowBeforeCursor()))
             return false;
 
         // The marks can say prompt while a program runs (they settle late, cmd has no mark for a command starting, and
