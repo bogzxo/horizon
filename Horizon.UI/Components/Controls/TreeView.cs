@@ -70,6 +70,9 @@ public sealed partial class UITreeItem
     /// </summary>
     public Vector4? Pip { get; set; }
 
+    /// <summary>Small coloured indicators at the trailing edge of a row.</summary>
+    public IReadOnlyList<Vector4>? StatusDots { get; set; }
+
     /// <summary>
     /// Whether the row is drawn as a button, a box with an edge round it that lights under the pointer, so a row that
     /// does something reads as one (Source Control's Commit under a repository's heading).
