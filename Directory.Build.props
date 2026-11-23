@@ -7,7 +7,7 @@
 
   <!-- Keep the engine and its companion assemblies on the same release version. -->
   <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
-    <Version>1.5.0</Version>
+    <Version>1.5.1</Version>
   </PropertyGroup>
 
   <!--
