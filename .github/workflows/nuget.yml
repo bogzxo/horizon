@@ -1,7 +1,9 @@
 name: NuGet
 
-# The engine's packages on nuget.org: bogzxo.Horizon.HIDL, bogzxo.Horizon.Engine, bogzxo.Horizon.Platform.Desktop and
-# bogzxo.Horizon.UI. A tag
+# The engine's packages on nuget.org: bogzxo.Horizon.HIDL, bogzxo.Horizon.Engine, the platforms
+# bogzxo.Horizon.Platform.Desktop, .Android and .iOS, bogzxo.Horizon.UI, bogzxo.Horizon.Terminal, bogzxo.Horizon.Tooling
+# and the tool bogzxo.Horizon.Shaders.Build, see scripts/pack.ps1. On a Mac, as the iOS platform builds nowhere else
+# a runner has. A tag
 # named for the version (v1.5.0) packs and publishes them. Run by hand it only packs, and the packages are the run's
 # artifact, unless publish is ticked.
 #
@@ -25,7 +27,7 @@ permissions:
 
 jobs:
   pack:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     permissions:
       # Making the release
       contents: write
@@ -42,6 +44,10 @@ jobs:
         with:
           dotnet-version: 11.0.x
           dotnet-quality: preview
+
+      # The phone platforms' workloads
+      - name: Workloads
+        run: dotnet workload install android ios
 
       # A tag that says one version over packages that say another would publish the wrong thing under the right name
       - name: The tag is the version
@@ -75,7 +81,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         run: dotnet nuget push "artifacts/nuget/*.nupkg" --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json
 
-      # The version's release on GitHub, with the four packages on it and nothing else
+      # The version's release on GitHub, with the packages on it and nothing else
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:

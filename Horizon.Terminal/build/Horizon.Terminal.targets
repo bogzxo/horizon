@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    The terminal's own plugins, keys and shell integration scripts, at the paths TerminalHost looks for them at. A
+    project that references the terminal's project gets them copied from there; one that references the package gets
+    them from the package's terminal folder, here, into its output and what it publishes.
+  -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\terminal\**\*.*"
+          Link="%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Visible="false"
+          Pack="false" />
+  </ItemGroup>
+</Project>
