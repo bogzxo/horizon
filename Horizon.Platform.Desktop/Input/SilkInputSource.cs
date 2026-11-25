@@ -20,6 +20,8 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
     public SilkInputSource(IInputContext context, Func<Vector2, Vector2> toPixels)
     {
         this.toPixels = toPixels;
+        if (DesktopWindow.UsesSdl)
+            MacScrollWatch.Install();
         keyboards = [.. context.Keyboards];
         mice = [.. context.Mice];
         foreach (var keyboard in keyboards)
@@ -36,6 +38,9 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
             mouse.Scroll += OnScroll;
         }
     }
+
+    /// <summary>Says an event of the platform's own (a gesture) as if it came from a device.</summary>
+    internal void Raise(InputEvent input) => EventReceived?.Invoke(input);
 
     private void OnKeyDown(IKeyboard device, Silk.NET.Input.Key key, int code)
     {
@@ -57,10 +62,32 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
     private void OnMove(IMouse device, Vector2 position) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerMove, toPixels(position)));
     private void OnMouseDown(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerDown, toPixels(device.Position), button: (MouseButton)button));
     private void OnMouseUp(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerUp, toPixels(device.Position), button: (MouseButton)button));
-    private void OnScroll(IMouse device, ScrollWheel wheel) => EventReceived?.Invoke(new InputEvent
+    private void OnScroll(IMouse device, ScrollWheel wheel)
     {
-        Kind = InputEventKind.Scroll, ScrollY = wheel.Y, Position = toPixels(device.Position), Timestamp = Stopwatch.GetTimestamp()
-    });
+        // GLFW (Windows) stays as it was, notches. Under SDL Silk only says the whole notches SDL has added up, so the turn
+        // is the one the event watch saw (MacScrollWatch): a Mac's says whether a trackpad or Magic Mouse made it, and its
+        // points; elsewhere SDL's fractional deltas are a trackpad's or momentum's
+        ScrollTurn turn = Turn(wheel);
+        if (turn.X == 0.0f && turn.Y == 0.0f)
+            return;
+
+        EventReceived?.Invoke(new InputEvent
+        {
+            Kind = InputEventKind.Scroll, ScrollY = turn.Y, ScrollX = turn.X,
+            ScrollPrecise = turn.Precise, Position = toPixels(device.Position), Timestamp = Stopwatch.GetTimestamp()
+        });
+    }
+
+    private static ScrollTurn Turn(ScrollWheel wheel)
+    {
+        if (!DesktopWindow.UsesSdl)
+            return new ScrollTurn(wheel.X, wheel.Y, false);
+
+        if (MacScrollWatch.Active && MacScrollWatch.TryTake(wheel.X, wheel.Y, out ScrollTurn turn))
+            return OperatingSystem.IsMacOS() ? turn : turn with { Precise = PreciseScroll.LooksPrecise(turn.X, turn.Y) };
+
+        return new ScrollTurn(wheel.X, wheel.Y, PreciseScroll.LooksPrecise(wheel.X, wheel.Y));
+    }
 
     public void Dispose()
     {

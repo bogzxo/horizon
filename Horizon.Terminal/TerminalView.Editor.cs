@@ -141,7 +141,7 @@ public partial class TerminalView
         if (IsFocused)
             inline.Focus();
 
-        if (!inline.IsFocused || GameEngine.Instance?.Input?.Keyboard is not { Control: true } keyboard)
+        if (!inline.IsFocused || GameEngine.Instance?.Input?.Keyboard is not { Primary: true } keyboard)
             return;
 
         if (keyboard.WasPressed(Key.S))

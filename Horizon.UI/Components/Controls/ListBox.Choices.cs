@@ -131,6 +131,15 @@ public partial class ListBox
             left += side + ICON_GAP;
         }
 
+        // A row's star at the right edge, lit when it's starred and quiet when it isn't
+        if (choice.Starred is { } starred)
+        {
+            float side = IconSide(skin, scale);
+            var square = new UIRect(new Vector2(area.Max.X - side, area.Center.Y - side * 0.5f), new Vector2(area.Max.X, area.Center.Y + side * 0.5f));
+            list.Symbol(starred ? "star-full" : "star-empty", square, starred ? skin.AccentColor with { W = ink.W } : ink with { W = ink.W * (chosen ? 0.55f : 0.3f) });
+            area = new UIRect(area.Min, new Vector2(area.Max.X - side * 1.5f, area.Max.Y));
+        }
+
         float right = PaintKeys(list, choice.Keys, area, scale, ink, chosen);
         list.PushClip(new UIRect(new Vector2(left, area.Min.Y), new Vector2(MathF.Max(left, right), area.Max.Y)));
         List<(int Part, int Start, int Length)> lit = Matched(item);

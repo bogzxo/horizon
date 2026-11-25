@@ -103,7 +103,36 @@ public partial class WindowManager
     public void NoteChange()
     {
         Volatile.Write(ref lastChangeTick, Tick);
-        RequestFrames();
+
+        // Calm, a change is shown in a frame or two, not the stretch of frames input wants for its blend: presented as often
+        // as the screen changes, a display that can (a Mac's ProMotion) goes down to that rate, and so does the GPU
+        RequestFrames(CalmNow() > 0.0 ? CALM_FRAMES : FRAMES_AFTER);
+    }
+
+    // How long frames are drawn after a change while calm, two at 120 Hz
+    private const double CALM_FRAMES = 1.0 / 60.0;
+
+    // Until when something moving asked for the full rate, see RequestSmooth
+    private long smoothUntil;
+
+    /// <summary>
+    /// Asks for the full rate of ticks and frames for a while, for something moving on its own that a person follows with
+    /// their eye: a glide after a flick, a spring going back. Without it, those were drawn at the calm rate once the input
+    /// that started them was a quarter of a second old (see CalmNow), smooth under the fingers and choppy after. Text coming
+    /// in, a spinner, a clock don't ask, they're fine at the calm rate. From any thread, every tick it goes on moving.
+    /// </summary>
+    public void RequestSmooth(double seconds = FRAMES_AFTER)
+    {
+        long until = Stopwatch.GetTimestamp() + (long)(seconds * Stopwatch.Frequency);
+        long had;
+        do
+        {
+            had = Volatile.Read(ref smoothUntil);
+            if (had >= until)
+                break;
+        } while (Interlocked.CompareExchange(ref smoothUntil, until, had) != had);
+
+        RequestFrames(seconds);
     }
 
     /// <summary>
@@ -141,6 +170,27 @@ public partial class WindowManager
     /// <summary>Whether nothing is happening, no input lately, no UI changed for a couple of ticks, nothing waiting to be done.</summary>
     private bool IdleNow() =>
         !InputLately && Tick - Volatile.Read(ref lastChangeTick) > IDLE_TICKS && !exclusiveRequested && !EntityLifecycle.HasWork;
+
+    // How far apart ticks are while the screen changes with nobody touching it: a film's 24 a second in front (the lowest a
+    // Mac's ProMotion goes for motion, and the frames between two ticks blend what moves), 10 behind other windows. The
+    // frames are only as many as the changes (NoteChange), so a display that varies its rate goes down with them
+    private const double CALM_PERIOD = 1.0 / 24.0, CALM_PERIOD_BEHIND = 1.0 / 10.0;
+
+    /// <summary>
+    /// How long the next tick may wait while something changes on screen that nobody is touching, an agent's chat streaming
+    /// in, 0 for the full rate. Every one of a hundred and twenty ticks a second painted all of the UI again for text that
+    /// came a few times a second, which was a Mac run hot through a long agent session. It follows how often the screen
+    /// really changes (NoteChange), down to 24 a second in front and 10 behind other windows. Input, an animation asking
+    /// for ticks (Wake) and work waiting have the full rate at once.
+    /// </summary>
+    private double CalmNow()
+    {
+        if (InputLately || exclusiveRequested || EntityLifecycle.HasWork || windowMinimised
+            || Stopwatch.GetTimestamp() < Volatile.Read(ref smoothUntil))
+            return 0.0;
+
+        return windowFocused ? CALM_PERIOD : CALM_PERIOD_BEHIND;
+    }
 
     /// <summary>
     /// Helper method to take in what the window was like as it came up. Creation can finish without a focus transition
@@ -239,5 +289,33 @@ public partial class WindowManager
             if (!frameWanted.WaitOne(hidden && dormant ? Timeout.Infinite : HEARTBEAT_MS) && !hidden)
                 return;
         }
+    }
+
+    // When the last frame was let through while calm, see PaceCalmFrames
+    private long calmFrameAt;
+
+    /// <summary>
+    /// While calm (see CalmNow), frames no closer together than half a calm tick: the frames between two ticks still blend
+    /// what moves, at twice the ticks' rate rather than the screen's. A spinner on screen asked for frames for ever, and
+    /// with them every frame of the screen's 120 a second put the whole UI together and up again. Input, or anybody waking
+    /// the frames, has them at once. The thread that draws, after WaitForDemand.
+    /// </summary>
+    private void PaceCalmFrames()
+    {
+        if ((Behaviour & ApplicationBehaviour.DrawOnChange) == 0)
+            return;
+
+        double calm = CalmNow();
+        long now = Stopwatch.GetTimestamp();
+        if (calm > 0.0)
+        {
+            // In short sleeps, so input coming has its frame at once. Frames asked for don't end it, a spinner asks every paint
+            long until = calmFrameAt + (long)(calm * 0.5 * Stopwatch.Frequency);
+            while (!renderStopping && !InputLately && Stopwatch.GetTimestamp() < until)
+                Thread.Sleep(Math.Clamp((int)((until - Stopwatch.GetTimestamp()) * 1000 / Stopwatch.Frequency), 1, 4));
+            now = Stopwatch.GetTimestamp();
+        }
+
+        calmFrameAt = now;
     }
 }

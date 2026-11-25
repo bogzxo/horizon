@@ -602,13 +602,13 @@ public partial class TerminalView : UIComponent, IDisposable
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
         // A link under control, the program's mouse, or a selection
-        if (keyboard.Control && LinkAt(x, y) is { } link)
+        if (keyboard.Primary && LinkAt(x, y) is { } link)
         {
             OnLink?.Invoke(link);
             return;
         }
 
-        if (keyboard.Control && TextLinkAt(x, y + RowOffset()) is { } found)
+        if (keyboard.Primary && TextLinkAt(x, y + RowOffset()) is { } found)
         {
             OnTextLink?.Invoke(found);
             return;
@@ -728,7 +728,7 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>The link under the pointer worked out again when the pointer moved to another cell with control held.</summary>
     private void FollowLink()
     {
-        bool control = GameEngine.Instance?.Input.Keyboard.Control == true;
+        bool control = GameEngine.Instance?.Input.Keyboard.Primary == true;
         if (!control || Module is not { } module)
         {
             if (underlined.Row >= 0)

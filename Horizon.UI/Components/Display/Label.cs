@@ -303,6 +303,42 @@ public class Label : UIComponent
         right = to - shapedBounds.Min.X;
     }
 
+    /// <summary>
+    /// What it paints, as a number, so that a label that hasn't changed is taken as it was painted the tick before and not
+    /// laid out letter by letter again (see UIComponent.PaintVersion). Where it is, the skin, the font and the clip are the
+    /// list's to say. With agents' chats streaming every label of every chat was painted again every tick, a quarter of a
+    /// core on a Mac. Only a Label itself: one that's something more paints what this doesn't know about.
+    /// </summary>
+    protected override long PaintVersion
+    {
+        get
+        {
+            if (GetType() != typeof(Label))
+                return -1;
+
+            var hash = new HashCode();
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Text)));
+            hash.Add(TextScale);
+            hash.Add(Color);
+            hash.Add(Dim);
+            hash.Add(Align);
+            hash.Add(Bold);
+            hash.Add(drawnRich);
+            hash.Add(paintedAlign);
+            hash.Add(wrapped);
+            if (drawnRich)
+                hash.Add(rich.Builds);
+            else if (wrapped)
+            {
+                hash.Add(wrappedWidth);
+                hash.Add(wrappedScale);
+                hash.Add(lines.Count);
+            }
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     /// <summary>The text's area, overridable by labels that reserve space for disclosure or selection marks.</summary>
     protected virtual UIRect TextBounds => Bounds;
 

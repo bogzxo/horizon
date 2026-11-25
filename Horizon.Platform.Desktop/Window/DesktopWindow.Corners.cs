@@ -27,6 +27,10 @@ public sealed partial class DesktopWindow
             // Windows owns the region after success; only free a region it did not accept.
             if (region != 0 && CornerSetWindowRgn(win32.Hwnd, region, true) == 0) CornerDeleteObject(region);
         }
+        else if (OperatingSystem.IsMacOS() && NativeChrome)
+        {
+            // A titled window is rounded and shaded by the system, a mask of our own over it would clip its shadow and corners twice
+        }
         else if (OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa && cocoa != 0)
         {
             nint view = (nint)MsgSend(cocoa, RegisterSelector("contentView"));

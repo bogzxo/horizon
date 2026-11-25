@@ -149,6 +149,29 @@ public partial class UICompositor : GameComponent, IDisposable
         } while (Interlocked.CompareExchange(ref pendingScroll, before + notches, before) != before);
     }
 
+    // What ScrollPrecisely was given and hasn't been handed out yet, in notches, and the tick the horizontal part of the
+    // window's wheel was last used on (the vertical part has UIKeyboard.UseScroll)
+    private float pendingPreciseX, pendingPreciseY;
+    private static long scrollXUsedOn = -1;
+
+    // The tick a pinch or smart zoom of the window was last used on, so one that went to a UI is not given to the next
+    private static long gestureUsedOn = -1;
+
+    /// <summary>
+    /// Scrolls whatever is under the pointer as if a trackpad had been dragged: fractional notches (a notch is
+    /// <see cref="PreciseScroll.NotchPoints"/> layout units) that scrolling components follow to the pixel with no stepping or
+    /// easing. Safe from any thread, it happens on the next update.
+    /// </summary>
+    /// <param name="notches">X positive to the right, Y positive up.</param>
+    public void ScrollPrecisely(Vector2 notches)
+    {
+        lock (skinLock)
+        {
+            pendingPreciseX += notches.X;
+            pendingPreciseY += notches.Y;
+        }
+    }
+
     // A skin asked for with SetSkin, waiting for the render thread to load it.
     private (string Directory, string File, string? Theme)? requestedSkin;
     private readonly Lock skinLock = new();

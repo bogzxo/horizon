@@ -24,7 +24,7 @@ public partial class CodeEditor
 {
     // How big a lens over a line is written against the code, and the paint parts its rows go in (counted down from here
     // by line, under every other part the editor has)
-    private const float LENS_ABOVE_TEXT = 0.8f;
+    private const float LENS_ABOVE_TEXT = 1.0f;
     private const int PART_LENS_ABOVE = -11;
 
     /// <summary>The lenses over the lines, in no particular order. Empty for none, and no line gets a row over it.</summary>
@@ -249,11 +249,27 @@ public partial class CodeEditor
         }
     }
 
-    /// <summary>How much room the caret's line has over it for its lens, so a line scrolled to from below shows its lens too.</summary>
+    /// <summary>How much room the caret's line has over it for its lens and the gap kept over it (CodeEditor.SetBlockSpace), so a line scrolled to from below shows them too.</summary>
     private float LensRoomAbove(int line, int column, float lineHeight)
     {
         int row = RowOf(line, column);
-        return row > 0 && row < rows.Count && rows[row].Start == 0 && rows[row - 1].Lens && rows[row - 1].Line == line ? lineHeight : 0.0f;
+        if (row <= 0 || row >= rows.Count || rows[row].Start != 0)
+            return 0.0f;
+
+        int up = row - 1, room = 0;
+        if (rows[up].Lens && rows[up].Line == line)
+        {
+            room++;
+            up--;
+        }
+
+        while (up >= 0 && rows[up].Block && rows[up].Line == line)
+        {
+            room++;
+            up--;
+        }
+
+        return room * lineHeight;
     }
 
     /// <summary>Whether a point is on a lens row, where the tooltip and the hover say nothing.</summary>

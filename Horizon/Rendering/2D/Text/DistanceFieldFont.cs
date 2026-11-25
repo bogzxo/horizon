@@ -36,7 +36,8 @@ public sealed class DistanceFieldFont
     /// <summary>How far the field reaches either side of an edge, in texels of the field.</summary>
     public const int SPREAD = 6;
 
-    private const int CACHE_VERSION = 2;
+    // 3: the technical block (a Mac's command, option and control keys) joined the default characters
+    private const int CACHE_VERSION = 3;
     private const uint CACHE_MAGIC = 0x544E4648; // HFNT
 
     // The characters a TrueType font is built with unless it is told which. The printable ASCII and Latin-1, Latin's
@@ -46,7 +47,7 @@ public sealed class DistanceFieldFont
     private static readonly (int From, int To)[] DefaultRanges =
     [
         (32, 126), (160, 383), (0x370, 0x3FF), (0x400, 0x45F), (0x2010, 0x2027), (0x2030, 0x203A), (0x2070, 0x209C),
-        (0x20AC, 0x20AC), (0x2100, 0x2122), (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2500, 0x25FF)
+        (0x20AC, 0x20AC), (0x2100, 0x2122), (0x2190, 0x21FF), (0x2200, 0x22FF), (0x2300, 0x23FF), (0x2500, 0x25FF)
     ];
 
     // Kerning is looked for between letters only, every pair of the symbols too was millions of lookups for nothing

@@ -15,6 +15,8 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     private DesktopWindow? window;
     private DesktopInput? input;
     private SilkSurface? surface;
+    private IPlatformMenuBar? macMenuBar;
+    private IPlatformAppearance? macAppearance;
     private readonly List<SilkGamepadSource> gamepads = [];
     private volatile bool disposed, closed;
 
@@ -30,7 +32,8 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
             (request.Window.CustomFrame ? PlatformFeatures.WindowFrame | PlatformFeatures.CornerRadius : 0) |
             (request.Window.CustomFrame && DesktopWindow.UsesSdlDragArea ? PlatformFeatures.DragArea : 0) |
             (request.Window.CustomFrame && OperatingSystem.IsWindows() ? PlatformFeatures.HotKeys : 0) |
-            PlatformFeatures.DropDown;
+            PlatformFeatures.DropDown |
+            (OperatingSystem.IsMacOS() ? PlatformFeatures.NativeMenuBar : 0);
 
         SurfaceAhead = Win32SurfaceAhead.ForThisMachine(DesktopWindow.UsesSdl);
     }
@@ -41,6 +44,15 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     public DesktopWindow Window => window ?? throw new InvalidOperationException("The desktop host has no window until the engine attached it.");
 
     IPlatformWindow? IPlatformHost.Window => window;
+
+    /// <summary>A Mac's menu bar, null on every other desktop. There from <see cref="Initialize"/> on.</summary>
+    public IPlatformMenuBar? MenuBar => macMenuBar;
+
+    /// <summary>A Mac's light or dark appearance and accent, null on every other desktop. There from <see cref="Initialize"/> on.</summary>
+    public IPlatformAppearance? Appearance => macAppearance;
+
+    /// <summary>Whether the close being decided is the application quitting (a Mac's Cmd+Q), see <see cref="IPlatformHost.CloseIsQuit"/>.</summary>
+    public bool CloseIsQuit { get; internal set; }
 
     public IPlatformSurfaceAhead? SurfaceAhead { get; }
 
@@ -70,8 +82,18 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
         dispatcher.BindToCurrentThread();
         window.Initialize();
 
+        // A Mac's menu bar is AppKit's, which is the main thread's, and so is the platform's
+        if (OperatingSystem.IsMacOS())
+        {
+            MacMain.Poster = Post;
+            macMenuBar = new MacMenuBar();
+            macAppearance = MacAppearance.Create();
+            if (DesktopWindow.UsesSdl)
+                MacQuitWatch.Install();
+        }
+
         var context = window.NativeInput ?? throw new InvalidOperationException("The desktop window loaded without an input context.");
-        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle);
+        input = new DesktopInput(this, context, window.PointerToPixels, window.Win32Handle, window.CocoaHandle);
 
         // On a Mac making the surface is SDL putting a Metal view into the window, which only the main thread may do,
         // see SilkSurface

@@ -452,8 +452,33 @@ public class TabStrip : UIComponent
             OnSelected?.Invoke(tab);
     }
 
+    // What a trackpad scrolled the whole-tab strip that didn't add up to a tab yet
+    private float tabCarry;
+
+    // Sideways is the strip's own way, the same as the wheel
+    protected internal override bool OnScrollX(float delta) => OnScroll(delta);
+
     protected internal override bool OnScroll(float delta)
     {
+        if (PreciseWheel)
+        {
+            // By the pixel, or a tab for every notch's worth of it when only whole tabs are shown
+            if (HideClippedTabs)
+            {
+                tabCarry += delta;
+                if (MathF.Abs(tabCarry) < 1.0f)
+                    return true;
+                delta = MathF.Sign(tabCarry);
+                tabCarry = 0.0f;
+            }
+            else
+            {
+                scroll -= delta * UIWheel.NotchUnits;
+                ClampScroll();
+                return true;
+            }
+        }
+
         if (HideClippedTabs && Module?.Compositor.Skin is { } skin)
         {
             float start = 0;

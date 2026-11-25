@@ -91,6 +91,7 @@ public partial class CodeEditor
             hash.Add(agentHints.Count);
             hash.Add(lensesAbove);
             hash.Add(lensRowsChanged);
+            hash.Add(blocksChanged);
             hash.Add(VisiblePredictionRowsVersion);
             hash.Add(lensHeldLine);
             hash.Add(inlaysVersion);

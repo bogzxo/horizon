@@ -21,10 +21,10 @@ public partial class CodeEditor
     /// none of the line on it, it's the room over the line its lenses are written in (CodeEditor.LensesAbove). A predicted
     /// row has none of it either, it's a line of a prediction under the line, counted from 1 (CodeEditor.Prediction).
     /// </summary>
-    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false, int Predicted = 0)
+    private readonly record struct CodeRow(int Line, int Start, int End, float Indent, bool Lens = false, int Predicted = 0, bool Block = false)
     {
-        /// <summary>Whether none of the line's text is on it, a lens row or a predicted one.</summary>
-        public bool Virtual => Lens || Predicted > 0;
+        /// <summary>Whether none of the line's text is on it, a lens row, a predicted one or a row of a gap kept open (CodeEditor.SetBlockSpace).</summary>
+        public bool Virtual => Lens || Predicted > 0 || Block;
     }
 
     private readonly List<CodeRow> rows = [];
@@ -34,7 +34,7 @@ public partial class CodeEditor
 
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
-    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int? Predicted) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, null);
+    private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int? Predicted, int Blocks) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, null, -1);
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -285,7 +285,7 @@ public partial class CodeEditor
         }
 
         int? visiblePredictionRows = VisiblePredictionRowsVersion;
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows);
+        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows, blocksChanged);
         if (rowsFor == wanted && rows.Count > 0)
             return;
 
@@ -299,7 +299,8 @@ public partial class CodeEditor
         // top of the view keeps its place. Gone to a reference, the counts came a moment after and the line went to was
         // pushed off the bottom
         (int Line, int Row)? anchor = null;
-        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        bool blocksMoved = rowsFor.Blocks != blocksChanged;
+        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows || blocksMoved) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
         {
             int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
             while (top < rows.Count - 1 && rows[top].Virtual)
@@ -309,7 +310,8 @@ public partial class CodeEditor
             // The caret's line when it's in sight, the one somebody went to and is looking at, so the rows of the lines
             // between the top and it don't push it down either
             int caret = document.Caret.Line;
-            if (caret < lineRow.Length && lineRow[caret] >= top && lineRow[caret] < top + (int)(area.Height / lineHeight))
+            // (a gap opening hangs from the caret's line, so it's the top of the view that stays, the code under the gap moves)
+            if (!blocksMoved && caret < lineRow.Length && lineRow[caret] >= top && lineRow[caret] < top + (int)(area.Height / lineHeight))
                 line = caret;
 
             if (line < lineRow.Length)
@@ -340,8 +342,19 @@ public partial class CodeEditor
 
         int lens = 0, predicted = 0;
         lensRows = 0;
+        BlockRowCount = 0;
+        blockRows.Clear();
+        bool blocked = blockSpaces.Count > 0;
+
+        // Lines of a prediction put in over the first line
+        if (visiblePredictionRows.HasValue)
+            AddPredictedRowsBefore(ref predicted);
         for (int line = 0; line < count; line++)
         {
+            // The room of a gap kept over the line, above its lens row
+            if (blocked)
+                AddBlockRows(line, line, above: true, lineHeight);
+
             // A line with lenses has a row over it for them, the line itself starts on the row after
             if (lensesAbove.Count > 0 && LensAboveOn(line, ref lens))
             {
@@ -360,11 +373,17 @@ public partial class CodeEditor
                 int into = rows.Count - 1;
                 for (int hidden = line + 1; hidden <= end && hidden < count; hidden++)
                     lineRow[hidden] = into;
+                int shown = line;
                 line = Math.Min(end, count - 1);
+                if (blocked)
+                    AddBlockRows(shown, line, above: false, lineHeight);
             }
-            else if (visiblePredictionRows.HasValue)
+            else
             {
-                AddPredictedRows(line, ref predicted);
+                if (visiblePredictionRows.HasValue)
+                    AddPredictedRows(line, ref predicted);
+                if (blocked)
+                    AddBlockRows(line, line, above: false, lineHeight);
             }
         }
 
@@ -545,7 +564,7 @@ public partial class CodeEditor
 
         // Along the line's rows to the one the column is on, the end of one row being the start of the next, and never on
         // to the rows of a prediction under it
-        while (row + 1 < rows.Count && rows[row + 1].Line == line && rows[row + 1].Predicted == 0 && column >= rows[row + 1].Start)
+        while (row + 1 < rows.Count && rows[row + 1].Line == line && rows[row + 1].Predicted == 0 && !rows[row + 1].Block && column >= rows[row + 1].Start)
             row++;
         return row;
     }

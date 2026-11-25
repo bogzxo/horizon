@@ -54,7 +54,8 @@ public class UICommandsTests
         Assert.Null(UIKeys.Read("Ctrl+K Z"));
         Assert.Null(UIKeys.ReadChord("Ctrl+K Z X"));
         Assert.Null(UIKeys.ReadChord("Ctrl+K Nope"));
-        Assert.Equal("Ctrl+K Ctrl+S", UIShortcutText.Shown("Ctrl+K Ctrl+S").Replace("Cmd", "Ctrl"));
+        Assert.Equal("Ctrl+K Ctrl+S", UIShortcutText.Shown("Ctrl+K Ctrl+S", mac: false));
+        Assert.Equal("⌘K ⌘S", UIShortcutText.Shown("Ctrl+K Ctrl+S", mac: true));
     }
 
     [Fact]

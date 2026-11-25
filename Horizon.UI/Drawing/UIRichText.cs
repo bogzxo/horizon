@@ -240,6 +240,9 @@ public sealed partial class UIRichText
         tag is "b" or "/b" or "i" or "/i" or "u" or "/u" or "s" or "/s" or "code" or "/code" or "reset" or "/" or "/color" or "/size"
         || tag.StartsWith("color:") || tag.StartsWith("color=") || tag.StartsWith("size:") || tag.StartsWith("size=");
 
+    /// <summary>How many times the text has been laid out, another number whenever what it paints is another, see Label.PaintVersion.</summary>
+    public int Builds { get; private set; }
+
     /// <summary>
     /// Lays text out, unless it is what was laid out last time, the same string at the same size in the same room.
     /// </summary>
@@ -291,6 +294,7 @@ public sealed partial class UIRichText
         StartRoom();
 
         LayOut();
+        Builds++;
 
         Width = 0.0f;
         foreach (var line in lines)

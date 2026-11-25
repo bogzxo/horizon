@@ -20,12 +20,23 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     // Fingers on a Windows touch screen, which GLFW would only ever hand over as the mouse
     private readonly WindowsTouch? touch;
 
-    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0)
+    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0, nint cocoaWindow = 0)
     {
         this.host = host;
         this.context = context;
         this.toPixels = toPixels;
         source = new SilkInputSource(context, toPixels);
+        if (OperatingSystem.IsMacOS() && DesktopWindow.UsesSdl && cocoaWindow != 0)
+        {
+            MacGestures.Install(cocoaWindow, input => source.Raise(input));
+            // Heard as input, as the wheel is, which wakes an application gone quiet. The fingers coming off a stretch
+            // held still say nothing to SDL, and without it the spring back waited for the next slow tick and leapt
+            MacScrollWatch.Monitor(cocoaWindow, input =>
+            {
+                source.Raise(input);
+                host.Events.InputHeard();
+            });
+        }
         if (OperatingSystem.IsWindows() && windowHandle != 0) touch = new WindowsTouch(windowHandle, toPixels);
     }
 

@@ -251,8 +251,11 @@ public class VirtualStack : ScrollPanel
 
         contentHeight = tops.Length == 0 ? 0.0f : tops[^1];
         float max = MathF.Max(0.0f, contentHeight - sight);
+        float before = offset;
         offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
         ease.Clamp(max);
+        if (UIWheel.Tracing && (MathF.Abs(before - offset) > 0.5f || MathF.Abs(laidMax - max) > 0.5f))
+            UIWheel.Trace(FormattableString.Invariant($"virtual arrange offset {before:F1} -> {offset:F1} atEnd={atEnd} stick={StickToEnd} max {laidMax:F1} -> {max:F1} items={ItemCount} stretch={ease.Over.Stretch:F2}"));
         laidMax = max;
 
         // Rows in sight at their places, from the top less the offset

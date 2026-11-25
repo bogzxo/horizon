@@ -100,6 +100,15 @@ public partial class WindowManager
     /// </summary>
     public void SetDragArea(RectangleF bar, ReadOnlySpan<RectangleF> holes) => host.Window?.SetDragArea(bar, holes);
 
+    /// <summary>Whether the system draws the frame controls (a Mac's traffic lights) over the UI's title bar, see <see cref="Horizon.Platform.IPlatformWindow.NativeChrome"/>. From any thread.</summary>
+    public bool NativeChrome => host.Window?.NativeChrome ?? false;
+
+    /// <summary>What the system's frame controls cover of the window's top left corner, in the window's pixels. From any thread.</summary>
+    public Horizon.Platform.PlatformFrameInsets FrameInsets => host.Window?.FrameInsets ?? default;
+
+    /// <summary>Tells the window how tall the UI's title bar is, in the window's pixels, for the system's frame controls to be centred in it. From any thread.</summary>
+    public void SetTitleBarHeight(float pixels) => host.Window?.SetTitleBarHeight(pixels);
+
     /// <summary>Clips a custom window to rounded corners, in logical display units. Maximized windows stay square.</summary>
     public void SetCornerRadius(float radius) => host.Window?.SetCornerRadius(radius);
 }

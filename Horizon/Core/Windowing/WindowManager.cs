@@ -210,6 +210,12 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     public Func<bool>? CloseRequested { get; set; }
 
+    /// <summary>
+    /// True while <see cref="CloseRequested"/> is being asked because the application was told to quit (a Mac's Cmd+Q or the
+    /// Dock's Quit) and not because its window was closed. See <see cref="IPlatformHost.CloseIsQuit"/>.
+    /// </summary>
+    public bool CloseIsQuit => host.CloseIsQuit;
+
     private bool MayClose()
     {
         try
@@ -706,6 +712,7 @@ public partial class WindowManager : GameComponent, IDisposable
             {
                 renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
                 WaitForDemand();
+                PaceCalmFrames();
                 WaitForFrame();
                 WaitWithoutSurface();
                 renderStatistics.SetState(LoopStatistics.LoopState.Working);
@@ -792,6 +799,7 @@ public partial class WindowManager : GameComponent, IDisposable
         if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
         {
             simulation.IsIdle = IdleNow;
+            simulation.CalmPeriod = CalmNow;
             UpdateIdlePeriod();
         }
 

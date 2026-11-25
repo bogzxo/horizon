@@ -359,7 +359,8 @@ public class HidlHighlighterTests
         for (string? at = AppContext.BaseDirectory; at is not null; at = Path.GetDirectoryName(at))
         {
             string here = Path.Combine(at, folder);
-            if (Directory.Exists(here))
+            // The build output can have a folder of the same name (bin/Horizon.HIDL), the source is the one with the editors in it
+            if (Directory.Exists(Path.Combine(here, "editors")))
                 return here;
         }
 

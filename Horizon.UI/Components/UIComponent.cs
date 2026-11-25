@@ -752,7 +752,13 @@ public abstract partial class UIComponent
 
     internal void UpdateTree(float dt)
     {
-        tweens?.Tick(dt);
+        // Something on its way somewhere is drawn at the full rate, however long ago the input that started it was
+        if (tweens is { } playing)
+        {
+            playing.Tick(dt);
+            if (playing.MovedFinite)
+                Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
 
         // Still settling back down after the hover was taken off is a hover as well
         if (Hover != UIHover.None || hoverness > 0.0f)

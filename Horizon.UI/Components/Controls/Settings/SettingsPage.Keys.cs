@@ -18,7 +18,7 @@ public partial class SettingsPage
     private void UpdateKeys()
     {
         bool has = HasKeyboard();
-        if (GameEngine.Instance?.Input.Keyboard is { } keyboard && keyboard.Control && keyboard.WasPressed(Key.F) && (has || hadKeyboard))
+        if (GameEngine.Instance?.Input.Keyboard is { } keyboard && keyboard.Primary && keyboard.WasPressed(Key.F) && (has || hadKeyboard))
             findFor = 2;
 
         if (findFor > 0)
@@ -32,7 +32,7 @@ public partial class SettingsPage
     }
 
     // Whether control is held, Ctrl+PageDown comes as a page down like any other
-    private static bool ControlHeld => GameEngine.Instance?.Input.Keyboard is { Control: true };
+    private static bool ControlHeld => GameEngine.Instance?.Input.Keyboard is { Primary: true };
 
     // Down in the search goes to the first row it left, the way a list under a box is walked into, and a section at a
     // time from there with Alt or Ctrl

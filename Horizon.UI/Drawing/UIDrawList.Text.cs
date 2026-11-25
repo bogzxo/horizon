@@ -142,7 +142,7 @@ public sealed partial class UIDrawList
         bool subpixels = subpixelText && GlyphAtlas.Subpixel.Ready;
         GlyphAtlas glyphs = subpixels ? GlyphAtlas.Subpixel : GlyphAtlas.Shared;
         float pixels = this.scale.X;
-        if (outlines is not null && glyphs.Ready && !FieldTextOnly && visualScale == Vector2.One && this.scale.X == this.scale.Y && pixels > 0.0f)
+        if (outlines is not null && glyphs.Ready && !FieldTextOnly && !FieldText && visualScale == Vector2.One && this.scale.X == this.scale.Y && pixels > 0.0f)
             madeSize = GlyphAtlas.SizeOf(font.Field.EmSize * scale * pixels);
         GlyphStyle glyphStyle = (bold ? GlyphStyle.Bold : 0) | (slant != 0.0f ? GlyphStyle.Italic : 0)
             | (hintedText ? 0 : GlyphStyle.Unhinted) | (subpixels && subpixelBgr ? GlyphStyle.Bgr : 0);
@@ -264,6 +264,13 @@ public sealed partial class UIDrawList
         subpixelGlyphs.Clear();
     }
 
+    /// <summary>
+    /// Whether the text painted now is drawn out of its distance field rather than the glyph atlas: text whose size changes
+    /// tick by tick (a zoom on its way). Every size of it was letters the atlas had to make anew, more than it makes in a
+    /// paint, and the ones it hadn't got to came out of the field, dimmer: the code flickered darker and lighter as it zoomed.
+    /// </summary>
+    internal bool FieldText { get; set; }
+
     // HORIZON_TEXT=field draws every letter out of its distance field as before the glyph atlas, to compare the two
     private static readonly bool FieldTextOnly = string.Equals(Environment.GetEnvironmentVariable("HORIZON_TEXT"), "field", StringComparison.OrdinalIgnoreCase);
 
@@ -288,7 +295,12 @@ public sealed partial class UIDrawList
         float row = MathF.Round(((pen.Y - baseline) + visualOffset.Y) * scale.Y + origin.Y);
 
         if (!glyphs.TryGet(outlines, new GlyphKey(outlines.Id, character, size, (byte)phase, style), bold, slant, out GlyphSlot slot))
+        {
+            // Drawn out of its field this once, until the atlas has room: what's painted now isn't what the same text
+            // paints once it does, and isn't kept to be painted again as it was (PaintVersion)
+            Uncacheable();
             return false;
+        }
 
         // The picture's rows go down from its top and the screen's up, its corners back into the layout for Quad
         GlyphBox box = slot.Box;

@@ -39,6 +39,12 @@ public sealed partial class UIPalette
     /// <summary>Laid over a control while the pointer is on it.</summary>
     public Vector4 Hover { get; set; } = new(1.0f, 1.0f, 1.0f, 0.22f);
 
+    /// <summary>
+    /// The accent colour the system has (a Mac's), which a theme that says <c>accent_color: "system"</c> takes as its accent
+    /// when it's read. Set by the program before it reads a skin. Blue until it is, the system's own default.
+    /// </summary>
+    public static Vector4 SystemAccent { get; set; } = new(0.0f, 0.478f, 1.0f, 1.0f);
+
     /// <summary>The colour of the filled part of bars and sliders, and of toggles that are on, when the skin has no art for them.</summary>
     public Vector4 Accent { get; set; } = new(0.85f, 0.42f, 0.3f, 1.0f);
 

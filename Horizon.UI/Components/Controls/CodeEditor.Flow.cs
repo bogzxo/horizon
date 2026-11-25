@@ -48,10 +48,16 @@ public partial class CodeEditor
         flowTime = 0.0f;
         flowFar = lineHeight * FLOW_FAR_LINES;
 
-        // Edited since, everything is put where it is, and all of the time when nothing is to flow
-        flowSnap = document.Version != flowVersion || rate <= 0.0f;
+        // Edited since, everything is put where it is, and all of the time when nothing is to flow. Zoomed as well: every
+        // word moved with the size, each eased after it at its own pace, and the code came apart into pieces as it zoomed,
+        // the rows splitting and the words of a line not where the line was, wrapped or not
+        flowSnap = document.Version != flowVersion || rate <= 0.0f || lineHeight != flowLineHeight;
         flowVersion = document.Version;
+        flowLineHeight = lineHeight;
     }
+
+    // How tall a line was the last paint, a zoom changes it
+    private float flowLineHeight;
 
     // Once a paint, after it, the words that weren't drawn let go of now and then
     private void EndFlow()

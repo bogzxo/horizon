@@ -6,7 +6,13 @@ namespace Horizon.Input;
 public enum InputEventKind
 {
     KeyDown, KeyUp, Text, PointerDown, PointerMove, PointerUp, PointerCancel, Scroll,
-    GamepadConnected, GamepadDisconnected, GamepadState
+    GamepadConnected, GamepadDisconnected, GamepadState,
+    /// <summary>A pinch of a trackpad, <see cref="InputEvent.Magnification"/> is the change of size.</summary>
+    Magnify,
+    /// <summary>A two finger double tap of a trackpad (smart zoom).</summary>
+    SmartMagnify,
+    /// <summary>A multi finger swipe of a trackpad, <see cref="InputEvent.SwipeX"/> is 1 for left and -1 for right.</summary>
+    Swipe
 }
 public enum PointerKind { Mouse, Touch, Pen }
 
@@ -30,6 +36,22 @@ public readonly record struct InputEvent
     public Vector2 Position { get; init; }
     public MouseButton Button { get; init; }
     public float ScrollY { get; init; }
+    /// <summary>Horizontal wheel or trackpad delta, positive to the right (content follows the finger to the right, as ScrollY positive moves it up). Zero on a plain mouse.</summary>
+    public float ScrollX { get; init; }
+    /// <summary>
+    /// True when ScrollX/ScrollY come from a continuous device (trackpad, momentum) as fractional "lines", rather than
+    /// whole notches of a wheel. See <see cref="PreciseScroll"/> for the units.
+    /// </summary>
+    public bool ScrollPrecise { get; init; }
+    /// <summary>
+    /// Where a trackpad's gesture is, when the platform says (a Mac's <c>phase</c> and <c>momentumPhase</c>): the fingers on it,
+    /// just lifted, or the glide after. Such an event can have no delta at all, it only says the fingers went.
+    /// </summary>
+    public ScrollPhase ScrollPhase { get; init; }
+    /// <summary>For <see cref="InputEventKind.Magnify"/>: the change of size since the last event of the pinch, 0.02 for two per cent bigger.</summary>
+    public float Magnification { get; init; }
+    /// <summary>For <see cref="InputEventKind.Swipe"/>: 1 for a swipe to the left, -1 to the right.</summary>
+    public int SwipeX { get; init; }
     public GamepadDevice? Gamepad { get; init; }
     public GamepadSnapshot GamepadState { get; init; }
 

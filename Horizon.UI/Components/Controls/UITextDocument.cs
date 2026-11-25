@@ -662,6 +662,51 @@ public sealed partial class UITextDocument
     }
 
     /// <summary>
+    /// A Mac's control with K: the rest of the caret's line goes (its new line, when there is no more of it), and what went
+    /// is given back for the kill buffer. Empty when there was nothing to take.
+    /// </summary>
+    public string KillToLineEnd()
+    {
+        Record(EditKind.Other);
+        string line = lines[Caret.Line];
+        UITextPosition to = Caret.Column < line.Length ? Caret with { Column = line.Length } : Step(Caret, 1);
+        string killed = TextBetween(Caret, to);
+        if (killed.Length > 0)
+        {
+            DeleteRaw(Caret, to);
+            MoveTo(Caret);
+            Touched();
+        }
+
+        return killed;
+    }
+
+    /// <summary>A Mac's control with T: the two characters round the caret change places (at the end of a line, the two before it), and the caret goes after them.</summary>
+    public void Transpose()
+    {
+        string line = lines[Caret.Line];
+        int column = Caret.Column;
+        if (column == 0 || line.Length < 2)
+            return;
+
+        if (column == line.Length) column--;
+        Record(EditKind.Other);
+        lines[Caret.Line] = line[..(column - 1)] + line[column] + line[column - 1] + line[(column + 1)..];
+        MoveTo(Caret with { Column = column + 1 });
+        Touched();
+    }
+
+    /// <summary>A Mac's control with O: a new line after the caret, the caret staying where it is.</summary>
+    public void OpenLine()
+    {
+        Record(EditKind.Other);
+        UITextPosition at = Caret;
+        InsertRaw(at, "\n");
+        MoveTo(at);
+        Touched();
+    }
+
+    /// <summary>
     /// Tab. A selection over more than one line has every line of it indented a level, otherwise spaces to the next
     /// stop of the indentation go in where the caret is.
     /// </summary>
@@ -1536,6 +1581,14 @@ public sealed partial class UITextDocument
         extras.Add(new UITextSelection(Caret, Anchor));
         Caret = Anchor = at;
         preferredColumn = at.Column;
+    }
+
+    /// <summary>Replaces the carets other than the primary one with these selections.</summary>
+    public void SetExtraCarets(IEnumerable<UITextSelection> selections)
+    {
+        extras.Clear();
+        foreach (UITextSelection selection in selections)
+            extras.Add(new UITextSelection(Clamp(selection.Caret), Clamp(selection.Anchor)));
     }
 
     /// <summary>Control, alt and up or down, a caret on the line over the highest of them (or under the lowest), at the same column.</summary>

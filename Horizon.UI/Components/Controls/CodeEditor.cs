@@ -160,7 +160,7 @@ public partial class CodeEditor : UIComponent
     /// screen, so a row scrolled into sight or a selection a row longer had every one after it blended with another's for
     /// a frame, and the blank lines filled up with dots and guides on their way somewhere else.
     /// </summary>
-    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens, row.Predicted) & 0x3FFFFFFF;
+    private static int RowPart(int what, in CodeRow row) => HashCode.Combine(what, row.Line, row.Start, row.Lens, row.Predicted, row.Block) & 0x3FFFFFFF;
 
     private readonly UITextDocument document = new();
 
@@ -251,6 +251,7 @@ public partial class CodeEditor : UIComponent
     private float checkIn;
 
     private float scrollY, scrollX;
+    private float completionWheel;
 
     // Where the wheel wants the view to be, which it eases to (null while it is where it's wanted). The wheel used to move
     // it three lines in one tick, and the frames between two ticks blend the rows that were in sight both times, so the
@@ -319,13 +320,47 @@ public partial class CodeEditor : UIComponent
 
             KeepPlaceThroughZoom();
             textScale = value;
+            scaleSetAt = System.Diagnostics.Stopwatch.GetTimestamp();
+
+            // A tick when it has rested, however quiet the window is by then
+            GameEngine.Instance?.WindowManager?.RequestTickIn(ZOOM_RESTS_AFTER + 0.02);
         }
     }
 
     private float textScale;
 
-    // The line (and column, for a wrapped one) a zoom keeps in place and how far down the view it was, null for none
-    private (int Line, int Column, float Down, float OldScale)? zoomAnchor;
+    // When the scale was last changed, and how long after it a zoom counts as still going on, seconds
+    private long scaleSetAt;
+    private const double ZOOM_RESTS_AFTER = 0.2;
+
+    /// <summary>Whether the scale was changed a moment ago, a zoom still going on, see ScaleOf.</summary>
+    private bool Zooming
+    {
+        get
+        {
+            if (scaleSetAt == 0)
+                return false;
+
+            if (System.Diagnostics.Stopwatch.GetTimestamp() - scaleSetAt < ZOOM_RESTS_AFTER * System.Diagnostics.Stopwatch.Frequency)
+                return true;
+
+            // Rested: once more at whole pixels, kept in place as any zoom is
+            scaleSetAt = 0;
+            zoomAnchor = null;
+            KeepPlaceThroughZoom();
+            GameEngine.Instance?.WindowManager?.RequestFrames();
+            return false;
+        }
+    }
+
+
+
+    // The row a zoom keeps in the middle of the view (its line, and column for a wrapped one), how far into the row the middle
+    // was, a share of it, and the scale before. Null for none
+    private (int Line, int Column, float Into, float OldScale)? zoomAnchor;
+
+    // The scale the code was drawn at last, see PaintCode
+    private float scaleDrawn;
 
     /// <summary>Whether the lines are numbered down the left.</summary>
     public bool LineNumbers { get; set; } = true;
@@ -820,9 +855,42 @@ public partial class CodeEditor : UIComponent
     /// Null, the wheel scrolls whatever is held.
     /// </summary>
     public Action<float>? OnZoom { get; set; }
-    protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Control != true;
+
+    /// <summary>A pinch of a trackpad zooms by this factor (1.02 is two per cent bigger), where <see cref="OnZoom"/> is given steps of a wheel.</summary>
+    public Action<float>? OnPinch { get; set; }
+
+    /// <summary>A smart zoom (two finger double tap) over the editor, the zoom goes between the usual size and a bigger one.</summary>
+    public Action? OnSmartZoom { get; set; }
+
+    protected internal override bool OnMagnify(float amount)
+    {
+        if (OnPinch is not { } pinch)
+            return false;
+
+        pinch(Horizon.Input.PreciseScroll.PinchFactor(amount));
+        return true;
+    }
+
+    protected internal override bool OnSmartMagnify()
+    {
+        if (OnSmartZoom is not { } smart)
+            return false;
+
+        smart();
+        return true;
+    }
+    protected internal override bool UsesScrollSpeed => GameEngine.Instance?.Input.Keyboard.Primary != true;
 
     protected internal override bool HasOverscroll => over.Active;
+
+    protected internal override bool? ScrollEnd(float delta)
+    {
+        if (paintedSkin is not { } skin || AllInSight || completions.Count > 0)
+            return null;
+
+        float most = MaxScroll(skin, paintedScale);
+        return most <= 0.0f ? null : over.Active ? false : delta > 0.0f ? scrollY <= 0.5f : scrollY >= most - 0.5f;
+    }
 
     // A finger on the bar or the minimap drags that, anywhere else it scrolls the code
     protected internal override bool KeepsTouchDrag(Vector2 point) => (paintedSkin is { } skin && point.X >= TextArea(skin, paintedScale).Max.X) || base.KeepsTouchDrag(point);
@@ -924,6 +992,7 @@ public partial class CodeEditor : UIComponent
         document.LinesMoved += MoveDiagnostics;
         document.LinesMoved += MoveInlays;
         document.LinesMoved += MoveLensesAbove;
+        document.LinesMoved += MoveBlockSpaces;
     }
 
     public CodeEditor(string text)
@@ -1012,6 +1081,12 @@ public partial class CodeEditor : UIComponent
     private float ScaleOf(UISkin skin)
     {
         float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
+
+        // A zoom on its way goes as smoothly as it's asked to, and lands on whole pixels once it has stopped. Rounded every
+        // tick the code went up and down in steps while the zoom's own number went smoothly
+        if (Zooming)
+            return scale;
+
         UIFont font = FontOf(skin);
         float cell = font.Measure("M", 1.0f, markup: false).X;
         if (cell <= 0.0f || MathF.Abs(font.Measure("i", 1.0f, markup: false).X - cell) > 0.01f)
@@ -1638,6 +1713,9 @@ public partial class CodeEditor : UIComponent
             }
         }
 
+        if (revealBlockOwner is not null)
+            RevealBlock(skin, scale, area, lineHeight);
+
         float x = ColumnX(skin, scale, caret.Line, caret.Column);
         float width = area.Width - TEXT_PAD * 2.0f;
         if (wordWrap)
@@ -1651,7 +1729,7 @@ public partial class CodeEditor : UIComponent
     }
 
     /// <summary>How far down the code is scrolled in pixels, set it goes there at once, the way a drag of the bar does. For the checks.</summary>
-    internal float ScrollPixels
+    public float ScrollPixels
     {
         get => scrollY;
         set
@@ -1664,11 +1742,17 @@ public partial class CodeEditor : UIComponent
     /// <summary>Whether it's on its way somewhere the wheel or the caret sent it. For the checks.</summary>
     internal bool Easing => scrollGoal is not null || revealCaret;
 
-    private void ClampScroll(UISkin skin, float scale)
+    // How far down the code goes
+    private float MaxScroll(UISkin skin, float scale)
     {
         float lineHeight = FontOf(skin).LineHeight * scale;
         UIRect area = TextArea(skin, scale);
-        float most = MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * (FitRows > 0 ? 1.0f : 0.5f));
+        return MathF.Max(0.0f, Math.Max(1, rows.Count) * lineHeight - area.Height * (FitRows > 0 ? 1.0f : 0.5f));
+    }
+
+    private void ClampScroll(UISkin skin, float scale)
+    {
+        float most = MaxScroll(skin, scale);
 
         // Past the end because the code got shorter under it (lines taken out, a row of counts gone), eased back rather
         // than put there. Put there, the whole view jumped the next time the caret moved
@@ -2064,7 +2148,17 @@ public partial class CodeEditor : UIComponent
             case UIKeyboard.DELETE: document.Delete(); break;
             case UIKeyboard.WORD_BACKSPACE: document.DeleteWord(-1); break;
             case UIKeyboard.WORD_DELETE: document.DeleteWord(1); break;
-            case UIKeyboard.ENTER when OnControlEnter is not null && GameEngine.Instance.Input.Keyboard.Control && OnControlEnter(): break;
+            // A Mac's control keys (see UIKeyboard.CocoaMeaning), the caret's own line and nobody else's
+            case UIKeyboard.KILL_LINE:
+                if (document.KillToLineEnd() is { Length: > 0 } killed)
+                    UIKeyboard.KillBuffer = killed;
+                break;
+            case UIKeyboard.YANK:
+                if (UIKeyboard.KillBuffer.Length > 0) document.Insert(UIKeyboard.KillBuffer);
+                break;
+            case UIKeyboard.TRANSPOSE: document.Transpose(); break;
+            case UIKeyboard.OPEN_LINE: document.OpenLine(); break;
+            case UIKeyboard.ENTER when OnControlEnter is not null && GameEngine.Instance.Input.Keyboard.Primary && OnControlEnter(): break;
             // Alt+Enter is a command's key in every editor (Properties in Hex, a quick fix elsewhere), never a new line. It
             // put one in the file as it brought the Properties up
             case UIKeyboard.ENTER when GameEngine.Instance.Input.Keyboard.Alt: break;
@@ -2727,7 +2821,7 @@ public partial class CodeEditor : UIComponent
         // makes the column and it's control and alt that puts down a caret
         var keyboard = GameEngine.Instance.Input.Keyboard;
         bool visualStudio = UIKeyboard.VisualStudioKeys;
-        if (keyboard.Alt && (keyboard.Shift || visualStudio && !keyboard.Control))
+        if (keyboard.Alt && (keyboard.Shift || visualStudio && !keyboard.Primary))
         {
             columnFrom = at;
             document.SelectColumn(at, at);
@@ -2796,9 +2890,9 @@ public partial class CodeEditor : UIComponent
     protected internal override bool OnScroll(float delta)
     {
         middleScroll.Cancel();
-        if (OnZoom is { } zoom && GameEngine.Instance?.Input.Keyboard.Control == true)
+        if (OnZoom is { } zoom && GameEngine.Instance?.Input.Keyboard.Primary == true)
         {
-            zoom(delta);
+            zoom(Horizon.Input.PreciseScroll.ZoomSteps(delta, PreciseWheel));
             return true;
         }
 
@@ -2810,8 +2904,18 @@ public partial class CodeEditor : UIComponent
         if (CompletionOpen && Module is { } module && CompletionBounds().Contains(module.ToLocal(module.Compositor.Pointer.Position)))
         {
             int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_LINES));
+            int sign = Math.Sign(delta);
+            if (PreciseWheel)
+            {
+                // A row for every row's worth of finger, the rest waits for the next turn
+                completionWheel += delta * WHEEL_LINES;
+                rows = (int)MathF.Abs(completionWheel);
+                sign = Math.Sign(completionWheel);
+                completionWheel -= rows * sign;
+            }
+
             BeginScrollMotion(completionShown != completionTop);
-            completionTop = Math.Clamp(completionTop - rows * Math.Sign(delta), 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
+            completionTop = Math.Clamp(completionTop - rows * sign, 0, Math.Max(0, completions.Count - COMPLETION_ROWS));
             return true;
         }
 
@@ -2821,6 +2925,23 @@ public partial class CodeEditor : UIComponent
 
         // Where it's going, from where it was going if it hadn't got there yet, so a quick turn of the wheel adds up.
         // Whatever of it goes past the top or the bottom stretches the code out past it and springs back
+        // A trackpad's turn moves the code by exactly what it says, the pixel, with nothing easing after it. Only
+        // what's left past an end is thrown into the stretch, as it is for the wheel
+        if (PreciseWheel)
+        {
+            float most = MaxScroll(skin, paintedScale);
+            if (most <= 0.0f)
+                return false;
+
+            scrollGoal = null;
+            float extent = TextArea(skin, paintedScale).Height;
+            float move = -delta * UIWheel.NotchUnits;
+            over.Scroll(ref scrollY, move, most, extent, MotionSpeed);
+            if (UIWheel.Tracing)
+                UIWheel.Trace(FormattableString.Invariant($"editor move={move:F2} y={scrollY:F2} most={most:F1} stretch={over.Stretch:F2} velocity={over.Velocity:F1}"));
+            return true;
+        }
+
         BeginScrollMotion(scrollGoal is not null || over.Active);
         float wanted = (scrollGoal ?? scrollY) - delta * WHEEL_LINES * FontOf(skin).LineHeight * paintedScale;
         scrollGoal = wanted;
@@ -2829,13 +2950,42 @@ public partial class CodeEditor : UIComponent
         return true;
     }
 
+    // Sideways, a trackpad's or a horizontal wheel's, to the pixel. Not with the lines wrapped, there's nothing past the
+    // edge then, and not past the end of the longest of the rows in sight
+    protected internal override bool OnScrollX(float delta)
+    {
+        if (wordWrap || paintedSkin is not { } skin || rows.Count == 0)
+            return false;
+
+        float lineHeight = FontOf(skin).LineHeight * paintedScale;
+        UIRect area = TextArea(skin, paintedScale);
+        int first = Math.Clamp((int)(scrollY / MathF.Max(1.0f, lineHeight)), 0, rows.Count - 1);
+        int last = Math.Min(rows.Count - 1, first + (int)(area.Height / MathF.Max(1.0f, lineHeight)) + 1);
+        float widest = 0.0f;
+        for (int i = first; i <= last; i++)
+            widest = MathF.Max(widest, ColumnX(skin, paintedScale, rows[i].Line, rows[i].End));
+
+        float most = MathF.Max(0.0f, widest + TEXT_PAD * 2.0f - area.Width);
+        float by = UIWheel.Units(delta, WHEEL_LINES * lineHeight);
+        float target = Math.Clamp(scrollX - by, 0.0f, most);
+        if (target == scrollX)
+            return false;
+
+        scrollX = target;
+        return true;
+    }
+
     /* Painting */
 
     protected override void Paint(UIDrawList list)
     {
+        // Zooming, the letters come out of their field all alike until the zoom rests, see UIDrawList.FieldText
+        bool field = list.FieldText;
+        list.FieldText = field || Zooming;
         list.PushFont(FontOf(list.Skin));
         PaintCode(list);
         list.PopFont();
+        list.FieldText = field;
     }
 
     private void PaintCode(UIDrawList list)
@@ -2848,6 +2998,25 @@ public partial class CodeEditor : UIComponent
         paintedScale = scale;
         EnsureRows(skin, scale);
         ApplyZoomAnchor(skin, scale);
+
+        // A tick the zoom changed the scroll by keeping its place: the scroll jumped, it didn't move, and the frames between
+        // this tick and the last slid the new rows over from the old scroll, the code jumping about for a frame as it zoomed
+        bool zoomed = scale != scaleDrawn;
+        scaleDrawn = scale;
+        bool jumpedBefore = list.JumpsFrames;
+        list.JumpsFrames = jumpedBefore || zoomed;
+        try
+        {
+            PaintCodeLaidOut(list, skin, colors, scale, zoomed);
+        }
+        finally
+        {
+            list.JumpsFrames = jumpedBefore;
+        }
+    }
+
+    private void PaintCodeLaidOut(UIDrawList list, UISkin skin, UISyntaxColors colors, float scale, bool zoomed)
+    {
 
         float lineHeight = FontOf(skin).LineHeight * scale;
         float digit = FontOf(skin).Measure("0", scale, markup: false).X;
@@ -2895,7 +3064,7 @@ public partial class CodeEditor : UIComponent
         // moves it smoothly while what's in it is the newer tick's. Only the code, the box, the bar and the minimap stay
         // put. Moved by fractions of a pixel the boxes behind the words slid while the words snapped to the pixels
         bool stretched = over.Begin(list, area);
-        list.PushFrame(new Vector2(-scrollX, scrollY));
+        list.PushFrame(new Vector2(-scrollX, scrollY), jumped: zoomed);
 
         // What is behind the code, row by row. The caret's line, the selections, what is found, the brackets
         var extras = document.ExtraCarets;
@@ -3150,6 +3319,7 @@ public partial class CodeEditor : UIComponent
 
         PaintSpelling(list, skin, scale, area, left, lineHeight, firstLine, lastLine);
         PaintAgentHints(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
+        PaintJumpMarkers(list, skin, scale, area, left, lineHeight, digit, firstLine, lastLine);
 
         // How the call being typed is called, over it
         if (focused && ShownSignature() is { } said)
@@ -3176,7 +3346,7 @@ public partial class CodeEditor : UIComponent
         if (LineNumbers)
         {
             bool gutterStretched = over.Begin(list, new UIRect(new Vector2(content.Min.X, area.Min.Y), area.Max));
-            list.PushFrame(new Vector2(0.0f, scrollY));
+            list.PushFrame(new Vector2(0.0f, scrollY), jumped: zoomed);
             // The gutter is the look's and not the language's, C# in Visual Studio's colours had teal numbers on Solstice
             // Day's paper and a Markdown file beside it grey ones
             PaintGutter(list, skin, scale, content, area, lineHeight, digit, paintFrom, paintTo, origin, skin.Palette.Syntax);
@@ -3514,20 +3684,36 @@ public partial class CodeEditor : UIComponent
         if (zoomAnchor is not null || paintedSkin is not { } skin || rows.Count == 0)
             return;
 
+        // The middle of the view stays where it is, the way a pinch zooms a page in Safari. It was the caret's line or the
+        // top one, so the code grew out of the line's start and the top of the view
         float lineHeight = FontOf(skin).LineHeight * paintedScale;
         UIRect area = TextArea(skin, paintedScale);
-        UITextPosition caret = document.Caret;
-        float down = RowOf(caret.Line, caret.Column) * lineHeight - scrollY;
-        if (down >= 0.0f && down + lineHeight <= area.Height)
+        float middle = scrollY + area.Height * 0.5f;
+        int row = Math.Clamp((int)(middle / lineHeight), 0, rows.Count - 1);
+        float down = middle / lineHeight;
+        while (rows[row].Virtual && row + 1 < rows.Count)
         {
-            zoomAnchor = (caret.Line, caret.Column, down, paintedScale);
-            return;
+            row++;
+            down = row;
         }
 
-        int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
-        while (rows[top].Virtual && top + 1 < rows.Count)
-            top++;
-        zoomAnchor = (rows[top].Line, rows[top].Start, top * lineHeight - scrollY, paintedScale);
+        // How far through the whole line the middle is, its share of all the rows the line wraps onto. By the row it was
+        // in, a wrapped line breaking somewhere else at the new size moved the middle a row up or down, and every line
+        // shook as a pinch went on
+        int line = rows[row].Line;
+        LineSpan(line, out int first, out int count);
+        float share = Math.Clamp((down - first) / count, 0.0f, 1.0f);
+        zoomAnchor = (line, 0, share, paintedScale);
+    }
+
+    // Helper method for the rows a line is drawn on: the first and how many, its lenses' row over it left out
+    private void LineSpan(int line, out int first, out int count)
+    {
+        first = line < lineRow.Length ? Math.Clamp(lineRow[line], 0, Math.Max(0, rows.Count - 1)) : 0;
+        int end = first + 1;
+        while (end < rows.Count && rows[end].Line == line && !rows[end].Lens && !rows[end].Virtual)
+            end++;
+        count = end - first;
     }
 
     /// <summary>Helper method to scroll the line a zoom kept back to where it was on the screen, once the rows are laid out at the new scale.</summary>
@@ -3541,12 +3727,19 @@ public partial class CodeEditor : UIComponent
 
         zoomAnchor = null;
         float lineHeight = FontOf(skin).LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
         scrollGoal = null;
-        scrollY = RowOf(anchor.Line, anchor.Column) * lineHeight - anchor.Down;
+        LineSpan(anchor.Line, out int first, out int count);
+        scrollY = (first + anchor.Into * count) * lineHeight - area.Height * 0.5f;
 
-        // Sideways it's the same share of the way along, a line too long for the view keeps the caret's part of it in sight
-        if (!wordWrap)
-            scrollX *= scale / MathF.Max(0.0001f, anchor.OldScale);
+        // Sideways the middle of the view stays put too, once the code has been scrolled along from its start. At the start
+        // the start stays in sight, as the lines grow out to the right of it
+        if (!wordWrap && scrollX > 0.0f)
+        {
+            float half = area.Width * 0.5f;
+            scrollX = (scrollX + half) * (scale / MathF.Max(0.0001f, anchor.OldScale)) - half;
+        }
+
         ClampScroll(skin, scale);
     }
 
@@ -3565,8 +3758,8 @@ public partial class CodeEditor : UIComponent
     {
         int line = rows[index].Line;
         int from = index, to = index;
-        while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens) from--;
-        while (to + 1 < rows.Count && rows[to + 1].Line == line && rows[to + 1].Predicted == 0) to++;
+        while (from > 0 && rows[from - 1].Line == line && !rows[from - 1].Lens && !rows[from - 1].Block) from--;
+        while (to + 1 < rows.Count && rows[to + 1].Line == line && rows[to + 1].Predicted == 0 && !rows[to + 1].Block) to++;
 
         float top = FlowTop(line, RowTop(area, from, lineHeight), origin);
         float bottom = top - (to - from + 1) * lineHeight;

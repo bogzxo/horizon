@@ -67,8 +67,11 @@ internal sealed class UIInBetween
     /// between the pixels every frame, and a scroll shimmered. One that jumped further than <see cref="JUMP"/> is where
     /// the newer tick put it.
     /// </summary>
-    internal static UIFrame Between(in UIFrame a, in UIFrame b, float t)
+    internal static UIFrame Between(in UIFrame older, in UIFrame b, float t)
     {
+        // A frame whose shift jumped this tick (a zoom keeping its place, see UIFrame.Jumped) has none of it to move by,
+        // what's in it was laid out for the new shift, and only the rest of it is blended
+        UIFrame a = b.Jumped ? older with { Shift = b.Shift, Laid = b.Laid } : older;
         Vector2 across = b.VisualScale * b.Scale;
         float opacity = a.Opacity + (b.Opacity - a.Opacity) * t;
         if (a.VisualScale == b.VisualScale && a.Scale == b.Scale && across.X != 0.0f && across.Y != 0.0f)

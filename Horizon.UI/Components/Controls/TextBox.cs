@@ -401,6 +401,30 @@ public class TextBox : UIComponent
                 Submit();
                 break;
 
+            // A Mac's control keys (see UIKeyboard.CocoaMeaning), a line having one line to open there is nothing for O
+            case UIKeyboard.KILL_LINE:
+                if (!ReadOnly && !Secret && caret < text.Length)
+                {
+                    UIKeyboard.KillBuffer = text[caret..];
+                    anchor = text.Length;
+                    RemoveSelection();
+                }
+                break;
+            case UIKeyboard.YANK:
+                if (UIKeyboard.KillBuffer.Length > 0) Insert(UIKeyboard.KillBuffer);
+                break;
+            case UIKeyboard.TRANSPOSE:
+                if (!ReadOnly && text.Length >= 2 && caret > 0)
+                {
+                    int at = caret == text.Length ? caret - 1 : caret;
+                    text = string.Concat(text.AsSpan(0, at - 1), text.AsSpan(at, 1), text.AsSpan(at - 1, 1), text.AsSpan(at + 1));
+                    caret = anchor = at + 1;
+                    Changed();
+                }
+                break;
+            case UIKeyboard.OPEN_LINE:
+                break;
+
             // The focus and what is open are the compositor's to deal with, see UICompositor.RouteKeyboard
             case UIKeyboard.TAB or UIKeyboard.SHIFT_TAB or UIKeyboard.ESCAPE or UIKeyboard.PASTE:
                 break;

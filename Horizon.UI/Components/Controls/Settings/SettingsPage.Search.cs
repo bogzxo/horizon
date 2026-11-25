@@ -100,7 +100,12 @@ public partial class SettingsPage
         foreach (SettingRow row in rowOf.Values)
         {
             UISetting setting = row.Setting;
-            row.Visible = (!onlyModified || IsModified?.Invoke(setting.Key) == true)
+            bool left = HiddenOf?.Invoke(setting.Key) == true;
+            if (left)
+                hiddenNow.Add(setting.Key);
+            else
+                hiddenNow.Remove(setting.Key);
+            row.Visible = !left && (!onlyModified || IsModified?.Invoke(setting.Key) == true)
                 && (!onlyCommon || common.Contains(setting.Key))
                 && (ids.Count == 0 || ids.Contains(setting.Key, StringComparer.OrdinalIgnoreCase))
                 && InSection(setting.Group)

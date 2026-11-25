@@ -1,5 +1,6 @@
 using System.Numerics;
 
+using Horizon.Engine;
 using Horizon.UI.Drawing;
 using Horizon.UI.Skinning;
 
@@ -100,7 +101,17 @@ public partial class CodeEditor
         predictionClosers = [];
         predictionWentTo = false;
         predictionHadFocus = IsFocused;
-        Show(edits, edits.Length == 1 && edits[0].Start == edits[0].End && edits[0].Start == document.Caret);
+        Show(edits, IsGhostEdit(edits));
+    }
+
+    // Ghost text is one insertion at the caret. Lines of their own put in at a caret that has code after it on its line are
+    // not: they go over the line, the code after the caret isn't to be drawn after their first
+    private bool IsGhostEdit(UITextEdit[] edits)
+    {
+        if (edits.Length != 1 || edits[0].Start != edits[0].End || edits[0].Start != document.Caret)
+            return false;
+        UITextPosition caret = document.Caret;
+        return !edits[0].Text.Contains('\n') || document.LineAt(caret.Line).AsSpan(Math.Min(caret.Column, document.LineAt(caret.Line).Length)).IsWhiteSpace();
     }
 
     /// <summary>Apply a remote revision and translate any prediction still valid at its mapped positions.</summary>
@@ -249,6 +260,55 @@ public partial class CodeEditor
         return true;
     }
 
+    /// <summary>Ghost text only: its next line taken (with the line break after it), the rest still showing. False when there's no ghost text.</summary>
+    public bool AcceptPredictionLine()
+    {
+        if (prediction is null || !predictionGhost || ReadOnly)
+            return false;
+
+        UITextEdit ghost = predictionEdits[0];
+        int length = NextLineLength(ghost.Text);
+        if (length >= ghost.Text.Length)
+            return AcceptPrediction();
+
+        int consumed = 0;
+        while (consumed < predictionClosers.Length && predictionClosers[consumed] < length)
+            consumed++;
+
+        UITextPosition end = ghost.Start with { Column = ghost.Start.Column + consumed };
+        bool applied;
+        predictionApplying = true;
+        try
+        {
+            UITextEdit prefix = new(ghost.Start, end, ghost.Text[..length]);
+            applied = consumed > 0 ? ApplyGhostPrefix(prefix) : document.ApplyEdits([prefix]);
+        }
+        finally
+        {
+            predictionApplying = false;
+        }
+
+        if (!applied)
+        {
+            ClearPrediction();
+            return false;
+        }
+
+        revealCaret = true;
+        ShowRest(document.Caret, ghost.Text[length..], AdvanceClosers(consumed, length));
+        return true;
+    }
+
+    // Up to and with the next line break; a leading break alone is taken with the line after it
+    private static int NextLineLength(string text)
+    {
+        int at = 0;
+        while (at < text.Length && text[at] == '\n')
+            at++;
+        int end = text.IndexOf('\n', at);
+        return end < 0 ? text.Length : end + 1;
+    }
+
     // A prefix already present in the document only advances the caret.
     private bool ApplyGhostPrefix(UITextEdit edit)
     {
@@ -323,6 +383,22 @@ public partial class CodeEditor
                 continue;
             }
 
+            // Whole lines put in at the start of a line are lines of their own over it (over the first line, before it)
+            if (edit.Start == edit.End && edit.Start.Column == 0 && split[^1].Length == 0)
+            {
+                for (int i = 0; i < split.Length - 1; i++)
+                    lines.Add(new PredictedRow(edit.Start.Line - 1, split[i], Ghost: false));
+                continue;
+            }
+
+            // Lines put in after the end of a line start with its break, which isn't a row
+            if (edit.Start == edit.End && split[0].Length == 0)
+            {
+                for (int i = 1; i < split.Length; i++)
+                    lines.Add(new PredictedRow(edit.Start.Line, split[i], Ghost: false));
+                continue;
+            }
+
             // Whole lines replaced end at the start of the line after them, the new ones go under the last that goes
             int under = edit.End.Column == 0 && edit.End.Line > edit.Start.Line ? edit.End.Line - 1 : edit.End.Line;
             int count = split[^1].Length == 0 ? split.Length - 1 : split.Length;
@@ -354,7 +430,39 @@ public partial class CodeEditor
     }
 
     // Whether what's predicted is drawn now: it is for this text, and the completion list isn't over it
-    private bool PredictionShown => prediction is not null && predictionFor == document.Version && !CompletionOpen;
+    private bool PredictionShown => PredictionValid && (!PredictionSubtle || PredictionPeeking);
+
+    private bool PredictionValid => prediction is not null && predictionFor == document.Version && !CompletionOpen;
+
+    /// <summary>Subtle display mode: the prediction isn't drawn, a small marker shows at its start and the preview is drawn while Alt is held.</summary>
+    public bool PredictionSubtle { get; set; }
+
+    private static bool PredictionPeeking => GameEngine.Instance.Input.Keyboard.Alt;
+
+    // The marker subtle mode draws where the prediction would start, a small square that doesn't move the code
+    private bool PredictionMarked => PredictionSubtle && !PredictionPeeking && PredictionValid;
+
+    /// <summary>
+    /// Where the subtle marker goes: the edit's start, but the caret when the caret is inside the edit's range on a later line.
+    /// A diff that begins by replacing the end of the line above (a newline and what follows) starts there, with the caret on
+    /// the line the person is typing on, and the arrow must be beside the caret, not at the end of the line above.
+    /// </summary>
+    internal static UITextPosition MarkerPosition(UITextEdit edit, UITextPosition caret, bool ghost) =>
+        !ghost && edit.Start.Line < caret.Line && caret >= edit.Start && caret <= edit.End ? caret : edit.Start;
+
+    private UITextPosition? PredictionMarkerAt() =>
+        predictionEdits.Length == 0 ? null : MarkerPosition(predictionEdits[0], document.Caret, predictionGhost);
+
+    private void DrawPredictionMarker(UIDrawList list, UISkin skin, float scale, float x, float top, UISyntaxColors colors)
+    {
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        // An arrow in the accent a little after the place (the caret is there, a mark on it is lost), Zed's subtle indicator's tab
+        // arrow. It sits over what is drawn there without moving any of it
+        float side = MathF.Max(6.0f, lineHeight * 0.62f);
+        float left = x + MathF.Max(3.0f, lineHeight * 0.3f);
+        float y = top + (lineHeight - side) * 0.5f;
+        list.Symbol("arrow-right", new UIRect(new Vector2(left, y), new Vector2(left + side, y + side)), skin.AccentColor with { W = 0.9f });
+    }
 
     // Rebase the ghost before the editor forwards OnChanged.
     private void PredictionTextChanged()
@@ -526,6 +634,9 @@ public partial class CodeEditor
 
             case UIKeyboard.WORD_RIGHT when !CompletionOpen && predictionGhost && plain:
                 return AcceptPredictionWord();
+
+            case UIKeyboard.DOWN when !CompletionOpen && predictionGhost && plain && GameEngine.Instance.Input.Keyboard.Control:
+                return AcceptPredictionLine();
         }
 
         return false;
@@ -606,6 +717,13 @@ public partial class CodeEditor
 
     private int? VisiblePredictionRowsVersion => predictedRows.Length > 0 && PredictionShown ? predictionRowsVersion : null;
 
+    // The rows of predicted text over the first line, before everything (they hang from line -1)
+    private void AddPredictedRowsBefore(ref int next)
+    {
+        for (; next < predictedRows.Length && predictedRows[next].Line < 0; next++)
+            rows.Add(new CodeRow(0, 0, 0, 0.0f, Predicted: next + 1));
+    }
+
     // The rows of predicted text under a line, after its own, walking the rows in order with the line
     private void AddPredictedRows(int line, ref int next)
     {
@@ -645,6 +763,15 @@ public partial class CodeEditor
     /// </summary>
     private float DrawWithInlays(UIDrawList list, UISkin skin, float scale, int line, int column, ReadOnlySpan<char> text, float x, float top, Vector4 color, float left, float origin, UISyntaxColors colors, bool draw = true)
     {
+        if (PredictionMarked && PredictionMarkerAt() is { } start && start.Line == line && start.Column - column is var into0 && into0 >= 0 && into0 < text.Length)
+        {
+            x = into0 > 0 ? DrawWithHints(list, skin, scale, line, column, text[..into0], x, top, color, left, origin, colors, draw) : x;
+            // Drawn whether the piece is or not: a blank gap (the indentation the caret is in) is only made room for, never
+            // drawn, and the marker beside the caret was lost there. The measuring pass of a piece left of the screen has no marker
+            DrawPredictionMarker(list, skin, scale, x, top, colors);
+            return DrawWithHints(list, skin, scale, line, column + into0, text[into0..], x, top, color, left, origin, colors, draw);
+        }
+
         if (predictedPieces.Length == 0 || !PredictionShown)
             return DrawWithHints(list, skin, scale, line, column, text, x, top, color, left, origin, colors, draw);
 
@@ -672,6 +799,9 @@ public partial class CodeEditor
     // The predicted text after the end of a line, once the last row of it has been drawn
     private float DrawPredictedAtEnd(UIDrawList list, UISkin skin, float scale, int line, int length, float x, float top, UISyntaxColors colors)
     {
+        if (PredictionMarked && PredictionMarkerAt() is { } start && start.Line == line && start.Column >= length)
+            DrawPredictionMarker(list, skin, scale, x, top, colors);
+
         if (predictedPieces.Length == 0 || !PredictionShown)
             return x;
 

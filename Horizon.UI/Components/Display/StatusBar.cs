@@ -21,6 +21,12 @@ public sealed class StatusItem
     /// <summary>What clicking it does, null for an item that only says something.</summary>
     public Action? OnPressed { get; set; }
 
+    /// <summary>
+    /// What a right click on it lists, made as it is pressed so it says how things stand then. Null for no menu, and a menu
+    /// with nothing in it shows nothing either.
+    /// </summary>
+    public Func<Menu?>? ContextMenuBuilder { get; set; }
+
     /// <summary>Whether it is there right now. Always, if nothing is set.</summary>
     public Func<bool>? IsVisible { get; set; }
 
@@ -81,6 +87,19 @@ public class StatusBar : UIComponent
     public float TextScale { get; set; }
 
     protected override bool HitTestVisible => true;
+
+    public StatusBar()
+    {
+        // A right click on an item that has a menu opens it over the item, on the bar's top edge
+        OnContextMenu = point =>
+        {
+            if (ItemAt(point) is not { ContextMenuBuilder: { } build } item || Module is not { } module)
+                return;
+
+            if (build() is { Items.Count: > 0 } menu)
+                ContextMenu.ShowAbove(module, ItemBounds(item) is { IsEmpty: false } area ? new UIRect(area.Min, new Vector2(area.Max.X, Bounds.Max.Y)) : new UIRect(point, point), menu);
+        };
+    }
 
     /// <summary>Adds a piece at the end of the left or of the right.</summary>
     public StatusItem Add(string text, bool right = false, Action? pressed = null, string tooltip = "")

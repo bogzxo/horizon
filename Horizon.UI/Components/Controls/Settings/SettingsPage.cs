@@ -403,11 +403,39 @@ public partial class SettingsPage : UIComponent
     public void Refresh()
     {
         foreach (string key in rowOf.Keys)
-            Refresh(key);
+            RefreshRow(key);
+        RefreshHidden();
     }
 
     /// <summary>A row showing what its setting is now, after it was changed.</summary>
     public void Refresh(string key)
+    {
+        RefreshRow(key);
+        RefreshHidden();
+    }
+
+    /// <summary>Whether a setting's row is left out altogether for now (a row only one engine uses), null for none. Asked again as rows are refreshed.</summary>
+    public Func<string, bool>? HiddenOf { get; set; }
+
+    private readonly HashSet<string> hiddenNow = new(StringComparer.Ordinal);
+
+    // The rows are filtered again when one of them is hidden or shown by what changed
+    private void RefreshHidden()
+    {
+        if (HiddenOf is not { } hidden)
+            return;
+
+        foreach (string key in rowOf.Keys)
+        {
+            if (hidden(key) != hiddenNow.Contains(key))
+            {
+                Filter(search.Text);
+                return;
+            }
+        }
+    }
+
+    private void RefreshRow(string key)
     {
         if (rowOf.TryGetValue(key, out SettingRow? row))
         {

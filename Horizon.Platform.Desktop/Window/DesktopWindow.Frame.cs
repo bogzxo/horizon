@@ -46,7 +46,14 @@ public sealed partial class DesktopWindow
     public void Minimize() => PostToWindow(() => _window.WindowState = WindowState.Minimized);
 
     /// <summary>Has the window fill the screen it is on, or go back to how it was. From any thread.</summary>
-    public void ToggleMaximized() => PostToWindow(() => SetMaximized(!IsWindowMaximized()));
+    public void ToggleMaximized() => PostToWindow(() =>
+    {
+        // A Mac's window is zoomed (or put in the Dock, or left alone) the way the Dock setting says a double click on a caption does
+        if (OperatingSystem.IsMacOS() && NativeChrome)
+            ZoomWithSystem();
+        else
+            SetMaximized(!IsWindowMaximized());
+    });
 
     /// <summary>
     /// Starts moving the window with the pointer, for as long as the left button is held, the way dragging a title bar
@@ -101,6 +108,10 @@ public sealed partial class DesktopWindow
             SystemDrag(HTCAPTION);
             return;
         }
+
+        // A Mac has the system drag it, with the press that is down; the tracker below is for when it can't
+        if (OperatingSystem.IsMacOS() && MoveWithSystem())
+            return;
 
         if (FrameMouse is not { } mouse || !mouse.IsButtonPressed(MouseButton.Left))
             return;

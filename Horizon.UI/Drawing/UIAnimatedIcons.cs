@@ -144,8 +144,17 @@ public static class UIAnimatedIcons
         if (!started || dt <= 0.0f || (Stopwatch.GetTimestamp() - lastUsed) / (double)Stopwatch.Frequency > IDLE_AFTER)
             return;
 
-        tweens.Tick(MathF.Min(dt, 0.1f));
+        // A step at a time, and still where nobody sees the window, see UIDecorative
+        if (!UIDecorative.Runs)
+            return;
+
+        float moved = UIDecorative.Take(ref waiting, dt);
+        if (moved > 0.0f)
+            tweens.Tick(MathF.Min(moved, 0.25f));
     }
+
+    // Time gone by since the motions last stepped, see Advance
+    private static float waiting;
 
     /// <summary>Says a moving icon was drawn, which keeps the motions going for a while, made the first time.</summary>
     internal static void Used()

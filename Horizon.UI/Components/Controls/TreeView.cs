@@ -557,6 +557,17 @@ public partial class TreeView : UIComponent
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
+        // A trackpad moves it by the pixel, the way a finger's drag does
+        if (PreciseWheel)
+        {
+            // and gives at the ends the way a Mac's own lists do
+            if (!ease.Precise(ref scroll, -delta * UIWheel.NotchUnits, Travel(skin), Bounds.Height, MotionSpeed))
+                return false;
+
+            revealSelected = false;
+            return true;
+        }
+
         BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
         ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin), MotionSpeed);
         return true;
@@ -652,6 +663,10 @@ public partial class TreeView : UIComponent
     protected internal override bool UsesScrollSpeed => true;
 
     protected internal override bool HasOverscroll => ease.Over.Active;
+
+    protected internal override bool? ScrollEnd(float delta) =>
+        Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f ? null
+            : ease.Over.Active ? false : delta > 0.0f ? scroll <= 0.5f : scroll >= Travel(skin) - 0.5f;
 
     // A finger on the bar drags the bar, anywhere else it scrolls the rows
     protected internal override bool KeepsTouchDrag(Vector2 point) => (!scrollBarTrack.IsEmpty && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);

@@ -49,5 +49,8 @@ public partial class LanguageServerTests
         Assert.Equal("textDocument/foldingRange", again["method"]!.GetValue<string>());
         Write(toClient, new JsonObject { ["id"] = again["id"]!.DeepClone(), ["result"] = new JsonArray() }.ToJsonString());
         await later.WaitAsync(TimeSpan.FromSeconds(1));
+
+        // Its reading end can only be let go of on Linux and macOS once the writing end has gone, which the usings below would do after it
+        toClient.Dispose();
     }
 }

@@ -97,10 +97,21 @@ public partial class CodeEditor
         return Math.Max(diffNumbers is null ? MIN_DIGITS : 2, digits);
     }
 
+    /// <summary>
+    /// The largest scale the gutter's numbers and marks are drawn at, 0 for no limit: zoomed in a long way, the code grows
+    /// and the gutter stops at this, its numbers grown far past what anybody needs to read them.
+    /// </summary>
+    public float MostGutterScale { get; set; }
+
+    // The scale the gutter is drawn at for code drawn at this one
+    private float GutterScale(float scale) => MostGutterScale > 0.0f ? MathF.Min(scale, MostGutterScale) : scale;
+
     private float GutterWidth(UISkin skin, float scale)
     {
         if (!LineNumbers)
             return TEXT_PAD;
+
+        scale = GutterScale(scale);
 
         // Room for the biggest number there is, every digit of a font is as wide as its zero, the column of marks before
         // them and the chevron and the change's bar after. A diff has two columns of them with a digit between
@@ -119,8 +130,13 @@ public partial class CodeEditor
     }
 
     // The gutter's rows in sight, each line's number, its mark and its chevron, and the bars of what changed
-    private void PaintGutter(UIDrawList list, UISkin skin, float scale, UIRect content, UIRect area, float lineHeight, float digit, int first, int last, float origin, UISyntaxColors colors)
+    private void PaintGutter(UIDrawList list, UISkin skin, float codeScale, UIRect content, UIRect area, float codeLineHeight, float codeDigit, int first, int last, float origin, UISyntaxColors colors)
     {
+        // At most so big, in the middle of rows that can be taller than its own
+        float scale = GutterScale(codeScale);
+        float digit = scale == codeScale ? codeDigit : FontOf(skin).Measure("0", scale, markup: false).X;
+        float lineHeight = scale == codeScale ? codeLineHeight : FontOf(skin).LineHeight * scale;
+        float below = (codeLineHeight - lineHeight) * 0.5f;
         list.PushClip(new UIRect(content.Min, new Vector2(area.Min.X, content.Max.Y)));
         Vector2 pointerAt = Module is { } module ? module.ToLocal(module.Compositor.Pointer.Position) : Vector2.Zero;
         bool overGutter = IsHovered && pointerAt.X < area.Min.X;
@@ -141,14 +157,15 @@ public partial class CodeEditor
 
             // A change's bar goes down every row of its line, painted once from its first row (or the first in sight)
             if ((changedLines.Count > 0 || deletedBefore.Count > 0) && (row.Start == 0 || index == first))
-                PaintLineChange(list, skin, area, index, origin, lineHeight, digit, columns);
+                PaintLineChange(list, skin, area, index, origin, codeLineHeight, digit, columns);
 
             if (row.Start > 0)
                 continue;
 
             int line = row.Line;
             list.BeginPart(PART_GUTTER + line);
-            float top = FlowTop(line, RowTop(area, index, lineHeight), origin);
+            float rowTop = FlowTop(line, RowTop(area, index, codeLineHeight), origin);
+            float top = rowTop - below;
             Vector4 shade = line == document.Caret.Line ? colors.Name : colors.LineNumber;
 
             // What is wrong has its icon in the column of marks, the number lit the same colour. A breakpoint has that
@@ -160,7 +177,7 @@ public partial class CodeEditor
 
             float middle = top - lineHeight * 0.5f;
             var slot = new UIRect(new Vector2(columns.GlyphLeft, middle - columns.GlyphSide * 0.5f), new Vector2(columns.GlyphLeft + columns.GlyphSide, middle + columns.GlyphSide * 0.5f));
-            bool pointing = OnGutterPressed is not null && overGutter && pointerY <= top && pointerY > top - lineHeight;
+            bool pointing = OnGutterPressed is not null && overGutter && pointerY <= rowTop && pointerY > rowTop - codeLineHeight;
             CodeBreakpointMark mark = breakpoint && BreakpointMarks is { } marks && marks.TryGetValue(line, out CodeBreakpointMark said) ? said : CodeBreakpointMark.Plain;
             if (breakpoint && mark != CodeBreakpointMark.Plain)
             {
@@ -185,11 +202,13 @@ public partial class CodeEditor
 
             if (line == ExecutionLine)
                 list.Symbol("debug-stackframe", slot, skin.WarningColor);
+            else if (!breakpoint && !marked && !ShowsAction(line) && HasJumpMarker(line))
+                list.Symbol("arrow-right", slot, JumpColour(skin));
 
             // The number of a row cut off by the bottom edge fades out with its code
-            bool cut = top - lineHeight < area.Min.Y - 0.5f;
+            bool cut = rowTop - codeLineHeight < area.Min.Y - 0.5f;
             if (cut)
-                list.PushFade(area, 0.0f, lineHeight * BOTTOM_FADE);
+                list.PushFade(area, 0.0f, codeLineHeight * BOTTOM_FADE);
             if (diffNumbers is var (olds, news))
             {
                 Number(list, number, line < olds.Length ? olds[line] : 0, columns.NumbersRight - digit * (digits + 1), top, scale, digit, shade);
@@ -211,7 +230,7 @@ public partial class CodeEditor
             }
         }
 
-        PaintRemoteGutter(list, content, lineHeight, first, last, area);
+        PaintRemoteGutter(list, content, codeLineHeight, first, last, area);
         list.PopClip();
     }
 }

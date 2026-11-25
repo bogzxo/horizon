@@ -21,6 +21,12 @@ internal readonly record struct UIFrame(Vector2 Key, int Parent, Vector2 Shift, 
     public Vector2 FollowFrom { get; init; }
 
     /// <summary>
+    /// Whether its <see cref="Shift"/> jumped this tick rather than moved (a zoom kept its place, the scroll went somewhere
+    /// else with it), so a frame between this tick and the last doesn't slide what's in it over from the old shift.
+    /// </summary>
+    public bool Jumped { get; init; }
+
+    /// <summary>
     /// Where the layout put the component it's the frame of, less what it's scrolled by (see <see cref="Shift"/>), while
     /// the layout is moving things about (something sliding or folding, see <see cref="UIDrawList.LayoutMoves"/>). A
     /// frame inside it has the same. Moved between two ticks, what's in the frame moves with it.
@@ -307,6 +313,13 @@ public sealed partial class UIDrawList
     /// </summary>
     internal bool LayoutMoves { get; set; }
 
+    /// <summary>
+    /// Whether every frame opened from here on jumped this tick rather than moved (see <see cref="UIFrame.Jumped"/>): all of
+    /// a component laid out anew at another size, a zoom, whose lenses and hints slid over from where they were at their
+    /// own speeds while the code jumped.
+    /// </summary>
+    internal bool JumpsFrames { get; set; }
+
     // How many frames every owner has opened so far this paint, which is what a frame is named by after its owner
     private readonly Dictionary<float, int> framesOpened = [];
 
@@ -336,6 +349,7 @@ public sealed partial class UIDrawList
         BeginRecords();
         shift = laid = Vector2.Zero;
         LayoutMoves = false;
+        JumpsFrames = false;
         clipAt = -1;
         frameAt = -1;
         OpenFrame();
@@ -353,7 +367,8 @@ public sealed partial class UIDrawList
     /// wobbles against the rest. A scroll eases by fractions of a pixel, and moved by those the words snapped to the
     /// pixels a tick at a time while the boxes under them glided.
     /// </remarks>
-    public void PushFrame(Vector2 moved)
+    /// <param name="jumped">Whether the move jumped this tick rather than slid, see <see cref="UIFrame.Jumped"/>.</param>
+    public void PushFrame(Vector2 moved, bool jumped = false)
     {
         openFrames.Push((frameAt, clipAt, shift));
         visuals.Push((visualOffset, visualScale, opacity));
@@ -366,6 +381,8 @@ public sealed partial class UIDrawList
 
         shift += moved;
         OpenFrame();
+        if (jumped)
+            frameList.Frames[frameAt] = frameList.Frames[frameAt] with { Jumped = true };
     }
 
     /// <summary>Goes back to the frame from before <see cref="PushFrame"/>.</summary>
@@ -381,7 +398,7 @@ public sealed partial class UIDrawList
         // By who opened it and how many they had opened before it, never by how many quads they'd painted, a highlight
         // painted before a list's rows would have had its rows' frame taken for another
         int opened = System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(framesOpened, owner, out _)++;
-        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity });
+        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity, Jumped = JumpsFrames });
         frameAt = frameList.Frames.Count - 1;
     }
 
