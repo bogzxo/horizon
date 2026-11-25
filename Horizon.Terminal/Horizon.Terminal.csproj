@@ -20,6 +20,8 @@
     <IsTrimmable>true</IsTrimmable>
     <InvariantGlobalization>true</InvariantGlobalization>
     <WarningLevel>4</WarningLevel>
+    <!-- zsh's integration is dotfiles (.zshrc, .zshenv, .zprofile), which a package leaves out unless told not to -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
