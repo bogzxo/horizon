@@ -1,0 +1,11 @@
+{
+  "name": "binary-and-intruder",
+  "integrator": "Yoshida4",
+  "collisions": "Merge",
+  "timeScale": 1,
+  "bodies": [
+    { "name": "A", "mass": 1, "x": -0.5, "y": 0, "vx": 0, "vy": -0.5, "radius": 0.05, "color": [1.0, 0.35, 0.3, 1] },
+    { "name": "B", "mass": 1, "x": 0.5, "y": 0, "vx": 0, "vy": 0.5, "radius": 0.05, "color": [0.4, 1.0, 0.5, 1] },
+    { "name": "C", "mass": 0.8, "x": -4, "y": 1.5, "vx": 0.9, "vy": 0, "radius": 0.05, "color": [0.4, 0.6, 1.0, 1] }
+  ]
+}

@@ -80,6 +80,7 @@ public class Slider : ProgressBar
 
         if (Value != previous)
         {
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestUrgentFrames();
             OnChanged?.Invoke(Value);
             InvokeScript(changedHandler, new NumberValue(Value));
         }
@@ -187,6 +188,7 @@ public class Slider : ProgressBar
 
         if (Value != previous)
         {
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestUrgentFrames();
             OnChanged?.Invoke(Value);
             InvokeScript(changedHandler, new NumberValue(Value));
         }

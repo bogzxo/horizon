@@ -277,6 +277,9 @@ public sealed partial class SkylineDebugger : GameObject, IGameDebugger
             mouse.HeldInWindow(MouseButton.Right) || mouse.PressedInWindow(MouseButton.Right));
     }
 
+    // Whether it was up the tick before, see UpdateState
+    private bool shownBefore = true;
+
     public override void UpdateState(float dt)
     {
         var keyboard = Engine.Input.Keyboard;
@@ -306,7 +309,11 @@ public sealed partial class SkylineDebugger : GameObject, IGameDebugger
         if (shown)
             WriteBar(dt);
 
-        base.UpdateState(dt);
+        // Its own UI is laid out, routed and painted only while it's up (and the tick it went, to put itself away).
+        // Hidden, it was all of that every tick for nothing, a couple of per cent of a core under an editor that was busy
+        if (shown || shownBefore)
+            base.UpdateState(dt);
+        shownBefore = shown;
 
         // What the game gets to see of the mouse and the keys this update. In its container the pointer is where
         // it would be if the container were the window, and over a panel the buttons are the suite's

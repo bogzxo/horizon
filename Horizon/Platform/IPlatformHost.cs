@@ -21,6 +21,23 @@ public interface IPlatformHost : IDisposable
     /// <summary>What there is beyond a surface, see <see cref="PlatformFeatures"/>.</summary>
     PlatformFeatures Features { get; }
 
+    /// <summary>The system's own menu bar (a Mac's), null where there is none, see <see cref="PlatformFeatures.NativeMenuBar"/>.</summary>
+    IPlatformMenuBar? MenuBar => null;
+
+    /// <summary>
+    /// True only while <see cref="IPlatformEvents.MayClose"/> is being asked because the application was told to quit (a
+    /// Mac's Cmd+Q, the Dock's Quit, logout) and not because its window was closed (the red button). A program that only
+    /// puts itself away when its window closes quits for real on this. False everywhere the system makes no difference.
+    /// The platform's thread.
+    /// </summary>
+    bool CloseIsQuit => false;
+
+    /// <summary>The system's light or dark appearance and accent colour, null where it says none (everywhere but a Mac).</summary>
+    IPlatformAppearance? Appearance => null;
+
+    /// <summary>The system's native open, save and folder dialogs (a Mac's), null where there are none, see <see cref="PlatformFeatures.NativeDialogs"/>.</summary>
+    IPlatformDialogs? Dialogs => null;
+
     /// <summary>The desktop window, null where there is none.</summary>
     IPlatformWindow? Window { get; }
 

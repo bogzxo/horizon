@@ -145,6 +145,7 @@ public partial class SettingsPage
     private void Arrive(SettingRow row)
     {
         arrived = true;
+        rows.EnsureAttached(row);
         row.Flash();
         if (row.FirstControl() is { } control)
         {
@@ -170,7 +171,8 @@ public partial class SettingsPage
         if (!arrived)
             Arrive(row);
 
-        if (row.Bounds.IsEmpty)
+        bool laid = !row.Bounds.IsEmpty || (rows.HasMeasured(row) && !scroll.Bounds.IsEmpty);
+        if (!laid)
             return;
 
         revealSteps++;
@@ -178,7 +180,18 @@ public partial class SettingsPage
             GoTo(row.Setting.Group);
         else if (revealSteps >= 3)
         {
-            scroll.ScrollIntoView(row);
+            if (rows.IsAttached(row) && !row.Bounds.IsEmpty)
+                scroll.ScrollIntoView(row);
+            else if (rows.TryGetSpan(row, out float rowTop, out float rowHeight))
+            {
+                float viewHeight = scroll.Bounds.Shrink(scroll.Padding).Height;
+                float top = rowTop + rows.Padding.Top;
+                float bottom = top + rowHeight;
+                if (top < scroll.Offset)
+                    scroll.Offset = top;
+                else if (bottom > scroll.Offset + viewHeight)
+                    scroll.Offset = Math.Min(top, bottom - viewHeight);
+            }
             revealing = null;
         }
     }

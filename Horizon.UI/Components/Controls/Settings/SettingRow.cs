@@ -66,8 +66,12 @@ internal sealed partial class SettingRow : StackPanel
     private readonly HelpLabel? help;
 
     // The page's note under the name, when the row is too narrow for its pill beside the name
-    private readonly Label noteLine;
+    private readonly NoteLineLabel noteLine;
     private string lit = string.Empty;
+
+    // The switch for a Flag row (when not ButtonsOnly), toggled by clicking anywhere on the row outside reset/toggle
+    private ToggleButton? flagToggle;
+    private bool rowPressActive;
 
     // After its key, the keyword or choice a search found it by when that's nowhere it shows, and the note the page has
     // for it (set by the other scope), each a little pill and hidden while there's nothing to say
@@ -150,10 +154,10 @@ internal sealed partial class SettingRow : StackPanel
         float side = MathF.Max(26.0f, page.RowTitleScale + 10.0f);
         float keyRoom = page.CompactRows ? 0.0f : MathF.Min(textWidth * 0.4f, Room(setting.Key));
         nameRoom = textWidth - side - 8.0f - keyRoom - 8.0f;
-        name = top.Add(new RowTitle(nameRoom) { Text = $"[b]{UIRichText.Literal(setting.Title)}[/b]", TextScale = page.RowTitleScale, Align = Origin.Left, Size = new Vector2(0.0f, page.RowControlHeight) });
-        key = top.Add(new RowTitle(keyRoom) { Text = UIRichText.Literal(setting.Key), Visible = !page.CompactRows, TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Opacity = KEY_FAINT, Size = new Vector2(0.0f, page.RowControlHeight) });
-        foundBy = top.Add(new RowPill(textWidth * 0.3f, accent: false) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
-        note = top.Add(new RowPill(textWidth * 0.3f, accent: true) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
+        name = top.Add(new RowTitle(this, nameRoom) { Text = $"[b]{UIRichText.Literal(setting.Title)}[/b]", TextScale = page.RowTitleScale, Align = Origin.Left, Size = new Vector2(0.0f, page.RowControlHeight) });
+        key = top.Add(new RowTitle(this, keyRoom) { Text = UIRichText.Literal(setting.Key), Visible = !page.CompactRows, TextScale = page.RowBodyScale * 0.85f, Align = Origin.Left, Opacity = KEY_FAINT, Size = new Vector2(0.0f, page.RowControlHeight) });
+        foundBy = top.Add(new RowPill(this, textWidth * 0.3f, accent: false) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
+        note = top.Add(new RowPill(this, textWidth * 0.3f, accent: true) { TextScale = page.RowBodyScale * 0.85f, Align = Origin.Center, Visible = false });
 
         // The glyph as big as the name, it was a speck beside it
         reset = top.Add(new RowButton(this)
@@ -176,7 +180,7 @@ internal sealed partial class SettingRow : StackPanel
         top.MoveChild(key, top.Children.Count - 1);
 
         // The note on a line of its own under the name, for a row too narrow to have it beside the name (see FitName)
-        noteLine = text.Add(new Label { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
+        noteLine = text.Add(new NoteLineLabel(this) { Wrap = true, TextScale = page.RowBodyScale * 0.85f, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(textWidth, 0.0f), Visible = false });
 
         // Its first sentence, what it does in a line, and all it says when the pointer rests on it. Three lines of what wins
         // over it and when, down every row, made the page a wall to read. A search that finds a word only in the rest
@@ -184,7 +188,7 @@ internal sealed partial class SettingRow : StackPanel
         if (setting.Help.Length > 0 && !page.CompactRows)
         {
             shortHelp = FirstSentence(setting.Help);
-            help = text.Add(new HelpLabel { Text = UIRichText.Literal(shortHelp), Tooltip = shortHelp.Length < setting.Help.Length ? setting.Help : string.Empty, Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
+            help = text.Add(new HelpLabel(this) { Text = UIRichText.Literal(shortHelp), Tooltip = shortHelp.Length < setting.Help.Length ? setting.Help : string.Empty, Wrap = true, TextScale = page.RowBodyScale, Align = Origin.TopLeft, Anchor = Origin.Left, Pivot = Origin.Left, Size = new Vector2(helpWidth, 0.0f) });
             faded.Add(help);
         }
 
@@ -271,13 +275,14 @@ internal sealed partial class SettingRow : StackPanel
 
     public void Show(IRuntimeValue? value, bool isModified)
     {
+        bool wasModified = modified;
         modified = isModified;
         string? disabledReason = page.DisabledReasonOf?.Invoke(Setting.Key);
         Enabled = disabledReason is null;
         reset.Visible = isModified && Enabled;
 
-        // What the reset puts back said on it, only asked for while there's a reset to rest the pointer on
-        if (isModified)
+        // What the reset puts back said on it, only asked for when it becomes modified (its default value doesn't move during a drag)
+        if (isModified && (!wasModified || reset.Tooltip.Length == 0))
             reset.Tooltip = page.ResetText(Setting.Key);
         show(value);
         ShowNote(disabledReason ?? page.NoteOf?.Invoke(Setting.Key), disabledReason ?? page.NoteTipOf?.Invoke(Setting.Key));
@@ -385,10 +390,94 @@ internal sealed partial class SettingRow : StackPanel
         }
     }
 
+    // Whether clicking anywhere on the row (outside its own controls) toggles its boolean switch
+    private bool CanToggleRow => flagToggle is not null && EnabledInHierarchy && flagToggle.EnabledInHierarchy;
+
+    protected internal override void OnPointerDown(Vector2 point)
+    {
+        base.OnPointerDown(point);
+        BeginRowTogglePress();
+    }
+
+    protected internal override void OnPointerUp(Vector2 point)
+    {
+        base.OnPointerUp(point);
+        EndRowTogglePress(point);
+    }
+
+    protected internal override void OnPointerCancel()
+    {
+        base.OnPointerCancel();
+        CancelRowTogglePress();
+    }
+
+    internal void BeginRowTogglePress()
+    {
+        rowPressActive = CanToggleRow;
+    }
+
+    internal void EndRowTogglePress(Vector2 point)
+    {
+        if (!rowPressActive)
+            return;
+
+        rowPressActive = false;
+        if (CanToggleRow && Bounds.Contains(point))
+            flagToggle!.OnClick();
+    }
+
+    internal void CancelRowTogglePress()
+    {
+        rowPressActive = false;
+    }
+
     // The sentence under its name, under the pointer only while it has the rest of its help to say in its tooltip
-    private sealed class HelpLabel : Label
+    private sealed class HelpLabel(SettingRow row) : Label
     {
         protected override bool HitTestVisible => Tooltip.Length > 0;
+        protected override long PaintVersion => LabelPaintVersion();
+
+        protected internal override void OnPointerDown(Vector2 point)
+        {
+            base.OnPointerDown(point);
+            row.BeginRowTogglePress();
+        }
+
+        protected internal override void OnPointerUp(Vector2 point)
+        {
+            base.OnPointerUp(point);
+            row.EndRowTogglePress(point);
+        }
+
+        protected internal override void OnPointerCancel()
+        {
+            base.OnPointerCancel();
+            row.CancelRowTogglePress();
+        }
+    }
+
+    // The narrow-row note line under the name, forwarding clicks to the row while preserving any hover tooltip
+    private sealed class NoteLineLabel(SettingRow row) : Label
+    {
+        protected override long PaintVersion => LabelPaintVersion();
+
+        protected internal override void OnPointerDown(Vector2 point)
+        {
+            base.OnPointerDown(point);
+            row.BeginRowTogglePress();
+        }
+
+        protected internal override void OnPointerUp(Vector2 point)
+        {
+            base.OnPointerUp(point);
+            row.EndRowTogglePress(point);
+        }
+
+        protected internal override void OnPointerCancel()
+        {
+            base.OnPointerCancel();
+            row.CancelRowTogglePress();
+        }
     }
 
     // What its sentence shows when nothing found it by the rest, the first sentence of its help

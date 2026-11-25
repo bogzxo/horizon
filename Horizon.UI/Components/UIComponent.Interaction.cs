@@ -103,14 +103,40 @@ public abstract partial class UIComponent
     /// <param name="delta">How many notches, positive away from the user (up).</param>
     protected internal virtual bool OnScroll(float delta) => false;
 
+    /// <summary>
+    /// The wheel or trackpad was turned sideways over this component or something inside it. Same contract as
+    /// <see cref="OnScroll"/>, whoever scrolls sideways says so by returning true.
+    /// </summary>
+    /// <param name="delta">How many notches, positive to the right, the way the content follows a finger. Fractional for a trackpad.</param>
+    protected internal virtual bool OnScrollX(float delta) => false;
+
+    /// <summary>
+    /// A trackpad was pinched over this component or something inside it. Same contract as <see cref="OnScroll"/>.
+    /// </summary>
+    /// <param name="amount">The change of size since the last event of the pinch, 0.02 for two per cent bigger (see <c>PreciseScroll.PinchFactor</c>).</param>
+    protected internal virtual bool OnMagnify(float amount) => false;
+
+    /// <summary>The trackpad was double tapped with two fingers over this component or something inside it (smart zoom), true when it was used.</summary>
+    protected internal virtual bool OnSmartMagnify() => false;
+
+    /// <summary>Whether the delta <see cref="OnScroll"/> or <see cref="OnScrollX"/> is being given is a trackpad's, continuous and in fractions of a notch.</summary>
+    protected static bool PreciseWheel => UIWheel.Precise;
+
     /// <summary>Whether wheel input represents scrolling distance, rather than zooming or editing a value.</summary>
     protected internal virtual bool UsesScrollSpeed => false;
 
     /// <summary>Whether an end spring has taken over from scrolling, so a released finger must stop pushing it.</summary>
     protected internal virtual bool HasOverscroll => false;
 
+    /// <summary>
+    /// Whether a turn of the wheel by <paramref name="delta"/> (up positive, as <see cref="OnScroll"/> has it) would go on
+    /// past the end it's scrolled to: true at that end, false with room to go, null for what doesn't scroll at all. One
+    /// stretched past an end isn't at it, a turn back is its own. See UICompositor.GiveWheel.
+    /// </summary>
+    protected internal virtual bool? ScrollEnd(float delta) => null;
+
     // What a finger dragged that didn't add up to a whole notch yet, see OnPan
-    private float panCarry;
+    private float panCarry, panCarryX;
 
     /// <summary>How far a finger drags for one notch of the wheel, on whatever scrolls by notches and has no OnPan of its own.</summary>
     internal const float PAN_NOTCH = 48.0f;
@@ -130,11 +156,24 @@ public abstract partial class UIComponent
         // Up the screen is down the content, which is the wheel turned towards the user
         panCarry -= delta.Y / PAN_NOTCH;
         int notches = (int)panCarry;
-        if (notches == 0)
+        if (notches != 0)
+            panCarry -= notches;
+
+        // Right across the screen moves content right, which is positive OnScrollX
+        panCarryX += delta.X / PAN_NOTCH;
+        int notchesX = (int)panCarryX;
+        if (notchesX != 0)
+            panCarryX -= notchesX;
+
+        if (notches == 0 && notchesX == 0)
             return true;
 
-        panCarry -= notches;
-        return OnScroll(notches);
+        bool scrolled = false;
+        if (notches != 0)
+            scrolled |= OnScroll(notches);
+        if (notchesX != 0)
+            scrolled |= OnScrollX(notchesX);
+        return scrolled;
     }
 
     /// <summary>

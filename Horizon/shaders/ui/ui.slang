@@ -44,7 +44,6 @@ static const uint SMOOTH_FLAG = 0x20000u;
 static const uint CORNER_FLAG = 0x40000u;
 static const uint FIELD_FLAG = 0x200000u;
 static const uint BOLD_FLAG = 0x800000u;
-static const uint SOFT_FLAG = 0x1000000u;
 
 // A rounded box, the edge of one or the shadow of one, worked out per pixel. Its ring is the radius of its corners in
 // pixels (for a shadow how far it fades), texMin.x how thick its edge is (0 for a box filled in), texMin.y 1 for a
@@ -213,6 +212,27 @@ GBuffer fsMain(Varyings input)
         return writeFlat(input.color, 0.0);
     }
 
+    // Rasterized atlas glyphs are 1:1 texel-to-pixel on a single mip level and need no derivatives or SampleGrad.
+    if (texture != NO_TEXTURE
+        && (input.flags & (GLYPH_FLAG | SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u
+        && (input.flags & (SMOOTH_FLAG | FIELD_FLAG | CORNER_FLAG)) == 0u)
+    {
+        float2 uv = input.texel * input.texelSize;
+        float4 tex = uTextures[NonUniformResourceIndex(texture)].SampleLevel(uv, 0.0);
+        if ((input.flags & (SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u)
+        {
+            float3 colour = input.color.rgb;
+            float3 ink = float3(glyphInk(tex.r, colour), glyphInk(tex.g, colour), glyphInk(tex.b, colour)) * input.color.a;
+            if (max(ink.r, max(ink.g, ink.b)) <= 0.0) discard;
+            float3 said = (input.flags & SUBPIXEL_ERASE_FLAG) != 0u ? ink : colour * ink;
+            return writeFlat(float4(said, 0.0), 0.0);
+        }
+
+        float4 result = float4(input.color.rgb, glyphInk(tex.r, input.color.rgb) * input.color.a);
+        if (result.a <= 0.0) discard;
+        return writeFlat(result, 0.0);
+    }
+
     // Worked out up front, outside of any branch, so the derivatives are always well defined (see sprites.slang)
     float2 box = clamp(fwidth(input.texel), float2(0.00001, 0.00001), float2(1.0, 1.0));
     float fromMiddle = length(input.texel);
@@ -265,13 +285,8 @@ GBuffer fsMain(Varyings input)
         tex = float4(1.0, 1.0, 1.0, ink * 0.25);
     }
 
-    // A quarter of a disc, what's left drawing them (the silver lining of glass), see sprites.slang
-    if ((input.flags & CORNER_FLAG) != 0u && (input.flags & SOFT_FLAG) != 0u)
-    {
-        float t = saturate(1.0 - fromMiddle);
-        tex.a *= t * t * (3.0 - 2.0 * t);
-    }
-    else if ((input.flags & CORNER_FLAG) != 0u)
+    // A quarter of a disc or arc (e.g. squiggles), see sprites.slang
+    if ((input.flags & CORNER_FLAG) != 0u)
     {
         float inside = clamp((1.0 - fromMiddle) / cornerPixel + 0.5, 0.0, 1.0);
         float pastHole = input.ring < 1.0 ? clamp((fromMiddle - (1.0 - input.ring)) / cornerPixel + 0.5, 0.0, 1.0) : 1.0;

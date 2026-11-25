@@ -1,0 +1,16 @@
+# Hex Link leaves out files and folders that match these rules.
+# Use .gitignore syntax. A leading slash starts at this folder, a trailing slash matches a folder, and ** spans folders.
+# Start a line with ! to take a match back. Blank lines and lines starting with # are comments.
+
+# Common build outputs and local settings
+bin/
+obj/
+.vs/
+node_modules/
+build/
+out/
+target/
+dist/
+*.pdb
+*.user
+.DS_Store

@@ -144,11 +144,14 @@ public class TerminalTuiTests
         }
     }
 
+    private static string ThisFile([System.Runtime.CompilerServices.CallerFilePath] string path = "") => path;
+
     [Fact]
     public void The_git_viewer_shows_the_branch_the_changes_and_the_log()
     {
         // this repository, read only, nothing is staged or unstaged
-        string repository = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        // (found from this source file, not from the build output, which an artifacts path puts outside of it)
+        string repository = Path.GetDirectoryName(ThisFile())!;
         // git started cold on a CI runner takes its time, the two seconds a program gets in Dusk weren't always enough
         var (_, program) = Run(Shipped("git.hor"), new TerminalTuiServices { Folder = repository, CallLimit = TimeSpan.FromSeconds(30) });
         Assert.Null(program.Failed);

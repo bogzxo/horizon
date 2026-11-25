@@ -18,7 +18,7 @@ public partial class SettingsPage
     private void UpdateKeys()
     {
         bool has = HasKeyboard();
-        if (GameEngine.Instance?.Input.Keyboard is { } keyboard && keyboard.Control && keyboard.WasPressed(Key.F) && (has || hadKeyboard))
+        if (GameEngine.Instance?.Input.Keyboard is { } keyboard && keyboard.Primary && keyboard.WasPressed(Key.F) && (has || hadKeyboard))
             findFor = 2;
 
         if (findFor > 0)
@@ -32,7 +32,7 @@ public partial class SettingsPage
     }
 
     // Whether control is held, Ctrl+PageDown comes as a page down like any other
-    private static bool ControlHeld => GameEngine.Instance?.Input.Keyboard is { Control: true };
+    private static bool ControlHeld => GameEngine.Instance?.Input.Keyboard is { Primary: true };
 
     // Down in the search goes to the first row it left, the way a list under a box is walked into, and a section at a
     // time from there with Alt or Ctrl
@@ -93,9 +93,10 @@ public partial class SettingsPage
     private List<SettingRow> RowsWithControls()
     {
         var shown = new List<SettingRow>();
-        foreach (UIComponent child in rows.Children)
+        IReadOnlyList<UIComponent> items = rows.Items;
+        for (int i = 0; i < items.Count; i++)
         {
-            if (child is SettingRow { Visible: true } row && row.FirstControl() is not null)
+            if (items[i] is SettingRow { Visible: true } row && row.FirstControl() is not null)
                 shown.Add(row);
         }
 
@@ -115,7 +116,11 @@ public partial class SettingsPage
     }
 
     // The keyboard on what sets a row, the row scrolled into sight the next update
-    private static void FocusRow(SettingRow row) => row.FirstControl()?.Focus();
+    private void FocusRow(SettingRow row)
+    {
+        rows.EnsureAttached(row);
+        row.FirstControl()?.Focus();
+    }
 
     /// <summary>The key of the row whatever has the keyboard is in, null when it's in none of them. For a test.</summary>
     public string? FocusedKey => FocusedRow()?.Setting.Key;
@@ -176,11 +181,14 @@ public partial class SettingsPage
         GoTo(group);
         CurrentGroup = group;
         UIComponent? first = null;
-        foreach (UIComponent child in rows.Children)
+        UIComponent? owner = null;
+        IReadOnlyList<UIComponent> items = rows.Items;
+        for (int i = 0; i < items.Count; i++)
         {
-            if (child is SettingRow { Visible: true } row && row.Setting.Group == group && row.FirstControl() is { } control)
+            if (items[i] is SettingRow { Visible: true } row && row.Setting.Group == group && row.FirstControl() is { } control)
             {
                 first = control;
+                owner = row;
                 break;
             }
         }
@@ -190,11 +198,14 @@ public partial class SettingsPage
             var found = new List<UIComponent>();
             UIModule.CollectFocusable(content, found);
             first = found.FirstOrDefault();
+            owner = content;
         }
 
         if (first is null)
             return;
 
+        if (owner is not null)
+            rows.EnsureAttached(owner);
         first.Focus();
         focusSeen = Module?.Compositor.Focus;
     }

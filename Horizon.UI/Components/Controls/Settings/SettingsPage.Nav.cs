@@ -426,6 +426,20 @@ public partial class SettingsPage
             base.Update(dt);
         }
 
+        protected override long PaintVersion
+        {
+            get
+            {
+                var hash = new HashCode();
+                hash.Add(LabelPaintVersion());
+                hash.Add(Padding);
+                hash.Add(page.CurrentGroup == Group);
+                hash.Add(lit);
+                hash.Add(Changed);
+                return hash.ToHashCode() & 0x7FFFFFFF;
+            }
+        }
+
         protected override void Paint(UIDrawList list)
         {
             // A pill under the section that's at the top of the rows, the way a sidebar has what's open, and a fainter

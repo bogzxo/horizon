@@ -300,15 +300,29 @@ public sealed partial class UIDrawList
     /// </summary>
     internal bool SameAs(UIDrawList other)
     {
-        if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete)
+        if (itemCount != other.itemCount || Skin != other.Skin || Incomplete != other.Incomplete ||
+            runs.Count != other.runs.Count || glass.Count != other.glass.Count)
             return false;
 
-        if (!CollectionsMarshal.AsSpan(runs).SequenceEqual(CollectionsMarshal.AsSpan(other.runs)) ||
-            !CollectionsMarshal.AsSpan(glass).SequenceEqual(CollectionsMarshal.AsSpan(other.glass)))
+        if (runs.Count > 0)
+        {
+            ReadOnlySpan<Run> a = CollectionsMarshal.AsSpan(runs);
+            ReadOnlySpan<Run> b = CollectionsMarshal.AsSpan(other.runs);
+            for (int i = 0; i < a.Length; i++)
+            {
+                if (a[i].First != b[i].First || a[i].Count != b[i].Count ||
+                    !ReferenceEquals(a[i].Image0, b[i].Image0) || !ReferenceEquals(a[i].Image1, b[i].Image1))
+                    return false;
+            }
+        }
+
+        if (glass.Count > 0 &&
+            !MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(glass)).SequenceEqual(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(other.glass))))
             return false;
 
         // Byte for byte, an item is nothing but numbers
-        return MemoryMarshal.AsBytes(items.AsSpan(0, itemCount)).SequenceEqual(MemoryMarshal.AsBytes(other.items.AsSpan(0, itemCount)));
+        return itemCount == 0 ||
+            MemoryMarshal.AsBytes(items.AsSpan(0, itemCount)).SequenceEqual(MemoryMarshal.AsBytes(other.items.AsSpan(0, itemCount)));
     }
 
     /// <summary>
@@ -414,26 +428,47 @@ public sealed partial class UIDrawList
         PopFrameClip();
     }
 
+    /// <summary>A capture point in the draw list before a pane's own drop shadow is painted, see <see cref="GlassMark"/>.</summary>
+    internal readonly record struct UIGlassMark(int Items, int Quads);
+
+    /// <summary>Marks the current quad counts so a following <see cref="Glass(UIRect, float, float, float, uint, UIGlassMark)"/> captures only what was painted before this point.</summary>
+    internal UIGlassMark GlassMark() => new(itemCount, frameList.QuadCount);
+
     /// <summary>
-    /// Puts a pane of frosted glass down, a blur of whatever is drawn before it (the scene and everything painted so
-    /// far) shown inside the rectangle, under whatever is painted after it. See <see cref="UIGlass"/>, a component
-    /// that says <see cref="Components.UIComponent.Glass"/> gets one without asking for it.
+    /// Puts a pane of frosted or liquid glass down, a blur of whatever is drawn before it (the scene and everything
+    /// painted so far) shown inside the rectangle, under whatever is painted after it. See <see cref="UIGlass"/>, a
+    /// component that says <see cref="Components.UIComponent.Glass"/> gets one without asking for it.
     /// </summary>
     /// <param name="radius">How round its corners are, the same as the box painted over it.</param>
     /// <param name="blur">How far what is behind it is smeared, in the UI's pixels.</param>
     /// <param name="bend">How far what is behind is bent in at its edge, in the UI's pixels, see <see cref="UIGlass.Bend"/>.</param>
-    public void Glass(UIRect rect, float radius, float blur, float bend = 0.0f)
+    public void Glass(UIRect rect, float radius, float blur, float bend = 0.0f) =>
+        Glass(rect, radius, blur, bend, 0u, GlassMark());
+
+    /// <summary>
+    /// Puts a tinted pane of frosted or liquid glass down using <paramref name="glass"/>'s blur, bevel bend, and dye strength.
+    /// </summary>
+    public void Glass(UIRect rect, float radius, UIGlass glass, Vector4 tint) =>
+        Glass(rect, radius, glass.Blur, glass.Bend, SpriteItem.PackColor(glass.DyeColor(tint)), GlassMark());
+
+    internal void Glass(UIRect rect, float radius, UIGlass glass, Vector4 tint, UIGlassMark under) =>
+        Glass(rect, radius, glass.Blur, glass.Bend, SpriteItem.PackColor(glass.DyeColor(tint)), under);
+
+    internal void Glass(UIRect rect, float radius, float blur, float bend, uint tint, UIGlassMark under)
     {
-        if (rect.IsEmpty || opacity <= 0.0f || blur <= 0.0f)
+        if (rect.IsEmpty || opacity <= 0.0f || (blur <= 0.0f && bend <= 0.0f))
             return;
 
-        // What's behind it is what it shows, which is nothing a component can say the version of
-        Uncacheable();
+        blur = MathF.Max(0.0f, blur);
+        bend = MathF.Max(0.0f, bend);
+        float lens = Math.Clamp(bend / UIGlass.MAX_BEND, 0.0f, 1.0f);
 
         // Kept in its frame even cut away, a frame between two ticks can bring it into sight
         Vector2 drawn = visualScale * scale;
         float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
-        KeepFrameGlass(rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), bend * MathF.Abs(drawn.X));
+        int underItems = Math.Clamp(under.Items, 0, itemCount);
+        int underQuads = Math.Clamp(under.Quads, 0, frameList.QuadCount);
+        KeepFrameGlass(underQuads, rect, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), bend * MathF.Abs(drawn.X), lens, tint);
         if (rect.Intersect(clip).IsEmpty)
             return;
 
@@ -447,85 +482,11 @@ public sealed partial class UIDrawList
 
         // Frosted well ahead of the rest fading in (see frosted above). Faded along with it, a menu coming in had the code
         // behind it sharp through its half there text, the two sets of words on top of each other for the first few frames
-        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X)));
+        glass.Add(new UIGlassPane(itemCount, min, max, clipMin, clipMax, radius * MathF.Abs(drawn.X), blur * MathF.Abs(scale.X), frosted, bend * MathF.Abs(drawn.X), underItems, lens, tint));
     }
 
     // How many times quicker a pane of glass comes in than what's painted over it, see Glass
     internal const float GLASS_LEAD = 3.0f;
-
-    /// <summary>
-    /// The silver lining of a pane of glass, a thin lit edge round a rounded rectangle, brightest along the top and the
-    /// left and faint along the bottom and the right, the light taken to come from the top left. Paint it over the
-    /// background and under what is in it. See <see cref="UIGlass.Rim"/>.
-    /// </summary>
-    /// <param name="strength">How bright it is at its brightest, as the alpha of white.</param>
-    public void SilverLining(UIRect rect, float radius, float strength)
-    {
-        if (strength <= 0.0f || rect.IsEmpty)
-            return;
-
-        radius = MathF.Min(radius, MathF.Min(rect.Width, rect.Height) * 0.5f);
-
-        // A pixel of the screen wide whatever the UI is scaled by, a lining is a hairline or it's a border
-        float thickness = 1.0f / MathF.Max(0.01f, MathF.Abs((visualScale * scale).X));
-        float lit = Math.Clamp(strength, 0.0f, 1.0f);
-        uint top = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit));
-        uint side = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit * 0.45f));
-        uint under = SpriteItem.PackColor(new Vector4(1.0f, 1.0f, 1.0f, lit * 0.18f));
-        var (min, max) = rect;
-
-        if (radius < 0.5f)
-        {
-            Quad(new UIRect(new Vector2(min.X, max.Y - thickness), max), Vector2.Zero, Vector2.Zero, top, SpriteItem.NoTexture);
-            Quad(new UIRect(min, new Vector2(max.X, min.Y + thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
-            Quad(new UIRect(new Vector2(min.X, min.Y + thickness), new Vector2(min.X + thickness, max.Y - thickness)), Vector2.Zero, Vector2.Zero, side, SpriteItem.NoTexture);
-            Quad(new UIRect(new Vector2(max.X - thickness, min.Y + thickness), new Vector2(max.X, max.Y - thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
-            return;
-        }
-
-        thickness = MathF.Min(thickness, radius);
-
-        // The straight runs between the corners, then the corners, each the colour of the edges it joins
-        Quad(new UIRect(new Vector2(min.X + radius, max.Y - thickness), new Vector2(max.X - radius, max.Y)), Vector2.Zero, Vector2.Zero, top, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X + radius, min.Y), new Vector2(max.X - radius, min.Y + thickness)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(min.X, min.Y + radius), new Vector2(min.X + thickness, max.Y - radius)), Vector2.Zero, Vector2.Zero, side, SpriteItem.NoTexture);
-        Quad(new UIRect(new Vector2(max.X - thickness, min.Y + radius), new Vector2(max.X, max.Y - radius)), Vector2.Zero, Vector2.Zero, under, SpriteItem.NoTexture);
-
-        Vector2 size = new(radius);
-        uint flags = SpriteItem.NoTexture | SpriteItem.CornerFlag;
-        float ring = thickness / radius;
-        Quad(new UIRect(new Vector2(min.X, max.Y - radius), new Vector2(min.X + radius, max.Y)), Vector2.One, Vector2.Zero, top, flags, ring);
-        Quad(new UIRect(max - size, max), Vector2.UnitY, Vector2.UnitX, side, flags, ring);
-        Quad(new UIRect(min, min + size), Vector2.UnitX, Vector2.UnitY, side, flags, ring);
-        Quad(new UIRect(new Vector2(max.X - radius, min.Y), new Vector2(max.X, min.Y + radius)), Vector2.Zero, Vector2.One, under, flags, ring);
-    }
-
-    // How many bands a sheen is laid in, how far down the glass it reaches as a share of its height, and how bright it is
-    // at the top for a rim of 1
-    private const int SHEEN_BANDS = 6;
-    private const float SHEEN_REACH = 0.45f, SHEEN_STRENGTH = 0.065f;
-
-    /// <summary>
-    /// The sheen of a pane of glass, a soft light down from its top edge that fades out before its middle, the light the
-    /// silver lining catches caught by the face of the glass as well. It's what has glass read as glass over something
-    /// dark, where there's nothing behind it to blur. Laid in bands of the rounded box a little further down each, too
-    /// faint each to see a step between them.
-    /// </summary>
-    /// <param name="strength">How bright it is, as the rim of the glass, 0 for none.</param>
-    public void Sheen(UIRect rect, float radius, float strength)
-    {
-        if (strength <= 0.0f || rect.IsEmpty)
-            return;
-
-        var band = new Vector4(1.0f, 1.0f, 1.0f, SHEEN_STRENGTH * Math.Clamp(strength, 0.0f, 1.0f) / SHEEN_BANDS);
-        for (int i = 1; i <= SHEEN_BANDS; i++)
-        {
-            float down = rect.Height * SHEEN_REACH * i / SHEEN_BANDS;
-            PushClip(new UIRect(new Vector2(rect.Min.X, rect.Max.Y - down), rect.Max));
-            RoundRect(rect, radius, band);
-            PopClip();
-        }
-    }
 
     // How far the shadow under a popup reaches and how far down it's moved, in the UI's pixels, and how dark it is on a
     // dark panel and on a light one (on light it's a hint, on dark it has to be there to be seen at all)
@@ -533,9 +494,8 @@ public sealed partial class UIDrawList
 
     /// <summary>
     /// What every popup sits on, the same for all of them. A soft shadow that lifts it off what's behind, the glass
-    /// when there is any (see <see cref="UIGlass"/>), the panel's colour over that, a hairline round it in the border's
-    /// colour, and the silver lining on glass. Rounded by the skin's <see cref="UISkin.PopupRadius"/>. The accent is
-    /// left for what is picked inside of it, it used to be the frame of every popup and so meant nothing.
+    /// when there is any (see <see cref="UIGlass"/>), the panel's colour over that, and a hairline round it in the
+    /// border's colour. Rounded by the skin's <see cref="UISkin.PopupRadius"/>.
     /// </summary>
     public void Popup(UIRect rect, UIGlass? glass = null)
     {
@@ -546,11 +506,12 @@ public sealed partial class UIDrawList
         // pill beside the list of completions it sat over
         float radius = MathF.Min(Skin.PopupRadius, rect.Height * 0.3f);
         Vector4 panel = Skin.Palette.Raised;
+        UIGlassMark under = GlassMark();
         Lifted(rect, radius);
 
         if (glass is { } frosted)
         {
-            Glass(rect, radius, frosted.Blur, frosted.Bend);
+            Glass(rect, radius, frosted, panel, under);
             panel = frosted.Over(panel);
         }
 
@@ -559,12 +520,6 @@ public sealed partial class UIDrawList
         // A pixel of the screen wide, a hairline whatever the UI is scaled by
         float hairline = 1.0f / MathF.Max(0.01f, MathF.Abs((visualScale * scale).X));
         RoundOutline(rect, radius, hairline, Skin.BorderColor);
-
-        if (glass is { Rim: > 0.0f } lined)
-        {
-            Sheen(rect, radius, lined.Rim);
-            SilverLining(rect, radius, lined.Rim);
-        }
     }
 
     /// <summary>
@@ -581,9 +536,9 @@ public sealed partial class UIDrawList
     }
 
     /// <summary>
-    /// A soft shadow under a rounded rectangle, what lifts a popup off whatever it's over. Nine quads, the middle solid,
-    /// the edges and the corners fading out over <paramref name="softness"/> (worked out per pixel, see SOFT_FLAG in
-    /// sprites.slang). Paint it before the box it's the shadow of.
+    /// A soft shadow under a rounded rectangle, what lifts a popup off whatever it's over. One rounded-box shape quad
+    /// that fades out over <paramref name="softness"/> per pixel (see <see cref="SpriteItem.ShapeFlag"/>). Paint it
+    /// before the box it's the shadow of.
     /// </summary>
     /// <param name="radius">How round the corners of the box are.</param>
     /// <param name="softness">How far out the shadow fades to nothing.</param>
@@ -644,7 +599,7 @@ public sealed partial class UIDrawList
 
         ref SpriteItem item = ref items[itemCount++];
         item = ScreenShape(rect, clip, form, radius, color, visualScale, visualOffset, scale, origin);
-        KeepFrameQuad(rect, form, Vector2.Zero, asked, flags, radius, 0.0f, 0.0f, fade);
+        KeepFrameQuad(rect, form, Vector2.Zero, asked, flags, radius, 0.0f, 0.0f, fade, itemCount - 1);
         ownerPainted++;
     }
 
@@ -1049,7 +1004,7 @@ public sealed partial class UIDrawList
             item.Origin.X += slant * (min.Y - pivot);
             item.AxisY.X = slant * (max.Y - min.Y);
         }
-        KeepFrameQuad(rect, texAskedMin, texAskedMax, asked, flags, ring, slant, upright, fade);
+        KeepFrameQuad(rect, texAskedMin, texAskedMax, asked, flags, ring, slant, upright, fade, itemCount - 1);
         item.Key = new Vector2(owner, ownerPainted++);
     }
 

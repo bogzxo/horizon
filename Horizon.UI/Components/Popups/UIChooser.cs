@@ -52,7 +52,7 @@ public static partial class UIChooser
     /// </param>
     public static UIDialog Show(UIModule module, string title, string message, List<UIChoice> choices,
         string placeholder = "a few letters", bool shortestFirst = false, Func<char, List<UIChoice>?>? prefixed = null,
-        UIRecentList? recent = null, string typed = "", Func<char, UIChoiceSearch?>? searched = null)
+        UIRecentList? recent = null, string typed = "", Func<char, UIChoiceSearch?>? searched = null, Action? escaped = null, string chosen = "")
     {
         string[] texts = [];
         var byText = new Dictionary<string, UIChoice>();
@@ -84,6 +84,8 @@ public static partial class UIChooser
         {
             if (list.Index < 0 || list.Index >= list.Items.Length || !byText.TryGetValue(list.Items[list.Index], out UIChoice? picked))
                 return;
+            if (picked.Header)
+                return;
 
             // Remembered before it runs, what it runs might well open another chooser
             if (showing == '\0')
@@ -97,12 +99,17 @@ public static partial class UIChooser
             // The best matches first, what starts with what was typed, then what has a word starting with it, then what has
             // it whole, then the first letters of its words, then the letters in a few pieces. Dusk's "dawn" had Dawn, the
             // editor under a command that only had the letters
-            var ranked = texts.Where(text => Matches(text, query)).Select(text => (Text: text, Rank: Rank(text, query))).ToList();
+            // A group's heading is there only while nothing is typed, and the rows come in the order they were given
+            bool nothingTyped = query.Trim().Length == 0;
+            // A pinned row stays at the end whatever is typed, so it is left out here and put back after
+            var ranked = texts.Where(text => byText.TryGetValue(text, out UIChoice? kind) && (kind.Header || kind.Pinned) ? kind.Header && nothingTyped : Matches(text, query)).Select(text => (Text: text, Rank: Rank(text, query))).ToList();
 
             // The letters only in a few pieces are kept for when nothing has more of it than that, "close" listed
             // Trigger Completion under Close and Close All
             int best = ranked.Count > 0 ? ranked.Min(pair => pair.Rank) : 0;
-            var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE).OrderBy(pair => pair.Rank);
+            // A demoted row (a download not on the disk) comes after every other whatever it matches
+            var ordered = ranked.Where(pair => best >= LOOSE || pair.Rank < LOOSE)
+                .OrderBy(pair => byText.TryGetValue(pair.Text, out UIChoice? kind) && kind.Demoted ? 1 : 0).ThenBy(pair => pair.Rank);
 
             // Files, a backup or a picture after the code as good as it, a short a.bak sat over Program.cs
             if (shortestFirst && showing == '\0')
@@ -118,8 +125,9 @@ public static partial class UIChooser
                 : [];
             list.Lead = lead.Length;
             list.Query = query;
-            list.Items =lead.Length == 0 ? [.. left.Take(MOST)] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST)];
-            if (list.Items.Length > 0) list.Choose(0);
+            string[] pinned = [.. texts.Where(text => byText.TryGetValue(text, out UIChoice? kind) && kind.Pinned)];
+            list.Items = lead.Length == 0 ? [.. left.Take(MOST), .. pinned] : [.. lead, .. left.Where(text => !lead.Contains(text)).Take(MOST), .. pinned];
+            if (list.Items.Length > 0 && list.NextChoosable(0, 1) is >= 0 and var first) list.Choose(first);
 
             // The card as tall as what's left and no taller, Spotlight's, and a line saying so when nothing is
             list.Rows = Math.Clamp(list.Items.Length, 1, ROWS);
@@ -193,7 +201,12 @@ public static partial class UIChooser
         }
 
         // The title is what the box says until something's typed, the line about it goes quietly along the bottom
-        shown = UIDialog.ShowPalette(module, title, new DialogChoice("Go", PickChosen), new DialogChoice("Cancel"));
+        shown = UIDialog.ShowPalette(module, title, new DialogChoice("Go", PickChosen), new DialogChoice("Cancel", escaped is null ? null : () =>
+        {
+            // Only escape goes back, a press outside is a dismissal
+            if (!shown.CancelledOutside)
+                escaped();
+        }));
         Vector4 edge = module.Compositor.Skin?.BorderColor ?? new Vector4(1.0f, 1.0f, 1.0f, 0.1f);
         var picking = shown.Body.Add(new ChooserPanel { Spacing = 6.0f });
         TextBox box = picking.Add(new TextBox
@@ -207,7 +220,8 @@ public static partial class UIChooser
             LeadIcon = "search"
         });
         Panel divider = picking.Add(new Panel { Size = new Vector2(WIDTH, 1.0f), Color = edge });
-        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, ActivateOnClick = true, Choice = id => byText.GetValueOrDefault(id) });
+        list = picking.Add(new ListBox { Size = new Vector2(WIDTH, 0.0f), Rows = ROWS, TextScale = TEXT, Plain = true, ActivateOnClick = true, Choice = id => byText.GetValueOrDefault(id),
+            Inert = id => byText.TryGetValue(id, out UIChoice? row) && row.Header });
         nothing = picking.Add(new Label { TextScale = TEXT, Align = Origin.Center, Size = new Vector2(WIDTH, 64.0f), Visible = false, Color = module.Compositor.Skin?.DimTextColor });
         // What the highlighted row would do, under the list while any row has something to say of it
         Panel? previewBox = null;
@@ -359,8 +373,23 @@ public static partial class UIChooser
                 UIKeyboard.PAGE_DOWN or UIKeyboard.SELECT_PAGE_DOWN => Math.Max(1, list.Rows - 1),
                 _ => 0
             };
-            if (step != 0 && list.Items.Length > 0)
-                list.Choose(Math.Clamp(list.Index + step, 0, list.Items.Length - 1));
+            if (step != 0 && list.Items.Length > 0
+                && list.NextChoosable(Math.Clamp(list.Index + step, 0, list.Items.Length - 1), step) is >= 0 and var stepped)
+                list.Choose(stepped);
+
+            // The key to star the highlighted row, or unstar it
+            if (key == UIKeyboard.TOGGLE_STAR && list.Index >= 0 && list.Index < list.Items.Length
+                && byText.TryGetValue(list.Items[list.Index], out UIChoice? starring) && starring.OnStar is { } toggle)
+                toggle();
+
+            // Control with enter: the row picked and its second action, when it has one
+            if (key == UIKeyboard.PICK_AND_OPEN && shown.IsOpen && list.Index >= 0 && list.Index < list.Items.Length
+                && byText.TryGetValue(list.Items[list.Index], out UIChoice? also) && !also.Header && also.PickedAlso is { } alsoDo)
+            {
+                shown.Close();
+                also.Picked();
+                alsoDo();
+            }
         };
         list.OnActivated = _ =>
         {
@@ -370,9 +399,20 @@ public static partial class UIChooser
             PickChosen();
         };
 
+        // The row to start on, when it's still there after what's typed (a list shown again after a star, the way it was)
+        if (chosen.Length > 0 && list.Visible && Array.IndexOf(list.Items, chosen) is >= 0 and var at)
+            list.Choose(at);
+
+        Snapshot = () => (box.Text, list.Index >= 0 && list.Index < list.Items.Length ? list.Items[list.Index] : string.Empty);
         box.Focus();
         return shown;
     }
+
+    /// <summary>
+    /// What is typed in the chooser shown last and the id of the row highlighted in it, for a row's star to show the list again
+    /// as it was (the filter and the row kept) rather than from the start.
+    /// </summary>
+    public static Func<(string Typed, string Chosen)>? Snapshot { get; private set; }
 
     private sealed class ChooserPanel : StackPanel
     {

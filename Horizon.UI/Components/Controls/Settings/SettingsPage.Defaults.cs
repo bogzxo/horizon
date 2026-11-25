@@ -13,6 +13,9 @@ public partial class SettingsPage
     /// <summary>A setting's default value, which its reset restores, null where none is given.</summary>
     public Func<string, IRuntimeValue?>? DefaultOf { get; set; }
 
+    private readonly Dictionary<string, List<SettingRow>> dependentsOf = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, UISetting> settingByKey = new(StringComparer.Ordinal);
+
     /// <summary>
     /// What a setting's reset says it puts back, "Reset to 4", "Reset to On" or a choice's label, the way a slider of it
     /// writes a number ("Reset to 22%"). <see cref="SettingsTexts.ResetToDefault"/> when the default value is unknown or is
@@ -20,7 +23,7 @@ public partial class SettingsPage
     /// </summary>
     public string ResetText(string key)
     {
-        UISetting? setting = settings.Find(each => each.Key == key);
+        UISetting? setting = settingByKey.GetValueOrDefault(key) ?? settings.Find(each => each.Key == key);
         if (setting is null || DefaultOf?.Invoke(key) is not { } usual)
             return texts.ResetToDefault;
 
@@ -45,10 +48,13 @@ public partial class SettingsPage
     // The rows that hang off a setting faded or brought back by what it is now
     private void RefreshDependents(string key)
     {
-        foreach (SettingRow row in rowOf.Values)
+        if (!dependentsOf.TryGetValue(key, out List<SettingRow>? list))
+            return;
+
+        for (int i = 0; i < list.Count; i++)
         {
-            if (row.Setting.DependsOn == key)
-                row.Dimmed = !row.Enabled || ParentOff(row.Setting);
+            SettingRow row = list[i];
+            row.Dimmed = !row.Enabled || ParentOff(row.Setting);
         }
     }
 }

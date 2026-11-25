@@ -54,6 +54,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Horizon.Tests" />
+    <InternalsVisibleTo Include="Hex.Tests" />
     <InternalsVisibleTo Include="Horizon.Testing" />
   </ItemGroup>
 

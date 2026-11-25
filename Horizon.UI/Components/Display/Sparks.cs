@@ -19,6 +19,7 @@ namespace Horizon.UI.Components;
 public class Sparks : UIComponent
 {
     private const int MOST = 384;
+    private const float MIN_VISIBLE_ALPHA = 0.001f;
 
     private struct Spark
     {
@@ -89,6 +90,11 @@ public class Sparks : UIComponent
 
     protected override void Update(float dt)
     {
+        if (count == 0)
+            return;
+
+        float fall = Gravity * dt;
+        float drag = MathF.Max(0.0f, 1.0f - 2.5f * dt);
         int kept = 0;
         for (int i = 0; i < count; i++)
         {
@@ -97,8 +103,8 @@ public class Sparks : UIComponent
             if (spark.Age >= spark.Life)
                 continue;
 
-            spark.Velocity.Y -= Gravity * dt;
-            spark.Velocity *= MathF.Max(0.0f, 1.0f - 2.5f * dt);
+            spark.Velocity.Y -= fall;
+            spark.Velocity *= drag;
             spark.Position += spark.Velocity * dt;
             sparks[kept++] = spark;
         }
@@ -111,23 +117,34 @@ public class Sparks : UIComponent
         if (count == 0)
             return;
 
+        bool hasGlow = Glow > 0.0f;
         // A part a spark by its name, so a frame between two ticks blends every spark with itself
         for (int i = 0; i < count; i++)
         {
             ref Spark spark = ref sparks[i];
-            list.BeginPart(spark.Id);
-
             float left = 1.0f - spark.Age / spark.Life;
+            float alpha = spark.Color.W * left;
+            if (left <= 0.0f || alpha <= MIN_VISIBLE_ALPHA)
+                continue;
+
             float radius = spark.Size * (0.4f + 0.6f * left) * 0.5f;
+            if (radius <= 0.0f)
+                continue;
+
+            list.BeginPart(spark.Id);
             Vector2 middle = spark.Position;
 
             // White hot as it's thrown, its own colour as it cools
-            Vector4 core = Vector4.Lerp(spark.Color, Vector4.One, 0.65f * left * left) with { W = spark.Color.W * left };
+            Vector4 core = Vector4.Lerp(spark.Color, Vector4.One, 0.65f * left * left) with { W = alpha };
 
-            if (Glow > 0.0f)
+            if (hasGlow)
             {
-                float halo = radius * Glow;
-                list.RoundRect(new UIRect(middle - new Vector2(halo), middle + new Vector2(halo)), halo, spark.Color with { W = spark.Color.W * left * 0.16f });
+                float haloAlpha = alpha * 0.16f;
+                if (haloAlpha > MIN_VISIBLE_ALPHA)
+                {
+                    float halo = radius * Glow;
+                    list.RoundRect(new UIRect(middle - new Vector2(halo), middle + new Vector2(halo)), halo, spark.Color with { W = haloAlpha });
+                }
             }
 
             list.RoundRect(new UIRect(middle - new Vector2(radius), middle + new Vector2(radius)), radius, core);

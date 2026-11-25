@@ -80,6 +80,14 @@ public sealed class SimulationLoop : IDisposable
     public Func<bool>? IsIdle { get; set; }
 
     /// <summary>
+    /// Asked after every tick that isn't idle: how long the next one may wait, in seconds, 0 for the loop's own rate. For
+    /// an application whose screen is changing with nobody touching it (an agent's chat streaming in, a build's output),
+    /// which wants its changes shown, not a hundred and twenty ticks a second of them. The frames between two ticks are
+    /// put together as they always are, so what moves still moves smoothly. Woken (input, work finished) it ticks at once.
+    /// </summary>
+    public Func<double>? CalmPeriod { get; set; }
+
+    /// <summary>
     /// Whether a loop that falls behind makes a single tick as long as the time that went by instead of ticks one after
     /// another to catch up, for a program that isn't a game (an editor), where what moves keeps to real time and the
     /// physics, stepped by its own clock, is nothing to keep in step. Off, a game catches up the way it always did.
@@ -88,6 +96,9 @@ public sealed class SimulationLoop : IDisposable
 
     /// <summary>Spins for the end of each timed wait for game pacing. Applications use the timer alone.</summary>
     public bool PrecisePacing { get; set; } = true;
+
+    /// <summary>Whether this loop currently holds Windows' global 1 ms timer sharp (for diagnostics and tests).</summary>
+    internal bool SharpenedTimer { get; private set; }
 
     /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
     public double IdlePeriod { get; set; } = 0.05;
@@ -213,7 +224,14 @@ public sealed class SimulationLoop : IDisposable
     private void Run()
     {
         Diagnostics.AllocationLog.NameThisThread(thread?.Name ?? "Simulation");
-        LoopTiming.SharpenTimer(true);
+        // Games keep the global 1 ms timer sharp; applications rely on high-resolution waitable timers so
+        // Windows laptops don't sit at a 1000 Hz global OS timer interrupt while idle.
+        bool sharpened = LoopTiming.NeedsSharpTimer(PrecisePacing);
+        if (sharpened)
+        {
+            LoopTiming.SharpenTimer(true);
+            SharpenedTimer = true;
+        }
 
         // Whatever is awaited on this thread carries on here, see SimulationContext
         SynchronizationContext.SetSynchronizationContext(Context);
@@ -233,6 +251,24 @@ public sealed class SimulationLoop : IDisposable
                         stretch = Math.Clamp((clock() - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
                         next = double.NaN;
                     }
+                    // Something changing that nobody is touching (an agent's chat streaming in), ticks further apart, see
+                    // CalmPeriod, from the last one, until something wakes it
+                    else if (CalmPeriod?.Invoke() is > 0.0 and var calm && calm > tickPeriod)
+                    {
+                        // Waited out, one tick of all the time that went by. Woken before then (input, an animation
+                        // asking for ticks), back to the loop's own pace: ticked at once with a tick's time it ran ahead
+                        // of the clock, a glide that woke it every tick going several times as fast and off the end
+                        double left = calm - (clock() - lastStamp) / frequency;
+                        if (left <= 0.0 || !wake.WaitOne(TimeSpan.FromSeconds(left)))
+                        {
+                            stretch = Math.Clamp((clock() - lastStamp) / frequency, tickPeriod, MAX_STRETCH);
+                            next = double.NaN;
+                        }
+                        else
+                        {
+                            LoopTiming.WaitUntil(next / frequency, spin: PrecisePacing);
+                        }
+                    }
                     else
                     {
                         LoopTiming.WaitUntil(next / frequency, spin: PrecisePacing);
@@ -245,7 +281,11 @@ public sealed class SimulationLoop : IDisposable
         finally
         {
             Ticks.SetState(LoopStatistics.LoopState.Stopped);
-            LoopTiming.SharpenTimer(false);
+            if (sharpened)
+            {
+                SharpenedTimer = false;
+                LoopTiming.SharpenTimer(false);
+            }
         }
     }
 

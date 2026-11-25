@@ -111,6 +111,9 @@ public partial class SettingsPage : UIComponent
     /// <summary>The zoom the page is drawn at now, <see cref="Zoom"/> or less on a page too narrow for it.</summary>
     public float ZoomNow => zoom;
 
+    /// <summary>Every row, heading and section panel in the page, including off-screen virtualized items.</summary>
+    public IReadOnlyList<UIComponent> RowItems => rows.Items;
+
     // The zoom the page is drawn at worked out again from how wide it is, built again when that changes it
     private void FitZoom()
     {
@@ -179,7 +182,7 @@ public partial class SettingsPage : UIComponent
     private readonly ScrollPanel navScroll;
     private readonly StackPanel nav;
     private readonly ScrollPanel scroll;
-    private readonly StackPanel rows;
+    private readonly RowsStack rows;
 
     // What the rows say when a search leaves none of them
     private readonly Label nothing;
@@ -393,7 +396,7 @@ public partial class SettingsPage : UIComponent
         // No gaps between the sections' rows, a pointer going down them is always on one, the gap is in their pills
         nav = navScroll.Add(new StackPanel { Spacing = 0.0f, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
         scroll = Add(new ScrollPanel());
-        rows = scroll.Add(new StackPanel { Spacing = ROW_GAP, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
+        rows = scroll.Add(new RowsStack(scroll) { Spacing = ROW_GAP, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft });
         nothing = Add(new Label { Align = Origin.Center, Visible = false });
         nothingClear = Add(new Button { Style = "button_flat", Animated = false, Visible = false, OnPressed = ClearSearch });
         ApplyTexts();
@@ -403,23 +406,57 @@ public partial class SettingsPage : UIComponent
     public void Refresh()
     {
         foreach (string key in rowOf.Keys)
-            Refresh(key);
+            RefreshRow(key);
+        RefreshHidden();
     }
 
     /// <summary>A row showing what its setting is now, after it was changed.</summary>
     public void Refresh(string key)
     {
+        RefreshRow(key);
+        RefreshHidden();
+    }
+
+    /// <summary>Whether a setting's row is left out altogether for now (a row only one engine uses), null for none. Asked again as rows are refreshed.</summary>
+    public Func<string, bool>? HiddenOf { get; set; }
+
+    private readonly HashSet<string> hiddenNow = new(StringComparer.Ordinal);
+
+    // The rows are filtered again when one of them is hidden or shown by what changed
+    private void RefreshHidden()
+    {
+        if (HiddenOf is not { } hidden)
+            return;
+
+        foreach (string key in rowOf.Keys)
+        {
+            if (hidden(key) != hiddenNow.Contains(key))
+            {
+                Filter(search.Text);
+                return;
+            }
+        }
+    }
+
+    private void RefreshRow(string key)
+    {
+        bool wasModified = false;
         if (rowOf.TryGetValue(key, out SettingRow? row))
         {
+            wasModified = row.Modified;
             row.Show(ValueOf?.Invoke(key), IsModified?.Invoke(key) ?? false);
             row.Dimmed = !row.Enabled || ParentOff(row.Setting);
+            if (!rows.IsAttached(row))
+                rows.InvalidateHeights();
         }
 
         // The rows that hang off it fade or come back with it
         RefreshDependents(key);
 
-        // A section's dot down the left goes by its rows' changes
-        navStale = true;
+        // A section's dot down the left goes by its rows' changes; while dragging a slider whose modified state hasn't
+        // flipped (and no search is active), the nav dots and counts are unchanged.
+        if (row is null || row.Modified != wasModified || searching)
+            navStale = true;
     }
 
     /// <summary>What a choice's row says in its dropdown and in the line under it, nulls for a key with no such row. For a test.</summary>
@@ -544,14 +581,17 @@ public partial class SettingsPage : UIComponent
         UnfoldPartOf(group);
 
         // Asked for before the page has been built and laid out (as it opens), gone to once it has
-        if (dirty || !headerOf.TryGetValue(group, out Label? header) || header.Bounds.IsEmpty)
+        if (dirty || !headerOf.TryGetValue(group, out Label? header) || (header.Bounds.IsEmpty && (!rows.TryGetTop(header, out _) || scroll.Bounds.IsEmpty)))
         {
             wantedGroup = group;
             return;
         }
 
         wantedGroup = null;
-        scroll.ScrollToTop(header);
+        if (rows.IsAttached(header) && !header.Bounds.IsEmpty)
+            scroll.ScrollToTop(header);
+        else if (rows.TryGetTop(header, out float headerTop))
+            scroll.Offset = Math.Clamp(headerTop + rows.Padding.Top, 0.0f, scroll.MaxOffset);
         wentToAt = scroll.Offset;
     }
 
@@ -607,6 +647,7 @@ public partial class SettingsPage : UIComponent
         }
 
         float top = scroll.Bounds.Max.Y - scroll.Padding.Top;
+        float scrollCutoff = scroll.Offset - rows.Padding.Top + 12.0f;
         string? current = null;
 
         // Down the page the way they're showing, a search puts the sections it found the most in first. Through the list
@@ -615,12 +656,21 @@ public partial class SettingsPage : UIComponent
         {
             string group = section.Group;
             Label header = section.Header;
-            if (!header.Visible || header.Bounds.IsEmpty)
+            if (!header.Visible)
                 continue;
 
-            current ??= group;
-            if (header.Bounds.Max.Y >= top - 12.0f)
-                current = group;
+            if (rows.TryGetTop(header, out float headerTop))
+            {
+                current ??= group;
+                if (headerTop <= scrollCutoff)
+                    current = group;
+            }
+            else if (!header.Bounds.IsEmpty)
+            {
+                current ??= group;
+                if (header.Bounds.Max.Y >= top - 12.0f)
+                    current = group;
+            }
         }
 
         CurrentGroup = current;
@@ -634,6 +684,14 @@ public partial class SettingsPage : UIComponent
 
     protected override void Update(float dt)
     {
+        // Skip building rows and ticking search/nav while hidden inside a live UI (e.g. a closed SettingsWindow
+        // or hidden properties inspector on startup). Headless unit tests (Module is null) still update normally.
+        if (Module is not null && (!VisibleInHierarchy || IsHiddenByLayer))
+        {
+            base.Update(dt);
+            return;
+        }
+
         FitZoom();
         float width = scroll.Bounds.Width - RowsInset;
         if (dirty || width > 0.0f && MathF.Abs(width - builtWidth) > 1.0f)
@@ -645,7 +703,7 @@ public partial class SettingsPage : UIComponent
         // A part asked for while the page was being made, its first section, and a section once its heading is laid out
         if (wantedPart is { } part)
             GoToPart(part);
-        if (wantedGroup is { } wanted && headerOf.TryGetValue(wanted, out Label? heading) && !heading.Bounds.IsEmpty)
+        if (wantedGroup is { } wanted && headerOf.TryGetValue(wanted, out Label? heading) && (!heading.Bounds.IsEmpty || (rows.HasMeasured(heading) && !scroll.Bounds.IsEmpty)))
             GoTo(wanted);
 
         UpdateReveal();
@@ -736,16 +794,19 @@ public partial class SettingsPage : UIComponent
 
         // The search as big as the rows' sentences once the page is zoomed, the skin's own size otherwise as it was
         search.TextScale = zoom > 1.0f ? sentenceSize : 0.0f;
-        foreach (UIComponent child in rows.Children.ToArray())
-            rows.Remove(child);
         foreach (UIComponent child in nav.Children.ToArray())
             nav.Remove(child);
         rowOf.Clear();
         headerOf.Clear();
+        dependentsOf.Clear();
+        settingByKey.Clear();
         navParts.Clear();
         shownParts = navParts;
         built.Clear();
+        foreach (UISetting setting in settings)
+            settingByKey[setting.Key] = setting;
         float rowWidth = RowWidth(width);
+        var nextRows = new List<UIComponent>(settings.Count + panels.Count + 16);
 
         // the rows of a section together, the sections in the order they first come, the panels' after them
         var groups = settings.Select(setting => setting.Group).Concat(panels.Select(panel => panel.Group)).Distinct().ToList();
@@ -762,7 +823,8 @@ public partial class SettingsPage : UIComponent
 
             // The section big and the part it's of quietly in front of it
             string heading = dot < 0 ? $"[b]{named}[/b]" : $"[color:dim]{top} ·[/color] [b]{under}[/b]";
-            var header = headerOf[group] = rows.Add(new SectionHeading(this, group) { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, (CompactRows ? 32.0f : 44.0f) * zoom) });
+            var header = headerOf[group] = new SectionHeading(this, group) { Text = heading, TextScale = headingSize, Align = Origin.Left, Anchor = Origin.TopLeft, Pivot = Origin.TopLeft, Size = new Vector2(rowWidth, (CompactRows ? 32.0f : 44.0f) * zoom) };
+            nextRows.Add(header);
             var section = new BuiltSection(group, header);
             built.Add(section);
 
@@ -771,7 +833,17 @@ public partial class SettingsPage : UIComponent
             foreach (UISetting setting in settings)
             {
                 if (setting.Group == group)
-                    section.Rows.Add(rowOf[setting.Key] = rows.Add(new SettingRow(this, setting, rowWidth)));
+                {
+                    var row = rowOf[setting.Key] = new SettingRow(this, setting, rowWidth);
+                    if (setting.DependsOn.Length > 0)
+                    {
+                        if (!dependentsOf.TryGetValue(setting.DependsOn, out List<SettingRow>? deps))
+                            dependentsOf[setting.DependsOn] = deps = [];
+                        deps.Add(row);
+                    }
+                    nextRows.Add(row);
+                    section.Rows.Add(row);
+                }
             }
 
             foreach (var (of, content) in panels)
@@ -781,10 +853,12 @@ public partial class SettingsPage : UIComponent
                 content.Parent?.Remove(content);
                 content.Anchor = Origin.TopLeft;
                 content.Pivot = Origin.TopLeft;
-                section.Panels.Add(rows.Add(content));
+                nextRows.Add(content);
+                section.Panels.Add(content);
             }
         }
 
+        rows.SetItems(nextRows);
         FoldForFirstOpen();
         Refresh();
         ranked = null;

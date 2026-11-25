@@ -176,6 +176,18 @@ public class DrawingPanel : UIComponent
         Raise("up", point);
     }
 
+    protected internal override bool OnMagnify(float amount)
+    {
+        if (!Pannable || Module is not { } module)
+            return false;
+
+        Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+        Vector2 under = FromScreen(pointer);
+        Zoom = Math.Clamp(Zoom * Horizon.Input.PreciseScroll.PinchFactor(amount), 0.05f, 64.0f);
+        Pan += pointer - ToScreen(under);
+        return true;
+    }
+
     protected internal override bool OnScroll(float delta)
     {
         if (!Pannable || Module is not { } module)
@@ -184,7 +196,8 @@ public class DrawingPanel : UIComponent
         // Round the pointer, what is under it stays under it
         Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
         Vector2 under = FromScreen(pointer);
-        Zoom = Math.Clamp(Zoom * (delta > 0 ? 1.15f : 1.0f / 1.15f), 0.05f, 64.0f);
+        // A trackpad's fractions of a notch zoom by that fraction of a step
+        Zoom = Math.Clamp(Zoom * (PreciseWheel ? MathF.Pow(1.15f, delta) : delta > 0 ? 1.15f : 1.0f / 1.15f), 0.05f, 64.0f);
         Pan += pointer - ToScreen(under);
         return true;
     }
@@ -224,7 +237,7 @@ public class DrawingPanel : UIComponent
     private void Raise(string kind, Vector2 point)
     {
         var keyboard = Horizon.Engine.GameEngine.Instance?.Input.Keyboard;
-        var happened = new DrawingPointer(kind, FromScreen(point), keyboard?.Shift == true, keyboard?.Control == true);
+        var happened = new DrawingPointer(kind, FromScreen(point), keyboard?.Shift == true, keyboard?.Primary == true);
         OnPointer?.Invoke(happened);
 
         if (pointerHandler is not null)

@@ -172,6 +172,36 @@ public partial class ListBox : UIComponent
 
     protected internal override bool TabStop => TakesKeys;
 
+    /// <summary>
+    /// Whether an item is only there to be looked at (a group's heading), never chosen: the keys and the pointer pass it by.
+    /// Null for a list whose every item can be.
+    /// </summary>
+    public Func<string, bool>? Inert { get; set; }
+
+    private bool IsInert(int at) => at >= 0 && at < items.Length && Inert?.Invoke(items[at]) == true;
+
+    /// <summary>
+    /// The nearest item that can be chosen from <paramref name="from"/> going by <paramref name="down"/> (its sign) and
+    /// not past either end, <paramref name="from"/> itself when none is, -1 when there is none at all.
+    /// </summary>
+    public int NextChoosable(int from, int down)
+    {
+        int step = down >= 0 ? 1 : -1;
+        for (int at = Math.Clamp(from, 0, items.Length - 1); at >= 0 && at < items.Length; at += step)
+        {
+            if (!IsInert(at))
+                return at;
+        }
+
+        for (int at = Math.Clamp(from, 0, items.Length - 1); at >= 0 && at < items.Length; at -= step)
+        {
+            if (!IsInert(at))
+                return at;
+        }
+
+        return -1;
+    }
+
     protected internal override void OnTextInput(char character)
     {
         if (!TakesKeys || items.Length == 0 || !EnabledInHierarchy)
@@ -187,9 +217,28 @@ public partial class ListBox : UIComponent
         };
 
         if (by != 0)
-            Choose(index < 0 ? (by > 0 ? 0 : items.Length - 1) : Math.Clamp(index + by, 0, items.Length - 1));
+        {
+            int target = Math.Clamp(index < 0 ? (by > 0 ? 0 : items.Length - 1) : index + by, 0, items.Length - 1);
+            if (NextChoosable(target, by) is >= 0 and var found)
+                Choose(found);
+        }
         else if (character is UIKeyboard.ENTER or ' ')
             OnActivate();
+    }
+
+    /// <summary>Where an item's row is as of the last paint, in the module's units, null for one that is scrolled out of sight.</summary>
+    public UIRect? RowBounds(int at)
+    {
+        if (at < 0 || at >= items.Length || rowHeightSeen <= 0.0f)
+            return null;
+
+        float heading = HeadingHeight(rowHeightSeen);
+        float topEdge = Bounds.Max.Y - heading - (at - shown) * rowHeightSeen;
+        float bottomEdge = topEdge - rowHeightSeen;
+        if (bottomEdge < Bounds.Min.Y - 1.0f || topEdge > Bounds.Max.Y - heading + 1.0f)
+            return null;
+
+        return new UIRect(new Vector2(Bounds.Min.X, bottomEdge), new Vector2(Bounds.Max.X, topEdge));
     }
 
     /// <summary>The first row that is in sight, for a list longer than the box.</summary>
@@ -251,6 +300,8 @@ public partial class ListBox : UIComponent
 
         // At either end the press goes on to whatever is past the list
         int next = index + down;
+        while (next >= 0 && next < items.Length && IsInert(next))
+            next += down;
         if (next < 0 || next >= items.Length)
             return false;
 
@@ -262,6 +313,18 @@ public partial class ListBox : UIComponent
     {
         if (items.Length <= Rows)
             return false;
+
+        // A trackpad moves it by the pixel, the way a finger's drag does
+        if (PreciseWheel && rowHeightSeen > 0.0f)
+        {
+            // and gives at the ends the way a Mac's own lists do, in pixels, which the rows are worked out from
+            float at = shown * rowHeightSeen;
+            if (!over.Scroll(ref at, -delta * UIWheel.NotchUnits, (items.Length - Rows) * rowHeightSeen, Rows * rowHeightSeen, MotionSpeed))
+                return false;
+
+            top = shown = at / rowHeightSeen;
+            return true;
+        }
 
         int rows = Math.Max(1, (int)MathF.Round(MathF.Abs(delta) * WHEEL_ROWS));
         BeginScrollMotion(shown != top || over.Active);
@@ -287,6 +350,9 @@ public partial class ListBox : UIComponent
     protected internal override bool UsesScrollSpeed => true;
 
     protected internal override bool HasOverscroll => over.Active;
+
+    protected internal override bool? ScrollEnd(float delta) =>
+        items.Length <= Rows ? null : over.Active ? false : delta > 0.0f ? shown <= 0.001f : shown >= items.Length - Rows - 0.001f;
 
     // A finger on the bar drags the bar, anywhere else it scrolls the rows
     protected internal override bool KeepsTouchDrag(Vector2 point) => (items.Length > Rows && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
@@ -339,6 +405,8 @@ public partial class ListBox : UIComponent
         shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(top - shown) < 0.01f)
             shown = top;
+        else
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
     }
 
     protected internal override void OnPointerUp(Vector2 point)
@@ -365,8 +433,16 @@ public partial class ListBox : UIComponent
         if (row < 0 || row >= items.Length)
             row = -1;
 
-        if (row < 0)
+        if (row < 0 || IsInert(row))
             return;
+
+        // A click on a row's star presses the star, and chooses nothing
+        if (Choice?.Invoke(items[row]) is { Starred: not null, OnStar: { } star }
+            && point.X >= (Plain || items.Length > Rows ? Bounds.Max.X - BAR_WIDTH * 2.0f : Bounds.Max.X) - ROW_INSET - ROW_PADDING - IconSide(skin, TextScale > 0.0f ? TextScale : skin.TextScale) * 1.5f)
+        {
+            star();
+            return;
+        }
 
         // A click on the chosen row is a confirmation, on another row a choice
         if (ActivateOnClick)
@@ -460,6 +536,16 @@ public partial class ListBox : UIComponent
             // accent whole, a bar of gold down every list, and the accent is for what's on and what has the keyboard
             bool chosen = i == index;
             UIRect slip = row.Shrink(new UIEdges(ROW_INSET, 1.0f));
+
+            // A group's heading, small and quiet, with no highlight under it
+            if (IsInert(i))
+            {
+                UIRect headed = slip.Shrink(new UIEdges(ROW_PADDING, 0.0f));
+                string heading = Choice?.Invoke(items[i]) is { } named ? named.Text : Resolve(items[i]);
+                list.Text(heading, headed, Origin.BottomLeft, scale * HEADING_SCALE, skin.DimTextColor * tint, markup: false);
+                continue;
+            }
+
             list.Box(slip, chosen ? skin.TextColor with { W = PICKED } * tint
                 : IsHovered && enabled && Hovering(row) ? skin.HoverColor with { W = skin.HoverColor.W * 0.6f } : skin.HoverColor with { W = 0.0f });
             // Keep the keyboard selection identifiable while the pointer rests over another command.

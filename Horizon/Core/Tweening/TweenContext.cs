@@ -41,9 +41,17 @@ public sealed class TweenContext
         return tween;
     }
 
+    /// <summary>
+    /// Whether the last tick moved a tween that comes to an end, something on its way somewhere (a slide, a pop), not one
+    /// that goes on for ever (a pulse). For an application that only gives the full rate to what's on its way, see
+    /// WindowManager.RequestSmooth.
+    /// </summary>
+    public bool MovedFinite { get; private set; }
+
     /// <summary>Moves every tween along by some time, and lets go of the ones that are over.</summary>
     public void Tick(float dt)
     {
+        MovedFinite = false;
         int count;
         lock (tweensLock)
         {
@@ -57,7 +65,11 @@ public sealed class TweenContext
         }
 
         for (int i = 0; i < count; i++)
+        {
+            if (ticking[i].Loops > 0 && !ticking[i].IsFinished)
+                MovedFinite = true;
             ticking[i].Tick(dt);
+        }
 
         Array.Clear(ticking, 0, count);
 

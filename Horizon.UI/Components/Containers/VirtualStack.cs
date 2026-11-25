@@ -82,7 +82,7 @@ public class VirtualStack : ScrollPanel
     public float TopOf(int index)
     {
         EnsureTops(CurrentWidth);
-        return index <= 0 || tops.Length == 0 ? 0.0f : index >= ItemCount ? tops[^1] : tops[index];
+        return index <= 0 || laidCount <= 0 ? 0.0f : index >= ItemCount ? tops[laidCount] : tops[index];
     }
 
     /// <summary>The whole height of every row, measured or estimated.</summary>
@@ -91,7 +91,7 @@ public class VirtualStack : ScrollPanel
         get
         {
             EnsureTops(CurrentWidth);
-            return tops.Length == 0 ? 0.0f : tops[^1];
+            return laidCount <= 0 ? 0.0f : tops[laidCount];
         }
     }
 
@@ -145,7 +145,7 @@ public class VirtualStack : ScrollPanel
     {
         EnsureTops(CurrentWidth);
         // How far it can go as the rows are now, a list not yet laid out knows nothing else
-        contentHeight = tops.Length == 0 ? 0.0f : tops[^1];
+        contentHeight = laidCount <= 0 ? 0.0f : tops[laidCount];
         Offset = TopOf(Math.Clamp(index, 0, Math.Max(0, ItemCount - 1)));
     }
 
@@ -171,8 +171,9 @@ public class VirtualStack : ScrollPanel
         if (!dirty && laidCount == ItemCount && laidBucket == bucket)
             return;
 
-        if (tops.Length != ItemCount + 1)
-            tops = new float[ItemCount + 1];
+        // Grow geometrically rather than allocating a fresh array on every single appended row in streaming logs/chats.
+        if (tops.Length < ItemCount + 1)
+            tops = new float[Math.Max(ItemCount + 1, tops.Length * 2)];
         // A gap goes between two rows that take room, one of no height (a hidden one) has none either side of it, the way
         // a stack leaves out a child that isn't visible
         float at = 0.0f;
@@ -228,7 +229,7 @@ public class VirtualStack : ScrollPanel
 
         // At its end it's the end of the rows as they are now that's in sight, the rows made for it are the last ones
         if (atEnd)
-            offset = MathF.Max(0.0f, tops[^1] - sight);
+            offset = MathF.Max(0.0f, tops[ItemCount] - sight);
 
         // Twice at the most, the rows made the first time can measure other than they were estimated
         float anchorTop = ItemCount > 0 ? tops[anchor] : 0.0f;
@@ -239,7 +240,7 @@ public class VirtualStack : ScrollPanel
                 break;
             EnsureTops(width);
             if (atEnd)
-                offset = MathF.Max(0.0f, tops[^1] - sight);
+                offset = MathF.Max(0.0f, tops[ItemCount] - sight);
             else if (ItemCount > 0)
                 offset = tops[Math.Min(anchor, ItemCount - 1)] + into;
         }
@@ -249,10 +250,13 @@ public class VirtualStack : ScrollPanel
         if (!atEnd && ItemCount > 0 && ease.Goal is { } goal)
             ease.Goal = goal + tops[Math.Min(anchor, ItemCount - 1)] - anchorTop;
 
-        contentHeight = tops.Length == 0 ? 0.0f : tops[^1];
+        contentHeight = ItemCount <= 0 ? 0.0f : tops[ItemCount];
         float max = MathF.Max(0.0f, contentHeight - sight);
+        float before = offset;
         offset = atEnd ? max : Math.Clamp(offset, 0.0f, max);
         ease.Clamp(max);
+        if (UIWheel.Tracing && (MathF.Abs(before - offset) > 0.5f || MathF.Abs(laidMax - max) > 0.5f))
+            UIWheel.Trace(FormattableString.Invariant($"virtual arrange offset {before:F1} -> {offset:F1} atEnd={atEnd} stick={StickToEnd} max {laidMax:F1} -> {max:F1} items={ItemCount} stretch={ease.Over.Stretch:F2}"));
         laidMax = max;
 
         // Rows in sight at their places, from the top less the offset
@@ -278,6 +282,11 @@ public class VirtualStack : ScrollPanel
 
         float from = MathF.Max(0.0f, offset - sight), to = offset + sight * 2.0f;
         int first = RowAt(from), last = RowAt(to);
+
+        // On idle ticks where the realized window is unchanged and complete, skip dictionary scans and child-list updates.
+        if (Realized == (first, last) && realized.Count == last - first + 1 && last < ItemCount)
+            return;
+
         // Gathered first and let go of after, into a list kept between layouts so a tick allocates nothing
         going.Clear();
         foreach (var (index, _) in realized)
@@ -286,15 +295,18 @@ public class VirtualStack : ScrollPanel
                 going.Add(index);
         }
         // Taken out of the list together, then each let go of
-        leaving.Clear();
-        foreach (int index in going)
-            leaving.Add(realized[index]);
-        RemoveRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leaving));
-        leaving.Clear();
-        foreach (int index in going)
+        if (going.Count > 0)
         {
-            realized.Remove(index, out UIComponent? component);
-            Let(index, component!);
+            leaving.Clear();
+            foreach (int index in going)
+                leaving.Add(realized[index]);
+            RemoveRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(leaving));
+            leaving.Clear();
+            foreach (int index in going)
+            {
+                realized.Remove(index, out UIComponent? component);
+                Let(index, component!);
+            }
         }
 
         // Made in order and put in the list together, then measured
@@ -309,13 +321,16 @@ public class VirtualStack : ScrollPanel
             arriving.Add(made);
         }
 
-        AddRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(arriving));
-        if (skin is not null)
+        if (arriving.Count > 0)
         {
-            foreach (UIComponent made in arriving)
-                made.MeasureTree(skin);
+            AddRange(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(arriving));
+            if (skin is not null)
+            {
+                foreach (UIComponent made in arriving)
+                    made.MeasureTree(skin);
+            }
+            arriving.Clear();
         }
-        arriving.Clear();
 
         Realized = (first, last);
     }

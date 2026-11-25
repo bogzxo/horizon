@@ -33,7 +33,7 @@ public partial class TerminalView : UIComponent, IDisposable
     private const long RESIZE_SETTLE_MS = 120;
     private (int Columns, int Rows) sizeWanted;
     private long sizeWantedSince;
-    private bool sizedOnce;
+    private bool sizedOnce, resizePending;
 
     private TerminalScreen screen = new(80, 24);
     private PseudoTerminal? process;
@@ -65,7 +65,7 @@ public partial class TerminalView : UIComponent, IDisposable
 
     /// <summary>The middle of the cursor where it was last drawn, in the UI's units, for whoever throws sparks off it.</summary>
     public Vector2 CursorPoint => cursorAt + new Vector2(cellWidth, cellHeight) * 0.5f;
-    private bool cursorPlaced;
+    private bool cursorPlaced, cursorGliding;
     private float blink, bell;
 
     // How many rows up into the scrollback the view is, 0 for the bottom, and how many rows had gone off the top as of
@@ -465,7 +465,7 @@ public partial class TerminalView : UIComponent, IDisposable
     protected override void OnKeyDown(in UIKeyPress press)
     {
         blink = 0.0f;
-        if (CompletionKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
+        if (CompletionKey(press) || GhostKey(press) || Intercept?.Invoke(press) == true || EndedKey(press))
             return;
 
         var modifiers = ModifiersOf(press);
@@ -602,13 +602,13 @@ public partial class TerminalView : UIComponent, IDisposable
         var keyboard = GameEngine.Instance.Input.Keyboard;
 
         // A link under control, the program's mouse, or a selection
-        if (keyboard.Control && LinkAt(x, y) is { } link)
+        if (keyboard.Primary && LinkAt(x, y) is { } link)
         {
             OnLink?.Invoke(link);
             return;
         }
 
-        if (keyboard.Control && TextLinkAt(x, y + RowOffset()) is { } found)
+        if (keyboard.Primary && TextLinkAt(x, y + RowOffset()) is { } found)
         {
             OnTextLink?.Invoke(found);
             return;
@@ -728,7 +728,7 @@ public partial class TerminalView : UIComponent, IDisposable
     /// <summary>The link under the pointer worked out again when the pointer moved to another cell with control held.</summary>
     private void FollowLink()
     {
-        bool control = GameEngine.Instance?.Input.Keyboard.Control == true;
+        bool control = GameEngine.Instance?.Input.Keyboard.Primary == true;
         if (!control || Module is not { } module)
         {
             if (underlined.Row >= 0)
@@ -762,10 +762,14 @@ public partial class TerminalView : UIComponent, IDisposable
     private string? LinkAt(int x, int y)
     {
         int row = y + RowOffset();
-        if (row >= screen.TotalRows || x >= screen.Columns)
+        if (row >= screen.TotalRows || x < 0 || x >= screen.Columns)
             return null;
 
-        int link = screen.RowAt(row).Cells[x].Style.Link;
+        TerminalRow cells = screen.RowAt(row);
+        if (x >= cells.Length)
+            return null;
+
+        int link = cells.Cells[x].Style.Link;
         return link > 0 && link < screen.Links.Count ? screen.Links[link] : null;
     }
 
@@ -777,8 +781,8 @@ public partial class TerminalView : UIComponent, IDisposable
             ((ax, ay), (ex, ey)) = ((ex, ey), (ax, ay));
 
         TerminalRow start = screen.RowAt(Math.Min(ay, screen.TotalRows - 1)), end = screen.RowAt(Math.Min(ey, screen.TotalRows - 1));
-        while (ax > 0 && IsWord(start.Cells[ax - 1])) ax--;
-        while (ex < end.Length - 1 && IsWord(end.Cells[ex + 1])) ex++;
+        while (ax > 0 && IsWord(start.CellOrBlank(ax - 1))) ax--;
+        while (ex < end.Length - 1 && IsWord(end.CellOrBlank(ex + 1))) ex++;
         selectionAnchor = (ax, ay);
         selectionEnd = (ex, ey);
         hasSelection = true;
@@ -834,6 +838,136 @@ public partial class TerminalView : UIComponent, IDisposable
 
     protected override Vector2 Measure(UISkin skin) => Size;
 
+    /// <summary>
+    /// Reuse the previous tick's draw list while the terminal is idle so unfocused or quiet panes do not re-walk
+    /// every cell on unrelated UI repaints. Opts out while animating, resizing, dragging, or showing inline overlays.
+    /// </summary>
+    protected override long PaintVersion
+    {
+        get
+        {
+            if (GetType() != typeof(TerminalView))
+                return -1;
+            if (inline is not null || !sizedOnce || cellWidth <= 0.0f || cellHeight <= 0.0f || drawnVersion != screen.Version)
+                return -1;
+            if (resizePending || bell > 0.0f || cursorGliding || draggingPane || draggingBar || draggingMinimap || completions.Count > 0)
+                return -1;
+            if (screen.CursorVisible && scrolled == 0 && EndedWith is null && !cursorPlaced)
+                return -1;
+
+            var hash = new HashCode();
+
+            // Screen content and modes
+            hash.Add(screen.Version);
+            hash.Add(screen.Scrollback.Count);
+            hash.Add(screen.Columns);
+            hash.Add(screen.Rows);
+            hash.Add(screen.ReverseVideo);
+            hash.Add(screen.AlternateScreen);
+            hash.Add(screen.CursorX);
+            hash.Add(screen.CursorY);
+            hash.Add(screen.CursorVisible);
+            hash.Add(screen.CursorShape);
+            hash.Add(screen.MarksSeen);
+
+            // Appearance and palette
+            hash.Add(Font);
+            hash.Add(TextScale);
+            hash.Add(Radius);
+            TerminalPalette pal = Palette;
+            hash.Add(pal);
+            hash.Add(pal.Foreground);
+            hash.Add(pal.Background);
+            hash.Add(pal.Cursor);
+            hash.Add(pal.Selection);
+            for (int i = 0; i < pal.Ansi.Length; i++)
+                hash.Add(pal.Ansi[i]);
+
+            // Backdrop
+            bool hasBackdrop = Backdrop is { IsValid: true } && BackdropOpacity > 0.0f && !screen.AlternateScreen;
+            hash.Add(hasBackdrop);
+            if (hasBackdrop)
+            {
+                hash.Add(Backdrop);
+                hash.Add(BackdropOpacity);
+                hash.Add(BackdropScale);
+                hash.Add(BackdropOffset);
+                hash.Add(BackdropStretch);
+                hash.Add(BackdropArea);
+                hash.Add(Module?.Frame);
+            }
+
+            // Scroll, selection, and cursor state
+            hash.Add(scrolled);
+            hash.Add(hasSelection);
+            if (hasSelection)
+            {
+                hash.Add(selectionAnchor);
+                hash.Add(selectionEnd);
+            }
+            hash.Add(IsFocused);
+            hash.Add(cursorAt);
+            bool cursorLit = !IsFocused || blink < BLINK || screen.CursorShape is 2 or 4 or 6;
+            hash.Add(cursorLit);
+
+            // Marks, find matches, and Ctrl-hover link underline
+            hash.Add(jumpedTo);
+            hash.Add(matches.Count);
+            hash.Add(matchAt);
+            hash.Add(Finding);
+            hash.Add(findRow);
+            hash.Add(FindRunning);
+            hash.Add(underlined);
+
+            // Line colouring, output highlighting, and ghost text
+            hash.Add(lineRow);
+            hash.Add(lineColumn);
+            hash.Add(lineLength);
+            hash.Add(lineStride);
+            hash.Add(colouredVersion);
+            hash.Add(colouredBy);
+            hash.Add(outputHighlighter);
+            hash.Add(outputVersion);
+            hash.Add(outputOffset);
+            hash.Add(outputStride);
+            hash.Add(outputRulesVersion);
+            hash.Add(ghost);
+            hash.Add(ghostFor);
+
+            // Minimap and scroll bar
+            bool minimapUp = MinimapUp;
+            hash.Add(minimapUp);
+            if (minimapUp)
+            {
+                hash.Add(minimapGeneration);
+                bool minimapHovered = !screen.AlternateScreen && screen.Scrollback.Count > 0 && IsHovered
+                    && Module is { } mod && minimapMap.Contains(mod.ToLocal(mod.Compositor.Pointer.Position));
+                hash.Add(minimapHovered);
+            }
+            hash.Add(HasScrollBar);
+            hash.Add(barLit);
+
+            // Split pane header badge and ended bar
+            hash.Add(ShowPaneTitle);
+            if (ShowPaneTitle)
+            {
+                hash.Add(PaneTitle);
+                hash.Add(IsHovered);
+            }
+            bool endedShown = EndedShown;
+            hash.Add(endedShown);
+            if (endedShown)
+            {
+                hash.Add(EndedWith);
+                hash.Add(endedSaid);
+                hash.Add(OnRestart is not null);
+                hash.Add(RestartHint);
+            }
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         // Editing in place the editor is the pane, the shell carries on underneath out of sight
@@ -881,13 +1015,22 @@ public partial class TerminalView : UIComponent, IDisposable
             if (!sizedOnce || now - sizeWantedSince >= RESIZE_SETTLE_MS)
             {
                 sizedOnce = true;
+                resizePending = false;
                 screen.Resize(columns, rows);
                 process?.Resize(columns, rows);
                 program?.Resize(columns, rows);
                 scrolled = Math.Min(scrolled, screen.Scrollback.Count);
             }
             else
+            {
+                resizePending = true;
                 Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
+            }
+        }
+        else
+        {
+            sizedOnce = true;
+            resizePending = false;
         }
 
         TerminalPalette palette = Palette;
@@ -927,6 +1070,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
+        cursorGliding = false;
         if (screen.CursorVisible && scrolled == 0 && EndedWith is null)
         {
             Vector2 wanted = new(paintedArea.Min.X + screen.CursorX * cellWidth, top - (screen.CursorY + 1) * cellHeight);
@@ -942,7 +1086,10 @@ public partial class TerminalView : UIComponent, IDisposable
                 if (Vector2.DistanceSquared(cursorAt, wanted) < 0.25f)
                     cursorAt = wanted;
                 else
+                {
+                    cursorGliding = true;
                     RequestFrame();
+                }
             }
 
             list.BeginPart(-2);
@@ -970,6 +1117,7 @@ public partial class TerminalView : UIComponent, IDisposable
         }
 
         PaintCompletion(list, scale, top, palette);
+        PaintGhost(list, scale, top, palette);
 
         // The link under the pointer with control held, underlined in the cursor's colour
         if (underlined.Row >= offset && underlined.Row < offset + rows)
@@ -1011,6 +1159,22 @@ public partial class TerminalView : UIComponent, IDisposable
                 list.Rect(new UIRect(new Vector2(left + runStart * cellWidth, baseline), new Vector2(left + runEnd * cellWidth, top)), back);
 
             runStart = runEnd;
+        }
+
+        // Compacted scrollback rows omit trailing plain blanks; paint selection over any selected columns past row.Length
+        if (hasSelection && columns < screen.Columns)
+        {
+            var (x1, y1, x2, y2) = SelectionBounds();
+            if (rowIndex >= y1 && rowIndex <= y2)
+            {
+                int selFrom = Math.Max(columns, rowIndex == y1 ? x1 : 0);
+                int selTo = Math.Min(screen.Columns, rowIndex == y2 ? x2 + 1 : screen.Columns);
+                if (selFrom < selTo)
+                {
+                    Vector4 back = Blend(BackgroundOf(TerminalStyle.Plain, palette), palette.Selection);
+                    list.Rect(new UIRect(new Vector2(left + selFrom * cellWidth, baseline), new Vector2(left + selTo * cellWidth, top)), back);
+                }
+            }
         }
 
         // The typed line's colours split the runs where its kinds change, on the rows it is on

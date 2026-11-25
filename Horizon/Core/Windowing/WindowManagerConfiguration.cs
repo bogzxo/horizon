@@ -141,6 +141,18 @@ public readonly struct WindowManagerConfiguration
     /// </summary>
     public readonly PresentationMode Presentation { get; init; } = PresentationMode.Interpolated;
 
+    /// <summary>
+    /// Whether the window starts with <see cref="WindowManager.LowLatency"/> on, what a person does shown as soon as
+    /// it can be rather than as cheaply. Off unless it's switched on, and it can be changed while the window runs.
+    /// </summary>
+    public readonly bool LowLatency { get; init; }
+
+    /// <summary>
+    /// The most frames a second while frames are urgent in low latency, 0 for no limit, see
+    /// <see cref="WindowManager.UrgentFramesPerSecond"/>.
+    /// </summary>
+    public readonly double UrgentFramesPerSecond { get; init; } = WindowManager.URGENT_FRAMES_PER_SECOND;
+
     // What isn't said is as above, which takes a constructor to hold for a struct
     public WindowManagerConfiguration() { }
 

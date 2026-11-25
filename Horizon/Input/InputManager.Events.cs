@@ -89,8 +89,17 @@ public sealed partial class InputManager
                     if (input.Kind == InputEventKind.PointerMove) LastPointerKind = input.PointerKind;
                     break;
                 case InputEventKind.Scroll:
-                    Mouse.HearScroll(input.ScrollY);
+                    Mouse.HearScroll(input.ScrollY, input.ScrollX, input.ScrollPrecise, input.ScrollPhase);
                     LastPointerKind = PointerKind.Mouse;
+                    break;
+                case InputEventKind.Magnify:
+                    Mouse.HearMagnify(input.Magnification);
+                    break;
+                case InputEventKind.SmartMagnify:
+                    Mouse.HearSmartMagnify();
+                    break;
+                case InputEventKind.Swipe:
+                    Mouse.HearSwipe(input.SwipeX);
                     break;
                 case InputEventKind.GamepadConnected:
                 case InputEventKind.GamepadDisconnected:

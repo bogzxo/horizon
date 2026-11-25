@@ -15,7 +15,10 @@ internal enum MenuPlacement
     AtPoint,
 
     /// <summary>To the side of the item that opens it, the right if it fits, else the left.</summary>
-    BesideItem
+    BesideItem,
+
+    /// <summary>Standing on the top edge of something at the bottom of the window (anchor.Max.Y), under it when there's no room above.</summary>
+    Above
 }
 
 // Where the list goes and how it scrolls. No list ever leaves the window, one too tall for it scrolls, with a strip at
@@ -122,6 +125,16 @@ internal sealed partial class MenuPanel
         Vector2 size = new(MathF.Min(naturalWidth, roomX), MathF.Min(height + BORDER * 2.0f, roomY));
         scrolls = height + BORDER * 2.0f > roomY + 0.5f;
 
+        bounds = Position(placement, size, anchor, parentList, frame);
+        scroll = Math.Clamp(scroll, 0.0f, MaxScroll(skin));
+    }
+
+    /// <summary>
+    /// Where a list of a size goes against what opened it, always whole inside the frame (y runs up, so a list's top is
+    /// its largest y). A list taller or wider than the frame is the caller's to cut to size first.
+    /// </summary>
+    internal static UIRect Position(MenuPlacement placement, Vector2 size, UIRect anchor, UIRect parentList, UIRect frame)
+    {
         float lowest = frame.Min.X + MARGIN, highest = frame.Max.X - MARGIN - size.X;
         float bottom = frame.Min.Y + MARGIN, ceiling = frame.Max.Y - MARGIN;
         float left, top;
@@ -130,6 +143,11 @@ internal sealed partial class MenuPanel
             case MenuPlacement.Below:
                 left = anchor.Min.X;
                 top = anchor.Min.Y;
+                break;
+
+            case MenuPlacement.Above:
+                left = anchor.Min.X;
+                top = anchor.Max.Y + size.Y <= ceiling ? anchor.Max.Y + size.Y : anchor.Min.Y;
                 break;
 
             case MenuPlacement.AtPoint:
@@ -150,8 +168,7 @@ internal sealed partial class MenuPanel
 
         left = MathF.Max(MathF.Min(left, highest), lowest);
         top = MathF.Min(MathF.Max(top, bottom + size.Y), ceiling);
-        bounds = new UIRect(new Vector2(left, top - size.Y), new Vector2(left + size.X, top));
-        scroll = Math.Clamp(scroll, 0.0f, MaxScroll(skin));
+        return new UIRect(new Vector2(left, top - size.Y), new Vector2(left + size.X, top));
     }
 
     // How narrow and how wide a list is at the most, in lines of its text, so a menu of two short items still has a

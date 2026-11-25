@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
@@ -31,6 +32,7 @@ public sealed unsafe class GlyphOutlines
 {
     // The font file, out of the collector's way for good: a font is read for as long as anything draws with it
     private readonly byte* data;
+    private readonly int dataLength;
     private readonly StbTrueType.stbtt_fontinfo info = new();
 
     // Font units to pixels for a font a pixel tall, the same measure DistanceFieldFont's metrics are made in
@@ -46,6 +48,14 @@ public sealed unsafe class GlyphOutlines
     /// <summary>A number of its own, for keys.</summary>
     public int Id { get; }
 
+    // Shared native buffer for a font file, kept for the process lifetime so multiple faces or callers don't duplicate
+    // multi-megabyte .ttf/.ttc files in memory
+    private readonly record struct NativeFontBuffer(nint Pointer, int Length);
+    private static readonly ConcurrentDictionary<string, Lazy<NativeFontBuffer>> sharedBuffers = new(StringComparer.OrdinalIgnoreCase);
+
+    internal byte* NativeData => data;
+    internal int NativeDataLength => dataLength;
+
     private static int made;
     // Lazy so two threads asking for the same font at once read it once, a factory GetOrAdd ran twice left a copy behind
     private static readonly ConcurrentDictionary<string, Lazy<GlyphOutlines?>> known = new(StringComparer.OrdinalIgnoreCase);
@@ -53,14 +63,24 @@ public sealed unsafe class GlyphOutlines
     /// <summary>How far an italic letter leans, across for every unit up. The same as the field's, see UIFont.ITALIC_SLANT.</summary>
     public const float ITALIC_SLANT = 0.2f;
 
-    private GlyphOutlines(byte[] bytes)
+    private const uint TTC_TAG = 0x74746366u; // 'ttcf'
+
+    private GlyphOutlines(byte* nativeData, int length, bool ownsMemory, int faceIndex = 0)
     {
-        // Kept for good once it reads, a font is drawn with for as long as Hex runs. Given back if it doesn't
-        data = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
-        bytes.CopyTo(new Span<byte>(data, bytes.Length));
-        if (StbTrueType.stbtt_InitFont(info, data, StbTrueType.stbtt_GetFontOffsetForIndex(data, 0)) == 0)
+        if (!TryGetFontOffset(new ReadOnlySpan<byte>(nativeData, length), faceIndex, out int fontOffset))
         {
-            NativeMemory.Free(data);
+            if (ownsMemory)
+                NativeMemory.Free(nativeData);
+            throw new InvalidDataException("not a TrueType font or collection stb_truetype can read");
+        }
+
+        // Kept for good once it reads, a font is drawn with for as long as Hex runs. Given back if it doesn't
+        data = nativeData;
+        dataLength = length;
+        if (StbTrueType.stbtt_InitFont(info, data, fontOffset) == 0)
+        {
+            if (ownsMemory)
+                NativeMemory.Free(data);
             throw new InvalidDataException("not a TrueType font stb_truetype can read");
         }
 
@@ -72,21 +92,132 @@ public sealed unsafe class GlyphOutlines
         Id = Interlocked.Increment(ref made);
     }
 
-    /// <summary>The outlines of a TrueType font file (<c>.ttf</c>, <c>.otf</c>), null for anything else or a file that won't read.</summary>
+    private static GlyphOutlines CreateFromManagedBytes(byte[] bytes, int faceIndex)
+    {
+        if (!TryGetFontOffset(bytes, faceIndex, out _))
+            throw new InvalidDataException("not a TrueType font or collection stb_truetype can read");
+
+        byte* native = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
+        bytes.CopyTo(new Span<byte>(native, bytes.Length));
+        return new GlyphOutlines(native, bytes.Length, ownsMemory: true, faceIndex);
+    }
+
+    /// <summary>Creates outlines directly from raw TrueType/OpenType or TrueType Collection (<c>.ttc</c>) bytes.</summary>
+    internal static GlyphOutlines FromBytes(byte[] bytes, int faceIndex = 0) => CreateFromManagedBytes(bytes, faceIndex);
+
+    // Helper method to read a font file straight into native memory so large .ttf/.ttc files skip a managed LOH copy
+    private static NativeFontBuffer LoadNativeBuffer(string path)
+    {
+        using Stream stream = ContentFiles.OpenRead(path);
+        if (stream.CanSeek && stream.Length - stream.Position is long length && length > 0 && length <= Array.MaxLength)
+        {
+            int size = (int)length;
+            byte* native = (byte*)NativeMemory.Alloc((nuint)size);
+            try
+            {
+                int read = stream.ReadAtLeast(new Span<byte>(native, size), size, throwOnEndOfStream: false);
+                if (read == size && stream.ReadByte() < 0)
+                    return new NativeFontBuffer((nint)native, size);
+
+                // Size shifted mid-read; fall back to full read
+                NativeMemory.Free(native);
+            }
+            catch
+            {
+                NativeMemory.Free(native);
+                throw;
+            }
+        }
+
+        byte[] fallback = ContentFiles.ReadAllBytes(path);
+        byte* copy = (byte*)NativeMemory.Alloc((nuint)fallback.Length);
+        fallback.CopyTo(new Span<byte>(copy, fallback.Length));
+        return new NativeFontBuffer((nint)copy, fallback.Length);
+    }
+
+    // Helper method to build a canonical deduplication key for a font file's native bytes
+    private static string BufferKey(string path, string cacheKey)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            if (file.Exists)
+                return $"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return cacheKey;
+    }
+
+    /// <summary>Returns already-loaded outlines for <paramref name="path"/> without triggering a load.</summary>
+    internal static bool TryGetLoaded(string path, out GlyphOutlines? outlines)
+    {
+        if (known.TryGetValue(ContentFiles.CacheKey(path), out Lazy<GlyphOutlines?>? lazy) && lazy.IsValueCreated)
+        {
+            outlines = lazy.Value;
+            return outlines is not null;
+        }
+
+        outlines = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the byte offset of a face's sfnt table directory inside a single TrueType/OpenType font or a TrueType
+    /// Collection (<c>.ttc</c>, starting with <c>'ttcf'</c>). Per the OpenType TTC spec, table record offsets inside the
+    /// directory at the returned offset remain relative to byte 0 of the collection file.
+    /// </summary>
+    internal static bool TryGetFontOffset(ReadOnlySpan<byte> bytes, int faceIndex, out int offset)
+    {
+        offset = 0;
+        if (faceIndex < 0 || bytes.Length < 12)
+            return false;
+
+        uint tag = BinaryPrimitives.ReadUInt32BigEndian(bytes);
+        if (tag == TTC_TAG)
+        {
+            uint count = BinaryPrimitives.ReadUInt32BigEndian(bytes.Slice(8, 4));
+            if ((uint)faceIndex >= count)
+                return false;
+
+            long entryOffset = 12L + (long)faceIndex * 4L;
+            if (entryOffset + 4 > bytes.Length)
+                return false;
+
+            uint fontOffset = BinaryPrimitives.ReadUInt32BigEndian(bytes.Slice((int)entryOffset, 4));
+            if (fontOffset > int.MaxValue || (long)fontOffset + 12 > bytes.Length)
+                return false;
+
+            offset = (int)fontOffset;
+            return true;
+        }
+
+        return faceIndex == 0;
+    }
+
+    /// <summary>The outlines of a TrueType font file (<c>.ttf</c>, <c>.otf</c>, <c>.ttc</c>), null for anything else or a file that won't read.</summary>
     public static GlyphOutlines? For(string path)
     {
-        if (Path.GetExtension(path).ToLowerInvariant() is not (".ttf" or ".otf"))
+        ReadOnlySpan<char> extension = Path.GetExtension(path.AsSpan());
+        if (!extension.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".otf", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".ttc", StringComparison.OrdinalIgnoreCase))
             return null;
 
         // A file that isn't there yet is looked for again next time rather than remembered as missing
         if (!ContentFiles.Exists(path))
             return null;
 
-        return known.GetOrAdd(ContentFiles.CacheKey(path), _ => new Lazy<GlyphOutlines?>(() =>
+        string cacheKey = ContentFiles.CacheKey(path);
+        return known.GetOrAdd(cacheKey, _ => new Lazy<GlyphOutlines?>(() =>
         {
             try
             {
-                return new GlyphOutlines(ContentFiles.ReadAllBytes(path));
+                string bufKey = BufferKey(path, cacheKey);
+                NativeFontBuffer buffer = sharedBuffers.GetOrAdd(bufKey, _ => new Lazy<NativeFontBuffer>(() => LoadNativeBuffer(path))).Value;
+                return new GlyphOutlines((byte*)buffer.Pointer, buffer.Length, ownsMemory: false);
             }
             catch (Exception e)
             {

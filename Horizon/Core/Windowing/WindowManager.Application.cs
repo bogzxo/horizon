@@ -1,5 +1,7 @@
 using System.Diagnostics;
 
+using Horizon.Platform;
+
 namespace Horizon.Core;
 
 // A window run as an application (RunMode.Application) rather than a game, an editor that sits there doing nothing
@@ -9,9 +11,14 @@ namespace Horizon.Core;
 // How the platform's thread waits is the host's, what it waits for and when frames and ticks are due is decided here.
 public partial class WindowManager
 {
-    // How long after the last input a window counts as idle, and how many ticks without a UI changing
-    private const double IDLE_AFTER = 0.25;
+    // How long after the last input a window counts as idle, and how many ticks without a UI changing.
+    // Half a second bridges pauses between wheel notches, keystrokes and menu clicks without delaying deep idle sleep.
+    // In Low Power Mode / Battery Saver, return to idle twice as fast after a burst.
+    internal const double IDLE_AFTER = 0.5;
+    internal const double IDLE_AFTER_LOW_POWER = 0.25;
     private const long IDLE_TICKS = 2;
+
+    internal static double IdleThreshold(bool lowPowerMode) => lowPowerMode ? IDLE_AFTER_LOW_POWER : IDLE_AFTER;
 
     // How long frames are drawn after input or a change, enough for the blend between two ticks and a refresh more
     private const double FRAMES_AFTER = 0.05;
@@ -73,7 +80,27 @@ public partial class WindowManager
     // The last input (stopwatch ticks), the last tick a UI painted something new on, and until when frames are drawn
     private long lastInput, lastChangeTick, drawUntil;
     private readonly AutoResetEvent frameWanted = new(false);
+    // Wakes PaceCalmFrames immediately when the window leaves calm mode (input, RequestSmooth, exclusive/lifecycle work, or stop)
+    private readonly AutoResetEvent calmWake = new(false);
 
+    /// <summary>
+    /// Monotonically extends a stopwatch-tick deadline to at least <paramref name="now"/> + <paramref name="seconds"/>.
+    /// Returns true when the deadline was already expired (transitioning from inactive to active).
+    /// </summary>
+    internal static bool ExtendDeadline(ref long deadline, long now, double seconds)
+    {
+        bool wasActive = now < Volatile.Read(ref deadline);
+        long until = now + (long)(seconds * Stopwatch.Frequency);
+        long had;
+        do
+        {
+            had = Volatile.Read(ref deadline);
+            if (had >= until)
+                break;
+        } while (Interlocked.CompareExchange(ref deadline, until, had) != had);
+
+        return !wasActive;
+    }
 
     /// <summary>
     /// Asks for frames to be drawn for a while, for a window that only draws when something wants it to
@@ -84,15 +111,7 @@ public partial class WindowManager
         if ((Behaviour & ApplicationBehaviour.DrawOnChange) == 0)
             return;
 
-        long until = Stopwatch.GetTimestamp() + (long)(seconds * Stopwatch.Frequency);
-        long had;
-        do
-        {
-            had = Volatile.Read(ref drawUntil);
-            if (had >= until)
-                break;
-        } while (Interlocked.CompareExchange(ref drawUntil, until, had) != had);
-
+        ExtendDeadline(ref drawUntil, Stopwatch.GetTimestamp(), seconds);
         frameWanted.Set();
     }
 
@@ -103,7 +122,48 @@ public partial class WindowManager
     public void NoteChange()
     {
         Volatile.Write(ref lastChangeTick, Tick);
-        RequestFrames();
+
+        // While calm, keep drawing for a full calm period (2x PaceCalmFrames' half-period) so a change never expires
+        // before PaceCalmFrames lets the frame through and UIInBetween finishes blending cleanly without stutter.
+        RequestFrames(CalmFrameWindow(CalmNow()));
+    }
+
+    internal static double CalmFrameWindow(double calm) => calm > 0.0 ? calm : FRAMES_AFTER;
+
+    // Until when something moving asked for the full rate, see RequestSmooth
+    private long smoothUntil;
+
+    // Until when interactive pointer-following drag asked to bypass WaitForFrame pacing, see RequestUncappedFrames
+    private long uncappedUntil;
+
+    /// <summary>
+    /// Asks for the full rate of ticks and frames for a while, for something moving on its own that a person follows with
+    /// their eye: a glide after a flick, a spring going back. Without it, those were drawn at the calm rate once the input
+    /// that started them was old (see CalmNow), smooth under the fingers and choppy after. Text coming
+    /// in, a spinner, a clock don't ask, they're fine at the calm rate. From any thread, every tick it goes on moving.
+    /// </summary>
+    public void RequestSmooth(double seconds = FRAMES_AFTER)
+    {
+        // When transitioning from calm/idle into smooth, wake both loops immediately so the animation
+        // never stalls waiting out a 41 ms / 100 ms calm sleep.
+        if (ExtendDeadline(ref smoothUntil, Stopwatch.GetTimestamp(), seconds))
+        {
+            simulation?.Wake();
+            calmWake.Set();
+        }
+
+        RequestFrames(seconds);
+    }
+
+    /// <summary>
+    /// Temporarily bypasses <see cref="WaitForFrame"/> frame-rate capping while interactive pointer-following motion
+    /// (such as dragging a floating window) is active, so Mailbox presentation can deliver the freshest cursor position
+    /// up to vblank. Also keeps smooth pacing active for the same window. From any thread.
+    /// </summary>
+    public void RequestUncappedFrames(double seconds = FRAMES_AFTER)
+    {
+        ExtendDeadline(ref uncappedUntil, Stopwatch.GetTimestamp(), seconds);
+        RequestSmooth(seconds);
     }
 
     /// <summary>
@@ -124,8 +184,12 @@ public partial class WindowManager
             simulation?.RequestTickIn(seconds);
     }
 
-    /// <summary>Helper method for input of any kind, which wakes everything up. Thread of the window.</summary>
-    private void NoteInput()
+    /// <summary>
+    /// Records interactive input (platform pointer/keyboard, IME, key repeat, or interactive text edits), keeping the
+    /// window at its full rate for <see cref="IDLE_AFTER"/> seconds and waking the simulation and render loops
+    /// immediately without holding the render loop awake past <see cref="FRAMES_AFTER"/>. From any thread.
+    /// </summary>
+    public void NoteInput()
     {
         // A game was never told about input this way, it has nothing to wake
         if (Behaviour == ApplicationBehaviour.None)
@@ -133,14 +197,81 @@ public partial class WindowManager
 
         Volatile.Write(ref lastInput, Stopwatch.GetTimestamp());
         simulation?.Wake();
+        calmWake.Set();
         RequestFrames();
+
+        // What the input changes is shown the moment its tick is done, see LowLatency
+        RequestUrgentFrames();
     }
 
-    private bool InputLately => Stopwatch.GetTimestamp() - Volatile.Read(ref lastInput) < (long)(IDLE_AFTER * Stopwatch.Frequency);
+    private bool InputLately =>
+        Stopwatch.GetTimestamp() - Volatile.Read(ref lastInput) < (long)(IdleThreshold(PlatformPower.IsLowPowerMode) * Stopwatch.Frequency);
 
-    /// <summary>Whether nothing is happening, no input lately, no UI changed for a couple of ticks, nothing waiting to be done.</summary>
+    private bool SmoothNow => Stopwatch.GetTimestamp() < Volatile.Read(ref smoothUntil);
+
+    internal bool UncappedFramesNow => UncappedFramesFor(Stopwatch.GetTimestamp(), Volatile.Read(ref uncappedUntil));
+
+    internal static bool UncappedFramesFor(long now, long uncappedUntilStamp) => now < uncappedUntilStamp;
+
+    /// <summary>Whether nothing is happening, no input lately, no active smooth motion, no UI changed for a couple of ticks, nothing waiting to be done.</summary>
     private bool IdleNow() =>
-        !InputLately && Tick - Volatile.Read(ref lastChangeTick) > IDLE_TICKS && !exclusiveRequested && !EntityLifecycle.HasWork;
+        !InputLately && !SmoothNow && Tick - Volatile.Read(ref lastChangeTick) > IDLE_TICKS && !exclusiveRequested && !EntityLifecycle.HasWork;
+
+    // How far apart ticks are while the screen changes with nobody touching it: a film's 24 a second in front (the lowest a
+    // Mac's ProMotion goes for motion, and the frames between two ticks blend what moves), 10 behind other windows. In Low
+    // Power Mode / Battery Saver, drop calm work further to 12 Hz focused and 4 Hz unfocused while keeping input & smooth at full rate.
+    internal const double CALM_PERIOD = 1.0 / 24.0, CALM_PERIOD_BEHIND = 1.0 / 10.0;
+    internal const double CALM_PERIOD_LOW_POWER = 1.0 / 12.0, CALM_PERIOD_BEHIND_LOW_POWER = 1.0 / 4.0;
+
+    /// <summary>
+    /// How long the next tick may wait while something changes on screen that nobody is touching, an agent's chat streaming
+    /// in, 0 for the full rate. Every one of a hundred and twenty ticks a second painted all of the UI again for text that
+    /// came a few times a second, which was a Mac run hot through a long agent session. It follows how often the screen
+    /// really changes (NoteChange), down to 24 a second in front and 10 behind other windows (12 / 4 in Low Power Mode).
+    /// Input, an animation asking for ticks (RequestSmooth) and work waiting have the full rate at once.
+    /// </summary>
+    internal double CalmNow() => CalmPeriodFor(
+        Stopwatch.GetTimestamp(),
+        Volatile.Read(ref lastInput),
+        Volatile.Read(ref smoothUntil),
+        exclusiveRequested,
+        EntityLifecycle.HasWork,
+        windowMinimised,
+        windowFocused,
+        PlatformPower.IsLowPowerMode);
+
+    internal static double CalmPeriodFor(
+        long now,
+        long lastInputStamp,
+        long smoothUntilStamp,
+        bool exclusive,
+        bool lifecycleWork,
+        bool minimized,
+        bool focused) =>
+        CalmPeriodFor(now, lastInputStamp, smoothUntilStamp, exclusive, lifecycleWork, minimized, focused, lowPowerMode: false);
+
+    internal static double CalmPeriodFor(
+        long now,
+        long lastInputStamp,
+        long smoothUntilStamp,
+        bool exclusive,
+        bool lifecycleWork,
+        bool minimized,
+        bool focused,
+        bool lowPowerMode)
+    {
+        if (now - lastInputStamp < (long)(IdleThreshold(lowPowerMode) * Stopwatch.Frequency)
+            || now < smoothUntilStamp
+            || exclusive
+            || lifecycleWork
+            || minimized)
+            return 0.0;
+
+        if (lowPowerMode)
+            return focused ? CALM_PERIOD_LOW_POWER : CALM_PERIOD_BEHIND_LOW_POWER;
+
+        return focused ? CALM_PERIOD : CALM_PERIOD_BEHIND;
+    }
 
     /// <summary>
     /// Helper method to take in what the window was like as it came up. Creation can finish without a focus transition
@@ -192,7 +323,19 @@ public partial class WindowManager
     /// something to say rather than look a thousand times a second. Whether it can wait at all, and whether it's in the
     /// middle of something of its own (a drag, a slide), is the host's to know.
     /// </summary>
-    private bool MayWaitForEvents => (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && !InputLately;
+    private bool MayWaitForEvents => (Behaviour & ApplicationBehaviour.WaitForEvents) != 0 && !InputLately && !SmoothNow;
+
+    internal bool IsMayWaitForEvents => MayWaitForEvents;
+
+    internal static bool MayWaitForEventsFor(
+        ApplicationBehaviour behaviour,
+        long now,
+        long lastInputStamp,
+        long smoothUntilStamp,
+        bool lowPowerMode = false) =>
+        (behaviour & ApplicationBehaviour.WaitForEvents) != 0
+        && now - lastInputStamp >= (long)(IdleThreshold(lowPowerMode) * Stopwatch.Frequency)
+        && now >= smoothUntilStamp;
 
     /// <summary>
     /// Sets the maximum idle sleep. Timed UI changes can request an earlier tick.
@@ -239,5 +382,39 @@ public partial class WindowManager
             if (!frameWanted.WaitOne(hidden && dormant ? Timeout.Infinite : HEARTBEAT_MS) && !hidden)
                 return;
         }
+    }
+
+    // When the last frame was let through while calm, see PaceCalmFrames
+    private long calmFrameAt;
+
+    /// <summary>
+    /// While calm (see CalmNow), frames no closer together than half a calm tick: the frames between two ticks still blend
+    /// what moves, at twice the ticks' rate rather than the screen's. A spinner on screen asked for frames for ever, and
+    /// with them every frame of the screen's 120 a second put the whole UI together and up again. Input, or anybody waking
+    /// the frames, has them at once. The thread that draws, after WaitForDemand.
+    /// </summary>
+    private void PaceCalmFrames()
+    {
+        if ((Behaviour & ApplicationBehaviour.DrawOnChange) == 0)
+            return;
+
+        double calm = CalmNow();
+        long now = Stopwatch.GetTimestamp();
+        if (calm > 0.0)
+        {
+            // Event-driven wait up to half a calm tick; breaks out immediately if CalmNow() drops to 0
+            // (input, RequestSmooth, exclusiveRequested, EntityLifecycle.HasWork) or renderStopping is set.
+            long until = calmFrameAt + (long)(calm * 0.5 * Stopwatch.Frequency);
+            while (!renderStopping && now < until && CalmNow() > 0.0)
+            {
+                int ms = (int)Math.Ceiling((until - now) * 1000.0 / Stopwatch.Frequency);
+                if (ms <= 0)
+                    break;
+                calmWake.WaitOne(ms);
+                now = Stopwatch.GetTimestamp();
+            }
+        }
+
+        calmFrameAt = now;
     }
 }

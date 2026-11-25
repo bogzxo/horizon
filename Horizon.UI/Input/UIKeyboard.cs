@@ -147,6 +147,12 @@ public static class UIKeyboard
     public const char BOX_LEFT = '\uE020';
     public const char BOX_RIGHT = '\uE021';
 
+    /// <summary>A Mac's control with K, Y, T and O: the rest of the line taken, typed again, two characters swapped, a line opened (see <see cref="CocoaMeaning"/>).</summary>
+    public const char KILL_LINE = (char)0xE027;
+    public const char YANK = (char)0xE028;
+    public const char TRANSPOSE = (char)0xE029;
+    public const char OPEN_LINE = (char)0xE02A;
+
     /// <summary>Control, shift and space, how the call the caret is in is called said again, after escape took it away.</summary>
     public const char PARAMETER_INFO = '\uE022';
 
@@ -156,6 +162,12 @@ public static class UIKeyboard
     /// shift and alt with a full stop (or a semicolon) adds the next occurrence (or every one). Off for VS Code's.
     /// </summary>
     public static bool VisualStudioKeys { get; set; }
+
+    /// <summary>Alt with K, what a chooser takes to star (or unstar) the row that is highlighted.</summary>
+    public const char TOGGLE_STAR = (char)0xE023;
+
+    /// <summary>Control with enter, what a chooser takes to pick the highlighted row and go on to its second action.</summary>
+    public const char PICK_AND_OPEN = (char)0xE024;
 
     // What a key that types nothing at all comes to, never put in the queue
     private const char NOTHING = '\0';
@@ -300,7 +312,7 @@ public static class UIKeyboard
         }
 
         // What the key means, and whether holding it does it over and over
-        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
+        (char code, bool repeats) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys, control);
 
         if (key == Key.V && primary)
         {
@@ -327,8 +339,35 @@ public static class UIKeyboard
     /// types nothing. Primary is control, command on a Mac, and visualStudio is Visual Studio's keys where they differ
     /// (see <see cref="VisualStudioKeys"/>). On its own so the keys can be tested without a keyboard.
     /// </summary>
-    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac, bool visualStudio = false) =>
-        visualStudio && VisualStudioMeaning(key, primary, shift, alt) is { } theirs ? theirs : CodeMeaning(key, primary, shift, alt, mac);
+    public static (char Code, bool Repeats) Meaning(Key key, bool primary, bool shift, bool alt, bool mac, bool visualStudio = false, bool control = false) =>
+        mac && control && !primary && !alt && !shift && CocoaMeaning(key) is { } cocoa ? cocoa
+        : visualStudio && VisualStudioMeaning(key, primary, shift, alt) is { } theirs ? theirs : CodeMeaning(key, primary, shift, alt, mac);
+
+    /// <summary>
+    /// A Mac's text keys, the ones Cocoa (and Emacs) give the control key itself, which is not command there. Control
+    /// with A and E the start and end of the line, F and B a character on, N and P a line down and up, D and H delete
+    /// forward and back, K takes the rest of the line (see <see cref="KillBuffer"/>), Y puts it back, T swaps the two
+    /// characters round the caret and O opens a line. Null for any other key.
+    /// </summary>
+    internal static (char Code, bool Repeats)? CocoaMeaning(Key key) => key switch
+    {
+        Key.A => (HOME, false),
+        Key.E => (END, false),
+        Key.F => (RIGHT, true),
+        Key.B => (LEFT, true),
+        Key.N => (DOWN, true),
+        Key.P => (UP, true),
+        Key.D => (DELETE, true),
+        Key.H => (BACKSPACE, true),
+        Key.K => (KILL_LINE, false),
+        Key.Y => (YANK, false),
+        Key.T => (TRANSPOSE, false),
+        Key.O => (OPEN_LINE, false),
+        _ => null
+    };
+
+    /// <summary>What control with K last took off a line, which control with Y types again. Shared by every text box and editor, like a Mac's.</summary>
+    public static string KillBuffer { get; set; } = string.Empty;
 
     // The keys Visual Studio has for something else, null for one that's the same in both
     private static (char Code, bool Repeats)? VisualStudioMeaning(Key key, bool primary, bool shift, bool alt) => key switch
@@ -358,7 +397,7 @@ public static class UIKeyboard
         Key.Backspace => (primary ? WORD_BACKSPACE : BACKSPACE, true),
         Key.Delete => (primary ? WORD_DELETE : DELETE, true),
         // With control (command on a Mac) enter is somebody's shortcut (put the code in), not a new line
-        Key.Enter or Key.KeypadEnter => (primary ? NOTHING : ENTER, false),
+        Key.Enter or Key.KeypadEnter => (primary ? (alt || shift ? NOTHING : PICK_AND_OPEN) : ENTER, false),
         // With control (command on a Mac) tab is somebody's shortcut too (the next document), not an indent
         Key.Tab => (primary ? NOTHING : shift ? SHIFT_TAB : TAB, false),
         Key.Escape => (ESCAPE, false),
@@ -386,6 +425,7 @@ public static class UIKeyboard
         Key.D when primary => (NEXT_OCCURRENCE, false),
         Key.L when primary && shift => (SELECT_ALL_OCCURRENCES, false),
         Key.L when primary => (SELECT_LINE, true),
+        Key.K when alt && !shift && !primary => (TOGGLE_STAR, false),
         Key.I when alt && shift && !primary => (CARETS_AT_LINE_ENDS, false),
         Key.A when alt && shift && !primary => (TOGGLE_BLOCK_COMMENT, false),
         Key.LeftBracket when primary && shift => (FOLD, false),
@@ -619,7 +659,7 @@ public static class UIKeyboard
             return;
         }
 
-        (char code, _) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys);
+        (char code, _) = Meaning(key, primary, shift, alt, mac, VisualStudioKeys, control);
         if (code != NOTHING)
             Push(code);
         else if (!control && !alt && !super && CharacterOf(key, shift) is { } character)

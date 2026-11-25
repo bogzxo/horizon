@@ -38,8 +38,9 @@ public partial class CodeEditor
 
         float dot = MathF.Max(1.0f, MathF.Round(lineHeight * 0.085f));
         Vector4 shade = skin.Palette.Error;
-        foreach (UISpellingMark mark in spelling)
+        for (int i = 0; i < spelling.Count; i++)
         {
+            UISpellingMark mark = spelling[i];
             if (mark.Line < firstLine || mark.Line > lastLine || mark.Line >= document.LineCount || IsHidden(mark.Line, out _))
                 continue;
             list.BeginPart(HashCode.Combine(PART_SPELLING, mark.Line, mark.Column) & 0x3FFFFFFF);

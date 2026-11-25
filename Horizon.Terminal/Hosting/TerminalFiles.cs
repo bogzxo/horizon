@@ -20,6 +20,9 @@ public static class TerminalFiles
     // the folder worked out once, it's asked for all the time and the answer doesn't change in a run
     private static string? found;
 
+    // The HEX_HOME folder last made, see UserFolder
+    private static string? madeHome;
+
     /// <summary>The user's folder of Hex's files, made the first time it is asked for.</summary>
     public static string UserFolder
     {
@@ -27,7 +30,13 @@ public static class TerminalFiles
         {
             if ((Environment.GetEnvironmentVariable("HEX_HOME") ?? Environment.GetEnvironmentVariable("DUSK_HOME")) is { Length: > 0 } home)
             {
-                Make(home);
+                // Made once a folder, it's asked for on every key typed in a file (IsTerminalFile), and each was a mkdir
+                if (!string.Equals(Volatile.Read(ref madeHome), home, StringComparison.Ordinal))
+                {
+                    Make(home);
+                    Volatile.Write(ref madeHome, home);
+                }
+
                 return home;
             }
 

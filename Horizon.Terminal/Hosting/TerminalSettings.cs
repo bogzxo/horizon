@@ -325,7 +325,10 @@ public sealed class TerminalSettings
     }
 
     /// <summary>Writes the settings to their file. Says what went wrong if they couldn't be, null if they could.</summary>
-    public string? Save()
+    public string? Save() => Save(null);
+
+    /// <summary>Writes an already-composed settings text (or composes it if null) to the file.</summary>
+    public string? Save(string? written)
     {
         if (Path is null)
             return null;
@@ -334,7 +337,7 @@ public sealed class TerminalSettings
         {
             if (System.IO.Path.GetDirectoryName(Path) is { Length: > 0 } folder)
                 Directory.CreateDirectory(folder);
-            File.WriteAllText(Path, Write());
+            File.WriteAllText(Path, written ?? Write());
             return null;
         }
         catch (Exception e)

@@ -1,3 +1,5 @@
+using System.Numerics;
+
 using Horizon.UI.Scripting;
 
 namespace Horizon.UI.Components;
@@ -11,16 +13,18 @@ public partial class CodeEditor
     // Whether a word was still on its way somewhere the last time the code was painted, see Flow
     private bool flowMoving;
 
+    internal long CurrentPaintVersion => PaintVersion;
+
     protected override long PaintVersion
     {
         get
         {
             // A long line read a paint at a time is still short of what of it is in sight too (see LongColours)
-            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar || longReading)
+            if (scrollGoal is not null || over.Active || flowMoving || completions.Count > 0 || WaitingShown || draggingMinimap || draggingBar || longReading || middleScroll.Active || scaleSetAt != 0)
                 return -1;
             if (caretSeen && CaretGlide > 0.0f && glideTime < CaretGlide)
                 return -1;
-            if (LineNote is not null && lineNoteAge < LineNoteDelay + LINE_NOTE_FADE)
+            if (LineNote is { } activeNote && activeNote.Line == document.Caret.Line && lineNoteAge < LineNoteDelay + LINE_NOTE_FADE)
                 return -1;
 
             var hash = new HashCode();
@@ -30,6 +34,7 @@ public partial class CodeEditor
             hash.Add(coloured);
             hash.Add(spans);
             hash.Add(semanticList);
+            hash.Add(Highlight);
             hash.Add(highlighter);
             hash.Add(Font);
             hash.Add(textScale);
@@ -72,9 +77,11 @@ public partial class CodeEditor
             hash.Add(caretDrawn);
             hash.Add(IsFocused && blink < BLINK);
             hash.Add(CaretStyle);
+            hash.Add(CaretBand);
 
             // What's drawn over and round the code
             // The lists it's handed and how long they are, a list filled again where it is would be the same list
+            hash.Add(SyntaxError);
             hash.Add(diagnostics);
             hash.Add(diagnostics.Count);
             hash.Add(moreErrors.Count);
@@ -91,6 +98,7 @@ public partial class CodeEditor
             hash.Add(agentHints.Count);
             hash.Add(lensesAbove);
             hash.Add(lensRowsChanged);
+            hash.Add(blocksChanged);
             hash.Add(VisiblePredictionRowsVersion);
             hash.Add(lensHeldLine);
             hash.Add(inlaysVersion);
@@ -116,12 +124,12 @@ public partial class CodeEditor
             hash.Add(swatches.Count);
             hash.Add(art.Count);
             hash.Add(hoveredArt);
-            hash.Add(hoverText);
             hash.Add(signature);
             hash.Add(signatureAt);
             hash.Add(overloadStep);
             hash.Add(signatureHidden);
             hash.Add(LineNote);
+            hash.Add(prediction is not null);
             hash.Add(lineNoteFor);
             hash.Add(ExecutionLine);
             hash.Add(OnActionPressed is null ? -1 : ActionLine);
@@ -131,6 +139,8 @@ public partial class CodeEditor
             hash.Add(BreakpointMarksVersion);
             hash.Add(Rulers);
             hash.Add(FirstLineNumber);
+            hash.Add(MostGutterScale);
+            hash.Add(diffNumbers);
 
             // What it's dressed in
             hash.Add(LineNumbers);
@@ -148,9 +158,68 @@ public partial class CodeEditor
             hash.Add(BackdropStretch);
             hash.Add(AnsiColours);
 
-            // Under the pointer the gutter shows what folds and the minimap lights its slider, so where the pointer is
+            // Only the pointer regions that actually change painted quads invalidate reuse:
+            // gutter fold chevrons / breakpoint hover dot, minimap slider highlight, scrollbar hover,
+            // interactive code lenses, and remote caret labels. Moving the pointer over plain code reuses.
             if (IsHovered && Module is { } module)
-                hash.Add(System.Numerics.Vector2.Round(module.ToLocal(module.Compositor.Pointer.Position)));
+            {
+                Vector2 pointer = module.ToLocal(module.Compositor.Pointer.Position);
+                if (paintedSkin is not { } hoveredSkin)
+                {
+                    hash.Add(Vector2.Round(pointer));
+                }
+                else
+                {
+                    UIRect area = TextArea(hoveredSkin, paintedScale);
+                    float lineHeight = FontOf(hoveredSkin).LineHeight * paintedScale;
+
+                    bool overGutter = LineNumbers && pointer.X < area.Min.X;
+                    hash.Add(overGutter);
+                    if (overGutter && OnGutterPressed is not null)
+                        hash.Add((int)MathF.Floor((area.Max.Y + scrollY - pointer.Y) / MathF.Max(1.0f, lineHeight)));
+
+                    bool overMinimap = MinimapShown && rows.Count > 0
+                        && new UIRect(OnPixel(MinimapArea(hoveredSkin, paintedScale).Min), OnPixel(MinimapArea(hoveredSkin, paintedScale).Max)).Contains(pointer);
+                    hash.Add(overMinimap);
+
+                    float trackMinX = area.Max.X + MinimapWidth;
+                    bool overBar = rows.Count * lineHeight > area.Height
+                        && pointer.X >= trackMinX && pointer.X <= Bounds.Max.X
+                        && pointer.Y >= area.Min.Y && pointer.Y <= area.Max.Y;
+                    hash.Add(overBar);
+
+                    if (OnLensPressed is not null && lenses.Count > 0)
+                    {
+                        int hoveredLens = -1;
+                        for (int i = 0; i < lensBoxes.Count; i++)
+                        {
+                            if (lensBoxes[i].Box.Contains(pointer))
+                            {
+                                hoveredLens = i;
+                                break;
+                            }
+                        }
+                        hash.Add(hoveredLens);
+                    }
+
+                    if (OnLensAbovePressed is not null && lensesAbove.Count > 0)
+                    {
+                        int hoveredLensAbove = -1;
+                        for (int i = 0; i < lensAboveBoxes.Count; i++)
+                        {
+                            if (lensAboveBoxes[i].Box.Contains(pointer))
+                            {
+                                hoveredLensAbove = i;
+                                break;
+                            }
+                        }
+                        hash.Add(hoveredLensAbove);
+                    }
+
+                    if (RemoteCarets.Count > 0)
+                        hash.Add(Vector2.Round(pointer));
+                }
+            }
 
             return hash.ToHashCode() & 0x7FFFFFFF;
         }

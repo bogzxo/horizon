@@ -37,14 +37,20 @@ public sealed class UIFont
 
     private readonly Dictionary<char, CharDefinition> glyphs;
     private readonly Dictionary<int, float> kerning;
+    private readonly bool hasKerning;
     private readonly float spaceAdvance;
+    private readonly CharDefinition fallbackGlyph;
+    private readonly bool hasFallback;
+    private readonly float fallbackAdvance;
 
     // The first couple of hundred characters, which is nearly everything anybody ever writes, by their number.
     // Every character of every label is looked up three times a tick (measured, lined up, drawn) and through
-    // the dictionary that was three hashes a letter to find the letter A where it has always been
+    // the dictionary that was three hashes a letter to find the letter A where it has always been.
+    // quickAdvance stores the already-resolved advance so Measure/Wrap/Advance avoid copying the full CharDefinition.
     private const int QUICK = 256;
     private readonly CharDefinition[] quickGlyphs = new CharDefinition[QUICK];
     private readonly bool[] quickKnown = new bool[QUICK];
+    private readonly float[] quickAdvance = new float[QUICK];
 
     /// <summary>The font itself, the field and its numbers.</summary>
     public DistanceFieldFont Field { get; }
@@ -144,6 +150,7 @@ public sealed class UIFont
         Outlines = Field.Glyphs.Count > 0 ? GlyphOutlines.For(Path.Combine(directory, file)) : null;
         glyphs = Field.Glyphs;
         kerning = Field.Kerning;
+        hasKerning = kerning.Count > 0;
 
         float tallest = 0.0f;
         foreach (var glyph in glyphs.Values)
@@ -181,11 +188,33 @@ public sealed class UIFont
             glyphs.TryGetValue(' ', out var space) ? space.XAdvance
             : glyphs.TryGetValue('n', out var n) ? n.XAdvance
             : LineHeight * 0.5f;
+
+        hasFallback = glyphs.TryGetValue('?', out fallbackGlyph);
+        fallbackAdvance = hasFallback ? fallbackGlyph.XAdvance : spaceAdvance;
+
+        for (int c = 0; c < QUICK; c++)
+        {
+            quickAdvance[c] = quickKnown[c]
+                ? quickGlyphs[c].XAdvance
+                : !char.IsWhiteSpace((char)c) ? fallbackAdvance : spaceAdvance;
+        }
     }
 
     /// <summary>How much nearer (or further) the second of two characters sits to the first than its advance says, at scale 1.</summary>
     internal float Kerning(char first, char second) =>
-        kerning.Count > 0 && kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
+        hasKerning && kerning.TryGetValue(DistanceFieldFont.KerningKey(first, second), out float kern) ? kern : 0.0f;
+
+    // Helper method to get a character's advance at scale 1 without copying the full CharDefinition struct
+    private float AdvanceOf(char character)
+    {
+        if (character < QUICK)
+            return quickAdvance[character];
+
+        if (glyphs.TryGetValue(character, out var glyph))
+            return glyph.XAdvance;
+
+        return !char.IsWhiteSpace(character) ? fallbackAdvance : spaceAdvance;
+    }
 
     /// <summary>
     /// Finds what a character looks like. The glyph always says how far the character moves the pen,
@@ -206,8 +235,11 @@ public sealed class UIFont
             return glyph.Size.X > 0 && glyph.Size.Y > 0;
         }
 
-        if (!char.IsWhiteSpace(character) && glyphs.TryGetValue('?', out glyph))
+        if (hasFallback && !char.IsWhiteSpace(character))
+        {
+            glyph = fallbackGlyph;
             return true;
+        }
 
         glyph = new CharDefinition { Id = character, XAdvance = spaceAdvance };
         return false;
@@ -287,6 +319,29 @@ public sealed class UIFont
         if (text.IsEmpty)
             return Vector2.Zero;
 
+        // Fast path for plain text without kerning (code editors, terminals, unkerned UI fonts)
+        if (!markup && !hasKerning)
+        {
+            float plainWidest = 0.0f;
+            float plainWidth = 0.0f;
+            int plainLines = 1;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char character = text[i];
+                if (character == '\n')
+                {
+                    plainWidest = MathF.Max(plainWidest, plainWidth);
+                    plainWidth = 0.0f;
+                    plainLines++;
+                    continue;
+                }
+
+                plainWidth += AdvanceOf(character) * scale;
+            }
+
+            return new Vector2(MathF.Max(plainWidest, plainWidth), plainLines * LineHeight * scale);
+        }
+
         // Counted in pixels at the scale asked for, as icons don't scale the way glyphs do.
         float widest = 0.0f;
         float width = 0.0f;
@@ -329,9 +384,8 @@ public sealed class UIFont
                 }
             }
 
-            Resolve(character, out var glyph);
-            width += glyph.XAdvance * scale;
-            if (i + 1 < text.Length) width += Kerning(character, text[i + 1]) * scale;
+            width += AdvanceOf(character) * scale;
+            if (hasKerning && i + 1 < text.Length) width += Kerning(character, text[i + 1]) * scale;
         }
 
         return new Vector2(MathF.Max(widest, width), lines * LineHeight * scale);
@@ -526,9 +580,9 @@ public sealed class UIFont
             }
         }
 
-        Resolve(character, out var glyph);
+        float advance = AdvanceOf(character);
         at++;
-        float kern = at < text.Length ? Kerning(character, text[at]) : 0.0f;
-        return (glyph.XAdvance + kern) * scale;
+        float kern = hasKerning && at < text.Length ? Kerning(character, text[at]) : 0.0f;
+        return (advance + kern) * scale;
     }
 }

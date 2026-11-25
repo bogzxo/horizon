@@ -70,6 +70,9 @@ public sealed partial class UITreeItem
     /// </summary>
     public Vector4? Pip { get; set; }
 
+    /// <summary>Small coloured indicators at the trailing edge of a row.</summary>
+    public IReadOnlyList<Vector4>? StatusDots { get; set; }
+
     /// <summary>
     /// Whether the row is drawn as a button, a box with an edge round it that lights under the pointer, so a row that
     /// does something reads as one (Source Control's Commit under a repository's heading).
@@ -163,8 +166,9 @@ public partial class TreeView : UIComponent
     private float scrollBarMax;
     private UIRect scrollBarTrack, scrollBarThumb;
 
-    // The icons the tree draws itself, looked up once
+    // The icons the tree draws itself, looked up once, and the skin it was last painted with (for PaintVersion)
     private char chevronRight, chevronDown;
+    private UISkin? paintedSkin;
 
     /// <summary>The rows at the top of the tree. Changed by the owner, then <see cref="Refresh"/>.</summary>
     public List<UITreeItem> Items
@@ -554,6 +558,17 @@ public partial class TreeView : UIComponent
         if (Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f)
             return false;
 
+        // A trackpad moves it by the pixel, the way a finger's drag does
+        if (PreciseWheel)
+        {
+            // and gives at the ends the way a Mac's own lists do
+            if (!ease.Precise(ref scroll, -delta * UIWheel.NotchUnits, Travel(skin), Bounds.Height, MotionSpeed))
+                return false;
+
+            revealSelected = false;
+            return true;
+        }
+
         BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
         ease.Wheel(scroll, -delta * LineHeight(skin) * 3.0f, Travel(skin), MotionSpeed);
         return true;
@@ -650,6 +665,10 @@ public partial class TreeView : UIComponent
 
     protected internal override bool HasOverscroll => ease.Over.Active;
 
+    protected internal override bool? ScrollEnd(float delta) =>
+        Module?.Compositor.Skin is not { } skin || Travel(skin) <= 0.0f ? null
+            : ease.Over.Active ? false : delta > 0.0f ? scroll <= 0.5f : scroll >= Travel(skin) - 0.5f;
+
     // A finger on the bar drags the bar, anywhere else it scrolls the rows
     protected internal override bool KeepsTouchDrag(Vector2 point) => (!scrollBarTrack.IsEmpty && ScrollBarGrabZone.Contains(point)) || base.KeepsTouchDrag(point);
 
@@ -677,6 +696,7 @@ public partial class TreeView : UIComponent
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
+        paintedSkin = skin;
         float line = LineHeight(skin), scale = ScaleOf(skin);
 
         // The rows go under the titles of a table, all of it otherwise

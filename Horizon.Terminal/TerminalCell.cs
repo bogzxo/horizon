@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace Horizon.UI.Components;
 
@@ -6,15 +7,56 @@ namespace Horizon.UI.Components;
 /// A colour as a terminal names one. The default (the theme's foreground or background), one of the 256 of the
 /// palette (the first sixteen the theme's, the rest the cube and the greys), or a true colour.
 /// </summary>
-public readonly record struct TerminalColor(TerminalColorKind Kind, byte Index, byte R, byte G, byte B)
+public readonly struct TerminalColor : IEquatable<TerminalColor>
 {
-    public static readonly TerminalColor Default = new(TerminalColorKind.Default, 0, 0, 0, 0);
+    private readonly uint packed;
 
-    public static TerminalColor Indexed(int index) => new(TerminalColorKind.Indexed, (byte)Math.Clamp(index, 0, 255), 0, 0, 0);
+    public static readonly TerminalColor Default = default;
 
-    public static TerminalColor Rgb(int r, int g, int b) => new(TerminalColorKind.Rgb, 0, (byte)Math.Clamp(r, 0, 255), (byte)Math.Clamp(g, 0, 255), (byte)Math.Clamp(b, 0, 255));
+    private TerminalColor(uint packed) => this.packed = packed;
 
-    public bool IsDefault => Kind == TerminalColorKind.Default;
+    public TerminalColor(TerminalColorKind kind, byte index, byte r, byte g, byte b)
+    {
+        packed = kind switch
+        {
+            TerminalColorKind.Indexed => (uint)TerminalColorKind.Indexed | ((uint)index << 8),
+            TerminalColorKind.Rgb => (uint)TerminalColorKind.Rgb | ((uint)r << 8) | ((uint)g << 16) | ((uint)b << 24),
+            _ => 0u
+        };
+    }
+
+    public TerminalColorKind Kind => (TerminalColorKind)(packed & 0xFF);
+
+    public byte Index => Kind == TerminalColorKind.Indexed ? (byte)(packed >> 8) : (byte)0;
+
+    public byte R => Kind == TerminalColorKind.Rgb ? (byte)(packed >> 8) : (byte)0;
+
+    public byte G => Kind == TerminalColorKind.Rgb ? (byte)(packed >> 16) : (byte)0;
+
+    public byte B => Kind == TerminalColorKind.Rgb ? (byte)(packed >> 24) : (byte)0;
+
+    public static TerminalColor Indexed(int index) => new((uint)TerminalColorKind.Indexed | ((uint)Math.Clamp(index, 0, 255) << 8));
+
+    public static TerminalColor Rgb(int r, int g, int b) => new((uint)TerminalColorKind.Rgb | ((uint)Math.Clamp(r, 0, 255) << 8) | ((uint)Math.Clamp(g, 0, 255) << 16) | ((uint)Math.Clamp(b, 0, 255) << 24));
+
+    public bool IsDefault => packed == 0;
+
+    public bool Equals(TerminalColor other) => packed == other.packed;
+
+    public override bool Equals(object? obj) => obj is TerminalColor other && packed == other.packed;
+
+    public override int GetHashCode() => (int)packed;
+
+    public static bool operator ==(TerminalColor left, TerminalColor right) => left.packed == right.packed;
+
+    public static bool operator !=(TerminalColor left, TerminalColor right) => left.packed != right.packed;
+
+    public override string ToString() => Kind switch
+    {
+        TerminalColorKind.Indexed => $"Indexed({Index})",
+        TerminalColorKind.Rgb => $"Rgb({R}, {G}, {B})",
+        _ => "Default"
+    };
 }
 
 public enum TerminalColorKind : byte { Default, Indexed, Rgb }
@@ -48,25 +90,42 @@ public enum TerminalUnderline : byte { None, Single, Double, Curly, Dotted, Dash
 /// </summary>
 public struct TerminalStyle : IEquatable<TerminalStyle>
 {
+    private const ushort ATTRIBUTES_MASK = 0x0FFF;
+    private const ushort UNDERLINE_MASK = 0xF000;
+    private const ushort LAYOUT_MASK = (ushort)(TerminalAttributes.Wide | TerminalAttributes.Continuation);
+
     public TerminalColor Foreground, Background, UnderlineColor;
-    public TerminalAttributes Attributes;
-    public TerminalUnderline Underline;
+    private ushort attrsAndUnderline;
     public ushort Link;
 
-    public static readonly TerminalStyle Plain = new() { Foreground = TerminalColor.Default, Background = TerminalColor.Default, UnderlineColor = TerminalColor.Default };
+    public TerminalAttributes Attributes
+    {
+        readonly get => (TerminalAttributes)(attrsAndUnderline & ATTRIBUTES_MASK);
+        set => attrsAndUnderline = (ushort)((attrsAndUnderline & UNDERLINE_MASK) | ((ushort)value & ATTRIBUTES_MASK));
+    }
 
-    public readonly bool Has(TerminalAttributes attribute) => (Attributes & attribute) != 0;
+    public TerminalUnderline Underline
+    {
+        readonly get => (TerminalUnderline)(attrsAndUnderline >> 12);
+        set => attrsAndUnderline = (ushort)((attrsAndUnderline & ATTRIBUTES_MASK) | (((ushort)value & 0x0F) << 12));
+    }
+
+    public static readonly TerminalStyle Plain = default;
+
+    public readonly bool Has(TerminalAttributes attribute) => (attrsAndUnderline & (ushort)attribute) != 0;
 
     /// <summary>The same look, the wide and continuation flags apart, which is what makes two cells one run on screen.</summary>
     public readonly bool LooksLike(in TerminalStyle other) =>
-        Foreground == other.Foreground && Background == other.Background && UnderlineColor == other.UnderlineColor && Underline == other.Underline && Link == other.Link
-        && (Attributes & ~(TerminalAttributes.Wide | TerminalAttributes.Continuation)) == (other.Attributes & ~(TerminalAttributes.Wide | TerminalAttributes.Continuation));
+        Foreground == other.Foreground && Background == other.Background && UnderlineColor == other.UnderlineColor && Link == other.Link
+        && (attrsAndUnderline & ~LAYOUT_MASK) == (other.attrsAndUnderline & ~LAYOUT_MASK);
 
-    public readonly bool Equals(TerminalStyle other) => LooksLike(other) && Attributes == other.Attributes;
+    public readonly bool Equals(TerminalStyle other) =>
+        Foreground == other.Foreground && Background == other.Background && UnderlineColor == other.UnderlineColor
+        && attrsAndUnderline == other.attrsAndUnderline && Link == other.Link;
 
     public override readonly bool Equals(object? obj) => obj is TerminalStyle other && Equals(other);
 
-    public override readonly int GetHashCode() => HashCode.Combine(Foreground, Background, UnderlineColor, Attributes, Underline, Link);
+    public override readonly int GetHashCode() => HashCode.Combine(Foreground, Background, UnderlineColor, attrsAndUnderline, Link);
 
     public static bool operator ==(TerminalStyle left, TerminalStyle right) => left.Equals(right);
 
@@ -89,6 +148,8 @@ public struct TerminalCell
     public static TerminalCell Erased(in TerminalStyle style) => new() { CodePoint = ' ', Style = new TerminalStyle { Foreground = TerminalColor.Default, Background = style.Background, UnderlineColor = TerminalColor.Default } };
 
     public readonly bool IsBlank => CodePoint == ' ' && Combining is null;
+
+    public readonly bool IsPlainBlank => CodePoint == ' ' && Combining is null && Style == TerminalStyle.Plain;
 
     public readonly bool IsContinuation => Style.Has(TerminalAttributes.Continuation);
 }
@@ -121,6 +182,41 @@ public sealed class TerminalRow
     }
 
     public int Length => Cells.Length;
+
+    /// <summary>The cell at a column, or a plain blank when the row was compacted shorter than the screen.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public TerminalCell CellOrBlank(int column) => (uint)column < (uint)Cells.Length ? Cells[column] : TerminalCell.Blank;
+
+    /// <summary>
+    /// Drops trailing plain blank cells once the row enters the scrollback, returning the replaced full-width array so
+    /// the screen can reuse it for a new grid row. Wrapped rows keep their length so reflow preserves trailing spaces.
+    /// </summary>
+    internal TerminalCell[]? CompactForScrollback()
+    {
+        if (Wrapped || Cells.Length == 0)
+            return null;
+
+        int used = Cells.Length;
+        while (used > 0 && Cells[used - 1].IsPlainBlank)
+            used--;
+
+        if (used == Cells.Length)
+            return null;
+
+        TerminalCell[] previous = Cells;
+        if (used == 0)
+        {
+            Cells = [];
+        }
+        else
+        {
+            var compact = new TerminalCell[used];
+            Array.Copy(previous, compact, used);
+            Cells = compact;
+        }
+
+        return previous;
+    }
 
     /// <summary>The cells to the last one that isn't blank, what the text of the row is.</summary>
     public int Used

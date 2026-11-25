@@ -80,4 +80,29 @@ public interface IPlatformWindow
 
     /// <summary>Makes the window fullscreen or the size it was given. Platform thread, the engine waits for it.</summary>
     void ApplyDisplay(DisplaySettings settings);
+
+    /// <summary>
+    /// Whether the system draws the window's frame controls (a Mac's traffic lights) over the UI's own title bar, which then
+    /// leaves room for them (<see cref="FrameInsets"/>) and draws no minimise, maximise and close, and leaves moving, resizing
+    /// and zooming the window to the system. From any thread.
+    /// </summary>
+    bool NativeChrome => false;
+
+    /// <summary>What the system's frame controls cover of the window's top left corner, in the window's pixels, nothing when there are none or in fullscreen. From any thread.</summary>
+    PlatformFrameInsets FrameInsets => default;
+
+    /// <summary>Tells the window how tall the UI's title bar is (in the window's pixels), for the system's frame controls to be centred in it. From any thread.</summary>
+    void SetTitleBarHeight(float pixels) { }
 }
+
+/// <summary>
+/// The room the system's frame controls take of the window (<see cref="IPlatformWindow.FrameInsets"/>), in the window's pixels.
+/// </summary>
+/// <param name="Leading">How far from the left edge of the window the title bar's own things have to start, 0 for none.</param>
+/// <param name="Height">How tall the system's own title bar is, 0 for none.</param>
+/// <param name="Trailing">How far from the right edge the title bar's own things have to stop, to keep clear of the window's rounded corner (the margin the lights have on the left), 0 for none.</param>
+/// <param name="Exact">
+/// Whether the UI's bar is to be exactly <paramref name="Height"/> tall rather than at least that: a Mac in full screen, where
+/// the system's own bar slides down over the UI's with a shadow of its own height, and the two line up.
+/// </param>
+public readonly record struct PlatformFrameInsets(float Leading, float Height, float Trailing = 0.0f, bool Exact = false);

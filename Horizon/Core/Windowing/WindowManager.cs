@@ -210,6 +210,12 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     public Func<bool>? CloseRequested { get; set; }
 
+    /// <summary>
+    /// True while <see cref="CloseRequested"/> is being asked because the application was told to quit (a Mac's Cmd+Q or the
+    /// Dock's Quit) and not because its window was closed. See <see cref="IPlatformHost.CloseIsQuit"/>.
+    /// </summary>
+    public bool CloseIsQuit => host.CloseIsQuit;
+
     private bool MayClose()
     {
         try
@@ -265,6 +271,7 @@ public partial class WindowManager : GameComponent, IDisposable
     public void RequestExclusive()
     {
         exclusiveRequested = true;
+        calmWake.Set();
         RequestFrames();
     }
 
@@ -320,6 +327,8 @@ public partial class WindowManager : GameComponent, IDisposable
         Loops = [renderStatistics];
 
         Presentation = config.Presentation;
+        lowLatency = config.LowLatency;
+        urgentPeriod = PeriodOf(config.UrgentFramesPerSecond);
 
         // Only a window with a frame of its own to draw gets one, a phone's view has none
         CustomFrame = config.CustomFrame && (host.Features & PlatformFeatures.WindowFrame) != 0;
@@ -442,7 +451,7 @@ public partial class WindowManager : GameComponent, IDisposable
             DoExclusiveWork(dt, always: simulation is null);
         }
 
-        DrawFrom(snapshots.Acquire(Presentation), dt);
+        DrawFrom(snapshots.Acquire(PresentationNow), dt);
     }
 
     /// <summary>
@@ -576,7 +585,13 @@ public partial class WindowManager : GameComponent, IDisposable
     /// </summary>
     private void WaitForFrame()
     {
-        double period = framePeriod;
+        if (UncappedFramesNow)
+        {
+            nextFrame = 0.0;
+            return;
+        }
+
+        double period = FramePeriodFor(framePeriod, urgentPeriod, UrgentNow);
         if (period <= 0.0)
             return;
 
@@ -584,6 +599,10 @@ public partial class WindowManager : GameComponent, IDisposable
         double now = Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         if (nextFrame < now - period)
             nextFrame = now;
+
+        // Frames that only just became urgent don't wait out what was left of a longer turn
+        if (nextFrame > now + period)
+            nextFrame = now + period;
 
         LoopTiming.WaitUntil(nextFrame, spin: Mode != RunMode.Application);
         nextFrame += period;
@@ -606,14 +625,17 @@ public partial class WindowManager : GameComponent, IDisposable
         Start();
 
         AllocationLog.NameThisThread("Window");
-        LoopTiming.SharpenTimer(true);
+        bool sharpened = LoopTiming.NeedsSharpTimer(Mode != RunMode.Application);
+        if (sharpened)
+            LoopTiming.SharpenTimer(true);
         try
         {
             loop.Run();
         }
         finally
         {
-            LoopTiming.SharpenTimer(false);
+            if (sharpened)
+                LoopTiming.SharpenTimer(false);
         }
 
         // The last frame is finished, and whatever it may still need done to the window with it
@@ -674,6 +696,7 @@ public partial class WindowManager : GameComponent, IDisposable
 
             // Out of its wait for something to draw, there's no heartbeat to wait for
             frameWanted.Set();
+            calmWake.Set();
 
             if (renderThread is null)
             {
@@ -706,6 +729,7 @@ public partial class WindowManager : GameComponent, IDisposable
             {
                 renderStatistics.SetState(LoopStatistics.LoopState.Sleeping);
                 WaitForDemand();
+                PaceCalmFrames();
                 WaitForFrame();
                 WaitWithoutSurface();
                 renderStatistics.SetState(LoopStatistics.LoopState.Working);
@@ -792,6 +816,7 @@ public partial class WindowManager : GameComponent, IDisposable
         if ((Behaviour & ApplicationBehaviour.SlowWhenIdle) != 0)
         {
             simulation.IsIdle = IdleNow;
+            simulation.CalmPeriod = CalmNow;
             UpdateIdlePeriod();
         }
 
@@ -851,6 +876,7 @@ public partial class WindowManager : GameComponent, IDisposable
         simulationParked.Release();
 
         // A window that only draws when asked has to be asked, or this waited for its heartbeat
+        calmWake.Set();
         RequestFrames();
 
         if (simulationResumed.Wait(LONGEST_SET_UP_WAIT))
@@ -966,6 +992,8 @@ public partial class WindowManager : GameComponent, IDisposable
         simulationParked.Dispose();
 
         simulationResumed.Dispose();
+        calmWake.Dispose();
+        frameWanted.Dispose();
         allocations?.Dispose();
 
         Log.Info($"[{Name}] Disposed!");

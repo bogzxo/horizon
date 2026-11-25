@@ -66,7 +66,8 @@ public partial class TreeView
     // How much of the row's right end its badge takes, the gap before it included
     private static float BadgeWidth(UITreeItem item, UISkin skin, float scale) =>
         (item.Badge.Length > 0 ? skin.Font.Measure(item.Badge, scale, markup: false).X + DETAIL_GAP : 0.0f)
-        + (item.Dot is not null ? DotSize(skin, scale) + DETAIL_GAP : 0.0f);
+        + (item.Dot is not null ? DotSize(skin, scale) + DETAIL_GAP : 0.0f)
+        + (item.StatusDots is { Count: > 0 } dots ? dots.Count * (DotSize(skin, scale) + DETAIL_GAP) : 0.0f);
 
     // How wide a row's dot is, a little under half the height of its letters
     private static float DotSize(UISkin skin, float scale) => MathF.Max(4.0f, MathF.Round(skin.Font.LineHeight * scale * 0.38f));
@@ -132,12 +133,20 @@ public partial class TreeView
             right -= size.X + DETAIL_GAP;
         }
 
-        // The dot left of the letter, round and on whole pixels so it stays round at every size
+        if (item.Dot is null && item.StatusDots is not { Count: > 0 })
+            return;
+        float diameter = DotSize(skin, scale), top = MathF.Round(row.Center.Y - diameter * 0.5f);
         if (item.Dot is { } dot)
+            PaintDot(dot);
+        if (item.StatusDots is { } dots)
+            for (int index = dots.Count - 1; index >= 0; index--)
+                PaintDot(dots[index]);
+
+        void PaintDot(Vector4 colour)
         {
-            float size = DotSize(skin, scale), top = MathF.Round(row.Center.Y - size * 0.5f);
-            var at = new UIRect(new Vector2(MathF.Round(right - size), top), new Vector2(MathF.Round(right - size) + size, top + size));
-            list.RoundRect(at, size * 0.5f, dot);
+            float left = MathF.Round(right - diameter);
+            list.RoundRect(new UIRect(new Vector2(left, top), new Vector2(left + diameter, top + diameter)), diameter * 0.5f, colour);
+            right -= diameter + DETAIL_GAP;
         }
     }
 

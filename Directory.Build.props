@@ -7,20 +7,25 @@
 
   <!-- Keep the engine and its companion assemblies on the same release version. -->
   <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
-    <Version>1.5.0</Version>
+    <Version>1.5.1</Version>
   </PropertyGroup>
 
   <!--
-    The NuGet packages: the scripting language, the engine, the desktop platform and the UI, which is what a game needs
-    to be built against the engine without a checkout of it beside it. scripts/pack.ps1 makes them. Nothing else in
-    here is a package. Their IDs start with bogzxo. because somebody else has reserved the Horizon prefix on nuget.org;
-    the engine's assembly is Horizon and so is its project, its package is bogzxo.Horizon.Engine. Horizon.HIDL is a
-    submodule with no props of its own, so it gets its package from here as well.
+    The NuGet packages: every Horizon.* library, the scripting language, the engine, the UI, the terminal, the editor's
+    tooling and the platforms (desktop, Android, iOS), which is what a game or an editor needs to be built against the
+    engine without a checkout of it beside it, and the shader pack builder as a dotnet tool. scripts/pack.ps1 makes them.
+    The tests, the examples and the test and probe apps on a phone are not packages. Their IDs start with bogzxo.
+    because somebody else has reserved the Horizon prefix on nuget.org; the engine's assembly is Horizon and so is its
+    project, its package is bogzxo.Horizon.Engine. Horizon.HIDL is a submodule with no props of its own, so it gets its
+    package from here as well.
   -->
   <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Horizon'))">
     <IsPackable>false</IsPackable>
+    <HorizonPackage>false</HorizonPackage>
+    <HorizonPackage Condition="'$(MSBuildProjectName)' == 'Horizon' or '$(MSBuildProjectName)' == 'Horizon.HIDL' or '$(MSBuildProjectName)' == 'Horizon.UI' or '$(MSBuildProjectName)' == 'Horizon.Terminal' or '$(MSBuildProjectName)' == 'Horizon.Tooling' or '$(MSBuildProjectName)' == 'Horizon.Shaders.Build'">true</HorizonPackage>
+    <HorizonPackage Condition="$(MSBuildProjectName.StartsWith('Horizon.Platform.'))">true</HorizonPackage>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon' or '$(MSBuildProjectName)' == 'Horizon.HIDL' or '$(MSBuildProjectName)' == 'Horizon.UI' or '$(MSBuildProjectName)' == 'Horizon.Platform.Desktop'">
+  <PropertyGroup Condition="'$(HorizonPackage)' == 'true'">
     <IsPackable>true</IsPackable>
     <PackageId>bogzxo.$(MSBuildProjectName)</PackageId>
     <Authors>bogzxo</Authors>
@@ -45,5 +50,22 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Platform.Desktop'">
     <Description>The Horizon engine on Windows, macOS and Linux: the window, keyboard, mouse and controllers, audio, and MoltenVK for a Mac.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Platform.Android'">
+    <Description>The Horizon engine on Android: the SurfaceView's window for Vulkan, the APK's assets, the app's storage, AAudio, and HorizonActivity for a game's activity to derive from.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Platform.iOS'">
+    <Description>The Horizon engine on iOS: the Metal view for Vulkan over MoltenVK, touch, keyboard and controllers, audio, the bundle's content and the app's storage, and HorizonAppDelegate for a game's app to derive from.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Terminal'">
+    <Description>The Horizon engine's terminal: the VT parser, the screen, the views and panes, and the host with its plugins, profiles, sessions and shell integration.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Tooling'">
+    <Description>What an editor built on Horizon needs and a game doesn't: the language server client and the debug adapter client.</Description>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Horizon.Shaders.Build'">
+    <Description>Makes a Horizon shader pack out of a manifest, for a platform with no Slang to compile with (a phone). A dotnet tool, horizon-shaders.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>horizon-shaders</ToolCommandName>
   </PropertyGroup>
 </Project>

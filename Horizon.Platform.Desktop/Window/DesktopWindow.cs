@@ -45,6 +45,9 @@ public sealed partial class DesktopWindow : IPlatformWindow
     /// <summary>The Silk input context of the window, there once it loaded. Thread of the window.</summary>
     public IInputContext? NativeInput => _input;
 
+    /// <summary>The NSWindow on a Mac, 0 anywhere else.</summary>
+    public nint CocoaHandle => OperatingSystem.IsMacOS() && _window.Native?.Cocoa is { } cocoa ? (nint)cocoa : 0;
+
     /// <summary>The window's HWND on Windows, 0 anywhere else or before it is made.</summary>
     public nint Win32Handle => _window.Native?.Win32 is { Hwnd: not 0 } win32 ? win32.Hwnd : 0;
 
@@ -172,6 +175,10 @@ public sealed partial class DesktopWindow : IPlatformWindow
     {
         _window.Initialize();
         SetUpFrame();
+
+        // After SetUpFrame, which has SDL set the style of the window again
+        if (OperatingSystem.IsMacOS())
+            SetUpMacChrome();
         ListenForFileDrops();
 
         // Only now, a frameless window on Windows is maximised by SetUpFrame and the engine has to start from that
@@ -227,6 +234,11 @@ public sealed partial class DesktopWindow : IPlatformWindow
     private Vector2 RenderSize(Vector2 drawable)
     {
         if (!OperatingSystem.IsMacOS() || !IsFullscreen())
+            return drawable;
+
+        // The system's own full screen (the green button) of an application is drawn at every pixel the screen has: the size
+        // it was set to is a game's, an editor's text would be a stretched 1x picture
+        if (NativeChrome)
             return drawable;
 
         Vector2 set = settings.WindowSize;
@@ -404,8 +416,15 @@ public sealed partial class DesktopWindow : IPlatformWindow
             // Asked to close (its X, alt and F4), whoever said they want a say gets it, and the window stays if they say no.
             // Looked at only here: a close the system said while the thread waited (WaitForEvents takes the system's
             // messages too) used to end the loop by its condition, nobody asked, what wasn't saved gone with the window
-            if (_window.IsClosing && !Events.MayClose())
-                _window.IsClosing = false;
+            if (_window.IsClosing)
+            {
+                // A Mac's Cmd+Q and the Dock's Quit say the application is quitting, not just the window, to whoever is asked
+                host.CloseIsQuit = OperatingSystem.IsMacOS() && MacQuitWatch.TakeQuit();
+                bool mayClose = Events.MayClose();
+                host.CloseIsQuit = false;
+                if (!mayClose)
+                    _window.IsClosing = false;
+            }
             if (_window.IsClosing)
                 break;
 
@@ -422,11 +441,14 @@ public sealed partial class DesktopWindow : IPlatformWindow
     private void HandleEvents()
     {
         _window.DoEvents();
+        FlushHitTestPress();
         HandOnFileDrops();
         host.SampleGamepads();
         Events.EventsProcessed();
 
         host.DoWork();
+        if (OperatingSystem.IsMacOS())
+            MaintainMacChrome();
         TrackFrame();
         StepSlide();
 
@@ -454,8 +476,9 @@ public sealed partial class DesktopWindow : IPlatformWindow
         StopListeningForFileDrops();
         StopListening();
         ReleaseFrame();
-        if (ReferenceEquals(hitTested, this))
-            hitTested = null;
+        ReleaseHitTesting();
+        if (OperatingSystem.IsMacOS())
+            MacMouseDownWatch.Clear();
         _window.Reset();
         _window.Dispose();
         windowWake.Dispose();

@@ -26,13 +26,19 @@ public sealed partial class UIDrawList
     /// <summary>Frames asked for, once a paint, while something on it moves.</summary>
     private void KeepMoving()
     {
-        if (movingAsked || !Moves)
+        if (!Moves)
             return;
 
+        // Every one that moves keeps what it's in from being taken as it was painted (PaintVersion), not only the first of
+        // the paint: a label or button painted again as it was is a spinner standing still
+        Uncacheable();
+        if (movingAsked)
+            return;
+
+        // No frames of its own: it moves a step at a time (UIDecorative), and every step is a change, which has its frame.
+        // Frames asked for every paint had a spinner put up the whole UI at the screen's rate
         UIAnimatedIcons.Used();
         movingAsked = true;
-        Uncacheable();
-        GameEngine.Instance?.WindowManager?.RequestFrames(MOVING_FRAMES);
     }
 
     /// <summary>

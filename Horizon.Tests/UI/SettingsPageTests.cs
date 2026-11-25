@@ -460,4 +460,45 @@ public class SettingsPageTests
         Assert.Equal(new System.Numerics.Vector2(1152.0f, 702.0f), SettingsWindow.SizeFor(new(1600.0f, 900.0f), least));
         Assert.Equal(least, SettingsWindow.SizeFor(new(700.0f, 400.0f), least));
     }
+
+    [Fact]
+    public void Dragging_a_slider_does_not_rescan_every_setting_on_every_step()
+    {
+        var values = new Dictionary<string, IRuntimeValue>(StringComparer.Ordinal)
+        {
+            ["glass_blur"] = new NumberValue(12.0f)
+        };
+        int modifiedQueries = 0;
+        var rows = new List<UISetting>
+        {
+            new("glass_blur", "Glass blur", UIFormKind.Number, "How far glass blurs", "Appearance · Glass", Least: 0.0f, Most: 64.0f, Step: 0.1f, Slider: true)
+        };
+        for (int i = 0; i < 80; i++)
+            rows.Add(Row($"setting_{i}", $"Editor · Section {i % 5}", $"Help {i}"));
+
+        var page = new SettingsPage
+        {
+            Settings = rows,
+            ValueOf = key => values.GetValueOrDefault(key),
+            IsModified = key =>
+            {
+                modifiedQueries++;
+                return values.ContainsKey(key);
+            },
+            OnChanged = (key, val) => values[key] = val
+        };
+
+        page.UpdateTree(1.0f / 120.0f);
+        modifiedQueries = 0;
+
+        // Simulate 40 continuous slider drag steps where glass_blur remains modified
+        for (int step = 1; step <= 40; step++)
+        {
+            page.Enter("glass_blur", new NumberValue(12.0f + step * 0.5f));
+            page.UpdateTree(1.0f / 120.0f);
+        }
+
+        // Only the changed row itself should be queried per step (40 queries, not 40 * 81 = 3,240)
+        Assert.Equal(40, modifiedQueries);
+    }
 }

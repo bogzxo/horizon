@@ -153,6 +153,10 @@ public class Table : UIComponent
 
     protected internal override bool HasOverscroll => ease.Over.Active;
 
+    protected internal override bool? ScrollEnd(float delta) =>
+        Module?.Compositor.Skin is not { } skin || TravelY(skin) <= 0.0f ? null
+            : ease.Over.Active ? false : delta > 0.0f ? scrollY <= 0.5f : scrollY >= TravelY(skin) - 0.5f;
+
     protected internal override bool Focusable => true;
 
     /// <summary>
@@ -349,21 +353,64 @@ public class Table : UIComponent
 
         // Shift turns the wheel across, the way every spreadsheet does
         bool across = Horizon.Engine.GameEngine.Instance?.Input.Keyboard.Shift == true;
+
+        // A trackpad moves it by the pixel, the way a finger's drag does
+        if (PreciseWheel)
+        {
+            if (across)
+                return ScrollAcross(delta, skin);
+
+            // All of it in sight, the wheel is for whatever it's in. Otherwise it gives at the ends the way a Mac's own lists do
+            if (TravelY(skin) <= 0.0f)
+                return false;
+
+            return ease.Precise(ref scrollY, -delta * UIWheel.NotchUnits, TravelY(skin), Bounds.Height, MotionSpeed);
+        }
+
         return ScrollWheel(delta, skin, across);
+    }
+
+    protected internal override bool OnScrollX(float delta) =>
+        Module?.Compositor.Skin is { } skin && ScrollAcross(delta, skin);
+
+    private bool ScrollAcross(float delta, UISkin skin)
+    {
+        if (!PreciseWheel)
+            return ScrollWheel(delta, skin, across: true);
+
+        if (TravelX <= 0.0f || (delta > 0 && scrollX <= 0.0f) || (delta < 0 && scrollX >= TravelX))
+            return false;
+
+        easeX.Goal = null;
+        scrollX = Math.Clamp(scrollX - delta * UIWheel.NotchUnits, 0.0f, TravelX);
+        return true;
     }
 
     protected internal override bool OnPan(Vector2 delta)
     {
         if (Module?.Compositor.Skin is not { } skin)
             return false;
-        float max = TravelY(skin);
-        if (max <= 0 || delta.Y == 0
-            || (delta.Y < 0 && scrollY <= 0) || (delta.Y > 0 && scrollY >= max))
-            return false;
 
-        ease.Stop();
-        scrollY = Math.Clamp(scrollY + delta.Y, 0, max);
-        return true;
+        bool moved = false;
+        float maxY = TravelY(skin);
+        if (maxY > 0.0f && delta.Y != 0.0f
+            && !((delta.Y < 0.0f && scrollY <= 0.0f) || (delta.Y > 0.0f && scrollY >= maxY)))
+        {
+            ease.Stop();
+            scrollY = Math.Clamp(scrollY + delta.Y, 0.0f, maxY);
+            moved = true;
+        }
+
+        float maxX = TravelX;
+        if (maxX > 0.0f && delta.X != 0.0f
+            && !((delta.X > 0.0f && scrollX <= 0.0f) || (delta.X < 0.0f && scrollX >= maxX)))
+        {
+            easeX.Goal = null;
+            scrollX = Math.Clamp(scrollX - delta.X, 0.0f, maxX);
+            moved = true;
+        }
+
+        return moved;
     }
 
     internal bool ScrollWheel(float delta, UISkin skin, bool across)

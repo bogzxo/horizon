@@ -21,6 +21,12 @@ public sealed class StatusItem
     /// <summary>What clicking it does, null for an item that only says something.</summary>
     public Action? OnPressed { get; set; }
 
+    /// <summary>
+    /// What a right click on it lists, made as it is pressed so it says how things stand then. Null for no menu, and a menu
+    /// with nothing in it shows nothing either.
+    /// </summary>
+    public Func<Menu?>? ContextMenuBuilder { get; set; }
+
     /// <summary>Whether it is there right now. Always, if nothing is set.</summary>
     public Func<bool>? IsVisible { get; set; }
 
@@ -82,6 +88,19 @@ public class StatusBar : UIComponent
 
     protected override bool HitTestVisible => true;
 
+    public StatusBar()
+    {
+        // A right click on an item that has a menu opens it over the item, on the bar's top edge
+        OnContextMenu = point =>
+        {
+            if (ItemAt(point) is not { ContextMenuBuilder: { } build } item || Module is not { } module)
+                return;
+
+            if (build() is { Items.Count: > 0 } menu)
+                ContextMenu.ShowAbove(module, ItemBounds(item) is { IsEmpty: false } area ? new UIRect(area.Min, new Vector2(area.Max.X, Bounds.Max.Y)) : new UIRect(point, point), menu);
+        };
+    }
+
     /// <summary>Adds a piece at the end of the left or of the right.</summary>
     public StatusItem Add(string text, bool right = false, Action? pressed = null, string tooltip = "")
     {
@@ -104,9 +123,12 @@ public class StatusBar : UIComponent
         MathF.Max(item.MinWidth, skin.Font.Measure(item.Text, ScaleOf(skin)).X + ITEM_PADDING * 2.0f);
 
     /// <summary>Where an item is on the bar, in the module's units. Empty for one that isn't there right now.</summary>
-    public UIRect ItemBounds(StatusItem item)
+    public UIRect ItemBounds(StatusItem item) =>
+        Module?.Compositor.Skin is { } skin ? ItemBounds(skin, item) : default;
+
+    private UIRect ItemBounds(UISkin skin, StatusItem item)
     {
-        if (Module?.Compositor.Skin is not { } skin || !item.Shown)
+        if (!item.Shown)
             return default;
 
         // The left ones from the left in their order, the right ones end at the right in theirs
@@ -214,6 +236,40 @@ public class StatusBar : UIComponent
         Tooltip = over?.Tooltip ?? string.Empty;
     }
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(Color);
+            hash.Add(TextColor);
+            hash.Add(TextScale);
+            hash.Add(Hairline);
+            hash.Add(items.Count);
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                StatusItem item = items[i];
+                bool shown = item.Shown;
+                hash.Add(shown);
+                if (!shown)
+                    continue;
+                hash.Add(item.Text);
+                hash.Add(item.Right);
+                hash.Add(item.Color);
+                hash.Add(item.Background);
+                hash.Add(item.MinWidth);
+                hash.Add(item.OnPressed is not null);
+            }
+
+            // Item hover pill depends on pointer position only while the bar is hovered.
+            if (IsHovered && Module is not null)
+                hash.Add(Pointer);
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -237,7 +293,7 @@ public class StatusBar : UIComponent
         {
             list.BeginPart(i);
             StatusItem item = items[i];
-            UIRect area = ItemBounds(item);
+            UIRect area = ItemBounds(skin, item);
             if (area.IsEmpty)
                 continue;
 

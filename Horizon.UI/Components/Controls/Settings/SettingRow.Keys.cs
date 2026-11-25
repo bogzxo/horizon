@@ -41,6 +41,8 @@ internal sealed partial class SettingRow
 
     private sealed class RowButton(SettingRow row) : Button
     {
+        protected override long PaintVersion => ButtonPaintVersion();
+
         protected internal override void OnTextInput(char character)
         {
             if (!row.Offer(this, character))
@@ -94,12 +96,30 @@ internal sealed partial class SettingRow
     // name rather than off at the far end of the row. The room shrinks while a pill after the key takes some of it. Words
     // with more to them than the room are cut at its edge with dots, and the whole of them is the tooltip. It used to be
     // measured short and painted whole, and code_zoom ran on under the font pill after it as code_zoofont
-    private sealed class RowTitle(float most) : Label
+    private sealed class RowTitle(SettingRow row, float most) : Label
     {
         // Three full stops, the UI font has no ellipsis of its own and drew a question mark
         private const string DOTS = "...";
 
         public float Most { get; set; } = most;
+
+        protected internal override void OnPointerDown(Vector2 point)
+        {
+            base.OnPointerDown(point);
+            row.BeginRowTogglePress();
+        }
+
+        protected internal override void OnPointerUp(Vector2 point)
+        {
+            base.OnPointerUp(point);
+            row.EndRowTogglePress(point);
+        }
+
+        protected internal override void OnPointerCancel()
+        {
+            base.OnPointerCancel();
+            row.CancelRowTogglePress();
+        }
 
         // How wide all of what it says is, whatever room it has
         private float whole;
@@ -113,6 +133,8 @@ internal sealed partial class SettingRow
 
         // Whether there's more to say than the room it was given
         private bool Cut => whole > Bounds.Width + 0.5f;
+
+        protected override long PaintVersion => HashCode.Combine(LabelPaintVersion(), Cut) & 0x7FFFFFFF;
 
         protected override Vector2 Measure(UISkin skin)
         {
@@ -200,7 +222,7 @@ internal sealed partial class SettingRow
     // A few small words in a pill after a row's key, what a search found it by or the page's note for it (set by the
     // other scope). The note's in the accent, it's about where the value comes from. A label puts its words against its
     // edges whatever its padding, so the pill is the words' width and a little either side, the words in the middle
-    private sealed class RowPill(float most, bool accent) : Label
+    private sealed class RowPill(SettingRow row, float most, bool accent) : Label
     {
         // How far the pill goes past its words either side, and how tall it is
         public const float PAD = 7.0f, HEIGHT = 20.0f;
@@ -208,6 +230,24 @@ internal sealed partial class SettingRow
         public float Most { get; } = most;
 
         protected override bool HitTestVisible => Tooltip.Length > 0;
+
+        protected internal override void OnPointerDown(Vector2 point)
+        {
+            base.OnPointerDown(point);
+            row.BeginRowTogglePress();
+        }
+
+        protected internal override void OnPointerUp(Vector2 point)
+        {
+            base.OnPointerUp(point);
+            row.EndRowTogglePress(point);
+        }
+
+        protected internal override void OnPointerCancel()
+        {
+            base.OnPointerCancel();
+            row.CancelRowTogglePress();
+        }
 
         protected override Vector2 Measure(UISkin skin)
         {

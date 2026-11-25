@@ -137,10 +137,31 @@ public class TitleBar : StackPanel
     /// <summary>Whether it has the window's minimise, maximise and close at the right end.</summary>
     public bool WindowButtons { get; set; } = true;
 
-    // Only where there's a window to minimise and maximise, a phone's bar has no business pretending. Without an engine
-    // (a test laying the bar out) it's what it was told
+    // Only where there's a window to minimise and maximise, a phone's bar has no business pretending, and not where the
+    // system draws them itself (a Mac's traffic lights). Without an engine (a test laying the bar out) it's what it was told
     private bool ShowsWindowButtons => WindowButtons &&
-        (GameEngine.Instance?.WindowManager is not { } window || (window.Features & Horizon.Platform.PlatformFeatures.Window) != 0);
+        (GameEngine.Instance?.WindowManager is not { } window || ((window.Features & Horizon.Platform.PlatformFeatures.Window) != 0 && !window.NativeChrome));
+
+    /// <summary>
+    /// How much room to leave empty at the left end, in the window's pixels, on top of what the system's own frame controls
+    /// cover (a Mac's traffic lights, see <see cref="Horizon.Core.WindowManager.FrameInsets"/>, which is 0 in fullscreen).
+    /// </summary>
+    public float LeadingInset { get; set; }
+
+    // The room at the left end that the window's frame controls and LeadingInset take, in the UI's units
+    private float LeadingRoom
+    {
+        get
+        {
+            float pixels = LeadingInset + (GameEngine.Instance?.WindowManager?.FrameInsets.Leading ?? 0.0f);
+            return LeadingRoomFor(pixels, Module?.Compositor.UIScale ?? 1.0f);
+        }
+    }
+
+    /// <summary>The room at the left end the window's pixels take, in the UI's units, where a unit is <paramref name="uiScale"/> pixels.</summary>
+    public static float LeadingRoomFor(float pixels, float uiScale) => pixels > 0.0f && uiScale > 0.0f ? pixels / uiScale : 0.0f;
+
+    private float reportedBar = -1.0f;
 
     /// <summary>How tall it is when nothing in it is taller, in the window's pixels (see <see cref="PixelSized"/>).</summary>
     public float Height { get; set; } = 32.0f;
@@ -167,7 +188,17 @@ public class TitleBar : StackPanel
     /// </summary>
     public float WindowCorner { get; set; } = OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) ? 8.0f : 0.0f;
 
-    private float BarHeight => Height * Unit;
+    // At least as tall as the system's own title bar where it draws the window's frame controls, they are centred in it
+    // (exactly as tall where the system says so, a Mac's full screen, whose own bar slides down over this one)
+    private float BarHeight
+    {
+        get
+        {
+            var insets = GameEngine.Instance?.WindowManager?.FrameInsets ?? default;
+            float system = LeadingRoomFor(insets.Height, Module?.Compositor.UIScale ?? 1.0f);
+            return insets.Exact && system > 0.0f ? system : MathF.Max(Height * Unit, system);
+        }
+    }
     private float ButtonWidth => BUTTON_WIDTH * Unit;
 
     /// <summary>The scale of the title, or zero for a little smaller than the skin's.</summary>
@@ -190,8 +221,15 @@ public class TitleBar : StackPanel
     private float ScaleOf(UISkin skin) => (TextScale > 0.0f ? TextScale : skin.TextScale) * Unit;
 
     // The room at the left for the icon, and at the right for the buttons
-    private float IconRoom => Icon.Length > 0 || IconFile.Length > 0 ? BarHeight : 0.0f;
-    private float ButtonsRoom => ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f;
+    private float IconRoom => (ShowsIcon ? BarHeight : 0.0f) + LeadingRoom;
+
+    // Not in the system's full screen on a Mac, where the traffic lights come down over the bar's left end
+    private bool ShowsIcon => (Icon.Length > 0 || IconFile.Length > 0) &&
+        !(GameEngine.Instance?.WindowManager is { NativeChrome: true } window && window.FrameInsets.Height <= 0.0f);
+    private float ButtonsRoom => (ShowsWindowButtons ? ButtonWidth * 3.0f : 0.0f) + TrailingRoom;
+
+    // The room the window's rounded corner takes at the right end, where the system draws the frame controls at the left
+    private float TrailingRoom => LeadingRoomFor(GameEngine.Instance?.WindowManager?.FrameInsets.Trailing ?? 0.0f, Module?.Compositor.UIScale ?? 1.0f);
 
     protected override Vector2 Measure(UISkin skin)
     {
@@ -265,13 +303,24 @@ public class TitleBar : StackPanel
         float scale = ScaleOf(skin);
         Vector2 pointer = Pointer;
 
+        // The system's frame controls are centred in the bar, which they are told the height of (in the window's pixels)
+        if (Visible && GameEngine.Instance?.WindowManager is { NativeChrome: true } native && Module is { } own)
+        {
+            float pixels = Bounds.Height * own.Compositor.UIScale;
+            if (MathF.Abs(pixels - reportedBar) > 0.5f)
+            {
+                reportedBar = pixels;
+                native.SetTitleBarHeight(pixels);
+            }
+        }
+
         list.BeginPart(-1);
         list.Rect(Bounds, Color ?? skin.PanelColor with { W = 1.0f });
 
-        if (IconRoom > 0)
+        if (ShowsIcon)
         {
             float side = MathF.Round(BarHeight * 0.5f);
-            Vector2 middle = Vector2.Round(new Vector2(Bounds.Min.X + BarHeight * 0.5f, Bounds.Center.Y));
+            Vector2 middle = Vector2.Round(new Vector2(Bounds.Min.X + LeadingRoom + BarHeight * 0.5f, Bounds.Center.Y));
             var area = new UIRect(middle - new Vector2(side * 0.5f), middle + new Vector2(side * 0.5f));
             Vector4 tint = IconColor ?? skin.AccentColor;
             if (IconFile.Length > 0)

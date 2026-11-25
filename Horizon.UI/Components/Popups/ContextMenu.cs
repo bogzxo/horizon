@@ -48,10 +48,27 @@ public sealed class ContextMenu : UIComponent
 
         shown.menu = menu;
         shown.corner = point;
+        shown.above = false;
         shown.panel = null;
         shown.OpenPopup();
         return shown;
     }
+
+    /// <summary>
+    /// Shows a menu over something at the bottom of the window (a status bar item), its list standing on the item's top edge
+    /// from the item's left, under the item with no room above it, and kept inside the module's frame whatever happens.
+    /// </summary>
+    public static ContextMenu ShowAbove(UIModule module, UIRect item, Menu menu)
+    {
+        ContextMenu shown = Show(module, item.Min, menu);
+        shown.corner = item.Min;
+        shown.itemTop = item.Max.Y;
+        shown.above = true;
+        return shown;
+    }
+
+    private bool above;
+    private float itemTop;
 
     /// <inheritdoc cref="Show(UIModule, Vector2, Menu)"/>
     /// <param name="world">Where, in the camera's world (what <see cref="UICompositor.ContextRequested"/> hands you).</param>
@@ -97,7 +114,9 @@ public sealed class ContextMenu : UIComponent
             if (Showing is not { } shown || Skin is not { } skin || Module is not { } module)
                 return null;
 
-            panel ??= new MenuPanel(shown, skin, TextScale, MenuPlacement.AtPoint, new UIRect(corner, corner), module.Frame);
+            panel ??= above
+                ? new MenuPanel(shown, skin, TextScale, MenuPlacement.Above, new UIRect(corner, new Vector2(corner.X, itemTop)), module.Frame)
+                : new MenuPanel(shown, skin, TextScale, MenuPlacement.AtPoint, new UIRect(corner, corner), module.Frame);
             return panel;
         }
     }

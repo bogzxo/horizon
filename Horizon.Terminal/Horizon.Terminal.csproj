@@ -20,6 +20,8 @@
     <IsTrimmable>true</IsTrimmable>
     <InvariantGlobalization>true</InvariantGlobalization>
     <WarningLevel>4</WarningLevel>
+    <!-- zsh's integration is dotfiles (.zshrc, .zshenv, .zprofile), which a package leaves out unless told not to -->
+    <NoDefaultExcludes>true</NoDefaultExcludes>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -38,6 +40,16 @@
     <None Update="Assets\terminal\**\*.hor;Assets\terminal\**\*.ps1;Assets\terminal\**\*.bash;Assets\terminal\**\*.zsh;Assets\terminal\**\*.fish;Assets\terminal\**\*.cmd;Assets\terminal\shell\zsh\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <!--
+    The same files in the package (bogzxo.Horizon.Terminal), under terminal/ at the paths they have here, with the targets
+    that copy them next to whatever references the package (build/Horizon.Terminal.targets, packed under the package's ID)
+  -->
+  <ItemGroup>
+    <None Update="Assets\terminal\**\*.hor;Assets\terminal\**\*.ps1;Assets\terminal\**\*.bash;Assets\terminal\**\*.zsh;Assets\terminal\**\*.fish;Assets\terminal\**\*.cmd;Assets\terminal\shell\zsh\*"
+          Pack="true" PackagePath="terminal\" />
+    <None Update="build\Horizon.Terminal.targets" Pack="true" PackagePath="build\bogzxo.Horizon.Terminal.targets;buildTransitive\bogzxo.Horizon.Terminal.targets" />
   </ItemGroup>
 
   <ItemGroup>

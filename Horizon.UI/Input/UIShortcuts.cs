@@ -199,6 +199,15 @@ public sealed class UIShortcuts
             wasPressed = keyboard.WasPressed;
         }
 
+        // No key went down and no chord is waiting, there's nothing to go off. Every shortcut was asked about its key every
+        // tick, twice, the most of a still tick's input work
+        if (!keyboard.AnyPressed && pending is null)
+        {
+            taken.Clear();
+            Swallowed = false;
+            return;
+        }
+
         Update(wasPressed, keyboard.Primary, keyboard.IsDown(Key.ShiftLeft) || keyboard.IsDown(Key.ShiftRight),
             keyboard.IsDown(Key.AltLeft) || keyboard.IsDown(Key.AltRight), typing);
 

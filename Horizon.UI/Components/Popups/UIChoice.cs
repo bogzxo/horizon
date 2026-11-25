@@ -71,6 +71,30 @@ public sealed record UIChoice(string Text, Action Picked)
     /// </summary>
     public IReadOnlyList<(string Text, UIChoiceTone Tone)>? Segments { get; init; }
 
+    /// <summary>
+    /// Whether the row is a heading for the rows after it (a group's name), drawn small and quiet, never highlighted nor
+    /// picked, and only shown while nothing is typed.
+    /// </summary>
+    public bool Header { get; init; }
+
+    /// <summary>Whether the row stays at the end of the list whatever is typed (a "Manage..." row), never narrowed away.</summary>
+    public bool Pinned { get; init; }
+
+    /// <summary>
+    /// Whether the row has a star at its right, lit while true and dim while false, pressing it calls <see cref="OnStar"/>.
+    /// Null for a row without one.
+    /// </summary>
+    public bool? Starred { get; init; }
+
+    /// <summary>What pressing the row's star (or the star key, with the row highlighted) does.</summary>
+    public Action? OnStar { get; init; }
+
+    /// <summary>What Control with enter does on the highlighted row (pick it and go on to something more). Null for the row's own.</summary>
+    public Action? PickedAlso { get; init; }
+
+    /// <summary>Whether the row is ranked after every other one for what is typed, however well it matches (a download not on the disk yet).</summary>
+    public bool Demoted { get; init; }
+
     private readonly string? id;
 
     /// <summary>

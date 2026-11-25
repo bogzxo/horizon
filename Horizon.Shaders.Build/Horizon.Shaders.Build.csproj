@@ -13,7 +13,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <IsPublishable>false</IsPublishable>
+    <!-- Publishable, as its package is a dotnet tool (Directory.Build.props) and a tool's package is what publish makes -->
   </PropertyGroup>
 
   <ItemGroup>

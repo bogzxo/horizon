@@ -100,7 +100,12 @@ public partial class SettingsPage
         foreach (SettingRow row in rowOf.Values)
         {
             UISetting setting = row.Setting;
-            row.Visible = (!onlyModified || IsModified?.Invoke(setting.Key) == true)
+            bool left = HiddenOf?.Invoke(setting.Key) == true;
+            if (left)
+                hiddenNow.Add(setting.Key);
+            else
+                hiddenNow.Remove(setting.Key);
+            row.Visible = !left && (!onlyModified || IsModified?.Invoke(setting.Key) == true)
                 && (!onlyCommon || common.Contains(setting.Key))
                 && (ids.Count == 0 || ids.Contains(setting.Key, StringComparer.OrdinalIgnoreCase))
                 && InSection(setting.Group)
@@ -477,7 +482,23 @@ public partial class SettingsPage
     }
 
     /// <summary>How many settings on the page aren't what they come as, what Reset all settings would put back.</summary>
-    public int ModifiedCount => ChangedKeys(null).Length;
+    public int ModifiedCount
+    {
+        get
+        {
+            if (IsModified is not { } isModified)
+                return 0;
+
+            int count = 0;
+            foreach (SettingRow row in rowOf.Values)
+            {
+                if (isModified(row.Setting.Key))
+                    count++;
+            }
+
+            return count;
+        }
+    }
 
     // The funnel pressed, its menu under it
     private void ShowFilters()

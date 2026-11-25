@@ -149,6 +149,29 @@ public partial class UICompositor : GameComponent, IDisposable
         } while (Interlocked.CompareExchange(ref pendingScroll, before + notches, before) != before);
     }
 
+    // What ScrollPrecisely was given and hasn't been handed out yet, in notches, and the tick the horizontal part of the
+    // window's wheel was last used on (the vertical part has UIKeyboard.UseScroll)
+    private float pendingPreciseX, pendingPreciseY;
+    private static long scrollXUsedOn = -1;
+
+    // The tick a pinch or smart zoom of the window was last used on, so one that went to a UI is not given to the next
+    private static long gestureUsedOn = -1;
+
+    /// <summary>
+    /// Scrolls whatever is under the pointer as if a trackpad had been dragged: fractional notches (a notch is
+    /// <see cref="PreciseScroll.NotchPoints"/> layout units) that scrolling components follow to the pixel with no stepping or
+    /// easing. Safe from any thread, it happens on the next update.
+    /// </summary>
+    /// <param name="notches">X positive to the right, Y positive up.</param>
+    public void ScrollPrecisely(Vector2 notches)
+    {
+        lock (skinLock)
+        {
+            pendingPreciseX += notches.X;
+            pendingPreciseY += notches.Y;
+        }
+    }
+
     // A skin asked for with SetSkin, waiting for the render thread to load it.
     private (string Directory, string File, string? Theme)? requestedSkin;
     private readonly Lock skinLock = new();
@@ -168,6 +191,7 @@ public partial class UICompositor : GameComponent, IDisposable
     // Whether what is on the layer is what the UI looks like right now, and what it was drawn with. Seen
     // through another camera the same list is another picture
     private bool pictureCurrent;
+    private ulong pictureGlassGeneration;
     private Matrix4x4 pictureView, pictureProjection;
 
     /// <summary>
@@ -238,6 +262,11 @@ public partial class UICompositor : GameComponent, IDisposable
         }
 
         renderedAt = now;
+
+        // In low latency what is new goes up on the frame that finds it, frames show the newest tick as it is there
+        // (WindowManager.LowLatency), so nothing is blended anew between two of them and there is nothing to hold back
+        if (GameEngine.Instance?.WindowManager is { LowLatency: true })
+            return true;
 
         return refreshedAt == 0 || RefreshDue(Stopwatch.GetElapsedTime(refreshedAt, now).TotalSeconds, frameSeconds, FrameRateLimit);
     }
@@ -395,6 +424,9 @@ public partial class UICompositor : GameComponent, IDisposable
     private int shownBefore = -1, shownAfter = -1;
     private float shownAlpha = float.NaN;
     private Vector2? shownPointer;
+    private bool followingPointer;
+
+    internal bool FollowingPointerForTest => followingPointer;
 
     // How far between two ticks the last frame was drawn, and the newer of the two, for hit testing where things are
     // drawn (see DrawnMove). Written by the render thread, read by the simulation's
@@ -1000,8 +1032,21 @@ public partial class UICompositor : GameComponent, IDisposable
         // From here on the painting waits for this, the end of the tick
         capturedBefore = true;
         PaintPending();
+        PublishCaptured(SnapshotClock.Active);
+    }
 
-        if (captured.BeginPublish() is not { } into)
+    internal void CaptureForTest(UIRect screen, UISkin skin, float dt, SnapshotClock clock)
+    {
+        Skin ??= skin;
+        pending = new PendingPaint(modules, screen, skin, dt);
+        capturedBefore = true;
+        PaintPending();
+        PublishCaptured(clock);
+    }
+
+    private void PublishCaptured(SnapshotClock? clock)
+    {
+        if (captured.BeginPublish(clock) is not { } into)
             return;
 
         lock (frameLock)
@@ -1050,6 +1095,8 @@ public partial class UICompositor : GameComponent, IDisposable
         return mouse.IsLiveDown(Horizon.Input.MouseButton.Left) ? position : null;
     }
 
+    internal bool UploadCapturedForTest(in RenderFrame frame, UISkin skin) => UploadCaptured(frame, skin, NoteFrame());
+
     private bool UploadCaptured(in RenderFrame frame, UISkin skin, bool due)
     {
         if (!captured.TryGet(frame, out CapturedList before, out CapturedList after, out bool continuous))
@@ -1058,7 +1105,7 @@ public partial class UICompositor : GameComponent, IDisposable
         // Not to be shown until it is the UI as it is meant to look
         if (after.Painted == 0 || after.Incomplete || after.Skin != skin)
         {
-            GameEngine.Instance.SceneManager.ReportUnfinished();
+            GameEngine.Instance?.SceneManager?.ReportUnfinished();
             return true;
         }
 
@@ -1081,8 +1128,17 @@ public partial class UICompositor : GameComponent, IDisposable
         // Only while something of this UI is still being dragged. The list a drag left behind kept its frame that follows
         // the pointer while nothing here painted again, and a press in another UI of the window (the editor's, under a
         // window of the chrome's) took the window with it until the button came up
-        Vector2? pointer = after.Frames.Follows && pressed is { FollowsPointer: true } && PointerSource is null && LiveDragPointer(GameEngine.Instance.Input.Mouse) is { } dragPointer
-            ? viewportCamera.ScreenToWorld(dragPointer) : null;
+        Vector2? pointer = after.Frames.Follows && pressed is { FollowsPointer: true } && PointerSource is null
+            && InputOf is { } dragInput && LiveDragPointer(dragInput.Mouse) is { } dragPointer
+            ? ToWorld(dragPointer) : null;
+        followingPointer = pointer is not null;
+
+        // What goes where the pointer goes is drawn as often as low latency allows for as long as it's held
+        if (followingPointer)
+        {
+            GameEngine.Instance?.WindowManager?.RequestUrgentFrames();
+            GameEngine.Instance?.WindowManager?.RequestUncappedFrames();
+        }
 
         int from = canBlend ? before.Painted : shown.Painted;
         if (from == shownBefore && shown.Painted == shownAfter && alpha == shownAlpha && pointer == shownPointer)
@@ -1090,19 +1146,21 @@ public partial class UICompositor : GameComponent, IDisposable
 
         // Not yet, see FrameRateLimit. What is up there already is shown once more and this is asked again the
         // next frame, so whatever the UI comes to rest as gets there a hundred and twentieth of a second late
-        // at the worst
-        if (!due)
+        // at the worst. Live pointer-following drags bypass the rate limit so window motion stays locked to the cursor.
+        bool pointerMoved = pointer is not null && pointer != shownPointer;
+        if (!due && !pointerMoved)
             return true;
 
         if (canBlend && alpha < 1.0f || pointer is not null)
         {
             long started = Stopwatch.GetTimestamp();
             bool between = canBlend && alpha < 1.0f;
-            inBetween.Frames(between ? before.Frames : shown.Frames, between ? after.Frames : shown.Frames, between ? alpha : 1.0f, pointer);
+            CapturedList target = between ? after : shown;
+            inBetween.Frames(between ? before.Frames : shown.Frames, target.Frames, between ? alpha : 1.0f, pointer, target.Span);
             Statistics.BlendMs += UIStatistics.Since(started);
             Statistics.FramesBlended++;
             CountUpload(inBetween.FramedQuads.Length);
-            renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan((between ? after : shown).Atlases), inBetween.FramedGlass);
+            renderer.Upload(inBetween.FramedQuads, inBetween.FramedRuns, skin, CollectionsMarshal.AsSpan(target.Atlases), inBetween.FramedGlass);
         }
         else
         {
@@ -1115,7 +1173,8 @@ public partial class UICompositor : GameComponent, IDisposable
         drawnAfter = after.Painted;
         drawnAlpha = canBlend ? alpha : 1.0f;
         pictureCurrent = false;
-        refreshedAt = renderedAt;
+        if (due)
+            refreshedAt = renderedAt;
         return true;
     }
 
@@ -1215,6 +1274,7 @@ public partial class UICompositor : GameComponent, IDisposable
                 // What was uploaded is the newest list, not one that was captured
                 shownBefore = shownAfter = -1;
                 shownAlpha = float.NaN;
+                followingPointer = false;
             }
 
             // Nothing painted yet, or what was painted last is still waiting for its art. What is about to be
@@ -1333,6 +1393,10 @@ public partial class UICompositor : GameComponent, IDisposable
         if (viewportCamera.View != pictureView || viewportCamera.Projection != pictureProjection)
             pictureCurrent = false;
 
+        ulong generation = Volatile.Read(ref glassGeneration);
+        if (generation != pictureGlassGeneration)
+            pictureCurrent = false;
+
         // Nothing has changed since the picture on the layer was drawn. That is laid over the frame as it is,
         // and none of the UI is drawn again
         if (Retained && pictureCurrent)
@@ -1354,6 +1418,7 @@ public partial class UICompositor : GameComponent, IDisposable
         {
             if (renderer.Glass.IsEmpty || (!layered && output is { HoldsPicture: false }))
             {
+                glassPass?.Reset();
                 renderer.Draw(viewportCamera);
                 GlassDrawn = default;
             }
@@ -1370,6 +1435,7 @@ public partial class UICompositor : GameComponent, IDisposable
         // Only a picture that made it onto the layer is there to be shown again. One with glass in it shows what was
         // behind the glass, which a scene that moves under it doesn't keep still for, see GlassKeepsPicture
         pictureCurrent = layered && (renderer.Glass.IsEmpty || GlassKeepsPicture);
+        pictureGlassGeneration = generation;
         (pictureView, pictureProjection) = (viewportCamera.View, viewportCamera.Projection);
     }
 
@@ -1409,41 +1475,132 @@ public partial class UICompositor : GameComponent, IDisposable
 
         ReadOnlySpan<UIGlassPane> panes = renderer.Glass;
         ReadOnlySpan<SpriteItem> items = renderer.Uploaded;
+        ReadOnlySpan<UIDrawList.Run> runs = renderer.Runs;
 
         bool sent = renderer.Begin();
         int from = 0, blurredBy = -1, blurs = 0;
+        (int X, int Y, int W, int H) blurredRegion = default;
+
+        Vector2 size = Renderer2D.OutputSize(output);
+        bool validSize = size.X >= 1.0f && size.Y >= 1.0f;
+        float pixelsPerUnit = validSize ? UIGlassPass.PixelsPerUnit(viewportCamera, size) : 1.0f;
+        Matrix4x4 toClip = viewportCamera.View * viewportCamera.Projection;
+        bool hasInverse = Matrix4x4.Invert(toClip, out Matrix4x4 fromClip);
 
         // What is under every pane, for keeping its blur from one frame to the next. Only when what is behind the UI
         // holds still (GlassKeepsPicture), the UI can't see a scene that moves under it
-        ulong under = GlassKeepsPicture ? Seed(output) : 0;
-        int hashed = 0;
+        ulong seed = GlassKeepsPicture ? Seed(output) : 0;
 
         for (int i = 0; i < panes.Length; i++)
         {
-            int start = Math.Clamp(panes[i].Start, from, items.Length);
-            if (sent)
-                renderer.DrawRange(from, start, viewportCamera);
+            ref readonly UIGlassPane pane = ref panes[i];
+            if (!validSize || pane.Opacity <= 0.0f)
+                continue;
 
-            if (under != 0)
+            var (rect, clip) = UIGlassPass.Pixels(pane, viewportCamera, size);
+            float vx0 = MathF.Max(MathF.Max(rect.X, clip.X), 0.0f);
+            float vy0 = MathF.Max(MathF.Max(rect.Y, clip.Y), 0.0f);
+            float vx1 = MathF.Min(MathF.Min(rect.Z, clip.Z), size.X);
+            float vy1 = MathF.Min(MathF.Min(rect.W, clip.W), size.Y);
+            if (vx1 <= vx0 || vy1 <= vy0)
+                continue;
+
+            float minBox = MathF.Min(rect.Z - rect.X, rect.W - rect.Y);
+            UIGlassOptics optics = UIGlassOptics.Compute(pane.Bend * pixelsPerUnit, pane.Lens, minBox);
+            float pad = optics.PaddingPixels;
+            Vector4 pVis = new(
+                MathF.Max(vx0 - pad, 0.0f),
+                MathF.Max(vy0 - pad, 0.0f),
+                MathF.Min(vx1 + pad, size.X),
+                MathF.Min(vy1 + pad, size.Y));
+
+            float radius = MathF.Max(0.0f, pane.Blur) * pixelsPerUnit;
+            float share = GaussianBlur.Share(radius);
+            int margin = share > 0.001f ? GaussianBlur.Margin(radius, size) : 2;
+            int maxW = (int)size.X, maxH = (int)size.Y;
+            var region = GlassCaptureRegion(pVis, margin, maxW, maxH, followingPointer && GlassKeepsPicture);
+
+            var (rWorldMin, rWorldMax) = hasInverse
+                ? RegionWorldBounds(region, fromClip, size)
+                : (new Vector2(float.NegativeInfinity), new Vector2(float.PositiveInfinity));
+
+            int under = Math.Clamp(pane.Under, from, items.Length);
+            int start = Math.Clamp(pane.Start, under, items.Length);
+
+            if (sent && under > from)
+                renderer.DrawRange(from, under, viewportCamera);
+
+            ulong madeOf = 0;
+            if (seed != 0)
             {
-                under = Mix(under, items[hashed..start]);
-                under = Mix(under, panes[i]);
-                hashed = start;
+                madeOf = Mix(seed, ((ulong)(uint)region.X << 32) | (uint)region.Y);
+                madeOf = Mix(madeOf, ((ulong)(uint)region.W << 32) | (uint)region.H);
+                madeOf = Mix(madeOf, BitConverter.SingleToUInt32Bits(pane.Blur));
+
+                for (int j = 0; j < i; j++)
+                {
+                    ref readonly UIGlassPane earlier = ref panes[j];
+                    if (Overlaps(Vector2.Min(earlier.Min, earlier.Max), Vector2.Max(earlier.Min, earlier.Max), rWorldMin, rWorldMax))
+                        madeOf = MixPaneFull(madeOf, earlier);
+                }
+
+                int runIdx = 0;
+                int lastMixedRun = -1;
+                float rMinX = rWorldMin.X, rMinY = rWorldMin.Y, rMaxX = rWorldMax.X, rMaxY = rWorldMax.Y;
+                for (int k = 0; k < under; k++)
+                {
+                    ref readonly SpriteItem item = ref items[k];
+                    float ox = item.Origin.X, ax = item.AxisX.X, bx = item.AxisY.X;
+                    float minX = ox + (ax < 0.0f ? ax : 0.0f) + (bx < 0.0f ? bx : 0.0f);
+                    float maxX = ox + (ax > 0.0f ? ax : 0.0f) + (bx > 0.0f ? bx : 0.0f);
+                    if (maxX <= rMinX || minX >= rMaxX)
+                        continue;
+
+                    float oy = item.Origin.Y, ay = item.AxisX.Y, by = item.AxisY.Y;
+                    float minY = oy + (ay < 0.0f ? ay : 0.0f) + (by < 0.0f ? by : 0.0f);
+                    float maxY = oy + (ay > 0.0f ? ay : 0.0f) + (by > 0.0f ? by : 0.0f);
+                    if (maxY <= rMinY || minY >= rMaxY)
+                        continue;
+
+                    while (runIdx < runs.Length && runs[runIdx].First + runs[runIdx].Count <= k)
+                        runIdx++;
+                    if (runIdx < runs.Length && runIdx != lastMixedRun && k >= runs[runIdx].First)
+                    {
+                        lastMixedRun = runIdx;
+                        UIDrawList.Run run = runs[runIdx];
+                        if (run.Image0 is { } img0)
+                            madeOf = Mix(madeOf, img0.Native.Handle);
+                        if (run.Image1 is { } img1)
+                            madeOf = Mix(madeOf, img1.Native.Handle);
+                    }
+
+                    madeOf = Mix(madeOf, in item);
+                }
+
+                madeOf |= 1;
             }
 
-            bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, i);
+            bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, blurredRegion, i, pVis, margin, rWorldMin, rWorldMax, size);
+            bool captured;
             using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GLASS_SCOPE))
-                glassPass.Draw(panes[i], i, under, viewportCamera, output, picture, fresh);
-            if (fresh)
+                captured = glassPass.Capture(pane, madeOf, region, viewportCamera, output, picture, fresh);
+            if (fresh || captured)
             {
                 blurredBy = i;
+                blurredRegion = region;
                 blurs++;
             }
+
+            if (sent && start > under)
+                renderer.DrawRange(under, start, viewportCamera);
+
+            using (GameEngine.Instance.Graphics.BeginGpuScope(UIStatistics.GLASS_SCOPE))
+                glassPass.Composite(pane, viewportCamera, output, picture);
 
             from = start;
         }
 
-        if (sent)
+        if (sent && from < items.Length)
             renderer.DrawRange(from, items.Length, viewportCamera);
 
         renderer.End();
@@ -1451,32 +1608,96 @@ public partial class UICompositor : GameComponent, IDisposable
     }
 
     /// <summary>
-    /// Helper method to say whether a pane can show the blur an earlier one made, which it can when it smears as far and
-    /// nothing drawn since that blur (quads or panes) is anywhere near it. Panes side by side (a side bar and the panel
-    /// under the editor) are one copy and one blur then, not one each.
+    /// Computes the pixel capture region for a glass pane. Normally quantizes the padded visible bounds to a 128 px
+    /// grid so small movements reuse the cached blur; during a pointer-following drag over a stationary backdrop,
+    /// captures the full viewport once so dragging across the entire screen hits the cached blur on every frame.
     /// </summary>
-    private static bool SameBlur(ReadOnlySpan<UIGlassPane> panes, ReadOnlySpan<SpriteItem> items, int blurredBy, int pane)
+    internal static (int X, int Y, int W, int H) GlassCaptureRegion(Vector4 pVis, int margin, int maxW, int maxH, bool fullViewport)
+    {
+        if (fullViewport)
+            return (0, 0, Math.Max(1, maxW), Math.Max(1, maxH));
+
+        int rx0 = Math.Max(0, (int)MathF.Floor((pVis.X - margin) / 128.0f) * 128);
+        int ry0 = Math.Max(0, (int)MathF.Floor((pVis.Y - margin) / 128.0f) * 128);
+        int rx1 = Math.Min(maxW, (int)MathF.Ceiling((pVis.Z + margin) / 128.0f) * 128);
+        int ry1 = Math.Min(maxH, (int)MathF.Ceiling((pVis.W + margin) / 128.0f) * 128);
+        if (rx1 <= rx0) rx1 = Math.Min(maxW, rx0 + 1);
+        if (ry1 <= ry0) ry1 = Math.Min(maxH, ry0 + 1);
+        return (rx0, ry0, rx1 - rx0, ry1 - ry0);
+    }
+
+    private static (Vector2 Min, Vector2 Max) RegionWorldBounds((int X, int Y, int W, int H) region, in Matrix4x4 fromClip, Vector2 size)
+    {
+        Vector2 a = UnprojectPixel(new Vector2(region.X, region.Y), fromClip, size);
+        Vector2 b = UnprojectPixel(new Vector2(region.X + region.W, region.Y), fromClip, size);
+        Vector2 c = UnprojectPixel(new Vector2(region.X, region.Y + region.H), fromClip, size);
+        Vector2 d = UnprojectPixel(new Vector2(region.X + region.W, region.Y + region.H), fromClip, size);
+        return (Vector2.Min(Vector2.Min(a, b), Vector2.Min(c, d)), Vector2.Max(Vector2.Max(a, b), Vector2.Max(c, d)));
+    }
+
+    private static Vector2 UnprojectPixel(Vector2 pixel, in Matrix4x4 fromClip, Vector2 size)
+    {
+        float ndcX = pixel.X / size.X * 2.0f - 1.0f;
+        float ndcY = 1.0f - pixel.Y / size.Y * 2.0f;
+        Vector4 world = Vector4.Transform(new Vector4(ndcX, ndcY, 0.0f, 1.0f), fromClip);
+        float w = world.W == 0.0f ? 1.0f : world.W;
+        return new Vector2(world.X / w, world.Y / w);
+    }
+
+    /// <summary>
+    /// Helper method to say whether a pane can show the blur an earlier one made, which it can when it smears as far,
+    /// its visible bounds lie inside the earlier blur's safe interior, and nothing drawn since that blur (quads or panes)
+    /// overlaps this pane's region.
+    /// </summary>
+    private static bool SameBlur(
+        ReadOnlySpan<UIGlassPane> panes,
+        ReadOnlySpan<SpriteItem> items,
+        int blurredBy,
+        (int X, int Y, int W, int H) blurredRegion,
+        int pane,
+        Vector4 pVis,
+        int margin,
+        Vector2 rWorldMin,
+        Vector2 rWorldMax,
+        Vector2 size)
     {
         UIGlassPane at = panes[pane];
         if (at.Blur != panes[blurredBy].Blur)
             return false;
 
-        // As far round it as the blur reaches, what is there is smeared into it
-        Vector2 reach = new(at.Blur * 2.0f);
-        Vector2 min = Vector2.Min(at.Min, at.Max) - reach, max = Vector2.Max(at.Min, at.Max) + reach;
+        int maxW = (int)size.X, maxH = (int)size.Y;
+        float safeX0 = blurredRegion.X <= 0 ? 0.0f : blurredRegion.X + margin;
+        float safeY0 = blurredRegion.Y <= 0 ? 0.0f : blurredRegion.Y + margin;
+        float safeX1 = blurredRegion.X + blurredRegion.W >= maxW ? size.X : blurredRegion.X + blurredRegion.W - margin;
+        float safeY1 = blurredRegion.Y + blurredRegion.H >= maxH ? size.Y : blurredRegion.Y + blurredRegion.H - margin;
+
+        if (MathF.Max(0.0f, pVis.X - 2.0f) < safeX0
+            || MathF.Max(0.0f, pVis.Y - 2.0f) < safeY0
+            || MathF.Min(size.X, pVis.Z + 2.0f) > safeX1
+            || MathF.Min(size.Y, pVis.W + 2.0f) > safeY1)
+            return false;
 
         for (int i = blurredBy; i < pane; i++)
         {
-            if (Overlaps(Vector2.Min(panes[i].Min, panes[i].Max), Vector2.Max(panes[i].Min, panes[i].Max), min, max))
+            if (Overlaps(Vector2.Min(panes[i].Min, panes[i].Max), Vector2.Max(panes[i].Min, panes[i].Max), rWorldMin, rWorldMax))
                 return false;
         }
 
-        int end = Math.Min(at.Start, items.Length);
-        for (int i = Math.Max(0, panes[blurredBy].Start); i < end; i++)
+        int end = Math.Min(at.Under, items.Length);
+        float rMinX = rWorldMin.X, rMinY = rWorldMin.Y, rMaxX = rWorldMax.X, rMaxY = rWorldMax.Y;
+        for (int i = Math.Max(0, panes[blurredBy].Under); i < end; i++)
         {
             ref readonly SpriteItem item = ref items[i];
-            Vector2 a = item.Origin, b = item.Origin + item.AxisX, c = item.Origin + item.AxisY, d = b + item.AxisY;
-            if (Overlaps(Vector2.Min(Vector2.Min(a, b), Vector2.Min(c, d)), Vector2.Max(Vector2.Max(a, b), Vector2.Max(c, d)), min, max))
+            float ox = item.Origin.X, ax = item.AxisX.X, bx = item.AxisY.X;
+            float minX = ox + (ax < 0.0f ? ax : 0.0f) + (bx < 0.0f ? bx : 0.0f);
+            float maxX = ox + (ax > 0.0f ? ax : 0.0f) + (bx > 0.0f ? bx : 0.0f);
+            if (maxX <= rMinX || minX >= rMaxX)
+                continue;
+
+            float oy = item.Origin.Y, ay = item.AxisX.Y, by = item.AxisY.Y;
+            float minY = oy + (ay < 0.0f ? ay : 0.0f) + (by < 0.0f ? by : 0.0f);
+            float maxY = oy + (ay > 0.0f ? ay : 0.0f) + (by > 0.0f ? by : 0.0f);
+            if (maxY > rMinY && minY < rMaxY)
                 return false;
         }
 
@@ -1490,35 +1711,49 @@ public partial class UICompositor : GameComponent, IDisposable
     /// Has every pane of glass blur what is behind it again on the next frame, for an application whose UI keeps its
     /// glass (<see cref="GlassKeepsPicture"/>) and that knows something behind the UI changed that the UI can't see.
     /// </summary>
-    public void ForgetGlass() => glassGeneration++;
+    public void ForgetGlass() => Interlocked.Increment(ref glassGeneration);
 
     // Helper method for what every hash of what is under the glass starts from, how big the picture is and which
     // generation of it, see ForgetGlass
     private ulong Seed(Renderer2D? output)
     {
         Vector2 size = Renderer2D.OutputSize(output);
-        return Mix(Mix(0x9E3779B97F4A7C15UL, glassGeneration), ((ulong)(uint)size.X << 32) | (uint)size.Y) | 1;
+        return Mix(Mix(0x9E3779B97F4A7C15UL, Volatile.Read(ref glassGeneration)), ((ulong)(uint)size.X << 32) | (uint)size.Y) | 1;
     }
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static ulong Mix(ulong hash, ulong value) => (hash ^ value) * 0x100000001B3UL + (hash >> 29);
 
-    // Helper method to fold quads into a hash, as the numbers they are, eight bytes at a time
-    private static ulong Mix(ulong hash, ReadOnlySpan<SpriteItem> items)
+    // Helper method to fold one quad into a hash, as the numbers it is, eight bytes at a time without span/cast overhead in Debug
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static ulong Mix(ulong hash, in SpriteItem item)
     {
-        ReadOnlySpan<byte> bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(items);
-        ReadOnlySpan<ulong> words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ulong>(bytes);
-        foreach (ulong word in words)
-            hash = Mix(hash, word);
-        for (int i = words.Length * 8; i < bytes.Length; i++)
-            hash = Mix(hash, bytes[i]);
+        int size = System.Runtime.CompilerServices.Unsafe.SizeOf<SpriteItem>();
+        int words = size >> 3;
+        ref byte raw = ref System.Runtime.CompilerServices.Unsafe.As<SpriteItem, byte>(ref System.Runtime.CompilerServices.Unsafe.AsRef(in item));
+        ref ulong w0 = ref System.Runtime.CompilerServices.Unsafe.As<byte, ulong>(ref raw);
+        for (int i = 0; i < words; i++)
+        {
+            ulong word = System.Runtime.CompilerServices.Unsafe.Add(ref w0, i);
+            hash = (hash ^ word) * 0x100000001B3UL + (hash >> 29);
+        }
+        for (int i = words << 3; i < size; i++)
+        {
+            ulong b = System.Runtime.CompilerServices.Unsafe.Add(ref raw, i);
+            hash = (hash ^ b) * 0x100000001B3UL + (hash >> 29);
+        }
         return hash | 1;
     }
 
-    private static ulong Mix(ulong hash, in UIGlassPane pane)
+    private static ulong MixPaneFull(ulong hash, in UIGlassPane pane)
     {
-        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Min.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Min.Y));
-        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Max.X) << 32 | BitConverter.SingleToUInt32Bits(pane.Max.Y));
-        hash = Mix(hash, (ulong)BitConverter.SingleToUInt32Bits(pane.Blur) << 32 | BitConverter.SingleToUInt32Bits(pane.Opacity));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.Min.X) << 32) | BitConverter.SingleToUInt32Bits(pane.Min.Y));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.Max.X) << 32) | BitConverter.SingleToUInt32Bits(pane.Max.Y));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.ClipMin.X) << 32) | BitConverter.SingleToUInt32Bits(pane.ClipMin.Y));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.ClipMax.X) << 32) | BitConverter.SingleToUInt32Bits(pane.ClipMax.Y));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.Radius) << 32) | BitConverter.SingleToUInt32Bits(pane.Blur));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.Opacity) << 32) | BitConverter.SingleToUInt32Bits(pane.Bend));
+        hash = Mix(hash, ((ulong)BitConverter.SingleToUInt32Bits(pane.Lens) << 32) | pane.Tint);
         return hash | 1;
     }
 

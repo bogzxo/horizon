@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.Runtime.InteropServices;
+
 using TextMateSharp.Grammars;
 
 namespace Horizon.UI.Scripting;
@@ -31,7 +34,26 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     // About how long a piece is, cut just after a comma, a bracket or a space near its end so a token is seldom cut in two
     internal const int PIECE = 2048;
 
+    private static readonly SearchValues<char> Brackets = SearchValues.Create("()[]{}");
+
+    // Bounded per-grammar trie caching (SyntaxKind, HoldsBrackets) for full scope stacks so tokenizing doesn't repeat
+    // prefix checks and ConcurrentDictionary lookups on every token. Only touched while holding lock (grammar).
+    private const int MAX_SCOPE_NODES = 2048;
+
+    private sealed class ScopeNode
+    {
+        public Dictionary<string, ScopeNode>? Children;
+        public SyntaxKind Kind;
+        public bool HoldsBrackets;
+        public bool Resolved;
+    }
+
     private readonly IGrammar grammar;
+    private readonly ScopeNode scopeRoot = new();
+    private int scopeNodeCount;
+    // Reusable scratch buffer for ReadLine (always under lock (grammar)) so each line's returned List<SyntaxSpan>
+    // is allocated at exact capacity with zero intermediate growth arrays or trailing slack
+    private readonly List<SyntaxSpan> lineScratch = [];
 
     public string Name { get; }
 
@@ -206,7 +228,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     {
         ReadOnlySpan<char> now = text.Span;
         var read = new LongLineSpans(now.Length);
-        int pos = 0, delta = 0, tail = int.MaxValue, next = 0;
+        int pos = 0, delta = 0, tail = int.MaxValue, next = 0, spanCursor = 0;
         CodeLineStart at = start;
 
         if (last is { Pieces.Count: > 0 } && last.Pieces[0].Start == start && lastText.Length == last.Length)
@@ -221,8 +243,9 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             for (int i = 0; i <= kept; i++)
                 read.Pieces.Add(last.Pieces[i]);
             (pos, at) = last.Pieces[kept];
-            foreach (SyntaxSpan span in last)
+            for (; spanCursor < last.Count; spanCursor++)
             {
+                SyntaxSpan span = last[spanCursor];
                 if (span.Start >= pos) break;
                 read.Add(span);
             }
@@ -252,22 +275,37 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             if (aligned && last!.Pieces[next].At + delta == pos && last.Pieces[next].Start == at)
             {
                 int from = last.Pieces[next].At;
-                for (int i = next; i < last.Pieces.Count; i++)
+                int reusedTo = Math.Min(now.Length, last.ReadTo + delta);
+                if (from < last.ReadTo)
                 {
-                    int moved = last.Pieces[i].At + delta;
-                    if (moved > read.Pieces[^1].At)
-                        read.Pieces.Add((moved, last.Pieces[i].Start));
+                    for (int i = next; i < last.Pieces.Count; i++)
+                    {
+                        int moved = last.Pieces[i].At + delta;
+                        if (moved > read.Pieces[^1].At && moved <= now.Length)
+                            read.Pieces.Add((moved, last.Pieces[i].Start));
+                    }
+
+                    for (int i = spanCursor; i < last.Count; i++)
+                    {
+                        SyntaxSpan span = last[i];
+                        if (span.Start >= from)
+                            read.Add(span with { Start = span.Start + delta });
+                    }
                 }
 
-                foreach (SyntaxSpan span in last)
+                // If the previous read covered the whole line or already reached our goal/budget, we're done;
+                // otherwise continue tokenizing from where the partial read stopped.
+                if (last.Whole || reusedTo >= Math.Min(now.Length, goal) || reusedTo - begun >= budget)
                 {
-                    if (span.Start >= from)
-                        read.Add(span with { Start = span.Start + delta });
+                    read.ReadTo = reusedTo;
+                    read.End = last.End;
+                    return read;
                 }
 
-                read.ReadTo = last.ReadTo + delta;
-                read.End = last.End;
-                return read;
+                pos = reusedTo;
+                at = last.End;
+                last = null;
+                continue;
             }
 
             if (read.Pieces[^1].At != pos)
@@ -279,8 +317,16 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             {
                 if (aligned && last!.Pieces[next].At + delta == pos)
                     aligned = ++next < last.Pieces.Count;
-                int there = aligned ? last!.Pieces[next].At + delta : -1;
+                int there = aligned ? Math.Min(now.Length, last!.Pieces[next].At + delta) : -1;
                 end = there > pos && there <= pos + PIECE * 2 ? there : CutNear(now, pos, end);
+            }
+
+            // Guarantee strict forward progress without splitting a UTF-16 surrogate pair
+            if (end <= pos)
+            {
+                end = Math.Min(now.Length, pos + 1);
+                if (end < now.Length && char.IsHighSurrogate(now[end - 1]) && char.IsLowSurrogate(now[end]))
+                    end++;
             }
 
             IStateStack? state = at.State as IStateStack;
@@ -299,16 +345,29 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     }
 
     // Where a piece from a place is cut, just after the last comma, bracket or space in the second half of it, at the
-    // most letters otherwise, never between the two halves of a letter outside the basic plane
-    private static int CutNear(ReadOnlySpan<char> line, int from, int most)
+    // most letters otherwise, never between the two halves of a letter outside the basic plane, and always advancing past from
+    internal static int CutNear(ReadOnlySpan<char> line, int from, int most)
     {
-        for (int i = most - 1; i > from + PIECE / 2; i--)
+        if (from >= line.Length)
+            return line.Length;
+
+        most = Math.Clamp(most, from + 1, line.Length);
+        int half = from + PIECE / 2;
+        for (int i = most - 1; i > half; i--)
         {
             if (line[i] is ',' or ';' or ' ' or '\t' or '}' or ']' or ')')
                 return i + 1;
         }
 
-        return char.IsHighSurrogate(line[most - 1]) ? most - 1 : most;
+        if (char.IsHighSurrogate(line[most - 1]))
+        {
+            if (most - 1 > from)
+                return most - 1;
+            if (most < line.Length && char.IsLowSurrogate(line[most]))
+                return most + 1;
+        }
+
+        return most;
     }
 
     /// <summary>
@@ -318,16 +377,68 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     /// </summary>
     private List<SyntaxSpan> ReadLine(ReadOnlyMemory<char> text, ref IStateStack? state, ref int depth)
     {
-        var spans = new List<SyntaxSpan>();
         if (text.Length == 0)
         {
             // An empty line still moves the state on, a block comment is still open after one
             state = grammar.TokenizeLine(new LineText(text), state!, LineLimit).RuleStack;
-            return spans;
+            return [];
         }
 
-        ReadInto(spans, text, 0, ref state, ref depth);
+        lineScratch.Clear();
+        ReadInto(lineScratch, text, 0, ref state, ref depth);
+        int count = lineScratch.Count;
+        if (count == 0)
+            return [];
+
+        var spans = new List<SyntaxSpan>(count);
+        CollectionsMarshal.SetCount(spans, count);
+        CollectionsMarshal.AsSpan(lineScratch).CopyTo(CollectionsMarshal.AsSpan(spans));
         return spans;
+    }
+
+    // Helper method to resolve a token's scope stack through the per-grammar trie cache (called under lock (grammar))
+    private void ResolveScopes(IReadOnlyList<string> scopes, out SyntaxKind kind, out bool holdsBrackets)
+    {
+        ScopeNode node = scopeRoot;
+        for (int i = 1; i < scopes.Count; i++)
+        {
+            string scope = scopes[i];
+            if (node.Children is null)
+            {
+                if (scopeNodeCount >= MAX_SCOPE_NODES)
+                {
+                    kind = SyntaxScopes.KindOf(scopes);
+                    holdsBrackets = SyntaxScopes.HoldsBrackets(scopes);
+                    return;
+                }
+                node.Children = new Dictionary<string, ScopeNode>(StringComparer.Ordinal);
+            }
+
+            if (!node.Children.TryGetValue(scope, out ScopeNode? next))
+            {
+                if (scopeNodeCount >= MAX_SCOPE_NODES)
+                {
+                    kind = SyntaxScopes.KindOf(scopes);
+                    holdsBrackets = SyntaxScopes.HoldsBrackets(scopes);
+                    return;
+                }
+                next = new ScopeNode();
+                node.Children[scope] = next;
+                scopeNodeCount++;
+            }
+
+            node = next;
+        }
+
+        if (!node.Resolved)
+        {
+            node.Kind = SyntaxScopes.KindOf(scopes);
+            node.HoldsBrackets = SyntaxScopes.HoldsBrackets(scopes);
+            node.Resolved = true;
+        }
+
+        kind = node.Kind;
+        holdsBrackets = node.HoldsBrackets;
     }
 
     // Helper method for ReadLine, a line or a piece of one read into spans, its spans moved along by where it is in its
@@ -339,17 +450,42 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         state = result.RuleStack;
         ReadOnlySpan<char> line = text.Span;
 
+        IReadOnlyList<string>? prevScopes = null;
+        SyntaxKind prevKind = SyntaxKind.Name;
+        bool prevHoldsBrackets = true;
+
         foreach (IToken token in result.Tokens)
         {
             int from = Math.Clamp(token.StartIndex, 0, line.Length), to = Math.Clamp(token.EndIndex, from, line.Length);
+            while (from < to && char.IsWhiteSpace(line[from])) from++;
+            while (to > from && char.IsWhiteSpace(line[to - 1])) to--;
             if (to <= from)
                 continue;
 
-            SyntaxKind kind = SyntaxScopes.KindOf(token.Scopes);
-
-            if (!SyntaxScopes.HoldsBrackets(token.Scopes))
+            SyntaxKind kind;
+            bool holdsBrackets;
+            IReadOnlyList<string> scopes = token.Scopes;
+            if (scopes.Count <= 1)
             {
-                Add(spans, first, offset, line, from, to, kind);
+                kind = SyntaxKind.Name;
+                holdsBrackets = true;
+            }
+            else if (ReferenceEquals(scopes, prevScopes))
+            {
+                kind = prevKind;
+                holdsBrackets = prevHoldsBrackets;
+            }
+            else
+            {
+                ResolveScopes(scopes, out kind, out holdsBrackets);
+                prevScopes = scopes;
+                prevKind = kind;
+                prevHoldsBrackets = holdsBrackets;
+            }
+
+            if (!holdsBrackets || line.Slice(from, to - from).IndexOfAny(Brackets) < 0)
+            {
+                AddTrimmed(spans, first, offset, from, to, kind);
                 continue;
             }
 
@@ -365,12 +501,12 @@ public sealed class TextMateHighlighter : ICodeHighlighter
                 Add(spans, first, offset, line, runStart, i, kind);
                 if (opens)
                 {
-                    Add(spans, first, offset, line, i, i + 1, BracketAt(depth++));
+                    AddTrimmed(spans, first, offset, i, i + 1, BracketAt(depth++));
                 }
                 else
                 {
                     depth = Math.Max(0, depth - 1);
-                    Add(spans, first, offset, line, i, i + 1, BracketAt(depth));
+                    AddTrimmed(spans, first, offset, i, i + 1, BracketAt(depth));
                 }
 
                 runStart = i + 1;
@@ -397,6 +533,11 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         if (to <= from)
             return;
 
+        AddTrimmed(spans, first, offset, from, to, kind);
+    }
+
+    private static void AddTrimmed(List<SyntaxSpan> spans, int first, int offset, int from, int to, SyntaxKind kind)
+    {
         from += offset;
         to += offset;
         if (spans.Count > first && spans[^1] is { } last && last.Kind == kind && kind is not (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3))

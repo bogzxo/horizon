@@ -34,7 +34,7 @@ public partial class TreeView
     // A click with Ctrl or Shift on a tree that takes several, true when it was one and has been dealt with
     private bool PickMany(UITreeItem at)
     {
-        if (!MultiSelect || GameEngine.Instance?.Input.Keyboard is not { } keyboard || !(keyboard.Control || keyboard.Shift) || selected is null)
+        if (!MultiSelect || GameEngine.Instance?.Input.Keyboard is not { } keyboard || !(keyboard.Primary || keyboard.Shift) || selected is null)
         {
             alsoSelected.Clear();
             return false;

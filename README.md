@@ -4,6 +4,14 @@ Horizon is a 2D game engine for .NET 11, built around a Vulkan renderer with def
 
 A game runs on three threads, the window and input on one, the GPU on another and the simulation on a third, ticking at a fixed rate while frames are drawn between the last two ticks, so things move smoothly at any frame rate, and the engine stays out of the way of the game's own code, a scene is a tree of entities and components with a turn for each thread, and nothing more is asked of it.
 
+## Demo
+
+Down in the Dark, a demo game made with Horizon.
+
+<video src="docs/media/downinthedarkdemo.mp4" controls muted width="100%"></video>
+
+[Watch the Down in the Dark demo](docs/media/downinthedarkdemo.mp4) if the video doesn't play here.
+
 ## Getting started
 
 Horizon is on nuget.org, a game needs three packages, HIDL comes along with them, and the engine's package copies its shaders, fonts and UI skins next to the program at build and publish.
@@ -27,13 +35,13 @@ using var engine = new GameEngine(WindowManagerConfiguration.Default1600x900 wit
 engine.Run<MainScene>();
 ```
 
-`MainScene` is a `Scene`, or a `Scene2D` for a lit world with a camera, sprites, shapes and a UI already in it, the [guide](docs/guide/getting-started.md) goes from there.
+`MainScene` is a `Scene`, or a `Scene2D` for a lit world with a camera, sprites, shapes and a UI already in it, the [guide](docs/guide/getting-started.md) goes from there, and [`samples/ThreeBody`](samples/ThreeBody) is a whole small game made this way, the three body problem with glowing trails, presets and mouse controls, [read through in the guide](docs/guide/a-first-game.md).
 
 ## Desktop applications
 
 The same engine runs high performance desktop GUI applications, with `RunMode.Application` a window draws a frame only when something on it changed, ticks a few times a second while nobody is using it and waits on the system rather than polling it, and its UI is painted then compared, so a tick that changed nothing costs the GPU nothing. A frameless window with a title bar and menus of its own, tree views that paint only the rows in sight, a code editor, settings pages, a real terminal and NativeAOT publishing all come with it.
 
-[Hex](https://github.com/bogzxo/hex) is the proof, an editor drawn by Horizon with no browser underneath, 450 ms from launch to its first frame, 56 ms to wake from its background sleep and about 2% of one core at rest, by its own published measurements. [Desktop applications](docs/guide/desktop-applications.md) shows how a program of your own does the same.
+[Hex](https://github.com/bogzxo/hex) is a great example, a high performance IDE drawn by Horizon with no browser underneath, 450 ms from launch to its first frame, 56 ms to wake from its background sleep and about 2% of one core at rest, by its own published measurements. [Desktop applications](docs/guide/desktop-applications.md) shows how a program of your own does the same.
 
 ![Hex's editor, drawn entirely by Horizon, with the explorer, semantic colours, reference counts, git blame and the minimap](docs/guide/images/hex-editor.webp)
 

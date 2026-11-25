@@ -31,6 +31,11 @@ public partial class WindowPanel : Panel
     private Vector2 dragFrom;
     private Vector2 startPosition, startSize;
 
+    // Cached title height so dragging or repainting a window doesn't re-measure the title string every tick.
+    private string? measuredTitle;
+    private UIFont? measuredTitleFont;
+    private float measuredTitleScale, measuredTitleHeight;
+
     /// <summary>What its title bar says.</summary>
     public string Title { get; set; } = string.Empty;
 
@@ -169,7 +174,12 @@ public partial class WindowPanel : Panel
         // The title in bold, it's the heading of what's in it, as a dialog's is
         string title = Resolve(Title);
         float scale = ScaleOf(skin);
-        float tall = list.Font.Measure(title, scale, false).Y;
+        if (!ReferenceEquals(measuredTitle, title) || measuredTitleFont != list.Font || measuredTitleScale != scale)
+        {
+            measuredTitleHeight = list.Font.Measure(title, scale, false).Y;
+            (measuredTitle, measuredTitleFont, measuredTitleScale) = (title, list.Font, scale);
+        }
+        float tall = measuredTitleHeight;
         list.PushClip(new UIRect(bar.Min, new Vector2(bar.Max.X - (Closable ? CloseWidth : 0.0f) - ActionsWidth, bar.Max.Y)));
         list.Text(title, new Vector2(x, bar.Center.Y + tall * 0.5f), scale, skin.TextColor, false, UITextStyle.Bold, default);
         list.PopClip();

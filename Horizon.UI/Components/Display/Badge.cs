@@ -43,7 +43,7 @@ public class Badge : UIComponent
     private const float PAD = 7.0f, INNER_GAP = 5.0f, TALL = 1.45f;
 
     // How strong the tint behind is and the rim round it, and how long a beat of the dot takes
-    private const float FILL = 0.16f, RIM = 0.32f, BEAT = 1.2f;
+    private const float FILL = 0.16f, RIM = 0.32f, BEAT = 2.0f;
 
     // The blue of something going on, the same in every look, a theme's selection is its accent in some
     private static readonly Vector4 INFO = new(0.38f, 0.62f, 1.0f, 1.0f);
@@ -69,8 +69,8 @@ public class Badge : UIComponent
     /// <summary>How big its words are, 0 for a little under the skin's.</summary>
     public float TextScale { get; set; }
 
-    // How far into a beat the dot is
-    private float beat;
+    // How far into a beat the dot is, and the time gone by since it last stepped
+    private float beat, beatWaiting;
 
     private float ScaleIn(UISkin skin) => TextScale > 0.0f ? TextScale : skin.TextScale * 0.85f;
 
@@ -99,13 +99,22 @@ public class Badge : UIComponent
 
     protected override void Update(float dt)
     {
+        // A step at a time, twelve a second, and held where it is while nobody sees the window (UIDecorative). It asked for
+        // frames every update, which had every running agent's card keep the whole UI drawn at the screen's rate
         if (Dot && Pulse && MotionTime(BEAT) > 0.0f)
         {
-            beat = (beat + dt / MotionTime(BEAT)) % 1.0f;
-            GameEngine.Instance?.WindowManager?.RequestFrames(0.1);
+            if (Drawing.UIDecorative.Runs)
+            {
+                float moved = Drawing.UIDecorative.Take(ref beatWaiting, dt);
+                if (moved > 0.0f)
+                    beat = (beat + moved / MotionTime(BEAT)) % 1.0f;
+            }
         }
         else
+        {
             beat = 0.0f;
+            beatWaiting = 0.0f;
+        }
 
         base.Update(dt);
     }

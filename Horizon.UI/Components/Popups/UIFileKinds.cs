@@ -29,7 +29,7 @@ public static class UIFileKinds
             return "make";
         if (lower == ".env" || lower.StartsWith(".env.", StringComparison.Ordinal) || lower.EndsWith(".env", StringComparison.Ordinal))
             return "env";
-        if (lower is ".gitignore" or ".gitattributes" or ".gitmodules" or ".gitkeep" or ".dockerignore")
+        if (lower is ".gitignore" or ".gitattributes" or ".gitmodules" or ".gitkeep" or ".dockerignore" or ".hex-link-ignore")
             return "git";
         return null;
     }

@@ -98,12 +98,12 @@ public partial class CodeEditor
     {
         UIWhitespace.All => true,
         UIWhitespace.Boundary => column < lead || column >= trail,
-        UIWhitespace.Selection => IsSelected(line, column),
+        UIWhitespace.Selection => IsPositionSelected(line, column),
         _ => false
     };
 
     // Whether a character is inside one of the selections, the caret's or one of the others'
-    private bool IsSelected(int line, int column)
+    private bool IsPositionSelected(int line, int column)
     {
         var at = new UITextPosition(line, column);
         if (document.HasSelection && at >= document.SelectionStart && at < document.SelectionEnd)

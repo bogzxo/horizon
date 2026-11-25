@@ -47,6 +47,51 @@ public partial class CodeEditor
         }
     }
 
+    /// <summary>A bar on the left edge of the gutter at every row a remote caret is on, so a caret scrolled out of sight is still found.</summary>
+    private void PaintRemoteGutter(UIDrawList list, UIRect content, float lineHeight, int first, int last, UIRect area)
+    {
+        for (int i = 0; i < RemoteCarets.Count; i++)
+        {
+            UICodeRemoteCaret remote = RemoteCarets[i];
+            if ((uint)remote.Line >= document.LineCount || IsHidden(remote.Line, out _))
+                continue;
+            int row = RowOf(remote.Line, Math.Clamp(remote.Column, 0, document.LineAt(remote.Line).Length));
+            if (row < first || row > last)
+                continue;
+            float top = RowTop(area, row, lineHeight);
+            list.BeginPart(HashCode.Combine(nameof(RemoteCarets), remote.Id, nameof(PaintRemoteGutter)));
+            list.Rect(new UIRect(new Vector2(content.Min.X, top - lineHeight), new Vector2(content.Min.X + 3.0f, top)), remote.Colour);
+        }
+    }
+
+    /// <summary>Helper method for the names of the remote carets on the line of a point in the gutter, empty elsewhere.</summary>
+    private string RemoteGutterTooltip(Vector2 point)
+    {
+        if (RemoteCarets.Count == 0 || paintedSkin is not { } skin || point.X >= TextArea(skin, paintedScale).Min.X || point.X < Bounds.Min.X)
+            return string.Empty;
+        int line = PositionAt(point).Line;
+        string? first = null;
+        System.Text.StringBuilder? built = null;
+        for (int i = 0; i < RemoteCarets.Count; i++)
+        {
+            UICodeRemoteCaret remote = RemoteCarets[i];
+            if (remote.Line != line)
+                continue;
+
+            string name = string.IsNullOrEmpty(remote.Label) ? remote.Id : remote.Label;
+            if (first is null)
+            {
+                first = name;
+            }
+            else
+            {
+                built ??= new System.Text.StringBuilder(first);
+                built.Append(", ").Append(name);
+            }
+        }
+        return built is not null ? built.ToString() : first ?? string.Empty;
+    }
+
     private void PaintRemoteSelections(UIDrawList list, UISkin skin, float scale, float left, float top, float lineHeight, float digit, CodeRow row)
     {
         for (int i = 0; i < RemoteCarets.Count; i++)

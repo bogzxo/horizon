@@ -139,19 +139,31 @@ Other assemblies add kinds via `UIModule.AddKind<T>("name")` (`UIModule.Runtime.
    `front` list through `UIRenderer` (`Drawing/UIRenderer.cs`: `SpriteBatch` of `SpriteItem` quads, no own shader);
    draws. A list painted with missing art (`front.Incomplete`) is skipped and the previous stays up.
 5. **Decoupled rendering** (`RenderFrame.IsDecoupled`): frames between two ticks blend the last two lists
-   (`Drawing/UIInBetween.cs`; "quads that are the same in both lists but for position/size/colour are blended", things
-   that change in steps flip at their moment). Tests: `Horizon.Tests/UI/InBetweenTests.cs`.
+   (`Drawing/UIInBetween.cs`, caching `framesBefore` by `UIFrameList.Stamp`; "quads that are the same in both lists
+   but for position/size/colour are blended", things that change in steps flip at their moment). Tests:
+   `Horizon.Tests/UI/InBetweenTests.cs`.
 6. `Retained` (default true, `UICompositor.cs` ~200): while nothing changes the compositor keeps a picture of the UI
-   and overlays that as one quad instead of redrawing every quad. `FrameRateLimit` (default 120,
-   `DefaultFrameRateLimit`, `[Inspect(0..480)]`) limits how often the UI is re-put-together and uploaded; input and
-   updates still run at sim rate. The mouse `Cursor` is drawn every frame regardless.
+   and overlays that as one quad instead of redrawing every quad. `pictureGlassGeneration` (`ForgetGlass`) invalidates
+   `Retained` layers whenever a glass backdrop changes. `FrameRateLimit` (default 120, `DefaultFrameRateLimit`,
+   `[Inspect(0..480)]`) limits how often the UI is re-put-together and uploaded; input and updates still run at sim
+   rate. The mouse `Cursor` is drawn every frame regardless.
 7. `PostProcessing` (`compositor.PostProcessing.Add(new BlurEffect())`): UI is drawn into its own `PostLayer`
    while any effect is on; components then track motion speed.
-8. `UIGlass` / `UIGlassPass`: backdrop blur ("glass") panes; component `Glass`/`Lift`; `Uncacheable()` for reuse.
+8. **Rimless Apple Liquid Glass** (`Drawing/UIGlass.cs`, `Drawing/UIGlassPass.cs`, `horizon/Horizon/shaders/post/glass.slang`):
+   - `UIGlass(Blur, Clarity, Bend)` uses 3 parameters only (`SilverLining`, `Sheen`, and `Rim` were removed completely).
+   - `glass.slang` implements a smooth $C^1$ polynomial smooth-max meniscus dome (`pow(depth, 0.25) * pi/2`), grazing
+     RGB dispersion, `uSharpRect` cropped sharp backdrop sampling, and a 1-tap flat-interior fast path
+     (`-d >= rimWidth + k*0.25 + 1.0`).
+   - `UIGlassPane.Under` (recorded via `UIDrawList.GlassMark()`) captures the backdrop *before* a popup/component's
+     `Lifted` shadow so glass never blurs its own drop shadow (`UIGlassPass.Capture` -> draw `[Under..Start)` ->
+     `UIGlassPass.Composite`).
+   - GPU/VRAM efficiency: region-scissored blur via `GraphicsDevice.SetScissor`/`ResetScissor` + `GaussianBlur.Margin`,
+     128px-grid spatial `madeOf` cache keys with run-texture invalidation, cropped `keptSharp` targets, 120-frame idle
+     VRAM eviction, and `pictureGlassGeneration` (`ForgetGlass` on `Retained` layers).
 
 `UIDrawList` primitives (`Drawing/UIDrawList.cs`): `Rect`, `Box` (skin corner radius), `RoundRect`, `Outline`,
 `Frame`, `NineSlice(region, rect, tint)`, `Region`, `Image`, `Symbol`, `Text(...)` (in `.Text.cs`), `PushClip/PopClip`,
-`Shadow`, `Lifted`, `Glass`, `Popup`, `Squiggles` (diagnostic underlines). `BeginPart(n)` / `EndParts()` number
+`Shadow`, `Lifted`, `GlassMark`, `Glass`, `Popup`, `Squiggles` (diagnostic underlines). `BeginPart(n)` / `EndParts()` number
 sub-parts of a component so quad counts stay stable for tick blending (see the comment in `Button.Paint`,
 `Controls/Button.cs:128-132`). Painting rule: always use `list.Skin` for colours/regions and fall back to flat
 colours if `skin.TryGetRegion` fails.
@@ -169,11 +181,7 @@ colours if `skin.TryGetRegion` fails.
   `Navigable`, `Focusable`, `TabStop`, `KeepsTab`, `TakesRawKeys`, `WantsTextInput`, `OnKeyDown(UIKeyPress)`,
   `OnTextInput(char)`, `OnPaste(string)`, `OnEscape`. Popups: `module.Popup` + `PaintPopup`, `PopupContains`,
   `TakesPopupKeys`, `OnPopupKeys`, `PopupClosed`, `PaintClosing`.
-- **Keyboard**: `UIKeyboard` (static, `Input/UIKeyboard.cs`) queues the *character stream* from the window thread.
-  Editing keys are encoded as private control chars (`BACKSPACE`, `ENTER`, `TAB`, `LEFT`, `HOME`, `COPY`, `PASTE`
-  ...). A component reads them in `OnTextInput(char)`. Paste text is fetched separately with `TryTakePaste`. A focused
-  component with `TakesRawKeys` (terminal) instead receives `UIKeyPress` through `OnKeyDown` and Tab/Escape too.
-  Key repeat is synthesised (`UIKeyboard.Repeat`).
+- **Keyboard & IME**: `UIKeyboard` (static, `Input/UIKeyboard.cs`) queues the *character stream* from the window thread; `UICompositor.Input.cs` calls `WindowManager.NoteInput()` on keyboard/pointer activity to lift calm throttling immediately. Editing keys are encoded as private control chars (`BACKSPACE`, `ENTER`, `TAB`, `LEFT`, `HOME`, `COPY`, `PASTE` ...). A component reads them in `OnTextInput(char)`. Paste text is fetched separately with `TryTakePaste`. On SDL hosts (macOS/Linux), `SdlTextEditing` (`Horizon.Platform.Desktop/Input/SdlTextEditing.cs`) delivers intact UTF-8 emoji/IME commits and `InputEvent.Composition` preedit events (routed through `UICompositor.Input.cs` to `CodeEditor` and `TextBox`, with caret bounds sent to `IPlatformInput.SetTextInputRect`). A focused component with `TakesRawKeys` (terminal) instead receives `UIKeyPress` through `OnKeyDown` and Tab/Escape too. Key repeat is synthesised (`UIKeyboard.Repeat`).
 - **Routing order each tick** (`RouteKeyboard`, `Input.cs:51`): keep focus sane -> `RouteToPopup` (open menu owns all
   keys) -> Escape (`Escape()`: dialog, then popup, then focus) -> Tab/Shift+Tab `FocusNext` (over
   `UIModule.CollectFocusable`, components with `Focusable`/`TabStop`) -> typed chars to `focus`.
@@ -193,7 +201,11 @@ colours if `skin.TryGetRegion` fails.
 ## 7. Text rendering and editing
 
 - Font: `UIFont` (`Drawing/UIFont.cs`, bitmap `.fnt`, default `Assets/fonts/vcr_mono/vcr_mono.fnt`, `UISkin.cs:28`);
-  `skin.Font.Measure(text, scale)`. Text drawn via `UIDrawList.Text`. Inline icons: `$(codicon-name)` inside any
+  `skin.Font.Measure(text, scale)`. TrueType outline rasterisation (`horizon/Horizon/Rendering/2D/Text/GlyphOutlines.cs`)
+  supports `.ttf`, `.otf`, and `.ttc` TrueType collections (`stbtt_GetFontOffsetForIndex`, e.g. macOS `Menlo.ttc`).
+  `GlyphAtlas` (`horizon/Horizon/Rendering/2D/Text/GlyphAtlas.cs`) grows `512 -> 1024 -> 2048` with sub-rect GPU
+  uploads (no permanent CPU pixel/staging mirrors), and `horizon/Horizon/shaders/ui/ui.slang` takes a zero-derivative
+  `SampleLevel(uv, 0)` early exit for rasterized atlas glyphs. Text drawn via `UIDrawList.Text`. Inline icons: `$(codicon-name)` inside any
   label (`Button.Written`, `Controls/Button.cs:~100`); Hex's MCP strips these via regex. `@key` strings are
   localised: `UIComponent.Resolve(text)` -> `UICompositor.Resolve` (own `Strings` first, then
   `Horizon.Content.Localisation`).
@@ -208,7 +220,9 @@ colours if `skin.TryGetRegion` fails.
   .MiddleScroll .CompletionDocumentation .AgentHints .Reuse`). Language-server data enters through hooks
   (`Diagnostics`, `CompletionSource`, `HoverSource`) as `UICodeDiagnostic`, completion items etc.; **colour** comes
   from `ICodeHighlighter` (`Scripting/ICodeHighlighter.cs`): `TextMateHighlighter` (VS Code grammars in
-  `Scripting/Grammars/`, Oniguruma via Onigwrap) or `HidlHighlighter`; `CodeLanguages.cs` picks by extension and
+  `Scripting/Grammars/`, Oniguruma via Onigwrap; `CutNear` guards UTF-16 surrogate pairs so emoji/non-BMP text never
+  splits across highlight chunks) or `HidlHighlighter` (`Scripting/HidlHighlighter.cs`, native C# scanner);
+  `CodeLanguages.cs` picks by extension and
   `CodeLanguages.Register(ext, scope)` adds one. Highlighting runs on a thread-pool thread after a pause; until it
   returns the typed line is coloured with `ReadLine`. Semantic tokens overlay via `SemanticOverlay`.
   `CodeEditor` uses `PaintVersion` reuse (section 9).
@@ -233,17 +247,24 @@ colours if `skin.TryGetRegion` fails.
   (`UIComponent.Hover.cs`, `hoverness`), button `Punch`; (d) `Sliding` (animated layout size); (e) overscroll/ease in
   `UIOverscroll.cs`, `UIScrollEase.cs`; (f) animated icons (`UIAnimatedIcons.cs`). Global speed
   `compositor.AnimationSpeed`; `MotionTime(t)` in components respects it (0 = reduced motion; see Button.Update).
-  Animations that change only `Visual*`/`Opacity` do not relayout neighbours.
+  Animations that change only `Visual*`/`Opacity` do not relayout neighbours. User-followed animations (scroll
+  glides, overscroll springs, panel easing) call `WindowManager.RequestSmooth()` so they stay smooth instead of
+  dropping to the calm rate (24 Hz focused / 10 Hz unfocused); decorative motion (`UIDecorative.cs`, spinners/pulses)
+  uses `WindowManager.RequestTickIn(...)` capped at 12 Hz.
 
 ## 9. Invalidation and performance
 
 - No invalidation API: everything repainted every tick; savings come from (1) `Retained` picture overlay when nothing
-  changed, (2) `FrameRateLimit`, (3) **per-component paint reuse** (`Drawing/UIDrawList.Reuse.cs`): override
+  changed (invalidated by `pictureGlassGeneration` / `ForgetGlass`), (2) `FrameRateLimit` + `WindowManager.PaceCalmFrames()` in `RunMode.Application`, (3) **per-component paint reuse** (`Drawing/UIDrawList.Reuse.cs`): override
   `protected virtual long PaintVersion` (return a number that changes whenever what you paint changes; -1 = never
-  reuse). If version and `PaintContext` (bounds, clip, offsets) match last tick, the component's quads are copied from
-  the previous list. Only worth it for heavy painters (`CodeEditor`); verify with `HORIZON_UI_REUSE_CHECK=1`
-  (paints anyway and logs differences). Call `list.Uncacheable()` for things that can't be replayed (glass, raised
-  components).
+  reuse; leaf components only — `UIComponent.cs:593`). If version and `PaintContext` (bounds, clip, offsets) match last tick, the component's quads are copied from
+  the previous list; glass panes participate in `PaintRecord` reuse by rebasing `Under` and `Start`. Worth it for heavy painters (`CodeEditor`, `Label` via `UIRichText` layout version, `TerminalView.PaintVersion` in `horizon/Horizon.Terminal/TerminalView.cs`); verify with `HORIZON_UI_REUSE_CHECK=1`
+  (paints anyway and logs differences). Call `list.Uncacheable()` for things that can't be replayed (raised
+  components, animated icons).
+- **Terminal memory & paint efficiency**: `TerminalCell` (`horizon/Horizon.Terminal/TerminalCell.cs`) is packed to
+  32 bytes with scrollback blank-tail compaction, paired with `TerminalView.PaintVersion` reuse.
+- **Settings virtualization**: `SettingsPage.RowsStack` (`Components/Controls/Settings/SettingsPage.Rows.cs`) keeps only viewport-visible rows (+ buffer and focused/flashing/popup rows) attached as live children when a page exceeds 24 items, avoiding ~1,500-component measure/arrange/update overhead per tick. `SettingsPage.RowItems` exposes the full list (attached and detached) for tests/automation (e.g. `DawnScene.SelfTest.cs:Descendants`).
+- **Native dialogs**: `UIFileDialogs` (`Components/Popups/UIFileDialogs.cs`) delegates to `IPlatformDialogs` (`MacDialogs` on macOS when `PlatformFeatures.NativeDialogs` is available) and falls back to the in-app `UIFileBrowser`.
 - Zero-alloc conventions: use `ChildSpan`, cache composed strings (`Button.Written` reference-equality cache),
   reuse scratch `List`s (`TooltipLines`), `FrozenDictionary` strings, `GetAlternateLookup<ReadOnlySpan<char>>`.
   `Resolve` "makes no garbage" by design. `Horizon.Tests/Core/HotPathTests.cs` references the compositor (hot path
@@ -433,8 +454,8 @@ Unclear: whether any control exposes semantic roles; none found in this assembly
 | Typed characters & key encoding | `Input/UIKeyboard.cs`, `Input/UIKeys.cs` |
 | Menu/shortcut registration | `Components/Popups/UICommands.cs`, `Input/UIShortcuts.cs`, `MenuBar*.cs` |
 | Painting primitives | `Drawing/UIDrawList*.cs` |
-| Drawing text / fonts / rich text | `UIDrawList.Text.cs`, `Drawing/UIFont.cs`, `UIRichText*.cs` |
-| Glass/blur/shadows | `UIGlass*.cs`, `UIDrawList.cs` `Glass/Lifted/Shadow` |
+| Drawing text / fonts / rich text | `UIDrawList.Text.cs`, `Drawing/UIFont.cs`, `UIRichText*.cs`, `horizon/Horizon/Rendering/2D/Text/GlyphAtlas.cs`, `horizon/Horizon/shaders/ui/ui.slang` |
+| Glass/blur/shadows | `Drawing/UIGlass*.cs`, `horizon/Horizon/shaders/post/glass.slang`, `horizon/Horizon/Rendering/Common/PostProcessing/GaussianBlur.cs` (`Margin`), `UIDrawList.cs` (`GlassMark/Glass/Lifted/Shadow`) |
 | Skin art, palette, themes | `Skinning/UISkin*.cs`, `UIPalette.cs`, `UITheme.cs` |
 | Tweens/intros | `UITweens.cs`, `UIComponent.cs` (Intro), `UIComponent.Sliding.cs` |
 | Code editor features | `Components/Controls/CodeEditor.<Feature>.cs`, `UITextDocument*.cs`, `Scripting/*Highlighter*.cs` |

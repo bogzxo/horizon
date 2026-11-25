@@ -21,6 +21,12 @@ internal readonly record struct UIFrame(Vector2 Key, int Parent, Vector2 Shift, 
     public Vector2 FollowFrom { get; init; }
 
     /// <summary>
+    /// Whether its <see cref="Shift"/> jumped this tick rather than moved (a zoom kept its place, the scroll went somewhere
+    /// else with it), so a frame between this tick and the last doesn't slide what's in it over from the old shift.
+    /// </summary>
+    public bool Jumped { get; init; }
+
+    /// <summary>
     /// Where the layout put the component it's the frame of, less what it's scrolled by (see <see cref="Shift"/>), while
     /// the layout is moving things about (something sliding or folding, see <see cref="UIDrawList.LayoutMoves"/>). A
     /// frame inside it has the same. Moved between two ticks, what's in the frame moves with it.
@@ -68,10 +74,13 @@ internal struct UIFrameQuad
     // Turned about a point (an icon that spins), only while it's all in sight
     public float Turn;
     public Vector2 Pivot;
+
+    // Index in UIDrawList.items when emitted during painting, or -1 if culled
+    public int Item;
 }
 
-/// <summary>A pane of glass as it was put down, before the quad it goes under (by its place among the frame quads).</summary>
-internal readonly record struct UIFrameGlass(int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Bend);
+/// <summary>A pane of glass as it was put down, with the quad index before its own shadow (<see cref="Under"/>) and the quad index it goes under (<see cref="Start"/>), both in frame-quad indices.</summary>
+internal readonly record struct UIFrameGlass(int Under, int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Bend, float Lens, uint Tint);
 
 /// <summary>Where a run of quads that show the same images ended, by its place among the frame quads.</summary>
 internal readonly record struct UIFrameRun(int End, Texture? Image0, Texture? Image1);
@@ -95,10 +104,14 @@ internal sealed class UIFrameList
     /// <summary>Whether any of its frames goes where the pointer goes, see <see cref="UIFrame.Follows"/>.</summary>
     public bool Follows;
 
+    /// <summary>Monotonically incremented every time this list is cleared for a new paint, for caches keyed on its frames.</summary>
+    public long Stamp { get; private set; }
+
     public ReadOnlySpan<UIFrame> Span => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Frames);
 
     public void Clear()
     {
+        Stamp++;
         Frames.Clear();
         Clips.Clear();
         Glass.Clear();
@@ -129,6 +142,17 @@ internal sealed class UIFrameList
         return ref Quads[QuadCount++];
     }
 
+    /// <summary>Grows the frame-quad buffer once so a reused component can bulk-copy its quads without per-quad resize checks.</summary>
+    public void EnsureCapacity(int required)
+    {
+        if (Quads.Length >= required)
+            return;
+        int next = Quads.Length == 0 ? 512 : Quads.Length;
+        while (next < required)
+            next *= 2;
+        Array.Resize(ref Quads, next);
+    }
+
     // Clips worked out by Resolve, every one once
     private UIRect[] resolvedClips = [];
 
@@ -136,29 +160,66 @@ internal sealed class UIFrameList
     // once a quad, see Moved
     private Vector2[] resolvedMoves = [];
 
+    // Resolved quad counts at each glass pane's Under mark, reused across Resolve calls
+    private int[] resolvedUnder = [];
+
+    // Per-frame and per-clip unchanged flags for stationary-frame fast copy, reused across Resolve calls
+    private bool[] frameUnchanged = [];
+    private bool[] clipUnchanged = [];
+
     /// <summary>
     /// The quads, runs and glass the frames come to on screen, as the list painted them. With the frames as they were
     /// painted that's what the list has already (see <see cref="UIDrawList.FramesDiffer"/>), with frames moved between two ticks
     /// it's the frame in between.
     /// </summary>
+    /// <param name="paintedItems">
+    /// The painted <see cref="SpriteItem"/> buffer corresponding to this frame list. When non-empty, quads whose frame and
+    /// clip are unchanged from where they were painted are copied directly without recomputing transforms, clipping, or UVs.
+    /// </param>
     /// <returns>How many quads went into <paramref name="into"/>, which is made bigger when they don't fit.</returns>
-    public int Resolve(ReadOnlySpan<UIFrame> at, ref SpriteItem[] into, List<UIDrawList.Run> runsInto, List<UIGlassPane> glassInto)
+    public int Resolve(ReadOnlySpan<UIFrame> at, ref SpriteItem[] into, List<UIDrawList.Run> runsInto, List<UIGlassPane> glassInto, ReadOnlySpan<SpriteItem> paintedItems = default)
     {
         runsInto.Clear();
         glassInto.Clear();
 
+        bool useFastCopy = !paintedItems.IsEmpty;
+
         if (resolvedMoves.Length < at.Length)
             resolvedMoves = new Vector2[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)at.Length)];
+        if (useFastCopy && frameUnchanged.Length < at.Length)
+            frameUnchanged = new bool[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)at.Length)];
         ReadOnlySpan<UIFrame> painted = Span;
-        for (int i = 0; i < at.Length && i < painted.Length; i++)
-            resolvedMoves[i] = Moved(at[i], painted[i]);
+        int frameCount = Math.Min(at.Length, painted.Length);
+        for (int i = 0; i < frameCount; i++)
+        {
+            ref readonly UIFrame current = ref at[i];
+            ref readonly UIFrame orig = ref painted[i];
+            resolvedMoves[i] = Moved(current, orig);
+            if (useFastCopy)
+                frameUnchanged[i] = FrameUnchanged(current, orig);
+        }
+        for (int i = frameCount; i < at.Length; i++)
+        {
+            resolvedMoves[i] = Vector2.Zero;
+            if (useFastCopy)
+                frameUnchanged[i] = false;
+        }
 
         if (resolvedClips.Length < Clips.Count)
             resolvedClips = new UIRect[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Clips.Count)];
+        if (useFastCopy && clipUnchanged.Length < Clips.Count)
+            clipUnchanged = new bool[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Clips.Count)];
         ReadOnlySpan<UIFrameClip> clips = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Clips);
         for (int i = 0; i < clips.Length; i++)
         {
             ref readonly UIFrameClip cut = ref clips[i];
+            if (useFastCopy)
+            {
+                bool unchanged = frameUnchanged[cut.Frame] && (cut.Parent < 0 || clipUnchanged[cut.Parent]);
+                if (unchanged && cut.StationaryParentFrame is { } stationary)
+                    unchanged = frameUnchanged[stationary];
+                clipUnchanged[i] = unchanged;
+            }
             UIRect rect = Shifted(cut.Rect, resolvedMoves[cut.Frame]);
             UIRect parent = cut.Parent < 0 ? Unclipped : resolvedClips[cut.Parent];
             if (cut.StationaryParentFrame is { } outside)
@@ -172,23 +233,68 @@ internal sealed class UIFrameList
             resolvedClips[i] = parent.Intersect(rect);
         }
 
-        int count = 0, glassNext = 0, runNext = 0, runFirst = 0;
+        ReadOnlySpan<UIFrameGlass> glassSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Glass);
+        ReadOnlySpan<UIFrameRun> runSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Runs);
+        if (glassSpan.Length > 0 && resolvedUnder.Length < glassSpan.Length)
+            resolvedUnder = new int[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)glassSpan.Length)];
+
+        int count = 0, underNext = 0, glassNext = 0, runNext = 0, runFirst = 0;
+        int nextUnder = glassSpan.Length > 0 ? glassSpan[0].Under : -1;
+        int nextGlass = glassSpan.Length > 0 ? glassSpan[0].Start : -1;
+        int nextRun = runSpan.Length > 0 ? runSpan[0].End : -1;
         for (int i = 0; i <= QuadCount; i++)
         {
-            // The panes of glass that go under this quad, and the runs that ended before it
-            for (; glassNext < Glass.Count && Glass[glassNext].Start == i; glassNext++)
-                ResolveGlass(Glass[glassNext], at, count, glassInto);
-            for (; runNext < Runs.Count && Runs[runNext].End == i; runNext++)
+            // The panes of glass that capture or go under this quad, and the runs that ended before it
+            if (i == nextUnder)
             {
-                if (count > runFirst)
-                    runsInto.Add(new UIDrawList.Run(runFirst, count - runFirst, Runs[runNext].Image0, Runs[runNext].Image1));
-                runFirst = count;
+                do
+                {
+                    resolvedUnder[underNext++] = count;
+                }
+                while (underNext < glassSpan.Length && glassSpan[underNext].Under == i);
+                nextUnder = underNext < glassSpan.Length ? glassSpan[underNext].Under : -1;
+            }
+            if (i == nextGlass)
+            {
+                do
+                {
+                    ResolveGlass(glassSpan[glassNext], at, resolvedUnder[glassNext], count, glassInto);
+                    glassNext++;
+                }
+                while (glassNext < glassSpan.Length && glassSpan[glassNext].Start == i);
+                nextGlass = glassNext < glassSpan.Length ? glassSpan[glassNext].Start : -1;
+            }
+            if (i == nextRun)
+            {
+                do
+                {
+                    if (count > runFirst)
+                        runsInto.Add(new UIDrawList.Run(runFirst, count - runFirst, runSpan[runNext].Image0, runSpan[runNext].Image1));
+                    runFirst = count;
+                    runNext++;
+                }
+                while (runNext < runSpan.Length && runSpan[runNext].End == i);
+                nextRun = runNext < runSpan.Length ? runSpan[runNext].End : -1;
             }
 
             if (i == QuadCount)
                 break;
 
             ref readonly UIFrameQuad quad = ref Quads[i];
+            if (useFastCopy && frameUnchanged[quad.Frame] && (quad.Clip < 0 || clipUnchanged[quad.Clip]))
+            {
+                int itemIndex = quad.Item;
+                if (itemIndex < 0)
+                    continue;
+                if ((uint)itemIndex < (uint)paintedItems.Length)
+                {
+                    if (count == into.Length)
+                        Array.Resize(ref into, Math.Max(512, into.Length * 2));
+                    into[count++] = paintedItems[itemIndex];
+                    continue;
+                }
+            }
+
             ref readonly UIFrame frame = ref at[quad.Frame];
             Vector2 moved = resolvedMoves[quad.Frame];
             UIRect rect = Shifted(quad.Rect, moved);
@@ -264,7 +370,7 @@ internal sealed class UIFrameList
     }
 
     // Helper method for a pane of glass on screen, the way Glass puts it down
-    private void ResolveGlass(in UIFrameGlass pane, ReadOnlySpan<UIFrame> at, int start, List<UIGlassPane> into)
+    private void ResolveGlass(in UIFrameGlass pane, ReadOnlySpan<UIFrame> at, int under, int start, List<UIGlassPane> into)
     {
         ref readonly UIFrame frame = ref at[pane.Frame];
         UIRect rect = Shifted(pane.Rect, resolvedMoves[pane.Frame]);
@@ -274,11 +380,21 @@ internal sealed class UIFrameList
 
         Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? frame.ToScreen(cut.Min) : new Vector2(float.NegativeInfinity);
         Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? frame.ToScreen(cut.Max) : new Vector2(float.PositiveInfinity);
-        into.Add(new UIGlassPane(start, frame.ToScreen(rect.Min), frame.ToScreen(rect.Max), clipMin, clipMax, pane.Radius, pane.Blur, MathF.Min(1.0f, frame.Opacity * UIDrawList.GLASS_LEAD), pane.Bend));
+        into.Add(new UIGlassPane(start, frame.ToScreen(rect.Min), frame.ToScreen(rect.Max), clipMin, clipMax, pane.Radius, pane.Blur, MathF.Min(1.0f, frame.Opacity * UIDrawList.GLASS_LEAD), pane.Bend, under, pane.Lens, pane.Tint));
     }
 
     // Helper method for how far a frame's content has moved from where it was painted, nothing for the frames as painted
     private static Vector2 Moved(in UIFrame at, in UIFrame painted) => at.Shift - painted.Shift + (at.Laid - painted.Laid);
+
+    // Helper method for whether a frame's transform and opacity match how it was painted
+    private static bool FrameUnchanged(in UIFrame at, in UIFrame painted) =>
+        at.Shift == painted.Shift &&
+        at.Laid == painted.Laid &&
+        at.VisualScale == painted.VisualScale &&
+        at.VisualOffset == painted.VisualOffset &&
+        at.Scale == painted.Scale &&
+        at.Origin == painted.Origin &&
+        at.Opacity == painted.Opacity;
 
     private static UIRect Shifted(UIRect rect, Vector2 by) =>
         by == Vector2.Zero || !float.IsFinite(rect.Min.X) ? rect : new UIRect(rect.Min + by, rect.Max + by);
@@ -306,6 +422,13 @@ public sealed partial class UIDrawList
     /// smoothly. Otherwise something the layout put somewhere else is put there, not slid over from where it was.
     /// </summary>
     internal bool LayoutMoves { get; set; }
+
+    /// <summary>
+    /// Whether every frame opened from here on jumped this tick rather than moved (see <see cref="UIFrame.Jumped"/>): all of
+    /// a component laid out anew at another size, a zoom, whose lenses and hints slid over from where they were at their
+    /// own speeds while the code jumped.
+    /// </summary>
+    internal bool JumpsFrames { get; set; }
 
     // How many frames every owner has opened so far this paint, which is what a frame is named by after its owner
     private readonly Dictionary<float, int> framesOpened = [];
@@ -336,6 +459,7 @@ public sealed partial class UIDrawList
         BeginRecords();
         shift = laid = Vector2.Zero;
         LayoutMoves = false;
+        JumpsFrames = false;
         clipAt = -1;
         frameAt = -1;
         OpenFrame();
@@ -353,7 +477,8 @@ public sealed partial class UIDrawList
     /// wobbles against the rest. A scroll eases by fractions of a pixel, and moved by those the words snapped to the
     /// pixels a tick at a time while the boxes under them glided.
     /// </remarks>
-    public void PushFrame(Vector2 moved)
+    /// <param name="jumped">Whether the move jumped this tick rather than slid, see <see cref="UIFrame.Jumped"/>.</param>
+    public void PushFrame(Vector2 moved, bool jumped = false)
     {
         openFrames.Push((frameAt, clipAt, shift));
         visuals.Push((visualOffset, visualScale, opacity));
@@ -366,6 +491,8 @@ public sealed partial class UIDrawList
 
         shift += moved;
         OpenFrame();
+        if (jumped)
+            frameList.Frames[frameAt] = frameList.Frames[frameAt] with { Jumped = true };
     }
 
     /// <summary>Goes back to the frame from before <see cref="PushFrame"/>.</summary>
@@ -381,7 +508,7 @@ public sealed partial class UIDrawList
         // By who opened it and how many they had opened before it, never by how many quads they'd painted, a highlight
         // painted before a list's rows would have had its rows' frame taken for another
         int opened = System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(framesOpened, owner, out _)++;
-        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity });
+        frameList.Frames.Add(new UIFrame(new Vector2(owner, -1 - opened), frameAt, shift, visualScale, visualOffset, scale, origin) { Laid = laid, Opacity = opacity, Jumped = JumpsFrames });
         frameAt = frameList.Frames.Count - 1;
     }
 
@@ -447,7 +574,7 @@ public sealed partial class UIDrawList
     private void PopFrameClip() => clipAt = openClips.Pop();
 
     // Helper method to keep a quad as it was asked for, see Quad
-    private void KeepFrameQuad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, float fade = 1.0f)
+    private void KeepFrameQuad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, float fade = 1.0f, int item = -1)
     {
         frameList.Add() = new UIFrameQuad
         {
@@ -462,7 +589,8 @@ public sealed partial class UIDrawList
             Upright = upright,
             Key = new Vector2(owner, ownerPainted),
             Frame = frameAt,
-            Clip = clipAt
+            Clip = clipAt,
+            Item = item
         };
     }
 
@@ -474,8 +602,8 @@ public sealed partial class UIDrawList
         quad.Pivot = pivot;
     }
 
-    private void KeepFrameGlass(UIRect rect, float radius, float blur, float bend) =>
-        frameList.Glass.Add(new UIFrameGlass(frameList.QuadCount, rect, frameAt, clipAt, radius, blur, bend));
+    private void KeepFrameGlass(int under, UIRect rect, float radius, float blur, float bend, float lens, uint tint) =>
+        frameList.Glass.Add(new UIFrameGlass(under, frameList.QuadCount, rect, frameAt, clipAt, radius, blur, bend, lens, tint));
 
     private void KeepFrameRun(Texture? image0, Texture? image1) => frameList.Runs.Add(new UIFrameRun(frameList.QuadCount, image0, image1));
 
@@ -509,8 +637,8 @@ public sealed partial class UIDrawList
         for (int i = 0; i < glass.Count; i++)
         {
             UIGlassPane a = glassBack[i], b = glass[i];
-            if (a.Start != b.Start || !Near(a.Min, b.Min) || !Near(a.Max, b.Max) || !Near(a.ClipMin, b.ClipMin) || !Near(a.ClipMax, b.ClipMax) ||
-                a.Radius != b.Radius || a.Blur != b.Blur || a.Opacity != b.Opacity || a.Bend != b.Bend)
+            if (a.Under != b.Under || a.Start != b.Start || !Near(a.Min, b.Min) || !Near(a.Max, b.Max) || !Near(a.ClipMin, b.ClipMin) || !Near(a.ClipMax, b.ClipMax) ||
+                a.Radius != b.Radius || a.Blur != b.Blur || a.Opacity != b.Opacity || a.Bend != b.Bend || a.Lens != b.Lens || a.Tint != b.Tint)
                 return $"pane of glass {i} differs, resolved {a}, painted {b}";
         }
 

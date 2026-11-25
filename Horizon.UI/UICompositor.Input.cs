@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 
 using Horizon.Core;
@@ -14,6 +15,45 @@ namespace Horizon.UI;
 // Where the mouse, its wheel and the keyboard are read and handed to whichever component they are meant for.
 public partial class UICompositor
 {
+    private static long scriptedPointerTick = -1;
+
+    /// <summary>
+    /// True when any compositor is currently being driven by a scripted <see cref="PointerSource"/> (such as a self-test),
+    /// so dialogs stay in-process instead of opening modal OS Finder panels.
+    /// </summary>
+    public static bool IsPointerScripted
+    {
+        get
+        {
+            long seen = Volatile.Read(ref scriptedPointerTick);
+            if (seen < 0)
+                return false;
+            long now = GameEngine.Instance?.WindowManager?.Tick ?? 0;
+            return now - seen <= 2;
+        }
+    }
+
+    private InputManager? compositionInput;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(string Text, int Cursor, int Length)> compositions = new();
+    private UIComponent? lastRoutedFocus;
+
+    private void HookComposition(InputManager input)
+    {
+        if (ReferenceEquals(compositionInput, input))
+            return;
+
+        if (compositionInput is not null)
+            compositionInput.EventReceived -= OnCompositionEvent;
+
+        compositionInput = input;
+        input.EventReceived += OnCompositionEvent;
+    }
+
+    private void OnCompositionEvent(InputEvent input)
+    {
+        if (input.Kind == InputEventKind.Composition)
+            compositions.Enqueue((input.Text ?? string.Empty, input.CompositionCursor, input.CompositionLength));
+    }
     /// <summary>
     /// Whether this UI reads the wheel as the window has it rather than as the game is given it. For the UI that
     /// sits between the two and withholds the mouse from the game while it is over one of its own panels.
@@ -31,7 +71,7 @@ public partial class UICompositor
     public WindowEdges WindowEdgeAt()
     {
         // A UI driven by something other than the mouse (a script testing it) has no business with the real window's edges
-        if (!ResizesWindow || PointerSource is not null || GameEngine.Instance?.WindowManager is not { CustomFrame: true, IsMaximized: false } window)
+        if (!ResizesWindow || PointerSource is not null || GameEngine.Instance?.WindowManager is not { CustomFrame: true, IsMaximized: false, NativeChrome: false } window)
             return WindowEdges.None;
 
         // As wide as the system's own on a scaled screen, an edge of a few pixels on a 4K one is a needle to thread
@@ -55,6 +95,16 @@ public partial class UICompositor
 
         if (InputOf is not { } input)
             return;
+
+        HookComposition(input);
+
+        if (!ReferenceEquals(lastRoutedFocus, focus))
+        {
+            lastRoutedFocus?.OnFocusLost();
+            lastRoutedFocus = focus;
+            if (!compositions.IsEmpty)
+                compositions.Clear();
+        }
 
         var keyboard = input.Keyboard;
         if (KeysMoved(keyboard))
@@ -81,15 +131,24 @@ public partial class UICompositor
 
         if (focus is null)
         {
+            if (!compositions.IsEmpty)
+                compositions.Clear();
+
             // Nothing is typing, so a paste is for whoever asked for those (an editor). Everything else typed into
             // the void is thrown away with it
             if (Pasted is not null && focusOwner is null)
             {
+                bool pasted = false;
                 while (UIKeyboard.TryRead(out char character))
                 {
                     if (character == UIKeyboard.PASTE && UIKeyboard.TryTakePaste(out string text) && text.Length > 0)
+                    {
+                        pasted = true;
                         Pasted(text);
+                    }
                 }
+                if (pasted)
+                    GameEngine.Instance?.WindowManager?.NoteInput();
             }
 
             return;
@@ -98,11 +157,17 @@ public partial class UICompositor
         // A key that edits and is being held is typed again every so often
         UIKeyboard.Repeat();
 
+        bool hadKeyboardInput = false;
+        bool hadComposition = false;
         while (focus is { TakesRawKeys: true } && UIKeyboard.TryReadKey(out UIKeyPress press))
+        {
+            hadKeyboardInput = true;
             focus.OnKeyDown(press);
+        }
 
         while (focus is not null && UIKeyboard.TryRead(out char character))
         {
+            hadKeyboardInput = true;
             if (character == UIKeyboard.PASTE)
             {
                 if (UIKeyboard.TryTakePaste(out string text) && (text.Length > 0 || focus.TakesEmptyPaste))
@@ -111,6 +176,21 @@ public partial class UICompositor
             }
 
             focus.OnTextInput(character);
+        }
+
+        while (focus is not null && compositions.TryDequeue(out var composition))
+        {
+            hadKeyboardInput = true;
+            hadComposition = true;
+            focus.OnComposition(composition.Text, composition.Cursor, composition.Length);
+        }
+
+        if (hadKeyboardInput)
+            GameEngine.Instance?.WindowManager?.NoteInput();
+        if (hadComposition)
+        {
+            GameEngine.Instance?.WindowManager?.RequestFrames();
+            GameEngine.Instance?.WindowManager?.Wake();
         }
     }
 
@@ -221,6 +301,30 @@ public partial class UICompositor
     /// </summary>
     private void UpdateTooltip(UIModule[] snapshot, float dt)
     {
+        // A menu open (a context menu, a menu bar's, a dropdown's list) owns the pointer: a tooltip came up over its lower
+        // items, so any that is up goes and none comes until it closes
+        bool menuOpen = false;
+        foreach (UIModule each in snapshot)
+        {
+            if (each.Enabled && each.Popup is Components.ContextMenu or Components.MenuBar or Components.Dropdown)
+            {
+                menuOpen = true;
+                break;
+            }
+        }
+
+        if (menuOpen)
+        {
+            tooltipModule?.ShowTooltip(null, default);
+            tooltipModule = null;
+            TooltipOf = null;
+            held = null;
+            pinned = null;
+            restingAt = lastPointer;
+            restingFor = 0.0f;
+            return;
+        }
+
         // One a component put up stays where it was put until it's taken down or something is clicked, the pointer can go
         // wherever it likes meanwhile
         if (pinned is { } pin)
@@ -368,8 +472,57 @@ public partial class UICompositor
     private void RouteScroll(UIModule[] snapshot, Vector2 pointer)
     {
         float wheel = ReadsWindowMouse ? UIKeyboard.PeekWindowScroll() : UIKeyboard.PeekScroll();
-        float delta = wheel + Interlocked.Exchange(ref pendingScroll, 0.0f);
-        if (delta == 0.0f)
+        float pending = Interlocked.Exchange(ref pendingScroll, 0.0f);
+        float delta = wheel + pending;
+
+        // The trackpad's part of it, fractional notches that are sideways as well as up and down. Its tick's turn is
+        // read once by whichever UI has the pointer, the way the vertical one is
+        float across = 0.0f;
+        bool precise = false;
+        long tick = -1;
+        if (GameEngine.Instance is { } engine)
+        {
+            tick = engine.WindowManager.Tick;
+            Mouse mouse = engine.Input.Mouse;
+
+            // Where a trackpad's gesture is, for the rubber band at the ends, which the springs read on their ticks too
+            UIWheel.Held = mouse.WindowFingersOn;
+            UIWheel.Gliding = mouse.WindowScrollGliding;
+            if (Volatile.Read(ref scrollXUsedOn) != tick && (ReadsWindowMouse || !mouse.Withheld))
+            {
+                across = mouse.WindowScrollX;
+                precise = mouse.WindowScrollPrecise;
+            }
+            else if (wheel != 0.0f)
+            {
+                precise = mouse.WindowScrollPrecise;
+            }
+        }
+
+        // What the mouse said is in SDL's units, a notch or the fraction of one a precise device gave
+        if (precise)
+        {
+            // Points of the finger, a layout unit being UIScale pixels and a point DisplayScale of them
+            float unitsPerPoint = UIScale > 0.0f ? DisplayScale / UIScale : 1.0f;
+            wheel = PreciseScroll.ToNotchesAt(wheel, unitsPerPoint);
+            across = PreciseScroll.ToNotchesAt(across, unitsPerPoint);
+            delta = wheel + pending;
+        }
+
+        lock (skinLock)
+        {
+            across += pendingPreciseX;
+            delta += pendingPreciseY;
+            if (pendingPreciseX != 0.0f || pendingPreciseY != 0.0f) precise = true;
+            pendingPreciseX = pendingPreciseY = 0.0f;
+        }
+
+        bool glided = Glide(ref delta, ref across, ref precise);
+
+        if (UIWheel.Tracing && (delta != 0.0f || across != 0.0f || UIWheel.Held || UIWheel.Gliding))
+            UIWheel.Trace(FormattableString.Invariant($"tick={tick} dt={UIWheel.Seconds:F4} delta={delta:F4} across={across:F4} precise={precise} held={UIWheel.Held} gliding={UIWheel.Gliding}"));
+
+        if (delta == 0.0f && across == 0.0f)
             return;
 
         WheelTakenBy = null;
@@ -386,8 +539,148 @@ public partial class UICompositor
 
             // Whatever is in front has the wheel over itself, used or not. Nothing behind it gets it, a window of settings
             // with nothing to scroll where the pointer is doesn't scroll the code under it
-            WheelTakenBy = GiveWheel(over, snapshot[i].Popup, delta, ScrollSpeed);
+            UIComponent? taken = null;
+            if (delta != 0.0f) taken = GiveWheel(over, snapshot[i].Popup, delta, ScrollSpeed, precise);
+            if (across != 0.0f) taken = GiveWheelX(over, snapshot[i].Popup, across, ScrollSpeed, precise) ?? taken;
+            WheelTakenBy = taken;
+
+            // The glide is over once it has nowhere to go: nobody took it, or it ran into an end and bounced
+            if (glided && (taken is null || taken.HasOverscroll))
+                glideX = glideY = 0.0f;
             if (wheel != 0.0f) UIKeyboard.UseScroll();
+            if (across != 0.0f && tick >= 0) Volatile.Write(ref scrollXUsedOn, tick);
+            return;
+        }
+    }
+
+    /* The glide after a flick, Safari's. A Mac sends this window no momentum events (none at all came, a trace of a real
+       trackpad showed: each flick ended on its last move, the fingers lifting at full speed and the code stopping dead),
+       so it is made here. How fast the fingers were going over the last moments before they lifted carries on, slowing
+       the way AppKit's scroll views slow (0.998 a millisecond), as precise turns of the glide (UIWheel.Gliding, so an end
+       bounces it). Fingers back on stop it, and so does the system's own momentum if it ever comes */
+
+    // How far back the fingers' speed is measured from when they lift, the slowest a flick has to be to glide (notches a
+    // second, about 100 points), and where a glide stops (about 15 points a second)
+    private const float FLICK_WINDOW = 0.08f, GLIDE_FROM = 2.0f, GLIDE_UNTIL = 0.3f;
+
+    // AppKit's and UIKit's normal deceleration, 0.998 of the speed kept each millisecond, as a rate a second
+    private static readonly float GlideDecay = -1000.0f * MathF.Log(0.998f);
+
+    // The fingers' last moves (when, and how far down and across in notches), a ring
+    private readonly long[] flickAt = new long[32];
+    private readonly float[] flickY = new float[32], flickX = new float[32];
+    private int flickNext;
+
+    // Whether the fingers were on the trackpad the tick before, and the glide's speed in notches a second
+    private bool fingersWereOn;
+    private float glideX, glideY;
+
+    /// <summary>
+    /// Keeps the fingers' moves, starts a glide as they lift, and adds this tick's part of one that's going to the turn.
+    /// True when the turn handed out is the glide's.
+    /// </summary>
+    private bool Glide(ref float delta, ref float across, ref bool precise)
+    {
+        bool held = UIWheel.Held;
+        long now = Stopwatch.GetTimestamp();
+
+        // The system glides by itself, or the fingers are back: nothing of ours goes on
+        if (held || UIWheel.Gliding)
+            glideX = glideY = 0.0f;
+
+        if (precise && !UIWheel.Gliding && (delta != 0.0f || across != 0.0f))
+        {
+            flickAt[flickNext] = now;
+            flickY[flickNext] = delta;
+            flickX[flickNext] = across;
+            flickNext = (flickNext + 1) % flickAt.Length;
+        }
+
+        bool lifted = fingersWereOn && !held && !UIWheel.Gliding;
+        fingersWereOn = held;
+        if (lifted)
+        {
+            // How far they went over the last moments, over how long that was
+            long from = now - (long)(FLICK_WINDOW * Stopwatch.Frequency), earliest = now;
+            float sumY = 0.0f, sumX = 0.0f;
+            for (int i = 0; i < flickAt.Length; i++)
+            {
+                if (flickAt[i] == 0 || flickAt[i] < from)
+                    continue;
+
+                sumY += flickY[i];
+                sumX += flickX[i];
+                earliest = Math.Min(earliest, flickAt[i]);
+            }
+
+            float span = MathF.Max((now - earliest) / (float)Stopwatch.Frequency, 1.0f / 60.0f);
+            (glideY, glideX) = (sumY / span, sumX / span);
+            if (MathF.Sqrt(glideY * glideY + glideX * glideX) < GLIDE_FROM)
+                glideX = glideY = 0.0f;
+            Array.Clear(flickAt);
+
+            if (UIWheel.Tracing)
+                UIWheel.Trace(FormattableString.Invariant($"lifted glide={glideX:F2},{glideY:F2} notches/s over {span:F3}s"));
+        }
+
+        if ((glideX == 0.0f && glideY == 0.0f) || held || lifted)
+            return false;
+
+        // A tick's worth of it, slowing as it goes
+        float dt = Math.Clamp(UIWheel.Seconds, 0.0f, 1.0f / 30.0f);
+        delta += glideY * dt;
+        across += glideX * dt;
+        precise = true;
+        UIWheel.Gliding = true;
+
+        float keep = MathF.Exp(-GlideDecay * dt);
+        glideY *= keep;
+        glideX *= keep;
+        if (MathF.Sqrt(glideY * glideY + glideX * glideX) < GLIDE_UNTIL)
+            glideX = glideY = 0.0f;
+
+        // Every frame of it drawn, and the ticks kept at their rate however quiet the input is
+        GameEngine.Instance?.WindowManager?.RequestSmooth();
+        GameEngine.Instance?.WindowManager?.Wake();
+        return true;
+    }
+
+    /// <summary>
+    /// Hands a trackpad's pinch and smart zoom to whatever is under the pointer that has a use for them, the way
+    /// <see cref="RouteScroll"/> does the wheel: the innermost component first, then the ones it is inside of.
+    /// </summary>
+    private void RouteGestures(UIModule[] snapshot, Vector2 pointer)
+    {
+        if (GameEngine.Instance is not { } engine)
+            return;
+
+        Mouse mouse = engine.Input.Mouse;
+        long tick = engine.WindowManager.Tick;
+        if (Volatile.Read(ref gestureUsedOn) == tick || !(ReadsWindowMouse || !mouse.Withheld))
+            return;
+
+        float amount = mouse.WindowMagnify;
+        bool smart = mouse.WindowSmartMagnify;
+        if (amount == 0.0f && !smart)
+            return;
+
+        for (int i = snapshot.Length - 1; i >= 0; i--)
+        {
+            if (!snapshot[i].Enabled || !snapshot[i].Interactive || snapshot[i].HitTest(pointer) is not { } over)
+                continue;
+
+            bool taken = false;
+            for (UIComponent? component = over; component is not null && !taken; component = component.Parent)
+            {
+                taken = amount != 0.0f && component.OnMagnify(amount);
+                if (!taken && smart)
+                    taken = component.OnSmartMagnify();
+                if (component == snapshot[i].Popup)
+                    break;
+            }
+
+            if (taken)
+                Volatile.Write(ref gestureUsedOn, tick);
             return;
         }
     }
@@ -396,19 +689,84 @@ public partial class UICompositor
     /// Helper method to hand a turn of the wheel to the innermost component that has a use for it, starting at what the
     /// pointer is over and going out through what that's inside of. Returns whoever took it, null for nobody.
     /// </summary>
-    internal static UIComponent? GiveWheel(UIComponent over, UIComponent? popup, float delta, float scrollSpeed = 1)
+    internal static UIComponent? GiveWheel(UIComponent over, UIComponent? popup, float delta, float scrollSpeed = 1, bool precise = false)
     {
-        for (UIComponent? component = over; component is not null; component = component.Parent)
+        bool before = UIWheel.Precise;
+        UIWheel.Precise = precise;
+        try
         {
-            if (component.OnScroll(component.UsesScrollSpeed ? delta * scrollSpeed : delta))
-                return component;
+            for (UIComponent? component = over; component is not null; component = component.Parent)
+            {
+                // A trackpad's turn going on past the end of something scrolled inside something else that can still go
+                // that way is the outer one's, the way a page scrolls on past the end of a box of code in it. It gave at
+                // its own end instead (the rubber band), and a code block or a tool's output in a chat scrolled to its top
+                // stretched while the chat it was in didn't move
+                if (precise && component.ScrollEnd(delta) == true && OuterCanScroll(component, delta, popup))
+                {
+                    if (UIWheel.Tracing)
+                        UIWheel.Trace($"wheel passed on by {component.GetType().Name} at its end, delta={delta:F3}");
+                    continue;
+                }
 
-            // An open list or menu that can't scroll is still on top of the rest, what it was opened from doesn't get it
-            if (component == popup)
-                return null;
+                if (component.OnScroll(component.UsesScrollSpeed ? delta * scrollSpeed : delta))
+                {
+                    if (UIWheel.Tracing)
+                        UIWheel.Trace($"wheel taken by {component.GetType().Name} end={component.ScrollEnd(delta)?.ToString() ?? "-"} delta={delta:F3}");
+                    return component;
+                }
+
+                // An open list or menu that can't scroll is still on top of the rest, what it was opened from doesn't get it
+                if (component == popup)
+                    return null;
+            }
+
+            return null;
+        }
+        finally
+        {
+            UIWheel.Precise = before;
+        }
+    }
+
+    // Whether something a component is inside of (up to an open popup) can still scroll the way a turn goes
+    private static bool OuterCanScroll(UIComponent inner, float delta, UIComponent? popup)
+    {
+        if (inner == popup)
+            return false;
+
+        for (UIComponent? outer = inner.Parent; outer is not null; outer = outer.Parent)
+        {
+            if (outer.ScrollEnd(delta) == false)
+                return true;
+            if (outer == popup)
+                return false;
         }
 
-        return null;
+        return false;
+    }
+
+    /// <summary>The same for a sideways turn, to whoever scrolls across (<see cref="UIComponent.OnScrollX"/>).</summary>
+    internal static UIComponent? GiveWheelX(UIComponent over, UIComponent? popup, float delta, float scrollSpeed = 1, bool precise = false)
+    {
+        bool before = UIWheel.Precise;
+        UIWheel.Precise = precise;
+        try
+        {
+            for (UIComponent? component = over; component is not null; component = component.Parent)
+            {
+                if (component.OnScrollX(component.UsesScrollSpeed ? delta * scrollSpeed : delta))
+                    return component;
+
+                if (component == popup)
+                    return null;
+            }
+
+            return null;
+        }
+        finally
+        {
+            UIWheel.Precise = before;
+        }
     }
 
     // Closing a dialog invalidates a press begun inside it, even while its children
@@ -446,6 +804,9 @@ public partial class UICompositor
 
     private void RoutePointer(UIModule[] snapshot, float dt)
     {
+        if (PointerSource is not null)
+            Volatile.Write(ref scriptedPointerTick, GameEngine.Instance?.WindowManager?.Tick ?? 0);
+
         UIPointer pointer = PointerSource?.Invoke() ?? ReadPointer();
         lastPointer = pointer.Position;
         Pointer = pointer;
@@ -481,7 +842,9 @@ public partial class UICompositor
             return;
         }
 
+        UIWheel.Seconds = dt;
         RouteScroll(snapshot, pointer.Position);
+        RouteGestures(snapshot, pointer.Position);
         if (!pointer.Down)
             StepFling(dt);
 

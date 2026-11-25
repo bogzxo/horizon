@@ -271,8 +271,14 @@ public sealed class UIDialog : Panel
     private void DismissOutside(Vector2 point)
     {
         if (DismissOnOutsidePress && !card.Bounds.Contains(point))
+        {
+            CancelledOutside = true;
             Cancel();
+        }
     }
+
+    /// <summary>Whether the dialog was last cancelled by a press outside it rather than by escape, for a cancel that goes back only on escape.</summary>
+    public bool CancelledOutside { get; private set; }
 
     /// <summary>Closes the dialog as if its last choice had been picked, which is what escape does.</summary>
     public void Cancel() => Pick(choices.Length - 1);

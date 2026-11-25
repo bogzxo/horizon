@@ -21,6 +21,7 @@ public sealed class SettingsWindow
     private static readonly Vector2 SHARE = new(0.72f, 0.78f);
 
     private readonly List<ISettingsSource> sources;
+    private readonly Dictionary<string, ISettingsSource> sourceByKey = new(StringComparer.Ordinal);
 
     /// <summary>The page, for a test to drive.</summary>
     public SettingsPage Page { get; }
@@ -42,6 +43,11 @@ public sealed class SettingsWindow
         IReadOnlyList<string>? sections = null, SettingsTexts? texts = null)
     {
         this.sources = [.. sources];
+        foreach (ISettingsSource source in this.sources)
+        {
+            foreach (UISetting setting in source.Settings)
+                sourceByKey.TryAdd(setting.Key, source);
+        }
         this.parts = parts ?? [];
         this.sections = sections ?? [];
         texts ??= SettingsTexts.English;
@@ -154,7 +160,7 @@ public sealed class SettingsWindow
     }
 
     // the section a row is of, by its key, which no two sections share (the editor's theme is editor_skin)
-    private ISettingsSource? SourceOf(string key) => sources.Find(source => source.Settings.Any(setting => setting.Key == key));
+    private ISettingsSource? SourceOf(string key) => sourceByKey.GetValueOrDefault(key);
 
     /// <summary>Every row showing what its setting is now, after the file changed somewhere else.</summary>
     public void Refresh() => Page.Refresh();

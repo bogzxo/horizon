@@ -7,6 +7,7 @@ Every example is a plain Scene, the same kind you would write for your own game,
 ## Reading order
 
 1. [Getting started](getting-started.md), running the examples, the keys that work in all of them, and a first scene of your own.
+1. [A first game: the three body problem](a-first-game.md), `samples/ThreeBody`, a whole small game on the NuGet packages, read through.
 2. [Threads, entities and components](threads-and-entities.md), how Horizon runs, the one thing that will catch you out if you skip it.
 3. [Drawing, input and the world](drawing-and-input.md), shapes, sprites, cameras, the keyboard, the mouse and gamepads.
 4. [Making a game](making-a-game.md), tweens, scenes and transitions, tile maps, particles, physics and a bit of 3D.

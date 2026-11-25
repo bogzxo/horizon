@@ -81,8 +81,14 @@ internal static class UIKeycaps
     // Painted on the UI's thread only
     private static readonly Dictionary<string, string[]> split = new(StringComparer.Ordinal);
 
-    private static string[] Split(string keys)
+    internal static string[] Split(string keys) => Split(keys, Horizon.Input.Keyboard.PrimaryIsCommand);
+
+    // On a Mac a stroke is one cap, the way its keyboard writes it (⇧⌘P), what is held glued to the key
+    internal static string[] Split(string keys, bool mac)
     {
+        if (mac)
+            return UIShortcutText.Shown(keys, true).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
         var caps = new List<string>();
         foreach (string chord in keys.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {

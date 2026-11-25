@@ -430,7 +430,8 @@ public sealed partial class UISkin
             if (!properties.TryGetValue(key, out var value))
                 continue;
 
-            Vector4 color = UIScript.ToColor(value, key);
+            // accent_color: "system" is whatever accent the system has, see UIPalette.SystemAccent
+            Vector4 color = key == "accent_color" && value is StringValue { Value: "system" } ? UIPalette.SystemAccent : UIScript.ToColor(value, key);
             given[key] = color;
             palette.Set(key, color);
         }

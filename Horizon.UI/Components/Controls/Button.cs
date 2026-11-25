@@ -131,6 +131,12 @@ public class Button : UIComponent
     // Lit as the chosen one, by whoever set it or by a navigator standing on it
     private bool Chosen => Selected || IsSelected;
 
+    /// <summary>
+    /// Whether the pointer is on the button for the sake of how it is drawn. The pointer being over the button itself,
+    /// for a button that has things on top of it (a card with a badge and a close button) the pointer being over any of them.
+    /// </summary>
+    protected virtual bool PointerLit => IsHovered;
+
     protected override bool ShowsAsChosen => Chosen;
 
     // The body, the marker of the chosen one and the label are counted as parts of their own, see Paint
@@ -169,7 +175,7 @@ public class Button : UIComponent
 
         bool enabled = EnabledInHierarchy;
         bool down = enabled && IsPressed && IsHovered;
-        bool hovered = enabled && (IsHovered || Chosen) && !down;
+        bool hovered = enabled && (PointerLit || Chosen) && !down;
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
 
         // The hover box and the marker are quads that come and go, and counted along with the rest they pushed the
@@ -252,6 +258,33 @@ public class Button : UIComponent
         list.EndParts();
     }
 
+    /// <summary>
+    /// What it paints as a number, see Label.PaintVersion: a button that hasn't changed is taken as it was painted the tick
+    /// before. Hovered, focused and enabled are put in by PaintTree, a moving icon (a spinner) says it can't be kept, and a
+    /// bump or a squeeze moves it, which isn't kept either. Only a Button itself, one that's more paints what this can't see.
+    /// </summary>
+    protected override long PaintVersion => GetType() == typeof(Button) ? ButtonPaintVersion() : -1;
+
+    /// <summary>The button's own paint state hashed for <see cref="PaintVersion"/>, for subclasses that do not change <see cref="Paint"/>.</summary>
+    protected long ButtonPaintVersion()
+    {
+        var hash = new HashCode();
+        hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Label)));
+        hash.Add(Icon);
+        hash.Add(IconColor);
+        hash.Add(LabelColor);
+        hash.Add(Align);
+        hash.Add(LabelScale);
+        hash.Add(style);
+        hash.Add(Chosen);
+        hash.Add(PointerLit);
+        hash.Add(IsPressed);
+        hash.Add(Primary);
+        hash.Add(Danger);
+        hash.Add(Indicator);
+        return hash.ToHashCode() & 0x7FFFFFFF;
+    }
+
     // The fill of a primary button, the accent, or the skin's error red for a dangerous one
     private Vector4 FillOf(UISkin skin) => (Danger ? skin.ErrorColor : skin.AccentColor) with { W = 1.0f };
 
@@ -298,11 +331,14 @@ public class Button : UIComponent
 
     protected override void Update(float dt)
     {
-        bool lit = (IsHovered || Chosen) && EnabledInHierarchy;
+        bool lit = (PointerLit || Chosen) && EnabledInHierarchy;
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
         if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        {
             this.Punch(0.05f * Give, MotionTime(0.2f));
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
 
         wasLit = lit;
         updated = true;
@@ -311,7 +347,10 @@ public class Button : UIComponent
     protected internal override void OnClick()
     {
         if (Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        {
             this.Punch(-0.08f * Give, MotionTime(0.2f));
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
 
         OnPressed?.Invoke();
         InvokeScript(pressedHandler);

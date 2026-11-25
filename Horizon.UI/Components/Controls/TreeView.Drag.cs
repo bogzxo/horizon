@@ -54,7 +54,11 @@ public partial class TreeView
 
     private bool CanDrag => DropAt is not null && OnDrop is not null;
 
-    private bool Copies => DropCopies?.Invoke() ?? GameEngine.Instance?.Input.Keyboard is { Control: true };
+    private bool Copies => DropCopies?.Invoke() ?? CopyHeld(GameEngine.Instance?.Input.Keyboard);
+
+    /// <summary>Whether the key a drag copies with is held: Ctrl on Windows and Linux, ⌥ on a Mac, the way Finder has it.</summary>
+    public static bool CopyHeld(Horizon.Input.Keyboard? keyboard) =>
+        keyboard is not null && (Horizon.Input.Keyboard.PrimaryIsCommand ? keyboard.Alt : keyboard.Control);
 
     // A press on a row that might turn into a drag
     private void HoldRow(UITreeItem row, Vector2 point)

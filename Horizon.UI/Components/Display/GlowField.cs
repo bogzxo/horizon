@@ -28,6 +28,13 @@ public readonly record struct GlowBloom(Vector2 At, float Reach, Vector4 Color);
 /// </summary>
 public class GlowField : UIComponent
 {
+    private const float MIN_VISIBLE_ALPHA = 0.001f;
+    private const float OPAQUE_ALPHA = 0.999f;
+
+    // Cached hole from PaintVersion so PaintVersion and Paint evaluate Hole once per paint and always agree
+    private UIRect? resolvedHole;
+    private bool hasResolvedHole;
+
     /// <summary>What is under the blooms.</summary>
     public Vector4 Base { get; set; } = new(0.05f, 0.06f, 0.09f, 1.0f);
 
@@ -66,52 +73,142 @@ public class GlowField : UIComponent
 
     protected override Vector2 Measure(UISkin skin) => Size;
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            UIRect bounds = Bounds;
+            UIRect? hole = ResolveHole(bounds);
+            resolvedHole = hole;
+            hasResolvedHole = true;
+
+            var hash = new HashCode();
+            hash.Add(bounds);
+            hash.Add(Veil);
+            if (hole is { } cut)
+            {
+                hash.Add(true);
+                hash.Add(cut);
+            }
+            else
+            {
+                hash.Add(false);
+            }
+
+            // When the veil is opaque, the base and bloom layers underneath are occluded and skipped
+            if (Veil.W < OPAQUE_ALPHA)
+            {
+                hash.Add(Base);
+                hash.Add(Blooms.Count);
+                for (int i = 0; i < Blooms.Count; i++)
+                {
+                    GlowBloom bloom = Blooms[i];
+                    hash.Add(bloom.At);
+                    hash.Add(bloom.Reach);
+                    hash.Add(bloom.Color);
+                }
+            }
+
+            return (uint)hash.ToHashCode();
+        }
+    }
+
+    private UIRect? ResolveHole(UIRect field)
+    {
+        if (field.IsEmpty || Hole?.Invoke() is not { IsEmpty: false } raw)
+            return null;
+
+        UIRect clipped = raw.Intersect(field);
+        return clipped.IsEmpty ? null : clipped;
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UIRect field = Bounds;
+        UIRect? hole = Children.Count == 0 && hasResolvedHole ? resolvedHole : ResolveHole(field);
+        hasResolvedHole = false;
         if (field.IsEmpty)
             return;
 
-        // Round the hole in four strips, the one below it, the one over it and the two beside it, each the whole field cut down
-        if (Hole?.Invoke() is { IsEmpty: false } hole)
+        bool opaqueVeil = Veil.W >= OPAQUE_ALPHA;
+        bool hasVeil = Veil.W > MIN_VISIBLE_ALPHA;
+        bool hasBase = !opaqueVeil && Base.W > MIN_VISIBLE_ALPHA;
+        bool hasBlooms = false;
+        if (!opaqueVeil)
         {
-            hole = hole.Intersect(field);
-            PaintIn(list, new UIRect(field.Min, new Vector2(field.Max.X, hole.Min.Y)), 0);
-            PaintIn(list, new UIRect(new Vector2(field.Min.X, hole.Max.Y), field.Max), 1);
-            PaintIn(list, new UIRect(new Vector2(field.Min.X, hole.Min.Y), new Vector2(hole.Min.X, hole.Max.Y)), 2);
-            PaintIn(list, new UIRect(new Vector2(hole.Max.X, hole.Min.Y), new Vector2(field.Max.X, hole.Max.Y)), 3);
+            for (int i = 0; i < Blooms.Count; i++)
+            {
+                GlowBloom bloom = Blooms[i];
+                if (bloom.Color.W > MIN_VISIBLE_ALPHA && bloom.Reach > 0.0f)
+                {
+                    hasBlooms = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasVeil && !hasBase && !hasBlooms)
+            return;
+
+        // Round the hole in four strips, the one below it, the one over it and the two beside it, each the whole field cut down
+        if (hole is { } cut)
+        {
+            PaintIn(list, new UIRect(field.Min, new Vector2(field.Max.X, cut.Min.Y)), 0, field, opaqueVeil, hasBase, hasBlooms, hasVeil);
+            PaintIn(list, new UIRect(new Vector2(field.Min.X, cut.Max.Y), field.Max), 1, field, opaqueVeil, hasBase, hasBlooms, hasVeil);
+            PaintIn(list, new UIRect(new Vector2(field.Min.X, cut.Min.Y), new Vector2(cut.Min.X, cut.Max.Y)), 2, field, opaqueVeil, hasBase, hasBlooms, hasVeil);
+            PaintIn(list, new UIRect(new Vector2(cut.Max.X, cut.Min.Y), new Vector2(field.Max.X, cut.Max.Y)), 3, field, opaqueVeil, hasBase, hasBlooms, hasVeil);
             list.EndParts();
             return;
         }
 
-        PaintIn(list, field, 0);
+        PaintIn(list, field, 0, field, opaqueVeil, hasBase, hasBlooms, hasVeil);
         list.EndParts();
     }
 
     // The base and every bloom, cut down to a part of the field. Each strip is a part of its own, a hole that moves
     // empties a strip without shifting the quads of the others
-    private void PaintIn(UIDrawList list, UIRect area, int part)
+    private void PaintIn(UIDrawList list, UIRect area, int part, UIRect field, bool opaqueVeil, bool hasBase, bool hasBlooms, bool hasVeil)
     {
-        list.BeginPart(part);
         if (area.Width <= 0.0f || area.Height <= 0.0f)
             return;
 
-        list.PushClip(area);
-        list.Rect(area, Base);
+        list.BeginPart(part);
 
-        UIRect field = Bounds;
-        float longest = MathF.Max(field.Width, field.Height);
-        foreach (GlowBloom bloom in Blooms)
+        if (opaqueVeil)
         {
-            Vector2 middle = field.Min + bloom.At * field.Size;
-            float reach = bloom.Reach * longest;
-
-            // A shadow with no middle to speak of is a disc that fades from its centre out to its reach
-            list.Shadow(UIRect.FromCenter(middle, new Vector2(2.0f)), 0.0f, reach, bloom.Color);
+            // An opaque veil completely occludes the base and bloom layers underneath it
+            list.Rect(area, Veil);
+            return;
         }
 
-        list.Rect(area, Veil);
-        list.PopClip();
+        if (hasBlooms)
+            list.PushClip(area);
+
+        if (hasBase)
+            list.Rect(area, Base);
+
+        if (hasBlooms)
+        {
+            float longest = MathF.Max(field.Width, field.Height);
+            for (int i = 0; i < Blooms.Count; i++)
+            {
+                GlowBloom bloom = Blooms[i];
+                if (bloom.Color.W <= MIN_VISIBLE_ALPHA || bloom.Reach <= 0.0f)
+                    continue;
+
+                Vector2 middle = field.Min + bloom.At * field.Size;
+                float reach = bloom.Reach * longest;
+
+                // A shadow with no middle to speak of is a disc that fades from its centre out to its reach
+                list.Shadow(UIRect.FromCenter(middle, new Vector2(2.0f)), 0.0f, reach, bloom.Color);
+            }
+        }
+
+        if (hasVeil)
+            list.Rect(area, Veil);
+
+        if (hasBlooms)
+            list.PopClip();
     }
 
     protected override void DefineScript()

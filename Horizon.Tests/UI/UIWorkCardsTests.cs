@@ -159,8 +159,8 @@ public class UIWorkCardsTests
     [Fact]
     public void The_glass_presets_hold_the_sliders_to_what_still_looks_like_glass()
     {
-        UIGlass lens = UIGlass.Lens(100.0f, 2.0f, -1.0f, 50.0f);
-        Assert.Equal((64.0f, 1.0f, 0.0f, 24.0f), (lens.Blur, lens.Clarity, lens.Rim, lens.Bend));
+        UIGlass lens = UIGlass.Lens(100.0f, 2.0f, 50.0f);
+        Assert.Equal((64.0f, 1.0f, 24.0f), (lens.Blur, lens.Clarity, lens.Bend));
     }
 
     [Fact]

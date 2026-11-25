@@ -320,6 +320,41 @@ public class TabStrip : UIComponent
         return index >= 0 && index < Tabs.Count && Tabs[index].TitleColor is { } own ? own with { W = own.W * 0.75f } : skin.DimTextColor;
     }
 
+    protected override long PaintVersion
+    {
+        get
+        {
+            var hash = new HashCode();
+            hash.Add(TextScale);
+            hash.Add(MaxTabWidth);
+            hash.Add(HideClippedTabs);
+            hash.Add(Selected);
+            hash.Add(scroll);
+            hash.Add(Tabs.Count);
+
+            for (int i = 0; i < Tabs.Count; i++)
+            {
+                StripTab tab = Tabs[i];
+                hash.Add(tab.Title);
+                hash.Add(tab.Icon);
+                hash.Add(tab.IconColor);
+                hash.Add(tab.TitleColor);
+                hash.Add(tab.Modified);
+                hash.Add(tab.Pinned);
+                IReadOnlyList<Vector4> presence = tab.PresenceColors;
+                hash.Add(presence.Count);
+                for (int j = 0; j < presence.Count; j++)
+                    hash.Add(presence[j]);
+            }
+
+            // Tab and close-button hover highlights depend on pointer position only while the strip is hovered.
+            if (IsHovered && Module is not null)
+                hash.Add(Pointer);
+
+            return hash.ToHashCode() & 0x7FFFFFFF;
+        }
+    }
+
     protected override void Paint(UIDrawList list)
     {
         UISkin skin = list.Skin;
@@ -330,11 +365,16 @@ public class TabStrip : UIComponent
 
         list.PushClip(Bounds);
 
+        // Accumulate tab X incrementally in O(N) instead of calling TabBounds(i) per tab (which was O(N^2)).
+        float tabX = Bounds.Min.X - scroll;
+        float side = MathF.Round(line);
         for (int i = 0; i < Tabs.Count; i++)
         {
             list.BeginPart(i);
             StripTab tab = Tabs[i];
-            UIRect area = TabBounds(i);
+            float tabWidth = WidthOf(skin, tab);
+            UIRect area = new(new Vector2(tabX, Bounds.Min.Y), new Vector2(tabX + tabWidth, Bounds.Max.Y));
+            tabX += tabWidth;
             bool open = i == Selected;
             if (HiddenAtEdge(i, area))
                 continue;
@@ -353,7 +393,6 @@ public class TabStrip : UIComponent
             Vector4 plain = open ? skin.TextColor : dim;
             Vector4 text = TitleColorOf(i, skin);
             float x = area.Min.X + TAB_PADDING;
-            float side = MathF.Round(line);
 
             if (tab.Icon.Length > 0)
             {
@@ -362,7 +401,8 @@ public class TabStrip : UIComponent
             }
 
             // Up to the x, cut in the middle with dots once the tab is at its most
-            UIRect close = CloseBounds(i);
+            float closeRight = area.Max.X - TAB_PADDING + side * 0.25f;
+            UIRect close = area.IsEmpty ? default : new UIRect(new Vector2(closeRight - side, area.Center.Y - side * 0.5f), new Vector2(closeRight, area.Center.Y + side * 0.5f));
             float titleRoom = MathF.Max(0.0f, close.Min.X - GAP - x - PresenceWidth(tab, skin, scale));
             string title = Fitted(tab, skin, scale, titleRoom);
             list.Text(title, new UIRect(new Vector2(x, area.Min.Y), new Vector2(area.Max.X, area.Max.Y)), Origin.Left, scale, text, markup: false);
@@ -452,8 +492,33 @@ public class TabStrip : UIComponent
             OnSelected?.Invoke(tab);
     }
 
+    // What a trackpad scrolled the whole-tab strip that didn't add up to a tab yet
+    private float tabCarry;
+
+    // Sideways is the strip's own way, the same as the wheel
+    protected internal override bool OnScrollX(float delta) => OnScroll(delta);
+
     protected internal override bool OnScroll(float delta)
     {
+        if (PreciseWheel)
+        {
+            // By the pixel, or a tab for every notch's worth of it when only whole tabs are shown
+            if (HideClippedTabs)
+            {
+                tabCarry += delta;
+                if (MathF.Abs(tabCarry) < 1.0f)
+                    return true;
+                delta = MathF.Sign(tabCarry);
+                tabCarry = 0.0f;
+            }
+            else
+            {
+                scroll -= delta * UIWheel.NotchUnits;
+                ClampScroll();
+                return true;
+            }
+        }
+
         if (HideClippedTabs && Module?.Compositor.Skin is { } skin)
         {
             float start = 0;

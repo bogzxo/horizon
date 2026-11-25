@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using TextMateSharp.Grammars;
 
 namespace Horizon.UI.Scripting;
@@ -13,13 +15,16 @@ public static partial class CodeLanguages
     public const string PLAIN_TEXT = "plaintext";
 
     // What files were set to by hand, by their full path, a language id each
-    private static readonly Dictionary<string, string> overrides = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, string> overrides = new(StringComparer.OrdinalIgnoreCase);
 
     // The associations as they were given, the most specific first, each with what it matches split out of its braces
-    private static List<(string Glob, string LanguageId, string[] Patterns, bool OnPath)> associations = [];
+    private static (string Glob, string LanguageId, string[] Patterns, bool OnPath)[] associations = [];
 
     // What a language id (or an alias of one) is coloured with, null for one no grammar has
-    private static readonly Dictionary<string, ICodeHighlighter?> byLanguageId = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, ICodeHighlighter?> byLanguageId = new(StringComparer.OrdinalIgnoreCase);
+
+    // Reverse lookup from grammar scope to language id, populated lazily on first ask
+    private static readonly ConcurrentDictionary<string, string> scopeToLanguageId = new(StringComparer.Ordinal);
 
     // Files known by their name whatever their extension, each the languages to try in order, the first with a grammar wins
     private static readonly Dictionary<string, string[]> byName = new(StringComparer.OrdinalIgnoreCase)
@@ -36,6 +41,7 @@ public static partial class CodeLanguages
         { ".gitignore", ["ignore", "properties"] },
         { ".gitattributes", ["ignore", "properties"] },
         { ".dockerignore", ["ignore", "properties"] },
+        { ".hex-link-ignore", ["ignore", "properties"] },
         { ".editorconfig", ["ini", "properties"] },
         { ".env", ["dotenv", "properties", "shellscript"] },
         { ".bashrc", ["shellscript"] },
@@ -95,7 +101,7 @@ public static partial class CodeLanguages
         lock (gate)
         {
             if (languageId is null)
-                overrides.Remove(key);
+                overrides.TryRemove(key, out _);
             else
                 overrides[key] = languageId;
             Version++;
@@ -103,11 +109,8 @@ public static partial class CodeLanguages
     }
 
     /// <summary>The language a file was set to by hand, null when it's worked out.</summary>
-    public static string? OverrideOf(string fullPath)
-    {
-        lock (gate)
-            return overrides.Count == 0 ? null : overrides.GetValueOrDefault(FullPathOf(fullPath));
-    }
+    public static string? OverrideOf(string fullPath) =>
+        overrides.IsEmpty ? null : overrides.GetValueOrDefault(FullPathOf(fullPath));
 
     /// <summary>
     /// The associations of a glob with a language, files.associations, every one there was replaced. The most specific
@@ -126,9 +129,10 @@ public static partial class CodeLanguages
         }
 
         made.Sort((a, b) => Specificity(a.Glob) != Specificity(b.Glob) ? Specificity(b.Glob).CompareTo(Specificity(a.Glob)) : b.Glob.Length.CompareTo(a.Glob.Length));
+        var snapshot = made.ToArray();
         lock (gate)
         {
-            associations = made;
+            Volatile.Write(ref associations, snapshot);
             Version++;
         }
     }
@@ -150,9 +154,12 @@ public static partial class CodeLanguages
         if (id.Equals("hidl", StringComparison.OrdinalIgnoreCase))
             return Hidl;
 
+        if (byLanguageId.TryGetValue(id, out ICodeHighlighter? known))
+            return known;
+
         lock (gate)
         {
-            if (byLanguageId.TryGetValue(id, out ICodeHighlighter? known))
+            if (byLanguageId.TryGetValue(id, out known))
                 return known;
 
             ICodeHighlighter? found = null;
@@ -185,16 +192,27 @@ public static partial class CodeLanguages
                     return "d";
                 if (scope == TOML_SCOPE)
                     return "toml";
+                if (scopeToLanguageId.TryGetValue(scope, out string? cachedId))
+                    return cachedId;
+
                 lock (gate)
                 {
+                    if (scopeToLanguageId.TryGetValue(scope, out cachedId))
+                        return cachedId;
+
+                    string resolved = scope;
                     foreach (Language language in OptionsLocked().GetAvailableLanguages())
                     {
                         if (language.Extensions is { Count: > 0 } && OptionsLocked().GetScopeByLanguageId(language.Id) == scope)
-                            return language.Id;
+                        {
+                            resolved = language.Id;
+                            break;
+                        }
                     }
-                }
 
-                return scope;
+                    scopeToLanguageId[scope] = resolved;
+                    return resolved;
+                }
             default:
                 return highlighter.Name.ToLowerInvariant();
         }
@@ -206,11 +224,17 @@ public static partial class CodeLanguages
     /// </summary>
     public static string WithoutBackupSuffix(string name)
     {
-        int nameStart = name.LastIndexOfAny(['/', '\\']) + 1;
-        string now = name;
+        ReadOnlySpan<char> stripped = WithoutBackupSuffixSpan(name.AsSpan());
+        return stripped.Length == name.Length ? name : stripped.ToString();
+    }
+
+    private static ReadOnlySpan<char> WithoutBackupSuffixSpan(ReadOnlySpan<char> name)
+    {
+        int nameStart = name.LastIndexOfAny('/', '\\') + 1;
+        ReadOnlySpan<char> now = name;
         while (true)
         {
-            string next = StripOnce(now);
+            ReadOnlySpan<char> next = StripOnce(now);
             if (next.Length == now.Length || next.Length <= nameStart || next.Length == nameStart + 1 && next[^1] == '.')
                 return now;
             now = next;
@@ -218,30 +242,30 @@ public static partial class CodeLanguages
     }
 
     // Helper method to take one backup suffix off the end, the same text back when there's none
-    private static string StripOnce(string name)
+    private static ReadOnlySpan<char> StripOnce(ReadOnlySpan<char> name)
     {
-        if (name.EndsWith('~'))
+        if (name.Length > 0 && name[^1] == '~')
         {
             // Emacs's numbered backups, name.~1~, and the plain name~
-            int dot = name.LastIndexOf(".~", StringComparison.Ordinal);
-            if (dot > 0 && name.Length - dot > 3 && name.AsSpan(dot + 2, name.Length - dot - 3).IndexOfAnyExceptInRange('0', '9') < 0)
+            int dot = name.LastIndexOf(".~".AsSpan());
+            if (dot > 0 && name.Length - dot > 3 && name.Slice(dot + 2, name.Length - dot - 3).IndexOfAnyExceptInRange('0', '9') < 0)
                 return name[..dot];
             return name[..^1];
         }
 
         foreach (string suffix in backupSuffixes)
         {
-            if (name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            if (name.EndsWith(suffix.AsSpan(), StringComparison.OrdinalIgnoreCase))
                 return name[..^suffix.Length];
         }
 
         foreach (string side in mergeSuffixes)
         {
-            int at = name.LastIndexOf(side, StringComparison.Ordinal);
+            int at = name.LastIndexOf(side.AsSpan());
             if (at < 0)
                 continue;
 
-            ReadOnlySpan<char> rest = name.AsSpan(at + side.Length);
+            ReadOnlySpan<char> rest = name[(at + side.Length)..];
             if (rest.Length == 0 || rest[0] == '_' && rest.Length > 1 && rest[1..].IndexOfAnyExceptInRange('0', '9') < 0)
                 return name[..at];
         }
@@ -256,17 +280,18 @@ public static partial class CodeLanguages
             return null;
 
         string? associated = null;
-        lock (gate)
+        if (useOverride && !overrides.IsEmpty && overrides.TryGetValue(FullPathOf(path), out string? set))
         {
-            if (useOverride && overrides.Count > 0 && overrides.TryGetValue(FullPathOf(path), out string? set))
-            {
-                if (set.Equals(PLAIN_TEXT, StringComparison.OrdinalIgnoreCase))
-                    return null;
-                associated = set;
-            }
+            if (set.Equals(PLAIN_TEXT, StringComparison.OrdinalIgnoreCase))
+                return null;
+            associated = set;
+        }
 
-            if (associated is null && associations.Count > 0)
-                associated = AssociationLocked(path) ?? (WithoutBackupSuffix(path) is var stripped && stripped.Length != path.Length ? AssociationLocked(stripped) : null);
+        if (associated is null)
+        {
+            var currentAssociations = Volatile.Read(ref associations);
+            if (currentAssociations.Length > 0)
+                associated = AssociationOf(currentAssociations, path) ?? (WithoutBackupSuffix(path) is var stripped && stripped.Length != path.Length ? AssociationOf(currentAssociations, stripped) : null);
         }
 
         if (associated is not null)
@@ -277,8 +302,8 @@ public static partial class CodeLanguages
                 return chosen;
         }
 
-        string name = Path.GetFileName(path);
-        string bare = WithoutBackupSuffix(name);
+        ReadOnlySpan<char> name = Path.GetFileName(path.AsSpan());
+        ReadOnlySpan<char> bare = WithoutBackupSuffixSpan(name);
         if (ByNameOrExtension(bare) is { } found)
             return found;
 
@@ -290,16 +315,20 @@ public static partial class CodeLanguages
     }
 
     // Helper method to look a file's name up, then its extension
-    private static ICodeHighlighter? ByNameOrExtension(string name)
+    private static ICodeHighlighter? ByNameOrExtension(ReadOnlySpan<char> name)
     {
-        if (byName.TryGetValue(name, out string[]? ids) || name.StartsWith(".env.", StringComparison.OrdinalIgnoreCase) && byName.TryGetValue(".env", out ids))
+        if (byName.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(name, out string[]? ids)
+            || (name.StartsWith(".env.".AsSpan(), StringComparison.OrdinalIgnoreCase) && byName.TryGetValue(".env", out ids)))
         {
             if (FirstOf(ids) is { } named)
                 return named;
         }
 
-        string extension = Path.GetExtension(name);
-        if (byOwnExtension.TryGetValue(extension, out string[]? own) && FirstOf(own) is { } owned)
+        ReadOnlySpan<char> extension = Path.GetExtension(name);
+        if (extension.IsEmpty)
+            return null;
+
+        if (byOwnExtension.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(extension, out string[]? own) && FirstOf(own) is { } owned)
             return owned;
         return ForExtension(extension);
     }
@@ -336,11 +365,11 @@ public static partial class CodeLanguages
 
     // Helper method to find the association a file falls under, the first of them in their order, the most specific. A
     // backup is tried again with its suffix off, a.weird.bak is what a.weird is
-    private static string? AssociationLocked(string path)
+    private static string? AssociationOf((string Glob, string LanguageId, string[] Patterns, bool OnPath)[] currentAssociations, string path)
     {
         string forward = path.Replace('\\', '/');
         string name = Path.GetFileName(forward);
-        foreach (var (_, languageId, patterns, onPath) in associations)
+        foreach (var (_, languageId, patterns, onPath) in currentAssociations)
         {
             foreach (string pattern in patterns)
             {

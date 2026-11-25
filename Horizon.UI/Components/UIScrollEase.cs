@@ -1,3 +1,5 @@
+using Horizon.Engine;
+
 namespace Horizon.UI.Components;
 
 /// <summary>
@@ -26,10 +28,22 @@ internal struct UIScrollEase
     public void Wheel(float now, float by, float most, float speed = 1.0f)
     {
         most = MathF.Max(0.0f, most);
-        float wanted = (Goal ?? now) + by;
+
+        // From where it can be: a log scrolled to its end is at float.MaxValue until it's laid out, see UIOverscroll.Scroll
+        float wanted = Math.Clamp(Goal ?? now, 0.0f, most) + by;
         Goal = Math.Clamp(wanted, 0.0f, most);
         if (most > 0.0f)
             Over.Push(wanted - Goal.Value, speed);
+    }
+
+    /// <summary>
+    /// A trackpad's turn, which moves it by exactly that much at once, the band at the ends as <see cref="UIOverscroll.Scroll"/>
+    /// has it. <paramref name="by"/> is down positive, <paramref name="extent"/> how long the view is.
+    /// </summary>
+    public bool Precise(ref float now, float by, float most, float extent, float speed = 1.0f)
+    {
+        Goal = null;
+        return Over.Scroll(ref now, by, most, extent, speed);
     }
 
     /// <summary>Eases to a place of its own, a row the keys moved to brought into sight.</summary>
@@ -61,6 +75,8 @@ internal struct UIScrollEase
             return goal;
         }
 
+        // Keep full tick and frame rate while the scroll is still easing toward its target.
+        GameEngine.Instance?.WindowManager?.RequestSmooth();
         return now;
     }
 }

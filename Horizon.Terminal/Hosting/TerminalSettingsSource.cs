@@ -26,7 +26,10 @@ public sealed class TerminalSettingsSource(TerminalHost host, string? themeGroup
         if (!host.Settings.Set(key, TerminalSettingsForm.ValueOf(key, value)))
             return;
         host.ApplySettings();
-        host.SaveSettings();
+        if (host.Panel.Module?.Compositor.Pointer.Down == true)
+            host.QueueSaveSettings();
+        else
+            host.SaveSettings();
         Changed?.Invoke();
     }
 

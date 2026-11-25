@@ -76,6 +76,12 @@ public sealed class Mouse
     /// </summary>
     public float Scroll => Withheld ? 0.0f : WindowScroll;
 
+    /// <summary>
+    /// <see cref="Scroll"/> as notches of a wheel (fractional for a trackpad's), for what zooms or steps with it. <see cref="Scroll"/>
+    /// itself is in SDL's units, which are a tenth of a point on a Mac's trackpad.
+    /// </summary>
+    public float ScrollNotches => Withheld ? 0.0f : WindowScrollPrecise ? PreciseScroll.ToNotches(WindowScroll) : WindowScroll;
+
     public bool IsDown(MouseButton button) => !Withheld && HeldInWindow(button);
 
     /// <summary>
@@ -106,6 +112,44 @@ public sealed class Mouse
     internal Vector2 WindowDelta { get; private set; }
 
     internal float WindowScroll { get; private set; }
+
+    /// <summary>Horizontal wheel or trackpad turn since the last update, positive to the right.</summary>
+    internal float WindowScrollX { get; private set; }
+
+    /// <summary>Whether what was heard since the last update came from a continuous device, see <see cref="PreciseScroll"/>.</summary>
+    internal bool WindowScrollPrecise { get; private set; }
+
+    /// <summary>The pinch of a trackpad since the last update, as the change of size (0.05 is five per cent bigger), 0 anywhere else.</summary>
+    public float Magnify => Withheld ? 0.0f : WindowMagnify;
+
+    /// <summary>Whether a smart zoom (a two finger double tap of a trackpad) came since the last update.</summary>
+    public bool SmartMagnify => !Withheld && WindowSmartMagnify;
+
+    /// <summary>The multi finger swipes of a trackpad since the last update, to the left minus to the right.</summary>
+    public int Swipe => Withheld ? 0 : WindowSwipe;
+
+    /// <summary>The pinch since the last update, as the change of size (0.05 is five per cent bigger).</summary>
+    internal float WindowMagnify { get; private set; }
+
+    /// <summary>Whether a smart zoom (two finger double tap) came since the last update.</summary>
+    internal bool WindowSmartMagnify { get; private set; }
+
+    /// <summary>The swipes since the last update, to the left minus to the right.</summary>
+    internal int WindowSwipe { get; private set; }
+
+    private float _magnified;
+    private bool _smartMagnified;
+    private int _swiped;
+    private float _scrolledX;
+    private bool _scrolledPrecise;
+    private bool _fingersOn;
+    private bool _gliding;
+
+    /// <summary>Whether a trackpad's fingers are on it, scrolling, as of the last update (a Mac says, elsewhere always false).</summary>
+    internal bool WindowFingersOn { get; private set; }
+
+    /// <summary>Whether what was turned since the last update was the glide after a flick, the system's momentum.</summary>
+    internal bool WindowScrollGliding { get; private set; }
 
     /// <summary>The top left corner of the part of the window the game is shown in, and how much bigger the window is than that part.</summary>
     internal Vector2 ViewOrigin { get; set; }
@@ -157,11 +201,55 @@ public sealed class Mouse
 
     internal void CancelLiveButtons() => Interlocked.Exchange(ref _liveButtons, 0);
 
-    internal void Cancel() => _heard.Enqueue((default, false, true));
-
-    internal void HearScroll(float amount)
+    internal void Cancel()
     {
-        lock (_scrollLock) _scrolled += amount;
+        _heard.Enqueue((default, false, true));
+        ReleaseFingers();
+    }
+
+    internal void HearScroll(float amount, float across = 0.0f, bool precise = false, ScrollPhase phase = ScrollPhase.None)
+    {
+        lock (_scrollLock)
+        {
+            _scrolled += amount;
+            _scrolledX += across;
+            _scrolledPrecise |= precise;
+            switch (phase)
+            {
+                case ScrollPhase.Touching:
+                    _fingersOn = true;
+                    break;
+                case ScrollPhase.Momentum:
+                    _fingersOn = false;
+                    _gliding = true;
+                    break;
+                case ScrollPhase.Released:
+                case ScrollPhase.MomentumEnded:
+                    _fingersOn = false;
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Lets go of a trackpad's fingers that were never said to come off (the window lost the pointer).</summary>
+    internal void ReleaseFingers()
+    {
+        lock (_scrollLock) _fingersOn = false;
+    }
+
+    internal void HearMagnify(float amount)
+    {
+        lock (_scrollLock) _magnified += amount;
+    }
+
+    internal void HearSmartMagnify()
+    {
+        lock (_scrollLock) _smartMagnified = true;
+    }
+
+    internal void HearSwipe(int direction)
+    {
+        lock (_scrollLock) _swiped += direction;
     }
 
     internal void Place(Vector2 position)
@@ -186,7 +274,20 @@ public sealed class Mouse
         lock (_scrollLock)
         {
             WindowScroll = _scrolled;
+            WindowScrollX = _scrolledX;
+            WindowScrollPrecise = _scrolledPrecise;
             _scrolled = 0.0f;
+            _scrolledX = 0.0f;
+            _scrolledPrecise = false;
+            WindowFingersOn = _fingersOn;
+            WindowScrollGliding = _gliding;
+            _gliding = false;
+            WindowMagnify = _magnified;
+            WindowSmartMagnify = _smartMagnified;
+            WindowSwipe = _swiped;
+            _magnified = 0.0f;
+            _smartMagnified = false;
+            _swiped = 0;
         }
 
         if (_changed)

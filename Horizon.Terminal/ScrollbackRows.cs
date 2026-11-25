@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Numerics;
 
 namespace Horizon.UI.Components;
 
@@ -9,7 +10,9 @@ namespace Horizon.UI.Components;
 /// </summary>
 internal sealed class ScrollbackRows : IReadOnlyList<TerminalRow>
 {
-    private TerminalRow[] rows = new TerminalRow[64];
+    private const int INITIAL_CAPACITY = 64;
+
+    private TerminalRow[] rows = new TerminalRow[INITIAL_CAPACITY];
     private int start;
 
     public int Count { get; private set; }
@@ -56,12 +59,36 @@ internal sealed class ScrollbackRows : IReadOnlyList<TerminalRow>
         start = Slot(count);
         Count -= count;
         if (Count == 0)
+        {
             start = 0;
+            if (rows.Length > INITIAL_CAPACITY)
+                rows = new TerminalRow[INITIAL_CAPACITY];
+            return;
+        }
+
+        // Release excess ring capacity when MaxScrollback shrinks significantly
+        if (rows.Length > 256 && Count <= rows.Length / 4)
+        {
+            int target = Math.Max(INITIAL_CAPACITY, (int)BitOperations.RoundUpToPowerOf2((uint)(Count * 2)));
+            if (target < rows.Length)
+            {
+                var shrunk = new TerminalRow[target];
+                int first = Math.Min(Count, rows.Length - start);
+                Array.Copy(rows, start, shrunk, 0, first);
+                if (first < Count)
+                    Array.Copy(rows, 0, shrunk, first, Count - first);
+                rows = shrunk;
+                start = 0;
+            }
+        }
     }
 
     public void Clear()
     {
-        Array.Clear(rows);
+        if (rows.Length > INITIAL_CAPACITY)
+            rows = new TerminalRow[INITIAL_CAPACITY];
+        else
+            Array.Clear(rows);
         start = 0;
         Count = 0;
     }

@@ -190,6 +190,9 @@ public partial class ScrollPanel : Panel
         }
     }
 
+    // How wide what's in it was the last paint, see PaintChildren
+    private float paintedWidth;
+
     protected override void PaintChildren(UIDrawList list)
     {
         UIRect content = Bounds.Shrink(Padding);
@@ -199,11 +202,19 @@ public partial class ScrollPanel : Panel
         list.PushClip(content);
         list.PushFade(content, MathF.Min(fade, offset), MathF.Min(fade, MaxOffset - offset));
 
-        // What's in it moves by the offset as one, the clip and the bar stay put
+        // What's in it moves by the offset as one, the clip and the bar stay put. Made narrower or wider, what's in it is
+        // wrapped again and the offset jumps with it (kept at the end, or at its share): that's a jump, not a scroll, and
+        // the frames between this tick and the last slid the new lines over from the old offset, a chat's words smeared
+        // and shook as it was resized, the way the code did as it zoomed. So that paint's frames say they jumped
+        bool resized = MathF.Abs(content.Width - paintedWidth) > 0.5f && paintedWidth > 0.0f;
+        paintedWidth = content.Width;
+        bool jumpedBefore = list.JumpsFrames;
+        list.JumpsFrames = jumpedBefore || resized;
         bool stretched = ease.Over.Begin(list, content);
-        list.PushFrame(new Vector2(0.0f, offset));
+        list.PushFrame(new Vector2(0.0f, offset), jumped: resized);
         base.PaintChildren(list);
         list.PopFrame();
+        list.JumpsFrames = jumpedBefore;
         if (stretched)
             UIOverscroll.End(list);
         list.PopFade();
@@ -229,6 +240,10 @@ public partial class ScrollPanel : Panel
         if (MaxOffset <= 0.0f)
             return false;
 
+        // A trackpad moves it by the pixel, the way a finger's drag does
+        if (PreciseWheel)
+            return ease.Precise(ref offset, -delta * UIWheel.NotchUnits, MaxOffset, Bounds.Height, MotionSpeed); // and gives at the ends the way a Mac's own views do
+
         BeginScrollMotion(ease.Goal is not null || ease.Over.Active);
         ease.Wheel(offset, -delta * WheelStep, MaxOffset, MotionSpeed);
         return true;
@@ -237,6 +252,9 @@ public partial class ScrollPanel : Panel
     protected internal override bool UsesScrollSpeed => true;
 
     protected internal override bool HasOverscroll => ease.Over.Active;
+
+    protected internal override bool? ScrollEnd(float delta) =>
+        MaxOffset <= 0.0f ? null : ease.Over.Active ? false : delta > 0.0f ? offset <= 0.5f : offset >= MaxOffset - 0.5f;
 
     // Dragged by a finger the content goes along with it, to the pixel, and at an end the rest goes to whatever this is in
     protected internal override bool OnPan(Vector2 delta)

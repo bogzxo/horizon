@@ -20,12 +20,26 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     // Fingers on a Windows touch screen, which GLFW would only ever hand over as the mouse
     private readonly WindowsTouch? touch;
 
-    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0)
+    // Last IME candidate rect sent to SDL, so unchanged caret frames allocate nothing
+    private int lastImeX = int.MinValue, lastImeY, lastImeW, lastImeH;
+
+    public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0, nint cocoaWindow = 0)
     {
         this.host = host;
         this.context = context;
         this.toPixels = toPixels;
         source = new SilkInputSource(context, toPixels);
+        if (OperatingSystem.IsMacOS() && DesktopWindow.UsesSdl && cocoaWindow != 0)
+        {
+            MacGestures.Install(cocoaWindow, input => source.Raise(input));
+            // Heard as input, as the wheel is, which wakes an application gone quiet. The fingers coming off a stretch
+            // held still say nothing to SDL, and without it the spring back waited for the next slow tick and leapt
+            MacScrollWatch.Monitor(cocoaWindow, input =>
+            {
+                source.Raise(input);
+                host.Events.InputHeard();
+            });
+        }
         if (OperatingSystem.IsWindows() && windowHandle != 0) touch = new WindowsTouch(windowHandle, toPixels);
     }
 
@@ -70,6 +84,25 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     }
 
     public IPlatformGamepads? OpenGamepads() => host.OpenGamepads(context);
+
+    public void SetTextInputRect(int x, int y, int width, int height)
+    {
+        if (!DesktopWindow.UsesSdl)
+            return;
+
+        if (x == lastImeX && y == lastImeY && width == lastImeW && height == lastImeH)
+            return;
+
+        lastImeX = x;
+        lastImeY = y;
+        lastImeW = width;
+        lastImeH = height;
+
+        if (host.IsPlatformThread)
+            SdlTextEditing.SetTextInputRect(x, y, width, height);
+        else
+            host.Post(() => SdlTextEditing.SetTextInputRect(x, y, width, height));
+    }
 
     /// <summary>How many fingers are on a Windows touch screen right now, null where they aren't heard. For a check.</summary>
     public int? TouchContacts => OperatingSystem.IsWindows() && touch?.Installed == true ? touch.Contacts : null;
