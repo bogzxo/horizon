@@ -230,6 +230,18 @@ public partial class SettingsPage
             base.Update(dt);
         }
 
+        protected override long PaintVersion
+        {
+            get
+            {
+                var hash = new HashCode();
+                hash.Add(LabelPaintVersion());
+                hash.Add(page.commonShown);
+                hash.Add(lit);
+                return hash.ToHashCode() & 0x7FFFFFFF;
+            }
+        }
+
         // The pill a section's link has, lit while @common is the search, the pointer's fainter one and the keyboard's
         // ring. Always there and see-through when not wanted (ToggleButton has why)
         protected override void Paint(UIDrawList list)
@@ -341,6 +353,24 @@ public partial class SettingsPage
             base.Update(dt);
         }
 
+        protected override long PaintVersion
+        {
+            get
+            {
+                var hash = new HashCode();
+                hash.Add(first);
+                hash.Add(gap);
+                hash.Add(lit);
+                hash.Add(TextScale);
+                hash.Add(Part);
+                hash.Add(Collapsed);
+                hash.Add(Collapsed && page.CurrentGroup is { } group && InPart(group, Part));
+                hash.Add(count);
+                hash.Add(searched);
+                return hash.ToHashCode() & 0x7FFFFFFF;
+            }
+        }
+
         protected override void Paint(UIDrawList list)
         {
             UISkin skin = list.Skin;
@@ -363,7 +393,6 @@ public partial class SettingsPage
             // Its name in bold where a link's starts, the count after it a little smaller
             float scale = TextScale > 0.0f ? TextScale : skin.TextScale;
             float height = skin.Font.LineHeight * scale;
-            float width = skin.Font.MeasureLine(Part, scale, UITextStyle.Bold, default);
             var at = new Vector2(band.Min.X, band.Center.Y + height * 0.5f);
             // In the accent while it's folded with the section on screen in it, so the rows are always somewhere down the
             // left. Its links would have had the lit one
@@ -371,6 +400,7 @@ public partial class SettingsPage
             list.Text(Part, at, scale, current ? skin.AccentColor : text, false, UITextStyle.Bold, default);
             if (count > 0)
             {
+                float width = skin.Font.MeasureLine(Part, scale, UITextStyle.Bold, default);
                 float small = scale * 0.85f;
                 Vector4 accent = skin.AccentColor;
                 // Written into the stack, not a string made for it every frame

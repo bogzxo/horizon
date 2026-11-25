@@ -15,6 +15,45 @@ namespace Horizon.UI;
 // Where the mouse, its wheel and the keyboard are read and handed to whichever component they are meant for.
 public partial class UICompositor
 {
+    private static long scriptedPointerTick = -1;
+
+    /// <summary>
+    /// True when any compositor is currently being driven by a scripted <see cref="PointerSource"/> (such as a self-test),
+    /// so dialogs stay in-process instead of opening modal OS Finder panels.
+    /// </summary>
+    public static bool IsPointerScripted
+    {
+        get
+        {
+            long seen = Volatile.Read(ref scriptedPointerTick);
+            if (seen < 0)
+                return false;
+            long now = GameEngine.Instance?.WindowManager?.Tick ?? 0;
+            return now - seen <= 2;
+        }
+    }
+
+    private InputManager? compositionInput;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(string Text, int Cursor, int Length)> compositions = new();
+    private UIComponent? lastRoutedFocus;
+
+    private void HookComposition(InputManager input)
+    {
+        if (ReferenceEquals(compositionInput, input))
+            return;
+
+        if (compositionInput is not null)
+            compositionInput.EventReceived -= OnCompositionEvent;
+
+        compositionInput = input;
+        input.EventReceived += OnCompositionEvent;
+    }
+
+    private void OnCompositionEvent(InputEvent input)
+    {
+        if (input.Kind == InputEventKind.Composition)
+            compositions.Enqueue((input.Text ?? string.Empty, input.CompositionCursor, input.CompositionLength));
+    }
     /// <summary>
     /// Whether this UI reads the wheel as the window has it rather than as the game is given it. For the UI that
     /// sits between the two and withholds the mouse from the game while it is over one of its own panels.
@@ -57,6 +96,16 @@ public partial class UICompositor
         if (InputOf is not { } input)
             return;
 
+        HookComposition(input);
+
+        if (!ReferenceEquals(lastRoutedFocus, focus))
+        {
+            lastRoutedFocus?.OnFocusLost();
+            lastRoutedFocus = focus;
+            if (!compositions.IsEmpty)
+                compositions.Clear();
+        }
+
         var keyboard = input.Keyboard;
         if (KeysMoved(keyboard))
             FocusVisible = true;
@@ -82,15 +131,24 @@ public partial class UICompositor
 
         if (focus is null)
         {
+            if (!compositions.IsEmpty)
+                compositions.Clear();
+
             // Nothing is typing, so a paste is for whoever asked for those (an editor). Everything else typed into
             // the void is thrown away with it
             if (Pasted is not null && focusOwner is null)
             {
+                bool pasted = false;
                 while (UIKeyboard.TryRead(out char character))
                 {
                     if (character == UIKeyboard.PASTE && UIKeyboard.TryTakePaste(out string text) && text.Length > 0)
+                    {
+                        pasted = true;
                         Pasted(text);
+                    }
                 }
+                if (pasted)
+                    GameEngine.Instance?.WindowManager?.NoteInput();
             }
 
             return;
@@ -99,11 +157,17 @@ public partial class UICompositor
         // A key that edits and is being held is typed again every so often
         UIKeyboard.Repeat();
 
+        bool hadKeyboardInput = false;
+        bool hadComposition = false;
         while (focus is { TakesRawKeys: true } && UIKeyboard.TryReadKey(out UIKeyPress press))
+        {
+            hadKeyboardInput = true;
             focus.OnKeyDown(press);
+        }
 
         while (focus is not null && UIKeyboard.TryRead(out char character))
         {
+            hadKeyboardInput = true;
             if (character == UIKeyboard.PASTE)
             {
                 if (UIKeyboard.TryTakePaste(out string text) && (text.Length > 0 || focus.TakesEmptyPaste))
@@ -112,6 +176,21 @@ public partial class UICompositor
             }
 
             focus.OnTextInput(character);
+        }
+
+        while (focus is not null && compositions.TryDequeue(out var composition))
+        {
+            hadKeyboardInput = true;
+            hadComposition = true;
+            focus.OnComposition(composition.Text, composition.Cursor, composition.Length);
+        }
+
+        if (hadKeyboardInput)
+            GameEngine.Instance?.WindowManager?.NoteInput();
+        if (hadComposition)
+        {
+            GameEngine.Instance?.WindowManager?.RequestFrames();
+            GameEngine.Instance?.WindowManager?.Wake();
         }
     }
 
@@ -725,6 +804,9 @@ public partial class UICompositor
 
     private void RoutePointer(UIModule[] snapshot, float dt)
     {
+        if (PointerSource is not null)
+            Volatile.Write(ref scriptedPointerTick, GameEngine.Instance?.WindowManager?.Tick ?? 0);
+
         UIPointer pointer = PointerSource?.Invoke() ?? ReadPointer();
         lastPointer = pointer.Position;
         Pointer = pointer;

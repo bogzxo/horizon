@@ -136,7 +136,7 @@ public abstract partial class UIComponent
     protected internal virtual bool? ScrollEnd(float delta) => null;
 
     // What a finger dragged that didn't add up to a whole notch yet, see OnPan
-    private float panCarry;
+    private float panCarry, panCarryX;
 
     /// <summary>How far a finger drags for one notch of the wheel, on whatever scrolls by notches and has no OnPan of its own.</summary>
     internal const float PAN_NOTCH = 48.0f;
@@ -156,11 +156,24 @@ public abstract partial class UIComponent
         // Up the screen is down the content, which is the wheel turned towards the user
         panCarry -= delta.Y / PAN_NOTCH;
         int notches = (int)panCarry;
-        if (notches == 0)
+        if (notches != 0)
+            panCarry -= notches;
+
+        // Right across the screen moves content right, which is positive OnScrollX
+        panCarryX += delta.X / PAN_NOTCH;
+        int notchesX = (int)panCarryX;
+        if (notchesX != 0)
+            panCarryX -= notchesX;
+
+        if (notches == 0 && notchesX == 0)
             return true;
 
-        panCarry -= notches;
-        return OnScroll(notches);
+        bool scrolled = false;
+        if (notches != 0)
+            scrolled |= OnScroll(notches);
+        if (notchesX != 0)
+            scrolled |= OnScrollX(notchesX);
+        return scrolled;
     }
 
     /// <summary>

@@ -596,11 +596,13 @@ public abstract partial class UIComponent
         bool ringed = TabStop && !Focusable && IsFocused && EnabledInHierarchy && Module!.Compositor.FocusVisible;
         if (ringed)
             Module!.Compositor.FocusShownOn = this;
-        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && Glass is null && !FollowsPointer && !list.LayoutMoves;
+        bool recorded = version >= 0 && offset == Vector2.Zero && scale == Vector2.One && Opacity >= 1.0f && slideWanted is null && !FollowsPointer && !list.LayoutMoves;
         int context = 0;
         if (recorded)
         {
-            version = HashCode.Combine(version, IsFocused, IsHovered, EnabledInHierarchy, Module?.Compositor.FocusVisible ?? false, Resizable, Lift);
+            version = HashCode.Combine(
+                HashCode.Combine(version, IsFocused, IsHovered, EnabledInHierarchy, Module?.Compositor.FocusVisible ?? false, Resizable, Lift, CompositionPaintStamp),
+                Glass);
             context = list.PaintContext(Bounds);
             if (list.TryReuse(PaintId, version, context))
                 return;
@@ -637,20 +639,14 @@ public abstract partial class UIComponent
             list.PushClip(Bounds);
 
         UIRect surface = SurfaceBounds;
+        UIDrawList.UIGlassMark under = list.GlassMark();
         if (Lift > 0.0f)
             list.Lifted(surface, GlassRadius(list.Skin), Lift);
 
         if (Glass is { } glass)
-            list.Glass(surface, GlassRadius(list.Skin), glass.Blur, glass.Bend);
+            list.Glass(surface, GlassRadius(list.Skin), glass, list.Skin.PanelColor with { W = 1.0f }, under);
 
         Paint(list);
-
-        // The light on the glass, its sheen and its lit edge, over the background and under whatever is in it
-        if (Glass is { Rim: > 0.0f } lined)
-        {
-            list.Sheen(surface, GlassRadius(list.Skin), lined.Rim);
-            list.SilverLining(surface, GlassRadius(list.Skin), lined.Rim);
-        }
 
         if (hoverness > 0.0f && Hover == UIHover.Glow)
             PaintHoverGlow(list);
@@ -787,4 +783,56 @@ public abstract partial class UIComponent
     /// <summary>Called once per state update, on the simulation thread.</summary>
     protected virtual void Update(float dt)
     { }
+
+    /// <summary>An IME preedit composition update while this component has keyboard focus.</summary>
+    public virtual void OnComposition(string text, int cursor, int length)
+    { }
+
+    /// <summary>Called when this component loses keyboard focus.</summary>
+    public virtual void OnFocusLost()
+    { }
+
+    /// <summary>Extra paint-cache stamp for transient state not in <see cref="PaintVersion"/> (such as IME preedit).</summary>
+    protected virtual int CompositionPaintStamp => 0;
+
+    private (int X, int Y, int W, int H)? lastTextInputRect;
+
+    /// <summary>
+    /// Reports the focused text caret rectangle (in this component's module space, Y-up) to the platform's IME
+    /// in window points, throttled so unchanged coordinates make zero platform calls.
+    /// </summary>
+    protected void ReportTextInputRect(UIRect localRect)
+    {
+        if (Module is not { } owner || Horizon.Engine.GameEngine.Instance?.WindowManager is not { IsRunning: true } window)
+            return;
+
+        Vector2 viewport = window.ViewportSize;
+        var cam = owner.Compositor.viewportCamera.Bounds;
+        if (cam.Width <= 0.0f || cam.Height <= 0.0f || viewport.X <= 0.0f || viewport.Y <= 0.0f)
+            return;
+
+        Vector2 worldMin = owner.ToWorld(localRect.Min);
+        Vector2 worldMax = owner.ToWorld(localRect.Max);
+
+        float pxX = (worldMin.X - cam.X) / cam.Width * viewport.X;
+        float pxY = (1.0f - (worldMax.Y - cam.Y) / cam.Height) * viewport.Y;
+        float pxW = (worldMax.X - worldMin.X) / cam.Width * viewport.X;
+        float pxH = (worldMax.Y - worldMin.Y) / cam.Height * viewport.Y;
+
+        Vector2 pixelScale = window.PixelScale;
+        float sx = pixelScale.X > 0.01f ? pixelScale.X : 1.0f;
+        float sy = pixelScale.Y > 0.01f ? pixelScale.Y : 1.0f;
+
+        var rect = (
+            X: (int)MathF.Round(pxX / sx),
+            Y: (int)MathF.Round(pxY / sy),
+            W: Math.Max(1, (int)MathF.Round(pxW / sx)),
+            H: Math.Max(1, (int)MathF.Round(pxH / sy)));
+
+        if (lastTextInputRect == rect)
+            return;
+
+        lastTextInputRect = rect;
+        window.Host.Input.SetTextInputRect(rect.X, rect.Y, rect.W, rect.H);
+    }
 }

@@ -58,6 +58,13 @@ public interface IVtHandler
     /// <summary>A character to put on the screen, as a code point.</summary>
     void Print(int codePoint);
 
+    /// <summary>A contiguous run of printable ASCII bytes (0x20..0x7E) to put on the screen.</summary>
+    void PrintAscii(ReadOnlySpan<byte> ascii)
+    {
+        foreach (byte b in ascii)
+            Print(b);
+    }
+
     /// <summary>A C0 control, bell, backspace, tab, line feed, carriage return and the rest.</summary>
     void Execute(byte control);
 
@@ -111,8 +118,26 @@ public sealed class VtParser
     /// <summary>Reads bytes, as many as there are, and tells the handler what they meant.</summary>
     public void Feed(ReadOnlySpan<byte> bytes)
     {
-        foreach (byte b in bytes)
-            Feed(b);
+        int i = 0;
+        int length = bytes.Length;
+        while (i < length)
+        {
+            // Fast path for contiguous printable ASCII runs in Ground state with no pending UTF-8 bytes
+            if (state == State.Ground && pendingBytes == 0)
+            {
+                int start = i;
+                while (i < length && (uint)(bytes[i] - 0x20) <= (0x7E - 0x20))
+                    i++;
+                if (i > start)
+                {
+                    handler.PrintAscii(bytes.Slice(start, i - start));
+                    if (i >= length)
+                        return;
+                }
+            }
+
+            Feed(bytes[i++]);
+        }
     }
 
     public void Feed(byte b)

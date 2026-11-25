@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Horizon.HIDL;
 using Horizon.UI.Skinning;
 
@@ -35,10 +37,11 @@ public static partial class CodeLanguages
     private static readonly Lock gate = new();
     private static Options? options;
     private static Registry? registry;
+    private static IReadOnlyList<CodeLanguage>? cachedLanguages;
 
     // What an extension is coloured as, null for one looked up before that nothing has a grammar for
-    private static readonly Dictionary<string, ICodeHighlighter?> byExtension = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, ICodeHighlighter> byScope = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, ICodeHighlighter?> byExtension = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, ICodeHighlighter?> byScope = new(StringComparer.Ordinal);
 
     // Extensions that aren't in any grammar's package.json, the engine's own and whatever Register adds
     private static readonly Dictionary<string, string> ownExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -108,10 +111,13 @@ public static partial class CodeLanguages
         lock (gate)
         {
             ownExtensions[extension] = scopeName;
-            byExtension.Remove(extension);
+            byExtension.TryRemove(extension, out _);
             Version++;
         }
     }
+
+    /// <summary>Whether a grammar scope has already been lazily loaded into the cache.</summary>
+    internal static bool IsScopeLoaded(string scopeName) => byScope.ContainsKey(scopeName);
 
     /// <summary>
     /// The highlighter for a file, null for one nothing has a grammar for, which is shown as plain text. What it was set
@@ -127,23 +133,30 @@ public static partial class CodeLanguages
     public static ICodeHighlighter? ForFile(string path, string? firstLine) => Resolve(path, firstLine, useOverride: true);
 
     /// <summary>The highlighter for files with an extension (".cs"), null for one nothing has a grammar for.</summary>
-    public static ICodeHighlighter? ForExtension(string extension)
+    public static ICodeHighlighter? ForExtension(string extension) =>
+        string.IsNullOrEmpty(extension) ? null : ForExtension(extension.AsSpan());
+
+    private static ICodeHighlighter? ForExtension(ReadOnlySpan<char> extension)
     {
-        if (string.IsNullOrEmpty(extension))
+        if (extension.IsEmpty)
             return null;
 
+        if (byExtension.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(extension, out ICodeHighlighter? known))
+            return known;
+
+        string key = extension.ToString();
         lock (gate)
         {
-            if (byExtension.TryGetValue(extension, out ICodeHighlighter? known))
+            if (byExtension.TryGetValue(key, out known))
                 return known;
 
             ICodeHighlighter? found = null;
-            if (ownExtensions.TryGetValue(extension, out string? own))
+            if (ownExtensions.TryGetValue(key, out string? own))
                 found = ForScopeLocked(own, null);
-            else if (OptionsLocked().GetLanguageByExtension(extension) is { } language && OptionsLocked().GetScopeByLanguageId(language.Id) is { } scope)
+            else if (OptionsLocked().GetLanguageByExtension(key) is { } language && OptionsLocked().GetScopeByLanguageId(language.Id) is { } scope)
                 found = ForScopeLocked(scope, language.Aliases is { Count: > 0 } aliases ? aliases[0] : language.Id);
 
-            byExtension[extension] = found;
+            byExtension[key] = found;
             return found;
         }
     }
@@ -151,6 +164,9 @@ public static partial class CodeLanguages
     /// <summary>The highlighter for a grammar by its scope ("source.cs"), null for a scope no grammar has.</summary>
     public static ICodeHighlighter? ForScope(string scopeName)
     {
+        if (byScope.TryGetValue(scopeName, out ICodeHighlighter? known))
+            return known;
+
         lock (gate)
             return ForScopeLocked(scopeName, null);
     }
@@ -162,8 +178,14 @@ public static partial class CodeLanguages
     /// </summary>
     public static IReadOnlyList<CodeLanguage> Languages()
     {
+        if (cachedLanguages is { } cached)
+            return cached;
+
         lock (gate)
         {
+            if (cachedLanguages is not null)
+                return cachedLanguages;
+
             var found = new Dictionary<string, CodeLanguage>(StringComparer.OrdinalIgnoreCase)
             {
                 ["d"] = new CodeLanguage("D", "d", [".d", ".di"]),
@@ -180,7 +202,7 @@ public static partial class CodeLanguages
                 found[language.Id] = new CodeLanguage(name, language.Id, [.. extensions.Distinct(StringComparer.OrdinalIgnoreCase)]);
             }
 
-            return [.. found.Values.OrderBy(language => language.Name, StringComparer.OrdinalIgnoreCase)];
+            return cachedLanguages = [.. found.Values.OrderBy(language => language.Name, StringComparer.OrdinalIgnoreCase)];
         }
     }
 
@@ -235,8 +257,7 @@ public static partial class CodeLanguages
             made = grammar is null ? null : new TextMateHighlighter(grammar, name ?? grammar.GetName() ?? scopeName);
         }
 
-        if (made is not null)
-            byScope[scopeName] = made;
+        byScope[scopeName] = made;
         return made;
     }
 

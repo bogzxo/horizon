@@ -3,35 +3,131 @@
 // few panes a frame is cheaper than it sounds. The corners are worked out per pixel like the UI's own boxes, so the
 // glass and the box painted over it have the same edge.
 //
-// Two kinds of it. With no bend it's frosted, the blur laid flat. With a bend it's liquid, Apple's Liquid Glass more or
-// less, a slab with a rounded rim that bends what's behind it hard as the rim gets near (what's just outside the pane
-// squeezed into its edge), splits the light a little there the way a prism does, and blurs less at the rim than in the
-// middle. It costs a handful of reads more a pixel of the pane than the frosted kind and nothing else, the blur is the
-// dear part and both have that.
+// Two kinds of it. With no bevel width it's frosted, the blur laid flat. With a bevel width it's liquid, after
+// naughtyduk/liquidGL's optical model: center magnification, smooth bevel refraction with a steep pow(edge, 10) lip,
+// bidirectional RGB chromatic dispersion, and screen/multiply dye tinting. Unlike liquidGL the bend goes straight
+// across the nearest edge (lensNormal) rather than along the line from the middle, so every side bends alike.
 
 #include <common/screen.slang>
 
 struct Params
 {
-    // The pane and what it's cut down to, in pixels of what is drawn into from its top left, min then max
-    float4 uRect;
-    float4 uClip;
-
-    // How round its corners are in pixels, how much of it is there, and how much of the blurred picture is shown
-    // over the sharp one (all of it, unless the blur is barely there, see GaussianBlur.Share)
-    float uRadius;
-    float uOpacity;
-    float uShare;
-
-    // How far what is behind is pulled in at the rim, in pixels, the lens of a thick piece of glass, and how big a
-    // pixel of what is drawn into is in texture coordinates
-    float uBend;
-    float2 uTexel;
+    float4 uRect;        //   0: pane min/max in pixels from top-left
+    float4 uClip;        //  16: clip min/max in pixels from top-left
+    float4 uSharpRect;   //  32: crop of uSharp in full-res pixels (xy = origin, zw = size)
+    float4 uTint;        //  48: rgb = dye colour, a = dye strength
+    float2 uTexel;       //  64: 1.0 / full output size
+    float  uRadius;      //  72: corner radius in pixels
+    float  uOpacity;     //  76: pane opacity [0..1]
+    float  uShare;       //  80: GaussianBlur.Share(blurRadius) [0..1]
+    float  uRefraction;  //  84: smooth bevel refraction in pixels
+    float  uBevelDepth;  //  88: pow(edge, 10) steep lip depth in pixels
+    float  uBevelWidth;  //  92: bevel width in pixels (0 = flat frosted)
+    float  uMagnify;     //  96: center magnification (>= 1.0)
+    float  uAberration;  // 100: bidirectional RGB chromatic dispersion factor
+    float2 uPad;         // 104: alignment pad (total 112 bytes)
 };
 
 BIND_UNIFORM(1) ConstantBuffer<Params> params;
 BIND_TEXTURE(0) Sampler2D uSource;
 BIND_TEXTURE(1) Sampler2D uSharp;
+
+// Exact 2D rounded-box signed distance (negative inside, 0 on boundary, positive outside)
+float roundedBoxDistance(float2 p, float2 extent, float radius)
+{
+    float2 q = abs(p) - (extent - radius);
+    return length(max(q, float2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius;
+}
+
+// Which way the nearest edge of the lens is. Straight out of a straight edge and round a corner with its curve. The
+// lens is the pane with its corners at least as round as the bevel is wide (see fsMain), so inside the bevel there is
+// no diagonal where two edges are as near as each other, and no seam down a corner the way a picture frame has one.
+// liquidGL bends along the line from the middle of the pane instead, which on anything wider than it is tall slides
+// what is behind a long edge along that edge rather than across it, one way left of the middle and the other right.
+float2 lensNormal(float2 p, float2 b, float r)
+{
+    float2 q = abs(p) - b + r;
+    float2 s = float2(p.x < 0.0 ? -1.0 : 1.0, p.y < 0.0 ? -1.0 : 1.0);
+    float2 m = max(q, float2(0.0, 0.0));
+    float l = length(m);
+    if (l > 0.0)
+        return s * (m / l);
+    return s * (q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0));
+}
+
+// A place past the edge of the picture folded back into it, the way a mirror at the edge would show it. A pane that
+// sits against the side of the window bends there like it does everywhere else, rather than not at all.
+float2 mirrored(float2 uv)
+{
+    uv = abs(uv);
+    return float2(1.0, 1.0) - abs(float2(1.0, 1.0) - uv);
+}
+
+float2 sharpUV(float2 fullUV)
+{
+    float2 px = fullUV / params.uTexel - params.uSharpRect.xy;
+    float2 uv = px / params.uSharpRect.zw;
+    float2 halfTexel = 0.5 / params.uSharpRect.zw;
+    return clamp(uv, halfTexel, float2(1.0, 1.0) - halfTexel);
+}
+
+// Applies light-screen / dark-multiply dye tinting.
+float3 dye(float3 c)
+{
+    if (params.uTint.a <= 0.001)
+        return c;
+    float3 t = params.uTint.rgb;
+    float light = dot(t, float3(0.2126, 0.7152, 0.0722));
+    float3 dyed = light > 0.5 ? 1.0 - (1.0 - c) * (1.0 - t) : c * t;
+    return lerp(c, dyed, params.uTint.a);
+}
+
+// 5-tap crisp cross sample of the sharp backdrop, matching liquidGL when u_frost == 0.
+float3 sampleSharp5(float2 uv)
+{
+    float2 uvMin = params.uTexel * 0.5;
+    float2 uvMax = float2(1.0, 1.0) - uvMin;
+    float2 dx = float2(params.uTexel.x, 0.0);
+    float2 dy = float2(0.0, params.uTexel.y);
+    float3 sum = uSharp.Sample(sharpUV(clamp(uv, uvMin, uvMax))).rgb;
+    sum += uSharp.Sample(sharpUV(clamp(uv + dx, uvMin, uvMax))).rgb;
+    sum += uSharp.Sample(sharpUV(clamp(uv - dx, uvMin, uvMax))).rgb;
+    sum += uSharp.Sample(sharpUV(clamp(uv + dy, uvMin, uvMax))).rgb;
+    sum += uSharp.Sample(sharpUV(clamp(uv - dy, uvMin, uvMax))).rgb;
+    return sum / 5.0;
+}
+
+// Samples the unbent glass colour, skipping whichever texture has negligible weight.
+float3 sampleFlat(float2 uv, float share)
+{
+    float2 uvMin = params.uTexel * 0.5;
+    float2 uvMax = float2(1.0, 1.0) - uvMin;
+    uv = clamp(uv, uvMin, uvMax);
+    if (share >= 0.999)
+        return uSource.Sample(uv).rgb;
+    if (share <= 0.001)
+        return sampleSharp5(uv);
+    return lerp(sampleSharp5(uv), uSource.Sample(uv).rgb, share);
+}
+
+// What is behind one place, the blur and the sharp picture mixed by the share of the blur, one tap of each
+float3 sampleOne(float2 uv)
+{
+    uv = clamp(uv, params.uTexel * 0.5, float2(1.0, 1.0) - params.uTexel * 0.5);
+    if (params.uShare >= 0.999)
+        return uSource.Sample(uv).rgb;
+    if (params.uShare <= 0.001)
+        return uSharp.Sample(sharpUV(uv)).rgb;
+    return lerp(uSharp.Sample(sharpUV(uv)).rgb, uSource.Sample(uv).rgb, params.uShare);
+}
+
+// The same with its colours parted, red short of the place and blue past it
+float3 sampleParted(float2 uv, float2 chroma)
+{
+    if (params.uAberration <= 0.0001)
+        return sampleOne(uv);
+    return float3(sampleOne(uv - chroma).r, sampleOne(uv).g, sampleOne(uv + chroma).b);
+}
 
 [shader("fragment")]
 float4 fsMain(ScreenVaryings input) : SV_Target0
@@ -40,58 +136,52 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     if (any(p < params.uClip.xy) || any(p > params.uClip.zw))
         discard;
 
-    // How far outside of the rounded box the pixel is, the usual distance to a box with its corners taken off
     float2 middle = (params.uRect.xy + params.uRect.zw) * 0.5;
     float2 extent = max((params.uRect.zw - params.uRect.xy) * 0.5, float2(0.0, 0.0));
-    float radius = min(params.uRadius, min(extent.x, extent.y));
-    float2 q = abs(p - middle) - (extent - radius);
-    float outside = length(max(q, float2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius;
+    float minExtent = max(min(extent.x, extent.y), 1.0);
+    float radius = min(params.uRadius, minExtent);
+    float2 local = p - middle;
 
-    float coverage = saturate(0.5 - outside) * params.uOpacity;
+    float d = roundedBoxDistance(local, extent, radius);
+    float coverage = saturate(0.5 - d) * params.uOpacity;
     if (coverage <= 0.0)
         discard;
 
-    // Which way is out of the box from here, along the axis that is nearest its edge or out of the round of a corner
-    float2 outward = q.x > q.y ? float2(1.0, 0.0) : float2(0.0, 1.0);
-    if (q.x > 0.0 && q.y > 0.0)
-        outward = normalize(q);
-    outward *= sign(p - middle);
+    float mag = max(params.uMagnify, 0.001);
+    float2 mapped = (middle + local / mag) * params.uTexel;
 
-    float3 colour;
-    if (params.uBend <= 0.0)
-    {
-        // Frosted, the blur as it is
-        float2 uv = input.texCoords;
-        colour = lerp(uSharp.Sample(uv).rgb, uSource.Sample(uv).rgb, params.uShare);
-    }
-    else
-    {
-        // Liquid. How far into the rim  this is, 0 on the flat of the slab and 1 at its very edge, the rim three bends wide
-        float rim = max(params.uBend * 3.0, 6.0);
-        float t = saturate(1.0 + outside / rim);
+    float bevelPx = params.uBevelWidth;
+    if (bevelPx <= 0.0)
+        return float4(dye(sampleFlat(mapped, params.uShare)), coverage);
 
-        // The rim is the round of a quarter circle, its slope steepening to the edge, and what's behind is taken from as
-        // far further out as the slope is steep. Held short of straight up at the very edge or it reads from the moon
-        float slope = min(t * rsqrt(max(1.0 - t * t, 0.0625)), 4.0);
-        float2 bend = outward * params.uBend * slope * params.uTexel;
+    // The lens is the pane with corners no tighter than its bevel is wide, a square pane's glass still rounds its
+    // corners the way a drop of water does. In the tip of a square corner, outside that lens, the bend is at its most
+    float lensRadius = min(max(radius, bevelPx), minExtent);
+    float t = saturate(-roundedBoxDistance(local, extent, lensRadius) / bevelPx);
+    float edge = 1.0 - t * t * (3.0 - 2.0 * t);
+    if (edge <= 0.0)
+        return float4(dye(sampleFlat(mapped, params.uShare)), coverage);
 
-        // Split, the red bent the least and the blue the most, only where it bends at all
-        float2 uv = input.texCoords;
-        float3 sharp = float3(uSharp.Sample(uv + bend * 0.94).r, uSharp.Sample(uv + bend).g, uSharp.Sample(uv + bend * 1.08).b);
-        float3 soft = float3(uSource.Sample(uv + bend * 0.94).r, uSource.Sample(uv + bend).g, uSource.Sample(uv + bend * 1.08).b);
+    // The same bend on every side: as far as the depth under the edge says, straight across the nearest edge
+    float lip = pow(edge, 9.0);
+    float offsetPx = edge * params.uRefraction + lip * edge * params.uBevelDepth;
+    float2 dir = lensNormal(local, extent, lensRadius);
+    float2 offset = dir * offsetPx * params.uTexel;
+    float2 sampleUV = mirrored(mapped + offset);
 
-        // A little less of the blur at the rim, where the glass is a lens rather than a pane, and a thin line of light
-        // right on the edge. Half as much blur there let what was behind it be read, words doubled along the rim. It
-        // lifted the whole pane a little towards white as well, which on a dark theme was the wash over everything
-        colour = lerp(sharp, soft, params.uShare * (1.0 - 0.15 * t * t));
-        colour += pow(t, 8.0) * 0.06;
-    }
+    // The colours part along the bend, red short of it and blue past it. Mirrored places keep the bend's own way
+    float2 chroma = mirrored(mapped + offset * (1.0 + params.uAberration)) - sampleUV;
 
-    // The sheen, Liquid Glass's light caught along the top inside of the pane, strongest at the rim and gone by a
-    // third of the way down. One term, no reads
-    float fromTop = (p.y - params.uRect.y) / max(extent.y * 0.66, 1.0);
-    float sheen = pow(saturate(1.0 - fromTop), 3.0) * 0.035;
-    colour += sheen;
+    // How many pixels of what is behind one pixel of the rim takes in, across the edge: the bend grows faster than
+    // the pane does there, so the rim shows a strip squeezed thin. Read at one place that was every other line of a
+    // page of text and none of the ones between, a shimmer of stripes. It is read at as many places as it takes in
+    float squeeze = 1.0 / mag + (params.uRefraction + 10.0 * lip * params.uBevelDepth) * 6.0 * t * (1.0 - t) / bevelPx;
+    int taps = clamp(int(ceil(squeeze)), 1, 12);
+    float3 colour = float3(0.0, 0.0, 0.0);
+    float2 along = dir * params.uTexel * squeeze / float(taps);
+    for (int i = 0; i < taps; i++)
+        colour += sampleParted(mirrored(sampleUV + along * (float(i) - 0.5 * float(taps - 1))), chroma);
+    colour /= float(taps);
 
-    return float4(colour, coverage);
+    return float4(dye(colour), coverage);
 }

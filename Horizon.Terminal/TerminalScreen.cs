@@ -270,14 +270,19 @@ public sealed partial class TerminalScreen : IVtHandler
         int firstOnGrid = Math.Max(0, Math.Min(reflowed.Count - rows, newCursorRow - rows + 1));
         firstOnGrid = Math.Max(firstOnGrid, Math.Max(0, newCursorRow - rows + 1));
         for (int r = 0; r < firstOnGrid; r++)
+        {
+            reflowed[r].CompactForScrollback();
             scrollback.Add(reflowed[r]);
+        }
         for (int r = firstOnGrid; r < reflowed.Count; r++)
             main.Add(reflowed[r]);
         while (main.Count < rows)
             main.Add(new TerminalRow(columns));
         while (main.Count > rows)
         {
-            scrollback.Add(main[0]);
+            TerminalRow moved = main[0];
+            moved.CompactForScrollback();
+            scrollback.Add(moved);
             main.RemoveAt(0);
         }
         TrimScrollback();
@@ -321,6 +326,67 @@ public sealed partial class TerminalScreen : IVtHandler
     }
 
     /* Printing */
+
+    public void PrintAscii(ReadOnlySpan<byte> ascii)
+    {
+        if ((shiftOut ? g1Graphics : g0Graphics) || insertMode)
+        {
+            foreach (byte b in ascii)
+                Print(b);
+            return;
+        }
+
+        List<TerminalRow> grid = Current;
+        int columns = Columns;
+        TerminalCell template = new() { Style = Style };
+        int offset = 0;
+
+        while (offset < ascii.Length)
+        {
+            if (pendingWrap)
+            {
+                if (autowrap)
+                {
+                    grid[CursorY].Wrapped = true;
+                    CursorX = 0;
+                    LineFeed();
+                }
+                else
+                {
+                    CursorX = columns - 1;
+                }
+                pendingWrap = false;
+            }
+
+            TerminalCell[] cells = grid[CursorY].Cells;
+            int x = CursorX;
+            int count = Math.Min(ascii.Length - offset, columns - x);
+            int end = x + count;
+
+            // Only the two boundaries of the overwritten span can split an existing wide character
+            if (x > 0 && cells[x].IsContinuation)
+                cells[x - 1] = TerminalCell.Erased(cells[x - 1].Style);
+            if (end < cells.Length && cells[end - 1].Style.Has(TerminalAttributes.Wide))
+                cells[end] = TerminalCell.Erased(cells[end].Style);
+
+            for (int k = 0; k < count; k++)
+            {
+                template.CodePoint = ascii[offset + k];
+                cells[x + k] = template;
+            }
+
+            offset += count;
+            if (end >= columns)
+            {
+                CursorX = columns - 1;
+                pendingWrap = true;
+            }
+            else
+            {
+                CursorX = end;
+            }
+        }
+    }
 
     public void Print(int codePoint)
     {
@@ -494,10 +560,21 @@ public sealed partial class TerminalScreen : IVtHandler
             grid.RemoveAt(from);
             if (!AlternateScreen && from == 0)
             {
+                TerminalCell[]? recycled = gone.CompactForScrollback();
                 scrollback.Add(gone);
                 RowsScrolledOff++;
-                // The row made with its erased cells, not made blank and then given them, two arrays a line of output
-                grid.Insert(to, new TerminalRow(BlanksOfOldest(), false));
+                // Reuse the compacted row's full-width array immediately, otherwise recycle from the oldest scrollback row
+                TerminalCell[] fresh;
+                if (recycled is not null && recycled.Length == Columns)
+                {
+                    Array.Fill(recycled, TerminalCell.Erased(Style));
+                    fresh = recycled;
+                }
+                else
+                {
+                    fresh = BlanksOfOldest();
+                }
+                grid.Insert(to, new TerminalRow(fresh, false));
             }
             else
             {

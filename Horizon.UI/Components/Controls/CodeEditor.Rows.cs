@@ -35,6 +35,8 @@ public partial class CodeEditor
     // What the rows were made for, made again when any of it changes. The shapes the code wraps round (and the scroll
     // they were last flowed at to the pixel, they stay put on screen as the code goes by) count only while there are any
     private (int Version, int Folds, bool Wrap, float Width, float Scale, int Shapes, int Scrolled, int Inlays, int Lenses, int? Predicted, int Blocks) rowsFor = (-1, -1, false, -1.0f, -1.0f, 0, 0, -1, -1, null, -1);
+    private int rowsLastDocVersion = -1;
+    internal int RowsRebuildCount { get; private set; }
 
     // The fewest columns a row is cut down to by a shape, with less room than that beside one it runs over it instead
     private const int MIN_SHAPED_COLUMNS = 8;
@@ -46,6 +48,7 @@ public partial class CodeEditor
     // Where every bracket that opens on a line and closes on a later one closes, by the line it opens on, as the last
     // colouring found them. The lines that are folded, by the line they open on, and a count of the changes to them
     private readonly Dictionary<int, int> foldable = [];
+    private readonly List<(int Start, int End, int MaxEnd)> foldableSorted = [];
     private readonly HashSet<int> folded = [];
     private int foldsChanged;
 
@@ -202,6 +205,25 @@ public partial class CodeEditor
 
         if (folded.RemoveWhere(start => !foldable.ContainsKey(start)) > 0)
             foldsChanged++;
+
+        // Build a sorted prefix-max index of foldable scopes so StickyLines queries run in O(log N + depth).
+        foldableSorted.Clear();
+        if (foldable.Count > 0)
+        {
+            if (foldableSorted.Capacity < foldable.Count)
+                foldableSorted.Capacity = foldable.Count;
+            foreach (var (start, end) in foldable)
+                foldableSorted.Add((start, end, end));
+            foldableSorted.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+            int maxEnd = int.MinValue;
+            for (int i = 0; i < foldableSorted.Count; i++)
+            {
+                var entry = foldableSorted[i];
+                if (entry.End > maxEnd)
+                    maxEnd = entry.End;
+                foldableSorted[i] = (entry.Start, entry.End, maxEnd);
+            }
+        }
     }
 
     // The folds there were before the brackets were found again, by the line each opens on, and where each ended
@@ -285,9 +307,15 @@ public partial class CodeEditor
         }
 
         int? visiblePredictionRows = VisiblePredictionRowsVersion;
-        var wanted = (document.Version, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows, blocksChanged);
+        bool blocked = blockSpaces.Count > 0;
+        bool contentDependent = wordWrap || visiblePredictionRows.HasValue || blocked;
+        int versionKey = contentDependent ? document.Version : -(document.LineCount + 2);
+        var wanted = (versionKey, foldsChanged, wordWrap, width, scale, shapes, scrolled, wordWrap ? inlaysVersion : 0, lensRowsChanged, visiblePredictionRows, blocksChanged);
         if (rowsFor == wanted && rows.Count > 0)
+        {
+            rowsLastDocVersion = document.Version;
             return;
+        }
 
         // The top of row 0 as the rows are flowed, the scroll to the pixel (to the row it was a staircase, every line
         // flowed for where it was up to a line ago), and the left of the code
@@ -300,7 +328,7 @@ public partial class CodeEditor
         // pushed off the bottom
         (int Line, int Row)? anchor = null;
         bool blocksMoved = rowsFor.Blocks != blocksChanged;
-        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows || blocksMoved) && rowsFor.Version == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
+        if ((rowsFor.Lenses != lensRowsChanged || rowsFor.Predicted != visiblePredictionRows || blocksMoved) && rowsLastDocVersion == document.Version && rows.Count > 0 && scrollY > 0.0f && lineHeight > 0.0f)
         {
             int top = Math.Clamp((int)(scrollY / lineHeight), 0, rows.Count - 1);
             while (top < rows.Count - 1 && rows[top].Virtual)
@@ -319,6 +347,8 @@ public partial class CodeEditor
         }
 
         rowsFor = wanted;
+        rowsLastDocVersion = document.Version;
+        RowsRebuildCount++;
         rows.Clear();
         int count = document.LineCount;
         if (lineRow.Length < count)
@@ -344,7 +374,6 @@ public partial class CodeEditor
         lensRows = 0;
         BlockRowCount = 0;
         blockRows.Clear();
-        bool blocked = blockSpaces.Count > 0;
 
         // Lines of a prediction put in over the first line
         if (visiblePredictionRows.HasValue)
@@ -363,8 +392,10 @@ public partial class CodeEditor
             }
 
             lineRow[line] = rows.Count;
-            string text = document.LineAt(line);
-            AddRows(line, text, columns, digit);
+            if (!wordWrap)
+                rows.Add(new CodeRow(line, 0, int.MaxValue, 0.0f));
+            else
+                AddRows(line, document.LineAt(line), columns, digit);
 
             // A folded line's own rows, then every line it folds is drawn as it. One that isn't has the rows of a
             // prediction's lines under it after its own
@@ -612,12 +643,33 @@ public partial class CodeEditor
 
         stickyFor = wanted;
         sticky.Clear();
-        foreach (var (start, end) in foldable)
+        int lineCount = document.LineCount;
+        if (foldableSorted.Count > 0 && firstLine > 0)
         {
-            if (start < 0 || start >= document.LineCount) continue;
-            int header = HeaderOf(start);
-            if (header < firstLine && firstLine <= end && !sticky.Contains(header))
-                sticky.Add(header);
+            // HeaderOf(start) scans at most 7 lines above start, so only scopes with Start <= firstLine + 7 can enclose firstLine.
+            int limit = firstLine + 7;
+            int low = 0, high = foldableSorted.Count;
+            while (low < high)
+            {
+                int mid = (low + high) >>> 1;
+                if (foldableSorted[mid].Start <= limit)
+                    low = mid + 1;
+                else
+                    high = mid;
+            }
+
+            for (int i = low - 1; i >= 0; i--)
+            {
+                var (start, end, maxEnd) = foldableSorted[i];
+                if (maxEnd < firstLine)
+                    break;
+                if (start < 0 || start >= lineCount || firstLine > end)
+                    continue;
+
+                int header = HeaderOf(start);
+                if (header < firstLine && !sticky.Contains(header))
+                    sticky.Add(header);
+            }
         }
 
         sticky.Sort();

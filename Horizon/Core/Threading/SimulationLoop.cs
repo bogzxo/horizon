@@ -97,6 +97,9 @@ public sealed class SimulationLoop : IDisposable
     /// <summary>Spins for the end of each timed wait for game pacing. Applications use the timer alone.</summary>
     public bool PrecisePacing { get; set; } = true;
 
+    /// <summary>Whether this loop currently holds Windows' global 1 ms timer sharp (for diagnostics and tests).</summary>
+    internal bool SharpenedTimer { get; private set; }
+
     /// <summary>How long it sleeps between ticks while idle, in seconds, unless it is woken first.</summary>
     public double IdlePeriod { get; set; } = 0.05;
 
@@ -221,7 +224,14 @@ public sealed class SimulationLoop : IDisposable
     private void Run()
     {
         Diagnostics.AllocationLog.NameThisThread(thread?.Name ?? "Simulation");
-        LoopTiming.SharpenTimer(true);
+        // Games keep the global 1 ms timer sharp; applications rely on high-resolution waitable timers so
+        // Windows laptops don't sit at a 1000 Hz global OS timer interrupt while idle.
+        bool sharpened = LoopTiming.NeedsSharpTimer(PrecisePacing);
+        if (sharpened)
+        {
+            LoopTiming.SharpenTimer(true);
+            SharpenedTimer = true;
+        }
 
         // Whatever is awaited on this thread carries on here, see SimulationContext
         SynchronizationContext.SetSynchronizationContext(Context);
@@ -271,7 +281,11 @@ public sealed class SimulationLoop : IDisposable
         finally
         {
             Ticks.SetState(LoopStatistics.LoopState.Stopped);
-            LoopTiming.SharpenTimer(false);
+            if (sharpened)
+            {
+                SharpenedTimer = false;
+                LoopTiming.SharpenTimer(false);
+            }
         }
     }
 

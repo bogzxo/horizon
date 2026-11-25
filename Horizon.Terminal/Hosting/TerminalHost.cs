@@ -583,12 +583,23 @@ public sealed partial class TerminalHost : IDisposable
 
     public void SaveSettings()
     {
+        saveSettingsPending = false;
         // What was written is kept, so the watcher seeing the file change doesn't take the program's own save back in
         writtenSettings = Settings.Write();
-        if (Settings.Save() is { } problem)
+        if (Settings.Save(writtenSettings) is { } problem)
             Say(problem, true);
     }
 
+    /// <summary>Defers writing settings to disk until the pointer is released or a brief pause elapses, so dragging a slider does not parse and flush the file on every pixel.</summary>
+    public void QueueSaveSettings()
+    {
+        saveSettingsPending = true;
+        saveSettingsWait = 0.25f;
+        Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
+    }
+
+    private bool saveSettingsPending;
+    private float saveSettingsWait;
     private string? writtenSettings;
 
     /* Plugins */
@@ -687,6 +698,15 @@ public sealed partial class TerminalHost : IDisposable
     /// <summary>Every tick. The plugins that asked to be told, and the files that changed taken in.</summary>
     public void Update(float dt)
     {
+        if (saveSettingsPending)
+        {
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestFrames();
+            if (Panel.Module?.Compositor.Pointer.Down == true)
+                saveSettingsWait = MathF.Max(saveSettingsWait, 0.05f);
+            else if ((saveSettingsWait -= dt) <= 0.0f)
+                SaveSettings();
+        }
+
         TakeChanges();
 
         if (ticking.Count > 0)

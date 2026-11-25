@@ -15,10 +15,15 @@ internal sealed class UIInBetween
     // The frames between two ticks and what they resolve to, and where every frame of the older tick is by its key
     private readonly List<UIFrame> between = [];
     private readonly Dictionary<Vector2, int> framesBefore = [];
+    private UIFrameList? cachedOlder;
+    private long cachedOlderStamp = -1;
     private SpriteItem[] resolved = [];
     private readonly List<UIDrawList.Run> resolvedRuns = [];
     private readonly List<UIGlassPane> resolvedGlass = [];
     private int resolvedCount;
+
+    /// <summary>How many times the older-tick frame index map was rebuilt, for tests.</summary>
+    internal int FrameMapRebuilds { get; private set; }
 
     // How far every frame is moved to go where the pointer is, not a number for the ones that don't follow it
     private Vector2[] followed = [];
@@ -39,12 +44,19 @@ internal sealed class UIInBetween
     /// <see cref="FramedQuads"/>, <see cref="FramedRuns"/> and <see cref="FramedGlass"/> until the next call.
     /// </summary>
     /// <param name="pointer">Where the pointer is now, for the frames that go where it goes (see <see cref="UIFrame.Follows"/>), null for them to stay where they were painted.</param>
-    public void Frames(UIFrameList a, UIFrameList b, float alpha, Vector2? pointer = null)
+    /// <param name="paintedItems">Optional painted <see cref="SpriteItem"/> buffer for <paramref name="b"/> so stationary frames can be copied directly.</param>
+    public void Frames(UIFrameList a, UIFrameList b, float alpha, Vector2? pointer = null, ReadOnlySpan<SpriteItem> paintedItems = default)
     {
         ReadOnlySpan<UIFrame> older = a.Span, newer = b.Span;
-        framesBefore.Clear();
-        for (int i = 0; i < older.Length; i++)
-            framesBefore.TryAdd(older[i].Key, i);
+        if (!ReferenceEquals(a, cachedOlder) || a.Stamp != cachedOlderStamp)
+        {
+            framesBefore.Clear();
+            for (int i = 0; i < older.Length; i++)
+                framesBefore.TryAdd(older[i].Key, i);
+            cachedOlder = a;
+            cachedOlderStamp = a.Stamp;
+            FrameMapRebuilds++;
+        }
 
         between.Clear();
         foreach (ref readonly UIFrame frame in newer)
@@ -53,7 +65,7 @@ internal sealed class UIInBetween
         if (pointer is { } now && b.Follows)
             Follow(b, now);
 
-        resolvedCount = b.Resolve(CollectionsMarshal.AsSpan(between), ref resolved, resolvedRuns, resolvedGlass);
+        resolvedCount = b.Resolve(CollectionsMarshal.AsSpan(between), ref resolved, resolvedRuns, resolvedGlass, paintedItems);
     }
 
     public ReadOnlySpan<SpriteItem> FramedQuads => resolved.AsSpan(0, resolvedCount);

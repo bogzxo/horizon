@@ -70,11 +70,26 @@ public partial class CodeEditor
         if (RemoteCarets.Count == 0 || paintedSkin is not { } skin || point.X >= TextArea(skin, paintedScale).Min.X || point.X < Bounds.Min.X)
             return string.Empty;
         int line = PositionAt(point).Line;
-        var names = new List<string>();
-        foreach (UICodeRemoteCaret remote in RemoteCarets)
-            if (remote.Line == line)
-                names.Add(string.IsNullOrEmpty(remote.Label) ? remote.Id : remote.Label);
-        return string.Join(", ", names);
+        string? first = null;
+        System.Text.StringBuilder? built = null;
+        for (int i = 0; i < RemoteCarets.Count; i++)
+        {
+            UICodeRemoteCaret remote = RemoteCarets[i];
+            if (remote.Line != line)
+                continue;
+
+            string name = string.IsNullOrEmpty(remote.Label) ? remote.Id : remote.Label;
+            if (first is null)
+            {
+                first = name;
+            }
+            else
+            {
+                built ??= new System.Text.StringBuilder(first);
+                built.Append(", ").Append(name);
+            }
+        }
+        return built is not null ? built.ToString() : first ?? string.Empty;
     }
 
     private void PaintRemoteSelections(UIDrawList list, UISkin skin, float scale, float left, float top, float lineHeight, float digit, CodeRow row)

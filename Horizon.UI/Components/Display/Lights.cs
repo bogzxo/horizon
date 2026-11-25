@@ -20,6 +20,7 @@ namespace Horizon.UI.Components;
 public class Lights : UIComponent
 {
     private const int MOST_LIGHTS = 16, MOST_RIPPLES = 24;
+    private const float MIN_VISIBLE_ALPHA = 0.001f;
 
     // Keys of the parts, the lights and the rings apart, so a frame between two ticks blends each with itself
     private const int RIPPLE_PART = 1 << 20;
@@ -106,39 +107,48 @@ public class Lights : UIComponent
 
     protected override void Update(float dt)
     {
-        float follow = Follow > 0.0f ? 1.0f - MathF.Exp(-Follow * dt) : 1.0f;
-        float fade = 1.0f - MathF.Exp(-Fade * dt);
+        if (lightCount == 0 && ringCount == 0)
+            return;
 
-        int kept = 0;
-        for (int i = 0; i < lightCount; i++)
+        if (lightCount > 0)
         {
-            ref Light light = ref lights[i];
-            light.At += (light.Target - light.At) * follow;
-            light.Level += ((light.Asked ? 1.0f : 0.0f) - light.Level) * fade;
-            if (light.Asked && light.Level > 0.995f)
-                light.Level = 1.0f;
-            if (Vector2.DistanceSquared(light.At, light.Target) < 0.01f)
-                light.At = light.Target;
+            float follow = Follow > 0.0f ? 1.0f - MathF.Exp(-Follow * dt) : 1.0f;
+            float fade = 1.0f - MathF.Exp(-Fade * dt);
 
-            // Out once it's faded all the way and nobody asked for it this tick
-            bool keep = light.Asked || light.Level > 0.01f;
-            light.Asked = false;
-            if (keep)
-                lights[kept++] = light;
+            int kept = 0;
+            for (int i = 0; i < lightCount; i++)
+            {
+                ref Light light = ref lights[i];
+                light.At += (light.Target - light.At) * follow;
+                light.Level += ((light.Asked ? 1.0f : 0.0f) - light.Level) * fade;
+                if (light.Asked && light.Level > 0.995f)
+                    light.Level = 1.0f;
+                if (Vector2.DistanceSquared(light.At, light.Target) < 0.01f)
+                    light.At = light.Target;
+
+                // Out once it's faded all the way and nobody asked for it this tick
+                bool keep = light.Asked || light.Level > 0.01f;
+                light.Asked = false;
+                if (keep)
+                    lights[kept++] = light;
+            }
+
+            lightCount = kept;
         }
 
-        lightCount = kept;
-
-        int alive = 0;
-        for (int i = 0; i < ringCount; i++)
+        if (ringCount > 0)
         {
-            ref Ring ring = ref rings[i];
-            ring.Age += dt;
-            if (ring.Age < ring.Life)
-                rings[alive++] = ring;
-        }
+            int alive = 0;
+            for (int i = 0; i < ringCount; i++)
+            {
+                ref Ring ring = ref rings[i];
+                ring.Age += dt;
+                if (ring.Age < ring.Life)
+                    rings[alive++] = ring;
+            }
 
-        ringCount = alive;
+            ringCount = alive;
+        }
     }
 
     protected override void Paint(UIDrawList list)
@@ -150,23 +160,32 @@ public class Lights : UIComponent
         for (int i = 0; i < lightCount; i++)
         {
             ref Light light = ref lights[i];
+            float alpha = light.Color.W * light.Level;
+            if (alpha <= MIN_VISIBLE_ALPHA || light.Radius <= 0.0f)
+                continue;
+
             list.BeginPart(light.Key & (RIPPLE_PART - 1));
             float core = light.Radius * 0.3f;
             var disc = new UIRect(light.At - new Vector2(core), light.At + new Vector2(core));
-            list.Shadow(disc, core, light.Radius - core, light.Color with { W = light.Color.W * light.Level });
+            list.Shadow(disc, core, light.Radius - core, light.Color with { W = alpha });
         }
 
         // A ring that eases out as it goes, quick at first, and thins and fades on the way
         for (int i = 0; i < ringCount; i++)
         {
             ref Ring ring = ref rings[i];
-            list.BeginPart(RIPPLE_PART | ring.Id);
             float t = ring.Age / ring.Life;
-            float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+            float inv = 1.0f - t;
+            float alpha = ring.Color.W * inv * inv;
+            if (alpha <= MIN_VISIBLE_ALPHA)
+                continue;
+
+            list.BeginPart(RIPPLE_PART | ring.Id);
+            float eased = 1.0f - inv * inv * inv;
             float radius = MathF.Max(1.0f, ring.Reach * eased);
             float thickness = MathF.Max(0.75f, ring.Thickness * (1.0f - t * 0.6f));
             var round = new UIRect(ring.At - new Vector2(radius), ring.At + new Vector2(radius));
-            list.RoundOutline(round, radius, thickness, ring.Color with { W = ring.Color.W * (1.0f - t) * (1.0f - t) });
+            list.RoundOutline(round, radius, thickness, ring.Color with { W = alpha });
         }
 
         list.EndParts();

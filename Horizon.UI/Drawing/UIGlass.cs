@@ -1,93 +1,109 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace Horizon.UI.Drawing;
 
 /// <summary>
-/// Frosted glass, what a component sits on when it is to show a blur of whatever is behind it rather than its own
-/// flat background, the way Windows 11 has its menus and its side panels. See <see cref="Components.UIComponent.Glass"/>
-/// and <see cref="UICompositor.PopupGlass"/>.
-/// <para>
-/// A compositor that has any of it draws in goes, everything painted before the component, then a blurred copy of
-/// what is on screen by then laid inside the component's bounds, then the component and whatever is over it. So the
-/// glass shows the scene and the rest of the UI alike, a dialog over the code blurs the code. It costs a copy of the
-/// frame and a blur for every pane that has something new under it, and only on frames the UI is drawn anew, a UI
-/// that stands still lays its picture over as it always did.
-/// </para>
+/// Frosted and liquid glass, what a component sits on when it shows a blur and bevel refraction of whatever is
+/// behind it rather than its own flat background. See <see cref="Components.UIComponent.Glass"/> and
+/// <see cref="UICompositor.PopupGlass"/>.
 /// </summary>
 /// <param name="Blur">How far what is behind it is smeared, in the UI's pixels.</param>
 /// <param name="Clarity">
-/// How much of the blur shows through the background the component paints over it, 0 for none (it is as solid as it
-/// ever was), 1 for nothing but the blur.
-/// </param>
-/// <param name="Rim">
-/// How bright the silver lining is, the lit edge Apple's Liquid Glass has, brightest along the top and the left where
-/// the light is taken to come from and faint along the others. 0 for none. A handful of quads painted over the
-/// component's background, it costs nothing to speak of.
+/// How much of the blur shows through the background the component paints over it, 0 for none (solid), 1 for all of it.
 /// </param>
 /// <param name="Bend">
 /// How far what is behind is bent at the edge of the pane, in the UI's pixels, the way a thick piece of glass pulls
-/// what is under it in at its rim. 0 for flat glass. It's worked out in the pass that lays the pane down anyway, a
-/// few sums a pixel and no reads more.
+/// what is under it in round its bevel. 0 for flat frosted glass.
 /// </param>
-public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f, float Rim = 0.3f, float Bend = 6.0f)
+public readonly record struct UIGlass(float Blur = 18.0f, float Clarity = 0.35f, float Bend = 4.0f)
 {
+    /// <summary>Maximum bevel bend strength, in UI pixels.</summary>
+    public const float MAX_BEND = 24.0f;
+
     /// <summary>What a component sits on unless it says otherwise, a fair smear and most of its colour kept.</summary>
-    // Said in full, new() of a record struct is the struct's own empty one and not the primary constructor with its
-    // defaults, and frosted glass came out with no blur and no clarity, a solid panel over nothing
-    public static UIGlass Frosted => new(Blur: 18.0f, Clarity: 0.35f, Rim: 0.3f, Bend: 6.0f);
+    public static UIGlass Frosted => new(Blur: 18.0f, Clarity: 0.35f, Bend: 4.0f);
+
+    /// <summary>Clear liquid glass with a strong bevel lens, what Hex's Fluid Glass starts at.</summary>
+    public static UIGlass Clear => new(Blur: 3.0f, Clarity: 0.82f, Bend: 16.0f);
+
+    /// <summary>The glass of popups (dialogs, menus, a palette) out of three sliders, held to valid bounds.</summary>
+    public static UIGlass Lens(float blur, float clarity, float bend) =>
+        new(Blur: Math.Clamp(blur, 0.0f, 64.0f), Clarity: Math.Clamp(clarity, 0.0f, 1.0f), Bend: Math.Clamp(bend, 0.0f, MAX_BEND));
 
     /// <summary>
-    /// Clear glass with a bright rim and a strong lens, what Hex's glass sliders start at (its Fluid Glass), Apple's Liquid
-    /// Glass as near as it goes. Most of what's behind comes through, blurred only enough that words behind it stop
-    /// being words, and the rim bends it. It was a blur of 24 under nearly half a solid panel, which on a 4K screen is a
-    /// smear fifty pixels wide under a tint, and read as a solid slab with nothing behind it.
+    /// Helper method for a background as it is painted over the glass, the see-through part of it taken off its alpha
+    /// with its colour left untouched.
     /// </summary>
-    public static UIGlass Clear => new(Blur: 8.0f, Clarity: 0.78f, Rim: 0.6f, Bend: 16.0f);
+    public Vector4 Over(Vector4 background) =>
+        background with { W = background.W * Math.Clamp(1.0f - Clarity, 0.0f, 1.0f) };
 
-    /// <summary>The glass of popups (dialogs, menus, a palette) out of four sliders, each held to what still looks like glass.</summary>
-    public static UIGlass Lens(float blur, float clarity, float rim, float bend) =>
-        new(Blur: Math.Clamp(blur, 0.0f, 64.0f), Clarity: Math.Clamp(clarity, 0.0f, 1.0f), Rim: Math.Clamp(rim, 0.0f, 1.0f), Bend: Math.Clamp(bend, 0.0f, 24.0f));
+    /// <summary>Strength of the optical dye tint applied inside the glass shader, derived from <see cref="Clarity"/>.</summary>
+    public float Dye => Math.Clamp(1.07f - 0.6f * Clarity, 0.25f, 0.8f);
 
-    // How far towards white a background on glass that lets nothing through is lifted, frosted glass scatters the light.
-    // A tenth was milk, a dark theme's popups came out grey
-    private const float MILK = 0.05f;
+    /// <summary>Returns <paramref name="background"/> with its alpha scaled by <see cref="Dye"/> for shader tinting.</summary>
+    public Vector4 DyeColor(Vector4 background) => background with { W = background.W * Dye };
+}
 
-    /// <summary>
-    /// Helper method for a background as it is painted over the glass, the see through part of it taken off its alpha,
-    /// and the less there is of that the milkier it is, a little towards white. Clear glass and frosted glass came out the
-    /// same colour with only more or less of it, and nobody could tell the two looks apart.
-    /// </summary>
-    public Vector4 Over(Vector4 background)
+/// <summary>
+/// Derived liquid-glass optical parameters for one pane in screen pixels, shared between capture-region padding in
+/// <see cref="UICompositor"/> and uniform upload in <see cref="UIGlassPass"/>.
+/// </summary>
+internal readonly record struct UIGlassOptics(float BevelWidth, float Refraction, float BevelDepth, float Magnify, float Aberration)
+{
+    /// <summary>Extra pixels around the visible pane required in the captured backdrop so refracted and dispersed samples stay in bounds.</summary>
+    public float PaddingPixels => BevelWidth <= 0.0f ? 2.0f : MathF.Ceiling((Refraction + BevelDepth) * (1.0f + Aberration)) + 2.0f + RIM_SPREAD;
+
+    /// <summary>How far to either side of where the rim reads the shader's extra taps go, the strip a pixel of the rim takes in (glass.slang).</summary>
+    public const float RIM_SPREAD = 8.0f;
+
+    public static UIGlassOptics Compute(float bendPx, float lens, float minBox)
     {
-        float frost = Math.Clamp(1.0f - Clarity, 0.0f, 1.0f);
-        Vector4 milky = Vector4.Lerp(background, Vector4.One, frost * MILK);
-        return milky with { W = background.W * frost };
+        if (lens <= 0.0f || bendPx <= 0.0f || minBox < 8.0f)
+            return new UIGlassOptics(0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+
+        float bevelWidth = Math.Clamp(3.0f * bendPx, 4.0f, 0.32f * minBox);
+        float refraction = MathF.Min(2.2f * bendPx, 0.11f * minBox);
+        // The lip folds in what is up to a bevel and a half outside the pane. Further (it was three bevels) squeezed a
+        // dozen lines of code into every pixel of the rim, which over text is a shimmer of stripes and not glass
+        float bevelDepth = MathF.Min(4.5f * bendPx, 0.24f * minBox);
+        float magnify = 1.0f + 0.12f * lens;
+
+        // The colours part by a quarter of the bend at the most. At three quarters every letter near the rim was three
+        // letters, one red, one green and one blue, a hand's width apart
+        float aberration = 0.25f * lens;
+        return new UIGlassOptics(bevelWidth, refraction, bevelDepth, magnify, aberration);
     }
 }
 
 /// <summary>
-/// One pane of glass in a list, where it is and from which quad on everything is painted over it. Everything is in
-/// the camera's world, the way the quads are once the module and the tweens have placed them.
+/// One pane of glass in a list, where it is, up to which quad what is behind it is captured (<see cref="Under"/>),
+/// and from which quad on everything is painted over it (<see cref="Start"/>).
 /// </summary>
-/// <param name="Start">The first quad painted over the glass, everything before it is under it.</param>
-/// <param name="Min">The bottom left corner of the pane.</param>
-/// <param name="Max">Its top right one.</param>
-/// <param name="ClipMin">The bottom left corner of what it's cut down to.</param>
-/// <param name="ClipMax">And the top right of that.</param>
-/// <param name="Radius">How round its corners are.</param>
-/// <param name="Blur">How far it smears.</param>
-/// <param name="Opacity">How much of it is there, a dialog fading in fades its glass in with it.</param>
-/// <param name="Bend">How far it bends what is behind at its edge, see <see cref="UIGlass.Bend"/>.</param>
-internal readonly record struct UIGlassPane(int Start, Vector2 Min, Vector2 Max, Vector2 ClipMin, Vector2 ClipMax, float Radius, float Blur, float Opacity, float Bend = 0.0f)
+[StructLayout(LayoutKind.Sequential)]
+internal readonly record struct UIGlassPane(
+    int Start,
+    Vector2 Min,
+    Vector2 Max,
+    Vector2 ClipMin,
+    Vector2 ClipMax,
+    float Radius,
+    float Blur,
+    float Opacity,
+    float Bend = 0.0f,
+    int Under = -1,
+    float Lens = -1.0f,
+    uint Tint = 0u)
 {
-    /// <summary>
-    /// Helper method for a pane between two, for a frame between two ticks. The clip is the newer one's, an unclipped
-    /// pane's is infinite and infinity blended with itself is not a number.
-    /// </summary>
+    public int Under { get; init; } = Under < 0 ? Start : Under;
+    public float Lens { get; init; } = Lens < 0.0f ? Math.Clamp(Bend / UIGlass.MAX_BEND, 0.0f, 1.0f) : Lens;
+
     public static UIGlassPane Blend(in UIGlassPane a, in UIGlassPane b, float t) => b with
     {
         Min = Vector2.Lerp(a.Min, b.Min, t),
         Max = Vector2.Lerp(a.Max, b.Max, t),
-        Opacity = a.Opacity + (b.Opacity - a.Opacity) * t
+        Opacity = a.Opacity + (b.Opacity - a.Opacity) * t,
+        Bend = a.Bend + (b.Bend - a.Bend) * t,
+        Lens = a.Lens + (b.Lens - a.Lens) * t
     };
 }

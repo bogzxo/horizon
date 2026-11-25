@@ -1,7 +1,8 @@
-using Horizon.Content;
+using System.Buffers;
 using System.Numerics;
 using System.Security.Cryptography;
 
+using Horizon.Content;
 using Horizon.Graphics;
 using Horizon.Logging;
 
@@ -130,56 +131,62 @@ public sealed class DistanceFieldFont
 
     private unsafe (int, int, byte[]) BuildFromTrueType(string path)
     {
+        // Reuse already-loaded native font bytes from GlyphOutlines when present to avoid a duplicate multi-megabyte read
+        if (GlyphOutlines.TryGetLoaded(path, out GlyphOutlines? loaded) && loaded is not null)
+            return BuildFromTrueTypeData(loaded.NativeData);
+
         byte[] bytes = ContentFiles.ReadAllBytes(path);
-        var info = new StbTrueType.stbtt_fontinfo();
         fixed (byte* data = bytes)
+            return BuildFromTrueTypeData(data);
+    }
+
+    private unsafe (int, int, byte[]) BuildFromTrueTypeData(byte* data)
+    {
+        var info = new StbTrueType.stbtt_fontinfo();
+        if (StbTrueType.stbtt_InitFont(info, data, StbTrueType.stbtt_GetFontOffsetForIndex(data, 0)) == 0)
+            throw new InvalidDataException("not a TrueType font stb_truetype can read");
+
+        float fieldScale = StbTrueType.stbtt_ScaleForPixelHeight(info, FIELD_EM);
+        float toEm = (float)EmSize / FIELD_EM;
+
+        int ascent, descent, lineGap;
+        StbTrueType.stbtt_GetFontVMetrics(info, &ascent, &descent, &lineGap);
+        LineHeight = MathF.Round((ascent - descent + lineGap) * fieldScale * toEm);
+        Base = MathF.Round(ascent * fieldScale * toEm);
+        Spread = SPREAD * toEm;
+
+        // The characters the font has, then every glyph's field made side by side on the pool, in their order. One
+        // after another it was most of a first start: the code font's field alone was a second, and the terminal's
+        // half a second more. stb only reads the font's info, each glyph's field is a buffer of its own
+        var codepoints = new List<int>();
+        foreach (var (from, to) in ranges)
         {
-            if (StbTrueType.stbtt_InitFont(info, data, StbTrueType.stbtt_GetFontOffsetForIndex(data, 0)) == 0)
-                throw new InvalidDataException("not a TrueType font stb_truetype can read");
-
-            float fieldScale = StbTrueType.stbtt_ScaleForPixelHeight(info, FIELD_EM);
-            float toEm = (float)EmSize / FIELD_EM;
-
-            int ascent, descent, lineGap;
-            StbTrueType.stbtt_GetFontVMetrics(info, &ascent, &descent, &lineGap);
-            LineHeight = MathF.Round((ascent - descent + lineGap) * fieldScale * toEm);
-            Base = MathF.Round(ascent * fieldScale * toEm);
-            Spread = SPREAD * toEm;
-
-            // The characters the font has, then every glyph's field made side by side on the pool, in their order. One
-            // after another it was most of a first start: the code font's field alone was a second, and the terminal's
-            // half a second more. stb only reads the font's info, each glyph's field is a buffer of its own
-            var codepoints = new List<int>();
-            foreach (var (from, to) in ranges)
+            for (int codepoint = from; codepoint <= to; codepoint++)
             {
-                for (int codepoint = from; codepoint <= to; codepoint++)
-                {
-                    if (StbTrueType.stbtt_FindGlyphIndex(info, codepoint) != 0 || codepoint == ' ')
-                        codepoints.Add(codepoint);
-                }
+                if (StbTrueType.stbtt_FindGlyphIndex(info, codepoint) != 0 || codepoint == ' ')
+                    codepoints.Add(codepoint);
             }
-
-            var made = new (char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[codepoints.Count];
-            Parallel.For(0, codepoints.Count, at =>
-            {
-                made[at] = Glyph(info, codepoints[at], fieldScale);
-            });
-            var pictures = new List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)>(made);
-
-            // Kerning, for the pairs the font has
-            foreach (var a in pictures)
-            {
-                if (a.Id >= KERNED_BELOW) continue;
-                foreach (var b in pictures)
-                {
-                    if (b.Id >= KERNED_BELOW) continue;
-                    int kern = StbTrueType.stbtt_GetCodepointKernAdvance(info, a.Id, b.Id);
-                    if (kern != 0) Kerning[KerningKey(a.Id, b.Id)] = kern * fieldScale * toEm;
-                }
-            }
-
-            return Shelve(pictures, ascent, fieldScale, toEm);
         }
+
+        var made = new (char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[codepoints.Count];
+        Parallel.For(0, codepoints.Count, at =>
+        {
+            made[at] = Glyph(info, codepoints[at], fieldScale);
+        });
+
+        // Kerning, for the pairs the font has
+        foreach (var a in made)
+        {
+            if (a.Id >= KERNED_BELOW) continue;
+            foreach (var b in made)
+            {
+                if (b.Id >= KERNED_BELOW) continue;
+                int kern = StbTrueType.stbtt_GetCodepointKernAdvance(info, a.Id, b.Id);
+                if (kern != 0) Kerning[KerningKey(a.Id, b.Id)] = kern * fieldScale * toEm;
+            }
+        }
+
+        return Shelve(made, ascent, fieldScale, toEm);
     }
 
     // One glyph's field and measures, for BuildFromTrueType. Any thread
@@ -225,15 +232,16 @@ public sealed class DistanceFieldFont
     }
 
     // The glyphs on shelves, tallest first, in a square that grows until everything fits, and where each one went
-    private (int, int, byte[]) Shelve(List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)> pictures, int ascent, float fieldScale, float toEm)
+    private (int, int, byte[]) Shelve((char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[] pictures, int ascent, float fieldScale, float toEm)
     {
-        pictures.Sort((p, q) => q.Height.CompareTo(p.Height));
+        Array.Sort(pictures, static (p, q) => q.Height.CompareTo(p.Height));
         int side = 256;
         while (!Fits(pictures, side, side)) side *= 2;
         int atlasHeight = Pack(pictures, side, out var placed);
         atlasHeight = Math.Max(1, (int)BitOperations.RoundUpToPowerOf2((uint)atlasHeight));
 
         var atlas = new byte[side * atlasHeight];
+        Glyphs.EnsureCapacity(placed.Count);
         foreach (var (picture, x, y) in placed)
         {
             if (picture.Field is { } field)
@@ -257,15 +265,31 @@ public sealed class DistanceFieldFont
         return (side, atlasHeight, atlas);
     }
 
-    private static bool Fits(List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)> pictures, int width, int height)
+    private static bool Fits((char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[] pictures, int width, int height)
     {
-        return Pack(pictures, width, out _) <= height;
+        int x = 1, y = 1, shelf = 0;
+        foreach (var picture in pictures)
+        {
+            if (x + picture.Width + 1 > width)
+            {
+                x = 1;
+                y += shelf + 1;
+                shelf = 0;
+            }
+
+            x += picture.Width + 1;
+            shelf = Math.Max(shelf, picture.Height);
+            if (y + shelf + 1 > height)
+                return false;
+        }
+
+        return y + shelf + 1 <= height;
     }
 
     /// <summary>Helper method to lay the glyphs out on shelves across a width, a texel between them. How tall it came to.</summary>
-    private static int Pack(List<(char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)> pictures, int width, out List<((char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field) Picture, int X, int Y)> placed)
+    private static int Pack((char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field)[] pictures, int width, out List<((char Id, int Width, int Height, int XOff, int YOff, float Advance, byte[]? Field) Picture, int X, int Y)> placed)
     {
-        placed = [];
+        placed = new(pictures.Length);
         int x = 1, y = 1, shelf = 0;
         foreach (var picture in pictures)
         {
@@ -455,8 +479,17 @@ public sealed class DistanceFieldFont
         }
 
         return known.Item2 < 0
-            ? Convert.ToHexString(SHA256.HashData(ContentFiles.ReadAllBytes(path)))[..24]
-            : fontHashes.GetOrAdd(known, _ => Convert.ToHexString(SHA256.HashData(ContentFiles.ReadAllBytes(path)))[..24]);
+            ? HashStream(path)
+            : fontHashes.GetOrAdd(known, _ => HashStream(path));
+    }
+
+    // Helper method to hash a font file directly from its stream so large .ttf/.ttc files skip a managed LOH byte[] copy
+    private static string HashStream(string path)
+    {
+        using Stream stream = ContentFiles.OpenRead(path);
+        Span<byte> hash = stackalloc byte[SHA256.HashSizeInBytes];
+        SHA256.HashData(stream, hash);
+        return Convert.ToHexString(hash[..12]);
     }
 
     private string? CacheFile(string path, int emSize)
@@ -496,6 +529,7 @@ public sealed class DistanceFieldFont
             EmSize = reader.ReadInt32();
 
             int glyphs = reader.ReadInt32();
+            Glyphs.EnsureCapacity(glyphs);
             for (int i = 0; i < glyphs; i++)
             {
                 var glyph = new CharDefinition
@@ -511,13 +545,24 @@ public sealed class DistanceFieldFont
             }
 
             int pairs = reader.ReadInt32();
+            Kerning.EnsureCapacity(pairs);
             for (int i = 0; i < pairs; i++) Kerning[reader.ReadInt32()] = reader.ReadSingle();
 
-            byte[] field = reader.ReadBytes(width * height);
-            if (field.Length != width * height) return false;
+            int byteCount = width * height;
+            if (byteCount <= 0) return false;
+            byte[] rented = ArrayPool<byte>.Shared.Rent(byteCount);
+            try
+            {
+                int read = reader.BaseStream.ReadAtLeast(rented.AsSpan(0, byteCount), byteCount, throwOnEndOfStream: false);
+                if (read != byteCount) return false;
 
-            Texture = Texture.FromPixels((uint)width, (uint)height, field, new TextureDefinition(PixelFormat.R8, Smooth: true));
-            return true;
+                Texture = Texture.FromPixels((uint)width, (uint)height, rented.AsSpan(0, byteCount), new TextureDefinition(PixelFormat.R8, Smooth: true));
+                return true;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
         }
         catch (Exception)
         {

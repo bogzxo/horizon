@@ -263,29 +263,26 @@ public class Button : UIComponent
     /// before. Hovered, focused and enabled are put in by PaintTree, a moving icon (a spinner) says it can't be kept, and a
     /// bump or a squeeze moves it, which isn't kept either. Only a Button itself, one that's more paints what this can't see.
     /// </summary>
-    protected override long PaintVersion
-    {
-        get
-        {
-            if (GetType() != typeof(Button))
-                return -1;
+    protected override long PaintVersion => GetType() == typeof(Button) ? ButtonPaintVersion() : -1;
 
-            var hash = new HashCode();
-            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Label)));
-            hash.Add(Icon);
-            hash.Add(IconColor);
-            hash.Add(LabelColor);
-            hash.Add(Align);
-            hash.Add(LabelScale);
-            hash.Add(style);
-            hash.Add(Chosen);
-            hash.Add(PointerLit);
-            hash.Add(IsPressed);
-            hash.Add(Primary);
-            hash.Add(Danger);
-            hash.Add(Indicator);
-            return hash.ToHashCode() & 0x7FFFFFFF;
-        }
+    /// <summary>The button's own paint state hashed for <see cref="PaintVersion"/>, for subclasses that do not change <see cref="Paint"/>.</summary>
+    protected long ButtonPaintVersion()
+    {
+        var hash = new HashCode();
+        hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Label)));
+        hash.Add(Icon);
+        hash.Add(IconColor);
+        hash.Add(LabelColor);
+        hash.Add(Align);
+        hash.Add(LabelScale);
+        hash.Add(style);
+        hash.Add(Chosen);
+        hash.Add(PointerLit);
+        hash.Add(IsPressed);
+        hash.Add(Primary);
+        hash.Add(Danger);
+        hash.Add(Indicator);
+        return hash.ToHashCode() & 0x7FFFFFFF;
     }
 
     // The fill of a primary button, the accent, or the skin's error red for a dangerous one
@@ -338,7 +335,10 @@ public class Button : UIComponent
 
         // A button that is lit from the start hasn't changed, there is nothing to bump for.
         if (lit && !wasLit && updated && Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        {
             this.Punch(0.05f * Give, MotionTime(0.2f));
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
 
         wasLit = lit;
         updated = true;
@@ -347,7 +347,10 @@ public class Button : UIComponent
     protected internal override void OnClick()
     {
         if (Animated && Give > 0.0f && MotionTime(0.2f) > 0.0f)
+        {
             this.Punch(-0.08f * Give, MotionTime(0.2f));
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
+        }
 
         OnPressed?.Invoke();
         InvokeScript(pressedHandler);

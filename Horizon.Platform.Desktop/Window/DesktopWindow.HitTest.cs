@@ -16,8 +16,98 @@ namespace Horizon.Platform.Desktop;
 // and what is on it as it paints (SetDragArea). A press on the bar moves the window, on an edge resizes it, both by the
 // desktop the way its own windows go (snapping, the edges of the screen, a maximised window coming back to its size), on
 // X11 and a Mac as well. A double click on the bar is the UI's, it maximises the window or brings it back.
+
+/// <summary>
+/// Tracks title-bar hit-test candidates and double-click timing for SDL custom-frame windows.
+/// On Wayland, SDL invokes the hit-test callback on every pointer enter/motion event as well as on button presses;
+/// motion events immediately push <c>SDL_MOUSEMOTION</c> through the event watch, which cancels the pending candidate
+/// before the event pump finishes.
+/// </summary>
+internal struct SdlBarClickTracker
+{
+    internal const int DoubleClickMs = 450;
+    internal const int DoubleClickSlop = 4;
+
+    private bool hasBarPress;
+    private long barPressedAt;
+    private Point barPressedWhere;
+
+    private bool pending;
+    private long pendingAt;
+    private Point pendingWhere;
+
+    /// <summary>Whether a title-bar hit-test candidate is currently awaiting the end of the SDL event pump.</summary>
+    public readonly bool HasPending => pending;
+
+    /// <summary>Records a Wayland title-bar hit-test callback as a pending press candidate.</summary>
+    public void NoteBarHitTest(long now, Point at)
+    {
+        pending = true;
+        pendingAt = now;
+        pendingWhere = at;
+    }
+
+    /// <summary>Cancels any pending hit-test candidate because SDL followed it with a pointer-motion event.</summary>
+    public void CancelPendingMotion() => pending = false;
+
+    /// <summary>Clears any pending candidate and prior click state (e.g. after a window move or resize).</summary>
+    public void Reset()
+    {
+        pending = false;
+        hasBarPress = false;
+        barPressedAt = 0;
+        barPressedWhere = default;
+    }
+
+    /// <summary>
+    /// Commits a pending hit-test candidate that was not cancelled by pointer motion.
+    /// Returns <see langword="true"/> if it completes a double-click on the title bar.
+    /// </summary>
+    public bool FlushPending()
+    {
+        if (!pending)
+            return false;
+
+        pending = false;
+        return RecordPress(pendingAt, pendingWhere);
+    }
+
+    /// <summary>
+    /// Records a confirmed left-button press on the title bar.
+    /// Returns <see langword="true"/> if it completes a double-click within <see cref="DoubleClickMs"/> and <see cref="DoubleClickSlop"/>.
+    /// </summary>
+    public bool RecordPress(long now, Point at)
+    {
+        long elapsed = now - barPressedAt;
+        bool again = hasBarPress
+            && elapsed >= 0
+            && elapsed < DoubleClickMs
+            && Math.Abs(at.X - barPressedWhere.X) <= DoubleClickSlop
+            && Math.Abs(at.Y - barPressedWhere.Y) <= DoubleClickSlop;
+
+        if (again)
+        {
+            hasBarPress = false;
+            barPressedAt = 0;
+            barPressedWhere = default;
+            return true;
+        }
+
+        hasBarPress = true;
+        barPressedAt = now;
+        barPressedWhere = at;
+        return false;
+    }
+}
+
 public sealed partial class DesktopWindow
 {
+    private const uint SDL_WINDOWEVENT = 0x200;
+    private const uint SDL_MOUSEMOTION = 0x400;
+    private const byte SDL_WINDOWEVENT_MOVED = 4;
+    private const byte SDL_WINDOWEVENT_RESIZED = 5;
+    private const byte SDL_WINDOWEVENT_SIZE_CHANGED = 6;
+
     // Where the title bar is and what on it isn't the bar, swapped whole so the thread that asks never reads half of one
     private sealed record FrameArea(RectangleF Bar, RectangleF[] Holes);
 
@@ -32,18 +122,12 @@ public sealed partial class DesktopWindow
 
     // Whether SDL asks what the window is where it's pressed, which is then what moves and resizes it
     private bool hitTesting;
+    private bool hitTestUsesWayland;
+    private bool hitTestEventWatchInstalled;
 
-    // The last press on the bar (Environment.TickCount64) and where, and whether the button was down when last asked
-    private long barPressedAt;
-    private Point barPressedWhere;
+    // Tracks confirmed title-bar clicks (and pending Wayland hit-test candidates) for double-click maximize
+    private SdlBarClickTracker barClickTracker;
     private bool buttonWasDown;
-
-    // When SDL last asked (Environment.TickCount64), and how close behind the last an ask is the pointer moving rather than a press
-    private long lastAsked;
-    private const long MOVING_ASKS_MS = 40;
-
-    // A second press on the bar this soon (and near) after the first is a double click
-    private const int DOUBLE_CLICK_MS = 450, DOUBLE_CLICK_SLOP = 4;
 
     /// <summary>
     /// Says where the title bar the UI draws is, in the window's pixels (the pointer's), and what on it isn't the bar (its
@@ -78,10 +162,44 @@ public sealed partial class DesktopWindow
             return;
 
         hitTested = this;
+        hitTestUsesWayland = !OperatingSystem.IsMacOS() && !CanPlaceWindow;
+        barClickTracker.Reset();
         hitTesting = SdlProvider.SDL.Value.SetWindowHitTest(window, new PfnHitTest(&HitTest), null) == 0;
-        if (!hitTesting)
+        if (hitTesting)
+        {
+            SdlProvider.SDL.Value.AddEventWatch(new PfnEventFilter(&HitTestEventWatch), null);
+            hitTestEventWatchInstalled = true;
+        }
+        else
+        {
             Logging.Log.Warning($"[{Name}] SDL can't be asked to move the window, it is moved by hand.");
+        }
+    }
 
+    /// <summary>Removes the SDL hit-test event watch and clears hit-test state. Thread of the window.</summary>
+    private unsafe void ReleaseHitTesting()
+    {
+        if (hitTestEventWatchInstalled)
+        {
+            hitTestEventWatchInstalled = false;
+            SdlProvider.SDL.Value.DelEventWatch(new PfnEventFilter(&HitTestEventWatch), null);
+        }
+
+        barClickTracker.Reset();
+        hitTesting = false;
+        hitTestUsesWayland = false;
+        if (ReferenceEquals(hitTested, this))
+            hitTested = null;
+    }
+
+    /// <summary>
+    /// Commits any Wayland title-bar hit-test candidate that survived the SDL event pump without an accompanying
+    /// pointer-motion event, toggling maximize when it completes a double-click. Thread of the window.
+    /// </summary>
+    private void FlushHitTestPress()
+    {
+        if (hitTesting && hitTestUsesWayland && barClickTracker.FlushPending())
+            ToggleMaximized();
     }
 
     /// <summary>
@@ -118,25 +236,44 @@ public sealed partial class DesktopWindow
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static unsafe int HitTestEventWatch(void* userdata, Event* e)
+    {
+        try
+        {
+            if (hitTested is not { } window || e == null)
+                return 1;
+
+            if (e->Type == SDL_MOUSEMOTION)
+                window.barClickTracker.CancelPendingMotion();
+            else if (e->Type == SDL_WINDOWEVENT
+                && e->Window.Event is SDL_WINDOWEVENT_MOVED or SDL_WINDOWEVENT_RESIZED or SDL_WINDOWEVENT_SIZE_CHANGED)
+                window.barClickTracker.Reset();
+        }
+        catch (Exception)
+        {
+            // Never let a managed exception unwind back into SDL's C event loop.
+        }
+
+        return 1;
+    }
+
     // What of the window a point is, an edge (unless it's maximised), the bar, or the UI's
     private unsafe HitTestResult WhatIsAt(Point at)
     {
-        // A Mac and X11 ask as the pointer moves as well (for the cursor over an edge), so they're asked whether the button
-        // is down, which they know. Taking every ask for a press had the pointer moving slowly along the bar on X11 count
-        // as a double click over and over, the window maximised and back again without a button touched. Wayland asks
-        // before SDL has the button down itself, so there an ask is a press unless it comes hard on the heels of the last
-        // one, the way the asks of a pointer moving do, nobody presses twice in forty milliseconds
-        bool pressed;
+        // On X11 (and macOS), SDL knows the current global mouse button state when the hit-test runs, so we can check
+        // directly whether the left button just went down. On Wayland, SDL invokes the hit-test callback during both
+        // pointer motion/enter and button presses before updating button state; pointer motion immediately pushes
+        // SDL_MOUSEMOTION through HitTestEventWatch to cancel the pending candidate, whereas a real left-button press
+        // survives to FlushHitTestPress after DoEvents().
         long asked = Environment.TickCount64;
-        if (OperatingSystem.IsMacOS() || CanPlaceWindow)
+        bool pressed = false;
+        if (!hitTestUsesWayland)
         {
             bool down = (SdlProvider.SDL.Value.GetGlobalMouseState((int*)null, (int*)null) & 1) != 0;
             pressed = down && !buttonWasDown;
             buttonWasDown = down;
         }
-        else
-            pressed = asked - lastAsked > MOVING_ASKS_MS;
-        lastAsked = asked;
 
         var size = _window.Size;
         if (!maximized && !IsFullscreen())
@@ -162,19 +299,22 @@ public sealed partial class DesktopWindow
         if (!OnBar(frameArea, PointerToPixels(new System.Numerics.Vector2(at.X, at.Y))))
             return HitTestResult.Normal;
 
-        // The second press of a double click goes to the UI's title bar, which maximises the window or brings it back
-        if (pressed)
+        if (hitTestUsesWayland)
         {
-            long now = Environment.TickCount64;
-            bool again = now - barPressedAt < DOUBLE_CLICK_MS
-                && Math.Abs(at.X - barPressedWhere.X) <= DOUBLE_CLICK_SLOP && Math.Abs(at.Y - barPressedWhere.Y) <= DOUBLE_CLICK_SLOP;
-            barPressedAt = again ? 0 : now;
-            barPressedWhere = at;
-            if (again)
-            {
+            // If an earlier bar hit-test in this same pump was never cancelled by SDL_MOUSEMOTION, commit it first.
+            if (barClickTracker.HasPending && barClickTracker.FlushPending())
                 ToggleMaximized();
-                return HitTestResult.Normal;
-            }
+
+            barClickTracker.NoteBarHitTest(asked, at);
+            WakeSdl();
+            return HitTestResult.Draggable;
+        }
+
+        // The second press of a double click maximises the window or brings it back
+        if (pressed && barClickTracker.RecordPress(asked, at))
+        {
+            ToggleMaximized();
+            return HitTestResult.Normal;
         }
 
         return HitTestResult.Draggable;

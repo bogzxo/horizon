@@ -12,7 +12,9 @@ public enum InputEventKind
     /// <summary>A two finger double tap of a trackpad (smart zoom).</summary>
     SmartMagnify,
     /// <summary>A multi finger swipe of a trackpad, <see cref="InputEvent.SwipeX"/> is 1 for left and -1 for right.</summary>
-    Swipe
+    Swipe,
+    /// <summary>An IME preedit composition update, <see cref="InputEvent.Text"/> is the marked text.</summary>
+    Composition
 }
 public enum PointerKind { Mouse, Touch, Pen }
 
@@ -52,6 +54,10 @@ public readonly record struct InputEvent
     public float Magnification { get; init; }
     /// <summary>For <see cref="InputEventKind.Swipe"/>: 1 for a swipe to the left, -1 to the right.</summary>
     public int SwipeX { get; init; }
+    /// <summary>For <see cref="InputEventKind.Composition"/>: cursor offset within <see cref="Text"/>.</summary>
+    public int CompositionCursor { get; init; }
+    /// <summary>For <see cref="InputEventKind.Composition"/>: selection length within <see cref="Text"/>.</summary>
+    public int CompositionLength { get; init; }
     public GamepadDevice? Gamepad { get; init; }
     public GamepadSnapshot GamepadState { get; init; }
 
@@ -64,6 +70,13 @@ public readonly record struct InputEvent
     public static InputEvent Typed(string text) => new()
     {
         Kind = InputEventKind.Text, Text = text, Timestamp = Stopwatch.GetTimestamp()
+    };
+
+    public static InputEvent Composition(string text, int cursor, int length) => new()
+    {
+        Kind = InputEventKind.Composition, Text = text ?? string.Empty,
+        CompositionCursor = cursor, CompositionLength = length,
+        Timestamp = Stopwatch.GetTimestamp()
     };
 
     public static InputEvent Pointer(InputEventKind kind, Vector2 position, PointerKind pointerKind = PointerKind.Mouse,

@@ -441,6 +441,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
     private void HandleEvents()
     {
         _window.DoEvents();
+        FlushHitTestPress();
         HandOnFileDrops();
         host.SampleGamepads();
         Events.EventsProcessed();
@@ -475,8 +476,7 @@ public sealed partial class DesktopWindow : IPlatformWindow
         StopListeningForFileDrops();
         StopListening();
         ReleaseFrame();
-        if (ReferenceEquals(hitTested, this))
-            hitTested = null;
+        ReleaseHitTesting();
         if (OperatingSystem.IsMacOS())
             MacMouseDownWatch.Clear();
         _window.Reset();

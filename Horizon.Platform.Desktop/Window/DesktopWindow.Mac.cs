@@ -22,6 +22,9 @@ public sealed partial class DesktopWindow
     /// <summary>Whether the system draws the traffic lights over the UI's title bar, and zooms and drags the window. From any thread.</summary>
     public bool NativeChrome => OperatingSystem.IsMacOS() && chrome is { Titled: true };
 
+    /// <summary>Maximum refresh rate of the macOS display holding this window (120 on ProMotion Macs, 60 on standard displays, 0 if unavailable). From any thread.</summary>
+    public int MacScreenMaxFps => OperatingSystem.IsMacOS() && chrome is { } own ? own.ScreenMaxFramesPerSecond() : 0;
+
     /// <summary>What the traffic lights cover of the window's top left corner, in the window's pixels, nothing in fullscreen. From any thread.</summary>
     public PlatformFrameInsets FrameInsets
     {
@@ -54,6 +57,8 @@ public sealed partial class DesktopWindow
     [System.Runtime.Versioning.SupportedOSPlatform("macos")]
     private void SetUpMacChrome()
     {
+        DesktopPower.EnsureInitialized();
+
         nint cocoa = CocoaHandle;
         if (!MacChromeWanted || !CustomFrame || cocoa == 0)
             return;

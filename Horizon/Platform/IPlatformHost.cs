@@ -35,6 +35,9 @@ public interface IPlatformHost : IDisposable
     /// <summary>The system's light or dark appearance and accent colour, null where it says none (everywhere but a Mac).</summary>
     IPlatformAppearance? Appearance => null;
 
+    /// <summary>The system's native open, save and folder dialogs (a Mac's), null where there are none, see <see cref="PlatformFeatures.NativeDialogs"/>.</summary>
+    IPlatformDialogs? Dialogs => null;
+
     /// <summary>The desktop window, null where there is none.</summary>
     IPlatformWindow? Window { get; }
 

@@ -35,6 +35,12 @@ public interface IPlatformInput : IInputSource
     /// where the keyboard is a real one (a desktop). From any thread, done on the platform's.
     /// </summary>
     void SetTextInputActive(bool active) { }
+
+    /// <summary>
+    /// Tells the platform's IME where the text caret is (in window points) so its candidate window opens beside it.
+    /// From any thread, done on the platform's.
+    /// </summary>
+    void SetTextInputRect(int x, int y, int width, int height) { }
 }
 
 /// <summary>

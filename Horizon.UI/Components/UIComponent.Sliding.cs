@@ -112,7 +112,11 @@ public abstract partial class UIComponent
         slideProgress = wanted ? MathF.Min(1.0f, slideProgress + step) : MathF.Max(0.0f, slideProgress - step);
 
         if (slideProgress is > 0.0f and < 1.0f)
+        {
+            // Keep full tick and frame rate while the drawer is actively sliding in or out.
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
             return;
+        }
 
         slideWanted = null;
         Visible = wanted;

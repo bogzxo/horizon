@@ -1,4 +1,5 @@
 ﻿using Horizon.Content;
+using Horizon.Engine;
 using Horizon.Rendering;
 using System.Numerics;
 
@@ -51,6 +52,16 @@ public class TextBox : UIComponent
     private float blink;
 
     private string text = string.Empty;
+    private string compositionText = string.Empty;
+    private int compositionCursor;
+
+    /// <summary>Transient IME preedit text shown inline at the caret before commit; does not mutate <see cref="Text"/>.</summary>
+    public string CompositionText => compositionText;
+
+    /// <summary>Caret offset within <see cref="CompositionText"/>.</summary>
+    public int CompositionCursor => compositionCursor;
+
+    protected override int CompositionPaintStamp => compositionText.Length == 0 ? 0 : HashCode.Combine(compositionText, compositionCursor);
 
     // Where typing happens, and where the selection started. Everything between the two is selected. Both count
     // characters from the start of the text
@@ -366,6 +377,9 @@ public class TextBox : UIComponent
         // The caret stays lit while typing.
         blink = 0.0f;
 
+        if (!ReadOnly && IsShownInHierarchy)
+            GameEngine.Instance?.WindowManager?.NoteInput();
+
         TextChanged();
 
         OnChanged?.Invoke(Text);
@@ -376,8 +390,27 @@ public class TextBox : UIComponent
     protected virtual void TextChanged()
     { }
 
+    public override void OnComposition(string text, int cursor, int length)
+    {
+        if (ReadOnly)
+            return;
+
+        compositionText = text ?? string.Empty;
+        compositionCursor = Math.Clamp(cursor, 0, compositionText.Length);
+        blink = 0.0f;
+    }
+
+    public override void OnFocusLost()
+    {
+        compositionText = string.Empty;
+        compositionCursor = 0;
+    }
+
     protected internal override void OnTextInput(char character)
     {
+        compositionText = string.Empty;
+        compositionCursor = 0;
+
         if (TakeKey?.Invoke(character) == true)
             return;
 
@@ -596,6 +629,11 @@ public class TextBox : UIComponent
 
         bool enabled = EnabledInHierarchy;
         bool focused = enabled && IsFocused;
+        if (!focused && compositionText.Length > 0)
+        {
+            compositionText = string.Empty;
+            compositionCursor = 0;
+        }
         if (focused)
             ShowingFocus();
         Vector4 tint = enabled ? Vector4.One : skin.DisabledTint;
@@ -688,20 +726,31 @@ public class TextBox : UIComponent
         // keyboard said nothing about what it was for. Too long for the box and not being typed in, its end is shown with
         // dots in front, where the path along the top of a file dialog started on half a letter
         // A box with something said over it (a path's crumbs) shows its text only while it's typed in
+        bool hasComposition = focused && compositionText.Length > 0;
         bool shown = focused || !TextWhileTyped;
         if (shown && !empty && !focused && width > content.Width)
             list.Text(Tail(skin, scale, content.Width - 4.0f), content, Origin.Left, scale, ink * tint, markup: false);
         else if (shown && !empty)
             list.Text(Shown, line, Origin.Left, scale, ink * tint, markup: false);
-        else if (shown)
+        else if (shown && !hasComposition)
             list.Text(Resolve(Placeholder), line, Origin.Left, scale, PlaceholderInk(skin, ink) * tint);
+
+        if (hasComposition)
+        {
+            float compX = line.Min.X + caretX;
+            float compWidth = skin.Font.Measure(compositionText, scale, markup: false).X;
+            var compRect = new UIRect(new Vector2(compX, content.Min.Y), new Vector2(compX + compWidth + 4.0f, content.Max.Y));
+            list.Text(compositionText, compRect, Origin.Left, scale, ink * tint, markup: false);
+            list.Rect(new UIRect(new Vector2(compX, content.Min.Y + 1.0f), new Vector2(compX + MathF.Max(compWidth, 4.0f), content.Min.Y + 2.5f)), skin.HighlightColor);
+        }
         list.PopClip();
 
-        if (focused && blink < BLINK_INTERVAL)
+        if (focused)
         {
-            // In front of the placeholder of an empty box, not over its first letter
-            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X) - (empty ? 3.0f : 0.0f);
-            list.Rect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)), ink);
+            float x = Math.Clamp(line.Min.X + caretX, content.Min.X, content.Max.X) - (empty && !hasComposition ? 3.0f : 0.0f);
+            ReportTextInputRect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)));
+            if (blink < BLINK_INTERVAL)
+                list.Rect(new UIRect(new Vector2(x, content.Min.Y), new Vector2(x + 2.0f, content.Max.Y)), ink);
         }
 
         if (!focused)

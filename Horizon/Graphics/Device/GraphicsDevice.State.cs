@@ -62,6 +62,11 @@ public sealed unsafe partial class GraphicsDevice
     private uint viewportWidth, viewportHeight;
     private bool viewportDirty = true;
 
+    private bool customScissor;
+    private int scissorX, scissorY;
+    private uint scissorWidth, scissorHeight;
+    private bool scissorDirty = true;
+
     private Pipeline currentPipeline;
     private bool renderingActive;
     private RenderTarget? renderingTarget;
@@ -76,7 +81,7 @@ public sealed unsafe partial class GraphicsDevice
         buffersDirty = imagesDirty = offsetsDirty = true;
         setsBoundFor = (PipelineBindPoint)(-1);
         imagesPushedVersion[0] = imagesPushedVersion[1] = -1;
-        dynamicDirty = viewportDirty = true;
+        dynamicDirty = viewportDirty = scissorDirty = true;
     }
 
     /* What draws */
@@ -312,6 +317,29 @@ public sealed unsafe partial class GraphicsDevice
         viewportDirty = true;
     }
 
+    /// <summary>Clips what the next draws write to a box of the bound target, in pixels from its top left.</summary>
+    public void SetScissor(int x, int y, uint width, uint height)
+    {
+        if (customScissor && scissorX == x && scissorY == y && scissorWidth == width && scissorHeight == height)
+            return;
+
+        customScissor = true;
+        scissorX = x;
+        scissorY = y;
+        scissorWidth = width;
+        scissorHeight = height;
+        scissorDirty = true;
+    }
+
+    /// <summary>Clears any scissor set with <see cref="SetScissor"/> so draws clip to the viewport again.</summary>
+    public void ResetScissor()
+    {
+        if (!customScissor) return;
+
+        customScissor = false;
+        scissorDirty = true;
+    }
+
     /* State the renderers set around their draws */
 
     /// <summary>Whether what is drawn is mixed with what is there (the way the mode says) or simply replaces it.</summary>
@@ -399,16 +427,34 @@ public sealed unsafe partial class GraphicsDevice
             Vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, pipeline);
             currentPipeline = pipeline;
             Statistics.Counting.PipelineBinds++;
-            dynamicDirty = viewportDirty = true;
+            dynamicDirty = viewportDirty = scissorDirty = true;
         }
 
         if (viewportDirty)
         {
             var viewport = new Viewport(viewportX, viewportY, viewportWidth, viewportHeight, 0.0f, 1.0f);
-            var scissor = new Rect2D(new Offset2D(viewportX, viewportY), new Extent2D(viewportWidth, viewportHeight));
             Vk.CmdSetViewport(cmd, 0, 1, in viewport);
-            Vk.CmdSetScissor(cmd, 0, 1, in scissor);
             viewportDirty = false;
+            scissorDirty = true;
+        }
+
+        if (scissorDirty)
+        {
+            Rect2D scissor;
+            if (!customScissor)
+            {
+                scissor = new Rect2D(new Offset2D(viewportX, viewportY), new Extent2D(viewportWidth, viewportHeight));
+            }
+            else
+            {
+                int x0 = Math.Clamp(scissorX, viewportX, viewportX + (int)viewportWidth);
+                int y0 = Math.Clamp(scissorY, viewportY, viewportY + (int)viewportHeight);
+                int x1 = (int)Math.Clamp((long)scissorX + scissorWidth, x0, (long)viewportX + viewportWidth);
+                int y1 = (int)Math.Clamp((long)scissorY + scissorHeight, y0, (long)viewportY + viewportHeight);
+                scissor = new Rect2D(new Offset2D(x0, y0), new Extent2D((uint)(x1 - x0), (uint)(y1 - y0)));
+            }
+            Vk.CmdSetScissor(cmd, 0, 1, in scissor);
+            scissorDirty = false;
         }
 
         if (dynamicDirty)

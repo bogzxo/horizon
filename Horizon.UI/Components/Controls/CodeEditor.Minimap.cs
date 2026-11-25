@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using Horizon.UI.Drawing;
 using Horizon.UI.Scripting;
@@ -42,6 +43,72 @@ public partial class CodeEditor
     public IReadOnlyList<float> MinimapRowTops => minimapRowTops;
 
     private readonly List<float> minimapRowTops = [];
+
+    /// <summary>A precomputed minimap bar quad and its faded colour, cached in a flat contiguous list.</summary>
+    private readonly record struct MinimapRun(UIRect Rect, Vector4 Colour);
+
+    /// <summary>A precomputed TODO or FIXME mark on a visible minimap row.</summary>
+    private readonly record struct MinimapTodoMark(int RowIndex, bool Urgent);
+
+    private readonly record struct MinimapCacheKey(
+        int DocumentVersion,
+        int ColouredVersion,
+        List<SyntaxSpan>[]? Spans,
+        UISyntaxColors? Colors,
+        int LanguagesVersion,
+        int ColorsFingerprint,
+        bool Highlight,
+        bool HighlightTodos,
+        int RowsCount,
+        int FoldsChanged,
+        bool WordWrap,
+        float RowsWidth,
+        float RowsScale,
+        int RowsShapes,
+        int RowsScrolled,
+        int RowsInlays,
+        int RowsLenses,
+        int? RowsPredicted,
+        int RowsBlocks,
+        int First,
+        int Last,
+        int ScrolledRows,
+        float Left,
+        float Top,
+        float Row,
+        float Gap,
+        float Character,
+        float Pixels,
+        float ScreenTop);
+
+    private readonly List<MinimapRun> minimapRuns = [];
+    private readonly List<MinimapTodoMark> minimapTodoMarks = [];
+    private readonly List<MinimapWord> minimapWordScratch = [];
+    private MinimapCacheKey minimapCacheKey;
+    private bool minimapCacheValid;
+    private bool minimapLastWordsUncoloured;
+
+    internal int MinimapCacheHits { get; private set; }
+    internal int MinimapCacheMisses { get; private set; }
+    internal void ClearMinimapCache()
+    {
+        minimapCacheValid = false;
+        minimapSlotGen++;
+    }
+
+    // Small direct-mapped per-line reference cache so typing/scrolling avoids hashing 300+ unchanged line strings every paint.
+    private struct MinimapSlot
+    {
+        public int Generation;
+        public string? Text;
+        public MinimapWord[]? Words;
+        public sbyte Todo;
+        public bool HasTodo;
+    }
+
+    private const int MINIMAP_SLOTS = 512;
+    private readonly MinimapSlot[] minimapSlots = new MinimapSlot[MINIMAP_SLOTS];
+    private int minimapSlotGen = 1;
 
     // Where the slider was taken from, as a share of the slider's height, while it's dragged
     private bool draggingMinimap;
@@ -122,9 +189,9 @@ public partial class CodeEditor
         bool fits = rows.Count * lineHeight <= map.Height;
 
         MinimapRowPixels = (int)MathF.Round(row * pixels);
-        MinimapTop = ScreenY(top);
+        float screenTop = ScreenY(top);
+        MinimapTop = screenTop;
         MinimapScrollPixels = scrolledRows * MinimapRowPixels;
-        minimapRowTops.Clear();
 
         // Its rows stand for other lines from one tick to the next as it scrolls, nothing of it is blended between ticks
         list.BeginPart(PART_MINIMAP);
@@ -135,51 +202,119 @@ public partial class CodeEditor
         // The words of a line are worked out once and kept by its text, typing into a big file paints a few hundred rows
         // of these every tick and going through every span of every row again was most of a tick. Kept across colourings,
         // which every key starts, and let go of when the theme's colours change
-        if (!ReferenceEquals(minimapColoursFor, colors))
+        if (!ReferenceEquals(minimapColoursFor, colors) || minimapHighlightFor != Highlight)
         {
             minimapWords.Clear();
             minimapTodos.Clear();
             minimapColoursFor = colors;
+            minimapHighlightFor = Highlight;
             minimapWordsLast = null;
+            minimapCacheValid = false;
+            minimapSlotGen++;
         }
 
         // A gap of a pixel between rows once they're three or more tall
         float gap = UIMinimap.Gap(row, pixels);
         float left = OnPixel(new Vector2(map.Min.X + 4.0f, 0.0f)).X;
 
-        // Where the row before ended, in its line and in columns, a wrapped line's rows each counted on from there. Every
-        // row of a line of a fifth of a megabyte counted its columns from the start of the line, and again for every word
-        int countedLine = -1, countedAt = 0, countedColumn = 0;
-        for (int index = first; index <= last; index++)
+        var key = new MinimapCacheKey(
+            document.Version,
+            coloured,
+            spans,
+            colors,
+            CodeLanguages.Version,
+            colors.Fingerprint(),
+            Highlight,
+            HighlightTodos,
+            rows.Count,
+            rowsFor.Folds,
+            rowsFor.Wrap,
+            rowsFor.Width,
+            rowsFor.Scale,
+            rowsFor.Shapes,
+            rowsFor.Scrolled,
+            rowsFor.Inlays,
+            rowsFor.Lenses,
+            rowsFor.Predicted,
+            rowsFor.Blocks,
+            first,
+            last,
+            scrolledRows,
+            left,
+            top,
+            row,
+            gap,
+            character,
+            pixels,
+            screenTop);
+
+        if (minimapCacheValid && !longReading && minimapCacheKey == key)
         {
-            CodeRow shown = rows[index];
-            float rowTop = top - (index - scrolledRows) * row;
-            minimapRowTops.Add(ScreenY(rowTop));
-
-            // A lens row is a gap in the minimap, its line is drawn on the row after it, and so is a prediction's row
-            if (shown.Virtual)
-                continue;
-            string text = document.LineAt(shown.Line);
-            MinimapWord[] words = WordsOf(shown.Line, text, colors);
-
-            // A wrapped row starts its columns again where it starts in the line
-            if (countedLine != shown.Line || countedAt > shown.Start)
-                (countedLine, countedAt, countedColumn) = (shown.Line, 0, 0);
-            int rowColumn = countedColumn + Column(text, countedAt, shown.Start);
-            int endColumn = shown.End >= text.Length ? int.MaxValue : rowColumn + Column(text, shown.Start, shown.End);
-            (countedAt, countedColumn) = (Math.Min(shown.End, text.Length), endColumn == int.MaxValue ? 0 : endColumn);
-            if (endColumn == int.MaxValue)
-                countedLine = -1;
-
-            // From the first word that reaches into the row, they're in the order of the line
-            for (int w = FirstWordTo(words, shown.Start); w < words.Length && words[w].Start < shown.End; w++)
-            {
-                MinimapWord word = words[w];
-                int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
-                int to = Math.Min(word.EndColumn, endColumn) - rowColumn;
-                UIMinimap.Bar(list, left, character, rowTop, row, gap, from, to, MINIMAP_COLUMNS, word.Colour);
-            }
+            MinimapCacheHits++;
         }
+        else
+        {
+            MinimapCacheMisses++;
+            minimapRowTops.Clear();
+            minimapRuns.Clear();
+            minimapTodoMarks.Clear();
+
+            bool cacheable = !longReading;
+
+            // Where the row before ended, in its line and in columns, a wrapped line's rows each counted on from there. Every
+            // row of a line of a fifth of a megabyte counted its columns from the start of the line, and again for every word
+            int countedLine = -1, countedAt = 0, countedColumn = 0;
+            for (int index = first; index <= last; index++)
+            {
+                CodeRow shown = rows[index];
+                float rowTop = top - (index - scrolledRows) * row;
+                minimapRowTops.Add(ScreenY(rowTop));
+
+                // A lens row is a gap in the minimap, its line is drawn on the row after it, and so is a prediction's row
+                if (shown.Virtual)
+                    continue;
+
+                string text = document.LineAt(shown.Line);
+                MinimapWord[] words = WordsOf(shown.Line, text, colors);
+                if (minimapLastWordsUncoloured)
+                    cacheable = false;
+
+                // A wrapped row starts its columns again where it starts in the line
+                if (countedLine != shown.Line || countedAt > shown.Start)
+                    (countedLine, countedAt, countedColumn) = (shown.Line, 0, 0);
+                int rowColumn = countedColumn + Column(text, countedAt, shown.Start);
+                int endColumn = shown.End >= text.Length ? int.MaxValue : rowColumn + Column(text, shown.Start, shown.End);
+                (countedAt, countedColumn) = (Math.Min(shown.End, text.Length), endColumn == int.MaxValue ? 0 : endColumn);
+                if (endColumn == int.MaxValue)
+                    countedLine = -1;
+
+                // From the first word that reaches into the row, they're in the order of the line
+                for (int w = FirstWordTo(words, shown.Start); w < words.Length && words[w].Start < shown.End; w++)
+                {
+                    MinimapWord word = words[w];
+                    int from = Math.Max(word.StartColumn, rowColumn) - rowColumn;
+                    if (from >= MINIMAP_COLUMNS)
+                        break;
+                    int to = Math.Min(Math.Min(word.EndColumn, endColumn) - rowColumn, MINIMAP_COLUMNS);
+                    if (to > from)
+                    {
+                        var rect = new UIRect(
+                            new Vector2(left + from * character, rowTop - row + gap),
+                            new Vector2(left + to * character, rowTop));
+                        minimapRuns.Add(new MinimapRun(rect, word.Colour with { W = word.Colour.W * 0.42f }));
+                    }
+                }
+
+                if (HighlightTodos && shown.Start == 0 && TodoKindOf(shown.Line) is var todo and >= 0)
+                    minimapTodoMarks.Add(new MinimapTodoMark(index, todo > 0));
+            }
+
+            minimapCacheKey = key;
+            minimapCacheValid = cacheable && !longReading;
+        }
+
+        foreach (ref readonly MinimapRun run in CollectionsMarshal.AsSpan(minimapRuns))
+            list.Rect(run.Rect, run.Colour);
 
         PaintMinimapMarks(list, skin, map, row, scrolledRows, first, last);
 
@@ -207,6 +342,7 @@ public partial class CodeEditor
     // Whether a line has a TODO (0) or a FIXME (1) or neither (-1), by its text, kept like its words
     private readonly Dictionary<string, sbyte> minimapTodos = new(StringComparer.Ordinal);
     private object? minimapColoursFor;
+    private bool minimapHighlightFor = true;
 
     /// <summary>
     /// Helper method for the words of a line, every run of what isn't white space one bar, the colour of its first piece
@@ -214,13 +350,26 @@ public partial class CodeEditor
     /// </summary>
     private MinimapWord[] WordsOf(int line, string text, UISyntaxColors colors)
     {
+        minimapLastWordsUncoloured = false;
+
         // The line of the row before again, every row of a wrapped line asks for it, by its text it was hashed whole each
         // time. Words not kept (the line isn't coloured yet) are only for the rows of this paint
         if (ReferenceEquals(text, minimapWordsText) && minimapWordsLast is { } last && (minimapWordsKept || minimapWordsPaint == flowPaint))
             return last;
 
+        ref MinimapSlot slot = ref minimapSlots[line & (MINIMAP_SLOTS - 1)];
+        if (slot.Generation == minimapSlotGen && ReferenceEquals(slot.Text, text) && slot.Words is { } slotted)
+        {
+            (minimapWordsText, minimapWordsLast, minimapWordsKept) = (text, slotted, true);
+            return slotted;
+        }
+
         if (minimapWords.TryGetValue(text, out MinimapWord[]? known))
         {
+            slot.Generation = minimapSlotGen;
+            slot.Text = text;
+            slot.Words = known;
+            slot.HasTodo = false;
             (minimapWordsText, minimapWordsLast, minimapWordsKept) = (text, known, true);
             return known;
         }
@@ -229,7 +378,8 @@ public partial class CodeEditor
         // through all of it again every paint until the colouring came back, a second a paint for a fifth of a megabyte.
         // Those are only for this paint, the colouring may yet start the line otherwise
         List<SyntaxSpan>? coloured = ColoursOf(line, text), spans = coloured ?? FreshColours(line, text);
-        var words = new List<MinimapWord>();
+        minimapLastWordsUncoloured = coloured is null && spans is null && Highlight && text.Length > 0;
+        minimapWordScratch.Clear();
         int at = 0, column = 0, span = 0;
         while (at < text.Length)
         {
@@ -242,10 +392,10 @@ public partial class CodeEditor
                 column++;
             }
             if (at > start)
-                words.Add(new MinimapWord(start, at, startColumn, column, Faded(KindAt(spans, ref span, start, at), colors)));
+                minimapWordScratch.Add(new MinimapWord(start, at, startColumn, column, Faded(KindAt(spans, ref span, start, at), colors)));
         }
 
-        MinimapWord[] made = [.. words];
+        MinimapWord[] made = minimapWordScratch.Count == 0 ? [] : [.. minimapWordScratch];
 
         // Lines not coloured yet aren't kept, they'd stay plain once they are
         if (coloured is not null)
@@ -253,6 +403,10 @@ public partial class CodeEditor
             if (minimapWords.Count > 20000)
                 minimapWords.Clear();
             minimapWords[text] = made;
+            slot.Generation = minimapSlotGen;
+            slot.Text = text;
+            slot.Words = made;
+            slot.HasTodo = false;
         }
 
         (minimapWordsText, minimapWordsLast, minimapWordsKept, minimapWordsPaint) = (text, made, coloured is not null, flowPaint);
@@ -312,12 +466,21 @@ public partial class CodeEditor
     private sbyte TodoKindOf(int line)
     {
         string text = document.LineAt(line);
-        if (minimapTodos.TryGetValue(text, out sbyte known))
-            return known;
+        ref MinimapSlot slot = ref minimapSlots[line & (MINIMAP_SLOTS - 1)];
+        if (slot.Generation == minimapSlotGen && ReferenceEquals(slot.Text, text) && slot.HasTodo)
+            return slot.Todo;
 
-        sbyte kind = -1;
-        foreach (var (_, _, urgent) in TodosOn(line))
-            kind = Math.Max(kind, urgent ? (sbyte)1 : (sbyte)0);
+        if (minimapTodos.TryGetValue(text, out sbyte known))
+        {
+            if (slot.Generation == minimapSlotGen && ReferenceEquals(slot.Text, text))
+            {
+                slot.Todo = known;
+                slot.HasTodo = true;
+            }
+            return known;
+        }
+
+        sbyte kind = TodoKindOn(line, text);
 
         // A line not coloured yet isn't kept, it can't be told whether its TODO is in a comment
         if (ColoursOf(line, text) is not null)
@@ -325,6 +488,11 @@ public partial class CodeEditor
             if (minimapTodos.Count > 20000)
                 minimapTodos.Clear();
             minimapTodos[text] = kind;
+            if (slot.Generation == minimapSlotGen && ReferenceEquals(slot.Text, text))
+            {
+                slot.Todo = kind;
+                slot.HasTodo = true;
+            }
         }
 
         return kind;
@@ -344,29 +512,67 @@ public partial class CodeEditor
     private void PaintMinimapMarks(UIDrawList list, UISkin skin, UIRect map, float row, int scrolledRows, int first, int last)
     {
         float pixel = 1.0f / PixelsPerUnit;
-        for (int index = first; index <= last; index++)
+        ReadOnlySpan<MinimapTodoMark> todos = CollectionsMarshal.AsSpan(minimapTodoMarks);
+
+        if (changedLines.Count == 0 && deletedBefore.Count == 0)
         {
-            CodeRow shown = rows[index];
-            float top = map.Max.Y - (index - scrolledRows) * row;
-            if (shown.Virtual)
-                continue;
+            int caretRow = RowOf(document.Caret.Line, 0);
+            bool hasCaret = caretRow >= first && caretRow <= last
+                && !rows[caretRow].Virtual && rows[caretRow].Line == document.Caret.Line && rows[caretRow].Start == 0;
+            bool caretPainted = false;
 
-            if (changedLines.TryGetValue(shown.Line, out UILineChangeKind kind))
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Min.X + 2.0f, top)), ChangeColour(kind, skin));
-            if (shown.Start == 0 && deletedBefore.Contains(shown.Line))
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - pixel), new Vector2(map.Min.X + 4.0f, top + pixel)), skin.ErrorColor);
+            for (int i = 0; i < todos.Length; i++)
+            {
+                MinimapTodoMark mark = todos[i];
+                if (hasCaret && !caretPainted && mark.RowIndex > caretRow)
+                {
+                    float caretTop = map.Max.Y - (caretRow - scrolledRows) * row;
+                    list.Rect(new UIRect(new Vector2(map.Min.X, caretTop - row), new Vector2(map.Max.X, caretTop)), skin.TextColor with { W = 0.22f });
+                    caretPainted = true;
+                }
 
-            // A TODO or a FIXME, a mark down the right edge in its colour
-            if (HighlightTodos && shown.Start == 0 && TodoKindOf(shown.Line) is var todo and >= 0)
-                list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), todo > 0 ? skin.ErrorColor : skin.WarningColor);
+                float top = map.Max.Y - (mark.RowIndex - scrolledRows) * row;
+                list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), mark.Urgent ? skin.ErrorColor : skin.WarningColor);
+            }
 
-            if (shown.Line == document.Caret.Line && shown.Start == 0)
-                list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
+            if (hasCaret && !caretPainted)
+            {
+                float caretTop = map.Max.Y - (caretRow - scrolledRows) * row;
+                list.Rect(new UIRect(new Vector2(map.Min.X, caretTop - row), new Vector2(map.Max.X, caretTop)), skin.TextColor with { W = 0.22f });
+            }
+        }
+        else
+        {
+            int todoCursor = 0;
+            for (int index = first; index <= last; index++)
+            {
+                CodeRow shown = rows[index];
+                float top = map.Max.Y - (index - scrolledRows) * row;
+                if (shown.Virtual)
+                    continue;
+
+                if (changedLines.TryGetValue(shown.Line, out UILineChangeKind kind))
+                    list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Min.X + 2.0f, top)), ChangeColour(kind, skin));
+                if (shown.Start == 0 && deletedBefore.Contains(shown.Line))
+                    list.Rect(new UIRect(new Vector2(map.Min.X, top - pixel), new Vector2(map.Min.X + 4.0f, top + pixel)), skin.ErrorColor);
+
+                while (todoCursor < todos.Length && todos[todoCursor].RowIndex < index)
+                    todoCursor++;
+                if (todoCursor < todos.Length && todos[todoCursor].RowIndex == index)
+                {
+                    list.Rect(new UIRect(new Vector2(map.Max.X - 6.0f, top - row), new Vector2(map.Max.X, top)), todos[todoCursor].Urgent ? skin.ErrorColor : skin.WarningColor);
+                    todoCursor++;
+                }
+
+                if (shown.Line == document.Caret.Line && shown.Start == 0)
+                    list.Rect(new UIRect(new Vector2(map.Min.X, top - row), new Vector2(map.Max.X, top)), skin.TextColor with { W = 0.22f });
+            }
         }
 
         // A remote caret's line, a bar across the map in its device's colour, never thinner than three pixels
-        foreach (UICodeRemoteCaret remote in RemoteCarets)
+        for (int i = 0; i < RemoteCarets.Count; i++)
         {
+            UICodeRemoteCaret remote = RemoteCarets[i];
             if ((uint)remote.Line >= document.LineCount)
                 continue;
             int at = RowOf(remote.Line, Math.Clamp(remote.Column, 0, document.LineAt(remote.Line).Length));

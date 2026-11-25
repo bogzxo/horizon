@@ -219,6 +219,9 @@ public sealed partial class TerminalHost
     /// <summary>The watchers let go of.</summary>
     public void Dispose()
     {
+        if (saveSettingsPending)
+            SaveSettings();
+
         foreach (FileSystemWatcher watcher in watchers)
             watcher.Dispose();
         watchers.Clear();

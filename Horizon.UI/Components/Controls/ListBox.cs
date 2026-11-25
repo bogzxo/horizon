@@ -405,6 +405,8 @@ public partial class ListBox : UIComponent
         shown += (top - shown) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(top - shown) < 0.01f)
             shown = top;
+        else
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
     }
 
     protected internal override void OnPointerUp(Vector2 point)

@@ -117,13 +117,14 @@ public class Label : UIComponent
     // The lines the text was last cut into, and what it was cut for, so it is only cut again when any of that changes
     private readonly List<(int Start, int Length)> lines = [];
     private string? wrappedText;
+    private UIFont? wrappedFont;
     private float wrappedScale, wrappedWidth;
 
     // How big a text that doesn't wrap came out, measured again only once the text, its size or the font is another
     private string? measuredText;
     private float measuredScale;
     private UIFont? measuredFont;
-    private bool measuredBold;
+    private bool measuredBoldProp, measuredBold;
     private Vector2 measuredSize;
 
     // Whether the lines are what the text is drawn as right now
@@ -196,7 +197,7 @@ public class Label : UIComponent
 
         // Styled text lays itself out, and is as wide as it was told to wrap to when it was. So does text that wraps
         // round something, every line has a room of its own then
-        int shapes = width > 0.0f ? PlaceShapes(width) : 0;
+        int shapes = width > 0.0f && (WrapAreas.Count > 0 || WrapAround.Count > 0) ? PlaceShapes(width) : 0;
         drawnRich = shapes != 0 || UsesRichText(text);
         paintedAlign = shapes != 0 ? Origin.TopLeft : Align;
         if (drawnRich)
@@ -213,23 +214,23 @@ public class Label : UIComponent
         if (!wrapped)
         {
             // Measured every tick it was a walk along every letter of every label for the size it was the tick before
-            bool bold = Bold && !text.Contains('\n');
-            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || measuredFont != skin.Font || measuredBold != bold)
+            if (!ReferenceEquals(measuredText, text) || measuredScale != scale || measuredFont != skin.Font || measuredBoldProp != Bold)
             {
+                bool bold = Bold && !text.Contains('\n');
                 measuredSize = bold
                     ? new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale)
                     : skin.Font.Measure(text, scale);
-                (measuredText, measuredScale, measuredFont, measuredBold) = (text, scale, skin.Font, bold);
+                (measuredText, measuredScale, measuredFont, measuredBoldProp, measuredBold) = (text, scale, skin.Font, Bold, bold);
             }
 
             return measuredSize;
         }
 
         // Only cut again when the text, its size or the room has changed. The text is a string, the same one is the same text
-        if (!ReferenceEquals(wrappedText, text) || wrappedScale != scale || wrappedWidth != width)
+        if (!ReferenceEquals(wrappedText, text) || wrappedFont != skin.Font || wrappedScale != scale || wrappedWidth != width)
         {
             skin.Font.Wrap(text, scale, width, lines);
-            (wrappedText, wrappedScale, wrappedWidth) = (text, scale, width);
+            (wrappedText, wrappedFont, wrappedScale, wrappedWidth) = (text, skin.Font, scale, width);
         }
 
         // As wide as it was told to be, which is what it was wrapped to, and as tall as its lines. Only the height of the
@@ -309,34 +310,31 @@ public class Label : UIComponent
     /// list's to say. With agents' chats streaming every label of every chat was painted again every tick, a quarter of a
     /// core on a Mac. Only a Label itself: one that's something more paints what this doesn't know about.
     /// </summary>
-    protected override long PaintVersion
+    protected override long PaintVersion => GetType() == typeof(Label) ? LabelPaintVersion() : -1;
+
+    /// <summary>The label's own paint state hashed for <see cref="PaintVersion"/>, for subclasses that combine it with their own state.</summary>
+    protected long LabelPaintVersion()
     {
-        get
+        var hash = new HashCode();
+        hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Text)));
+        hash.Add(TextScale);
+        hash.Add(Color);
+        hash.Add(Dim);
+        hash.Add(Align);
+        hash.Add(Bold);
+        hash.Add(drawnRich);
+        hash.Add(paintedAlign);
+        hash.Add(wrapped);
+        if (drawnRich)
+            hash.Add(rich.Builds);
+        else if (wrapped)
         {
-            if (GetType() != typeof(Label))
-                return -1;
-
-            var hash = new HashCode();
-            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Resolve(Text)));
-            hash.Add(TextScale);
-            hash.Add(Color);
-            hash.Add(Dim);
-            hash.Add(Align);
-            hash.Add(Bold);
-            hash.Add(drawnRich);
-            hash.Add(paintedAlign);
-            hash.Add(wrapped);
-            if (drawnRich)
-                hash.Add(rich.Builds);
-            else if (wrapped)
-            {
-                hash.Add(wrappedWidth);
-                hash.Add(wrappedScale);
-                hash.Add(lines.Count);
-            }
-
-            return hash.ToHashCode() & 0x7FFFFFFF;
+            hash.Add(wrappedWidth);
+            hash.Add(wrappedScale);
+            hash.Add(lines.Count);
         }
+
+        return hash.ToHashCode() & 0x7FFFFFFF;
     }
 
     /// <summary>The text's area, overridable by labels that reserve space for disclosure or selection marks.</summary>
@@ -360,7 +358,9 @@ public class Label : UIComponent
         {
             // Placed the way a plain line is in its box, by its bold width
             float scale = ScaleOf(skin);
-            var size = new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
+            Vector2 size = ReferenceEquals(measuredText, text) && measuredScale == scale && measuredFont == skin.Font && measuredBold
+                ? measuredSize
+                : new Vector2(skin.Font.MeasureLine(text, scale, UITextStyle.Bold, default), skin.Font.LineHeight * scale);
             Vector2 center = TextBounds.PointAt(Align) - Align.ToVector() * size;
             list.Text(text, center + new Vector2(-0.5f, 0.5f) * size, scale, color, true, UITextStyle.Bold, default);
         }

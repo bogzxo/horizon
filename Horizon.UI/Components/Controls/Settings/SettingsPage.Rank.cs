@@ -42,7 +42,7 @@ public partial class SettingsPage
     private IEnumerable<(string Group, Label Header)> SectionsInOrder() => (ranked ?? built).Select(section => (section.Group, section.Header));
 
     /// <summary>The keys of the rows showing in the order they are down the page, for a test of what a search put first.</summary>
-    public IReadOnlyList<string> KeysShown => [.. rows.Children.OfType<SettingRow>().Where(row => row.Visible).Select(row => row.Setting.Key)];
+    public IReadOnlyList<string> KeysShown => [.. rows.Items.OfType<SettingRow>().Where(row => row.Visible).Select(row => row.Setting.Key)];
 
     /// <summary>
     /// How well a word typed in the search goes with a setting, 0 for not at all. Its name's start is best, then a word
@@ -202,32 +202,26 @@ public partial class SettingsPage
     // go over everything, each once
     private void PutInOrder(IEnumerable<BuiltSection> sections, Func<BuiltSection, IEnumerable<SettingRow>> rowsOf, IReadOnlyList<SettingRow>? first = null)
     {
-        int at = 0;
-        void Place(UIComponent child)
-        {
-            IReadOnlyList<UIComponent> children = rows.Children;
-            if (at >= children.Count || !ReferenceEquals(children[at], child))
-                rows.MoveChild(child, at);
-            at++;
-        }
-
+        var ordered = new List<UIComponent>(rows.Items.Count);
         var placed = new HashSet<SettingRow>();
         foreach (SettingRow row in first ?? [])
         {
             if (placed.Add(row))
-                Place(row);
+                ordered.Add(row);
         }
 
         foreach (BuiltSection section in sections)
         {
-            Place(section.Header);
+            ordered.Add(section.Header);
             foreach (SettingRow row in rowsOf(section))
             {
                 if (!placed.Contains(row))
-                    Place(row);
+                    ordered.Add(row);
             }
             foreach (UIComponent panel in section.Panels)
-                Place(panel);
+                ordered.Add(panel);
         }
+
+        rows.Reorder(ordered);
     }
 }

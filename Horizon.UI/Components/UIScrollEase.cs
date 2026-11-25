@@ -1,3 +1,5 @@
+using Horizon.Engine;
+
 namespace Horizon.UI.Components;
 
 /// <summary>
@@ -73,6 +75,8 @@ internal struct UIScrollEase
             return goal;
         }
 
+        // Keep full tick and frame rate while the scroll is still easing toward its target.
+        GameEngine.Instance?.WindowManager?.RequestSmooth();
         return now;
     }
 }

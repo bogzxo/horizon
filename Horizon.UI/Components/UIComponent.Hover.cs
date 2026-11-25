@@ -103,7 +103,12 @@ public abstract partial class UIComponent
         float time = MotionTime(HoverTime);
         float step = time > 0.0f ? dt / time : 1.0f;
 
+        float before = hoverness;
         hoverness = lit ? MathF.Min(1.0f, hoverness + step) : MathF.Max(0.0f, hoverness - step);
+
+        // Request full rate only while hoverness is actively easing in or out, never for steady-state UIHover.Pulse.
+        if (hoverness != before && hoverness is > 0.0f and < 1.0f)
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
 
         // The pulse starts from its rest every time, so it swells as the pointer arrives and doesn't jump
         hoverClock = hoverness > 0.0f ? hoverClock + dt : 0.0f;

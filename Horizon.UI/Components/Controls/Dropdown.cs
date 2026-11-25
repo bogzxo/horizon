@@ -394,6 +394,8 @@ public class Dropdown : UIComponent
         shownRow += (firstRow - shownRow) * (1.0f - MathF.Exp(-UIScrollEase.RATE * scrollDt));
         if (MathF.Abs(firstRow - shownRow) < 0.01f)
             shownRow = firstRow;
+        else
+            Horizon.Engine.GameEngine.Instance?.WindowManager?.RequestSmooth();
     }
 
     protected internal override void OnPointerUp(Vector2 point)

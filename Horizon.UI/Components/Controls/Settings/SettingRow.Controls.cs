@@ -28,6 +28,7 @@ internal sealed partial class SettingRow
         // tall, 0.7 of the row's control), so the switch ends on the column's edge with the dropdowns and the boxes
         float wide = sideways ? MathF.Round(MathF.Round(page.RowControlHeight * 0.7f) * 1.8f) : 56.0f;
         var toggle = Put(new RowToggle(this) { Size = new Vector2(wide, page.RowControlHeight), LabelScale = page.RowBodyScale, Anchor = Origin.Left, Pivot = Origin.Left });
+        flagToggle = toggle;
         toggle.OnPressed = () => page.Changed(setting.Key, Values.Bool(toggle.State));
         return value => toggle.State = value is BooleanValue { Value: true };
     }

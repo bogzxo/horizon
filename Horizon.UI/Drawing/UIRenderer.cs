@@ -31,6 +31,8 @@ internal sealed class UIRenderer
     /// <summary>The quads that were uploaded last, which is what is drawn. For tests that look at what is on screen.</summary>
     internal ReadOnlySpan<SpriteItem> Uploaded => items.AsSpan(0, itemCount);
 
+    /// <summary>The texture runs of what was uploaded last.</summary>
+    internal ReadOnlySpan<UIDrawList.Run> Runs => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(runs);
 
     /// <summary>The panes of glass in what was uploaded last, see <see cref="UIGlass"/>.</summary>
     internal ReadOnlySpan<UIGlassPane> Glass => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(glass);
@@ -270,12 +272,12 @@ internal sealed class UIRenderer
         }
     }
 
-    // Whether a pane of glass is put down before the item, which a block of letters mustn't be moved across
+    // Whether a pane of glass captures or is put down before the item, which a block of letters mustn't be moved across
     private bool GlassStartsAt(int item)
     {
         foreach (UIGlassPane pane in glass)
         {
-            if (pane.Start == item)
+            if (pane.Under == item || pane.Start == item)
                 return true;
         }
         return false;

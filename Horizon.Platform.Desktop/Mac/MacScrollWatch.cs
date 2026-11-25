@@ -26,6 +26,29 @@ internal static unsafe class MacScrollWatch
     private static readonly ScrollTurnQueue turns = new();
     private static int installed;
 
+    // Cached Objective-C class and selectors so 120-240 Hz ProMotion scroll callbacks avoid per-event dictionary lookups
+    private static nint clsNSApplication;
+    private static nint selSharedApplication, selCurrentEvent, selType, selWindow;
+    private static nint selHasPreciseScrollingDeltas, selPhase, selMomentumPhase, selScrollingDeltaX, selScrollingDeltaY;
+
+    [SupportedOSPlatform("macos")]
+    private static void EnsureMacSelectors()
+    {
+        if (selScrollingDeltaY != 0)
+            return;
+
+        clsNSApplication = MacObjC.Class("NSApplication");
+        selSharedApplication = MacObjC.Sel("sharedApplication");
+        selCurrentEvent = MacObjC.Sel("currentEvent");
+        selType = MacObjC.Sel("type");
+        selWindow = MacObjC.Sel("window");
+        selHasPreciseScrollingDeltas = MacObjC.Sel("hasPreciseScrollingDeltas");
+        selPhase = MacObjC.Sel("phase");
+        selMomentumPhase = MacObjC.Sel("momentumPhase");
+        selScrollingDeltaX = MacObjC.Sel("scrollingDeltaX");
+        selScrollingDeltaY = MacObjC.Sel("scrollingDeltaY");
+    }
+
     /// <summary>Where every turn is written when HORIZON_SCROLL_TRACE names a file, to see what the system said.</summary>
     private static readonly string? tracePath = Environment.GetEnvironmentVariable("HORIZON_SCROLL_TRACE") is { Length: > 0 } path ? path : null;
 
@@ -98,23 +121,29 @@ internal static unsafe class MacScrollWatch
     [SupportedOSPlatform("macos")]
     private static bool ReadMac(ref float x, ref float y, ref nint phase, ref nint momentum)
     {
-        nint current = MacObjC.Send(MacObjC.SharedApplication, MacObjC.Sel("currentEvent"));
-        if (current == 0 || MacObjC.SendInt(current, MacObjC.Sel("type")) != SCROLL_WHEEL)
+        EnsureMacSelectors();
+        nint app = MacObjC.Send(clsNSApplication, selSharedApplication);
+        nint current = app != 0 ? MacObjC.Send(app, selCurrentEvent) : 0;
+        if (current == 0 || MacObjC.SendInt(current, selType) != SCROLL_WHEEL)
             return false;
 
         if (tracePath is not null)
         {
-            phase = MacObjC.SendInt(current, MacObjC.Sel("phase"));
-            momentum = MacObjC.SendInt(current, MacObjC.Sel("momentumPhase"));
+            phase = MacObjC.SendInt(current, selPhase);
+            momentum = MacObjC.SendInt(current, selMomentumPhase);
         }
 
-        if (!MacObjC.SendBool(current, MacObjC.Sel("hasPreciseScrollingDeltas")))
+        if (!MacObjC.SendBool(current, selHasPreciseScrollingDeltas))
             return false;
+
+        // When the local monitor is active and tracing is off, Watch discards x/y anyway
+        if (monitorWindow != 0 && tracePath is null)
+            return true;
 
         // Already the way the content goes (natural scrolling or not), across as well as up and down. Turned round to
         // SDL's way across it went the wrong way
-        x = (float)(MacObjC.SendDouble(current, MacObjC.Sel("scrollingDeltaX")) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
-        y = (float)(MacObjC.SendDouble(current, MacObjC.Sel("scrollingDeltaY")) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
+        x = (float)(MacObjC.SendDouble(current, selScrollingDeltaX) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
+        y = (float)(MacObjC.SendDouble(current, selScrollingDeltaY) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
         return true;
     }
 
@@ -142,16 +171,21 @@ internal static unsafe class MacScrollWatch
         if (window == 0 || monitorWindow != 0 || !Active)
             return;
 
+        nint* descriptor = null;
+        byte* block = null;
         try
         {
+            using var pool = MacObjC.Pool();
+            EnsureMacSelectors();
+
             nint system = NativeLibrary.Load("/usr/lib/libSystem.B.dylib");
             nint isa = NativeLibrary.GetExport(system, "_NSConcreteGlobalBlock");
 
-            // A block literal as clang lays one out: isa, flags, reserved, invoke, descriptor (reserved, size). Never freed,
-            // AppKit keeps the handler for as long as the program runs
-            nint* descriptor = (nint*)NativeMemory.AllocZeroed(2, (nuint)sizeof(nint));
+            // A block literal as clang lays one out: isa, flags, reserved, invoke, descriptor (reserved, size). Never freed
+            // once registered, AppKit keeps the handler for as long as the program runs
+            descriptor = (nint*)NativeMemory.AllocZeroed(2, (nuint)sizeof(nint));
             descriptor[1] = 4 * sizeof(nint);
-            byte* block = (byte*)NativeMemory.AllocZeroed(4, (nuint)sizeof(nint));
+            block = (byte*)NativeMemory.AllocZeroed(4, (nuint)sizeof(nint));
             *(nint*)block = isa;
             *(int*)(block + sizeof(nint)) = BLOCK_IS_GLOBAL;
             *(nint*)(block + 2 * sizeof(nint)) = (nint)(delegate* unmanaged[Cdecl]<nint, nint, nint>)&Handle;
@@ -163,6 +197,9 @@ internal static unsafe class MacScrollWatch
             if (monitor == 0)
             {
                 monitorWindow = 0;
+                raise = null;
+                NativeMemory.Free(block);
+                NativeMemory.Free(descriptor);
                 return;
             }
 
@@ -171,6 +208,11 @@ internal static unsafe class MacScrollWatch
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
         {
             monitorWindow = 0;
+            raise = null;
+            if (block != null)
+                NativeMemory.Free(block);
+            if (descriptor != null)
+                NativeMemory.Free(descriptor);
         }
     }
 
@@ -181,19 +223,19 @@ internal static unsafe class MacScrollWatch
         {
             if (OperatingSystem.IsMacOS() && e != 0 && tracePath is not null)
             {
-                bool ours = MacObjC.Send(e, MacObjC.Sel("window")) == monitorWindow;
-                bool fine = MacObjC.SendBool(e, MacObjC.Sel("hasPreciseScrollingDeltas"));
-                Trace(0, 0, 0.0f, 0.0f, (float)MacObjC.SendDouble(e, MacObjC.Sel("scrollingDeltaX")), (float)MacObjC.SendDouble(e, MacObjC.Sel("scrollingDeltaY")),
-                    fine, MacObjC.SendInt(e, MacObjC.Sel("phase")), MacObjC.SendInt(e, MacObjC.Sel("momentumPhase")), ours ? "seen-ours" : "seen-other");
+                bool ours = MacObjC.Send(e, selWindow) == monitorWindow;
+                bool fine = MacObjC.SendBool(e, selHasPreciseScrollingDeltas);
+                Trace(0, 0, 0.0f, 0.0f, (float)MacObjC.SendDouble(e, selScrollingDeltaX), (float)MacObjC.SendDouble(e, selScrollingDeltaY),
+                    fine, MacObjC.SendInt(e, selPhase), MacObjC.SendInt(e, selMomentumPhase), ours ? "seen-ours" : "seen-other");
             }
 
-            if (OperatingSystem.IsMacOS() && e != 0 && MacObjC.Send(e, MacObjC.Sel("window")) == monitorWindow
-                && MacObjC.SendBool(e, MacObjC.Sel("hasPreciseScrollingDeltas")))
+            if (OperatingSystem.IsMacOS() && e != 0 && MacObjC.Send(e, selWindow) == monitorWindow
+                && MacObjC.SendBool(e, selHasPreciseScrollingDeltas))
             {
-                nint phase = MacObjC.SendInt(e, MacObjC.Sel("phase"));
-                nint momentum = MacObjC.SendInt(e, MacObjC.Sel("momentumPhase"));
-                float x = (float)(MacObjC.SendDouble(e, MacObjC.Sel("scrollingDeltaX")) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
-                float y = (float)(MacObjC.SendDouble(e, MacObjC.Sel("scrollingDeltaY")) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
+                nint phase = MacObjC.SendInt(e, selPhase);
+                nint momentum = MacObjC.SendInt(e, selMomentumPhase);
+                float x = (float)(MacObjC.SendDouble(e, selScrollingDeltaX) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
+                float y = (float)(MacObjC.SendDouble(e, selScrollingDeltaY) / Horizon.Input.PreciseScroll.MacPointsPerUnit);
                 var said = Horizon.Input.PreciseScroll.PhaseOf(phase, momentum);
                 if (x != 0.0f || y != 0.0f || said is not Horizon.Input.ScrollPhase.None)
                 {

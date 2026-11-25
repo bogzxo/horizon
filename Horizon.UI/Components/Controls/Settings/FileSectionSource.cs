@@ -23,8 +23,33 @@ public sealed class FileSectionSource(string? path, string section, IReadOnlyLis
 
     public IReadOnlyList<UISetting> Settings => settings;
 
-    private Dictionary<string, IRuntimeValue> Values() =>
-        SettingsSections.Read(path) is { } all ? SettingsSections.Section(all, section) : [];
+    private Dictionary<string, IRuntimeValue>? cachedValues;
+    private string? cachedText;
+
+    private Dictionary<string, IRuntimeValue> Values()
+    {
+        if (path is null || !PlatformStorage.Exists(path))
+        {
+            cachedText = null;
+            cachedValues = [];
+            return cachedValues;
+        }
+
+        try
+        {
+            string text = PlatformStorage.ReadAllText(path);
+            if (cachedValues is not null && string.Equals(text, cachedText, StringComparison.Ordinal))
+                return cachedValues;
+
+            cachedValues = SettingsSections.Section(SettingsSections.ReadText(text), section);
+            cachedText = text;
+            return cachedValues;
+        }
+        catch (Exception)
+        {
+            return cachedValues ?? [];
+        }
+    }
 
     public IRuntimeValue? Get(string key) => Values().TryGetValue(key, out IRuntimeValue? value) ? value : usual.GetValueOrDefault(key);
 
@@ -48,7 +73,10 @@ public sealed class FileSectionSource(string? path, string section, IReadOnlyLis
             written.Add(key, value, settings.FirstOrDefault(setting => setting.Key == key)?.Help);
         try
         {
-            PlatformStorage.WriteAllText(path, SettingsSections.Write(path, (section, written)));
+            string composed = SettingsSections.Write(path, (section, written));
+            PlatformStorage.WriteAllText(path, composed);
+            cachedText = composed;
+            cachedValues = values;
         }
         catch (IOException)
         {

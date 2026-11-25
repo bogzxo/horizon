@@ -47,7 +47,16 @@ public class TextMateHighlighterTests
             // before the paint even began. Five seconds is still half of the ten the grammar is held for, a paint
             // that waited for it would take those
             object? deferred = await Task.Factory.StartNew(() => freshColours.Invoke(editor, [0, changed]), TaskCreationOptions.LongRunning).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Null(deferred);
+            if (highlighter is HidlHighlighter)
+            {
+                // HidlHighlighter uses a lock-free native scanner and never contends with the TextMate grammar lock.
+                var immediate = Assert.IsType<List<SyntaxSpan>>(deferred);
+                Assert.Equal(highlighter.ReadLine(changed, CodeLineStart.First), immediate);
+            }
+            else
+            {
+                Assert.Null(deferred);
+            }
         }
         finally { release.Set(); await holding; }
         // Other tests and the background recolourer share this grammar. A later paint can still defer while one

@@ -15,13 +15,18 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
     private readonly IKeyboard[] keyboards;
     private readonly IMouse[] mice;
     private readonly Func<Vector2, Vector2> toPixels;
+    private readonly Action<InputEvent>? sdlTextHandler;
     public event Action<InputEvent>? EventReceived;
 
     public SilkInputSource(IInputContext context, Func<Vector2, Vector2> toPixels)
     {
         this.toPixels = toPixels;
         if (DesktopWindow.UsesSdl)
+        {
             MacScrollWatch.Install();
+            sdlTextHandler = Raise;
+            SdlTextEditing.Install(sdlTextHandler);
+        }
         keyboards = [.. context.Keyboards];
         mice = [.. context.Mice];
         foreach (var keyboard in keyboards)
@@ -58,7 +63,15 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
 
     private void OnKeyUp(IKeyboard device, Silk.NET.Input.Key key, int code) => EventReceived?.Invoke(
         InputEvent.KeyChange((Key)key, false) with { Modifiers = ModifiersOf(device), HasModifierSnapshot = true });
-    private void OnCharacter(IKeyboard device, char character) => EventReceived?.Invoke(InputEvent.Typed(character.ToString()));
+    private void OnCharacter(IKeyboard device, char character)
+    {
+        // Under SDL, SdlTextEditing delivers full UTF-8 SDL_TEXTINPUT strings (preserving surrogate pairs like emoji)
+        // directly; skip Silk's KeyChar so characters are never typed twice.
+        if (DesktopWindow.UsesSdl && SdlTextEditing.HandlesTextInput)
+            return;
+
+        EventReceived?.Invoke(InputEvent.Typed(character.ToString()));
+    }
     private void OnMove(IMouse device, Vector2 position) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerMove, toPixels(position)));
     private void OnMouseDown(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerDown, toPixels(device.Position), button: (MouseButton)button));
     private void OnMouseUp(IMouse device, Silk.NET.Input.MouseButton button) => EventReceived?.Invoke(InputEvent.Pointer(InputEventKind.PointerUp, toPixels(device.Position), button: (MouseButton)button));
@@ -91,6 +104,8 @@ internal sealed class SilkInputSource : IInputSource, IDisposable
 
     public void Dispose()
     {
+        if (sdlTextHandler is not null)
+            SdlTextEditing.Uninstall(sdlTextHandler);
         foreach (var keyboard in keyboards)
         {
             keyboard.KeyDown -= OnKeyDown;

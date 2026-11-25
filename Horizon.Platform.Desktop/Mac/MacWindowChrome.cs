@@ -37,9 +37,17 @@ internal sealed unsafe class MacWindowChrome
 
     private volatile float leading, height;
     private volatile bool titled;
+    private volatile int screenMaxFps;
 
     // How tall the UI's title bar is, in points, 0 until it says
     private double barPoints;
+
+    // Dirty tracking to avoid redundant per-tick AppKit/ObjC calls in Maintain()
+    private bool ownLightsOn;
+    private bool lightsDirty = true;
+    private nuint lastMask;
+    private double centeredForBar;
+    private double centeredWindowHeight;
 
     private MacWindowChrome(nint window, Action changed)
     {
@@ -90,6 +98,26 @@ internal sealed unsafe class MacWindowChrome
     /// <summary>The style mask the window has now, for the log and the checks.</summary>
     public nuint StyleMask => MacObjC.SendUInt(window, MacObjC.Sel("styleMask"));
 
+    /// <summary>
+    /// Maximum refresh rate of the screen currently holding this window (120 on ProMotion Macs, 60 on standard displays,
+    /// 0 if unavailable). Cached on the main thread during creation and window/screen notifications so any thread may read it.
+    /// </summary>
+    public int ScreenMaxFramesPerSecond() => screenMaxFps;
+
+    private void RefreshScreenMaxFps()
+    {
+        nint screen = MacObjC.Send(window, MacObjC.Sel("screen"));
+        if (screen != 0 && MacObjC.RespondsTo(screen, MacObjC.Sel("maximumFramesPerSecond")))
+        {
+            int fps = (int)MacObjC.SendInt(screen, MacObjC.Sel("maximumFramesPerSecond"));
+            screenMaxFps = fps > 0 ? fps : 0;
+        }
+        else
+        {
+            screenMaxFps = 0;
+        }
+    }
+
     private bool InFullscreen => (StyleMask & FULLSCREEN) != 0;
 
     // SDL's views say a press on them can move the window, which AppKit then takes as a drag of its own where it can (the strip of
@@ -132,7 +160,6 @@ internal sealed unsafe class MacWindowChrome
     /// came another way, so a click stayed held and nothing hovered). The listener is the window's delegate, and is put back
     /// whenever it isn't there. Main thread, cheap enough for every tick.
     /// </summary>
-    private static int vfixSeen; // [VFIX]
     private void KeepSdlListening()
     {
         nint content = MacObjC.Send(window, MacObjC.Sel("contentView"));
@@ -141,12 +168,11 @@ internal sealed unsafe class MacWindowChrome
             return;
 
         nint next = MacObjC.Send(content, MacObjC.Sel("nextResponder"));
-        if (next == listener) { if (vfixSeen++ < 2) Console.Error.WriteLine("[VFIX] ok already next=" + MacObjC.Describe(MacObjC.ClassOf(next))); return; } // [VFIX]
-        Console.Error.WriteLine("[VFIX] before next=" + (next == 0 ? "nil" : MacObjC.Describe(MacObjC.ClassOf(next))) + " delegate=" + MacObjC.Describe(MacObjC.ClassOf(listener))); // [VFIX]
+        if (next == listener)
+            return;
 
         // As SDL itself does it: the view's next responder is the listener, and the listener's stays as SDL left it
         MacObjC.SendVoid(content, MacObjC.Sel("setNextResponder:"), listener);
-        Console.Error.WriteLine("[VFIX] after next=" + MacObjC.Describe(MacObjC.ClassOf(MacObjC.Send(content, MacObjC.Sel("nextResponder"))))); // [VFIX]
     }
 
     /// <summary>Gives the window the mask and the transparent title bar, then reads where the lights are. Main thread.</summary>
@@ -170,6 +196,8 @@ internal sealed unsafe class MacWindowChrome
             MacObjC.SendVoid(window, MacObjC.Sel("setTitlebarSeparatorStyle:"), SEPARATOR_NONE);
         KeepSdlListening();
         titled = true;
+        lastMask = StyleMask;
+        lightsDirty = true;
         Refresh();
     }
 
@@ -181,12 +209,21 @@ internal sealed unsafe class MacWindowChrome
     {
         KeepSdlListening();
         nuint mask = StyleMask;
+        if (mask != lastMask)
+        {
+            lastMask = mask;
+            lightsDirty = true;
+        }
+
         if ((mask & FULLSCREEN) == 0)
             HideOwnLights();
         if ((mask & FULLSCREEN) == 0 && (mask & WANTED) != WANTED)
             Apply();
         else if ((mask & FULLSCREEN) == 0)
-            CenterLights();
+        {
+            if (lightsDirty || Math.Abs(barPoints - centeredForBar) >= 0.01)
+                CenterLights();
+        }
         else
         {
             HideRevealStrip();
@@ -300,6 +337,8 @@ internal sealed unsafe class MacWindowChrome
             MacObjC.SendVoid(light, MacObjC.Sel("setFrameOrigin:"), new MacPoint(lightX[which], y));
         }
 
+        ownLightsOn = true;
+
         if (!placed)
         {
             ownPlaced = bounds;
@@ -310,7 +349,7 @@ internal sealed unsafe class MacWindowChrome
 
     private void HideOwnLights()
     {
-        if (ownLights[0] == 0)
+        if (!ownLightsOn)
             return;
 
         foreach (nint light in ownLights)
@@ -320,6 +359,7 @@ internal sealed unsafe class MacWindowChrome
         }
 
         ownPlaced = default;
+        ownLightsOn = false;
     }
 
     // How far right the own lights reach, 0 while they aren't up
@@ -336,6 +376,9 @@ internal sealed unsafe class MacWindowChrome
     /// <summary>Reads where the lights are and puts them in the middle of the UI's bar. Main thread.</summary>
     public void Refresh()
     {
+        lightsDirty = true;
+        RefreshScreenMaxFps();
+
         if (InFullscreen)
         {
             // Room for the own lights, as for the windowed ones
@@ -373,6 +416,7 @@ internal sealed unsafe class MacWindowChrome
             return;
 
         barPoints = points;
+        lightsDirty = true;
         Refresh();
     }
 
@@ -426,18 +470,31 @@ internal sealed unsafe class MacWindowChrome
     private void CenterLights()
     {
         if (barPoints <= 0)
+        {
+            lightsDirty = false;
             return;
+        }
 
         nint first = Button(0);
         if (first == 0)
             return;
 
         MacRect rect = InWindow(first, out double windowHeight);
+        if (!lightsDirty && Math.Abs(barPoints - centeredForBar) < 0.01 && Math.Abs(windowHeight - centeredWindowHeight) < 0.01)
+            return;
+
         double centreFromTop = windowHeight - (rect.Y + rect.Height * 0.5);
         double move = barPoints * 0.5 - centreFromTop;
         // Mid-transition (fullscreen coming or going) the views are somewhere else, nothing to centre then
-        if (Math.Abs(move) < 0.01 || Math.Abs(move) > 40)
+        if (Math.Abs(move) > 40)
             return;
+        if (Math.Abs(move) < 0.01)
+        {
+            centeredForBar = barPoints;
+            centeredWindowHeight = windowHeight;
+            lightsDirty = false;
+            return;
+        }
 
         // Down is less of Y, and no light goes below the bottom of what holds it
         double lowest = double.MaxValue;
@@ -459,6 +516,10 @@ internal sealed unsafe class MacWindowChrome
             MacRect frame = MacObjC.SendRect(button, MacObjC.Sel("frame"));
             MacObjC.SendVoid(button, MacObjC.Sel("setFrameOrigin:"), new MacPoint(frame.X, frame.Y - move));
         }
+
+        centeredForBar = barPoints;
+        centeredWindowHeight = windowHeight;
+        lightsDirty = false;
     }
 
     /* Drag */
@@ -543,8 +604,12 @@ internal sealed unsafe class MacWindowChrome
         try
         {
             // SDL has its own say when it is told fullscreen is over, the mask is put back after it
-            current?.Maintain();
-            current?.Refresh();
+            if (current is { } chrome)
+            {
+                chrome.lightsDirty = true;
+                chrome.Maintain();
+                chrome.Refresh();
+            }
         }
         catch (Exception)
         {

@@ -42,9 +42,24 @@ public partial class SettingsPage
         OnPressed = pressed
     };
 
-    // Whether a filter word is in the search now
-    private bool HasWord(string word) =>
-        search.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Any(typed => typed.Equals(word, StringComparison.OrdinalIgnoreCase));
+    // Whether a filter word is in the search now, scanned without allocating on every tick
+    private bool HasWord(string word)
+    {
+        ReadOnlySpan<char> text = search.Text.AsSpan();
+        int i = 0;
+        while (i < text.Length)
+        {
+            while (i < text.Length && text[i] == ' ')
+                i++;
+            int start = i;
+            while (i < text.Length && text[i] != ' ')
+                i++;
+            if (i > start && text.Slice(start, i - start).Equals(word, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 
     // The search's own words kept, the two filter words put in or taken out as asked, the keyboard back in the box
     private void SetFilterWords(bool modified, bool common)
@@ -78,7 +93,7 @@ public partial class SettingsPage
         if (chipCount < 0 || chipCounted >= 0.5f || navStale)
         {
             chipCounted = 0.0f;
-            int count = ModifiedCount;
+            int count = CountModifiedRows();
             if (count != chipCount || chipModified.Label.Length == 0)
             {
                 chipCount = count;
@@ -87,6 +102,20 @@ public partial class SettingsPage
                 FitChip(chipCommon, texts.CommonlyUsed);
             }
         }
+    }
+
+    private int CountModifiedRows()
+    {
+        if (IsModified is null)
+            return 0;
+
+        int count = 0;
+        foreach (SettingRow row in rowOf.Values)
+        {
+            if (row.Modified)
+                count++;
+        }
+        return count;
     }
 
     // A chip as wide as its words, at the page's zoom

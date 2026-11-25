@@ -22,11 +22,13 @@ public partial class UICompositor
         list.PushOwner(target);
         list.BeginPart(-7005);
         Vector2 origin = middleScroll.Origin;
-        var box = UIRect.FromCenter(origin, new Vector2(26));
-        list.RoundRect(box, 13, list.Skin.Palette.Raised);
-        list.RoundOutline(box, 13, 1, list.Skin.AccentColor);
-        list.Symbol("arrow-up", UIRect.FromCenter(origin + new Vector2(0, 6), new Vector2(10)), list.Skin.TextColor);
-        list.Symbol("arrow-down", UIRect.FromCenter(origin - new Vector2(0, 6), new Vector2(10)), list.Skin.TextColor);
+        var box = UIRect.FromCenter(origin, new Vector2(28));
+        list.RoundRect(box, 14, list.Skin.Palette.Raised);
+        list.RoundOutline(box, 14, 1, list.Skin.AccentColor);
+        list.Symbol("arrow-small-up", UIRect.FromCenter(origin + new Vector2(0, 7), new Vector2(10)), list.Skin.TextColor);
+        list.Symbol("arrow-small-down", UIRect.FromCenter(origin - new Vector2(0, 7), new Vector2(10)), list.Skin.TextColor);
+        list.Symbol("arrow-small-left", UIRect.FromCenter(origin - new Vector2(7, 0), new Vector2(10)), list.Skin.TextColor);
+        list.Symbol("arrow-small-right", UIRect.FromCenter(origin + new Vector2(7, 0), new Vector2(10)), list.Skin.TextColor);
         list.EndParts();
         list.PopOwner();
     }
@@ -65,12 +67,16 @@ public partial class UICompositor
         cancel |= target is null || target.Module is not { Enabled: true, Interactive: true }
             || !target.EnabledInHierarchy || !target.IsShownInHierarchy;
         Vector2 point = target?.Module?.ToLocal(pointer.Position) ?? pointer.Position;
-        float distance = middleScroll.Step(point, pointer.MiddleDown, target is not null, cancel, dt, MiddleScrollSpeed);
+        Vector2 movement = middleScroll.Step(point, pointer.MiddleDown, target is not null, cancel, dt, MiddleScrollSpeed);
         if (!middleScroll.Active) { middleScrollTarget = null; return; }
-        if (distance != 0) target!.OnPan(new Vector2(0, distance));
-        // The simulation kept at its full rate, not only frames asked for: a slow scroll moves less than a pixel a frame,
-        // paints nothing new, and an idle window then ticked four times a second, each tick moving a twentieth of a
-        // second's worth, so the view stepped along at fixed intervals instead of gliding
-        GameEngine.Instance?.WindowManager.NoteChange();
+        // OnPan uses finger-displacement signs: +Y scrolls down, -X scrolls right.
+        if (movement != Vector2.Zero) target!.OnPan(new Vector2(-movement.X, movement.Y));
+        // Keep full tick and frame rate while middle-mouse autoscroll is active so a stationary pointer
+        // never drops into calm pacing (24/12 Hz) or WaitForEvents sleep.
+        if (GameEngine.Instance?.WindowManager is { } window)
+        {
+            window.RequestSmooth();
+            window.NoteChange();
+        }
     }
 }

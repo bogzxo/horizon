@@ -1,3 +1,5 @@
+using System.Buffers;
+
 using Horizon.Content;
 using Horizon.Graphics;
 
@@ -39,8 +41,17 @@ public readonly record struct GlyphSlot(short X, short Y, GlyphBox Box);
 /// </summary>
 public sealed class GlyphAtlas
 {
-    /// <summary>How many texels across and down. 4 MB of grey, 16 of subpixels, room for thousands of letters at the sizes a UI uses.</summary>
+    /// <summary>How many texels across and down at most. Starts smaller and grows on demand up to this cap.</summary>
     public const int SIZE = 2048;
+
+    // Starts lean so an unused or lightly loaded atlas doesn't claim 16 MB of VRAM upfront, then doubles up to SIZE
+    private const int INITIAL_SIZE = 512;
+
+    // Cap on retained per-frame upload buffer so a one-off burst of glyphs doesn't hold onto megabytes of RAM
+    private const int MAX_RETAINED_PENDING_BYTES = 64 * 1024;
+
+    // Rows per temporary zero strip when clearing a newly created or reset atlas texture
+    private const int CLEAR_STRIP_ROWS = 64;
 
     /// <summary>How many places across a pixel the pen can be, a letter is made for each it's drawn at.</summary>
     public const int PHASES = 4;
@@ -53,6 +64,8 @@ public sealed class GlyphAtlas
 
     // Between two pictures, so the filter never reads one's ink into the next
     private const int PADDING = 1;
+
+    private readonly record struct PendingGlyph(short X, short Y, short Width, short Height, int Offset);
 
     /// <summary>The grey one every draw list uses.</summary>
     public static GlyphAtlas Shared { get; } = new(subpixel: false);
@@ -67,18 +80,24 @@ public sealed class GlyphAtlas
     // every letter of every line painted. Read without the lock, every letter of every paint looks one up and only a
     // letter not made yet needs it: a lock a letter was the most of what painting a busy chat cost
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, GlyphSlot> slots = new();
-    private byte[]? pixels;
     private byte[] scratch = new byte[64 * 64];
     private byte[] work = new byte[64 * 64 * 3];
 
-    // The rows on their way up, copied out of pixels under the lock so the upload itself doesn't hold up painting
-    private byte[] staging = [];
+    // Newly rasterized glyphs queued on the painting thread and swapped to the render thread for sub-rect upload,
+    // avoiding a permanent full-atlas CPU pixel mirror and staging copy
+    private List<PendingGlyph> pendingGlyphs = [];
+    private byte[] pendingBytes = [];
+    private int pendingByteCount;
+    private List<PendingGlyph> uploadGlyphs = [];
+    private byte[] uploadBytes = [];
 
-    // The shelf being filled and how tall it is, the next picture goes to its right
+    // Old textures kept alive briefly after growing so in-flight frames finish reading them (render thread only)
+    private readonly List<(Texture Texture, int Frames)> retired = [];
+
+    // Current texture dimensions and the shelf being filled; the next picture goes to its right
+    private int atlasWidth = INITIAL_SIZE, atlasHeight = INITIAL_SIZE;
     private int shelfX, shelfY, shelfHeight;
-
-    // The rows that changed since they last went up, top in and bottom out, nothing when top isn't above bottom
-    private int dirtyTop = int.MaxValue, dirtyBottom;
+    private bool needsClear;
 
     // Read outside the lock by every paint and set by another, see BeginPaint
     private volatile bool full;
@@ -141,10 +160,9 @@ public sealed class GlyphAtlas
                 return;
             slots.Clear();
             shelfX = shelfY = shelfHeight = 0;
-            if (pixels is not null)
-                Array.Clear(pixels);
-            dirtyTop = 0;
-            dirtyBottom = SIZE;
+            pendingGlyphs.Clear();
+            pendingByteCount = 0;
+            needsClear = true;
             full = false;
             generation++;
             Horizon.Logging.Log.Info($"[GlyphAtlas] The {(subpixel ? "subpixel" : "grey")} letters filled their atlas and it was emptied, generation {generation}.");
@@ -190,13 +208,17 @@ public sealed class GlyphAtlas
                 return false;
             }
 
-            pixels ??= new byte[SIZE * SIZE * texel];
-            int rowBytes = box.Width * texel;
-            for (int row = 0; row < box.Height; row++)
-                scratch.AsSpan(row * rowBytes, rowBytes).CopyTo(pixels.AsSpan(((y + row) * SIZE + x) * texel, rowBytes));
-
-            dirtyTop = Math.Min(dirtyTop, y);
-            dirtyBottom = Math.Max(dirtyBottom, y + box.Height);
+            int bytes = box.Width * box.Height * texel;
+            int offset = pendingByteCount;
+            int needed = offset + bytes;
+            if (pendingBytes.Length < needed)
+            {
+                int nextCapacity = pendingBytes.Length == 0 ? Math.Max(4096, needed) : Math.Max(needed, pendingBytes.Length * 2);
+                Array.Resize(ref pendingBytes, nextCapacity);
+            }
+            scratch.AsSpan(0, bytes).CopyTo(pendingBytes.AsSpan(offset, bytes));
+            pendingByteCount = needed;
+            pendingGlyphs.Add(new PendingGlyph((short)x, (short)y, (short)box.Width, (short)box.Height, offset));
 
             slot = new GlyphSlot((short)x, (short)y, box);
             slots[packed] = slot;
@@ -204,21 +226,32 @@ public sealed class GlyphAtlas
         }
     }
 
-    // Room on the shelf, or on a new one under it
+    // Room on the shelf, or on a new one under it, growing the atlas up to SIZE before declaring it full
     private bool Place(int width, int height, out int x, out int y)
     {
         x = y = 0;
         if (width + PADDING > SIZE || height + PADDING > SIZE)
             return false;
 
-        if (shelfX + width + PADDING > SIZE)
+        while (true)
         {
-            shelfY += shelfHeight;
-            shelfX = shelfHeight = 0;
-        }
+            if (shelfX + width + PADDING <= atlasWidth && shelfY + height + PADDING <= atlasHeight)
+                break;
 
-        if (shelfY + height + PADDING > SIZE)
-            return false;
+            int nextY = shelfY + shelfHeight;
+            if (width + PADDING <= atlasWidth && nextY + height + PADDING <= atlasHeight)
+            {
+                shelfY = nextY;
+                shelfX = shelfHeight = 0;
+                break;
+            }
+
+            if (atlasWidth >= SIZE && atlasHeight >= SIZE)
+                return false;
+
+            atlasWidth = Math.Min(SIZE, atlasWidth * 2);
+            atlasHeight = Math.Min(SIZE, atlasHeight * 2);
+        }
 
         x = shelfX;
         y = shelfY;
@@ -228,55 +261,125 @@ public sealed class GlyphAtlas
     }
 
     /// <summary>
-    /// Makes the texture the first time it's wanted and sends up the rows that changed. Render thread, before the draws
+    /// Makes the texture the first time it's wanted and sends up the newly rasterized glyphs. Render thread, before the draws
     /// that show them.
     /// </summary>
     public unsafe void Upload()
     {
+        // Free old textures once in-flight frames have finished reading them
+        for (int i = retired.Count - 1; i >= 0; i--)
+        {
+            var (old, frames) = retired[i];
+            if (frames >= 2)
+            {
+                old.Dispose();
+                retired.RemoveAt(i);
+            }
+            else
+            {
+                retired[i] = (old, frames + 1);
+            }
+        }
+
+        if (!ready && (failed || !wanted))
+            return;
+
+        int targetWidth, targetHeight;
+        bool doClear;
+        lock (gate)
+        {
+            targetWidth = atlasWidth;
+            targetHeight = atlasHeight;
+            doClear = needsClear;
+            needsClear = false;
+
+            if (pendingGlyphs.Count > 0)
+            {
+                (pendingGlyphs, uploadGlyphs) = (uploadGlyphs, pendingGlyphs);
+                (pendingBytes, uploadBytes) = (uploadBytes, pendingBytes);
+                pendingGlyphs.Clear();
+                pendingByteCount = 0;
+            }
+        }
+
         if (!ready)
         {
-            if (failed || !wanted)
-                return;
-
             // Nearest, never smoothed: every letter is drawn a texel to the pixel, and a filter could only blur it. The
             // subpixel stripes are coverage, not colour, so plain numbers and never taken for sRGB
             using (AssetScope.EnterGlobal())
-                Texture = Texture.Create(SIZE, SIZE, new TextureDefinition(subpixel ? PixelFormat.Rgba8 : PixelFormat.R8, Smooth: false));
+                Texture = Texture.Create((uint)targetWidth, (uint)targetHeight, new TextureDefinition(subpixel ? PixelFormat.Rgba8 : PixelFormat.R8, Smooth: false));
             if (!Texture.IsValid)
             {
                 failed = true;
+                uploadGlyphs.Clear();
                 return;
             }
             Texture.Name = subpixel ? "glyphs subpixel" : "glyphs";
-
-            // What it held before it was made isn't anything, it all goes up the once
-            lock (gate)
-            {
-                pixels ??= new byte[SIZE * SIZE * texel];
-                dirtyTop = 0;
-                dirtyBottom = SIZE;
-            }
+            ClearTexture(Texture);
             ready = true;
         }
-
-        // The rows copied out under the lock, which is a memory copy, and sent up after it, which can wait on the driver
-        int top, rows;
-        lock (gate)
+        else if (Texture.Width != (uint)targetWidth || Texture.Height != (uint)targetHeight)
         {
-            if (dirtyTop >= dirtyBottom || pixels is null)
+            Texture grown;
+            using (AssetScope.EnterGlobal())
+                grown = Texture.Create((uint)targetWidth, (uint)targetHeight, new TextureDefinition(subpixel ? PixelFormat.Rgba8 : PixelFormat.R8, Smooth: false));
+            if (!grown.IsValid)
+            {
+                uploadGlyphs.Clear();
                 return;
-
-            top = dirtyTop;
-            rows = dirtyBottom - dirtyTop;
-            int bytes = rows * SIZE * texel;
-            if (staging.Length < bytes)
-                staging = new byte[bytes];
-            pixels.AsSpan(top * SIZE * texel, bytes).CopyTo(staging);
-            dirtyTop = int.MaxValue;
-            dirtyBottom = 0;
+            }
+            grown.Name = subpixel ? "glyphs subpixel" : "glyphs";
+            Texture old = Texture;
+            Texture = grown;
+            ClearTexture(Texture);
+            if (!doClear)
+                GraphicsDevice.Current.CopyTexels(old, Texture);
+            retired.Add((old, 0));
+        }
+        else if (doClear)
+        {
+            ClearTexture(Texture);
         }
 
-        fixed (byte* texels = staging)
-            GraphicsDevice.Current.UploadTexels(Texture, 0, top, SIZE, (uint)rows, subpixel ? TexelFormat.Rgba8 : TexelFormat.R8, texels);
+        if (uploadGlyphs.Count == 0)
+            return;
+
+        TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
+        fixed (byte* basePtr = uploadBytes)
+        {
+            foreach (PendingGlyph g in uploadGlyphs)
+                GraphicsDevice.Current.UploadTexels(Texture, g.X, g.Y, (uint)g.Width, (uint)g.Height, format, basePtr + g.Offset);
+        }
+        uploadGlyphs.Clear();
+        if (uploadBytes.Length > MAX_RETAINED_PENDING_BYTES)
+            uploadBytes = [];
+    }
+
+    // Helper method to zero a newly created or reset atlas texture in small pooled strips so no full-atlas CPU mirror is kept
+    private unsafe void ClearTexture(Texture texture)
+    {
+        int width = (int)texture.Width;
+        int height = (int)texture.Height;
+        int stripRows = Math.Min(CLEAR_STRIP_ROWS, height);
+        int stripBytes = width * stripRows * texel;
+        TexelFormat format = subpixel ? TexelFormat.Rgba8 : TexelFormat.R8;
+
+        byte[] zeros = ArrayPool<byte>.Shared.Rent(stripBytes);
+        try
+        {
+            Array.Clear(zeros, 0, stripBytes);
+            fixed (byte* ptr = zeros)
+            {
+                for (int y = 0; y < height; y += stripRows)
+                {
+                    int rows = Math.Min(stripRows, height - y);
+                    GraphicsDevice.Current.UploadTexels(texture, 0, y, (uint)width, (uint)rows, format, ptr);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(zeros);
+        }
     }
 }

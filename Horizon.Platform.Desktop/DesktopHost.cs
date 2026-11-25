@@ -17,6 +17,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
     private SilkSurface? surface;
     private IPlatformMenuBar? macMenuBar;
     private IPlatformAppearance? macAppearance;
+    private IPlatformDialogs? macDialogs;
     private readonly List<SilkGamepadSource> gamepads = [];
     private volatile bool disposed, closed;
 
@@ -33,7 +34,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
             (request.Window.CustomFrame && DesktopWindow.UsesSdlDragArea ? PlatformFeatures.DragArea : 0) |
             (request.Window.CustomFrame && OperatingSystem.IsWindows() ? PlatformFeatures.HotKeys : 0) |
             PlatformFeatures.DropDown |
-            (OperatingSystem.IsMacOS() ? PlatformFeatures.NativeMenuBar : 0);
+            (OperatingSystem.IsMacOS() ? PlatformFeatures.NativeMenuBar | PlatformFeatures.NativeDialogs : 0);
 
         SurfaceAhead = Win32SurfaceAhead.ForThisMachine(DesktopWindow.UsesSdl);
     }
@@ -50,6 +51,9 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
 
     /// <summary>A Mac's light or dark appearance and accent, null on every other desktop. There from <see cref="Initialize"/> on.</summary>
     public IPlatformAppearance? Appearance => macAppearance;
+
+    /// <summary>A Mac's native Finder open, save and folder dialogs, null on every other desktop. There from <see cref="Initialize"/> on.</summary>
+    public IPlatformDialogs? Dialogs => macDialogs;
 
     /// <summary>Whether the close being decided is the application quitting (a Mac's Cmd+Q), see <see cref="IPlatformHost.CloseIsQuit"/>.</summary>
     public bool CloseIsQuit { get; internal set; }
@@ -88,6 +92,7 @@ public sealed class DesktopHost : IPlatformHost, IPlatformLoop
             MacMain.Poster = Post;
             macMenuBar = new MacMenuBar();
             macAppearance = MacAppearance.Create();
+            macDialogs = new MacDialogs();
             if (DesktopWindow.UsesSdl)
                 MacQuitWatch.Install();
         }

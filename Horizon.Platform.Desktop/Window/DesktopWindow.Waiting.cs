@@ -15,8 +15,11 @@ public sealed partial class DesktopWindow
     // How long (in milliseconds) the thread of the window waits between two looks at what the system has to say
     private const int EVENT_POLL = 1;
 
-    // How long the window's thread waits for the system while idle, the longest it takes to notice a closing flag
-    private const double EVENT_WAIT = 0.1;
+    // How long the window's thread waits for the system while active in an application (woken immediately by OS input or WakeWindow)
+    private const double ACTIVE_WAIT = 0.004;
+
+    // How long the window's thread waits for the system while idle; WakeWindow (PostEmptyEvent/WakeSdl) wakes it immediately on close/post
+    private const double EVENT_WAIT = 0.5;
 
     private readonly AutoResetEvent windowWake = new(false);
 
@@ -106,18 +109,18 @@ public sealed partial class DesktopWindow
     /// </summary>
     private void WaitForEvents()
     {
-        bool idle = (behaviour & ApplicationBehaviour.WaitForEvents) != 0 && (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding && Events.MayWaitForEvents && !closing;
-        if (!idle)
+        bool canWait = (behaviour & ApplicationBehaviour.WaitForEvents) != 0 && (glfw is not null || sdlWaiting) && drag == Drag.None && !sliding && !closing;
+        if (!canWait)
         {
             windowWake.WaitOne(EVENT_POLL);
             return;
         }
 
-        // Dormant (WindowManager.Dormant) it waits as long as the system has nothing to say, whoever wants the window
-        // wakes it (WakeWindow)
-        double wait = Events.Dormant ? DORMANT_WAIT : EVENT_WAIT;
+        // Wait on the OS event queue both while active (short timeout, woken with 0 ms latency by input/WakeWindow
+        // without needing timeBeginPeriod(1)) and while idle/dormant (long timeout to avoid needless wakeups).
+        double wait = !Events.MayWaitForEvents ? ACTIVE_WAIT : Events.Dormant ? DORMANT_WAIT : EVENT_WAIT;
         if (sdlWaiting)
-            WaitForSdl((int)(wait * 1000.0));
+            WaitForSdl(Math.Max(1, (int)(wait * 1000.0)));
         else
             glfw!.WaitEventsTimeout(wait);
     }

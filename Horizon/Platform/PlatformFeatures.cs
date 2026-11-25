@@ -51,4 +51,7 @@ public enum PlatformFeatures
 
     /// <summary>The system has a menu bar of its own that the program can fill, see <see cref="IPlatformHost.MenuBar"/> (a Mac's).</summary>
     NativeMenuBar = 1 << 12,
+
+    /// <summary>The system has native file open, save and folder dialogs, see <see cref="IPlatformHost.Dialogs"/> (a Mac's Finder sheets).</summary>
+    NativeDialogs = 1 << 13,
 }

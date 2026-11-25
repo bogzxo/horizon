@@ -20,6 +20,9 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     // Fingers on a Windows touch screen, which GLFW would only ever hand over as the mouse
     private readonly WindowsTouch? touch;
 
+    // Last IME candidate rect sent to SDL, so unchanged caret frames allocate nothing
+    private int lastImeX = int.MinValue, lastImeY, lastImeW, lastImeH;
+
     public DesktopInput(DesktopHost host, IInputContext context, Func<Vector2, Vector2> toPixels, nint windowHandle = 0, nint cocoaWindow = 0)
     {
         this.host = host;
@@ -81,6 +84,25 @@ internal sealed class DesktopInput : IPlatformInput, IDisposable
     }
 
     public IPlatformGamepads? OpenGamepads() => host.OpenGamepads(context);
+
+    public void SetTextInputRect(int x, int y, int width, int height)
+    {
+        if (!DesktopWindow.UsesSdl)
+            return;
+
+        if (x == lastImeX && y == lastImeY && width == lastImeW && height == lastImeH)
+            return;
+
+        lastImeX = x;
+        lastImeY = y;
+        lastImeW = width;
+        lastImeH = height;
+
+        if (host.IsPlatformThread)
+            SdlTextEditing.SetTextInputRect(x, y, width, height);
+        else
+            host.Post(() => SdlTextEditing.SetTextInputRect(x, y, width, height));
+    }
 
     /// <summary>How many fingers are on a Windows touch screen right now, null where they aren't heard. For a check.</summary>
     public int? TouchContacts => OperatingSystem.IsWindows() && touch?.Installed == true ? touch.Contacts : null;

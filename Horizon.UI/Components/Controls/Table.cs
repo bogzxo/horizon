@@ -390,14 +390,27 @@ public class Table : UIComponent
     {
         if (Module?.Compositor.Skin is not { } skin)
             return false;
-        float max = TravelY(skin);
-        if (max <= 0 || delta.Y == 0
-            || (delta.Y < 0 && scrollY <= 0) || (delta.Y > 0 && scrollY >= max))
-            return false;
 
-        ease.Stop();
-        scrollY = Math.Clamp(scrollY + delta.Y, 0, max);
-        return true;
+        bool moved = false;
+        float maxY = TravelY(skin);
+        if (maxY > 0.0f && delta.Y != 0.0f
+            && !((delta.Y < 0.0f && scrollY <= 0.0f) || (delta.Y > 0.0f && scrollY >= maxY)))
+        {
+            ease.Stop();
+            scrollY = Math.Clamp(scrollY + delta.Y, 0.0f, maxY);
+            moved = true;
+        }
+
+        float maxX = TravelX;
+        if (maxX > 0.0f && delta.X != 0.0f
+            && !((delta.X > 0.0f && scrollX <= 0.0f) || (delta.X < 0.0f && scrollX >= maxX)))
+        {
+            easeX.Goal = null;
+            scrollX = Math.Clamp(scrollX - delta.X, 0.0f, maxX);
+            moved = true;
+        }
+
+        return moved;
     }
 
     internal bool ScrollWheel(float delta, UISkin skin, bool across)

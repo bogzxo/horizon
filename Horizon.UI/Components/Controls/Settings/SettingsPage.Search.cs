@@ -482,7 +482,23 @@ public partial class SettingsPage
     }
 
     /// <summary>How many settings on the page aren't what they come as, what Reset all settings would put back.</summary>
-    public int ModifiedCount => ChangedKeys(null).Length;
+    public int ModifiedCount
+    {
+        get
+        {
+            if (IsModified is not { } isModified)
+                return 0;
+
+            int count = 0;
+            foreach (SettingRow row in rowOf.Values)
+            {
+                if (isModified(row.Setting.Key))
+                    count++;
+            }
+
+            return count;
+        }
+    }
 
     // The funnel pressed, its menu under it
     private void ShowFilters()

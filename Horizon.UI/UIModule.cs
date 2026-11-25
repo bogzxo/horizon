@@ -356,6 +356,11 @@ namespace Horizon.UI
 
         internal void Paint(UIDrawList list)
         {
+            // A module whose root is hidden and that has no frame decoration, popups, tooltip or raised components paints nothing,
+            // so skip opening a transform frame and clip for it.
+            if (!Root.Visible && FrameBackground is null && FrameColor is null && closingPopup is null && Popup is null && tooltip is null && raisedShown.Length == 0)
+                return;
+
             // Where a module is counts in units of the layout like everything in it, so it scales along.
             list.SetTransform(Position * UnitScale, Scale * UnitScale);
 

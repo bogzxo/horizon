@@ -27,11 +27,12 @@ public sealed partial class UIDrawList
     /// </summary>
     internal static bool CheckReuse { get; set; } = Environment.GetEnvironmentVariable("HORIZON_UI_REUSE_CHECK") == "1";
 
-    // What a component painted, where it is among the list's quads, frame quads, frames, clips and homes, the frame
-    // and clip it was painted inside of, and the images its run had, by the component's name
+    // What a component painted, where it is among the list's quads, frame quads, frames, clips, homes and glass panes,
+    // the frame and clip it was painted inside of, and the images its run had, by the component's name
     private readonly record struct PaintRecord(
         long Version, int Context, int Items, int ItemsEnd, int Quads, int QuadsEnd, int Frames, int FramesEnd,
-        int Clips, int ClipsEnd, int Homes, int HomesEnd, Texture? Image0, Texture? Image1);
+        int Clips, int ClipsEnd, int Homes, int HomesEnd, int Glass, int GlassEnd, int FrameGlass, int FrameGlassEnd,
+        Texture? Image0, Texture? Image1);
 
     private readonly Dictionary<float, PaintRecord> records = [];
 
@@ -39,7 +40,7 @@ public sealed partial class UIDrawList
     internal int Reused { get; private set; }
 
     // Where a recording started, and how many things that can't be painted again had happened by then
-    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Runs, int FrameRuns, int Uncacheable)> recording = new();
+    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Glass, int FrameGlass, int Runs, int FrameRuns, int Uncacheable)> recording = new();
     private int uncacheable;
 
     // The components that started painting in frames, in order, for a record to carry its own
@@ -56,7 +57,7 @@ public sealed partial class UIDrawList
     }
 
     /// <summary>
-    /// Says that what's painted now can't be taken out of this list again as it was. Glass, a run of images that
+    /// Says that what's painted now can't be taken out of this list again as it was. A run of images that
     /// closed, a component raised over the rest, an icon that moves.
     /// </summary>
     internal void Uncacheable() => uncacheable++;
@@ -88,11 +89,14 @@ public sealed partial class UIDrawList
         hash.Add(subpixelText && Horizon.Rendering.Text.GlyphAtlas.Subpixel.Ready);
         hash.Add(subpixelBgr);
         hash.Add(hintedText);
-        foreach (var (area, top, bottom) in fades)
+        if (fades.Count > 0)
         {
-            hash.Add(area);
-            hash.Add(top);
-            hash.Add(bottom);
+            foreach (ref readonly var fade in CollectionsMarshal.AsSpan(fades))
+            {
+                hash.Add(fade.Area);
+                hash.Add(fade.Top);
+                hash.Add(fade.Bottom);
+            }
         }
 
         return hash.ToHashCode();
@@ -117,21 +121,21 @@ public sealed partial class UIDrawList
 
     /// <summary>Starts recording what a component paints, for the next tick to take it out of this list again.</summary>
     internal void BeginRecord() =>
-        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, runs.Count, frameList.Runs.Count, uncacheable));
+        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, runs.Count, frameList.Runs.Count, uncacheable));
 
     /// <summary>Ends what <see cref="BeginRecord"/> started, kept unless something that can't be painted again was painted.</summary>
     /// <param name="painter">Who it is, said when CheckReuse finds a difference.</param>
     internal void EndRecord(float paintId, long version, int context, object painter)
     {
-        var (items0, quads0, frames0, clips0, homes0, runs0, frameRuns0, uncacheable0) = recording.Pop();
+        var (items0, quads0, frames0, clips0, homes0, glass0, frameGlass0, runs0, frameRuns0, uncacheable0) = recording.Pop();
         bool kept = uncacheable == uncacheable0 && runs.Count == runs0 && frameList.Runs.Count == frameRuns0;
         if (CheckReuse && Previous is { } before && before.records.TryGetValue(paintId, out PaintRecord was) && was.Version == version && was.Context == context
-            && Differs(before, was, items0, quads0) is { } differs)
+            && Differs(before, was, items0, quads0, glass0) is { } differs)
             Log.Warning($"[UI reuse] a {painter.GetType().Name} painted something else at the same PaintVersion, {differs}");
 
         if (kept)
             records[paintId] = new PaintRecord(version, context, items0, itemCount, quads0, frameList.QuadCount, frames0, frameList.Frames.Count,
-                clips0, frameList.Clips.Count, homes0, homeOrder.Count, runImage0, runImage1);
+                clips0, frameList.Clips.Count, homes0, homeOrder.Count, glass0, glass.Count, frameGlass0, frameList.Glass.Count, runImage0, runImage1);
     }
 
     // Helper method to copy what a component painted the tick before into this list, where it's painted now
@@ -140,6 +144,7 @@ public sealed partial class UIDrawList
         // Its images in slots of this run, the slots it had then said the same images
         uint slot0 = was.Image0 is { } image0 ? ImageSlot(image0) : 0;
         uint slot1 = was.Image1 is { } image1 ? ImageSlot(image1) : 0;
+        bool remapSlots = (was.Image0 is not null && slot0 != IMAGE_SLOT) || (was.Image1 is not null && slot1 != IMAGE_SLOT + 1);
         uint Slot(uint flags)
         {
             uint texture = SpriteItem.TextureOf(flags);
@@ -147,59 +152,135 @@ public sealed partial class UIDrawList
         }
 
         int items0 = itemCount, frames0 = frameList.Frames.Count, clips0 = frameList.Clips.Count;
+        int glass0 = glass.Count, frameGlass0 = frameList.Glass.Count;
         int count = was.ItemsEnd - was.Items;
-        while (itemCount + count > items.Length)
-            Array.Resize(ref items, items.Length * 2);
-        before.items.AsSpan(was.Items, count).CopyTo(items.AsSpan(itemCount));
-        for (int i = itemCount; i < itemCount + count; i++)
-            items[i].Flags = Slot(items[i].Flags);
-        itemCount += count;
+        if (count > 0)
+        {
+            if (itemCount + count > items.Length)
+            {
+                int next = items.Length;
+                while (next < itemCount + count)
+                    next *= 2;
+                Array.Resize(ref items, next);
+            }
+            before.items.AsSpan(was.Items, count).CopyTo(items.AsSpan(itemCount));
+            // Most idle ticks bind the same images into the same slots, so the copied quads need no per-item flag rewrite.
+            if (remapSlots)
+            {
+                for (int i = itemCount; i < itemCount + count; i++)
+                    items[i].Flags = Slot(items[i].Flags);
+            }
+            itemCount += count;
+        }
 
         // Frames and clips inside of it numbered again among this list's, and the ones it was inside of are the ones
         // it's inside of now
         int Frame(int index) => index >= was.Frames && index < was.FramesEnd ? index - was.Frames + frames0 : frameAt;
         int Clip(int index) => index >= was.Clips && index < was.ClipsEnd ? index - was.Clips + clips0 : clipAt;
 
-        for (int i = was.Frames; i < was.FramesEnd; i++)
+        int frameCount = was.FramesEnd - was.Frames;
+        if (frameCount > 0)
         {
-            UIFrame frame = before.frameList.Frames[i];
-            frameList.Frames.Add(frame with { Parent = Frame(frame.Parent) });
+            frameList.Frames.EnsureCapacity(frames0 + frameCount);
+            for (int i = was.Frames; i < was.FramesEnd; i++)
+            {
+                UIFrame frame = before.frameList.Frames[i];
+                frameList.Frames.Add(frame with { Parent = Frame(frame.Parent) });
+            }
         }
 
-        for (int i = was.Clips; i < was.ClipsEnd; i++)
+        int clipCount = was.ClipsEnd - was.Clips;
+        if (clipCount > 0)
         {
-            UIFrameClip cut = before.frameList.Clips[i];
-            frameList.Clips.Add(cut with { Frame = Frame(cut.Frame), Parent = Clip(cut.Parent),
-                StationaryParentFrame = cut.StationaryParentFrame is { } outside ? Frame(outside) : null });
+            frameList.Clips.EnsureCapacity(clips0 + clipCount);
+            for (int i = was.Clips; i < was.ClipsEnd; i++)
+            {
+                UIFrameClip cut = before.frameList.Clips[i];
+                frameList.Clips.Add(cut with { Frame = Frame(cut.Frame), Parent = Clip(cut.Parent),
+                    StationaryParentFrame = cut.StationaryParentFrame is { } outside ? Frame(outside) : null });
+            }
         }
 
-        for (int i = was.Quads; i < was.QuadsEnd; i++)
+        int itemDelta = items0 - was.Items;
+        int quadCount = was.QuadsEnd - was.Quads;
+        int quads0 = frameList.QuadCount;
+        if (quadCount > 0)
         {
-            ref UIFrameQuad quad = ref frameList.Add();
-            quad = before.frameList.Quads[i];
-            quad.Frame = Frame(quad.Frame);
-            quad.Clip = Clip(quad.Clip);
-            quad.Flags = Slot(quad.Flags);
+            frameList.EnsureCapacity(quads0 + quadCount);
+            before.frameList.Quads.AsSpan(was.Quads, quadCount).CopyTo(frameList.Quads.AsSpan(quads0, quadCount));
+            frameList.QuadCount = quads0 + quadCount;
+
+            Span<UIFrameQuad> dst = frameList.Quads.AsSpan(quads0, quadCount);
+            bool hasInnerFrames = frameCount > 0;
+            bool hasInnerClips = clipCount > 0;
+            int frameDelta = frames0 - was.Frames;
+            int clipDelta = clips0 - was.Clips;
+            for (int i = 0; i < quadCount; i++)
+            {
+                ref UIFrameQuad quad = ref dst[i];
+                quad.Frame = hasInnerFrames && quad.Frame >= was.Frames && quad.Frame < was.FramesEnd ? quad.Frame + frameDelta : frameAt;
+                quad.Clip = hasInnerClips && quad.Clip >= was.Clips && quad.Clip < was.ClipsEnd ? quad.Clip + clipDelta : clipAt;
+                if (quad.Item >= 0)
+                    quad.Item += itemDelta;
+                if (remapSlots)
+                    quad.Flags = Slot(quad.Flags);
+            }
         }
 
-        for (int i = was.Homes; i < was.HomesEnd; i++)
+        int glassCount = was.GlassEnd - was.Glass;
+        if (glassCount > 0)
         {
-            var (id, frame) = before.homeOrder[i];
-            int home = Frame(frame);
-            homeOrder.Add((id, home));
-            homes.TryAdd(id, home);
+            glass.EnsureCapacity(glass0 + glassCount);
+            for (int i = was.Glass; i < was.GlassEnd; i++)
+            {
+                UIGlassPane pane = before.glass[i];
+                glass.Add(pane with { Under = pane.Under + itemDelta, Start = pane.Start + itemDelta });
+            }
+        }
+
+        int frameGlassCount = was.FrameGlassEnd - was.FrameGlass;
+        if (frameGlassCount > 0)
+        {
+            frameList.Glass.EnsureCapacity(frameGlass0 + frameGlassCount);
+            int quadDelta = quads0 - was.Quads;
+            for (int i = was.FrameGlass; i < was.FrameGlassEnd; i++)
+            {
+                UIFrameGlass fg = before.frameList.Glass[i];
+                frameList.Glass.Add(fg with
+                {
+                    Under = fg.Under + quadDelta,
+                    Start = fg.Start + quadDelta,
+                    Frame = Frame(fg.Frame),
+                    Clip = Clip(fg.Clip)
+                });
+            }
+        }
+
+        int homeCount = was.HomesEnd - was.Homes;
+        if (homeCount > 0)
+        {
+            homeOrder.EnsureCapacity(homeOrder.Count + homeCount);
+            for (int i = was.Homes; i < was.HomesEnd; i++)
+            {
+                var (id, frame) = before.homeOrder[i];
+                int home = Frame(frame);
+                homeOrder.Add((id, home));
+                homes.TryAdd(id, home);
+            }
         }
 
         records[paintId] = was with
         {
-            Items = items0, ItemsEnd = itemCount, Quads = frameList.QuadCount - (was.QuadsEnd - was.Quads), QuadsEnd = frameList.QuadCount,
+            Items = items0, ItemsEnd = itemCount, Quads = quads0, QuadsEnd = frameList.QuadCount,
             Frames = frames0, FramesEnd = frameList.Frames.Count, Clips = clips0, ClipsEnd = frameList.Clips.Count,
-            Homes = homeOrder.Count - (was.HomesEnd - was.Homes), HomesEnd = homeOrder.Count, Image0 = runImage0, Image1 = runImage1
+            Homes = homeOrder.Count - homeCount, HomesEnd = homeOrder.Count,
+            Glass = glass0, GlassEnd = glass.Count, FrameGlass = frameGlass0, FrameGlassEnd = frameList.Glass.Count,
+            Image0 = runImage0, Image1 = runImage1
         };
     }
 
     // Helper method for where what a component painted now differs from what it painted at the same version before, for CheckReuse
-    private string? Differs(UIDrawList before, in PaintRecord was, int items0, int quads0)
+    private string? Differs(UIDrawList before, in PaintRecord was, int items0, int quads0, int glass0)
     {
         int count = itemCount - items0;
         if (count != was.ItemsEnd - was.Items)
@@ -215,6 +296,20 @@ public sealed partial class UIDrawList
             if (a.Origin != b.Origin || a.AxisX != b.AxisX || a.AxisY != b.AxisY || a.TexMin != b.TexMin || a.TexMax != b.TexMax || a.Color != b.Color || a.Ring != b.Ring
                 || !image && a.Flags != b.Flags)
                 return $"quad {i} of {count} is at {a.Origin} {a.Color:X8} now and was at {b.Origin} {b.Color:X8}";
+        }
+
+        int glassCount = glass.Count - glass0;
+        if (glassCount != was.GlassEnd - was.Glass)
+            return $"{glassCount} glass panes painted, {was.GlassEnd - was.Glass} before";
+
+        for (int i = 0; i < glassCount; i++)
+        {
+            UIGlassPane a = glass[glass0 + i], b = before.glass[was.Glass + i];
+            if (a.Under - items0 != b.Under - was.Items || a.Start - items0 != b.Start - was.Items ||
+                a.Min != b.Min || a.Max != b.Max || a.ClipMin != b.ClipMin || a.ClipMax != b.ClipMax ||
+                a.Radius != b.Radius || a.Blur != b.Blur || a.Opacity != b.Opacity || a.Bend != b.Bend ||
+                a.Lens != b.Lens || a.Tint != b.Tint)
+                return $"glass pane {i} of {glassCount} is {a} now and was {b}";
         }
 
         return null;

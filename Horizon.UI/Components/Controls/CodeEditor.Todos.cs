@@ -24,17 +24,73 @@ public partial class CodeEditor
         if (!HighlightTodos)
             return;
 
+        Vector4 todoColour = skin.WarningColor with { W = 0.28f };
+        Vector4 fixmeColour = skin.ErrorColor with { W = 0.28f };
         for (int line = firstLine; line <= lastLine && line < document.LineCount; line++)
         {
             if (IsHidden(line, out _))
                 continue;
 
-            foreach (var (from, to, urgent) in TodosOn(line))
+            string text = document.LineAt(line);
+            if (!MightHaveTodo(text))
+                continue;
+
+            List<SyntaxSpan>? lineSpans = null;
+            if (Highlight)
             {
-                Vector4 colour = (urgent ? skin.ErrorColor : skin.WarningColor) with { W = 0.28f };
-                list.Rect(Piece(skin, scale, area, left, lineHeight, line, from, to), colour);
+                lineSpans = ColoursOf(line, text) ?? FreshColours(line, text);
+                if (lineSpans is null)
+                    continue;
+            }
+
+            for (int w = 0; w < TodoWords.Length; w++)
+            {
+                var (word, urgent) = TodoWords[w];
+                Vector4 colour = urgent ? fixmeColour : todoColour;
+                for (int at = text.IndexOf(word, StringComparison.Ordinal); at >= 0; at = text.IndexOf(word, at + word.Length, StringComparison.Ordinal))
+                {
+                    int end = at + word.Length;
+                    bool alone = (at == 0 || !IsWordChar(text[at - 1])) && (end >= text.Length || !IsWordChar(text[end]));
+                    if (alone && InComment(lineSpans, at))
+                        list.Rect(Piece(skin, scale, area, left, lineHeight, line, at, end), colour);
+                }
             }
         }
+    }
+
+    // Zero-allocation scan for whether a line has a FIXME (1), a TODO (0), or neither (-1).
+    private sbyte TodoKindOn(int line, string text)
+    {
+        if (!MightHaveTodo(text))
+            return -1;
+
+        List<SyntaxSpan>? lineSpans = null;
+        if (Highlight)
+        {
+            lineSpans = ColoursOf(line, text) ?? FreshColours(line, text);
+            if (lineSpans is null)
+                return -1;
+        }
+
+        sbyte kind = -1;
+        for (int w = 0; w < TodoWords.Length; w++)
+        {
+            var (word, urgent) = TodoWords[w];
+            for (int at = text.IndexOf(word, StringComparison.Ordinal); at >= 0; at = text.IndexOf(word, at + word.Length, StringComparison.Ordinal))
+            {
+                int end = at + word.Length;
+                bool alone = (at == 0 || !IsWordChar(text[at - 1])) && (end >= text.Length || !IsWordChar(text[end]));
+                if (alone && InComment(lineSpans, at))
+                {
+                    if (urgent)
+                        return 1;
+                    kind = 0;
+                    break;
+                }
+            }
+        }
+
+        return kind;
     }
 
     /// <summary>The TODOs and FIXMEs of a line that are in a comment, where each starts and ends and whether it's a FIXME.</summary>
@@ -91,8 +147,9 @@ public partial class CodeEditor
             return true;
 
         bool anyComment = false, allNames = true;
-        foreach (SyntaxSpan span in spans)
+        for (int i = 0; i < spans.Count; i++)
         {
+            SyntaxSpan span = spans[i];
             anyComment |= span.Kind == SyntaxKind.Comment;
             allNames &= span.Kind == SyntaxKind.Name;
             if (at >= span.Start && at < span.Start + span.Length)

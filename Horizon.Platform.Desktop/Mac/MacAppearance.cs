@@ -86,6 +86,7 @@ public sealed unsafe class MacAppearance : IPlatformAppearance
     /// <summary>Whether the app's effective appearance is Dark Aqua. The main thread.</summary>
     public static bool ReadIsDark()
     {
+        using var pool = MacObjC.Pool();
         nint app = MacObjC.SharedApplication;
         if (app == 0)
             return false;
@@ -103,6 +104,7 @@ public sealed unsafe class MacAppearance : IPlatformAppearance
     /// <summary>The accent colour as sRGB, null when it can't be had. The main thread.</summary>
     public static (float R, float G, float B)? ReadAccent()
     {
+        using var pool = MacObjC.Pool();
         nint color = MacObjC.Send(MacObjC.Class("NSColor"), MacObjC.Sel("controlAccentColor"));
         if (color == 0)
             return null;
@@ -143,8 +145,10 @@ public sealed unsafe class MacAppearance : IPlatformAppearance
     internal void Notified()
     {
         Read(raise: true);
-        lag?.Dispose();
-        lag = new Timer(static _ => MacMain.Run(static () => current?.Read(raise: true)), null, 300, Timeout.Infinite);
+        if (lag is null)
+            lag = new Timer(static _ => MacMain.Run(static () => current?.Read(raise: true)), null, 300, Timeout.Infinite);
+        else
+            lag.Change(300, Timeout.Infinite);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
@@ -152,6 +156,7 @@ public sealed unsafe class MacAppearance : IPlatformAppearance
     {
         try
         {
+            using var pool = MacObjC.Pool();
             current?.Notified();
         }
         catch (Exception)

@@ -88,6 +88,7 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
 
     private void Install(IReadOnlyList<PlatformMenu> menus)
     {
+        nint newBar = 0;
         try
         {
             EnsureTarget();
@@ -96,7 +97,7 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
             Forget();
 
             nint application = MacObjC.SharedApplication;
-            nint newBar = MacObjC.Send(MacObjC.Send(MacObjC.Class("NSMenu"), MacObjC.Sel("alloc")), MacObjC.Sel("initWithTitle:"), MacObjC.NSString(string.Empty));
+            newBar = MacObjC.Send(MacObjC.Send(MacObjC.Class("NSMenu"), MacObjC.Sel("alloc")), MacObjC.Sel("initWithTitle:"), MacObjC.NSString(string.Empty));
             nint windows = 0, help = 0;
 
             for (int i = 0; i < menus.Count; i++)
@@ -133,6 +134,9 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or InvalidOperationException)
         {
+            if (newBar != 0 && newBar != mainMenu)
+                MacObjC.Release(newBar);
+
             // No menu of the system's is a program that has its own bar still, which the program sees as IsNative staying false
             Console.Error.WriteLine($"[Horizon] the native menu bar wasn't made, {e.Message}");
         }
@@ -172,6 +176,8 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
         if (target != 0)
             return;
 
+        DisableAutoEditItems();
+
         // The item's target and the menus' delegate, one object. A class of its own, the program's names for what AppKit asks
         var builder = new MacClassBuilder("HorizonMenuTarget")
             .AddMethod("pick:", (nint)(delegate* unmanaged[Cdecl]<nint, nint, nint, void>)&Pick, "v@:@")
@@ -183,6 +189,22 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
             .AddProtocol("NSMenuItemValidation");
         targetClass = builder.Register();
         target = MacObjC.New(targetClass);
+    }
+
+    // AppKit auto-injects "Start Dictation…" and "Emoji & Symbols" into any menu titled "Edit", which duplicates them
+    // when a dynamic Edit menu is refilled on open. Registering these defaults in memory suppresses that without writing
+    // to the user's persisted preferences.
+    private static void DisableAutoEditItems()
+    {
+        nint defaults = MacObjC.Send(MacObjC.Class("NSUserDefaults"), MacObjC.Sel("standardUserDefaults"));
+        if (defaults == 0)
+            return;
+
+        nint dict = MacObjC.Send(MacObjC.Class("NSMutableDictionary"), MacObjC.Sel("dictionary"));
+        nint yes = MacObjC.Send(MacObjC.Class("NSNumber"), MacObjC.Sel("numberWithBool:"), (nint)1);
+        MacObjC.SendVoid(dict, MacObjC.Sel("setObject:forKey:"), yes, MacObjC.NSString("NSDisabledDictationMenuItem"));
+        MacObjC.SendVoid(dict, MacObjC.Sel("setObject:forKey:"), yes, MacObjC.NSString("NSDisabledCharacterPaletteMenuItem"));
+        MacObjC.SendVoid(defaults, MacObjC.Sel("registerDefaults:"), dict);
     }
 
     // A menu with its items made, a new one the caller owns. Nothing of the program's is kept but its menu and items
@@ -241,7 +263,8 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
     {
         nint item = MacObjC.Send(MacObjC.Send(MacObjC.Class("NSMenuItem"), MacObjC.Sel("alloc")), MacObjC.Sel("initWithTitle:action:keyEquivalent:"),
             MacObjC.NSString(title), action, MacObjC.NSString(key));
-        if (mask != 0)
+        // AppKit defaults keyEquivalentModifierMask to Command, so set it even when mask == 0 for modifierless keys (F5, Esc, Delete)
+        if (key.Length > 0)
             MacObjC.SendVoid(item, MacObjC.Sel("setKeyEquivalentModifierMask:"), (nuint)mask);
         return item;
     }
@@ -333,6 +356,7 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
     {
         try
         {
+            using var pool = MacObjC.Pool();
             if (current is not { } bar || !bar.itemsByPointer.TryGetValue(sender, out ItemNode? node) || node.Source.Picked is not { } picked)
                 return;
 
@@ -377,6 +401,7 @@ internal sealed unsafe class MacMenuBar : IPlatformMenuBar
     {
         try
         {
+            using var pool = MacObjC.Pool();
             if (current is not { } bar || !bar.menusByPointer.TryGetValue(menu, out MenuNode? node))
                 return;
 

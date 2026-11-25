@@ -69,10 +69,15 @@ public partial class CodeEditor
     private void PaintAgentHints(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, float digit, int first, int last)
     {
         agentHintBoxes.Clear();
+        IReadOnlyList<UICodeAgentHint> hints = AgentHints;
+        if (hints.Count == 0)
+            return;
+
         Dictionary<int, float> ends = agentHintEnds;
         ends.Clear();
-        foreach (var hint in AgentHints)
+        for (int i = 0; i < hints.Count; i++)
         {
+            UICodeAgentHint hint = hints[i];
             if (hint.Line < first || hint.Line > last || hint.Line < 0 || hint.Line >= document.LineCount || IsHidden(hint.Line, out _)) continue;
             int length = document.LineAt(hint.Line).Length;
             int column = Math.Clamp(hint.Column, 0, length);
@@ -81,8 +86,11 @@ public partial class CodeEditor
             list.Rect(new UIRect(new Vector2(anchor, top - lineHeight + 1), new Vector2(anchor + digit, top - lineHeight + 3)), skin.Palette.Link);
             float x = ends.GetValueOrDefault(hint.Line, left + EndX(skin, scale, hint.Line, length) + digit * 3
                 + LensWidthOn(hint.Line, digit) + ArtWidthOn(hint.Line));
-            foreach (var inline in inlineHints.Where(inline => inline.Line == hint.Line))
-                x += EndHintWidth(skin, scale, inline.Text, digit);
+            for (int h = 0; h < inlineHints.Count; h++)
+            {
+                if (inlineHints[h].Line == hint.Line)
+                    x += EndHintWidth(skin, scale, inlineHints[h].Text, digit);
+            }
             string caption = hint.Text.ReplaceLineEndings(" ");
             if (caption.Length > 64) caption = caption[..61] + "...";
             caption = "Agent: " + caption;

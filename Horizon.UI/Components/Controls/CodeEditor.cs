@@ -164,6 +164,18 @@ public partial class CodeEditor : UIComponent
 
     private readonly UITextDocument document = new();
 
+    // Transient IME preedit state shown inline at the caret without mutating the document until commit
+    private string compositionText = string.Empty;
+    private int compositionCursor;
+
+    /// <summary>Transient IME preedit text shown inline at the caret before commit; does not mutate <see cref="Document"/>.</summary>
+    public string CompositionText => compositionText;
+
+    /// <summary>Caret offset within <see cref="CompositionText"/>.</summary>
+    public int CompositionCursor => compositionCursor;
+
+    protected override int CompositionPaintStamp => compositionText.Length == 0 ? 0 : HashCode.Combine(compositionText, compositionCursor);
+
     // The colouring of every line, and the colours written in it. Worked out for the whole file, 1.7 ms and a megabyte for
     // two thousand lines, on a thread of the pool once the text has been left alone RECOLOUR_DELAY (a new text straight
     // away, on the editor's). Until it comes back a line that isn't what was coloured is coloured on its own, from where
@@ -235,9 +247,13 @@ public partial class CodeEditor : UIComponent
     private float occurrencesWait;
     private const int MAX_OCCURRENCES = 500;
 
-    // What the hover hint was last asked about, so it is asked once for as long as the pointer stays on one word
+    // What the hover hint was last asked about, plus a small per-version cache so sweeping the pointer back and forth
+    // over already-inspected words doesn't re-invoke HoverSource on every transition.
     private (int Version, int Line, int Start) hoverFor = (-1, -1, -1);
     private string hoverText = string.Empty;
+    private readonly Dictionary<(int Line, int Start), string> hoverCache = [];
+    private int hoverCacheVersion = -1;
+    private const int MAX_HOVER_CACHE = 64;
 
     // How long the text has to stay the same before the hint is asked again after a change, and how long it has been. A
     // hint can be worked out of the whole file (HIDL's is), and a pointer left resting on the code had a five thousand
@@ -322,7 +338,8 @@ public partial class CodeEditor : UIComponent
             textScale = value;
             scaleSetAt = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            // A tick when it has rested, however quiet the window is by then
+            // Keep full frame rate while zooming, and schedule a tick once it rests to snap back to whole pixels
+            GameEngine.Instance?.WindowManager?.RequestSmooth();
             GameEngine.Instance?.WindowManager?.RequestTickIn(ZOOM_RESTS_AFTER + 0.02);
         }
     }
@@ -460,7 +477,22 @@ public partial class CodeEditor : UIComponent
     /// or empty for nothing. Asked once for as long as the pointer stays on the same word. What is wrong there is said
     /// first.
     /// </summary>
-    public Func<CodeEditor, UITextPosition, string?>? HoverSource { get; set; }
+    public Func<CodeEditor, UITextPosition, string?>? HoverSource
+    {
+        get => hoverSource;
+        set
+        {
+            if (ReferenceEquals(hoverSource, value))
+                return;
+
+            hoverSource = value;
+            hoverFor = (-1, -1, -1);
+            hoverCache.Clear();
+            hoverCacheVersion = -1;
+        }
+    }
+
+    private Func<CodeEditor, UITextPosition, string?>? hoverSource;
 
     /// <summary>
     /// How the function being called at the caret is called, asked with its name (dotted, math.floor) and which argument the
@@ -552,6 +584,8 @@ public partial class CodeEditor : UIComponent
     public void AskAgain()
     {
         hoverFor = (-1, -1, -1);
+        hoverCache.Clear();
+        hoverCacheVersion = -1;
         signatureFor = (-1, default);
     }
 
@@ -987,6 +1021,8 @@ public partial class CodeEditor : UIComponent
             checkIn = CHECK_DELAY;
             revealCaret = true;
             PredictionTextChanged();
+            if (!ReadOnly && IsShownInHierarchy)
+                GameEngine.Instance?.WindowManager?.NoteInput();
             OnChanged?.Invoke();
         };
         document.LinesMoved += MoveDiagnostics;
@@ -1511,7 +1547,7 @@ public partial class CodeEditor : UIComponent
         // in the background isn't painted again twice a second for a caret nobody's typing at. Lit and still as well with
         // the UI's motion turned off, a caret that blinks is motion too
         bool still = MotionSpeed <= 0.0f;
-        blink = still || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
+        blink = still || !IsFocused || GameEngine.Instance?.WindowManager is { IsFocused: false } ? 0.0f : (blink + dt) % (BLINK * 2.0f);
         if (!still && IsFocused && GameEngine.Instance?.WindowManager is { IsFocused: true } blinkingWindow)
             blinkingWindow.RequestTickIn(BLINK - blink % BLINK);
         tickTime = dt;
@@ -1527,6 +1563,8 @@ public partial class CodeEditor : UIComponent
             completionShown += (completionTop - completionShown) * (1.0f - MathF.Exp(-SCROLL_EASE * scrollDt));
             if (MathF.Abs(completionTop - completionShown) < 0.01f)
                 completionShown = completionTop;
+            else
+                GameEngine.Instance?.WindowManager?.RequestSmooth();
         }
 
         over.Step(scrollDt, MotionSpeed);
@@ -1539,6 +1577,10 @@ public partial class CodeEditor : UIComponent
             {
                 scrollY = goal;
                 scrollGoal = null;
+            }
+            else
+            {
+                GameEngine.Instance?.WindowManager?.RequestSmooth();
             }
         }
 
@@ -1739,6 +1781,13 @@ public partial class CodeEditor : UIComponent
         }
     }
 
+    /// <summary>How far right the code is scrolled in pixels, set it goes there at once. For the checks.</summary>
+    public float ScrollXPixels
+    {
+        get => scrollX;
+        set => scrollX = MathF.Max(0.0f, value);
+    }
+
     /// <summary>Whether it's on its way somewhere the wheel or the caret sent it. For the checks.</summary>
     internal bool Easing => scrollGoal is not null || revealCaret;
 
@@ -1902,7 +1951,20 @@ public partial class CodeEditor : UIComponent
                 if (hoverFor != (document.Version, at.Line, start))
                 {
                     hoverFor = (document.Version, at.Line, start);
-                    hoverText = source(this, new UITextPosition(at.Line, start)) ?? string.Empty;
+                    if (hoverCacheVersion != document.Version)
+                    {
+                        hoverCache.Clear();
+                        hoverCacheVersion = document.Version;
+                    }
+
+                    if (!hoverCache.TryGetValue((at.Line, start), out string? cached))
+                    {
+                        if (hoverCache.Count >= MAX_HOVER_CACHE)
+                            hoverCache.Clear();
+                        hoverCache[(at.Line, start)] = cached = source(this, new UITextPosition(at.Line, start)) ?? string.Empty;
+                    }
+
+                    hoverText = cached;
                 }
 
                 said = hoverText;
@@ -2011,8 +2073,28 @@ public partial class CodeEditor : UIComponent
 
     /* The keyboard */
 
+    public override void OnComposition(string text, int cursor, int length)
+    {
+        if (ReadOnly)
+            return;
+
+        compositionText = text ?? string.Empty;
+        compositionCursor = Math.Clamp(cursor, 0, compositionText.Length);
+        blink = 0.0f;
+        revealCaret = true;
+    }
+
+    public override void OnFocusLost()
+    {
+        compositionText = string.Empty;
+        compositionCursor = 0;
+    }
+
     protected internal override void OnTextInput(char character)
     {
+        compositionText = string.Empty;
+        compositionCursor = 0;
+
         char? typed = null;
         middleScroll.Cancel();
         blink = 0.0f;
@@ -2950,6 +3032,26 @@ public partial class CodeEditor : UIComponent
         return true;
     }
 
+    // How far across the longest visible row goes past the text area (0 when word-wrapped or empty)
+    private float MaxScrollX(UISkin skin, float scale)
+    {
+        if (wordWrap || rows.Count == 0)
+            return 0.0f;
+
+        float lineHeight = FontOf(skin).LineHeight * scale;
+        UIRect area = TextArea(skin, scale);
+        int first = Math.Clamp((int)(scrollY / MathF.Max(1.0f, lineHeight)), 0, rows.Count - 1);
+        int last = Math.Min(rows.Count - 1, first + (int)(area.Height / MathF.Max(1.0f, lineHeight)) + 1);
+        float widest = 0.0f;
+        for (int i = first; i <= last; i++)
+        {
+            int end = Math.Min(rows[i].End, document.LineAt(rows[i].Line).Length);
+            widest = MathF.Max(widest, ColumnX(skin, scale, rows[i].Line, end));
+        }
+
+        return MathF.Max(0.0f, widest + TEXT_PAD * 2.0f - area.Width);
+    }
+
     // Sideways, a trackpad's or a horizontal wheel's, to the pixel. Not with the lines wrapped, there's nothing past the
     // edge then, and not past the end of the longest of the rows in sight
     protected internal override bool OnScrollX(float delta)
@@ -2958,14 +3060,7 @@ public partial class CodeEditor : UIComponent
             return false;
 
         float lineHeight = FontOf(skin).LineHeight * paintedScale;
-        UIRect area = TextArea(skin, paintedScale);
-        int first = Math.Clamp((int)(scrollY / MathF.Max(1.0f, lineHeight)), 0, rows.Count - 1);
-        int last = Math.Min(rows.Count - 1, first + (int)(area.Height / MathF.Max(1.0f, lineHeight)) + 1);
-        float widest = 0.0f;
-        for (int i = first; i <= last; i++)
-            widest = MathF.Max(widest, ColumnX(skin, paintedScale, rows[i].Line, rows[i].End));
-
-        float most = MathF.Max(0.0f, widest + TEXT_PAD * 2.0f - area.Width);
+        float most = MaxScrollX(skin, paintedScale);
         float by = UIWheel.Units(delta, WHEEL_LINES * lineHeight);
         float target = Math.Clamp(scrollX - by, 0.0f, most);
         if (target == scrollX)
@@ -3049,6 +3144,11 @@ public partial class CodeEditor : UIComponent
 
         // The caret is the sign that it has the keyboard, lit or between blinks
         bool focused = IsFocused;
+        if (!focused && compositionText.Length > 0)
+        {
+            compositionText = string.Empty;
+            compositionCursor = 0;
+        }
         if (focused)
             ShowingFocus();
         UITextPosition start = document.SelectionStart, end = document.SelectionEnd;
@@ -3125,8 +3225,9 @@ public partial class CodeEditor : UIComponent
             }
         }
 
-        foreach (var occurrence in nativeOccurrences)
+        for (int i = 0; i < nativeOccurrences.Count; i++)
         {
+            UICodeOccurrence occurrence = nativeOccurrences[i];
             if (occurrence.Line < firstLine || occurrence.Line > lastLine || occurrence.Line >= document.LineCount || occurrence.Length <= 0) continue;
             Vector4 colour = occurrence.Kind == 3 ? skin.HighlightColor with { W = 0.25f }
                 : occurrence.Kind == 2 ? skin.HighlightColor with { W = 0.12f } : skin.TextColor with { W = 0.1f };
@@ -3184,6 +3285,8 @@ public partial class CodeEditor : UIComponent
             int to = wordWrap ? row.End : row.Start + (int)((scrollX + area.Width) / MathF.Max(1.0f, digit)) + 1;
             longInSight[row.Line] = Math.Max(longInSight.GetValueOrDefault(row.Line), Math.Min(to, longLine.Length));
         }
+        float spaceWidth = FontOf(skin).Measure(" ", scale, markup: false).X;
+        bool simpleGaps = !wordWrap && inlays.Count == 0 && predictedPieces.Length == 0 && !PredictionMarked;
         for (int index = paintFrom; index <= paintTo; index++)
         {
             CodeRow row = rows[index];
@@ -3229,10 +3332,20 @@ public partial class CodeEditor : UIComponent
                     // The gap before it is spaces in code a grammar coloured, stepped over. Text a terminal coloured
                     // has words in its gaps, the plain ones between two coloured, and a traceback's code went missing
                     // round its keywords
-                    ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
-                    bool blank = gap.IsWhiteSpace();
-                    x = blank ? DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, default, left, origin, colors, draw: false)
-                        : DrawInSight(list, skin, scale, row.Line, at, gap, x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
+                    if (from > at)
+                    {
+                        if (simpleGaps && from - at == 1 && written[at] == ' ')
+                        {
+                            x += spaceWidth;
+                        }
+                        else
+                        {
+                            ReadOnlySpan<char> gap = written.AsSpan(at, from - at);
+                            bool blank = gap.IsWhiteSpace();
+                            x = blank ? DrawWithInlays(list, skin, scale, row.Line, at, gap, x, top, default, left, origin, colors, draw: false)
+                                : DrawInSight(list, skin, scale, row.Line, at, gap, x, top, colors.Of(SyntaxKind.Name), left, origin, colors, drawnFrom, drawnTo);
+                        }
+                    }
                     Vector4 colour = ColourOf(colors, span);
                     float started = x;
                     x = DrawInSight(list, skin, scale, row.Line, from, written.AsSpan(from, to - from), x, top, colour, left, origin, colors, drawnFrom, drawnTo);
@@ -3326,6 +3439,13 @@ public partial class CodeEditor : UIComponent
             PaintSignature(list, skin, scale, area, left, lineHeight, first, said);
 
         PaintRemoteCarets(list, skin, scale, area, left, lineHeight, first, last);
+
+        // Inline IME preedit composition, shown at the primary caret even between caret blinks
+        if (focused && compositionText.Length > 0)
+        {
+            list.BeginPart(PART_CARET);
+            PaintComposition(list, skin, scale, area, left, lineHeight, first, last, document.Caret);
+        }
 
         // The caret, which blinks, and stays lit while it is moved or typed with, and every other caret there is
         if (focused && blink < BLINK)
@@ -3542,19 +3662,23 @@ public partial class CodeEditor : UIComponent
     // The part of a selection on a row, to the end of the row and a little past it on the rows it runs over
     private void PaintSelected(UIDrawList list, UISkin skin, float scale, float left, float top, float lineHeight, float digit, CodeRow row, UITextPosition start, UITextPosition end, Vector4 color)
     {
-        var rowStart = new UITextPosition(row.Line, row.Start);
-        var rowEnd = new UITextPosition(row.Line, row.End);
-        if (end < rowStart || start > rowEnd || (end == rowStart && row.Start > 0))
+        if (end.Line < row.Line || start.Line > row.Line)
             return;
 
         string text = document.LineAt(row.Line);
+        int rowEndColumn = Math.Min(row.End, text.Length);
+        var rowStart = new UITextPosition(row.Line, row.Start);
+        var rowEnd = new UITextPosition(row.Line, rowEndColumn);
+        if (end < rowStart || start > rowEnd || (end == rowStart && row.Start > 0))
+            return;
+
         int fromColumn = start > rowStart ? start.Column : row.Start;
-        int toColumn = end < rowEnd ? end.Column : row.End;
+        int toColumn = end < rowEnd ? end.Column : rowEndColumn;
 
         // Starting at a character that has a hint before it, the hint isn't in it, and a hint before where it ends isn't either
         float from = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, fromColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, start > rowStart ? fromColumn + 1 : fromColumn);
         float to = row.Indent + Width(skin, scale, text.AsSpan(row.Start, Math.Max(0, toColumn - row.Start))) + InlaysWidth(skin, scale, row.Line, row.Start, toColumn);
-        if (end > rowEnd && row.End == text.Length)
+        if (end > rowEnd && rowEndColumn == text.Length)
             to += InlaysWidth(skin, scale, row.Line, text.Length, int.MaxValue) + digit * 0.5f;
 
         if (to > from)
@@ -3587,6 +3711,24 @@ public partial class CodeEditor : UIComponent
     // the caret forever crept up on it over its last few pixels, which read as a caret slower than every other editor's
     private Vector2 glideFrom, glideTo;
     private float glideTime;
+
+    private void PaintComposition(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, UITextPosition caret)
+    {
+        int row = RowOf(caret.Line, caret.Column);
+        if (row < first || row > last || IsHidden(caret.Line, out _))
+            return;
+
+        float top = RowTop(area, row, lineHeight);
+        float x = left + ColumnX(skin, scale, caret.Line, caret.Column);
+        float compWidth = FontOf(skin).Measure(compositionText, scale, markup: false).X;
+        float boxWidth = MathF.Max(compWidth, 4.0f);
+
+        // Cover existing characters behind the inline preedit text so marked text reads cleanly
+        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + boxWidth, top)), Color ?? skin.FieldColor);
+        list.Text(compositionText, new Vector2(x, top), scale, skin.TextColor, markup: false);
+        list.Rect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + boxWidth, top - lineHeight + 1.5f)), skin.HighlightColor);
+        ReportTextInputRect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + boxWidth, top)));
+    }
 
     private void PaintCaret(UIDrawList list, UISkin skin, float scale, UIRect area, float left, float lineHeight, int first, int last, UITextPosition caret)
     {
@@ -3627,6 +3769,7 @@ public partial class CodeEditor : UIComponent
             top = origin.Y + caretDrawn.Y;
             CaretPoint = new Vector2(x, top - lineHeight * 0.5f);
             CaretLineHeight = lineHeight;
+            ReportTextInputRect(new UIRect(new Vector2(x, top - lineHeight), new Vector2(x + 2.0f, top)));
         }
 
         if (CaretStyle == UICaretStyle.Line)
