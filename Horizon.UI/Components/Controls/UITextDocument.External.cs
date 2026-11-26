@@ -23,13 +23,21 @@ public sealed partial class UITextDocument
             SetLines(text);
         else
         {
-            for (int i = changes.Count - 1; i >= 0; i--)
+            suppressUndoRecording = true;
+            try
             {
-                UITextEdit edit = changes[i];
-                if (edit.Start != edit.End)
-                    DeleteRaw(edit.Start, edit.End);
-                if (edit.Text.Length != 0)
-                    InsertRaw(edit.Start, edit.Text);
+                for (int i = changes.Count - 1; i >= 0; i--)
+                {
+                    UITextEdit edit = changes[i];
+                    if (edit.Start != edit.End)
+                        DeleteRaw(edit.Start, edit.End);
+                    if (edit.Text.Length != 0)
+                        InsertRaw(edit.Start, edit.Text);
+                }
+            }
+            finally
+            {
+                suppressUndoRecording = false;
             }
         }
         Caret = Clamp(movedCaret);
@@ -40,11 +48,17 @@ public sealed partial class UITextDocument
 
         void RebaseHistory(List<Snapshot> history)
         {
+            if (history.Count == 0)
+                return;
+
+            var workLines = new List<string>(lines);
             string newer = before, revised = text;
+            string[] revisedLines = revised.Split('\n');
             for (int i = history.Count - 1; i >= 0; i--)
             {
                 Snapshot step = history[i];
-                string older = string.Join('\n', step.Lines);
+                ApplyDeltasReverse(workLines, step.Deltas, inverse: null);
+                string older = string.Join('\n', workLines);
                 string? next = rebase(newer, older, revised);
                 if (next is null)
                 {
@@ -52,10 +66,29 @@ public sealed partial class UITextDocument
                     break;
                 }
                 var positions = new ExternalPositionMap(older, next);
-                string[] updated = next.Split('\n');
-                for (int line = 0; line < Math.Min(updated.Length, step.Lines.Length); line++)
-                    if (updated[line] == step.Lines[line])
-                        updated[line] = step.Lines[line];
+                string[] nextLines = next.Split('\n');
+                for (int line = 0; line < Math.Min(nextLines.Length, workLines.Count); line++)
+                    if (nextLines[line] == workLines[line])
+                        nextLines[line] = workLines[line];
+
+                int limit = Math.Min(revisedLines.Length, nextLines.Length);
+                int prefix = 0;
+                while (prefix < limit && string.Equals(revisedLines[prefix], nextLines[prefix], StringComparison.Ordinal))
+                    prefix++;
+                int suffix = 0;
+                while (suffix < limit - prefix && string.Equals(revisedLines[revisedLines.Length - 1 - suffix], nextLines[nextLines.Length - 1 - suffix], StringComparison.Ordinal))
+                    suffix++;
+
+                int newCount = revisedLines.Length - prefix - suffix;
+                int oldCount = nextLines.Length - prefix - suffix;
+                var rebasedDeltas = new List<LineDelta>(1);
+                if (newCount > 0 || oldCount > 0)
+                {
+                    string[] oldSlice = oldCount == 0 ? [] : new string[oldCount];
+                    Array.Copy(nextLines, prefix, oldSlice, 0, oldCount);
+                    rebasedDeltas.Add(new LineDelta(prefix, newCount, oldSlice));
+                }
+
                 UITextSelection[]? movedExtras = null;
                 if (step.ExtraCarets is { Length: > 0 } savedExtras)
                 {
@@ -63,11 +96,12 @@ public sealed partial class UITextDocument
                     for (int j = 0; j < savedExtras.Length; j++)
                         movedExtras[j] = new(positions.Move(savedExtras[j].Caret), positions.Move(savedExtras[j].Anchor));
                 }
-                history[i] = new(updated, positions.Move(step.Caret), positions.Move(step.Anchor),
+                history[i] = new(rebasedDeltas, positions.Move(step.Caret), positions.Move(step.Anchor),
                     [.. step.Movements.Select(m => m with { At = positions.Move(m.At), ReverseAt = positions.Move(m.ReverseAt) })],
                     movedExtras);
                 newer = older;
                 revised = next;
+                revisedLines = nextLines;
             }
         }
     }

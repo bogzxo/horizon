@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace Horizon.UI.Scripting;
 
 /// <summary>
@@ -12,11 +14,17 @@ public static class SemanticOverlay
     /// The spans of a line with the names laid over them, into a list that's cleared first. Both have to be in order
     /// along the line, and a name that runs into the one before it is dropped.
     /// </summary>
-    public static void Overlay(List<SyntaxSpan> under, List<SyntaxSpan> over, List<SyntaxSpan> into)
+    public static void Overlay(List<SyntaxSpan> under, List<SyntaxSpan> over, List<SyntaxSpan> into) =>
+        Overlay(under, CollectionsMarshal.AsSpan(over), into);
+
+    /// <summary>
+    /// The spans of a line with a contiguous slice of semantic names laid over them, into a list that's cleared first.
+    /// </summary>
+    public static void Overlay(List<SyntaxSpan> under, ReadOnlySpan<SyntaxSpan> over, List<SyntaxSpan> into)
     {
         into.Clear();
         int g = 0, at = 0;
-        for (int o = 0; o < over.Count; o++)
+        for (int o = 0; o < over.Length; o++)
         {
             SyntaxSpan name = over[o];
             if (name.Length <= 0 || name.Start < at || Kept(under, g, name))

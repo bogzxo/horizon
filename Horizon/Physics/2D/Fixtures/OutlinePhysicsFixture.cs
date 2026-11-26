@@ -1,5 +1,7 @@
 ﻿using System.Numerics;
 
+using Horizon.Physics.Simulation;
+
 namespace Horizon.Physics.Fixtures;
 
 /// <summary>
@@ -16,7 +18,7 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
 {
     public string Tag { get; init; } = tag;
     public bool IsTouching { get; set; }
-    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
+    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new(4);
     public Vector3? DebugColour { get; set; }
     public bool OneWay { get; init; }
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Outline;
@@ -36,6 +38,10 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
     internal Vector2[] Points => points;
     internal int PointCount => pointCount;
     internal int Version { get; private set; }
+
+    private PhysicsShape _localShape;
+    internal bool HasLocalShape => pointCount > 0;
+    internal ref readonly PhysicsShape LocalShape => ref _localShape;
 
     /// <summary>
     /// Gives the fixture another outline.
@@ -58,6 +64,16 @@ public class OutlinePhysicsFixture(string tag = "") : IPhysicsFixture
         }
 
         (Min, Max) = count > 0 ? (min, max) : (Vector2.Zero, Vector2.Zero);
+        _localShape = count > 0
+            ? new PhysicsShape
+            {
+                Min = Min,
+                Max = Max,
+                Outline = points,
+                OutlineCount = count,
+                OutlineVersion = Version
+            }
+            : default;
     }
 
     // See the summary, bodies go by their other fixtures

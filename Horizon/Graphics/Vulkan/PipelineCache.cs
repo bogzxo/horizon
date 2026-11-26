@@ -400,7 +400,7 @@ internal sealed unsafe class PipelineCache : IDisposable
         _ => PrimitiveTopology.PointList
     };
 
-    private static Silk.NET.Vulkan.BlendFactor FactorOf(BlendFactor factor) => factor switch
+    internal static Silk.NET.Vulkan.BlendFactor FactorOf(BlendFactor factor) => factor switch
     {
         BlendFactor.Zero => Silk.NET.Vulkan.BlendFactor.Zero,
         BlendFactor.One => Silk.NET.Vulkan.BlendFactor.One,
@@ -411,6 +411,8 @@ internal sealed unsafe class PipelineCache : IDisposable
         BlendFactor.SrcAlpha => Silk.NET.Vulkan.BlendFactor.SrcAlpha,
         BlendFactor.OneMinusSrcAlpha => Silk.NET.Vulkan.BlendFactor.OneMinusSrcAlpha,
         BlendFactor.DstAlpha => Silk.NET.Vulkan.BlendFactor.DstAlpha,
+        BlendFactor.Src1Color => Silk.NET.Vulkan.BlendFactor.Src1Color,
+        BlendFactor.OneMinusSrc1Color => Silk.NET.Vulkan.BlendFactor.OneMinusSrc1Color,
         _ => Silk.NET.Vulkan.BlendFactor.OneMinusDstAlpha
     };
 

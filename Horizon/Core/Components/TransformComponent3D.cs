@@ -15,6 +15,7 @@ namespace Horizon.Core.Components;
 /// </summary>
 public class TransformComponent3D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.None;
     private Vector3 position;
     private Quaternion rotation = Quaternion.Identity;
     private Vector3 scale = Vector3.One;

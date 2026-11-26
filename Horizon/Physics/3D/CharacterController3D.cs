@@ -29,6 +29,7 @@ namespace Horizon.Physics.Colliders;
 /// </summary>
 public sealed class CharacterController3D(CollisionWorld3D world, Vector3 feet) : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdatePhysics;
     // How far apart two things can be and still count as touching, so standing on the floor stays standing on it
     private const float SKIN = 1e-4f;
 

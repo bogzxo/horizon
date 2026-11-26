@@ -90,10 +90,12 @@ Field makeField(int hasWalls, float2 origin, float2 cellSize, float2 size, int h
     field.wallHeight = wallHeight;
     field.spriteHeight = spriteHeight;
 
-    // Three points through the real matrix and the mapping falls out, that is the whole trick. The deferred
-    // renderer only ever has a Camera2D looking at it, which is orthographic, so the mapping is affine and w is 1
-    field.pictureOffset = pictureOf(float2(0.0, 0.0));
-    field.pictureScale = float2(pictureOf(float2(1.0, 0.0)).x, pictureOf(float2(0.0, 1.0)).y) - field.pictureOffset;
+    // The deferred renderer only ever has a Camera2D looking at it, which is orthographic, so world-to-picture is
+    // affine and w is constant; read the scale and offset directly from the row-major view-projection matrix instead
+    // of running three full 4x4 multiplies per thread.
+    float invW = 0.5 / camera.uViewProjection[3].w;
+    field.pictureOffset = camera.uViewProjection[3].xy * invW + 0.5;
+    field.pictureScale = float2(camera.uViewProjection[0].x, camera.uViewProjection[1].y) * invW;
     return field;
 }
 
@@ -447,4 +449,104 @@ float3 surfaceNormal(float4 surface, out bool hasNormal)
     hasNormal = dot(normal.xy, normal.xy) > 0.0025;
     normal.z = sqrt(max(1.0 - dot(normal.xy, normal.xy), 0.0));
     return normal;
+}
+
+// How open to the ambient light a point of the world is, 1 for wide open, down to 1 minus the strength in a corner.
+// Ambient light comes from everywhere, so what is hemmed in by walls and sprites gets less of it, the corner where
+// the floor meets a wall, the ground under a fighter's feet, the air right next to a pillar. A few rays are
+// marched a short way through the distance field, every one that meets something within the radius takes a share
+// of the light, the sooner it meets it the bigger the share. A point inside a wall is its face, the rays start
+// just outside and only go the way the face looks, a flat floor is wide open and its corners are not, and the
+// deeper in the point is the less of that it takes, so what a foot or a crate does to the floor fades out on the
+// way down instead of standing in it as a bar. Only the walls say where the face is, a sprite is a picture in front
+// of the world and has no inside to speak of, and a pixel that is such a sprite doesn't count the sprites at all
+// (sprites false), or every fighter is hemmed in by themselves and comes out speckled like a fucking dalmatian.
+float ambientOcclusion(float2 position, Field field, float radius, int samples, float strength, bool sprites)
+{
+    if (!hasAnything(field) || samples <= 0 || radius <= 0.0 || strength <= 0.0) return 1.0;
+
+    float texel = fieldTexel(field);
+    float2 at = position;
+    float2 baseDir = float2(1.0, 0.0);
+    float span = 6.2831853;
+    float share = 1.0;
+
+    float d = wallsDistance(at, field);
+
+    // A distance field bounds every direction at once. Leave a two-texel margin for the
+    // sampled field, then empty space needs no rays or trigonometry at all.
+    float margin = 2.0 * max(max(field.cellSize.x, field.cellSize.y), field.spritePixelWorld);
+    if (d > radius + margin && (!sprites || spritesDistance(at, field, false) > radius + margin))
+        return 1.0;
+
+    if (d < texel)
+    {
+        if (-d >= radius) return 1.0;
+
+        float2 slope = float2(
+            wallsDistance(at + float2(texel, 0.0), field) - wallsDistance(at - float2(texel, 0.0), field),
+            wallsDistance(at + float2(0.0, texel), field) - wallsDistance(at - float2(0.0, texel), field));
+        if (dot(slope, slope) < 1e-8) return 1.0;
+
+        float2 outward = normalize(slope);
+        if (d < 0.0)
+        {
+            at += outward * (-d + 0.5 * texel);
+
+            // Next to a ridge of the field (under a crate that stands on the floor, the middle of a box) the slope
+            // points somewhere near the face and not at it, and whether that lands in the open or not changes from
+            // one pixel to the next, which is noise. Once more from where it landed and it is out
+            float still = wallsDistance(at, field);
+            if (still < 0.0)
+            {
+                at += outward * (-still + 0.5 * texel);
+
+                // Still in, which is the ridge itself, there is no face to find from here and it is left open
+                if (wallsDistance(at, field) < 0.0) return 1.0;
+            }
+
+            share = 1.0 - clamp(-d / radius, 0.0, 1.0);
+        }
+
+        // The half of the directions the face looks towards: outward rotated by -pi/2 is (outward.y, -outward.x)
+        baseDir = float2(outward.y, -outward.x);
+        span = 3.1415927;
+    }
+
+    // One sincos for the half-step angle, then double-angle for the full step and iterative 2D rotation per sample
+    float halfStep = 0.5 * span / float(samples);
+    float sinHalf, cosHalf;
+    sincos(halfStep, sinHalf, cosHalf);
+    float cosStep = cosHalf * cosHalf - sinHalf * sinHalf;
+    float sinStep = 2.0 * sinHalf * cosHalf;
+    float2 direction = float2(
+        baseDir.x * cosHalf - baseDir.y * sinHalf,
+        baseDir.x * sinHalf + baseDir.y * cosHalf);
+
+    float occluded = 0.0;
+    for (int i = 0; i < samples; i++)
+    {
+        float t = 0.5 * texel;
+        float hit = radius;
+        for (int step = 0; step < 4; step++)
+        {
+            float2 ahead = at + direction * t;
+            float distance = sprites ? wallDistance(ahead, field) : wallsDistance(ahead, field);
+            if (distance < 0.05)
+            {
+                hit = t;
+                break;
+            }
+
+            t += max(distance, 0.5 * texel);
+            if (t >= radius) break;
+        }
+
+        occluded += 1.0 - hit / radius;
+        direction = float2(
+            direction.x * cosStep - direction.y * sinStep,
+            direction.x * sinStep + direction.y * cosStep);
+    }
+
+    return 1.0 - strength * share * occluded / float(samples);
 }

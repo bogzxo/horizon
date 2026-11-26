@@ -1,5 +1,7 @@
 using System.Numerics;
 
+using Horizon.Graphics;
+
 namespace Horizon.Rendering.PostProcessing;
 
 /// <summary>
@@ -28,9 +30,10 @@ public sealed class BloomEffect : PostEffect
     /// <summary>The most levels there can be, a picture halved this often is a few pixels across.</summary>
     public const int MOST_LEVELS = 8;
 
+    private static readonly BlendMode AdditiveRgb = new(BlendFactor.One, BlendFactor.One);
+
     private PostTechnique? down, up, mix;
     private readonly PostTarget?[] downs = new PostTarget?[MOST_LEVELS];
-    private readonly PostTarget?[] ups = new PostTarget?[MOST_LEVELS];
 
     /// <summary>What is darker than this (by its brightest channel, 0 to 1) doesn't glow. Softly, there is no hard edge at it.</summary>
     public float Threshold { get; set; } = 0.7f;
@@ -94,25 +97,29 @@ public sealed class BloomEffect : PostEffect
             sourceSize = target.Size;
         }
 
-        // And back up, each level blown up onto the one of its size from the way down
+        // And back up, each level blown up and blended additively directly onto the level of its size from the way down
         PostTarget low = downs[levels - 1]!;
         if (levels > 1)
         {
+            var saved = RenderState.Save();
+            RenderState.Blend = true;
+            RenderState.BlendMode = AdditiveRgb;
+
             up.Bind();
             up.SetUniform(UNIFORM_RADIUS, MathF.Max(Radius, 0.0f));
             for (int level = levels - 2; level >= 0; level--)
             {
-                PostTarget same = downs[level]!;
-                PostTarget target = Fit(ups, level, (uint)same.Size.X, (uint)same.Size.Y);
+                PostTarget target = downs[level]!;
 
                 Vector2 texel = Vector2.One / low.Size;
                 up.SetUniform(UNIFORM_TEXEL, in texel);
                 low.Texture.Bind(0);
-                same.Texture.Bind(1);
-                context.Draw(target);
+                context.DrawPreserving(target);
 
                 low = target;
             }
+
+            RenderState.Restore(in saved);
         }
 
         // Over the picture
@@ -130,7 +137,7 @@ public sealed class BloomEffect : PostEffect
         if (targets[level] is { } existing && existing.Fits(width, height)) return existing;
 
         targets[level]?.Dispose();
-        return targets[level] = new PostTarget(width, height, PostTarget.Precise);
+        return targets[level] = new PostTarget(width, height, PostTarget.HdrColor);
     }
 
     public override void Dispose()
@@ -138,8 +145,7 @@ public sealed class BloomEffect : PostEffect
         for (int i = 0; i < MOST_LEVELS; i++)
         {
             downs[i]?.Dispose();
-            ups[i]?.Dispose();
-            downs[i] = ups[i] = null;
+            downs[i] = null;
         }
 
         down = up = mix = null;

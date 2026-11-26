@@ -69,11 +69,16 @@ static const float GLYPH_CONTRAST = 0.5;
 static const float GLYPH_GAMMA_DARK = 1.15;
 static const float GLYPH_GAMMA_LIGHT = 0.8;
 
-float glyphInk(float coverage, float3 colour)
+float glyphInk(float coverage, float gamma)
 {
-    float light = dot(colour, float3(0.2126, 0.7152, 0.0722));
     float lifted = coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0);
-    return pow(saturate(lifted), lerp(GLYPH_GAMMA_DARK, GLYPH_GAMMA_LIGHT, light));
+    return pow(saturate(lifted), gamma);
+}
+
+float3 glyphInk3(float3 coverage, float gamma)
+{
+    float3 lifted = coverage * (GLYPH_CONTRAST + 1.0) / (coverage * GLYPH_CONTRAST + 1.0);
+    return pow(saturate(lifted), float3(gamma, gamma, gamma));
 }
 
 // How far out into the field the edge of a bold glyph is, as a share of the field's value at the edge. Must match
@@ -129,6 +134,12 @@ Varyings vsMain(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID, ui
         output.texel = at - middle;
         output.texelSize = float2(length(item.axisX), length(item.axisY)) * 0.5;
         output.shape = item.texMin;
+    }
+    else if ((item.flags & (GLYPH_FLAG | SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u)
+    {
+        // Compute glyph gamma once per vertex rather than per pixel/channel in fsMain (shape is unused on glyph quads).
+        float light = dot(output.color.rgb, float3(0.2126, 0.7152, 0.0722));
+        output.shape.x = lerp(GLYPH_GAMMA_DARK, GLYPH_GAMMA_LIGHT, light);
     }
 
     float4 world = mul(float4(at, item.depth, 1.0), params.uModel);
@@ -222,13 +233,13 @@ GBuffer fsMain(Varyings input)
         if ((input.flags & (SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u)
         {
             float3 colour = input.color.rgb;
-            float3 ink = float3(glyphInk(tex.r, colour), glyphInk(tex.g, colour), glyphInk(tex.b, colour)) * input.color.a;
+            float3 ink = glyphInk3(tex.rgb, input.shape.x) * input.color.a;
             if (max(ink.r, max(ink.g, ink.b)) <= 0.0) discard;
             float3 said = (input.flags & SUBPIXEL_ERASE_FLAG) != 0u ? ink : colour * ink;
             return writeFlat(float4(said, 0.0), 0.0);
         }
 
-        float4 result = float4(input.color.rgb, glyphInk(tex.r, input.color.rgb) * input.color.a);
+        float4 result = float4(input.color.rgb, glyphInk(tex.r, input.shape.x) * input.color.a);
         if (result.a <= 0.0) discard;
         return writeFlat(result, 0.0);
     }
@@ -255,7 +266,7 @@ GBuffer fsMain(Varyings input)
     if ((input.flags & (SUBPIXEL_ERASE_FLAG | SUBPIXEL_INK_FLAG)) != 0u)
     {
         float3 colour = input.color.rgb;
-        float3 ink = float3(glyphInk(tex.r, colour), glyphInk(tex.g, colour), glyphInk(tex.b, colour)) * input.color.a;
+        float3 ink = glyphInk3(tex.rgb, input.shape.x) * input.color.a;
         if (max(ink.r, max(ink.g, ink.b)) <= 0.0) discard;
         float3 said = (input.flags & SUBPIXEL_ERASE_FLAG) != 0u ? ink : colour * ink;
         return writeFlat(float4(said, 0.0), 0.0);
@@ -265,7 +276,7 @@ GBuffer fsMain(Varyings input)
     if ((input.flags & COVERAGE_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, tex.a);
 
     // A letter made at its size, one texel to the pixel
-    if ((input.flags & GLYPH_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, glyphInk(tex.r, input.color.rgb));
+    if ((input.flags & GLYPH_FLAG) != 0u) tex = float4(1.0, 1.0, 1.0, glyphInk(tex.r, input.shape.x));
 
     // Text out of a distance field, four samples to the pixel (see sprites.slang for why)
     float field = tex.r;

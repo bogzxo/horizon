@@ -27,8 +27,19 @@ public partial class UICompositor
     /// <summary>How quickly a scroll that was let go of mid swipe slows down, a share of its speed every second.</summary>
     public float FlingFriction { get; set; } = 4.0f;
 
+    private InputManager? inputOverride;
+
     /// <summary>The input this UI reads, the engine's unless a test hands it its own.</summary>
-    internal InputManager? InputOverride { get; set; }
+    internal InputManager? InputOverride
+    {
+        get => inputOverride;
+        set
+        {
+            inputOverride = value;
+            if (value is not null)
+                HookComposition(value);
+        }
+    }
 
     private InputManager? InputOf => InputOverride ?? GameEngine.Instance?.Input;
 

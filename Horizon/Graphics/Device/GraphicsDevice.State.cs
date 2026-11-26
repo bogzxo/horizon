@@ -102,6 +102,9 @@ public sealed unsafe partial class GraphicsDevice
     private bool scissorDirty = true;
 
     private Pipeline currentPipeline;
+    private PipelineCache.GraphicsKey lastGraphicsKey;
+    private Pipeline lastGraphicsPipeline;
+    private bool hasLastGraphicsPipeline;
     private bool renderingActive;
     private RenderTarget? renderingTarget;
     private bool renderingWindow;
@@ -483,16 +486,26 @@ public sealed unsafe partial class GraphicsDevice
             boundVertexArray?.LayoutKey ?? 0,
             targetIsWindow ? WindowFormatKey : boundTarget!.FormatKey);
 
-        Pipeline pipeline = targetIsWindow
-            ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, [swapchain.Format], Format.Undefined, false)
-            : Pipelines.GetGraphics(key, boundShader, boundVertexArray, boundTarget!.ColorFormats, boundTarget.DepthFormat, boundTarget.HasStencil);
+        Pipeline pipeline;
+        if (hasLastGraphicsPipeline && key == lastGraphicsKey)
+        {
+            pipeline = lastGraphicsPipeline;
+        }
+        else
+        {
+            pipeline = targetIsWindow
+                ? Pipelines.GetGraphics(key, boundShader, boundVertexArray, [swapchain.Format], Format.Undefined, false)
+                : Pipelines.GetGraphics(key, boundShader, boundVertexArray, boundTarget!.ColorFormats, boundTarget.DepthFormat, boundTarget.HasStencil);
+            lastGraphicsKey = key;
+            lastGraphicsPipeline = pipeline;
+            hasLastGraphicsPipeline = true;
+        }
 
         if (pipeline.Handle != currentPipeline.Handle)
         {
             Vk.CmdBindPipeline(cmd, PipelineBindPoint.Graphics, pipeline);
             currentPipeline = pipeline;
             Statistics.Counting.PipelineBinds++;
-            dynamicDirty = viewportDirty = scissorDirty = true;
         }
 
         if (viewportDirty)
@@ -560,7 +573,13 @@ public sealed unsafe partial class GraphicsDevice
         PrepareTextures(drawing: false);
         PrepareImages();
 
-        Pipeline pipeline = Pipelines.GetCompute(boundShader);
+        Pipeline pipeline = boundShader.ComputePipeline;
+        if (pipeline.Handle == 0)
+        {
+            pipeline = Pipelines.GetCompute(boundShader);
+            boundShader.ComputePipeline = pipeline;
+        }
+
         if (pipeline.Handle != currentPipeline.Handle)
         {
             Vk.CmdBindPipeline(cmd, PipelineBindPoint.Compute, pipeline);

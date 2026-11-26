@@ -237,3 +237,27 @@
 - **`HexStartup`** (3 cold runs, median):
   - `Dawn`: `396 ms` first frame | WS `171.3 MiB` | Priv `203.1 MiB` | Idle CPU `1.470%` (samples: `2.447%`, `1.470%`, `0%`)
   - `Dusk`: `319 ms` first frame | WS `120.9 MiB` | Priv `154.1 MiB` | Idle CPU `6.897%` (**-49.7%** vs P3 `13.707%`, **-6.3%** vs P4 `7.361%`; samples: `6.897%`, `8.332%`, `3.433%`)
+
+### Pass 6 — Shaders/Vulkan Sync, Fluid SoA Dense Grid, Entity Bitmasks, Glyph L1 Cache & Editor/Terminal Tail-Latency (`Horizon.Tests`: 2,616 passed / 0 failed)
+- **Changes**:
+  - Lighting, Shaders & Vulkan (`Horizon/Graphics/**`, `Horizon/Rendering/**`, `Horizon/shaders/**`, `horizon.hzshaders` 42/42 modules rebuilt): direct `camera.uViewProjection` extraction and 1-`sincos` double-angle AO in `direct.slang`; unconditional clamped `wallDistance` in `gi_radiance.slang`; pipeline cache, Vulkan sync, lighting/GI/sprite-shadow (`LightCells`, `PathTracedLighting2D`, `SpriteShadows`, `DeferredRenderer2D`) and post-processing (`BloomEffect`, `GaussianBlur`, `PostProcessor`) optimizations across 10 rebuilt shader programs + `glass.slang`.
+  - Physics, Core & Audio (`Horizon/Physics/**`, `Horizon/Core/**`, `Horizon/Audio/**`, `Horizon/Rendering/2D/Spriting/SpriteTweens.cs`): `PhysicsFluidParticleGroup` spawn-order SoA (`_pos`, `_prev`), single-stream `FluidPair`, bounded flat 2D dense grid (`MAX_DENSE_CELLS = 65536`) with 3-row-slice scan + spatial-hash fallback, AVX2/SSE `ApplySettleShift`, `[SkipLocalsInit]`, and `SQUEEZE_RATE = 80.0f` for 240 Hz basin stability; `PhysicsStaticGrid._nearMask` 1-cell dilation reject; `PhysicsShape` cached `LocalShape`; `Entity`/`GameComponent` `ComponentCapabilities` bitmask & NativeAOT trim-safe override detection; zero-alloc `Tween`/`SpriteTweens`/`UITweens` & `AudioMixer` / `SimulationLoop` optimizations.
+  - UI Drawing, Glyph Cache & Skinning (`Horizon.UI/**`, `Horizon/Rendering/2D/Text/GlyphAtlas.cs`): lock-free `GlyphAtlas.AsciiPage` L1 cache + pre-sized upload buffers; `UIDrawList` slice reuse, direct screen glyph emission & `UIFont` fast path; lazy `UISkin` theme loading; `UICompositor`/`UIModule` runtime refinements.
+  - Editor & Terminal Tail-Latency (`Horizon.UI/Components/Controls/**`, `Horizon.UI/Scripting/**`, `Horizon.Terminal/**`): flat CSR semantic span index in `CodeEditor.Semantic` + zero-alloc `SemanticOverlay`; `UITextDocument` & `TextMateHighlighter` tail-latency/LOH reductions; `TerminalView` slice reuse & `TerminalRow.Generation` skipping.
+- **`Horizon.Testing --checks`**: `848 / 848` passed (`0` failed), median wall `37,313 ms`; binaries: `Horizon.Testing.exe` `24.96 MiB`, `Hex.exe` `60.34 MiB`
+- **`Horizon.Testing` scenes (Release NativeAOT)**:
+  - `ui-controls`: Startup `551 ms` (**-37 ms** vs P5) | GPU `0.080 ms` | WS/Priv `121.0 / 203.1 MiB` | Render `6,932.7 fps` / `0.143 ms` / `0 B/t` | Sim `0.150 ms` / `21.7 B/t` | Logic `0.030 ms` / `11.2 B/t` | Physics `0 / 0`
+  - `dungeon`: Startup `934 ms` | GPU **`1.847 ms`** (**-25.4%** vs P5 `2.477 ms`, **-48.7%** vs Baseline `3.597 ms`) | WS/Priv `195.8 / 369.1 MiB` | Render **`530.7 fps`** / **`1.883 ms`** (**+32.7% FPS** vs P5 `400.0 fps`) / `0.4 B/t` | Sim `0.147 ms` / **`22.0 B/t`** (**-74.3%** vs P5 `85.5 B/t`) | Logic `0.030 ms` / **`11.2 B/t`** (**-84.8%** vs P5 `73.5 B/t`) | Physics `0.010 ms` / **`0.1 B/t`**
+  - `fluid`: Startup `560 ms` (`-21 ms` vs P5) | GPU `0.067 ms` | WS/Priv `123.9 / 207.3 MiB` | Render `6,027.3 fps` / `0.170 ms` / `0 B/t` | Sim **`0.923 ms`** (**-16.6%** vs P5 `1.107 ms`) / `23.1 B/t` | Logic `0.027 ms` / `12.8 B/t` | Physics **`0.810 ms`** (**-18.4%** vs P5 `0.993 ms`) / `0 B/t`
+  - `meshes`: Startup `547 ms` (`-52 ms` vs P5) | GPU `0.090 ms` | WS/Priv `128.0 / 212.3 MiB` | Render `6,690.7 fps` / `0.150 ms` / `0 B/t` | Sim `0.100 ms` / `21.8 B/t` | Logic `0.020 ms` / `11.2 B/t` | Physics `0 / 0`
+- **`Hex --selftest`** (`52,361.1 ms`, 7/7 passed):
+  - `idle`: Paint **`0.276 ms`** (**-36.1%** vs P5 `0.432 ms`, `Layout 0.073`, `Compare 0.018`) | Quads/t `4,943` | Draw **`0.130 ms`** (**-23.5%** vs P5 `0.170 ms`) | `39,497` up (`2,469 KB`) | GPU `0.788 ms`
+  - `typing`: Paint **`0.289 ms`** (**-18.4%** vs P5 `0.354 ms`, `Layout 0.042`) | Draw **`0.166 ms`** (**-30.3%** vs P5 `0.238 ms`) | `672,199` up (`42,012 KB`) | GPU `1.067 ms`
+  - `wheel`: Paint **`0.331 ms`** (**-22.5%** vs P5 `0.427 ms`) | Draw **`0.179 ms`** (**-35.6%** vs P5 `0.278 ms`) | `1,416,292` up (`88,518 KB`) | GPU `0.989 ms`
+  - `drag`: Paint **`0.433 ms`** (**-18.8%** vs P5 `0.533 ms`) | Draw **`0.253 ms`** (**-29.5%** vs P5 `0.359 ms`) | GPU `1.879 ms`
+  - `notebook`: Paint **`0.504 ms`** (**-20.8%** vs P5 `0.636 ms`) | Draw **`0.163 ms`** (**-28.8%** vs P5 `0.229 ms`) | GPU `1.145 ms`
+  - `typing csharp`: `Avg 4.2 / Med 4.2 / P95 5.0` / **Worst `11.3 ms`** (**-65.0%** vs P5 `32.3 ms`) | `typing hor`: `Avg 4.2 / Med 4.2 / P95 4.3` / **Worst `5.0 ms`** (**-35.1%** vs P5 `7.7 ms`)
+  - `garbage`: designer **`57 B/tick`** (**-41.8%** vs P5 `98 B/tick`) | code `78 B/tick` | layoutCode `32 B/tick`
+- **`HexStartup`** (3 cold runs, median):
+  - `Dawn`: **`391 ms`** first frame (`-5 ms` vs P5) | WS `170.1 MiB` | Priv `201.4 MiB` | Idle CPU **`0.000%`** (samples: `0%`, `0%`, `1.96%`)
+  - `Dusk`: **`308 ms`** first frame (`-11 ms` vs P5) | WS `120.6 MiB` | Priv `153.9 MiB` | Idle CPU `9.323%` (samples: `3.932%`, `11.290%`, `9.323%`)

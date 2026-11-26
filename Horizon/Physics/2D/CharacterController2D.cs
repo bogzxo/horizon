@@ -42,6 +42,7 @@ namespace Horizon.Physics;
 /// </summary>
 public sealed class CharacterController2D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdatePhysics;
     // How far under the feet the ground is looked for, and how far in from the sides, so a wall they are stood
     // against is not taken for a floor
     private const float FEET_REACH = 1.0f;

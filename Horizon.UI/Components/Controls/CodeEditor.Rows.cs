@@ -47,8 +47,8 @@ public partial class CodeEditor
 
     // Where every bracket that opens on a line and closes on a later one closes, by the line it opens on, as the last
     // colouring found them. The lines that are folded, by the line they open on, and a count of the changes to them
-    private readonly Dictionary<int, int> foldable = [];
-    private readonly List<(int Start, int End, int MaxEnd)> foldableSorted = [];
+    private Dictionary<int, int> foldable = [];
+    private List<(int Start, int End, int MaxEnd)> foldableSorted = [];
     private readonly HashSet<int> folded = [];
     private readonly List<(int Start, int End)> foldableScratch = [];
     private readonly List<int> foldedScratch = [];
@@ -168,6 +168,81 @@ public partial class CodeEditor
     private int DepthAt(int line) => line >= 0 && line < lineStarts.Length ? lineStarts[line].Depth : 0;
 
     /// <summary>
+    /// Pure helper that scans bracket pairs and merges optional native folding ranges into a dictionary; safe to run on
+    /// a background thread inside <see cref="StartColouring"/>.
+    /// </summary>
+    private static void ScanFoldableInto(Dictionary<int, int> target, string[] lines, List<SyntaxSpan>[] lineSpans, IReadOnlyList<UICodeFoldingRange>? nativeRanges, bool completeNative)
+    {
+        target.Clear();
+        if (nativeRanges is null || !completeNative)
+        {
+            var open = new Stack<int>();
+            int limit = Math.Min(lines.Length, lineSpans.Length);
+            for (int line = 0; line < limit; line++)
+            {
+                string text = lines[line];
+                List<SyntaxSpan> row = lineSpans[line];
+                for (int i = 0; i < row.Count; i++)
+                {
+                    SyntaxSpan span = row[i];
+                    if (span.Kind is not (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3) || span.Start >= text.Length)
+                        continue;
+
+                    char character = text[span.Start];
+                    if (character is '{' or '[' or '(')
+                    {
+                        open.Push(line);
+                    }
+                    else if (open.Count > 0)
+                    {
+                        int from = open.Pop();
+                        if (from < line && (!target.TryGetValue(from, out int was) || was < line))
+                            target[from] = line;
+                    }
+                }
+            }
+        }
+
+        if (nativeRanges is { Count: > 0 } native)
+        {
+            var ordered = new UICodeFoldingRange[native.Count];
+            for (int i = 0; i < native.Count; i++)
+                ordered[i] = native[i];
+            Array.Sort(ordered, static (a, b) => a.End.CompareTo(b.End));
+            for (int i = 0; i < ordered.Length; i++)
+                target[ordered[i].Start] = ordered[i].End;
+        }
+    }
+
+    private static List<(int Start, int End, int MaxEnd)> BuildFoldableSorted(Dictionary<int, int> source)
+    {
+        var sorted = new List<(int Start, int End, int MaxEnd)>(source.Count);
+        FillFoldableSorted(source, sorted);
+        return sorted;
+    }
+
+    private static void FillFoldableSorted(Dictionary<int, int> source, List<(int Start, int End, int MaxEnd)> target)
+    {
+        target.Clear();
+        if (source.Count == 0)
+            return;
+
+        if (target.Capacity < source.Count)
+            target.Capacity = source.Count;
+        foreach (var (start, end) in source)
+            target.Add((start, end, end));
+        target.Sort(static (a, b) => a.Start.CompareTo(b.Start));
+        int maxEnd = int.MinValue;
+        for (int i = 0; i < target.Count; i++)
+        {
+            var entry = target[i];
+            if (entry.End > maxEnd)
+                maxEnd = entry.End;
+            target[i] = (entry.Start, entry.End, maxEnd);
+        }
+    }
+
+    /// <summary>
     /// Where the brackets open and close worked out again out of the colouring that was just taken in, and the folds that
     /// don't open anything any more let go of.
     /// </summary>
@@ -180,40 +255,51 @@ public partial class CodeEditor
                 foldsWere[start] = end;
         }
 
-        foldable.Clear();
-        var open = new Stack<int>();
-        for (int line = 0; (nativeFoldingRanges is null || !completeNativeFolding) && line < colouredLines.Length && line < spans.Length; line++)
-        {
-            string text = colouredLines[line];
-            foreach (SyntaxSpan span in spans[line])
-            {
-                if (span.Kind is not (SyntaxKind.Bracket1 or SyntaxKind.Bracket2 or SyntaxKind.Bracket3) || span.Start >= text.Length)
-                    continue;
+        ScanFoldableInto(foldable, colouredLines, spans, nativeFoldingRanges, completeNativeFolding);
+        ReconcileFoldedAndSort(alreadySorted: false);
+    }
 
-                char character = text[span.Start];
-                if (character is '{' or '[' or '(')
-                {
-                    open.Push(line);
-                }
-                else if (open.Count > 0)
-                {
-                    int from = open.Pop();
-                    if (from < line && (!foldable.TryGetValue(from, out int was) || was < line))
-                        foldable[from] = line;
-                }
-            }
+    /// <summary>
+    /// O(1) swap of precomputed background foldable scopes into the editor on the UI thread, reconciling active folds
+    /// without re-scanning or re-sorting the document unless a broken active fold had to be preserved.
+    /// </summary>
+    private void ApplyPrecomputedFoldable(Dictionary<int, int> precomputedFoldable, List<(int Start, int End, int MaxEnd)> precomputedSorted)
+    {
+        if (folded.Count == 0)
+        {
+            foldable = precomputedFoldable;
+            foldableSorted = precomputedSorted;
+            foldedIntervalsVersion = -1;
+            linesWere = document.LineCount;
+            caretLineWas = document.Caret.Line;
+            return;
         }
 
-        if (nativeFoldingRanges is {} native)
-            foreach (var range in native.OrderBy(range => range.End)) foldable[range.Start] = range.End;
+        foldsWere.Clear();
+        foreach (int start in folded)
+        {
+            if (foldable.TryGetValue(start, out int end))
+                foldsWere[start] = end;
+        }
 
+        foldable = precomputedFoldable;
+        foldableSorted = precomputedSorted;
+        ReconcileFoldedAndSort(alreadySorted: true);
+    }
+
+    private void ReconcileFoldedAndSort(bool alreadySorted)
+    {
         // A fold that doesn't open anything now keeps where it ended, the brackets are only out for a moment while
         // something's half typed (a quote, a brace), and let go of it opened the fold and every line under it jumped
         // down. It opens the way any fold does, the caret going in
+        bool addedKept = false;
         foreach (var (start, end) in foldsWere)
         {
             if (nativeFoldingRanges is null && !foldable.ContainsKey(start) && end > start && end < document.LineCount)
+            {
                 foldable[start] = end;
+                addedKept = true;
+            }
         }
 
         foldedScratch.Clear();
@@ -229,33 +315,15 @@ public partial class CodeEditor
             foldsChanged++;
         }
 
-        RebuildFoldableSorted();
+        if (!alreadySorted || addedKept)
+            RebuildFoldableSorted();
         foldedIntervalsVersion = -1;
         linesWere = document.LineCount;
         caretLineWas = document.Caret.Line;
     }
 
     // Helper method to build a sorted prefix-max index of foldable scopes so StickyLines queries run in O(log N + depth).
-    private void RebuildFoldableSorted()
-    {
-        foldableSorted.Clear();
-        if (foldable.Count == 0)
-            return;
-
-        if (foldableSorted.Capacity < foldable.Count)
-            foldableSorted.Capacity = foldable.Count;
-        foreach (var (start, end) in foldable)
-            foldableSorted.Add((start, end, end));
-        foldableSorted.Sort(static (a, b) => a.Start.CompareTo(b.Start));
-        int maxEnd = int.MinValue;
-        for (int i = 0; i < foldableSorted.Count; i++)
-        {
-            var entry = foldableSorted[i];
-            if (entry.End > maxEnd)
-                maxEnd = entry.End;
-            foldableSorted[i] = (entry.Start, entry.End, maxEnd);
-        }
-    }
+    private void RebuildFoldableSorted() => FillFoldableSorted(foldable, foldableSorted);
 
     // Helper method to build a sorted non-overlapping list of outermost active folds for O(log F) IsHidden queries.
     private void EnsureFoldedIntervals()

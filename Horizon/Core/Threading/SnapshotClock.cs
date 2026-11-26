@@ -78,6 +78,7 @@ public sealed class SnapshotClock
     private const int RECENT = 128;
     private readonly double[] recent = new double[RECENT];
     private int recentAt;
+    private double recentPeak;
     private long lastStamp;
 
     // The renderer's side, when the last frame was and the time it showed
@@ -419,13 +420,25 @@ public sealed class SnapshotClock
         // tick that just came, which is what this did before, the lag settled about where the ticks are late on
         // average and one in seven of them came later than that, with the frames standing on the newest tick
         // waiting for every one of them
+        double leaving = recent[recentAt];
         recent[recentAt] = late;
-        recentAt = (recentAt + 1) % RECENT;
+        recentAt = (recentAt + 1) & (RECENT - 1);
 
-        double worst = 0.0;
-        foreach (double one in recent)
-            worst = Math.Max(worst, one);
+        if (late >= recentPeak)
+        {
+            recentPeak = late;
+        }
+        else if (leaving >= recentPeak)
+        {
+            double worst = 0.0;
+            for (int i = 0; i < RECENT; i++)
+            {
+                double one = recent[i];
+                if (one > worst) worst = one;
+            }
+            recentPeak = worst;
+        }
 
-        lag = worst > lag ? worst : lag + (worst - lag) * LAG_FALL;
+        lag = recentPeak > lag ? recentPeak : lag + (recentPeak - lag) * LAG_FALL;
     }
 }

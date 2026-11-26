@@ -222,8 +222,6 @@ namespace Horizon.UI
         {
             Compositor = compositor;
             Root.Module = this;
-
-            SetupRuntime();
         }
 
         /// <summary>

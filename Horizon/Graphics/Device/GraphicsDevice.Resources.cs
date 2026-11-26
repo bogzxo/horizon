@@ -271,7 +271,7 @@ public sealed unsafe partial class GraphicsDevice
         _ => TexelFormat.Rgba8
     };
 
-    internal Format FormatOf(PixelFormat format) => format switch
+    internal static Format MapPixelFormat(PixelFormat format, Format depthStencilFormat) => format switch
     {
         PixelFormat.Rgba8 => Format.R8G8B8A8Unorm,
         PixelFormat.Rgba8Srgb => Format.R8G8B8A8Srgb,
@@ -282,11 +282,14 @@ public sealed unsafe partial class GraphicsDevice
         PixelFormat.Rg32Uint => Format.R32G32Uint,
         PixelFormat.Rgba32Uint => Format.R32G32B32A32Uint,
         PixelFormat.Rgba16F => Format.R16G16B16A16Sfloat,
+        PixelFormat.R11G11B10F => Format.B10G11R11UfloatPack32,
         PixelFormat.Rgba32F => Format.R32G32B32A32Sfloat,
-        PixelFormat.Depth24Stencil8 => Context.DepthStencilFormat,
+        PixelFormat.Depth24Stencil8 => depthStencilFormat,
         PixelFormat.Depth32F => Format.D32Sfloat,
         _ => Format.R8G8B8A8Unorm
     };
+
+    internal Format FormatOf(PixelFormat format) => MapPixelFormat(format, Context.DepthStencilFormat);
 
     /* Names for the debugger, see VulkanContext.Name. A resource nobody named is told by what it is */
 
@@ -328,6 +331,12 @@ public sealed unsafe partial class GraphicsDevice
     internal void DestroyShader(Shader shader)
     {
         Unbind(shader);
+        shader.ComputePipeline = default;
+        if (hasLastGraphicsPipeline && lastGraphicsKey.Shader == shader.Handle)
+        {
+            hasLastGraphicsPipeline = false;
+            lastGraphicsPipeline = default;
+        }
 
         var pipelines = Pipelines.Forget(shader);
         var modules = shader.Modules.Select(stage => stage.Module).DistinctBy(module => module.Handle).ToArray();

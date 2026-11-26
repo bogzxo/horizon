@@ -187,6 +187,7 @@ public sealed partial class TerminalScreen : IVtHandler
             // One logical line, every row that wrapped into the next, its marks gathered for the first row it becomes
             int start = i;
             var cells = new List<TerminalCell>();
+            Dictionary<int, string>? lineCombining = null;
             TerminalRowMark marks = default;
             bool holdsLastPrompt = false;
             int cursorOffset = -1;
@@ -209,8 +210,14 @@ public sealed partial class TerminalScreen : IVtHandler
                     used = Math.Max(used, Math.Min(mainCursorX, row.Length));
                     cursorOffset = cells.Count + Math.Min(mainCursorX, used);
                 }
+                int baseOffset = cells.Count;
                 for (int c = 0; c < used; c++)
-                    cells.Add(row.Cells[c]);
+                {
+                    TerminalCell cell = row.Cells[c];
+                    if (cell.HasCombining && row.CombiningAt(c) is { } comb)
+                        (lineCombining ??= [])[baseOffset + c] = comb;
+                    cells.Add(cell);
+                }
                 i++;
                 if (!row.Wrapped || i >= all.Count)
                     break;
@@ -226,8 +233,17 @@ public sealed partial class TerminalScreen : IVtHandler
                 if (take == columns && at + take < cells.Count && cells[at + take].IsContinuation)
                     take--;
                 var row = new TerminalRow(columns);
+                bool rowStyled = false;
                 for (int c = 0; c < take; c++)
-                    row.Cells[c] = cells[at + c];
+                {
+                    TerminalCell cell = cells[at + c];
+                    row.Cells[c] = cell;
+                    if (!rowStyled && TerminalRow.StyleHasBackground(cell.Style))
+                        rowStyled = true;
+                    if (lineCombining is not null && cell.HasCombining && lineCombining.TryGetValue(at + c, out string? comb))
+                        row.SetCombining(c, comb);
+                }
+                row.HasStyledBackground = rowStyled;
                 row.Wrapped = at + take < cells.Count;
                 if (cursorOffset >= 0 && cursorOffset >= at && (cursorOffset < at + take || (!row.Wrapped && cursorOffset <= at + take)))
                 {
@@ -306,10 +322,21 @@ public sealed partial class TerminalScreen : IVtHandler
         var resized = NewGrid(columns, rows);
         for (int y = 0; y < Math.Min(rows, alternate.Count); y++)
         {
-            int copy = Math.Min(columns, alternate[y].Length);
-            Array.Copy(alternate[y].Cells, resized[y].Cells, copy);
-            if (copy > 0 && resized[y].Cells[copy - 1].Style.Has(TerminalAttributes.Wide))
-                resized[y].Cells[copy - 1] = TerminalCell.Erased(resized[y].Cells[copy - 1].Style);
+            TerminalRow src = alternate[y];
+            TerminalRow dst = resized[y];
+            int copy = Math.Min(columns, src.Length);
+            Array.Copy(src.Cells, dst.Cells, copy);
+            dst.HasStyledBackground = src.HasStyledBackground;
+            for (int c = 0; c < copy; c++)
+            {
+                if (dst.Cells[c].HasCombining && src.CombiningAt(c) is { } comb)
+                    dst.SetCombining(c, comb);
+            }
+            if (copy > 0 && dst.Cells[copy - 1].Style.Has(TerminalAttributes.Wide))
+            {
+                dst.Cells[copy - 1] = TerminalCell.Erased(dst.Cells[copy - 1].Style);
+                dst.ClearCombining(copy - 1, copy);
+            }
         }
         alternate = resized;
         savedAlternate = savedAlternate with { X = Math.Clamp(savedAlternate.X, 0, columns - 1), Y = Math.Clamp(savedAlternate.Y, 0, rows - 1) };
@@ -372,23 +399,33 @@ public sealed partial class TerminalScreen : IVtHandler
                 pendingWrap = false;
             }
 
-            TerminalCell[] cells = grid[CursorY].Cells;
+            TerminalRow row = grid[CursorY];
+            TerminalCell[] cells = row.Cells;
             int x = CursorX;
             int count = Math.Min(ascii.Length - offset, columns - x);
             int end = x + count;
 
             // Only the two boundaries of the overwritten span can split an existing wide character
             if (x > 0 && cells[x].IsContinuation)
+            {
                 cells[x - 1] = TerminalCell.Erased(cells[x - 1].Style);
+                row.ClearCombining(x - 1, x);
+            }
             if (end < cells.Length && cells[end - 1].Style.Has(TerminalAttributes.Wide))
+            {
                 cells[end] = TerminalCell.Erased(cells[end].Style);
+                row.ClearCombining(end, end + 1);
+            }
 
             for (int k = 0; k < count; k++)
             {
                 template.CodePoint = ascii[offset + k];
                 cells[x + k] = template;
             }
-            grid[CursorY].Touch();
+            row.ClearCombining(x, end);
+            if (TerminalRow.StyleHasBackground(Style))
+                row.HasStyledBackground = true;
+            row.Touch();
 
             offset += count;
             if (end >= columns)
@@ -417,11 +454,10 @@ public sealed partial class TerminalScreen : IVtHandler
             int x = CursorX - (pendingWrap ? 0 : 1);
             if (x >= 0 && x < Columns)
             {
-                ref TerminalCell before = ref grid[CursorY].Cells[x];
-                if (before.IsContinuation && x > 0)
-                    before = ref grid[CursorY].Cells[x - 1];
-                before.Combining = (before.Combining ?? string.Empty) + char.ConvertFromUtf32(codePoint);
-                grid[CursorY].Touch();
+                TerminalRow targetRow = grid[CursorY];
+                if (targetRow.Cells[x].IsContinuation && x > 0)
+                    x--;
+                targetRow.AppendCombining(x, char.ConvertFromUtf32(codePoint));
             }
             return;
         }
@@ -446,6 +482,9 @@ public sealed partial class TerminalScreen : IVtHandler
         {
             ClearWide(grid[CursorY], CursorX);
             grid[CursorY].Cells[CursorX] = TerminalCell.Erased(Style);
+            grid[CursorY].ClearCombining(CursorX, CursorX + 1);
+            if (TerminalRow.StyleHasBackground(Style))
+                grid[CursorY].HasStyledBackground = true;
             grid[CursorY].Touch();
             if (autowrap)
             {
@@ -465,8 +504,12 @@ public sealed partial class TerminalScreen : IVtHandler
             BreakWideAt(row, CursorX);
             for (int c = Columns - 1; c >= CursorX + width; c--)
                 row.Cells[c] = row.Cells[c - width];
+            row.ShiftCombiningRight(CursorX, width, Columns);
             if (Columns > 0 && row.Cells[Columns - 1].Style.Has(TerminalAttributes.Wide))
+            {
                 row.Cells[Columns - 1] = TerminalCell.Erased(row.Cells[Columns - 1].Style);
+                row.ClearCombining(Columns - 1, Columns);
+            }
         }
 
         // Writing over half of a wide character blanks the other half
@@ -477,6 +520,9 @@ public sealed partial class TerminalScreen : IVtHandler
         row.Cells[CursorX] = new TerminalCell { CodePoint = codePoint, Style = Style with { Attributes = Style.Attributes | (width == 2 ? TerminalAttributes.Wide : 0) } };
         if (width == 2)
             row.Cells[CursorX + 1] = new TerminalCell { CodePoint = 0, Style = Style with { Attributes = Style.Attributes | TerminalAttributes.Continuation } };
+        row.ClearCombining(CursorX, CursorX + width);
+        if (TerminalRow.StyleHasBackground(Style))
+            row.HasStyledBackground = true;
         row.Touch();
 
         CursorX += width;
@@ -493,9 +539,15 @@ public sealed partial class TerminalScreen : IVtHandler
             return;
 
         if (row.Cells[x].IsContinuation && x > 0)
+        {
             row.Cells[x - 1] = TerminalCell.Erased(row.Cells[x - 1].Style);
+            row.ClearCombining(x - 1, x);
+        }
         else if (row.Cells[x].Style.Has(TerminalAttributes.Wide) && x + 1 < row.Length)
+        {
             row.Cells[x + 1] = TerminalCell.Erased(row.Cells[x + 1].Style);
+            row.ClearCombining(x + 1, x + 2);
+        }
     }
 
     // If a boundary cuts through a wide character (lands on its continuation cell), blank both halves so neither is orphaned
@@ -505,6 +557,7 @@ public sealed partial class TerminalScreen : IVtHandler
         {
             row.Cells[x - 1] = TerminalCell.Erased(row.Cells[x - 1].Style);
             row.Cells[x] = TerminalCell.Erased(row.Cells[x].Style);
+            row.ClearCombining(x - 1, x + 1);
         }
     }
 
@@ -606,7 +659,7 @@ public sealed partial class TerminalScreen : IVtHandler
                 {
                     fresh = BlanksOfOldest();
                 }
-                grid.Insert(to, new TerminalRow(fresh, false));
+                grid.Insert(to, new TerminalRow(fresh, false, TerminalRow.StyleHasBackground(Style)));
             }
             else
             {
@@ -647,6 +700,8 @@ public sealed partial class TerminalScreen : IVtHandler
             Array.Fill(row.Cells, TerminalCell.Erased(Style));
         else
             row.Cells = Blanks();
+        row.ClearCombiningAll();
+        row.HasStyledBackground = TerminalRow.StyleHasBackground(Style);
         row.Touch();
     }
 
@@ -902,9 +957,13 @@ public sealed partial class TerminalScreen : IVtHandler
             BreakWideAt(row, CursorX);
             for (int c = Columns - 1; c >= CursorX + count; c--)
                 row.Cells[c] = row.Cells[c - count];
+            row.ShiftCombiningRight(CursorX, count, Columns);
             row.Fill(TerminalCell.Erased(Style), CursorX, CursorX + count);
             if (Columns > 0 && row.Cells[Columns - 1].Style.Has(TerminalAttributes.Wide))
+            {
                 row.Cells[Columns - 1] = TerminalCell.Erased(row.Cells[Columns - 1].Style);
+                row.ClearCombining(Columns - 1, Columns);
+            }
         }
         pendingWrap = false;
     }
@@ -919,6 +978,7 @@ public sealed partial class TerminalScreen : IVtHandler
             BreakWideAt(row, CursorX + count);
             for (int c = CursorX; c < Columns - count; c++)
                 row.Cells[c] = row.Cells[c + count];
+            row.ShiftCombiningLeft(CursorX, count, Columns);
             row.Fill(TerminalCell.Erased(Style), Columns - count, Columns);
         }
         pendingWrap = false;
@@ -932,9 +992,15 @@ public sealed partial class TerminalScreen : IVtHandler
             return;
 
         if (from > 0 && row.Cells[from].IsContinuation)
+        {
             row.Cells[from - 1] = TerminalCell.Erased(row.Cells[from - 1].Style);
+            row.ClearCombining(from - 1, from);
+        }
         if (to < row.Length && row.Cells[to - 1].Style.Has(TerminalAttributes.Wide))
+        {
             row.Cells[to] = TerminalCell.Erased(row.Cells[to].Style);
+            row.ClearCombining(to, to + 1);
+        }
 
         row.Fill(TerminalCell.Erased(Style), from, to);
     }

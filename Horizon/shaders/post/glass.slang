@@ -179,8 +179,12 @@ float4 fsMain(ScreenVaryings input) : SV_Target0
     int taps = clamp(int(ceil(squeeze)), 1, 12);
     float3 colour = float3(0.0, 0.0, 0.0);
     float2 along = dir * params.uTexel * squeeze / float(taps);
-    for (int i = 0; i < taps; i++)
-        colour += sampleParted(mirrored(sampleUV + along * (float(i) - 0.5 * float(taps - 1))), chroma);
+    // Pair consecutive sub-texel taps at their midpoint via bilinear filtering, halving sample count while preserving the bevel average.
+    float halfSpan = 0.5 * float(taps - 1);
+    for (int i = 0; i + 1 < taps; i += 2)
+        colour += 2.0 * sampleParted(mirrored(sampleUV + along * (float(i) + 0.5 - halfSpan)), chroma);
+    if ((taps & 1) != 0)
+        colour += sampleParted(mirrored(sampleUV + along * halfSpan), chroma);
     colour /= float(taps);
 
     return float4(dye(colour), coverage);

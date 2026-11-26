@@ -41,6 +41,9 @@ internal sealed class UIRenderer : IDisposable
     /// <summary>How many quads were uploaded last.</summary>
     internal int Count => itemCount;
 
+    /// <summary>Monotonically incremented whenever new quads are uploaded or cleared, for backdrop hash caching.</summary>
+    internal ulong Revision { get; private set; }
+
     /// <summary>Whether there is nothing to draw at all, a UI whose modules are all off, or one that hasn't been painted yet.</summary>
     public bool IsEmpty => itemCount == 0;
 
@@ -115,6 +118,7 @@ internal sealed class UIRenderer : IDisposable
             FindBlends();
         else if (blendChanges.Count > 0)
             blendChanges.Clear();
+        Revision++;
     }
 
     /// <summary>
@@ -130,6 +134,7 @@ internal sealed class UIRenderer : IDisposable
         glass.Clear();
         blendChanges.Clear();
         skin = null;
+        Revision++;
     }
 
     /// <summary>Frees the underlying sprite batch GPU buffers and clears uploaded state. Render thread.</summary>

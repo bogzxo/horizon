@@ -45,6 +45,10 @@ public class Lights : UIComponent
     private readonly Light[] lights = new Light[MOST_LIGHTS];
     private readonly Ring[] rings = new Ring[MOST_RIPPLES];
     private int lightCount, ringCount, nextRing;
+    private int visualVersion;
+
+    /// <summary>Reuse the previous draw list while lights are settled and no rings are spreading.</summary>
+    protected override long PaintVersion => ringCount > 0 ? -1 : visualVersion & 0x7FFFFFFF;
 
     /// <summary>How quickly a light gets to where it's asked to be, as the rate of an exponential, 0 for at once.</summary>
     public float Follow { get; set; } = 20.0f;
@@ -71,9 +75,13 @@ public class Lights : UIComponent
             if (light.Key != key)
                 continue;
 
-            light.Target = at;
-            light.Radius = radius;
-            light.Color = color;
+            if (light.Target != at || light.Radius != radius || light.Color != color)
+            {
+                light.Target = at;
+                light.Radius = radius;
+                light.Color = color;
+                visualVersion++;
+            }
             light.Asked = true;
             return;
         }
@@ -82,6 +90,7 @@ public class Lights : UIComponent
             return;
 
         lights[lightCount++] = new Light { Key = key, At = at, Target = at, Radius = radius, Color = color, Asked = true };
+        visualVersion++;
     }
 
     /// <summary>A ring out of a point that spreads as far as <paramref name="reach"/> and fades over <paramref name="life"/> seconds.</summary>
@@ -96,11 +105,14 @@ public class Lights : UIComponent
 
         nextRing = (nextRing + 1) & 0xFFFF;
         rings[ringCount++] = new Ring { At = at, Life = MathF.Max(0.05f, life), Reach = reach, Thickness = thickness, Color = color, Id = nextRing };
+        visualVersion++;
     }
 
     /// <summary>Every light out and every ring gone at once.</summary>
     public void Clear()
     {
+        if (lightCount != 0 || ringCount != 0)
+            visualVersion++;
         lightCount = 0;
         ringCount = 0;
     }
@@ -112,13 +124,33 @@ public class Lights : UIComponent
 
         if (lightCount > 0)
         {
-            float follow = Follow > 0.0f ? 1.0f - MathF.Exp(-Follow * dt) : 1.0f;
-            float fade = 1.0f - MathF.Exp(-Fade * dt);
+            float follow = -1.0f;
+            float fade = -1.0f;
+            bool changed = false;
 
             int kept = 0;
             for (int i = 0; i < lightCount; i++)
             {
                 ref Light light = ref lights[i];
+
+                // Settled static lights skip MathF.Exp easing and leave visualVersion untouched so Paint reuses.
+                if (light.Asked && light.Level == 1.0f && light.At == light.Target)
+                {
+                    light.Asked = false;
+                    if (kept != i)
+                        lights[kept] = light;
+                    kept++;
+                    continue;
+                }
+
+                if (fade < 0.0f)
+                {
+                    follow = Follow > 0.0f ? 1.0f - MathF.Exp(-Follow * dt) : 1.0f;
+                    fade = 1.0f - MathF.Exp(-Fade * dt);
+                }
+
+                Vector2 prevAt = light.At;
+                float prevLevel = light.Level;
                 light.At += (light.Target - light.At) * follow;
                 light.Level += ((light.Asked ? 1.0f : 0.0f) - light.Level) * fade;
                 if (light.Asked && light.Level > 0.995f)
@@ -126,14 +158,23 @@ public class Lights : UIComponent
                 if (Vector2.DistanceSquared(light.At, light.Target) < 0.01f)
                     light.At = light.Target;
 
+                if (light.At != prevAt || light.Level != prevLevel)
+                    changed = true;
+
                 // Out once it's faded all the way and nobody asked for it this tick
                 bool keep = light.Asked || light.Level > 0.01f;
                 light.Asked = false;
                 if (keep)
                     lights[kept++] = light;
+                else
+                    changed = true;
             }
 
+            if (kept != lightCount)
+                changed = true;
             lightCount = kept;
+            if (changed)
+                visualVersion++;
         }
 
         if (ringCount > 0)
@@ -148,6 +189,7 @@ public class Lights : UIComponent
             }
 
             ringCount = alive;
+            visualVersion++;
         }
     }
 

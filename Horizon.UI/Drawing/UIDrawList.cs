@@ -43,6 +43,8 @@ public sealed partial class UIDrawList
     private readonly List<Run> runs = [];
     private int runStart;
     private Texture? runImage0, runImage1;
+    // Last frame-quad index that bound IMAGE_SLOT / IMAGE_SLOT+1 in the active run, for O(1) RecordRunSegments
+    private int lastUsedImage0Quad = -1, lastUsedImage1Quad = -1;
 
     // The atlases of other people this list drew out of (or wanted to), for the renderer to bring up to date
     private readonly List<TextureAtlas> atlases = [];
@@ -192,6 +194,7 @@ public sealed partial class UIDrawList
         runs.Clear();
         runStart = 0;
         runImage0 = runImage1 = null;
+        lastUsedImage0Quad = lastUsedImage1Quad = -1;
         atlases.Clear();
         glass.Clear();
 
@@ -469,7 +472,7 @@ public sealed partial class UIDrawList
         float frosted = MathF.Min(1.0f, opacity * GLASS_LEAD);
         int underItems = Math.Clamp(under.Items, 0, itemCount);
         int underQuads = Math.Clamp(under.Quads, 0, frameList.QuadCount);
-        KeepFrameGlass(underQuads, rect, radius * drawnScale, blur * MathF.Min(MathF.Abs(scale.X), MathF.Abs(scale.Y)), bend * drawnScale, lens, tint);
+        KeepFrameGlass(underQuads, rect, radius * drawnScale, blur * MathF.Min(MathF.Abs(scale.X), MathF.Abs(scale.Y)), bend * drawnScale, lens, tint, underItems, itemCount);
         if (rect.Intersect(clip).IsEmpty)
             return;
 
@@ -948,6 +951,11 @@ public sealed partial class UIDrawList
             slot = IMAGE_SLOT;
         }
 
+        if (slot == IMAGE_SLOT)
+            lastUsedImage0Quad = frameList.QuadCount;
+        else
+            lastUsedImage1Quad = frameList.QuadCount;
+
         return slot;
     }
 
@@ -1038,12 +1046,13 @@ public sealed partial class UIDrawList
 
     private void CloseRun()
     {
-        KeepFrameRun(runImage0, runImage1);
+        KeepFrameRun(runImage0, runImage1, itemCount, lastUsedImage0Quad, lastUsedImage1Quad);
         int count = itemCount - runStart;
         if (count > 0)
             runs.Add(new Run(runStart, count, runImage0, runImage1));
 
         runStart = itemCount;
         runImage0 = runImage1 = null;
+        lastUsedImage0Quad = lastUsedImage1Quad = -1;
     }
 }

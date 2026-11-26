@@ -1099,20 +1099,28 @@ public partial class TerminalView : UIComponent, IDisposable
         // The marks of the blocks in the gutter, outside the cells, and the matches of a find under the text
         PaintMarks(list, offset, rows, top, palette);
 
-        // The cells, a row at a time. A row's quads are another line's the moment a program scrolls (micro down a long
-        // file) or the scrollback's oldest row goes, which is fine, a frame between two ticks shows the newer tick's
+        // The cells, a row at a time. Cached independently of cursor blink/glide via UIDrawList record reuse so
+        // blinking an idle focused terminal reuses the static cell-grid slice without re-walking every cell.
         list.PushClip(paintedArea);
-        for (int y = 0; y < rows; y++)
+        long gridVersion = GridPaintVersion(palette, offset, rows, scale);
+        if (!TryReuseSlice(list, paintedArea, gridVersion, out int gridContext))
         {
-            int index = offset + y;
-            if (index >= screen.TotalRows)
-                break;
+            BeginSliceRecord(list);
+            for (int y = 0; y < rows; y++)
+            {
+                int index = offset + y;
+                if (index >= screen.TotalRows)
+                    break;
 
-            list.BeginPart(index);
-            PaintRow(list, font, scale, screen.RowAt(index), index, top - y * cellHeight, palette);
+                list.BeginPart(index);
+                PaintRow(list, font, scale, screen.RowAt(index), index, top - y * cellHeight, palette);
+            }
+            EndSliceRecord(list, gridVersion, gridContext);
         }
 
-        // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't
+        // The cursor, gliding to its cell, as a block that blinks when it has the focus and an outline when it hasn't.
+        // Keep the cursor quad structurally stable in PART -2 (alpha = 0 when blinked off) so blink transitions never
+        // shift quad indices or cause cross-frame interpolation artifacts.
         cursorGliding = false;
         if (screen.CursorVisible && scrolled == 0 && EndedWith is null)
         {
@@ -1136,7 +1144,9 @@ public partial class TerminalView : UIComponent, IDisposable
             }
 
             list.BeginPart(-2);
-            bool wide = screen[screen.CursorX, screen.CursorY].Style.Has(TerminalAttributes.Wide);
+            TerminalRow cursorRow = screen.Grid[screen.CursorY];
+            ref TerminalCell cursorCell = ref cursorRow.Cells[screen.CursorX];
+            bool wide = cursorCell.Style.Has(TerminalAttributes.Wide);
             var box = new UIRect(cursorAt, cursorAt + new Vector2(cellWidth * (wide ? 2 : 1), cellHeight));
             Vector4 ink = palette.Cursor;
             if (!IsFocused)
@@ -1144,21 +1154,25 @@ public partial class TerminalView : UIComponent, IDisposable
                 // Square, a cell's outline. The skin's corners rounded it, a fat pill in Dusk and a box in Dawn
                 list.RoundOutline(box, 0.0f, 1.0f, ink);
             }
-            else if (blink < BLINK || screen.CursorShape is 2 or 4 or 6)
+            else
             {
+                bool cursorLit = blink < BLINK || screen.CursorShape is 2 or 4 or 6;
+                Vector4 drawInk = cursorLit ? ink : ink with { W = 0.0f };
                 switch (screen.CursorShape)
                 {
-                    case 3 or 4: list.Rect(new UIRect(box.Min, new Vector2(box.Max.X, box.Min.Y + MathF.Max(1.0f, cellHeight * 0.1f))), ink); break;
-                    case 5 or 6: list.Rect(new UIRect(box.Min, new Vector2(box.Min.X + MathF.Max(1.0f, cellWidth * 0.15f), box.Max.Y)), ink); break;
+                    case 3 or 4: list.Rect(new UIRect(box.Min, new Vector2(box.Max.X, box.Min.Y + MathF.Max(1.0f, cellHeight * 0.1f))), drawInk); break;
+                    case 5 or 6: list.Rect(new UIRect(box.Min, new Vector2(box.Min.X + MathF.Max(1.0f, cellWidth * 0.15f), box.Max.Y)), drawInk); break;
                     default:
-                        list.Rect(box, ink);
-                        // The character under a block cursor in the background's colour, so it reads
-                        PaintCell(list, font, scale, screen[screen.CursorX, screen.CursorY], cursorAt, palette, background, cursorInk: true);
+                        list.Rect(box, drawInk);
+                        // The character under a block cursor in the background's colour, so it reads (transparent when blinked off)
+                        PaintCell(list, font, scale, cursorCell, cursorRow.CombiningAt(screen.CursorX), cursorAt, palette, cursorLit ? background : background with { W = 0.0f }, cursorInk: true);
                         break;
                 }
             }
         }
 
+        // Keep post-grid overlays in a stable part id regardless of whether the cell grid was reused or freshly painted
+        list.BeginPart(-3);
         PaintCompletion(list, scale, top, palette);
         PaintGhost(list, scale, top, palette);
 
@@ -1176,6 +1190,48 @@ public partial class TerminalView : UIComponent, IDisposable
         PaintEnded(list, palette);
         list.EndParts();
         drawnVersion = screen.Version;
+    }
+
+    // Version fingerprint for the static terminal cell grid (everything PaintRow reads, excluding cursor blink/glide state)
+    private long GridPaintVersion(TerminalPalette palette, int offset, int rows, float scale)
+    {
+        var hash = new HashCode();
+        hash.Add(screen.Version);
+        hash.Add(screen.Scrollback.Count);
+        hash.Add(screen.Columns);
+        hash.Add(screen.Rows);
+        hash.Add(screen.ReverseVideo);
+        hash.Add(screen.AlternateScreen);
+        hash.Add(offset);
+        hash.Add(rows);
+        hash.Add(scale);
+        hash.Add(cellWidth);
+        hash.Add(cellHeight);
+        hash.Add(paintedArea);
+        hash.Add(palette);
+        hash.Add(palette.Foreground);
+        hash.Add(palette.Background);
+        hash.Add(palette.Selection);
+        for (int i = 0; i < palette.Ansi.Length; i++)
+            hash.Add(palette.Ansi[i]);
+        hash.Add(hasSelection);
+        if (hasSelection)
+        {
+            hash.Add(selectionAnchor);
+            hash.Add(selectionEnd);
+        }
+        hash.Add(lineRow);
+        hash.Add(lineColumn);
+        hash.Add(lineLength);
+        hash.Add(lineStride);
+        hash.Add(colouredVersion);
+        hash.Add(colouredBy);
+        hash.Add(outputHighlighter);
+        hash.Add(outputVersion);
+        hash.Add(outputOffset);
+        hash.Add(outputStride);
+        hash.Add(outputRulesVersion);
+        return hash.ToHashCode() & 0x7FFFFFFF;
     }
 
     private void PaintRow(UIDrawList list, UIFont font, float scale, TerminalRow row, int rowIndex, float top, TerminalPalette palette)
@@ -1199,34 +1255,37 @@ public partial class TerminalView : UIComponent, IDisposable
             }
         }
 
-        // Backgrounds first, then the text, each in runs of one look
+        // Backgrounds first, skipped completely when the row has no styled background, no selection, and no reverse video
         TerminalCell[] cells = row.Cells;
         int runStart = 0;
-        while (runStart < columns)
+        if (row.HasStyledBackground || rowSelected || reverseVideo)
         {
-            ref TerminalCell first = ref cells[runStart];
-            bool selected = rowSelected && runStart >= selFrom && runStart < selTo;
-            if (!selected && !reverseVideo && first.Style.Background.IsDefault && !first.Style.Has(TerminalAttributes.Inverse))
+            while (runStart < columns)
             {
-                int skipEnd = runStart + 1;
-                while (skipEnd < columns && !(rowSelected && skipEnd >= selFrom && skipEnd < selTo)
-                    && cells[skipEnd].Style.Background.IsDefault && !cells[skipEnd].Style.Has(TerminalAttributes.Inverse))
-                    skipEnd++;
-                runStart = skipEnd;
-                continue;
+                ref TerminalCell first = ref cells[runStart];
+                bool selected = rowSelected && runStart >= selFrom && runStart < selTo;
+                if (!selected && !reverseVideo && first.Style.Background.IsDefault && !first.Style.Has(TerminalAttributes.Inverse))
+                {
+                    int skipEnd = runStart + 1;
+                    while (skipEnd < columns && !(rowSelected && skipEnd >= selFrom && skipEnd < selTo)
+                        && cells[skipEnd].Style.Background.IsDefault && !cells[skipEnd].Style.Has(TerminalAttributes.Inverse))
+                        skipEnd++;
+                    runStart = skipEnd;
+                    continue;
+                }
+
+                int runEnd = runStart + 1;
+                while (runEnd < columns && cells[runEnd].Style.LooksLike(first.Style) && (rowSelected && runEnd >= selFrom && runEnd < selTo) == selected)
+                    runEnd++;
+
+                Vector4 back = BackgroundOf(first.Style, palette);
+                if (selected)
+                    back = Blend(back, palette.Selection);
+                if (back != palette.Background || selected || reverseVideo)
+                    list.Rect(new UIRect(new Vector2(left + runStart * cellWidth, baseline), new Vector2(left + runEnd * cellWidth, top)), back);
+
+                runStart = runEnd;
             }
-
-            int runEnd = runStart + 1;
-            while (runEnd < columns && cells[runEnd].Style.LooksLike(first.Style) && (rowSelected && runEnd >= selFrom && runEnd < selTo) == selected)
-                runEnd++;
-
-            Vector4 back = BackgroundOf(first.Style, palette);
-            if (selected)
-                back = Blend(back, palette.Selection);
-            if (back != palette.Background || selected || reverseVideo)
-                list.Rect(new UIRect(new Vector2(left + runStart * cellWidth, baseline), new Vector2(left + runEnd * cellWidth, top)), back);
-
-            runStart = runEnd;
         }
 
         // Compacted scrollback rows omit trailing plain blanks; paint selection over any selected columns past row.Length
@@ -1297,9 +1356,9 @@ public partial class TerminalView : UIComponent, IDisposable
             int plainEnd = at;
             int length = 0;
             bool hasNonSpace = false;
-            while (plainEnd < to && !bold && cells[plainEnd].CodePoint < 0x10000 && cells[plainEnd].Combining is null
-                && TerminalSymbols.IconOf(cells[plainEnd].CodePoint) is null
-                && !cells[plainEnd].Style.Has(TerminalAttributes.Wide | TerminalAttributes.Continuation))
+            while (plainEnd < to && !bold && cells[plainEnd].CodePoint < 0x10000
+                && !cells[plainEnd].Style.Has(TerminalAttributes.HasCombining | TerminalAttributes.Wide | TerminalAttributes.Continuation)
+                && (cells[plainEnd].CodePoint < TerminalSymbols.MIN_CODE_POINT || TerminalSymbols.IconOf(cells[plainEnd].CodePoint) is null))
             {
                 char ch = (char)cells[plainEnd].CodePoint;
                 if (ch != ' ')
@@ -1323,8 +1382,8 @@ public partial class TerminalView : UIComponent, IDisposable
             }
 
             ref TerminalCell cell = ref cells[at];
-            if (!cell.IsContinuation && cell.CodePoint > ' ')
-                PaintCell(list, font, scale, cell, new Vector2(left + at * cellWidth, baseline), Palette, ink, cursorInk: false);
+            if (!cell.IsContinuation && (cell.CodePoint > ' ' || cell.HasCombining))
+                PaintCell(list, font, scale, cell, cell.HasCombining ? row.CombiningAt(at) : null, new Vector2(left + at * cellWidth, baseline), Palette, ink, cursorInk: false);
             at++;
         }
 
@@ -1376,12 +1435,12 @@ public partial class TerminalView : UIComponent, IDisposable
     }
 
     // One cell on its own, a wide character, one with marks on it, or a bold one
-    private void PaintCell(UIDrawList list, UIFont font, float scale, in TerminalCell cell, Vector2 corner, TerminalPalette palette, Vector4 ink, bool cursorInk)
+    private void PaintCell(UIDrawList list, UIFont font, float scale, in TerminalCell cell, string? combiningMarks, Vector2 corner, TerminalPalette palette, Vector4 ink, bool cursorInk)
     {
-        if (cell.IsContinuation || cell.CodePoint <= ' ' && cell.Combining is null)
+        if (cell.IsContinuation || (cell.CodePoint <= ' ' && combiningMarks is null))
             return;
 
-        if (TerminalSymbols.IconOf(cell.CodePoint) is { } symbol && UISymbols.TryGet(symbol, out char symbolCode))
+        if (cell.CodePoint >= TerminalSymbols.MIN_CODE_POINT && TerminalSymbols.IconOf(cell.CodePoint) is { } symbol && UISymbols.TryGet(symbol, out char symbolCode))
         {
             float width = cellWidth * (cell.Style.Has(TerminalAttributes.Wide) ? 2 : 1);
             list.Symbol(symbolCode, new UIRect(corner, corner + new Vector2(width, cellHeight)), cursorInk ? ink : ForegroundOf(cell.Style, palette));
@@ -1400,10 +1459,10 @@ public partial class TerminalView : UIComponent, IDisposable
             runBuffer[length++] = (char)(0xDC00 + (v & 0x3FF));
         }
 
-        if (cell.Combining is { } marks)
+        if (combiningMarks is not null)
         {
-            for (int i = 0; i < marks.Length && length < runBuffer.Length; i++)
-                runBuffer[length++] = marks[i];
+            for (int i = 0; i < combiningMarks.Length && length < runBuffer.Length; i++)
+                runBuffer[length++] = combiningMarks[i];
         }
 
         UITextStyle textStyle = (cell.Style.Has(TerminalAttributes.Bold) ? UITextStyle.Bold : 0) | (cell.Style.Has(TerminalAttributes.Italic) ? UITextStyle.Italic : 0);

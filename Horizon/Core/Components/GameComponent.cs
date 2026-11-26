@@ -1,6 +1,21 @@
 namespace Horizon.Core.Components;
 
 /// <summary>
+/// Which per-tick lifecycle callbacks a <see cref="GameComponent"/> actually implements, so <see cref="Entity"/>
+/// can skip empty <see cref="GameComponent.UpdateState"/>, <see cref="GameComponent.UpdatePhysics"/>, and
+/// <see cref="GameComponent.Capture"/> walks without reflection.
+/// </summary>
+[Flags]
+public enum ComponentCapabilities : byte
+{
+    None = 0,
+    UpdateState = 1 << 0,
+    UpdatePhysics = 1 << 1,
+    Capture = 1 << 2,
+    All = UpdateState | UpdatePhysics | Capture
+}
+
+/// <summary>
 /// A component that does nothing until it is told what to do. It has the name, the parent and the switch every
 /// component needs, and every one of its turns is empty, so whoever makes a component from this only writes the
 /// turns it has something to do in.
@@ -14,6 +29,12 @@ namespace Horizon.Core.Components;
 /// </summary>
 public abstract class GameComponent : IGameComponent, ISnapshotSource
 {
+    /// <summary>
+    /// Which per-tick turns this component participates in. Defaults to <see cref="ComponentCapabilities.All"/>
+    /// for backward compatibility with subclasses that do not override it; components that only need a subset
+    /// (such as transforms or physics-only controllers) override this to let <see cref="Entity"/> skip empty walks.
+    /// </summary>
+    public virtual ComponentCapabilities Capabilities => ComponentCapabilities.All;
     /// <summary>
     /// Whether the component gets its turns. Off until it has been set up, and whenever somebody switches it off after.
     /// </summary>

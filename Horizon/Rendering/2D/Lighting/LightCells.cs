@@ -59,6 +59,16 @@ internal sealed class LightCells : IDisposable
         shader.SetUniform("uCellOrigin", in origin);
         shader.SetUniform("uCellCount", in count);
         shader.SetUniform("uPixelSize", pixelSize);
+
+        var (aoEnabled, aoSamples, aoRadius, aoStrength) = ClampAoParams(renderer.ShownAmbientOcclusion);
+        shader.SetUniform("uAoEnabled", aoEnabled);
+        if (aoEnabled)
+        {
+            shader.SetUniform("uAoSamples", aoSamples);
+            shader.SetUniform("uAoRadius", aoRadius);
+            shader.SetUniform("uAoStrength", aoStrength);
+        }
+
         device.BindStorageImage(0, light);
         device.BindStorageImage(1, extra);
         device.Dispatch((across + 7) / 8, (up + 7) / 8);
@@ -67,6 +77,17 @@ internal sealed class LightCells : IDisposable
         device.BindStorageImage(0, null);
         device.BindStorageImage(1, null);
         return true;
+    }
+
+    /// <summary>Clamps ambient occlusion settings to the range expected by <c>light_cells.slang</c>.</summary>
+    internal static (bool Enabled, int Samples, float Radius, float Strength) ClampAoParams(in AmbientOcclusion2D.State occlusion)
+    {
+        bool enabled = occlusion.Enabled && occlusion.Strength > 0.0f;
+        return (
+            enabled,
+            Math.Clamp(occlusion.Samples, 1, 32),
+            MathF.Max(occlusion.Radius, 1.0f),
+            Math.Clamp(occlusion.Strength, 0.0f, 1.0f));
     }
 
     private bool Fit(uint across, uint up)

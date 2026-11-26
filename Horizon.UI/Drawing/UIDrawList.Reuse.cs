@@ -32,11 +32,11 @@ public sealed partial class UIDrawList
     private readonly record struct RecordedRun(int Items, int ItemsEnd, int Quads, int QuadsEnd, Texture? Image0, Texture? Image1);
 
     // What a component painted, where it is among the list's quads, frame quads, frames, clips, homes, glass panes,
-    // and recorded run segments, by the component's name
+    // extras, and recorded run segments, by the component's name
     private readonly record struct PaintRecord(
         long Version, int Context, int Items, int ItemsEnd, int Quads, int QuadsEnd, int Frames, int FramesEnd,
         int Clips, int ClipsEnd, int Homes, int HomesEnd, int Glass, int GlassEnd, int FrameGlass, int FrameGlassEnd,
-        int Runs, int RunsEnd);
+        int Runs, int RunsEnd, int Extras, int ExtrasEnd, int OuterFrame, int OuterClip);
 
     private readonly Dictionary<float, PaintRecord> records = [];
     private readonly List<RecordedRun> recordedRuns = [];
@@ -45,7 +45,7 @@ public sealed partial class UIDrawList
     internal int Reused { get; private set; }
 
     // Where a recording started, and how many things that can't be painted again had happened by then
-    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Glass, int FrameGlass, int FrameRuns, int Uncacheable)> recording = new();
+    private readonly Stack<(int Items, int Quads, int Frames, int Clips, int Homes, int Glass, int FrameGlass, int FrameRuns, int Extras, int OuterFrame, int OuterClip, int Uncacheable)> recording = new();
     private int uncacheable;
 
     // The components that started painting in frames, in order, for a record to carry its own
@@ -127,13 +127,13 @@ public sealed partial class UIDrawList
 
     /// <summary>Starts recording what a component paints, for the next tick to take it out of this list again.</summary>
     internal void BeginRecord() =>
-        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, frameList.Runs.Count, uncacheable));
+        recording.Push((itemCount, frameList.QuadCount, frameList.Frames.Count, frameList.Clips.Count, homeOrder.Count, glass.Count, frameList.Glass.Count, frameList.Runs.Count, frameList.Extras.Count, frameAt, clipAt, uncacheable));
 
     /// <summary>Ends what <see cref="BeginRecord"/> started, kept unless something that can't be painted again was painted.</summary>
     /// <param name="painter">Who it is, said when CheckReuse finds a difference.</param>
     internal void EndRecord(float paintId, long version, int context, object painter)
     {
-        var (items0, quads0, frames0, clips0, homes0, glass0, frameGlass0, frameRuns0, uncacheable0) = recording.Pop();
+        var (items0, quads0, frames0, clips0, homes0, glass0, frameGlass0, frameRuns0, extras0, outerFrame, outerClip, uncacheable0) = recording.Pop();
         bool kept = uncacheable == uncacheable0;
         if (CheckReuse && Previous is { } before && before.records.TryGetValue(paintId, out PaintRecord was) && was.Version == version && was.Context == context
             && Differs(before, was, items0, quads0, glass0) is { } differs)
@@ -145,12 +145,12 @@ public sealed partial class UIDrawList
             RecordRunSegments(items0, itemCount, quads0, frameList.QuadCount, frameRuns0, frameList.Runs.Count);
             records[paintId] = new PaintRecord(version, context, items0, itemCount, quads0, frameList.QuadCount, frames0, frameList.Frames.Count,
                 clips0, frameList.Clips.Count, homes0, homeOrder.Count, glass0, glass.Count, frameGlass0, frameList.Glass.Count,
-                segStart, recordedRuns.Count);
+                segStart, recordedRuns.Count, extras0, frameList.Extras.Count, outerFrame, outerClip);
         }
     }
 
     // Helper method to split a recorded slice along any run boundaries closed during its paint, keeping only the custom
-    // images actually referenced by quads inside each segment so sibling textures are never inherited.
+    // images actually referenced by quads inside each segment so sibling textures are never inherited. O(1) per run segment.
     private void RecordRunSegments(int items0, int itemsEnd, int quads0, int quadsEnd, int frameRuns0, int frameRunsEnd)
     {
         int segItems = items0;
@@ -163,17 +163,9 @@ public sealed partial class UIDrawList
             if (qEnd <= segQuads)
                 continue;
 
-            int iEnd = segItems;
-            bool used0 = false, used1 = false;
-            for (int q = segQuads; q < qEnd; q++)
-            {
-                ref readonly UIFrameQuad fq = ref frameList.Quads[q];
-                if (fq.Item >= 0)
-                    iEnd = fq.Item + 1;
-                uint tex = SpriteItem.TextureOf(fq.Flags);
-                if (tex == IMAGE_SLOT) used0 = true;
-                else if (tex == IMAGE_SLOT + 1) used1 = true;
-            }
+            int iEnd = fr.ItemEnd >= 0 ? Math.Clamp(fr.ItemEnd, segItems, itemsEnd) : segItems;
+            bool used0 = fr.Image0 is not null && fr.Used0Quad >= segQuads;
+            bool used1 = fr.Image1 is not null && fr.Used1Quad >= segQuads;
 
             recordedRuns.Add(new RecordedRun(segItems, iEnd, segQuads, qEnd, used0 ? fr.Image0 : null, used1 ? fr.Image1 : null));
             segItems = iEnd;
@@ -182,14 +174,8 @@ public sealed partial class UIDrawList
 
         if (quadsEnd > segQuads)
         {
-            bool used0 = false, used1 = false;
-            for (int q = segQuads; q < quadsEnd; q++)
-            {
-                uint tex = SpriteItem.TextureOf(frameList.Quads[q].Flags);
-                if (tex == IMAGE_SLOT) used0 = true;
-                else if (tex == IMAGE_SLOT + 1) used1 = true;
-            }
-
+            bool used0 = runImage0 is not null && lastUsedImage0Quad >= segQuads;
+            bool used1 = runImage1 is not null && lastUsedImage1Quad >= segQuads;
             recordedRuns.Add(new RecordedRun(segItems, itemsEnd, segQuads, quadsEnd, used0 ? runImage0 : null, used1 ? runImage1 : null));
         }
     }
@@ -245,9 +231,23 @@ public sealed partial class UIDrawList
         if (totalQuads > 0)
             frameList.EnsureCapacity(quads0 + totalQuads);
 
+        int extras0 = frameList.Extras.Count;
+        int extraCount = was.ExtrasEnd - was.Extras;
+        int extraDelta = extras0 - was.Extras;
+        if (extraCount > 0)
+        {
+            frameList.Extras.EnsureCapacity(extras0 + extraCount);
+            ReadOnlySpan<UIQuadExtra> srcExtras = CollectionsMarshal.AsSpan(before.frameList.Extras).Slice(was.Extras, extraCount);
+            frameList.Extras.AddRange(srcExtras);
+        }
+
         int itemDelta = items0 - was.Items;
         bool hasInnerFrames = frameCount > 0;
         bool hasInnerClips = clipCount > 0;
+        bool sameFrame = frameAt == was.OuterFrame && (!hasInnerFrames || frameDelta == 0);
+        bool sameClip = clipAt == was.OuterClip && (!hasInnerClips || clipDelta == 0);
+        bool sameItem = itemDelta == 0;
+        bool sameExtra = extraCount == 0 || extraDelta == 0;
 
         // Replay each recorded run segment in order, closing the active run before a segment whose images do not fit
         // into the remaining slots so multi-run boundaries and active images stay exact.
@@ -289,23 +289,40 @@ public sealed partial class UIDrawList
             if (segQuadCount > 0)
             {
                 before.frameList.Quads.AsSpan(seg.Quads, segQuadCount).CopyTo(frameList.Quads.AsSpan(segDstQuads, segQuadCount));
+                before.frameList.QuadGeoms.AsSpan(seg.Quads, segQuadCount).CopyTo(frameList.QuadGeoms.AsSpan(segDstQuads, segQuadCount));
                 frameList.QuadCount = segDstQuads + segQuadCount;
 
-                Span<UIFrameQuad> dst = frameList.Quads.AsSpan(segDstQuads, segQuadCount);
-                for (int i = 0; i < segQuadCount; i++)
+                // Fast-skip per-quad fixup when deltas and image slot remapping are all zero.
+                if (!sameFrame || !sameClip || !sameItem || !sameExtra || remapSlots)
                 {
-                    ref UIFrameQuad quad = ref dst[i];
-                    quad.Frame = hasInnerFrames && quad.Frame >= was.Frames && quad.Frame < was.FramesEnd ? quad.Frame + frameDelta : frameAt;
-                    quad.Clip = hasInnerClips && quad.Clip >= was.Clips && quad.Clip < was.ClipsEnd ? quad.Clip + clipDelta : clipAt;
-                    if (quad.Item >= 0)
-                        quad.Item += itemDelta;
-                    if (remapSlots)
-                        quad.Flags = RemapImageSlot(quad.Flags, slot0, slot1);
+                    Span<UIFrameQuad> dst = frameList.Quads.AsSpan(segDstQuads, segQuadCount);
+                    for (int i = 0; i < segQuadCount; i++)
+                    {
+                        ref UIFrameQuad quad = ref dst[i];
+                        if (!sameFrame)
+                            quad.Frame = hasInnerFrames && quad.Frame >= was.Frames && quad.Frame < was.FramesEnd ? quad.Frame + frameDelta : frameAt;
+                        if (!sameClip)
+                            quad.Clip = hasInnerClips && quad.Clip >= was.Clips && quad.Clip < was.ClipsEnd ? quad.Clip + clipDelta : clipAt;
+                        if (!sameItem && quad.Item >= 0)
+                            quad.Item += itemDelta;
+                        if (!sameExtra && quad.Extra >= 0)
+                            quad.Extra += extraDelta;
+                        if (remapSlots)
+                            quad.Flags = RemapImageSlot(quad.Flags, slot0, slot1);
+                    }
                 }
             }
 
             Texture? newImg0 = slot0 == IMAGE_SLOT ? img0 : slot1 == IMAGE_SLOT ? img1 : null;
             Texture? newImg1 = slot0 == IMAGE_SLOT + 1 ? img0 : slot1 == IMAGE_SLOT + 1 ? img1 : null;
+            if (segQuadCount > 0)
+            {
+                int lastQuad = frameList.QuadCount - 1;
+                if (newImg0 is not null)
+                    lastUsedImage0Quad = lastQuad;
+                if (newImg1 is not null)
+                    lastUsedImage1Quad = lastQuad;
+            }
             recordedRuns.Add(new RecordedRun(segDstItems, itemCount, segDstQuads, frameList.QuadCount, newImg0, newImg1));
         }
 
@@ -335,7 +352,9 @@ public sealed partial class UIDrawList
                     Under = fg.Under + quadDelta,
                     Start = fg.Start + quadDelta,
                     Frame = fgFrame,
-                    Clip = fgClip
+                    Clip = fgClip,
+                    ItemUnder = fg.ItemUnder >= 0 ? fg.ItemUnder + itemDelta : -1,
+                    ItemStart = fg.ItemStart >= 0 ? fg.ItemStart + itemDelta : -1
                 });
             }
         }
@@ -359,7 +378,9 @@ public sealed partial class UIDrawList
             Frames = frames0, FramesEnd = frameList.Frames.Count, Clips = clips0, ClipsEnd = frameList.Clips.Count,
             Homes = homeOrder.Count - homeCount, HomesEnd = homeOrder.Count,
             Glass = glass0, GlassEnd = glass.Count, FrameGlass = frameGlass0, FrameGlassEnd = frameList.Glass.Count,
-            Runs = runsStart, RunsEnd = recordedRuns.Count
+            Runs = runsStart, RunsEnd = recordedRuns.Count,
+            Extras = extras0, ExtrasEnd = frameList.Extras.Count,
+            OuterFrame = frameAt, OuterClip = clipAt
         };
     }
 

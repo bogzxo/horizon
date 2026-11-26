@@ -128,17 +128,17 @@ public partial class TreeView
 
     // The part of a row's text that has what's typed, lit behind its letters. Always painted, see-through on a row
     // without it, so the row's quads stay the same ones as letters come and go
-    private void PaintFound(UIDrawList list, UISkin skin, string rowText, float x, UIRect row, float scale, float textHeight)
+    private void PaintFound(UIDrawList list, UISkin skin, ReadOnlySpan<char> rowText, float x, UIRect row, float scale, float textHeight)
     {
-        int at = findShown.Length > 0 ? rowText.AsSpan().IndexOf(findShown, StringComparison.OrdinalIgnoreCase) : -1;
+        int at = findShown.Length > 0 ? rowText.IndexOf(findShown, StringComparison.OrdinalIgnoreCase) : -1;
         if (at < 0)
         {
             list.RoundRect(new UIRect(new Vector2(x, row.Center.Y), new Vector2(x, row.Center.Y)), 3.0f, skin.Palette.Selection with { W = 0.0f });
             return;
         }
 
-        float from = x + skin.Font.Measure(rowText.AsSpan(0, at), scale, markup: false).X;
-        float width = skin.Font.Measure(rowText.AsSpan(at, findShown.Length), scale, markup: false).X;
+        float from = x + skin.Font.Measure(rowText[..at], scale, markup: false).X;
+        float width = skin.Font.Measure(rowText.Slice(at, findShown.Length), scale, markup: false).X;
         var lit = new UIRect(new Vector2(from - 1.0f, row.Center.Y - textHeight * 0.5f - 1.0f), new Vector2(from + width + 1.0f, row.Center.Y + textHeight * 0.5f + 1.0f));
         list.RoundRect(lit, 3.0f, skin.AccentColor with { W = 0.35f });
         list.RoundOutline(lit, 3.0f, 1.0f, skin.AccentColor with { W = 0.8f });

@@ -96,7 +96,8 @@ public partial class UICompositor
         if (InputOf is not { } input)
             return;
 
-        HookComposition(input);
+        if (!ReferenceEquals(compositionInput, input))
+            HookComposition(input);
 
         if (!ReferenceEquals(lastRoutedFocus, focus))
         {

@@ -48,12 +48,20 @@ internal sealed class UIInBetween
     /// </summary>
     /// <param name="pointer">Where the pointer is now, for the frames that go where it goes (see <see cref="UIFrame.Follows"/>), null for them to stay where they were painted.</param>
     /// <param name="paintedItems">Optional painted <see cref="SpriteItem"/> buffer for <paramref name="b"/> so stationary frames can be copied directly.</param>
-    public void Frames(UIFrameList a, UIFrameList b, float alpha, Vector2? pointer = null, ReadOnlySpan<SpriteItem> paintedItems = default)
+    public void Frames(
+        UIFrameList a,
+        UIFrameList b,
+        float alpha,
+        Vector2? pointer = null,
+        ReadOnlySpan<SpriteItem> paintedItems = default,
+        ReadOnlySpan<UIDrawList.Run> paintedRuns = default,
+        ReadOnlySpan<UIGlassPane> paintedGlass = default,
+        bool hasPaintedGlass = false)
     {
         bool following = pointer is not null && b.Follows;
 
         // When alpha has reached the newer tick and no frame follows the pointer, every frame is stationary.
-        if (alpha >= 1.0f && !following && TryBypassStationary(b, paintedItems))
+        if (alpha >= 1.0f && !following && TryBypassStationary(b, paintedItems, paintedRuns, paintedGlass, hasPaintedGlass))
             return;
 
         ReadOnlySpan<UIFrame> older = a.Span, newer = b.Span;
@@ -83,39 +91,91 @@ internal sealed class UIInBetween
         if (following && Follow(b, pointer!.Value))
             allStationary = false;
 
-        if (allStationary && TryBypassStationary(b, paintedItems))
+        if (allStationary && TryBypassStationary(b, paintedItems, paintedRuns, paintedGlass, hasPaintedGlass))
             return;
 
         resolvedCount = b.Resolve(CollectionsMarshal.AsSpan(between), ref resolved, resolvedRuns, resolvedGlass, paintedItems);
     }
 
-    // Helper method to copy painted quads directly when every frame in b is unchanged from how it was painted.
-    private bool TryBypassStationary(UIFrameList b, ReadOnlySpan<SpriteItem> paintedItems)
+    // Helper method to copy painted quads, runs, and glass directly when every frame in b is unchanged from how it was painted.
+    private bool TryBypassStationary(
+        UIFrameList b,
+        ReadOnlySpan<SpriteItem> paintedItems,
+        ReadOnlySpan<UIDrawList.Run> paintedRuns,
+        ReadOnlySpan<UIGlassPane> paintedGlass,
+        bool hasPaintedGlass)
     {
-        if (b.Glass.Count != 0)
-            return false;
-
         if (b.QuadCount == 0 && paintedItems.IsEmpty)
         {
+            if (hasPaintedGlass)
+            {
+                resolvedGlass.Clear();
+                if (!paintedGlass.IsEmpty)
+                    resolvedGlass.AddRange(paintedGlass);
+            }
+            else if (!b.ResolveStationaryGlass(resolvedGlass))
+            {
+                return false;
+            }
+
             resolvedCount = 0;
             resolvedRuns.Clear();
-            resolvedGlass.Clear();
             StationaryBypasses++;
             return true;
         }
 
-        if (paintedItems.IsEmpty || b.Runs.Count != 1 || b.Runs[0].End != b.QuadCount)
+        // Caller did not supply paintedItems (e.g. full-resolve parity tests); run full Resolve.
+        if (paintedItems.IsEmpty && paintedRuns.IsEmpty && !hasPaintedGlass)
             return false;
 
-        if (resolved.Length < paintedItems.Length)
-            resolved = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)paintedItems.Length)];
-        paintedItems.CopyTo(resolved);
-        resolvedCount = paintedItems.Length;
-
+        // Populate runs from paintedRuns if supplied, or directly from b.Runs using recorded ItemEnd boundaries.
         resolvedRuns.Clear();
-        UIFrameRun only = b.Runs[0];
-        resolvedRuns.Add(new UIDrawList.Run(0, resolvedCount, only.Image0, only.Image1));
-        resolvedGlass.Clear();
+        if (!paintedRuns.IsEmpty)
+        {
+            resolvedRuns.AddRange(paintedRuns);
+        }
+        else if (!paintedItems.IsEmpty)
+        {
+            ReadOnlySpan<UIFrameRun> runSpan = CollectionsMarshal.AsSpan(b.Runs);
+            if (runSpan.IsEmpty)
+                return false;
+
+            int runFirst = 0;
+            for (int i = 0; i < runSpan.Length; i++)
+            {
+                ref readonly UIFrameRun fr = ref runSpan[i];
+                int itemEnd = fr.ItemEnd >= 0
+                    ? fr.ItemEnd
+                    : (runSpan.Length == 1 && fr.End == b.QuadCount ? paintedItems.Length : -1);
+                if (itemEnd < runFirst || itemEnd > paintedItems.Length)
+                    return false;
+                if (itemEnd > runFirst)
+                    resolvedRuns.Add(new UIDrawList.Run(runFirst, itemEnd - runFirst, fr.Image0, fr.Image1));
+                runFirst = itemEnd;
+            }
+            if (runFirst != paintedItems.Length)
+                return false;
+        }
+
+        // Populate glass panes from paintedGlass if supplied, or resolve only the glass panes without touching quads.
+        if (hasPaintedGlass)
+        {
+            resolvedGlass.Clear();
+            if (!paintedGlass.IsEmpty)
+                resolvedGlass.AddRange(paintedGlass);
+        }
+        else if (!b.ResolveStationaryGlass(resolvedGlass))
+        {
+            return false;
+        }
+
+        if (!paintedItems.IsEmpty)
+        {
+            if (resolved.Length < paintedItems.Length)
+                resolved = new SpriteItem[(int)BitOperations.RoundUpToPowerOf2((uint)paintedItems.Length)];
+            paintedItems.CopyTo(resolved);
+        }
+        resolvedCount = paintedItems.Length;
         StationaryBypasses++;
         return true;
     }

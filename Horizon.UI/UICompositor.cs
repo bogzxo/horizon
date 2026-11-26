@@ -732,6 +732,8 @@ public partial class UICompositor : GameComponent, IDisposable
         renderer.Initialize();
 
         UIKeyboard.Hook();
+        if (InputOf is { } input)
+            HookComposition(input);
     }
 
     /// <summary>
@@ -1248,7 +1250,15 @@ public partial class UICompositor : GameComponent, IDisposable
             long started = Stopwatch.GetTimestamp();
             bool between = canBlend && alpha < 1.0f;
             CapturedList target = between ? after : shown;
-            inBetween.Frames(between ? before.Frames : shown.Frames, target.Frames, between ? alpha : 1.0f, pointer, target.Span);
+            inBetween.Frames(
+                between ? before.Frames : shown.Frames,
+                target.Frames,
+                between ? alpha : 1.0f,
+                pointer,
+                target.Span,
+                CollectionsMarshal.AsSpan(target.Runs),
+                CollectionsMarshal.AsSpan(target.Glass),
+                hasPaintedGlass: true);
             Statistics.BlendMs += UIStatistics.Since(started);
             Statistics.FramesBlended++;
             CountUpload(inBetween.FramedQuads.Length);
@@ -1554,6 +1564,68 @@ public partial class UICompositor : GameComponent, IDisposable
     /// </summary>
     public (int Panes, int Blurs) GlassDrawn { get; private set; }
 
+    // Cached backdrop hashes for static glass panes, keyed on (uploadedRevision, seed, cameraRevision, paneIndex, under, region, blur)
+    private struct GlassHashEntry
+    {
+        public ulong Revision;
+        public ulong Seed;
+        public ulong CameraRevision;
+        public int PaneIndex;
+        public int Under;
+        public int RegionX, RegionY, RegionW, RegionH;
+        public uint BlurBits;
+        public ulong Hash;
+    }
+
+    private readonly GlassHashEntry[] glassHashCache = new GlassHashEntry[16];
+    private int glassHashCursor;
+    private ulong glassCameraRevision = 1;
+    private Matrix4x4 glassHashView, glassHashProjection;
+
+    private bool TryGetCachedGlassHash(ulong revision, ulong seed, ulong cameraRev, int paneIndex, int under, (int X, int Y, int W, int H) region, uint blurBits, out ulong hash)
+    {
+        for (int c = 0; c < glassHashCache.Length; c++)
+        {
+            ref readonly GlassHashEntry entry = ref glassHashCache[c];
+            if (entry.Hash != 0
+                && entry.Revision == revision
+                && entry.Seed == seed
+                && entry.CameraRevision == cameraRev
+                && entry.PaneIndex == paneIndex
+                && entry.Under == under
+                && entry.RegionX == region.X
+                && entry.RegionY == region.Y
+                && entry.RegionW == region.W
+                && entry.RegionH == region.H
+                && entry.BlurBits == blurBits)
+            {
+                hash = entry.Hash;
+                return true;
+            }
+        }
+
+        hash = 0;
+        return false;
+    }
+
+    private void StoreCachedGlassHash(ulong revision, ulong seed, ulong cameraRev, int paneIndex, int under, (int X, int Y, int W, int H) region, uint blurBits, ulong hash)
+    {
+        glassHashCache[glassHashCursor++ & 15] = new GlassHashEntry
+        {
+            Revision = revision,
+            Seed = seed,
+            CameraRevision = cameraRev,
+            PaneIndex = paneIndex,
+            Under = under,
+            RegionX = region.X,
+            RegionY = region.Y,
+            RegionW = region.W,
+            RegionH = region.H,
+            BlurBits = blurBits,
+            Hash = hash
+        };
+    }
+
     /// <summary>
     /// Helper method to draw a list with glass in it, in goes. A stretch of quads, a pane, the next stretch, and so on,
     /// every pane blurring what was drawn before it.
@@ -1579,9 +1651,18 @@ public partial class UICompositor : GameComponent, IDisposable
         Matrix4x4 toClip = viewportCamera.View * viewportCamera.Projection;
         bool hasInverse = Matrix4x4.Invert(toClip, out Matrix4x4 fromClip);
 
+        if (viewportCamera.View != glassHashView || viewportCamera.Projection != glassHashProjection)
+        {
+            glassHashView = viewportCamera.View;
+            glassHashProjection = viewportCamera.Projection;
+            glassCameraRevision++;
+        }
+
         // What is under every pane, for keeping its blur from one frame to the next. Only when what is behind the UI
         // holds still (GlassKeepsPicture), the UI can't see a scene that moves under it
         ulong seed = GlassKeepsPicture ? Seed(output) : 0;
+        ulong uploadRev = renderer.Revision;
+        ulong camRev = glassCameraRevision;
 
         for (int i = 0; i < panes.Length; i++)
         {
@@ -1625,51 +1706,56 @@ public partial class UICompositor : GameComponent, IDisposable
             ulong madeOf = 0;
             if (seed != 0)
             {
-                madeOf = Mix(seed, ((ulong)(uint)region.X << 32) | (uint)region.Y);
-                madeOf = Mix(madeOf, ((ulong)(uint)region.W << 32) | (uint)region.H);
-                madeOf = Mix(madeOf, BitConverter.SingleToUInt32Bits(pane.Blur));
-
-                for (int j = 0; j < i; j++)
+                uint blurBits = BitConverter.SingleToUInt32Bits(pane.Blur);
+                if (!TryGetCachedGlassHash(uploadRev, seed, camRev, i, under, region, blurBits, out madeOf))
                 {
-                    ref readonly UIGlassPane earlier = ref panes[j];
-                    if (Overlaps(Vector2.Min(earlier.Min, earlier.Max), Vector2.Max(earlier.Min, earlier.Max), rWorldMin, rWorldMax))
-                        madeOf = MixPaneFull(madeOf, earlier);
-                }
+                    madeOf = Mix(seed, ((ulong)(uint)region.X << 32) | (uint)region.Y);
+                    madeOf = Mix(madeOf, ((ulong)(uint)region.W << 32) | (uint)region.H);
+                    madeOf = Mix(madeOf, blurBits);
 
-                int runIdx = 0;
-                int lastMixedRun = -1;
-                float rMinX = rWorldMin.X, rMinY = rWorldMin.Y, rMaxX = rWorldMax.X, rMaxY = rWorldMax.Y;
-                for (int k = 0; k < under; k++)
-                {
-                    ref readonly SpriteItem item = ref items[k];
-                    float ox = item.Origin.X, ax = item.AxisX.X, bx = item.AxisY.X;
-                    float minX = ox + (ax < 0.0f ? ax : 0.0f) + (bx < 0.0f ? bx : 0.0f);
-                    float maxX = ox + (ax > 0.0f ? ax : 0.0f) + (bx > 0.0f ? bx : 0.0f);
-                    if (maxX <= rMinX || minX >= rMaxX)
-                        continue;
-
-                    float oy = item.Origin.Y, ay = item.AxisX.Y, by = item.AxisY.Y;
-                    float minY = oy + (ay < 0.0f ? ay : 0.0f) + (by < 0.0f ? by : 0.0f);
-                    float maxY = oy + (ay > 0.0f ? ay : 0.0f) + (by > 0.0f ? by : 0.0f);
-                    if (maxY <= rMinY || minY >= rMaxY)
-                        continue;
-
-                    while (runIdx < runs.Length && runs[runIdx].First + runs[runIdx].Count <= k)
-                        runIdx++;
-                    if (runIdx < runs.Length && runIdx != lastMixedRun && k >= runs[runIdx].First)
+                    for (int j = 0; j < i; j++)
                     {
-                        lastMixedRun = runIdx;
-                        UIDrawList.Run run = runs[runIdx];
-                        if (run.Image0 is { } img0)
-                            madeOf = Mix(madeOf, img0.Native.Handle);
-                        if (run.Image1 is { } img1)
-                            madeOf = Mix(madeOf, img1.Native.Handle);
+                        ref readonly UIGlassPane earlier = ref panes[j];
+                        if (Overlaps(Vector2.Min(earlier.Min, earlier.Max), Vector2.Max(earlier.Min, earlier.Max), rWorldMin, rWorldMax))
+                            madeOf = MixPaneFull(madeOf, earlier);
                     }
 
-                    madeOf = Mix(madeOf, in item);
-                }
+                    int runIdx = 0;
+                    int lastMixedRun = -1;
+                    float rMinX = rWorldMin.X, rMinY = rWorldMin.Y, rMaxX = rWorldMax.X, rMaxY = rWorldMax.Y;
+                    for (int k = 0; k < under; k++)
+                    {
+                        ref readonly SpriteItem item = ref items[k];
+                        float ox = item.Origin.X, ax = item.AxisX.X, bx = item.AxisY.X;
+                        float minX = ox + (ax < 0.0f ? ax : 0.0f) + (bx < 0.0f ? bx : 0.0f);
+                        float maxX = ox + (ax > 0.0f ? ax : 0.0f) + (bx > 0.0f ? bx : 0.0f);
+                        if (maxX <= rMinX || minX >= rMaxX)
+                            continue;
 
-                madeOf |= 1;
+                        float oy = item.Origin.Y, ay = item.AxisX.Y, by = item.AxisY.Y;
+                        float minY = oy + (ay < 0.0f ? ay : 0.0f) + (by < 0.0f ? by : 0.0f);
+                        float maxY = oy + (ay > 0.0f ? ay : 0.0f) + (by > 0.0f ? by : 0.0f);
+                        if (maxY <= rMinY || minY >= rMaxY)
+                            continue;
+
+                        while (runIdx < runs.Length && runs[runIdx].First + runs[runIdx].Count <= k)
+                            runIdx++;
+                        if (runIdx < runs.Length && runIdx != lastMixedRun && k >= runs[runIdx].First)
+                        {
+                            lastMixedRun = runIdx;
+                            UIDrawList.Run run = runs[runIdx];
+                            if (run.Image0 is { } img0)
+                                madeOf = Mix(madeOf, img0.Native.Handle);
+                            if (run.Image1 is { } img1)
+                                madeOf = Mix(madeOf, img1.Native.Handle);
+                        }
+
+                        madeOf = Mix(madeOf, in item);
+                    }
+
+                    madeOf |= 1;
+                    StoreCachedGlassHash(uploadRev, seed, camRev, i, under, region, blurBits, madeOf);
+                }
             }
 
             bool fresh = blurredBy < 0 || !SameBlur(panes, items, blurredBy, blurredRegion, i, pVis, margin, rWorldMin, rWorldMax, size);

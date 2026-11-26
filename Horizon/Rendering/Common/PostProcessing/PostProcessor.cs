@@ -129,6 +129,7 @@ public sealed class PostProcessor : IDisposable
             // The picture has to be somewhere for the first effect to read
             holding = 0;
             Target(0, size).Bind();
+            GraphicsDevice.Current.DiscardBoundTarget();
             resolve();
             picture = targets[0]!.Texture;
         }

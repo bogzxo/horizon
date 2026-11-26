@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
 using Horizon.Graphics;
 using Horizon.Rendering.Particles.Simulation;
 
@@ -81,18 +84,28 @@ public sealed class PhysicsFluidParticleSimulator2D : ParticleSimulator2D
         var state = Particles.Particles;
         var flow = Particles.Flow;
         var render = back;
+        int count = state.Length;
 
-        for (int i = 0; i < state.Length; i++)
+        if (count > 0)
         {
-            render[i].Offset = state[i].Position;
-            render[i].Alive = state[i].Life;
-            render[i].Velocity = flow[i];
+            ref ParticleState2D stateRef = ref MemoryMarshal.GetReference(state);
+            ref System.Numerics.Vector2 flowRef = ref MemoryMarshal.GetReference(flow);
+            ref ParticleInstance renderRef = ref MemoryMarshal.GetArrayDataReference(render);
+
+            for (int i = 0; i < count; i++)
+            {
+                ref readonly ParticleState2D s = ref Unsafe.Add(ref stateRef, i);
+                ref ParticleInstance dst = ref Unsafe.Add(ref renderRef, i);
+                dst.Offset = s.Position;
+                dst.Alive = s.Life;
+                dst.Velocity = Unsafe.Add(ref flowRef, i);
+            }
         }
 
         lock (frameLock)
         {
             (front, back) = (back, front);
-            frontCount = state.Length;
+            frontCount = count;
         }
     }
 

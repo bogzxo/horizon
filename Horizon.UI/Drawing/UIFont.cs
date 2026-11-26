@@ -1,3 +1,4 @@
+using System.Buffers;
 using Horizon.Content;
 using System.Numerics;
 
@@ -34,6 +35,7 @@ public sealed class UIFont
     private const string ICON_TAG = "[icon:";
     private const string ICON_SET_TAG = "[icons:";
     private const char ICON_TAG_END = ']';
+    private static readonly SearchValues<char> MarkupChars = SearchValues.Create("$[");
 
     private readonly Dictionary<char, CharDefinition> glyphs;
     private readonly Dictionary<int, float> kerning;
@@ -360,24 +362,54 @@ public sealed class UIFont
         if (text.IsEmpty)
             return Vector2.Zero;
 
-        // Fast path for plain text (or markup text containing no '$'/'[' tags) without kerning
-        if ((!markup || text.IndexOfAny('$', '[') < 0) && !hasKerning)
+        // Fast path for plain text (or markup text containing no '$'/'[' delimiters)
+        if (!markup || text.IndexOfAny(MarkupChars) < 0)
         {
             float plainWidest = 0.0f;
             float plainWidth = 0.0f;
             int plainLines = 1;
-            for (int i = 0; i < text.Length; i++)
+            float[] advances = quickAdvance;
+            if (!hasKerning)
             {
-                char character = text[i];
-                if (character == '\n')
+                for (int i = 0; i < text.Length; i++)
                 {
-                    plainWidest = MathF.Max(plainWidest, plainWidth);
-                    plainWidth = 0.0f;
-                    plainLines++;
-                    continue;
-                }
+                    char character = text[i];
+                    if (character == '\n')
+                    {
+                        plainWidest = MathF.Max(plainWidest, plainWidth);
+                        plainWidth = 0.0f;
+                        plainLines++;
+                        continue;
+                    }
 
-                plainWidth += AdvanceOf(character) * scale;
+                    plainWidth += (character < QUICK ? advances[character] : AdvanceOf(character)) * scale;
+                }
+            }
+            else
+            {
+                float[]? kernTable = asciiKerning;
+                int last = text.Length - 1;
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char character = text[i];
+                    if (character == '\n')
+                    {
+                        plainWidest = MathF.Max(plainWidest, plainWidth);
+                        plainWidth = 0.0f;
+                        plainLines++;
+                        continue;
+                    }
+
+                    plainWidth += (character < QUICK ? advances[character] : AdvanceOf(character)) * scale;
+                    if (i < last)
+                    {
+                        char next = text[i + 1];
+                        float kern = (character | next) < ASCII_COUNT && kernTable is not null
+                            ? kernTable[(character << 7) | next]
+                            : Kerning(character, next);
+                        plainWidth += kern * scale;
+                    }
+                }
             }
 
             return new Vector2(MathF.Max(plainWidest, plainWidth), plainLines * LineHeight * scale);
@@ -439,8 +471,47 @@ public sealed class UIFont
     /// <param name="icons">The set of icons the text is written in from the start, see <c>[icons:set]</c>.</param>
     public float MeasureLine(ReadOnlySpan<char> text, float scale, UITextStyle style, ReadOnlySpan<char> icons, bool markup = true)
     {
+        if (text.IsEmpty)
+            return 0.0f;
+
         float width = 0.0f;
         float bold = (style & UITextStyle.Bold) != 0 ? BoldAdvance * scale : 0.0f;
+
+        // Tight ASCII fast-path when no markup delimiters are present, even when the font has kerning.
+        if (!markup || text.IndexOfAny(MarkupChars) < 0)
+        {
+            float[] advances = quickAdvance;
+            if (!hasKerning)
+            {
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = text[i];
+                    float adv = c < QUICK ? advances[c] : AdvanceOf(c);
+                    width += adv * scale + bold;
+                }
+            }
+            else
+            {
+                float[]? kernTable = asciiKerning;
+                int last = text.Length - 1;
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = text[i];
+                    float adv = c < QUICK ? advances[c] : AdvanceOf(c);
+                    float kern = 0.0f;
+                    if (i < last)
+                    {
+                        char next = text[i + 1];
+                        kern = (c | next) < ASCII_COUNT && kernTable is not null
+                            ? kernTable[(c << 7) | next]
+                            : Kerning(c, next);
+                    }
+                    width += (adv + kern) * scale + bold;
+                }
+            }
+
+            return width;
+        }
 
         for (int at = 0; at < text.Length;)
         {

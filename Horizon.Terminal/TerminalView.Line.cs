@@ -148,12 +148,25 @@ public partial class TerminalView
         // Every cell from the end of the prompt, a row it didn't fill padded so every row starts a stride further on
         int stride = screen.Columns;
         var cells = new List<TerminalCell>(stride);
+        Dictionary<int, string>? lineCombining = null;
         for (int row = start.Row; row < screen.TotalRows; row++)
         {
             TerminalRow line = screen.RowAt(row);
             int end = Math.Min(line.Length, stride);
             for (int column = row == start.Row ? start.Column : 0; column < stride; column++)
-                cells.Add(column < end ? line.Cells[column] : default);
+            {
+                if (column < end)
+                {
+                    TerminalCell c = line.Cells[column];
+                    if (c.HasCombining && line.CombiningAt(column) is { } comb)
+                        (lineCombining ??= [])[cells.Count] = comb;
+                    cells.Add(c);
+                }
+                else
+                {
+                    cells.Add(default);
+                }
+            }
 
             if (!line.Wrapped)
                 break;
@@ -179,7 +192,7 @@ public partial class TerminalView
             else
                 text.Append(char.ConvertFromUtf32(cell.CodePoint));
 
-            if (cell.Combining is { } marks)
+            if (lineCombining is not null && cell.HasCombining && lineCombining.TryGetValue(i, out string? marks))
                 text.Append(marks);
         }
 

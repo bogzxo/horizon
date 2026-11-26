@@ -87,19 +87,25 @@ float4 trace(float2 probe, float2 direction, Field field)
         if (t >= params.uIntervalEnd) break;
 
         float2 position = origin + step * t;
-        float toWall = wallDistance(position, field, true);
-
-        if (toWall < 0.25)
+        float2 picture = pictureOfFast(position, field);
+        if (all(picture >= 0.0) && all(picture <= 1.0))
         {
-            // Landed. Off the picture is nothing, the radiance was only worked out for what's on it
-            float2 picture = pictureOfFast(position, field);
-            if (any(picture < 0.0) || any(picture > 1.0)) return float4(0.0, 0.0, 0.0, 0.0);
-            return float4(uTexRadiance.SampleLevel(picture, 0.0).rgb, 0.0);
-        }
+            // Single tap fetches both the cached combined wall+sprite distance (alpha) and the wall radiance (rgb)
+            float4 rad = uTexRadiance.SampleLevel(picture, 0.0);
+            if (rad.a < 0.25)
+                return float4(rad.rgb, 0.0);
 
-        // Sphere tracing, as far as the nearest wall is in one go, never less than half a pixel so it always gets
-        // somewhere. A field that says "nothing for forty units" is forty units in one hop
-        t += max(toWall * invPixelWorld, 0.5);
+            t += max(rad.a * invPixelWorld, 0.5);
+        }
+        else
+        {
+            // Off the picture there is no sprite field and no cached radiance, fall back to the wall SDF
+            float toWall = wallsDistance(position, field);
+            if (toWall < 0.25)
+                return float4(0.0, 0.0, 0.0, 0.0);
+
+            t += max(toWall * invPixelWorld, 0.5);
+        }
     }
 
     return float4(0.0, 0.0, 0.0, 1.0);
@@ -134,10 +140,11 @@ float4 upper(float2 probePixels, uint direction)
 void csMain(uint3 id : SV_DispatchThreadID)
 {
     int2 texel = int2(id.xy);
-    if (any(texel >= int2(params.uCascadeSize))) return;
+    int2 count = int2(params.uProbeCount);
+    int2 activeSize = count * int(params.uDirectionsSqrt);
+    if (any(texel >= activeSize)) return;
 
     // Which probe and which direction this texel is, see the layout at the top
-    int2 count = int2(params.uProbeCount);
     int2 dirCell = texel / count;
     int2 probe = texel - dirCell * count;
     uint direction = uint(dirCell.y * int(params.uDirectionsSqrt) + dirCell.x);

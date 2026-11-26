@@ -197,7 +197,18 @@ public partial class CodeEditor : UIComponent
     private bool recolourNow = true;
 
     // The colouring going on off the editor's thread, and the lines coloured on their own while it does, by their text
-    private sealed record Colouring(int Version, List<SyntaxSpan>[] Spans, string[] Lines, List<HidlSwatch> Swatches, CodeLineStart[] Starts, List<HidlArt> Art, ICodeHighlighter Reader);
+    private sealed record Colouring(
+        int Version,
+        List<SyntaxSpan>[] Spans,
+        string[] Lines,
+        List<HidlSwatch> Swatches,
+        CodeLineStart[] Starts,
+        List<HidlArt> Art,
+        ICodeHighlighter Reader,
+        Dictionary<int, int> Foldable,
+        List<(int Start, int End, int MaxEnd)> FoldableSorted,
+        IReadOnlyList<UICodeFoldingRange>? NativeRanges,
+        bool CompleteNative);
 
     // What the colours there are now were worked out by, null for none (plain text), the next colouring goes on from them
     // when it's the same
@@ -1217,32 +1228,97 @@ public partial class CodeEditor : UIComponent
         return pixels < 3.0f ? scale : scale * MathF.Round(pixels) / pixels;
     }
 
+    // Cached monospace ASCII cell advance for the current (font, scale) so Draw() and Width() skip the redundant
+    // second per-character font.Measure() walk on printable ASCII runs while falling back to Measure() for anything else.
+    private UIFont? monoFont;
+    private float monoScale, monoCellWidth;
+    private bool monoAscii;
+
+    private float MeasurePiece(UIFont font, float scale, ReadOnlySpan<char> text)
+    {
+        if (text.IsEmpty)
+            return 0.0f;
+
+        if (!ReferenceEquals(font, monoFont) || scale != monoScale)
+            UpdateMonoCache(font, scale);
+
+        if (monoAscii && IsPrintableAscii(text))
+            return text.Length * monoCellWidth;
+
+        return font.Measure(text, scale, markup: false).X;
+    }
+
+    private void UpdateMonoCache(UIFont font, float scale)
+    {
+        monoFont = font;
+        monoScale = scale;
+        monoAscii = false;
+        monoCellWidth = 0.0f;
+
+        if (font.Field.Kerning.Count != 0)
+            return;
+
+        float cell = font.Measure("0", scale, markup: false).X;
+        if (cell <= 0.0f)
+            return;
+
+        for (int c = 0x20; c <= 0x7E; c++)
+        {
+            char ch = (char)c;
+            if (font.Measure(new ReadOnlySpan<char>(in ch), scale, markup: false).X != cell)
+                return;
+        }
+
+        monoCellWidth = cell;
+        monoAscii = true;
+    }
+
+    private static bool IsPrintableAscii(ReadOnlySpan<char> text)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            if ((uint)(text[i] - 0x20) > (0x7E - 0x20))
+                return false;
+        }
+
+        return true;
+    }
+
     /// <summary>How wide a piece of a line is drawn, a tab as wide as so many spaces.</summary>
     private float Width(UISkin skin, float scale, ReadOnlySpan<char> text)
     {
+        UIFont font = FontOf(skin);
         float width = 0.0f;
         int tab;
         while ((tab = text.IndexOf('\t')) >= 0)
         {
-            width += FontOf(skin).Measure(text[..tab], scale, markup: false).X + TabWidth(skin, scale);
+            width += MeasurePiece(font, scale, text[..tab]) + TabWidth(skin, scale);
             text = text[(tab + 1)..];
         }
 
-        return width + FontOf(skin).Measure(text, scale, markup: false).X;
+        return width + MeasurePiece(font, scale, text);
     }
 
-    private float TabWidth(UISkin skin, float scale) => FontOf(skin).Measure(" ", scale, markup: false).X * TabSize;
+    private float TabWidth(UISkin skin, float scale)
+    {
+        UIFont font = FontOf(skin);
+        if (!ReferenceEquals(font, monoFont) || scale != monoScale)
+            UpdateMonoCache(font, scale);
+        return (monoAscii ? monoCellWidth : font.Measure(" ", scale, markup: false).X) * TabSize;
+    }
 
     /// <summary>Draws a piece of a line, leaving the room of a tab where there is one.</summary>
     private float Draw(UIDrawList list, UISkin skin, float scale, ReadOnlySpan<char> text, float x, float top, Vector4 color)
     {
+        UIFont font = FontOf(skin);
         int tab;
         while ((tab = text.IndexOf('\t')) >= 0)
         {
             if (tab > 0)
             {
-                list.Text(text[..tab], new Vector2(x, top), scale, color, markup: false);
-                x += FontOf(skin).Measure(text[..tab], scale, markup: false).X;
+                ReadOnlySpan<char> piece = text[..tab];
+                list.Text(piece, new Vector2(x, top), scale, color, markup: false);
+                x += MeasurePiece(font, scale, piece);
             }
 
             x += TabWidth(skin, scale);
@@ -1252,7 +1328,7 @@ public partial class CodeEditor : UIComponent
         if (!text.IsEmpty)
         {
             list.Text(text, new Vector2(x, top), scale, color, markup: false);
-            x += FontOf(skin).Measure(text, scale, markup: false).X;
+            x += MeasurePiece(font, scale, text);
         }
 
         return x;
@@ -1410,20 +1486,38 @@ public partial class CodeEditor : UIComponent
 
         changeSeen = version;
         ICodeHighlighter reader = highlighter;
+        IReadOnlyList<UICodeFoldingRange>? nativeRanges = nativeFoldingRanges;
+        bool completeNative = completeNativeFolding;
 
         // Gone on from the last colouring when it was this highlighter's, only the lines from the edit on read again
         CodeColouring? last = ReferenceEquals(colouredWith, reader) ? new CodeColouring(colouredLines, spans, lineStarts) : null;
         colouring = Task.Run(() =>
         {
-            // Join off the UI thread so typing in large files never allocates multi-megabyte strings on the sim thread.
-            string text = string.Join('\n', lines);
             var found = new List<HidlSwatch>();
             var named = new List<HidlArt>();
             var starts = new CodeLineStart[count];
-            List<SyntaxSpan>[] read = last is null ? reader.Read(text, count, starts, found, named) : reader.ReadAgain(text, lines, starts, last, found, named);
+            List<SyntaxSpan>[] read;
+            if (last is null)
+            {
+                read = reader.NeedsFullText
+                    ? reader.Read(string.Join('\n', lines), count, starts, found, named)
+                    : reader.ReadLines(lines, starts, found, named);
+            }
+            else
+            {
+                // Skip full-document string.Join when the highlighter operates per-line (e.g. TextMateHighlighter).
+                string text = reader.NeedsFullText ? string.Join('\n', lines) : string.Empty;
+                read = reader.ReadAgain(text, lines, starts, last, found, named);
+            }
             EnsureSwatchesSorted(found);
             EnsureArtSorted(named);
-            var result = new Colouring(version, read, lines, found, starts, named, reader);
+
+            // Compute foldable brace pairs and prefix-max sorted index off the UI thread so TakeColouring() is O(1).
+            var computedFoldable = new Dictionary<int, int>();
+            ScanFoldableInto(computedFoldable, lines, read, nativeRanges, completeNative);
+            var computedFoldableSorted = BuildFoldableSorted(computedFoldable);
+
+            var result = new Colouring(version, read, lines, found, starts, named, reader, computedFoldable, computedFoldableSorted, nativeRanges, completeNative);
             GameEngine.Instance?.WindowManager?.Wake();
             return result;
         });
@@ -1443,7 +1537,10 @@ public partial class CodeEditor : UIComponent
         coloured = done.Version;
         fresh.Clear();
         freshText = null;
-        FindFoldable();
+        if (ReferenceEquals(done.NativeRanges, nativeFoldingRanges) && done.CompleteNative == completeNativeFolding)
+            ApplyPrecomputedFoldable(done.Foldable, done.FoldableSorted);
+        else
+            FindFoldable();
     }
 
     /// <summary>

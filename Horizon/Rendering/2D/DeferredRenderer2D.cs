@@ -433,6 +433,9 @@ public class DeferredRenderer2D : Renderer2D
         base.Render(dt);
     }
 
+    internal static bool ShouldBuildLightCells(float lightingPixelSize, bool cellsDisabled, int lightCount, bool aoEnabled) =>
+        lightingPixelSize > 0.0f && !cellsDisabled && (lightCount > 0 || aoEnabled);
+
     /// <summary>
     /// A sprite that blocks light was drawn into this frame, which is what makes the field of sprite shadows worth
     /// building. The sprite batches say so, see <see cref="Spriting.SpriteBatch"/>. Render thread.
@@ -501,10 +504,12 @@ public class DeferredRenderer2D : Renderer2D
         }
 
         // Art lit a pixel of the art at a time is lit once per pixel of the art rather than once per pixel of the
-        // screen, see LightCells. With no lights there is nothing to work out, the deferred pass sees to that quickly
+        // screen, see LightCells. Also computes pixel-art ambient occlusion per cell when AO is enabled.
         HasLightCells = false;
-        if (uploadedLights > 0 && ShownLightingPixelSize > 0.0f && !cellsOff)
+        if (ShouldBuildLightCells(ShownLightingPixelSize, cellsOff, uploadedLights, ShownAmbientOcclusion.Enabled))
         {
+            if (uploadedLights == 0)
+                CameraBlock.Use(camera);
             using var lightingScope = device.BeginGpuScope("light cells");
             long celled = Core.Diagnostics.SlowRender.Start();
             HasLightCells = LightCells.Build(this, camera, ShownLightingPixelSize);

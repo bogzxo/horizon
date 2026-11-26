@@ -34,8 +34,8 @@ public abstract class Tween
     /// <summary>The context that plays this tween, once one has.</summary>
     internal TweenContext? Context { get; set; }
 
-    /// <summary>What the context filed this tween under, see <see cref="TweenContext.Play"/>.</summary>
-    internal object? Channel { get; set; }
+    /// <summary>What the context filed this tween under, see <see cref="TweenContext.Play(Tween, TweenChannel)"/>.</summary>
+    internal TweenChannel Channel { get; set; }
 
     /// <summary>How long one run from start to end takes, in seconds.</summary>
     public abstract float Duration { get; }

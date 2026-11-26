@@ -371,30 +371,43 @@ public sealed class SimulationLoop : IDisposable
         logicOwed += length;
         physicsOwed += length;
 
-        if (logicOwed + DUE_SLACK >= logicPeriod)
+        bool logicDue = logicOwed + DUE_SLACK >= logicPeriod;
+        bool physicsDue = physicsOwed + DUE_SLACK >= physicsPeriod;
+
+        if (logicDue || physicsDue)
         {
-            // Everything since the last turn, which at the rate of the ticks is one tick
-            float dt = (float)logicOwed;
-            logicOwed = 0.0;
+            long phaseStamp = clock();
+            long phaseAllocated = GC.GetAllocatedBytesForCurrentThread();
 
-            long before = clock();
-            long logicAllocated = GC.GetAllocatedBytesForCurrentThread();
-            host.UpdateState(dt);
-            Logic.Record((clock() - before) / frequency, 0.0, SinceLast(ref lastLogicAt, before, dt), 1, GC.GetAllocatedBytesForCurrentThread() - logicAllocated);
+            if (logicDue)
+            {
+                // Everything since the last turn, which at the rate of the ticks is one tick
+                float dt = (float)logicOwed;
+                logicOwed = 0.0;
+
+                host.UpdateState(dt);
+                long afterLogic = clock();
+                long afterLogicAllocated = GC.GetAllocatedBytesForCurrentThread();
+                Logic.Record((afterLogic - phaseStamp) / frequency, 0.0, SinceLast(ref lastLogicAt, phaseStamp, dt), 1, afterLogicAllocated - phaseAllocated);
+                phaseStamp = afterLogic;
+                phaseAllocated = afterLogicAllocated;
+            }
+
+            if (physicsDue)
+            {
+                int steps = 0;
+                while (physicsOwed + DUE_SLACK >= physicsPeriod)
+                {
+                    physicsOwed -= physicsPeriod;
+                    host.UpdatePhysics((float)physicsPeriod);
+                    steps++;
+                }
+
+                long afterPhysics = clock();
+                long afterPhysicsAllocated = GC.GetAllocatedBytesForCurrentThread();
+                Physics.Record((afterPhysics - phaseStamp) / frequency, 0.0, SinceLast(ref lastPhysicsAt, phaseStamp, physicsPeriod), steps, afterPhysicsAllocated - phaseAllocated);
+            }
         }
-
-        int steps = 0;
-        long physicsStarted = clock();
-        long physicsAllocated = GC.GetAllocatedBytesForCurrentThread();
-        while (physicsOwed + DUE_SLACK >= physicsPeriod)
-        {
-            physicsOwed -= physicsPeriod;
-            host.UpdatePhysics((float)physicsPeriod);
-            steps++;
-        }
-
-        if (steps > 0)
-            Physics.Record((clock() - physicsStarted) / frequency, 0.0, SinceLast(ref lastPhysicsAt, physicsStarted, physicsPeriod), steps, GC.GetAllocatedBytesForCurrentThread() - physicsAllocated);
 
         host.EndTick(Tick, stamp, Time);
 

@@ -54,36 +54,55 @@ internal readonly record struct UIFrameClip(UIRect Rect, int Frame, int Parent)
 }
 
 /// <summary>
-/// A quad as it was asked for, before clipping, where the layout had it when it was painted. It moves with its frame,
-/// and what is worked out of where that is (its corners on screen, the part of its texture left once it's clipped) is
-/// worked out again whenever it's resolved. Kept where it was painted and not taken off its frame's shift, or put
-/// back it came out a bit out, and one that only just touched a clip's edge was cut away.
+/// Hot per-quad metadata (20 bytes) touched by stationary fast-copy in <see cref="UIFrameList.Resolve"/> and
+/// index rebasing in <see cref="UIDrawList"/> reuse. Cold layout geometry lives in the parallel
+/// <see cref="UIQuadGeometry"/> array, and rare slant/rotation parameters live in <see cref="UIQuadExtra"/>.
 /// </summary>
 internal struct UIFrameQuad
 {
-    public UIRect Rect;
-    public Vector2 TexMin, TexMax;
-    public uint Color, Flags;
-    public float Ring, Slant, Upright;
-
-    // How far it's faded by the edges it's near (see UIDrawList.PushFade), as it was painted, 1 for not at all
-    public float Fade;
-    public Vector2 Key;
     public int Frame, Clip;
-
-    // Turned about a point (an icon that spins), only while it's all in sight
-    public float Turn;
-    public Vector2 Pivot;
 
     // Index in UIDrawList.items when emitted during painting, or -1 if culled
     public int Item;
+
+    public uint Flags;
+
+    // Index in UIFrameList.Extras for slanted/turned quads, or -1 for the >99% of quads that need neither
+    public int Extra;
+}
+
+/// <summary>
+/// Cold layout-space geometry for a frame quad, bulk-copied on <see cref="UIFrameList.CopyFrom"/> and
+/// <see cref="UIDrawList"/> reuse and only read by <see cref="UIFrameList.Resolve"/> when a quad's frame or clip moved.
+/// </summary>
+internal struct UIQuadGeometry
+{
+    public UIRect Rect;
+    public Vector2 TexMin, TexMax;
+    public Vector2 Key;
+    public uint Color;
+    public float Ring;
+
+    // How far it's faded by the edges it's near (see UIDrawList.PushFade), as it was painted, 1 for not at all
+    public float Fade;
+}
+
+/// <summary>
+/// Sparse side-table entry for the &lt;1% of frame quads that lean (italic SDF glyphs) or turn (spinning icons).
+/// </summary>
+internal struct UIQuadExtra
+{
+    public float Slant;
+    public float Upright;
+    public float Turn;
+    public Vector2 Pivot;
 }
 
 /// <summary>A pane of glass as it was put down, with the quad index before its own shadow (<see cref="Under"/>) and the quad index it goes under (<see cref="Start"/>), both in frame-quad indices.</summary>
-internal readonly record struct UIFrameGlass(int Under, int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Bend, float Lens, uint Tint);
+internal readonly record struct UIFrameGlass(int Under, int Start, UIRect Rect, int Frame, int Clip, float Radius, float Blur, float Bend, float Lens, uint Tint, int ItemUnder = -1, int ItemStart = -1);
 
-/// <summary>Where a run of quads that show the same images ended, by its place among the frame quads.</summary>
-internal readonly record struct UIFrameRun(int End, Texture? Image0, Texture? Image1);
+/// <summary>Where a run of quads that show the same images ended, by its place among the frame quads and emitted items.</summary>
+internal readonly record struct UIFrameRun(int End, Texture? Image0, Texture? Image1, int ItemEnd = -1, int Used0Quad = -1, int Used1Quad = -1);
 
 /// <summary>
 /// What a list painted as frames, alongside the quads it painted as they are on screen. Kept from one tick to be put
@@ -98,7 +117,9 @@ internal sealed class UIFrameList
     public readonly List<UIFrameClip> Clips = [];
     public readonly List<UIFrameGlass> Glass = [];
     public readonly List<UIFrameRun> Runs = [];
+    public readonly List<UIQuadExtra> Extras = [];
     public UIFrameQuad[] Quads = new UIFrameQuad[512];
+    public UIQuadGeometry[] QuadGeoms = new UIQuadGeometry[512];
     public int QuadCount;
 
     /// <summary>Whether any of its frames goes where the pointer goes, see <see cref="UIFrame.Follows"/>.</summary>
@@ -116,6 +137,7 @@ internal sealed class UIFrameList
         Clips.Clear();
         Glass.Clear();
         Runs.Clear();
+        Extras.Clear();
         QuadCount = 0;
         Follows = false;
     }
@@ -128,21 +150,32 @@ internal sealed class UIFrameList
         Clips.AddRange(other.Clips);
         Glass.AddRange(other.Glass);
         Runs.AddRange(other.Runs);
+        if (other.Extras.Count > 0)
+            Extras.AddRange(other.Extras);
         if (Quads.Length < other.QuadCount)
-            Quads = new UIFrameQuad[(int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)other.QuadCount)];
+        {
+            int cap = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)other.QuadCount);
+            Quads = new UIFrameQuad[cap];
+            QuadGeoms = new UIQuadGeometry[cap];
+        }
         other.Quads.AsSpan(0, other.QuadCount).CopyTo(Quads);
+        other.QuadGeoms.AsSpan(0, other.QuadCount).CopyTo(QuadGeoms);
         QuadCount = other.QuadCount;
         Follows = other.Follows;
     }
 
-    public ref UIFrameQuad Add()
+    public int AddSlot()
     {
         if (QuadCount == Quads.Length)
-            Array.Resize(ref Quads, Quads.Length * 2);
-        return ref Quads[QuadCount++];
+        {
+            int next = Quads.Length * 2;
+            Array.Resize(ref Quads, next);
+            Array.Resize(ref QuadGeoms, next);
+        }
+        return QuadCount++;
     }
 
-    /// <summary>Grows the frame-quad buffer once so a reused component can bulk-copy its quads without per-quad resize checks.</summary>
+    /// <summary>Grows the frame-quad buffers once so a reused component can bulk-copy its quads without per-quad resize checks.</summary>
     public void EnsureCapacity(int required)
     {
         if (Quads.Length >= required)
@@ -151,6 +184,7 @@ internal sealed class UIFrameList
         while (next < required)
             next *= 2;
         Array.Resize(ref Quads, next);
+        Array.Resize(ref QuadGeoms, next);
     }
 
     // Clips worked out by Resolve, every one once
@@ -235,6 +269,7 @@ internal sealed class UIFrameList
 
         ReadOnlySpan<UIFrameGlass> glassSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Glass);
         ReadOnlySpan<UIFrameRun> runSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Runs);
+        ReadOnlySpan<UIQuadExtra> extraSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Extras);
         if (glassSpan.Length > 0 && resolvedUnder.Length < glassSpan.Length)
             resolvedUnder = new int[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)glassSpan.Length)];
 
@@ -295,9 +330,10 @@ internal sealed class UIFrameList
                 }
             }
 
+            ref readonly UIQuadGeometry geom = ref QuadGeoms[i];
             ref readonly UIFrame frame = ref at[quad.Frame];
             Vector2 moved = resolvedMoves[quad.Frame];
-            UIRect rect = Shifted(quad.Rect, moved);
+            UIRect rect = Shifted(geom.Rect, moved);
             UIRect cut = quad.Clip < 0 ? Unclipped : resolvedClips[quad.Clip];
             UIRect visible = rect.Intersect(cut);
             if (visible.IsEmpty)
@@ -309,20 +345,20 @@ internal sealed class UIFrameList
             // A shape goes whole with its clip, the shader cuts it, see UIDrawList.Shape
             if ((quad.Flags & SpriteItem.ShapeFlag) != 0)
             {
-                uint faded = quad.Color;
-                float fadedBy = frame.Opacity * quad.Fade;
+                uint faded = geom.Color;
+                float fadedBy = frame.Opacity * geom.Fade;
                 if (fadedBy < 1.0f)
                 {
                     uint alpha = (uint)((faded >> 24) * fadedBy + 0.5f);
                     faded = (faded & 0x00FFFFFF) | alpha << 24;
                 }
 
-                into[count++] = UIDrawList.ScreenShape(rect, cut, quad.TexMin, quad.Ring, faded, frame.VisualScale, frame.VisualOffset, frame.Scale, frame.Origin);
+                into[count++] = UIDrawList.ScreenShape(rect, cut, geom.TexMin, geom.Ring, faded, frame.VisualScale, frame.VisualOffset, frame.Scale, frame.Origin);
                 continue;
             }
 
             // Trimmed and placed the way Quad does it, see there
-            Vector2 texTopLeft = quad.TexMin, texBottomRight = quad.TexMax;
+            Vector2 texTopLeft = geom.TexMin, texBottomRight = geom.TexMax;
             if (visible != rect)
             {
                 Vector2 texelsPerUnit = (texBottomRight - texTopLeft) / rect.Size;
@@ -335,8 +371,8 @@ internal sealed class UIFrameList
             Vector2 min = frame.ToScreen(visible.Min), max = frame.ToScreen(visible.Max);
             ref SpriteItem item = ref into[count++];
             // Faded the way Quad fades it, by its frame and the edges it was near
-            uint color = quad.Color;
-            float shown = frame.Opacity * quad.Fade;
+            uint color = geom.Color;
+            float shown = frame.Opacity * geom.Fade;
             if (shown < 1.0f)
             {
                 uint alpha = (uint)((color >> 24) * shown + 0.5f);
@@ -344,29 +380,87 @@ internal sealed class UIFrameList
             }
 
             item = SpriteItem.Rectangle(min, max, texTopLeft, texBottomRight, color, quad.Flags);
-            item.Ring = quad.Ring;
+            item.Ring = geom.Ring;
 
-            if (quad.Slant != 0.0f)
+            if (quad.Extra >= 0)
             {
-                float pivot = frame.ToScreen(new Vector2(0.0f, quad.Upright + moved.Y)).Y;
-                item.Origin.X += quad.Slant * (min.Y - pivot);
-                item.AxisY.X = quad.Slant * (max.Y - min.Y);
+                ref readonly UIQuadExtra extra = ref extraSpan[quad.Extra];
+                if (extra.Slant != 0.0f)
+                {
+                    float pivot = frame.ToScreen(new Vector2(0.0f, extra.Upright + moved.Y)).Y;
+                    item.Origin.X += extra.Slant * (min.Y - pivot);
+                    item.AxisY.X = extra.Slant * (max.Y - min.Y);
+                }
+
+                if (extra.Turn != 0.0f && visible == rect)
+                {
+                    Vector2 pivot = frame.ToScreen(extra.Pivot + moved);
+                    var (sin, cos) = MathF.SinCos(extra.Turn);
+                    item.Origin = pivot + TurnVec(item.Origin - pivot, sin, cos);
+                    item.AxisX = TurnVec(item.AxisX, sin, cos);
+                    item.AxisY = TurnVec(item.AxisY, sin, cos);
+                }
             }
 
-            if (quad.Turn != 0.0f && visible == rect)
-            {
-                Vector2 pivot = frame.ToScreen(quad.Pivot + moved);
-                var (sin, cos) = MathF.SinCos(quad.Turn);
-                Vector2 Turned(Vector2 v) => new(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
-                item.Origin = pivot + Turned(item.Origin - pivot);
-                item.AxisX = Turned(item.AxisX);
-                item.AxisY = Turned(item.AxisY);
-            }
-
-            item.Key = quad.Key;
+            item.Key = geom.Key;
         }
 
         return count;
+    }
+
+    private static Vector2 TurnVec(Vector2 v, float sin, float cos) => new(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
+
+    /// <summary>
+    /// Resolves only the glass panes of a stationary frame without iterating quads, using the item indices recorded
+    /// at paint time. Returns false if any glass pane lacks recorded item indices.
+    /// </summary>
+    public bool ResolveStationaryGlass(List<UIGlassPane> glassInto)
+    {
+        glassInto.Clear();
+        ReadOnlySpan<UIFrameGlass> glassSpan = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Glass);
+        if (glassSpan.IsEmpty)
+            return true;
+
+        for (int i = 0; i < glassSpan.Length; i++)
+        {
+            if (glassSpan[i].ItemUnder < 0 || glassSpan[i].ItemStart < 0)
+                return false;
+        }
+
+        ReadOnlySpan<UIFrame> at = Span;
+        if (resolvedClips.Length < Clips.Count)
+            resolvedClips = new UIRect[System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Clips.Count)];
+        ReadOnlySpan<UIFrameClip> clips = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Clips);
+        for (int i = 0; i < clips.Length; i++)
+        {
+            ref readonly UIFrameClip cut = ref clips[i];
+            UIRect rect = cut.Rect;
+            UIRect parent = cut.Parent < 0 ? Unclipped : resolvedClips[cut.Parent];
+            if (cut.StationaryParentFrame is { } outside)
+            {
+                ref readonly UIFrame frame = ref at[cut.Frame];
+                Vector2 translation = frame.VisualScale.X != 0 && frame.VisualScale.Y != 0
+                    ? (frame.VisualOffset - at[outside].VisualOffset) / frame.VisualScale : Vector2.Zero;
+                rect = Shifted(rect, -translation);
+                parent = Shifted(parent, -translation);
+            }
+            resolvedClips[i] = parent.Intersect(rect);
+        }
+
+        for (int i = 0; i < glassSpan.Length; i++)
+        {
+            ref readonly UIFrameGlass pane = ref glassSpan[i];
+            ref readonly UIFrame frame = ref at[pane.Frame];
+            UIRect cut = pane.Clip < 0 ? Unclipped : resolvedClips[pane.Clip];
+            if (pane.Rect.Intersect(cut).IsEmpty)
+                continue;
+
+            Vector2 clipMin = float.IsFinite(cut.Min.X) && float.IsFinite(cut.Min.Y) ? frame.ToScreen(cut.Min) : new Vector2(float.NegativeInfinity);
+            Vector2 clipMax = float.IsFinite(cut.Max.X) && float.IsFinite(cut.Max.Y) ? frame.ToScreen(cut.Max) : new Vector2(float.PositiveInfinity);
+            glassInto.Add(new UIGlassPane(pane.ItemStart, frame.ToScreen(pane.Rect.Min), frame.ToScreen(pane.Rect.Max), clipMin, clipMax, pane.Radius, pane.Blur, MathF.Min(1.0f, frame.Opacity * UIDrawList.GLASS_LEAD), pane.Bend, pane.ItemUnder, pane.Lens, pane.Tint));
+        }
+
+        return true;
     }
 
     // Helper method for a pane of glass on screen, the way Glass puts it down
@@ -576,21 +670,31 @@ public sealed partial class UIDrawList
     // Helper method to keep a quad as it was asked for, see Quad
     private void KeepFrameQuad(UIRect rect, Vector2 texTopLeft, Vector2 texBottomRight, uint color, uint flags, float ring, float slant, float upright, float fade = 1.0f, int item = -1)
     {
-        frameList.Add() = new UIFrameQuad
+        int extraIndex = -1;
+        if (slant != 0.0f)
+        {
+            extraIndex = frameList.Extras.Count;
+            frameList.Extras.Add(new UIQuadExtra { Slant = slant, Upright = upright });
+        }
+
+        int slot = frameList.AddSlot();
+        frameList.Quads[slot] = new UIFrameQuad
+        {
+            Frame = frameAt,
+            Clip = clipAt,
+            Item = item,
+            Flags = flags,
+            Extra = extraIndex
+        };
+        frameList.QuadGeoms[slot] = new UIQuadGeometry
         {
             Rect = rect,
             TexMin = texTopLeft,
             TexMax = texBottomRight,
-            Color = color,
-            Flags = flags,
-            Ring = ring,
-            Fade = fade,
-            Slant = slant,
-            Upright = upright,
             Key = new Vector2(owner, ownerPainted),
-            Frame = frameAt,
-            Clip = clipAt,
-            Item = item
+            Color = color,
+            Ring = ring,
+            Fade = fade
         };
     }
 
@@ -598,14 +702,24 @@ public sealed partial class UIDrawList
     private void TurnFrameQuad(float turn, Vector2 pivot)
     {
         ref UIFrameQuad quad = ref frameList.Quads[frameList.QuadCount - 1];
-        quad.Turn = turn;
-        quad.Pivot = pivot;
+        if (quad.Extra >= 0)
+        {
+            ref UIQuadExtra extra = ref System.Runtime.InteropServices.CollectionsMarshal.AsSpan(frameList.Extras)[quad.Extra];
+            extra.Turn = turn;
+            extra.Pivot = pivot;
+        }
+        else
+        {
+            quad.Extra = frameList.Extras.Count;
+            frameList.Extras.Add(new UIQuadExtra { Turn = turn, Pivot = pivot });
+        }
     }
 
-    private void KeepFrameGlass(int under, UIRect rect, float radius, float blur, float bend, float lens, uint tint) =>
-        frameList.Glass.Add(new UIFrameGlass(under, frameList.QuadCount, rect, frameAt, clipAt, radius, blur, bend, lens, tint));
+    private void KeepFrameGlass(int under, UIRect rect, float radius, float blur, float bend, float lens, uint tint, int itemUnder = -1, int itemStart = -1) =>
+        frameList.Glass.Add(new UIFrameGlass(under, frameList.QuadCount, rect, frameAt, clipAt, radius, blur, bend, lens, tint, itemUnder, itemStart));
 
-    private void KeepFrameRun(Texture? image0, Texture? image1) => frameList.Runs.Add(new UIFrameRun(frameList.QuadCount, image0, image1));
+    private void KeepFrameRun(Texture? image0, Texture? image1, int itemEnd = -1, int used0Quad = -1, int used1Quad = -1) =>
+        frameList.Runs.Add(new UIFrameRun(frameList.QuadCount, image0, image1, itemEnd, used0Quad, used1Quad));
 
     /// <summary>
     /// Where the quads the frames resolve to differ from the ones the list painted, null where they don't, for the check

@@ -153,18 +153,62 @@ public sealed unsafe partial class GraphicsDevice
         Statistics.Counting.Dispatches++;
     }
 
+    /// <summary>Maps engine <see cref="BarrierTargets"/> to narrow Vulkan Synchronization2 stage and access masks.</summary>
+    internal static (PipelineStageFlags2 SrcStage, AccessFlags2 SrcAccess, PipelineStageFlags2 DstStage, AccessFlags2 DstAccess) BarrierMasks(BarrierTargets targets)
+    {
+        PipelineStageFlags2 srcStage = PipelineStageFlags2.None;
+        AccessFlags2 srcAccess = AccessFlags2.None;
+        PipelineStageFlags2 dstStage = PipelineStageFlags2.None;
+        AccessFlags2 dstAccess = AccessFlags2.None;
+
+        if ((targets & (BarrierTargets.ShaderImages | BarrierTargets.ShaderStorage)) != 0)
+        {
+            srcStage |= PipelineStageFlags2.ComputeShaderBit;
+            srcAccess |= AccessFlags2.ShaderWriteBit | AccessFlags2.ShaderStorageWriteBit;
+            dstStage |= PipelineStageFlags2.ComputeShaderBit | PipelineStageFlags2.FragmentShaderBit | PipelineStageFlags2.VertexShaderBit;
+            dstAccess |= AccessFlags2.ShaderReadBit | AccessFlags2.ShaderSampledReadBit | AccessFlags2.ShaderStorageReadBit | AccessFlags2.ShaderStorageWriteBit;
+        }
+
+        if ((targets & BarrierTargets.BufferUpdate) != 0)
+        {
+            srcStage |= PipelineStageFlags2.TransferBit;
+            srcAccess |= AccessFlags2.TransferWriteBit;
+            dstStage |= PipelineStageFlags2.ComputeShaderBit | PipelineStageFlags2.FragmentShaderBit | PipelineStageFlags2.VertexShaderBit;
+            dstAccess |= AccessFlags2.ShaderReadBit | AccessFlags2.ShaderStorageReadBit | AccessFlags2.UniformReadBit;
+        }
+
+        if ((targets & BarrierTargets.VertexAttributes) != 0)
+        {
+            if (srcStage == PipelineStageFlags2.None)
+            {
+                srcStage = PipelineStageFlags2.ComputeShaderBit;
+                srcAccess = AccessFlags2.ShaderWriteBit | AccessFlags2.ShaderStorageWriteBit;
+            }
+
+            dstStage |= PipelineStageFlags2.DrawIndirectBit | PipelineStageFlags2.VertexInputBit;
+            dstAccess |= AccessFlags2.VertexAttributeReadBit | AccessFlags2.IndexReadBit | AccessFlags2.IndirectCommandReadBit;
+        }
+
+        if (srcStage == PipelineStageFlags2.None)
+        {
+            srcStage = PipelineStageFlags2.AllCommandsBit;
+            srcAccess = AccessFlags2.MemoryWriteBit;
+            dstStage = PipelineStageFlags2.AllCommandsBit;
+            dstAccess = AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit;
+        }
+
+        return (srcStage, srcAccess, dstStage, dstAccess);
+    }
+
     /// <summary>Has what shaders wrote be there for whoever reads it next.</summary>
     public void Barrier(BarrierTargets targets)
     {
         EndRendering();
 
-        PipelineStageFlags2 dstStage = PipelineStageFlags2.AllCommandsBit;
-        AccessFlags2 dstAccess = AccessFlags2.MemoryReadBit | AccessFlags2.MemoryWriteBit;
-        if ((targets & BarrierTargets.VertexAttributes) != 0) dstAccess |= AccessFlags2.VertexAttributeReadBit | AccessFlags2.IndexReadBit | AccessFlags2.IndirectCommandReadBit;
+        var (srcStage, srcAccess, dstStage, dstAccess) = BarrierMasks(targets);
+        GlobalBarrier(srcStage, srcAccess, dstStage, dstAccess);
 
-        GlobalBarrier(PipelineStageFlags2.AllCommandsBit, AccessFlags2.MemoryWriteBit, dstStage, dstAccess);
-
-        // The global barrier above already made compute image writes visible; clear LastAccess so a subsequent
+        // The barrier above already made compute image writes visible; clear LastAccess so a subsequent
         // compute dispatch in General layout skips a redundant image barrier, while sampling as a texture still
         // transitions General -> ShaderReadOnlyOptimal.
         foreach (Texture? image in boundImages)
@@ -407,8 +451,9 @@ public sealed unsafe partial class GraphicsDevice
                     texture.LastAccess = colorAccess;
                 }
 
-                colors[i] = Attachment(texture.View, target.PendingColor[i]);
+                colors[i] = Attachment(texture.View, target.PendingColor[i], target.PendingDiscard[i]);
                 target.PendingColor[i] = null;
+                target.PendingDiscard[i] = false;
             }
 
             if (target.DepthTexture is { } depthTexture)
@@ -467,15 +512,31 @@ public sealed unsafe partial class GraphicsDevice
         viewportDirty = dynamicDirty = true;
     }
 
-    private static RenderingAttachmentInfo Attachment(ImageView view, Vector4? clear) => new()
+    private static RenderingAttachmentInfo Attachment(ImageView view, Vector4? clear, bool discard = false) => new()
     {
         SType = StructureType.RenderingAttachmentInfo,
         ImageView = view,
         ImageLayout = ImageLayout.ColorAttachmentOptimal,
-        LoadOp = clear.HasValue ? AttachmentLoadOp.Clear : AttachmentLoadOp.Load,
+        LoadOp = clear.HasValue ? AttachmentLoadOp.Clear : discard ? AttachmentLoadOp.DontCare : AttachmentLoadOp.Load,
         StoreOp = AttachmentStoreOp.Store,
         ClearValue = clear.HasValue ? new ClearValue { Color = new ClearColorValue(clear.Value.X, clear.Value.Y, clear.Value.Z, clear.Value.W) } : default
     };
+
+    /// <summary>
+    /// Marks the bound offscreen render target's colour attachments as <see cref="AttachmentLoadOp.DontCare"/> for the
+    /// next rendering instance, avoiding an unnecessary attachment load before an opaque full-screen overwrite.
+    /// </summary>
+    public void DiscardBoundTarget()
+    {
+        if (renderingActive || targetIsWindow || boundTarget is not { } target) return;
+
+        for (int i = 0; i < target.ColorTextures.Length; i++)
+        {
+            if (target.ColorTextures[i] is null) continue;
+            target.PendingColor[i] = null;
+            target.PendingDiscard[i] = true;
+        }
+    }
 
     /// <summary>
     /// Ends the rendering instance, if one is on. Everything that isn't a draw does this itself, it is here for
@@ -526,7 +587,17 @@ public sealed unsafe partial class GraphicsDevice
             return;
         }
 
-        if (color) for (int i = 0; i < target.ColorTextures.Length; i++) if (target.ColorTextures[i] is not null) target.PendingColor[i] = clearColor;
+        if (color)
+        {
+            for (int i = 0; i < target.ColorTextures.Length; i++)
+            {
+                if (target.ColorTextures[i] is not null)
+                {
+                    target.PendingColor[i] = clearColor;
+                    target.PendingDiscard[i] = false;
+                }
+            }
+        }
         if (depth || stencil)
         {
             target.PendingDepth = true;
@@ -543,7 +614,11 @@ public sealed unsafe partial class GraphicsDevice
         if (!targetIsWindow && ReferenceEquals(boundTarget, target))
         {
             if (renderingActive && ReferenceEquals(renderingTarget, target)) ClearAttachmentsNow([attachment], color, false, false, 1.0f, 0);
-            else target.PendingColor[attachment] = color;
+            else
+            {
+                target.PendingColor[attachment] = color;
+                target.PendingDiscard[attachment] = false;
+            }
             return;
         }
 

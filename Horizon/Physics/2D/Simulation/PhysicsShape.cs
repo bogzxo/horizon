@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.Physics.Fixtures;
 
@@ -23,50 +24,62 @@ internal struct PhysicsShape
     public readonly Vector2 Centre => (Min + Max) * 0.5f;
 
     /// <summary>
-    /// Helper method to place a fixture in the world, false for shapes the particles can't collide with.
+    /// Returns the cached body-local shape of a fixture without recomputing bounds.
     /// </summary>
-    public static bool TryCreate(IPhysicsFixture fixture, Vector2 bodyPosition, Vector2 bodyVelocity, out PhysicsShape shape)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TryGetLocal(IPhysicsFixture fixture, out PhysicsShape local)
     {
         switch (fixture)
         {
-            case CirclePhysicsFixture circle:
-                Vector2 centre = bodyPosition + circle.Position;
-                shape = new PhysicsShape
-                {
-                    Min = centre - new Vector2(circle.Radius),
-                    Max = centre + new Vector2(circle.Radius),
-                    Velocity = bodyVelocity,
-                    Radius = circle.Radius,
-                    IsCircle = true
-                };
-                return true;
-
             case RectanglePhysicsFixture rectangle:
-                shape = new PhysicsShape
-                {
-                    Min = bodyPosition + rectangle.Bounds.Position,
-                    Max = bodyPosition + rectangle.Bounds.Position + rectangle.Bounds.Size,
-                    Velocity = bodyVelocity
-                };
+                local = rectangle.LocalShape;
                 return true;
 
-            case OutlinePhysicsFixture outline when outline.PointCount > 0:
-                shape = new PhysicsShape
-                {
-                    Min = bodyPosition + outline.Min,
-                    Max = bodyPosition + outline.Max,
-                    Velocity = bodyVelocity,
-                    Outline = outline.Points,
-                    OutlineCount = outline.PointCount,
-                    OutlineVersion = outline.Version,
-                    Origin = bodyPosition
-                };
+            case CirclePhysicsFixture circle:
+                local = circle.LocalShape;
+                return true;
+
+            case OutlinePhysicsFixture outline when outline.HasLocalShape:
+                local = outline.LocalShape;
                 return true;
 
             default:
-                shape = default;
+                local = default;
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Translates a cached local shape into world space at <paramref name="bodyPosition"/> with <paramref name="bodyVelocity"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly PhysicsShape Translated(Vector2 bodyPosition, Vector2 bodyVelocity) => new()
+    {
+        Min = Min + bodyPosition,
+        Max = Max + bodyPosition,
+        Velocity = bodyVelocity,
+        Radius = Radius,
+        IsCircle = IsCircle,
+        Outline = Outline,
+        OutlineCount = OutlineCount,
+        OutlineVersion = OutlineVersion,
+        Origin = Origin + bodyPosition
+    };
+
+    /// <summary>
+    /// Helper method to place a fixture in the world, false for shapes the particles can't collide with.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool TryCreate(IPhysicsFixture fixture, Vector2 bodyPosition, Vector2 bodyVelocity, out PhysicsShape shape)
+    {
+        if (!TryGetLocal(fixture, out PhysicsShape local))
+        {
+            shape = default;
+            return false;
+        }
+
+        shape = local.Translated(bodyPosition, bodyVelocity);
+        return true;
     }
 
     /// <summary>

@@ -1,4 +1,6 @@
 using System.Buffers;
+using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 
 using Horizon.Content;
 using Horizon.Graphics;
@@ -65,6 +67,28 @@ public sealed class GlyphAtlas
     // Between two pictures, so the filter never reads one's ink into the next
     private const int PADDING = 1;
 
+    private const int INITIAL_PENDING_BYTES = 4096;
+    private const int INITIAL_PENDING_GLYPHS = 32;
+
+    /// <summary>
+    /// Lock-free L1 lookup page for ASCII characters (0..127) across all <see cref="PHASES"/> subpixel phases
+    /// for a fixed <c>(fontId, pixelSize, style)</c> tuple within one <see cref="GlyphAtlas"/> generation.
+    /// Slots are written once under the atlas lock and published via <see cref="Volatile.Write(ref byte, byte)"/>
+    /// on <see cref="States"/> so readers observe tear-free <see cref="GlyphSlot"/> values without locking.
+    /// </summary>
+    public sealed class AsciiPage
+    {
+        internal const int ASCII_COUNT = 128;
+        internal const int SLOT_COUNT = ASCII_COUNT * PHASES;
+
+        internal readonly GlyphSlot[] Slots = new GlyphSlot[SLOT_COUNT];
+        // 0 = uncached, 1 = cached empty (no ink, e.g. space), 2 = cached with ink
+        internal readonly byte[] States = new byte[SLOT_COUNT];
+        internal readonly int Generation;
+
+        internal AsciiPage(int generation) => Generation = generation;
+    }
+
     private readonly record struct PendingGlyph(short X, short Y, short Width, short Height, int Offset);
 
     /// <summary>The grey one every draw list uses.</summary>
@@ -79,17 +103,23 @@ public sealed class GlyphAtlas
     // By the key packed into a number, see Pack: a record struct's own hash mixes its five fields one at a time, for
     // every letter of every line painted. Read without the lock, every letter of every paint looks one up and only a
     // letter not made yet needs it: a lock a letter was the most of what painting a busy chat cost
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, GlyphSlot> slots = new();
+    private readonly ConcurrentDictionary<ulong, GlyphSlot> slots = new();
+    private readonly ConcurrentDictionary<ulong, AsciiPage> asciiPages = new();
     private byte[] scratch = new byte[64 * 64];
     private byte[] work = new byte[64 * 64 * 3];
 
     // Newly rasterized glyphs queued on the painting thread and swapped to the render thread for sub-rect upload,
-    // avoiding a permanent full-atlas CPU pixel mirror and staging copy
-    private List<PendingGlyph> pendingGlyphs = [];
-    private byte[] pendingBytes = [];
+    // avoiding a permanent full-atlas CPU pixel mirror and staging copy. Pre-sized so early ticks do not reallocate.
+    private List<PendingGlyph> pendingGlyphs = new(INITIAL_PENDING_GLYPHS);
+    private byte[] pendingBytes = new byte[INITIAL_PENDING_BYTES];
     private int pendingByteCount;
-    private List<PendingGlyph> uploadGlyphs = [];
-    private byte[] uploadBytes = [];
+    private List<PendingGlyph> uploadGlyphs = new(INITIAL_PENDING_GLYPHS);
+    private byte[] uploadBytes = new byte[INITIAL_PENDING_BYTES];
+
+    internal int PendingBytesCapacity => pendingBytes.Length;
+    internal int UploadBytesCapacity => uploadBytes.Length;
+    internal int PendingGlyphsCapacity => pendingGlyphs.Capacity;
+    internal int UploadGlyphsCapacity => uploadGlyphs.Capacity;
 
     // Old textures kept alive briefly after growing so in-flight frames finish reading them (render thread only)
     private readonly List<(Texture Texture, int Frames)> retired = [];
@@ -108,7 +138,7 @@ public sealed class GlyphAtlas
     // Whether anything has asked it for a letter, a subpixel one nobody uses is never made
     private volatile bool wanted;
 
-    private GlyphAtlas(bool subpixel)
+    internal GlyphAtlas(bool subpixel)
     {
         this.subpixel = subpixel;
         texel = subpixel ? 4 : 1;
@@ -138,6 +168,31 @@ public sealed class GlyphAtlas
     private static ulong Pack(in GlyphKey key) =>
         (ulong)(uint)key.Font << 32 | (ulong)key.Character << 16 | (ulong)(uint)(key.Size & 0x3FF) << 6 | (ulong)(uint)(key.Phase & 0x3) << 4 | (ulong)(uint)((byte)key.Style & 0xF);
 
+    // Page key for the flat L1 ASCII lookup table: (fontId, pixelSize, style)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ulong PackPage(int fontId, ushort size, GlyphStyle style) =>
+        (ulong)(uint)fontId << 16 | (ulong)(uint)(size & 0x3FF) << 6 | (ulong)(uint)((byte)style & 0xF);
+
+    /// <summary>
+    /// Resolves (or creates) the lock-free flat ASCII lookup page for a text run's <c>(fontId, size, style)</c>.
+    /// </summary>
+    public AsciiPage GetAsciiPage(int fontId, ushort size, GlyphStyle style)
+    {
+        ulong key = PackPage(fontId, size, style);
+        if (asciiPages.TryGetValue(key, out AsciiPage? page) && page.Generation == generation)
+            return page;
+
+        lock (gate)
+        {
+            if (asciiPages.TryGetValue(key, out page) && page.Generation == generation)
+                return page;
+
+            page = new AsciiPage(generation);
+            asciiPages[key] = page;
+            return page;
+        }
+    }
+
     /// <summary>The size a letter is made at for a font drawn so tall, in <see cref="SIZE_STEPS"/>, 0 when it's too big or small to be.</summary>
     public static ushort SizeOf(float pixelHeight)
     {
@@ -159,6 +214,7 @@ public sealed class GlyphAtlas
             if (!full)
                 return;
             slots.Clear();
+            asciiPages.Clear();
             shelfX = shelfY = shelfHeight = 0;
             pendingGlyphs.Clear();
             pendingByteCount = 0;
@@ -170,20 +226,54 @@ public sealed class GlyphAtlas
     }
 
     /// <summary>
+    /// Lock-free L1 ASCII fast-path lookup using a pre-resolved <see cref="AsciiPage"/>, falling back to
+    /// <see cref="TryGet(GlyphOutlines, in GlyphKey, float, float, out GlyphSlot)"/> on miss and publishing into the page.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryGet(GlyphOutlines outlines, AsciiPage page, char character, ushort size, byte phase, GlyphStyle style, float bold, float slant, out GlyphSlot slot)
+    {
+        if (character < AsciiPage.ASCII_COUNT && page.Generation == generation)
+        {
+            int index = (character << 2) | (phase & 3);
+            byte state = Volatile.Read(ref page.States[index]);
+            if (state != 0)
+            {
+                slot = page.Slots[index];
+                return state == 2;
+            }
+        }
+
+        return TryGetCore(outlines, new GlyphKey(outlines.Id, character, size, phase, style), bold, slant, page, out slot);
+    }
+
+    /// <summary>
     /// The picture of a letter, made now if it hasn't been. False when the letter has no ink (a space) or there's no room
     /// left, which draws it out of its field until the next paint has emptied the atlas.
     /// </summary>
     /// <param name="bold">How many pixels wider the ink is for bold, see <see cref="GlyphOutlines.Rasterize"/>.</param>
-    public bool TryGet(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, out GlyphSlot slot)
+    public bool TryGet(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, out GlyphSlot slot) =>
+        TryGetCore(outlines, in key, bold, slant, page: null, out slot);
+
+    private bool TryGetCore(GlyphOutlines outlines, in GlyphKey key, float bold, float slant, AsciiPage? page, out GlyphSlot slot)
     {
         ulong packed = Pack(key);
         if (slots.TryGetValue(packed, out slot))
-            return !slot.Box.IsEmpty;
+        {
+            bool hasInk = !slot.Box.IsEmpty;
+            if (page is not null && key.Character < AsciiPage.ASCII_COUNT)
+                PublishAsciiSlot(page, key.Character, key.Phase, slot, hasInk);
+            return hasInk;
+        }
 
         lock (gate)
         {
             if (slots.TryGetValue(packed, out slot))
-                return !slot.Box.IsEmpty;
+            {
+                bool hasInk = !slot.Box.IsEmpty;
+                if (key.Character < AsciiPage.ASCII_COUNT)
+                    PublishAsciiSlotLocked(page, key, slot, hasInk);
+                return hasInk;
+            }
             if (full)
                 return false;
 
@@ -198,6 +288,8 @@ public sealed class GlyphAtlas
                 // Remembered as nothing, a space is asked about on every line
                 slot = default;
                 slots[packed] = slot;
+                if (key.Character < AsciiPage.ASCII_COUNT)
+                    PublishAsciiSlotLocked(page, key, slot, hasInk: false);
                 return false;
             }
 
@@ -213,7 +305,7 @@ public sealed class GlyphAtlas
             int needed = offset + bytes;
             if (pendingBytes.Length < needed)
             {
-                int nextCapacity = pendingBytes.Length == 0 ? Math.Max(4096, needed) : Math.Max(needed, pendingBytes.Length * 2);
+                int nextCapacity = pendingBytes.Length == 0 ? Math.Max(INITIAL_PENDING_BYTES, needed) : Math.Max(needed, pendingBytes.Length * 2);
                 Array.Resize(ref pendingBytes, nextCapacity);
             }
             scratch.AsSpan(0, bytes).CopyTo(pendingBytes.AsSpan(offset, bytes));
@@ -222,7 +314,41 @@ public sealed class GlyphAtlas
 
             slot = new GlyphSlot((short)x, (short)y, box);
             slots[packed] = slot;
+            if (key.Character < AsciiPage.ASCII_COUNT)
+                PublishAsciiSlotLocked(page, key, slot, hasInk: true);
             return true;
+        }
+    }
+
+    private void PublishAsciiSlot(AsciiPage page, char character, byte phase, in GlyphSlot slot, bool hasInk)
+    {
+        int index = (character << 2) | (phase & 3);
+        if (page.Generation != generation || Volatile.Read(ref page.States[index]) != 0)
+            return;
+
+        lock (gate)
+        {
+            if (page.Generation == generation && page.States[index] == 0)
+            {
+                page.Slots[index] = slot;
+                Volatile.Write(ref page.States[index], hasInk ? (byte)2 : (byte)1);
+            }
+        }
+    }
+
+    private void PublishAsciiSlotLocked(AsciiPage? page, in GlyphKey key, in GlyphSlot slot, bool hasInk)
+    {
+        AsciiPage? target = page;
+        if (target is null)
+            asciiPages.TryGetValue(PackPage(key.Font, key.Size, key.Style), out target);
+        if (target is null || target.Generation != generation)
+            return;
+
+        int index = (key.Character << 2) | (key.Phase & 3);
+        if (target.States[index] == 0)
+        {
+            target.Slots[index] = slot;
+            Volatile.Write(ref target.States[index], hasInk ? (byte)2 : (byte)1);
         }
     }
 
@@ -356,7 +482,7 @@ public sealed class GlyphAtlas
             }
             uploadGlyphs.Clear();
             if (uploadBytes.Length > MAX_RETAINED_PENDING_BYTES)
-                uploadBytes = [];
+                uploadBytes = new byte[INITIAL_PENDING_BYTES];
         }
 
         // The glyph atlas is sampled bindlessly, so leave it in ShaderReadOnlyOptimal after any clear/copy/upload

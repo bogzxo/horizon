@@ -431,7 +431,7 @@ internal sealed class PerformanceFace
         if (target != outOf)
         {
             outOf = target;
-            row.Rate.Unit = target > 0.0 ? $"/{target:0}" : "/s";
+            row.Rate.Unit = TargetUnit(target);
         }
 
         row.Rate.Set(rate, "0");
@@ -449,6 +449,18 @@ internal sealed class PerformanceFace
         row.Milliseconds.Set(milliseconds, "0.00");
         row.Worst.Clear().Add("worst ").Add(peak, "0.0");
     }
+
+    private static string TargetUnit(double target) => target switch
+    {
+        <= 0.0 => "/s",
+        30.0 => "/30",
+        60.0 => "/60",
+        120.0 => "/120",
+        144.0 => "/144",
+        165.0 => "/165",
+        240.0 => "/240",
+        _ => $"/{target:0}"
+    };
 
     /// <summary>What a thread is up to, in a word. Sleeping is waiting for its next turn to be due, which is a thread with time to spare.</summary>
     private static string Doing(LoopStatistics.LoopState state) => state switch

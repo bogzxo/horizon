@@ -68,7 +68,6 @@ internal sealed class SpriteShadows : IDisposable
             seed.SetUniform("uScale", scale);
             seed.SetUniform("uSpritesBlock", spritesBlockRays);
             material.Bind(0);
-            surface.Bind(1);
             device.BindStorageImage(0, seedsA);
             device.Dispatch(groupsX, groupsY);
             device.Barrier(BarrierTargets.ShaderImages);
@@ -110,7 +109,6 @@ internal sealed class SpriteShadows : IDisposable
             field.SetUniform("uPixelWorld", pixelWorld);
             field.SetUniform("uSpritesBlock", spritesBlockRays);
             material.Bind(0);
-            surface.Bind(1);
             device.BindStorageImage(0, from);
             device.BindStorageImage(1, result);
             device.Dispatch((width + 7) / 8, (height + 7) / 8);

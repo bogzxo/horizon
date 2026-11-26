@@ -651,11 +651,10 @@ public sealed partial class UISkin : IUIIconSource, IDisposable
         try
         {
             var properties = ReadProperties(directory, file, 0);
-            List<UITheme> themes = ReadThemes(directory, properties);
-            UITheme? worn = ApplyTheme(properties, themes, theme);
+            var (themeNames, worn) = ReadAndApplyThemeLazy(directory, properties, theme);
 
             UISkin skin = Read(directory, file, properties, worn);
-            skin.Themes = [.. themes.Select(found => found.Name)];
+            skin.Themes = themeNames;
             return skin;
         }
         catch (Exception e)

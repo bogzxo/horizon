@@ -1,4 +1,7 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 using Horizon.Rendering.Particles.Simulation;
 
@@ -23,17 +26,25 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private const float SPREAD_RANGE = 1.5f;    // How far (in diameters) the particles of a pile keep nudging each other away
     private const float SPREAD_RATE = 80.0f;    // How far they nudge at a Spread of 1, in diameters a second (for two right up against each other it is a ninth of this)
     private const float SETTLE_RATE = 0.25f;    // How much (in diameters) of an old overlap two particles are put apart by every step
-    private const float SQUEEZE_RATE = 120.0f;  // Maximum newly acquired squeeze speed (in diameters a second) so sub-120Hz steps stay consistent
+    private const float SQUEEZE_RATE = 80.0f;   // Maximum newly acquired squeeze speed (in diameters a second, matching SPREAD_RATE) so sub-120Hz steps stay consistent
     private const float FLOW_TIME = 0.08f;      // How long (in seconds) the speed of a particle is averaged over for Flow
+    private const int MAX_DENSE_CELLS = 65536;  // Flat 2D dense grid cap; falls back to spatial hash when particles span more cells
 
-    // Where every particle was before it was moved, how fast it is going is worked out from how far it got
-    private Vector2[] _previous = [];
+    private struct FluidPair
+    {
+        public int A, B;
+        public float Gap, Nx, Ny;
+    }
 
-    // The way the map pushed a particle this step (zero if it didn't), sliding along it is slowed by friction
-    private Vector2[] _contacts = [];
+    // Compact SoA position buffers kept in persistent _particles[0..live) order for L1-resident pair passes
+    private Vector2[] _pos = [];
+    private Vector2[] _prev = [];
 
     // Where every particle was before anything at all was done to it this step, to go back to if all else fails
     private Vector2[] _origins = [];
+
+    // The way the map pushed a particle this step (zero if it didn't), sliding along it is slowed by friction
+    private Vector2[] _contacts = [];
 
     // The shove a body gave a particle this step (zero if none did), the speed it is sent off at, see BodyPush
     private Vector2[] _shoves = [];
@@ -42,24 +53,25 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     private bool[] _nearMap = [], _nearBodies = [];
 
     // How fast every particle has been going lately (see Flow), which the first _flowCount of them have been
-    // around for long enough to have
+    // around for long enough to have (in original _particles order)
     private Vector2[] _flow = [];
     private int _flowCount;
 
-    // The particles are sorted into the cells of a grid, which is how each one finds its neighbours.
-    // The grid has no edges, cells are hashed into a table, so two of them can share a slot (which only costs a few wasted tests).
-    // The particles in slot i are _cellParticles[_cellStart[i].._cellStart[i + 1]]
+    // Spatial grid buffers: bounded flat 2D dense grid when span <= MAX_DENSE_CELLS, spatial hash fallback otherwise.
+    private int[] _denseCellStart = [];
     private int[] _cellStart = [0];
     private int[] _cellParticles = [];
     private int[] _cellOf = [];
     private int _cellMask;
+    private int _denseMinCellX, _denseMinCellY, _denseGridW, _denseGridH;
+    private bool _usedDenseGrid;
 
-    // Every two particles close enough to matter this step, one after the other. For each pair there is how far apart
-    // the two have to be kept and the way from the first to the second before they were moved (x, y), see Settle
-    private int[] _pairs = [];
-    private float[] _pairGaps = [];
-    private float[] _pairNormals = [];
+    // Single-stream interleaved pair list (indices in [0..live) matching Pass 5 pair order)
+    private FluidPair[] _pairs = [];
     private int _pairCount;
+
+    internal bool LastStepUsedDenseGrid => _usedDenseGrid;
+    internal int LastPairCount => _pairCount;
 
     /// <summary>
     /// How many times a step the particles are pushed apart. More of them make for a stiffer pile that sags less
@@ -124,6 +136,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         _flowCount = Count;
     }
 
+    [SkipLocalsInit]
     internal override void Step(PhysicsStaticGrid grid, ReadOnlySpan<PhysicsShape> bodies, Vector2 bodiesMin, Vector2 bodiesMax, float dt)
     {
         if (dt <= 0.0f) return;
@@ -143,11 +156,13 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         // It is as fast as anything here falls, which makes small particles slow ones.
         float diameter = MathF.Max(Radius * 2.0f, 0.5f);
         float safeDistance = diameter;
+        float safeDistanceSq = safeDistance * safeDistance;
         float maxSpeed = safeDistance / dt;
 
         // Grown by how far a particle can reach in a step, so testing one against the box is just testing its centre
         bodiesMin -= new Vector2(Radius + safeDistance);
         bodiesMax += new Vector2(Radius + safeDistance);
+        bool hasBodies = bodies.Length > 0;
 
         Vector2 gravityStep = Gravity * dt;
         float airDrag = MathF.Max(0.0f, 1.0f - LinearDrag * dt);
@@ -157,39 +172,52 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
         // How far a particle can end up from where it is headed, put there by its neighbours or by a body
         // (which gets to move it once every other pass)
-        float mapReach = Radius * 3.0f + safeDistance + (bodies.Length > 0 ? BODY_STEP * ((iterations + 1) / 2) : 0.0f);
+        float mapReach = Radius * 3.0f + safeDistance + (hasBodies ? BODY_STEP * ((iterations + 1) / 2) : 0.0f);
 
         // The nudge is measured against the size of the particles, so piles of big and of small ones flatten out alike
         float spread = Spread * SPREAD_RATE * diameter * dt;
 
-        // 1. Move everyone to where they would end up if nothing was in their way
+        // 1. Move everyone to where they would end up if nothing was in their way, and populate compact SoA arrays
+        float minX = float.PositiveInfinity, maxX = float.NegativeInfinity;
+        float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
+
+        ref ParticleState2D particleBase = ref MemoryMarshal.GetArrayDataReference(particles);
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+        ref Vector2 prevBase = ref MemoryMarshal.GetArrayDataReference(_prev);
+        ref Vector2 originsBase = ref MemoryMarshal.GetArrayDataReference(_origins);
+
         for (int i = 0; i < live; i++)
         {
-            ref ParticleState2D p = ref particles[i];
-            p.Velocity = (p.Velocity + gravityStep) * airDrag;
+            ref ParticleState2D p = ref Unsafe.Add(ref particleBase, i);
+            Vector2 velocity = (p.Velocity + gravityStep) * airDrag;
+            p.Velocity = velocity;
 
-            Vector2 move = p.Velocity * dt;
+            Vector2 move = velocity * dt;
             float distanceSquared = move.LengthSquared();
-            if (distanceSquared > safeDistance * safeDistance)
+            if (distanceSquared > safeDistanceSq)
             {
                 move *= safeDistance / MathF.Sqrt(distanceSquared);
             }
 
-            _previous[i] = p.Position;
-            _origins[i] = p.Position;
-            _contacts[i] = Vector2.Zero;
-            _shoves[i] = Vector2.Zero;
-            p.Position += move;
+            Vector2 origin = p.Position;
+            Unsafe.Add(ref prevBase, i) = origin;
+            Unsafe.Add(ref originsBase, i) = origin;
+            Vector2 predicted = origin + move;
+            p.Position = predicted;
+            Unsafe.Add(ref posBase, i) = predicted;
 
-            // Most of a pool is nowhere near the map or a body, those never have to be tested against either
-            _nearMap[i] = IsNearMap(p.Position, mapReach, grid);
-            _nearBodies[i] = p.Position.X >= bodiesMin.X && p.Position.X <= bodiesMax.X &&
-                             p.Position.Y >= bodiesMin.Y && p.Position.Y <= bodiesMax.Y;
+            if (predicted.X < minX) minX = predicted.X;
+            if (predicted.X > maxX) maxX = predicted.X;
+            if (predicted.Y < minY) minY = predicted.Y;
+            if (predicted.Y > maxY) maxY = predicted.Y;
         }
 
-        // 2. Work out who is close enough to whom to matter, once. The passes below only go over this list
-        SortIntoCells(live, range);
-        FindPairs(live, range);
+        // 2. Sort particles into cells and build the pair list once
+        SortIntoCells(live, range, minX, maxX, minY, maxY, mapReach, bodiesMin, bodiesMax, hasBodies, grid);
+        if (_usedDenseGrid)
+            FindPairsDense(live, _denseMinCellX, _denseMinCellY, _denseGridW, _denseGridH, range);
+        else
+            FindPairsHash(live, range);
 
         // 3. Whatever was overlapping before anyone moved (let go on top of each other, or squeezed further than
         // the passes could undo) is put apart a little at a time, and what is merely close is nudged apart (the spread).
@@ -199,6 +227,13 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
         // 4. Then push them out of each other, the map and the bodies. Getting out of one thing can mean ending up in
         // the next, so it is done over and over, every pass gets the whole lot a bit closer to where nothing overlaps.
+        ref Vector2 contactsBase = ref MemoryMarshal.GetArrayDataReference(_contacts);
+        ref Vector2 shovesBase = ref MemoryMarshal.GetArrayDataReference(_shoves);
+        ref bool nearMapBase = ref MemoryMarshal.GetArrayDataReference(_nearMap);
+        ref bool nearBodiesBase = ref MemoryMarshal.GetArrayDataReference(_nearBodies);
+
+        float safeReach = MathF.Max(0f, mapReach - Radius);
+        float safeReachSq = safeReach * safeReach;
         for (int pass = 0; pass < iterations; pass++)
         {
             SeparatePairs(diameter);
@@ -210,45 +245,72 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             bool finalPass = pass == iterations - 1;
             for (int i = 0; i < live; i++)
             {
-                if (_nearBodies[i]) SeparateFromBodies(ref particles[i].Position, ref _previous[i], ref _shoves[i], bodies);
-
-                if (!_nearMap[i] && finalPass && IsNearMap(particles[i].Position, Radius, grid))
+                if (hasBodies && Unsafe.Add(ref nearBodiesBase, i))
                 {
-                    _nearMap[i] = true;
+                    SeparateFromBodies(
+                        ref Unsafe.Add(ref posBase, i),
+                        ref Unsafe.Add(ref prevBase, i),
+                        ref Unsafe.Add(ref shovesBase, i),
+                        bodies);
+                }
+
+                ref bool nearMap = ref Unsafe.Add(ref nearMapBase, i);
+                if (!nearMap && finalPass &&
+                    (grid.IsNearAnyShape(Unsafe.Add(ref posBase, i), Radius) ||
+                     Vector2.DistanceSquared(Unsafe.Add(ref posBase, i), Unsafe.Add(ref originsBase, i)) > safeReachSq))
+                {
+                    nearMap = true;
                 }
 
                 // The map goes last as it is the one thing which never gives way
-                if (_nearMap[i]) SeparateFromMap(ref particles[i].Position, _origins[i], ref _contacts[i], grid);
+                if (nearMap)
+                {
+                    SeparateFromMap(
+                        ref Unsafe.Add(ref posBase, i),
+                        Unsafe.Add(ref originsBase, i),
+                        ref Unsafe.Add(ref contactsBase, i),
+                        grid);
+                }
             }
         }
 
         // 5. How far everyone got in the end is how fast they are going
         float flowBlend = 1.0f - MathF.Exp(-dt / FLOW_TIME);
+        float invDt = 1.0f / dt;
+        float bodyLimit = MathF.Min(maxSpeed, BodyPushLimit);
+        float squeezeLimit = MathF.Min(maxSpeed, diameter * SQUEEZE_RATE);
+        float frictionFactor = 1.0f - slide;
+
+        ref Vector2 flowBase = ref MemoryMarshal.GetArrayDataReference(_flow);
 
         for (int i = 0; i < live; i++)
         {
-            ref ParticleState2D p = ref particles[i];
-            Vector2 contact = _contacts[i];
+            ref ParticleState2D p = ref Unsafe.Add(ref particleBase, i);
+            ref Vector2 flow = ref Unsafe.Add(ref flowBase, i);
+            Vector2 position = Unsafe.Add(ref posBase, i);
+            Vector2 origin = Unsafe.Add(ref originsBase, i);
+            Vector2 contact = Unsafe.Add(ref contactsBase, i);
 
             // The weight of a pile (or a body) can press a particle into or across a thin wall harder than the map
             // pushes back. The map always wins, rather than end up inside of it or on the far side of a wall the
             // particle stays where it was. Unless it was inside already (spawned there), then it has to be let out.
-            if ((_nearMap[i] || contact != Vector2.Zero) &&
-                (grid.Contains(p.Position) || grid.IntersectsSegment(_origins[i], p.Position)) &&
-                !grid.Contains(_origins[i]))
+            if ((Unsafe.Add(ref nearMapBase, i) || contact != Vector2.Zero) &&
+                (grid.Contains(position) || grid.IntersectsSegment(origin, position)) &&
+                !grid.Contains(origin))
             {
-                p.Position = _origins[i];
+                p.Position = origin;
                 p.Velocity = Vector2.Zero;
-                _flow[i] -= _flow[i] * flowBlend;
+                flow -= flow * flowBlend;
                 continue;
             }
 
-            Vector2 velocity = (p.Position - _previous[i]) / dt;
+            p.Position = position;
+            Vector2 velocity = (position - Unsafe.Add(ref prevBase, i)) * invDt;
 
             // Being squeezed out from between the others can be very sudden. Around a body more so, everything it
             // ploughs through is pressed into its neighbours at once, which would spray the lot into the air.
             // What is near a body comes away no faster than a body could have sent it, unless it already was.
-            float baseLimit = _nearBodies[i] ? MathF.Min(maxSpeed, BodyPushLimit) : MathF.Min(maxSpeed, diameter * SQUEEZE_RATE);
+            float baseLimit = (hasBodies && Unsafe.Add(ref nearBodiesBase, i)) ? bodyLimit : squeezeLimit;
             float speedSquared = velocity.LengthSquared();
             if (speedSquared > baseLimit * baseLimit)
             {
@@ -260,7 +322,7 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             }
 
             // The shove of a body is a speed to be brought up to, not one to add to every step it is leant on
-            Vector2 shove = _shoves[i];
+            Vector2 shove = Unsafe.Add(ref shovesBase, i);
             float shoveSpeed = shove.Length();
             if (shoveSpeed > 0.0f)
             {
@@ -273,11 +335,11 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             if (contact != Vector2.Zero)
             {
                 Vector2 tangent = velocity - contact * Vector2.Dot(velocity, contact);
-                velocity -= tangent * (1.0f - slide);
+                velocity -= tangent * frictionFactor;
             }
 
             p.Velocity = velocity;
-            _flow[i] += (velocity - _flow[i]) * flowBlend;
+            flow += (velocity - flow) * flowBlend;
         }
     }
 
@@ -322,89 +384,254 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
     private void EnsureScratch(int capacity)
     {
-        if (_previous.Length == capacity) return;
+        if (_pos.Length == capacity) return;
 
-        _previous = new Vector2[capacity];
-        _contacts = new Vector2[capacity];
+        _pos = new Vector2[capacity];
+        _prev = new Vector2[capacity];
         _origins = new Vector2[capacity];
+        _contacts = new Vector2[capacity];
         _shoves = new Vector2[capacity];
         _nearMap = new bool[capacity];
         _nearBodies = new bool[capacity];
         _cellParticles = new int[capacity];
         _cellOf = new int[capacity];
 
-        // Twice as many slots as there can be particles keeps most cells in a slot of their own
+        // Twice as many slots as there can be particles keeps most cells in a slot of their own (hash fallback)
         int slots = 16;
         while (slots < capacity * 2) slots <<= 1;
 
         _cellStart = new int[slots + 1];
         _cellMask = slots - 1;
 
-        // Pre-size pair scratch buffers up front for this capacity so FindPairs does not repeatedly resize during simulation
-        int pairCapacity = capacity > 0 ? Math.Max(capacity * 16, 1024) : 0;
+        // Pre-size interleaved pair buffer up front for this capacity so FindPairs does not repeatedly resize
+        int pairCapacity = capacity > 0 ? Math.Max(capacity * 8, 1024) : 0;
         if (pairCapacity > _pairs.Length)
         {
-            _pairs = new int[pairCapacity];
-            _pairGaps = new float[pairCapacity / 2];
-            _pairNormals = new float[pairCapacity];
+            _pairs = new FluidPair[pairCapacity];
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int GetCell(int x, int y) => ((x * 73856093) ^ (y * 19349663)) & _cellMask;
 
     /// <summary>
-    /// Helper method to sort the particles by the cell they are in, a counting sort so nothing is allocated.
+    /// Sorts particle indices into a bounded flat 2D dense grid (or spatial hash fallback when unbounded) via counting sort,
+    /// keeping <see cref="_pos"/> and <see cref="_prev"/> in persistent spawn order.
     /// </summary>
-    private void SortIntoCells(int live, float cellSize)
+    [SkipLocalsInit]
+    private void SortIntoCells(
+        int live, float cellSize,
+        float minX, float maxX, float minY, float maxY,
+        float mapReach, Vector2 bodiesMin, Vector2 bodiesMax, bool hasBodies,
+        PhysicsStaticGrid grid)
     {
-        var particles = _particles;
-        var cellStart = _cellStart;
         float scale = 1.0f / cellSize;
 
-        // First count how many particles are in every cell
-        Array.Clear(cellStart);
-        for (int i = 0; i < live; i++)
-        {
-            Vector2 position = particles[i].Position * scale;
-            int cell = GetCell((int)MathF.Floor(position.X), (int)MathF.Floor(position.Y));
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+        ref int cellParticlesBase = ref MemoryMarshal.GetArrayDataReference(_cellParticles);
+        ref int cellOfBase = ref MemoryMarshal.GetArrayDataReference(_cellOf);
 
-            _cellOf[i] = cell;
-            cellStart[cell]++;
+        bool useDense = false;
+        int minCellX = 0, minCellY = 0, gridW = 0, gridH = 0;
+
+        if (float.IsFinite(minX) && float.IsFinite(maxX) && float.IsFinite(minY) && float.IsFinite(maxY))
+        {
+            minCellX = (int)MathF.Floor(minX * scale);
+            int maxCellX = (int)MathF.Floor(maxX * scale);
+            minCellY = (int)MathF.Floor(minY * scale);
+            int maxCellY = (int)MathF.Floor(maxY * scale);
+
+            long spanX = (long)maxCellX - minCellX + 1;
+            long spanY = (long)maxCellY - minCellY + 1;
+            if (spanX > 0 && spanY > 0 && spanX <= MAX_DENSE_CELLS && spanY <= MAX_DENSE_CELLS && spanX * spanY <= MAX_DENSE_CELLS)
+            {
+                useDense = true;
+                gridW = (int)spanX;
+                gridH = (int)spanY;
+            }
         }
 
-        // Which makes where the particles of every cell end...
-        int total = 0;
-        for (int i = 0; i < cellStart.Length; i++)
+        _usedDenseGrid = useDense;
+
+        if (useDense)
         {
-            total += cellStart[i];
-            cellStart[i] = total;
+            _denseMinCellX = minCellX;
+            _denseMinCellY = minCellY;
+            _denseGridW = gridW;
+            _denseGridH = gridH;
+            int cellCount = gridW * gridH;
+            if (_denseCellStart.Length < cellCount + 1)
+            {
+                int nextLen = Math.Max(cellCount + 1, Math.Min(MAX_DENSE_CELLS + 1, Math.Max(_denseCellStart.Length * 2, 256)));
+                _denseCellStart = new int[nextLen];
+            }
+
+            var cellStart = _denseCellStart;
+            Array.Clear(cellStart, 0, cellCount + 1);
+            ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(cellStart);
+
+            for (int i = 0; i < live; i++)
+            {
+                Vector2 pos = Unsafe.Add(ref posBase, i);
+                int cx = Math.Clamp((int)MathF.Floor(pos.X * scale) - minCellX, 0, gridW - 1);
+                int cy = Math.Clamp((int)MathF.Floor(pos.Y * scale) - minCellY, 0, gridH - 1);
+                int cell = cy * gridW + cx;
+
+                Unsafe.Add(ref cellOfBase, i) = cell;
+                Unsafe.Add(ref cellStartBase, cell)++;
+            }
+
+            int total = 0;
+            for (int c = 0; c <= cellCount; c++)
+            {
+                ref int slot = ref Unsafe.Add(ref cellStartBase, c);
+                total += slot;
+                slot = total;
+            }
+
+            for (int i = 0; i < live; i++)
+            {
+                Unsafe.Add(ref cellParticlesBase, --Unsafe.Add(ref cellStartBase, Unsafe.Add(ref cellOfBase, i))) = i;
+            }
+        }
+        else
+        {
+            var cellStart = _cellStart;
+            Array.Clear(cellStart);
+            ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(cellStart);
+
+            for (int i = 0; i < live; i++)
+            {
+                Vector2 pos = Unsafe.Add(ref posBase, i);
+                int cell = GetCell((int)MathF.Floor(pos.X * scale), (int)MathF.Floor(pos.Y * scale));
+
+                Unsafe.Add(ref cellOfBase, i) = cell;
+                Unsafe.Add(ref cellStartBase, cell)++;
+            }
+
+            int total = 0;
+            for (int c = 0; c < cellStart.Length; c++)
+            {
+                ref int slot = ref Unsafe.Add(ref cellStartBase, c);
+                total += slot;
+                slot = total;
+            }
+
+            for (int i = 0; i < live; i++)
+            {
+                Unsafe.Add(ref cellParticlesBase, --Unsafe.Add(ref cellStartBase, Unsafe.Add(ref cellOfBase, i))) = i;
+            }
         }
 
-        // ...and handing them out backwards from there leaves every entry at where its cell starts
-        for (int i = 0; i < live; i++)
+        // Clear per-step contact/shove buffers and classify static/body proximity once per step
+        Array.Clear(_contacts, 0, live);
+        Array.Clear(_shoves, 0, live);
+
+        ref bool nearMapBase = ref MemoryMarshal.GetArrayDataReference(_nearMap);
+        ref bool nearBodiesBase = ref MemoryMarshal.GetArrayDataReference(_nearBodies);
+
+        if (hasBodies)
         {
-            _cellParticles[--cellStart[_cellOf[i]]] = i;
+            for (int i = 0; i < live; i++)
+            {
+                Vector2 pos = Unsafe.Add(ref posBase, i);
+                Unsafe.Add(ref nearMapBase, i) = grid.IsNearAnyShape(pos, mapReach);
+                Unsafe.Add(ref nearBodiesBase, i) =
+                    pos.X >= bodiesMin.X && pos.X <= bodiesMax.X &&
+                    pos.Y >= bodiesMin.Y && pos.Y <= bodiesMax.Y;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < live; i++)
+            {
+                Unsafe.Add(ref nearMapBase, i) = grid.IsNearAnyShape(Unsafe.Add(ref posBase, i), mapReach);
+            }
         }
     }
 
     /// <summary>
-    /// Helper method to list every two particles that are within range of each other, each pair once.
+    /// Dense flat 2D 3-row-slice pair finder: scans the contiguous horizontal slices across rows [cy-1..cy+1]
+    /// and [cx-1..cx+1] in spawn-order <see cref="_pos"/> with zero hash collisions and zero 9-cell deduplication.
     /// </summary>
-    private void FindPairs(int live, float range)
+    [SkipLocalsInit]
+    private void FindPairsDense(int live, int minCellX, int minCellY, int gridW, int gridH, float range)
     {
-        var particles = _particles;
-        var cellStart = _cellStart;
-        var cellParticles = _cellParticles;
-        var pairs = _pairs;
         float rangeSquared = range * range;
         float scale = 1.0f / range;
         int count = 0;
+        var pairs = _pairs;
+        int pairCapacity = pairs.Length;
+
+        ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(_denseCellStart);
+        ref int cellParticlesBase = ref MemoryMarshal.GetArrayDataReference(_cellParticles);
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+        ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+
+        for (int i = 0; i < live; i++)
+        {
+            Vector2 posI = Unsafe.Add(ref posBase, i);
+            int cx = Math.Clamp((int)MathF.Floor(posI.X * scale) - minCellX, 0, gridW - 1);
+            int cy = Math.Clamp((int)MathF.Floor(posI.Y * scale) - minCellY, 0, gridH - 1);
+
+            int ny0 = cy > 0 ? cy - 1 : 0;
+            int ny1 = cy + 1 < gridH ? cy + 1 : gridH - 1;
+            int nx0 = cx > 0 ? cx - 1 : 0;
+            int nx1 = cx + 1 < gridW ? cx + 2 : gridW;
+
+            for (int ry = ny0; ry <= ny1; ry++)
+            {
+                int row = ry * gridW;
+                int start = Unsafe.Add(ref cellStartBase, row + nx0);
+                int end = Unsafe.Add(ref cellStartBase, row + nx1);
+
+                for (int k = start; k < end; k++)
+                {
+                    int j = Unsafe.Add(ref cellParticlesBase, k);
+                    if (j <= i) continue;
+
+                    Vector2 posJ = Unsafe.Add(ref posBase, j);
+                    float dx = posJ.X - posI.X, dy = posJ.Y - posI.Y;
+                    if (dx * dx + dy * dy >= rangeSquared) continue;
+
+                    if (count == pairCapacity)
+                    {
+                        pairs = GrowPairs(ref pairCapacity);
+                        pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
+                    }
+
+                    ref FluidPair dst = ref Unsafe.Add(ref pairBase, count++);
+                    dst.A = i;
+                    dst.B = j;
+                }
+            }
+        }
+
+        _pairCount = count;
+    }
+
+    /// <summary>
+    /// Spatial-hash fallback pair finder when particles span more than <see cref="MAX_DENSE_CELLS"/> cells.
+    /// </summary>
+    [SkipLocalsInit]
+    private void FindPairsHash(int live, float range)
+    {
+        float rangeSquared = range * range;
+        float scale = 1.0f / range;
+        int count = 0;
+        var pairs = _pairs;
+        int pairCapacity = pairs.Length;
+
+        ref int cellStartBase = ref MemoryMarshal.GetArrayDataReference(_cellStart);
+        ref int cellParticlesBase = ref MemoryMarshal.GetArrayDataReference(_cellParticles);
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+        ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
 
         Span<int> cells = stackalloc int[9];
 
         for (int i = 0; i < live; i++)
         {
-            Vector2 position = particles[i].Position;
+            Vector2 position = Unsafe.Add(ref posBase, i);
             int cellX = (int)MathF.Floor(position.X * scale);
             int cellY = (int)MathF.Floor(position.Y * scale);
 
@@ -428,27 +655,26 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
                     if (seen) continue;
                     cells[cellCount++] = cell;
 
-                    int end = cellStart[cell + 1];
-                    for (int entry = cellStart[cell]; entry < end; entry++)
+                    int end = Unsafe.Add(ref cellStartBase, cell + 1);
+                    for (int entry = Unsafe.Add(ref cellStartBase, cell); entry < end; entry++)
                     {
                         // Every pair is only listed from the side of the one that comes first
-                        int j = cellParticles[entry];
+                        int j = Unsafe.Add(ref cellParticlesBase, entry);
                         if (j <= i) continue;
 
-                        ref ParticleState2D other = ref particles[j];
-                        float awayX = other.Position.X - position.X, awayY = other.Position.Y - position.Y;
+                        Vector2 other = Unsafe.Add(ref posBase, j);
+                        float awayX = other.X - position.X, awayY = other.Y - position.Y;
                         if (awayX * awayX + awayY * awayY >= rangeSquared) continue;
 
-                        if (count + 2 > pairs.Length)
+                        if (count == pairCapacity)
                         {
-                            Array.Resize(ref _pairs, Math.Max(_pairs.Length * 2, 1024));
-                            Array.Resize(ref _pairGaps, _pairs.Length / 2);
-                            Array.Resize(ref _pairNormals, _pairs.Length);
-                            pairs = _pairs;
+                            pairs = GrowPairs(ref pairCapacity);
+                            pairBase = ref MemoryMarshal.GetArrayDataReference(pairs);
                         }
 
-                        pairs[count++] = i;
-                        pairs[count++] = j;
+                        ref FluidPair dst = ref Unsafe.Add(ref pairBase, count++);
+                        dst.A = i;
+                        dst.B = j;
                     }
                 }
             }
@@ -457,10 +683,20 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
         _pairCount = count;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private FluidPair[] GrowPairs(ref int capacity)
+    {
+        int newCapacity = Math.Max(_pairs.Length * 2, 1024);
+        Array.Resize(ref _pairs, newCapacity);
+        capacity = newCapacity;
+        return _pairs;
+    }
+
     /// <summary>
     /// Helper method to give two particles in the very same spot (let go by the same emitter) a way to go apart,
     /// whichever, as long as it is the same one every time.
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void GetAnyDirection(int a, int b, out float x, out float y)
     {
         (y, x) = MathF.SinCos(a * 12.9898f + b * 78.233f);
@@ -474,23 +710,23 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
     /// here too, the way they were apart before moving, as after it one may sit right on top of the other.
     /// </summary>
     /// <param name="spread">How far the ones that are merely close nudge each other away, see <see cref="Spread"/>.</param>
+    [SkipLocalsInit]
     private void Settle(int live, float diameter, float range, float spread, float mapReach, PhysicsStaticGrid grid)
     {
-        var particles = _particles;
-        var previous = _previous;
-        var pairs = _pairs;
-        var gaps = _pairGaps;
-        var normals = _pairNormals;
         float most = diameter * SETTLE_RATE;
         float inverseRange = 1.0f / range;
+        int pairCount = _pairCount;
 
-        // The maths of the loops over the pairs is written out per axis. They are by far the hottest ones there are,
-        // and in a build without optimisations every operator of a vector is a call
-        for (int pair = 0, count = _pairCount; pair < count; pair += 2)
+        ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(_pairs);
+        ref Vector2 prevBase = ref MemoryMarshal.GetArrayDataReference(_prev);
+
+        // Mutate only _prev[] in the pair loop; the accumulated delta (_prev - _origins) is applied to _pos[] once below
+        for (int i = 0; i < pairCount; i++)
         {
-            int a = pairs[pair], b = pairs[pair + 1];
-            ref Vector2 first = ref previous[a];
-            ref Vector2 second = ref previous[b];
+            ref FluidPair pair = ref Unsafe.Add(ref pairBase, i);
+            int a = pair.A, b = pair.B;
+            ref Vector2 first = ref Unsafe.Add(ref prevBase, a);
+            ref Vector2 second = ref Unsafe.Add(ref prevBase, b);
 
             float x = second.X - first.X, y = second.Y - first.Y;
             float distance = MathF.Sqrt(x * x + y * y);
@@ -502,8 +738,9 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
             if (distance > 0.0001f)
             {
-                x /= distance;
-                y /= distance;
+                float invDist = 1.0f / distance;
+                x *= invDist;
+                y *= invDist;
             }
             else
             {
@@ -511,9 +748,9 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
             }
 
             // However far they are apart after this is as far as the passes have to keep them
-            gaps[pair >> 1] = MathF.Min(distance + amount * 2.0f, diameter);
-            normals[pair] = x;
-            normals[pair + 1] = y;
+            pair.Gap = MathF.Min(distance + amount * 2.0f, diameter);
+            pair.Nx = x;
+            pair.Ny = y;
             if (amount <= 0.0f) continue;
 
             x *= amount;
@@ -521,65 +758,116 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
 
             first.X -= x; first.Y -= y;
             second.X += x; second.Y += y;
-
-            ref ParticleState2D firstParticle = ref particles[a];
-            ref ParticleState2D secondParticle = ref particles[b];
-            firstParticle.Position.X -= x; firstParticle.Position.Y -= y;
-            secondParticle.Position.X += x; secondParticle.Position.Y += y;
         }
 
+        // Apply accumulated settle shift (_prev[i] - _origins[i]) to _pos[i] in one vectorized pass
+        ApplySettleShift(_pos, _prev, _origins, live);
+
         // Which must not end with anyone inside of the map or pushed across a thin wall
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+        ref Vector2 originsBase = ref MemoryMarshal.GetArrayDataReference(_origins);
+        ref bool nearMapBase = ref MemoryMarshal.GetArrayDataReference(_nearMap);
+
         for (int i = 0; i < live; i++)
         {
-            if (!_nearMap[i])
+            ref bool nearMap = ref Unsafe.Add(ref nearMapBase, i);
+            ref Vector2 prev = ref Unsafe.Add(ref prevBase, i);
+            ref Vector2 pos = ref Unsafe.Add(ref posBase, i);
+
+            if (!nearMap)
             {
-                _nearMap[i] = IsNearMap(previous[i], mapReach, grid) || IsNearMap(particles[i].Position, mapReach, grid);
-                if (!_nearMap[i]) continue;
+                nearMap = grid.IsNearAnyShape(prev, mapReach) || grid.IsNearAnyShape(pos, mapReach);
+                if (!nearMap) continue;
             }
 
-            Vector2 before = previous[i], contact = default;
-            SeparateFromMap(ref previous[i], _origins[i], ref contact, grid);
+            Vector2 origin = Unsafe.Add(ref originsBase, i);
+            Vector2 before = prev, contact = default;
+            SeparateFromMap(ref prev, origin, ref contact, grid);
 
             // Getting out of one tile can end inside of the one next to it (in a corner) or across a thin wall.
             // The map always wins, rather than that, the particle isn't put anywhere at all this time
-            if ((grid.Contains(previous[i]) || grid.IntersectsSegment(_origins[i], previous[i])) && !grid.Contains(_origins[i]))
+            if ((grid.Contains(prev) || grid.IntersectsSegment(origin, prev)) && !grid.Contains(origin))
             {
-                previous[i] = _origins[i];
+                prev = origin;
             }
 
-            particles[i].Position += previous[i] - before;
+            pos += prev - before;
+        }
+    }
+
+    /// <summary>
+    /// Vectorized linear pass: pos[i] += prev[i] - origins[i] for i in [0..count).
+    /// </summary>
+    [SkipLocalsInit]
+    private static void ApplySettleShift(Vector2[] pos, Vector2[] prev, Vector2[] origins, int count)
+    {
+        ref float posF = ref Unsafe.As<Vector2, float>(ref MemoryMarshal.GetArrayDataReference(pos));
+        ref float prevF = ref Unsafe.As<Vector2, float>(ref MemoryMarshal.GetArrayDataReference(prev));
+        ref float origF = ref Unsafe.As<Vector2, float>(ref MemoryMarshal.GetArrayDataReference(origins));
+
+        int totalFloats = count * 2;
+        int i = 0;
+
+        if (Vector256.IsHardwareAccelerated && totalFloats >= Vector256<float>.Count)
+        {
+            int limit = totalFloats - Vector256<float>.Count;
+            for (; i <= limit; i += Vector256<float>.Count)
+            {
+                Vector256<float> p = Vector256.LoadUnsafe(ref posF, (nuint)i);
+                Vector256<float> pr = Vector256.LoadUnsafe(ref prevF, (nuint)i);
+                Vector256<float> o = Vector256.LoadUnsafe(ref origF, (nuint)i);
+                Vector256.StoreUnsafe(p + (pr - o), ref posF, (nuint)i);
+            }
+        }
+        else if (Vector128.IsHardwareAccelerated && totalFloats >= Vector128<float>.Count)
+        {
+            int limit = totalFloats - Vector128<float>.Count;
+            for (; i <= limit; i += Vector128<float>.Count)
+            {
+                Vector128<float> p = Vector128.LoadUnsafe(ref posF, (nuint)i);
+                Vector128<float> pr = Vector128.LoadUnsafe(ref prevF, (nuint)i);
+                Vector128<float> o = Vector128.LoadUnsafe(ref origF, (nuint)i);
+                Vector128.StoreUnsafe(p + (pr - o), ref posF, (nuint)i);
+            }
+        }
+
+        for (; i < totalFloats; i++)
+        {
+            Unsafe.Add(ref posF, i) += Unsafe.Add(ref prevF, i) - Unsafe.Add(ref origF, i);
         }
     }
 
     /// <summary>
     /// Helper method to push every two particles that are closer than they are to be kept apart, each going half of the way.
     /// </summary>
+    [SkipLocalsInit]
     private void SeparatePairs(float diameter)
     {
-        var particles = _particles;
-        var pairs = _pairs;
-        var gaps = _pairGaps;
-        var normals = _pairNormals;
         float diameterSquared = diameter * diameter;
+        int pairCount = _pairCount;
 
-        for (int pair = 0, count = _pairCount; pair < count; pair += 2)
+        ref FluidPair pairBase = ref MemoryMarshal.GetArrayDataReference(_pairs);
+        ref Vector2 posBase = ref MemoryMarshal.GetArrayDataReference(_pos);
+
+        for (int i = 0; i < pairCount; i++)
         {
-            ref ParticleState2D first = ref particles[pairs[pair]];
-            ref ParticleState2D second = ref particles[pairs[pair + 1]];
+            ref readonly FluidPair pair = ref Unsafe.Add(ref pairBase, i);
+            ref Vector2 first = ref Unsafe.Add(ref posBase, pair.A);
+            ref Vector2 second = ref Unsafe.Add(ref posBase, pair.B);
 
-            float x = second.Position.X - first.Position.X, y = second.Position.Y - first.Position.Y;
+            float x = second.X - first.X, y = second.Y - first.Y;
             if (x * x + y * y >= diameterSquared) continue;
 
             // How far apart they are is measured along the way they were apart to begin with, one that has ended up
             // on top of (or just past) the other is then still put back on the side it came from
-            float normalX = normals[pair], normalY = normals[pair + 1];
-            float amount = (gaps[pair >> 1] - (x * normalX + y * normalY)) * 0.5f;
+            float normalX = pair.Nx, normalY = pair.Ny;
+            float amount = (pair.Gap - (x * normalX + y * normalY)) * 0.5f;
             if (amount <= 0.0f) continue;
 
             x = normalX * amount;
             y = normalY * amount;
-            first.Position.X -= x; first.Position.Y -= y;
-            second.Position.X += x; second.Position.Y += y;
+            first.X -= x; first.Y -= y;
+            second.X += x; second.Y += y;
         }
     }
 
@@ -608,29 +896,6 @@ public sealed class PhysicsFluidParticleGroup : PhysicsParticleGroup
                 shove = normal * push;
             }
         }
-    }
-
-    /// <summary>
-    /// Helper method to tell if anything of the map is within reach of a position, going by the boxes around its shapes.
-    /// </summary>
-    private static bool IsNearMap(Vector2 position, float reach, PhysicsStaticGrid grid)
-    {
-        Vector2 min = position - new Vector2(reach), max = position + new Vector2(reach);
-        if (!grid.TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
-
-        for (int y = y0; y <= y1; y++)
-        {
-            for (int x = x0; x <= x1; x++)
-            {
-                foreach (int index in grid.GetShapes(x, y))
-                {
-                    ref readonly PhysicsShape shape = ref grid[index];
-                    if (max.X >= shape.Min.X && min.X <= shape.Max.X && max.Y >= shape.Min.Y && min.Y <= shape.Max.Y) return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     /// <param name="contact">Set to the way the map pushed, if it did.</param>

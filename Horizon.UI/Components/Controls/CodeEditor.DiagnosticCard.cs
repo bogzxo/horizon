@@ -21,9 +21,17 @@ public partial class CodeEditor
     // The most places a diagnostic points at listed under it, and the most diagnostics at one place said
     private const int CARD_RELATED = 3, CARD_MOST = 4;
 
-    // The card last made and what it was made of, so the pointer resting on one place makes it once
-    private int cardKey;
-    private string card = string.Empty;
+    // Small fixed 8-slot inline LRU cache of formatted diagnostic cards so sweeping across diagnostics allocates 0 B.
+    private const int CARD_CACHE_SLOTS = 8;
+    private struct CardCacheEntry
+    {
+        public int Key;
+        public string? Card;
+        public uint Stamp;
+    }
+
+    private readonly CardCacheEntry[] cardCache = new CardCacheEntry[CARD_CACHE_SLOTS];
+    private uint cardCacheClock;
     private readonly StringBuilder cardText = new();
 
     /// <summary>Whether anything wrong is at a place, the parser's or the program's.</summary>
@@ -62,15 +70,21 @@ public partial class CodeEditor
             if (Covers(moreErrors[i], at))
                 hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(moreErrors[i].Message));
         }
-        for (int i = 0; i < diagnostics.Count; i++)
+        for (int i = FirstDiagnosticAtOrAfter(at.Line); i < diagnosticsSorted.Length && diagnosticsSorted[i].Line == at.Line; i++)
         {
-            if (Covers(diagnostics[i], at))
+            if (Covers(diagnosticsSorted[i], at))
                 hash.Add(i);
         }
 
         int key = hash.ToHashCode();
-        if (key == cardKey && card.Length > 0)
-            return card;
+        for (int i = 0; i < CARD_CACHE_SLOTS; i++)
+        {
+            if (cardCache[i].Key == key && cardCache[i].Card is { Length: > 0 } cached)
+            {
+                cardCache[i].Stamp = ++cardCacheClock;
+                return cached;
+            }
+        }
 
         cardText.Clear();
         int told = 0;
@@ -81,17 +95,34 @@ public partial class CodeEditor
             if (Covers(moreErrors[i], at))
                 AddToCard(moreErrors[i], ref told);
         }
-        for (int i = 0; i < diagnostics.Count; i++)
+        for (int i = FirstDiagnosticAtOrAfter(at.Line); i < diagnosticsSorted.Length && diagnosticsSorted[i].Line == at.Line; i++)
         {
-            if (Covers(diagnostics[i], at))
-                AddToCard(diagnostics[i], ref told);
+            if (Covers(diagnosticsSorted[i], at))
+                AddToCard(diagnosticsSorted[i], ref told);
         }
 
         if (said.Length > 0)
             cardText.Append("\n\n---\n\n").Append(said);
 
-        cardKey = key;
-        return card = cardText.ToString();
+        string made = cardText.ToString();
+        int victim = 0;
+        uint oldest = uint.MaxValue;
+        for (int i = 0; i < CARD_CACHE_SLOTS; i++)
+        {
+            if (cardCache[i].Card is null)
+            {
+                victim = i;
+                break;
+            }
+            if (cardCache[i].Stamp < oldest)
+            {
+                oldest = cardCache[i].Stamp;
+                victim = i;
+            }
+        }
+
+        cardCache[victim] = new CardCacheEntry { Key = key, Card = made, Stamp = ++cardCacheClock };
+        return made;
     }
 
     // One diagnostic's heading, message and places on the card, the first few of them

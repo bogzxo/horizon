@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 
 using Horizon.Core.Components;
@@ -25,6 +26,7 @@ namespace Horizon.Core;
 /// Children and components that are switched off (<see cref="Enabled"/>) are skipped, with everything in them.
 /// </para>
 /// </summary>
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]
 public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantiable
 {
     private volatile bool _enabled = true;
@@ -54,9 +56,39 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     // The lists are only touched under the lock. The arrays are copies that are swapped whole, so a turn can walk them without one
     private readonly List<IGameComponent> _components = [];
     private IGameComponent[] _componentsCache = [];
+    private IGameComponent[] _stateComponents = [];
+    private IGameComponent[] _physicsComponents = [];
+    private ISnapshotSource[] _captureComponents = [];
 
     private readonly List<Entity> _children = [];
     private Entity[] _childrenCache = [];
+
+    // Per-type cache of whether a concrete Entity subclass overrides UpdatePhysics (computed once per type)
+    private static readonly ConcurrentDictionary<Type, bool> _overridesPhysicsCache = new();
+    private readonly bool _ownPhysics;
+    private volatile bool _hasSubtreePhysics;
+    private volatile bool _hasSubtreeCapture;
+
+    internal bool HasSubtreePhysics => _hasSubtreePhysics;
+    internal bool HasSubtreeCapture => _hasSubtreeCapture;
+    internal int StateComponentCount => _stateComponents.Length;
+    internal int PhysicsComponentCount => _physicsComponents.Length;
+    internal int CaptureComponentCount => _captureComponents.Length;
+
+    protected Entity()
+    {
+        Type type = GetType();
+        if (type != typeof(Entity))
+            _ownPhysics = _overridesPhysicsCache.GetOrAdd(type, CheckOverridesPhysics);
+        _hasSubtreePhysics = _ownPhysics;
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2070", Justification = "Entity is annotated with DynamicallyAccessedMemberTypes.PublicMethods.")]
+    private static bool CheckOverridesPhysics(Type type)
+    {
+        var method = type.GetMethod(nameof(UpdatePhysics), System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        return method is not null && method.DeclaringType != typeof(Entity);
+    }
 
     // What was added and is still waiting to be set up, in the order it came. And how many of those there are,
     // which is nearly always none, so a turn only has to look anything up while something is waiting
@@ -191,38 +223,54 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// </summary>
     public virtual void Capture()
     {
+        IGameComponent[] components = _componentsCache;
+        Entity[] children = _childrenCache;
+
+        if (components.Length == 0 && children.Length == 0)
+        {
+            _node.Publish(new Node(children, components, 0));
+            return;
+        }
+
         bool waiting = Volatile.Read(ref _waiting) > 0;
 
-        IGameComponent[] components = _componentsCache;
         ulong on = 0;
-        for (int i = 0; i < components.Length; i++)
+        if (components.Length > 0)
         {
-            IGameComponent component = components[i];
-            if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
-
-            if (i < 64) on |= 1UL << i;
-            if (component is not ISnapshotSource source) continue;
-
-            // Measured while anybody is counting what things allocate, see AllocationLog. A UI paints here
-            if (AllocationLog.Tracking)
+            for (int i = 0; i < components.Length; i++)
             {
-                long before = AllocationLog.Begin(out long nested);
-                try
+                IGameComponent component = components[i];
+                if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+                if (i < 64) on |= 1UL << i;
+            }
+
+            ISnapshotSource[] captureComponents = _captureComponents;
+            for (int i = 0; i < captureComponents.Length; i++)
+            {
+                ISnapshotSource source = captureComponents[i];
+                var component = (IGameComponent)source;
+                if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
+
+                // Measured while anybody is counting what things allocate, see AllocationLog. A UI paints here
+                if (AllocationLog.Tracking)
+                {
+                    long before = AllocationLog.Begin(out long nested);
+                    try
+                    {
+                        source.Capture();
+                    }
+                    finally
+                    {
+                        AllocationLog.End(component, before, nested);
+                    }
+                }
+                else
                 {
                     source.Capture();
                 }
-                finally
-                {
-                    AllocationLog.End(component, before, nested);
-                }
-            }
-            else
-            {
-                source.Capture();
             }
         }
 
-        Entity[] children = _childrenCache;
         foreach (Entity child in children)
         {
             if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
@@ -299,6 +347,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
     public virtual void UpdatePhysics(float dt)
     {
+        if (!_hasSubtreePhysics) return;
+
         bool waiting = Volatile.Read(ref _waiting) > 0;
 
         // With somebody counting what things allocate, the same walk with every stop measured
@@ -308,7 +358,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             return;
         }
 
-        foreach (IGameComponent component in _componentsCache)
+        foreach (IGameComponent component in _physicsComponents)
         {
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
             component.UpdatePhysics(dt);
@@ -316,7 +366,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         foreach (Entity child in _childrenCache)
         {
-            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            if (!child._hasSubtreePhysics || !child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
             child.UpdatePhysics(dt);
         }
     }
@@ -329,7 +379,8 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
     /// </summary>
     private void UpdateMeasured(float dt, bool physics, bool waiting)
     {
-        foreach (IGameComponent component in _componentsCache)
+        IGameComponent[] components = physics ? _physicsComponents : _stateComponents;
+        foreach (IGameComponent component in components)
         {
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
 
@@ -347,7 +398,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
 
         foreach (Entity child in _childrenCache)
         {
-            if (!child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
+            if ((physics && !child._hasSubtreePhysics) || !child.Enabled || (waiting && _uninitializedSet.ContainsKey(child))) continue;
 
             long before = AllocationLog.Begin(out long nested);
             try
@@ -374,7 +425,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             return;
         }
 
-        foreach (IGameComponent component in _componentsCache)
+        foreach (IGameComponent component in _stateComponents)
         {
             if (!component.Enabled || (waiting && _uninitializedSet.ContainsKey(component))) continue;
             component.UpdateState(dt);
@@ -401,6 +452,7 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         }
 
         if (ReferenceEquals(entity.Parent, this)) entity.Parent = null;
+        UpdateSubtreeCapabilities();
         return true;
     }
 
@@ -414,9 +466,10 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         {
             if (!_components.Remove(component)) return false;
 
-            _componentsCache = [.. _components];
+            RebuildComponentCachesLocked();
         }
 
+        UpdateSubtreeCapabilities();
         return true;
     }
 
@@ -538,9 +591,10 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             if (string.IsNullOrEmpty(component.Name)) component.Name = component.GetType().Name;
 
             _components.Add(component);
-            _componentsCache = [.. _components];
+            RebuildComponentCachesLocked();
         }
 
+        UpdateSubtreeCapabilities();
         return component;
     }
 
@@ -590,7 +644,94 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
             _childrenCache = [.. _children];
         }
 
+        UpdateSubtreeCapabilities();
         return entity;
+    }
+
+    private static ComponentCapabilities GetCapabilities(IGameComponent component) =>
+        component is GameComponent gc
+            ? gc.Capabilities
+            : ComponentCapabilities.UpdateState | ComponentCapabilities.UpdatePhysics |
+              (component is ISnapshotSource ? ComponentCapabilities.Capture : ComponentCapabilities.None);
+
+    private void RebuildComponentCachesLocked()
+    {
+        int count = _components.Count;
+        if (count == 0)
+        {
+            _componentsCache = [];
+            _stateComponents = [];
+            _physicsComponents = [];
+            _captureComponents = [];
+            return;
+        }
+
+        var all = new IGameComponent[count];
+        int stateCount = 0, physicsCount = 0, captureCount = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            IGameComponent c = _components[i];
+            all[i] = c;
+            ComponentCapabilities caps = GetCapabilities(c);
+            if ((caps & ComponentCapabilities.UpdateState) != 0) stateCount++;
+            if ((caps & ComponentCapabilities.UpdatePhysics) != 0) physicsCount++;
+            if ((caps & ComponentCapabilities.Capture) != 0 && c is ISnapshotSource) captureCount++;
+        }
+
+        IGameComponent[] stateArr = stateCount == 0 ? [] : stateCount == count ? all : new IGameComponent[stateCount];
+        IGameComponent[] physicsArr = physicsCount == 0 ? [] : physicsCount == count ? all : new IGameComponent[physicsCount];
+        ISnapshotSource[] captureArr = captureCount == 0 ? [] : new ISnapshotSource[captureCount];
+
+        int si = 0, pi = 0, ci = 0;
+        for (int i = 0; i < count; i++)
+        {
+            IGameComponent c = all[i];
+            ComponentCapabilities caps = GetCapabilities(c);
+            if ((caps & ComponentCapabilities.UpdateState) != 0 && !ReferenceEquals(stateArr, all))
+                stateArr[si++] = c;
+            if ((caps & ComponentCapabilities.UpdatePhysics) != 0 && !ReferenceEquals(physicsArr, all))
+                physicsArr[pi++] = c;
+            if ((caps & ComponentCapabilities.Capture) != 0 && c is ISnapshotSource source)
+                captureArr[ci++] = source;
+        }
+
+        _componentsCache = all;
+        _stateComponents = stateArr;
+        _physicsComponents = physicsArr;
+        _captureComponents = captureArr;
+    }
+
+    private void UpdateSubtreeCapabilities()
+    {
+        Entity? current = this;
+        while (current is not null)
+        {
+            bool physics = current._ownPhysics || current._physicsComponents.Length > 0;
+            bool capture = current._captureComponents.Length > 0;
+
+            if (!physics || !capture)
+            {
+                Entity[] children = current._childrenCache;
+                for (int i = 0; i < children.Length; i++)
+                {
+                    Entity child = children[i];
+                    if (child._hasSubtreePhysics) physics = true;
+                    if (child._hasSubtreeCapture) capture = true;
+                    if (physics && capture) break;
+                }
+            }
+
+            bool prevPhysics = current._hasSubtreePhysics;
+            bool prevCapture = current._hasSubtreeCapture;
+            current._hasSubtreePhysics = physics;
+            current._hasSubtreeCapture = capture;
+
+            if (physics == prevPhysics && capture == prevCapture)
+                break;
+
+            current = current.Parent;
+        }
     }
 
     public T AddEntity<T>() where T : Entity, new() =>
@@ -623,12 +764,14 @@ public abstract class Entity : IRenderable, IUpdateable, IDisposable, IInstantia
         {
             components = _componentsCache;
             _components.Clear();
-            _componentsCache = [];
+            RebuildComponentCachesLocked();
 
             children = _childrenCache;
             _children.Clear();
             _childrenCache = [];
         }
+
+        UpdateSubtreeCapabilities();
 
         foreach (IGameComponent component in components)
         {

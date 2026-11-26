@@ -713,6 +713,10 @@ public sealed partial class TerminalHost : IDisposable
             TickPlugins(dt);
     }
 
+    // Cached NumberValue for dt so steady fixed-timestep ticks allocate 0 B in TickPlugins
+    private float lastTickDt = float.NaN;
+    private NumberValue? cachedTickDt;
+
     // The lambdas that take a plugin's functions away are in a method of their own, a method that runs every tick and
     // has a lambda using one of its locals makes an object for it every tick whether the lambda is reached or not
     private void TickPlugins(float dt)
@@ -721,7 +725,18 @@ public sealed partial class TerminalHost : IDisposable
             tickingNow = new (TerminalPlugin, IRuntimeValue)[ticking.Count];
         ticking.CopyTo(tickingNow);
 
-        IRuntimeValue elapsed = new NumberValue(dt);
+        NumberValue elapsed;
+        if (cachedTickDt is { } cached && dt == lastTickDt)
+        {
+            elapsed = cached;
+        }
+        else
+        {
+            elapsed = new NumberValue(dt);
+            cachedTickDt = elapsed;
+            lastTickDt = dt;
+        }
+
         for (int i = 0; i < tickingNow.Length; i++)
         {
             var (plugin, function) = tickingNow[i];

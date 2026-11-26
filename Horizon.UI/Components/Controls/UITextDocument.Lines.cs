@@ -22,6 +22,7 @@ public sealed partial class UITextDocument
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
         int count = last - first + 1;
+        RecordRange(last + 1, 0, count);
         lines.InsertRange(last + 1, lines.GetRange(first, count));
         NoteLineMovement(new(last, lines[last].Length), count, false, new(last + count, lines[last].Length), false);
 

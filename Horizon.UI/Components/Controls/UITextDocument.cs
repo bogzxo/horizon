@@ -47,11 +47,12 @@ public readonly record struct UITextSelection(UITextPosition Caret, UITextPositi
 /// </summary>
 public sealed partial class UITextDocument
 {
-    // What one step of the undo history comes back to. The lines and not the text joined up, a line is a string nobody
-    // changes, so a step shares every line it has with the text and the steps either side of it and costs a reference a
-    // line. The joined text was 120 KB a step in a 2000 line file, three hundred of them kept
-    private readonly record struct Snapshot(string[] Lines, UITextPosition Caret, UITextPosition Anchor, List<LineMovement> Movements, UITextSelection[]? ExtraCarets = null);
+    // Compact line-range delta for one mutation within an undo/redo step: replacing [StartLine .. StartLine + NewCount)
+    // back with OldLines restores the prior state in O(edited lines) without copying the full document array onto the LOH.
+    private readonly record struct LineDelta(int StartLine, int NewCount, string[] OldLines);
+    private readonly record struct Snapshot(List<LineDelta> Deltas, UITextPosition Caret, UITextPosition Anchor, List<LineMovement> Movements, UITextSelection[]? ExtraCarets = null);
     private sealed record LineMovement(UITextPosition At, int By, bool MoveAt, UITextPosition ReverseAt, bool ReverseMoveAt, int Last = -1);
+    private bool suppressUndoRecording;
 
     private static readonly SearchValues<char> LineBreaks = SearchValues.Create("\r\n");
 
@@ -203,7 +204,10 @@ public sealed partial class UITextDocument
     public void Replace(string text)
     {
         Record(EditKind.Other);
+        string[] oldLines = !suppressUndoRecording && undo.Count > 0 ? [.. lines] : [];
         SetLines(text ?? string.Empty);
+        if (!suppressUndoRecording && undo.Count > 0)
+            undo[^1].Deltas.Add(new LineDelta(0, lines.Count, oldLines));
         Caret = Anchor = Clamp(Caret);
         Touched();
     }
@@ -648,7 +652,10 @@ public sealed partial class UITextDocument
 
             MoveTo(InsertRaw(Caret, "\n" + indent + (opens ? Indent : string.Empty)));
             if (trailingSpaces > 0)
+            {
+                RecordSingleLine(Caret.Line);
                 lines[Caret.Line] = lines[Caret.Line].Remove(Caret.Column, trailingSpaces);
+            }
         }
 
         lastKind = EditKind.Other;
@@ -782,6 +789,7 @@ public sealed partial class UITextDocument
 
         if (column == line.Length) column--;
         Record(EditKind.Other);
+        RecordSingleLine(Caret.Line);
         lines[Caret.Line] = line[..(column - 1)] + line[column] + line[column - 1] + line[(column + 1)..];
         MoveTo(Caret with { Column = column + 1 });
         Touched();
@@ -813,6 +821,7 @@ public sealed partial class UITextDocument
         {
             Record(EditKind.Other);
             var (first, last) = SelectedLines();
+            RecordRange(first, last - first + 1, last - first + 1);
             for (int line = first; line <= last; line++)
             {
                 if (lines[line].Length > 0)
@@ -842,6 +851,7 @@ public sealed partial class UITextDocument
 
         Record(EditKind.Other);
         var (first, last) = SelectedLines();
+        RecordRange(first, last - first + 1, last - first + 1);
         int caretTaken = 0, anchorTaken = 0;
 
         for (int line = first; line <= last; line++)
@@ -884,6 +894,7 @@ public sealed partial class UITextDocument
         }
         else
         {
+            RecordRange(Caret.Line + 1, 0, 1);
             lines.Insert(Caret.Line + 1, lines[Caret.Line]);
             NoteLineMovement(new(Caret.Line, lines[Caret.Line].Length), 1, false,
                 new(Caret.Line + 1, lines[Caret.Line].Length), false);
@@ -910,12 +921,14 @@ public sealed partial class UITextDocument
 
         if (direction < 0)
         {
+            RecordRange(first - 1, last - first + 2, last - first + 2);
             string above = lines[first - 1];
             lines.RemoveAt(first - 1);
             lines.Insert(last, above);
         }
         else
         {
+            RecordRange(first, last - first + 2, last - first + 2);
             string below = lines[last + 1];
             lines.RemoveAt(last + 1);
             lines.Insert(first, below);
@@ -1084,6 +1097,7 @@ public sealed partial class UITextDocument
             }
 
             built.Append(text, from, text.Length - from);
+            RecordSingleLine(line);
             lines[line] = built.ToString();
         }
 
@@ -1240,8 +1254,10 @@ public sealed partial class UITextDocument
             return;
 
         Snapshot step = undo[^1];
-        redo.Add(Current() with { Movements = step.Movements });
-        Restore(step, reverse: true);
+        var inverseDeltas = new List<LineDelta>(step.Deltas.Count);
+        Snapshot redoStep = new(inverseDeltas, Caret, Anchor, step.Movements, extras.Count > 0 ? [.. extras] : null);
+        Restore(step, inverseDeltas, reverse: true);
+        redo.Add(redoStep);
         undo.RemoveAt(undo.Count - 1);
     }
 
@@ -1256,18 +1272,85 @@ public sealed partial class UITextDocument
             return;
 
         Snapshot step = redo[^1];
-        undo.Add(Current() with { Movements = step.Movements });
-        Restore(step, reverse: false);
+        var inverseDeltas = new List<LineDelta>(step.Deltas.Count);
+        Snapshot undoStep = new(inverseDeltas, Caret, Anchor, step.Movements, extras.Count > 0 ? [.. extras] : null);
+        Restore(step, inverseDeltas, reverse: false);
+        undo.Add(undoStep);
         redo.RemoveAt(redo.Count - 1);
     }
 
-    private Snapshot Current() => new([.. lines], Caret, Anchor, [], extras.Count > 0 ? [.. extras] : null);
+    private void RecordSingleLine(int line)
+    {
+        if (suppressUndoRecording || undo.Count == 0)
+            return;
 
-    private void Restore(Snapshot snapshot, bool reverse)
+        List<LineDelta> deltas = undo[^1].Deltas;
+        // Coalesce repeated edits on the same single line without allocating another string[]
+        if (deltas.Count > 0)
+        {
+            LineDelta last = deltas[^1];
+            if (last.StartLine == line && last.NewCount == 1 && last.OldLines.Length == 1)
+                return;
+        }
+
+        deltas.Add(new LineDelta(line, 1, [lines[line]]));
+    }
+
+    private void RecordRange(int startLine, int oldCount, int newCount)
+    {
+        if (suppressUndoRecording || undo.Count == 0)
+            return;
+
+        string[] oldLines = oldCount == 0 ? [] : new string[oldCount];
+        for (int i = 0; i < oldCount; i++)
+            oldLines[i] = lines[startLine + i];
+        undo[^1].Deltas.Add(new LineDelta(startLine, newCount, oldLines));
+    }
+
+    private static void ApplyDeltasReverse(List<string> target, List<LineDelta> deltas, List<LineDelta>? inverse)
+    {
+        for (int i = deltas.Count - 1; i >= 0; i--)
+        {
+            LineDelta delta = deltas[i];
+            int start = delta.StartLine;
+            int newCount = delta.NewCount;
+            string[] oldLines = delta.OldLines;
+
+            if (inverse is not null)
+            {
+                string[] current = newCount == 0 ? [] : new string[newCount];
+                for (int k = 0; k < newCount; k++)
+                    current[k] = target[start + k];
+                inverse.Add(new LineDelta(start, oldLines.Length, current));
+            }
+
+            if (newCount == oldLines.Length)
+            {
+                for (int k = 0; k < oldLines.Length; k++)
+                    target[start + k] = oldLines[k];
+            }
+            else if (newCount == 1 && oldLines.Length == 0)
+            {
+                target.RemoveAt(start);
+            }
+            else if (newCount == 0 && oldLines.Length == 1)
+            {
+                target.Insert(start, oldLines[0]);
+            }
+            else
+            {
+                if (newCount > 0)
+                    target.RemoveRange(start, newCount);
+                if (oldLines.Length > 0)
+                    target.InsertRange(start, oldLines);
+            }
+        }
+    }
+
+    private void Restore(Snapshot snapshot, List<LineDelta> inverseDeltas, bool reverse)
     {
         joined = null;
-        lines.Clear();
-        lines.AddRange(snapshot.Lines);
+        ApplyDeltasReverse(lines, snapshot.Deltas, inverseDeltas);
         Caret = Clamp(snapshot.Caret);
         Anchor = Clamp(snapshot.Anchor);
         extras.Clear();
@@ -1309,7 +1392,7 @@ public sealed partial class UITextDocument
     private void NoteLineMovement(UITextPosition at, int by, bool moveAt, UITextPosition reverseAt, bool reverseMoveAt)
     {
         var movement = new LineMovement(at, by, moveAt, reverseAt, reverseMoveAt);
-        if (undo.Count > 0) undo[^1].Movements.Add(movement);
+        if (!suppressUndoRecording && undo.Count > 0) undo[^1].Movements.Add(movement);
         PublishHistoryMovement(movement, reverse: false);
     }
 
@@ -1332,14 +1415,11 @@ public sealed partial class UITextDocument
             return;
         }
 
-        // Whatever comes next changes the lines
-        Snapshot before = kind != EditKind.Other && kind == lastKind && undo.Count > 0 ? default : Current();
         joined = null;
-
-        if (before.Lines is null)
+        if (kind != EditKind.Other && kind == lastKind && undo.Count > 0)
             return;
 
-        undo.Add(before);
+        undo.Add(new Snapshot([], Caret, Anchor, [], extras.Count > 0 ? [.. extras] : null));
         if (undo.Count > MAX_UNDO)
             undo.RemoveAt(0);
 
@@ -1352,6 +1432,7 @@ public sealed partial class UITextDocument
     private UITextPosition InsertCharRaw(UITextPosition at, char character)
     {
         at = Clamp(at);
+        RecordSingleLine(at.Line);
         string line = lines[at.Line];
         lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), new ReadOnlySpan<char>(in character), line.AsSpan(at.Column));
         return at with { Column = at.Column + 1 };
@@ -1366,11 +1447,13 @@ public sealed partial class UITextDocument
         int newline = textSpan.IndexOf('\n');
         if (newline < 0)
         {
+            RecordSingleLine(at.Line);
             lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), textSpan, line.AsSpan(at.Column));
             return at with { Column = at.Column + text.Length };
         }
 
         int breakCount = textSpan.Count('\n');
+        RecordRange(at.Line, 1, 1 + breakCount);
         bool beforeIsWhiteSpace = line.AsSpan(0, at.Column).IsWhiteSpace();
         ReadOnlySpan<char> afterSpan = line.AsSpan(at.Column);
         lines[at.Line] = string.Concat(line.AsSpan(0, at.Column), textSpan[..newline]);
@@ -1401,10 +1484,12 @@ public sealed partial class UITextDocument
 
         if (from.Line == to.Line)
         {
+            RecordSingleLine(from.Line);
             lines[from.Line] = lines[from.Line].Remove(from.Column, to.Column - from.Column);
             return;
         }
 
+        RecordRange(from.Line, to.Line - from.Line + 1, 1);
         string startLine = lines[from.Line];
         bool beforeIsWhiteSpace = startLine.AsSpan(0, from.Column).IsWhiteSpace();
         lines[from.Line] = string.Concat(startLine.AsSpan(0, from.Column), lines[to.Line].AsSpan(to.Column));

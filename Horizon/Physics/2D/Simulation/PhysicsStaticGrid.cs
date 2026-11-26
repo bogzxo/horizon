@@ -1,4 +1,5 @@
 ﻿using System.Numerics;
+using System.Runtime.CompilerServices;
 
 using Horizon.Physics.Fixtures;
 
@@ -11,6 +12,7 @@ namespace Horizon.Physics.Simulation;
 internal sealed class PhysicsStaticGrid
 {
     public const float CELL_SIZE = 32.0f;
+    private const float INV_CELL_SIZE = 1.0f / CELL_SIZE;
 
     private PhysicsShape[] _shapes = [];
 
@@ -21,6 +23,9 @@ internal sealed class PhysicsStaticGrid
     // The shapes touching cell i are _cellShapes[_cellStart[i].._cellStart[i + 1]]
     private int[] _cellStart = [0];
     private int[] _cellShapes = [];
+
+    // Dense 1-cell dilation mask: 1 if this cell or any of its 8 neighbours has at least one static shape
+    private byte[] _nearMask = [];
 
     private Vector2 _origin;
     private int _width, _height;
@@ -58,6 +63,7 @@ internal sealed class PhysicsStaticGrid
     public PhysicsShape[] Shapes => _shapes;
     public int[] CellStart => _cellStart;
     public int[] CellShapes => _cellShapes;
+    internal ReadOnlySpan<byte> NearMask => _nearMask;
 
     /// <summary>
     /// Rebuilds the grid if static bodies or fixtures were added, removed, swapped, moved or resized since the last time.
@@ -137,8 +143,8 @@ internal sealed class PhysicsStaticGrid
         _origin = min;
         Max = max;
         Version++;
-        _width = _shapes.Length == 0 ? 0 : (int)((max.X - min.X) / CELL_SIZE) + 1;
-        _height = _shapes.Length == 0 ? 0 : (int)((max.Y - min.Y) / CELL_SIZE) + 1;
+        _width = _shapes.Length == 0 ? 0 : (int)((max.X - min.X) * INV_CELL_SIZE) + 1;
+        _height = _shapes.Length == 0 ? 0 : (int)((max.Y - min.Y) * INV_CELL_SIZE) + 1;
 
         // First count how many shapes touch every cell, so they can all be packed into one array
         _cellStart = new int[_width * _height + 1];
@@ -167,6 +173,28 @@ internal sealed class PhysicsStaticGrid
                 {
                     int cell = y * _width + x;
                     _cellShapes[_cellStart[cell] + filled[cell]++] = i;
+                }
+            }
+        }
+
+        // Mark every cell within 1 cell of any occupied cell so interior fluid queries reject in 1 byte load
+        _nearMask = new byte[_width * _height];
+        for (int y = 0; y < _height; y++)
+        {
+            int row = y * _width;
+            for (int x = 0; x < _width; x++)
+            {
+                if (_cellStart[row + x + 1] == _cellStart[row + x]) continue;
+
+                int ny0 = Math.Max(0, y - 1), ny1 = Math.Min(_height - 1, y + 1);
+                int nx0 = Math.Max(0, x - 1), nx1 = Math.Min(_width - 1, x + 1);
+                for (int ny = ny0; ny <= ny1; ny++)
+                {
+                    int nRow = ny * _width;
+                    for (int nx = nx0; nx <= nx1; nx++)
+                    {
+                        _nearMask[nRow + nx] = 1;
+                    }
                 }
             }
         }
@@ -303,11 +331,57 @@ internal sealed class PhysicsStaticGrid
         return _cellShapes.AsSpan(_cellStart[cell], _cellStart[cell + 1] - _cellStart[cell]);
     }
 
+    /// <summary>
+    /// Fast test for whether any static shape AABB is within <paramref name="reach"/> of <paramref name="position"/>.
+    /// When <paramref name="reach"/> &lt;= <see cref="CELL_SIZE"/>, interior empty cells reject in a single byte load.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool IsNearAnyShape(Vector2 position, float reach)
+    {
+        if (_width == 0) return false;
+
+        if (reach <= CELL_SIZE)
+        {
+            int cx = (int)MathF.Floor((position.X - _origin.X) * INV_CELL_SIZE);
+            int cy = (int)MathF.Floor((position.Y - _origin.Y) * INV_CELL_SIZE);
+
+            if ((uint)cx < (uint)_width && (uint)cy < (uint)_height)
+            {
+                if (_nearMask[cy * _width + cx] == 0) return false;
+            }
+            else if (cx < -1 || cx > _width || cy < -1 || cy > _height)
+            {
+                return false;
+            }
+        }
+
+        Vector2 min = position - new Vector2(reach), max = position + new Vector2(reach);
+        if (!TryGetCells(min, max, out int x0, out int y0, out int x1, out int y1)) return false;
+
+        for (int y = y0; y <= y1; y++)
+        {
+            int row = y * _width;
+            for (int x = x0; x <= x1; x++)
+            {
+                int cell = row + x;
+                int start = _cellStart[cell], end = _cellStart[cell + 1];
+                for (int entry = start; entry < end; entry++)
+                {
+                    ref readonly PhysicsShape shape = ref _shapes[_cellShapes[entry]];
+                    if (max.X >= shape.Min.X && min.X <= shape.Max.X && max.Y >= shape.Min.Y && min.Y <= shape.Max.Y)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private void GetCells(Vector2 min, Vector2 max, out int x0, out int y0, out int x1, out int y1)
     {
-        x0 = Math.Clamp((int)((min.X - _origin.X) / CELL_SIZE), 0, _width - 1);
-        y0 = Math.Clamp((int)((min.Y - _origin.Y) / CELL_SIZE), 0, _height - 1);
-        x1 = Math.Clamp((int)((max.X - _origin.X) / CELL_SIZE), 0, _width - 1);
-        y1 = Math.Clamp((int)((max.Y - _origin.Y) / CELL_SIZE), 0, _height - 1);
+        x0 = Math.Clamp((int)((min.X - _origin.X) * INV_CELL_SIZE), 0, _width - 1);
+        y0 = Math.Clamp((int)((min.Y - _origin.Y) * INV_CELL_SIZE), 0, _height - 1);
+        x1 = Math.Clamp((int)((max.X - _origin.X) * INV_CELL_SIZE), 0, _width - 1);
+        y1 = Math.Clamp((int)((max.Y - _origin.Y) * INV_CELL_SIZE), 0, _height - 1);
     }
 }

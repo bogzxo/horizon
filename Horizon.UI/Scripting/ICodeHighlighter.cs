@@ -47,6 +47,19 @@ public interface ICodeHighlighter
     List<SyntaxSpan>? ReadUpTo(string line, in CodeLineStart start, int goal, int budget, List<SyntaxSpan>? last, string? lastLine) => null;
 
     /// <summary>
+    /// Whether this highlighter requires the full joined document text in <see cref="Read"/> / <see cref="ReadAgain"/>.
+    /// Highlighters that operate per-line (such as <see cref="TextMateHighlighter"/>) return false so the editor skips
+    /// allocating a full-file <c>string.Join</c>.
+    /// </summary>
+    bool NeedsFullText => true;
+
+    /// <summary>
+    /// Cuts code lines into spans without requiring a pre-joined full-document string.
+    /// </summary>
+    List<SyntaxSpan>[] ReadLines(string[] lines, CodeLineStart[]? starts = null, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null) =>
+        Read(string.Join('\n', lines), lines.Length, starts, swatches, art);
+
+    /// <summary>
     /// Colours code again after it was edited, given the last colouring of it. What comes out is what <see cref="Read"/>
     /// would make, one that can do better reads from the first line that changed and stops once a line after the edit
     /// starts the way it did last time, the rest taken over from then. Typing into a file of twenty thousand lines read

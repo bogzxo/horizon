@@ -24,6 +24,7 @@ public enum PhysicsRadialTargets
 
 public class PhysicsWorld : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdatePhysics | ComponentCapabilities.Capture;
     /// <summary>
     /// Whether the outline of every fixture is drawn over the world, see <see cref="DebugRenderer"/>. Static bodies
     /// in red, dynamic ones in blue, kinematic fixtures in yellow and cyan, the fixtures of particles in green.
@@ -286,13 +287,14 @@ public class PhysicsWorld : GameComponent
         for (int i = 0; i < dynamicCount; i++)
         {
             var body = dynamicBodies[i];
+            Vector2 bodyPos = body.Position;
             Vector2 min = new(float.MaxValue), max = new(float.MinValue);
             bool hasBounds = false;
             foreach (var fixture in body.DynamicFixtures)
             {
-                if (!PhysicsShape.TryCreate(fixture, body.Position, Vector2.Zero, out var shape)) continue;
-                min = Vector2.Min(min, shape.Min);
-                max = Vector2.Max(max, shape.Max);
+                if (!PhysicsShape.TryGetLocal(fixture, out var local)) continue;
+                min = Vector2.Min(min, bodyPos + local.Min);
+                max = Vector2.Max(max, bodyPos + local.Max);
                 hasBounds = true;
             }
             dynamicMin[i] = min;
@@ -331,7 +333,7 @@ public class PhysicsWorld : GameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
-                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+                bool hasLocal = PhysicsShape.TryGetLocal(fixture, out var local);
 
                 // Test against static bodies, the grid hands us only the ones nearby...
                 if (hasLocal)
@@ -435,7 +437,7 @@ public class PhysicsWorld : GameComponent
 
             foreach (var fixture in body.DynamicFixtures)
             {
-                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+                bool hasLocal = PhysicsShape.TryGetLocal(fixture, out var local);
 
                 // Test against static bodies, the grid hands us only the ones nearby...
                 if (hasLocal)
@@ -532,7 +534,7 @@ public class PhysicsWorld : GameComponent
             // 5. Update Kinematic Triggers against final position
             foreach (var fixture in body.KinematicFixtures)
             {
-                bool hasLocal = PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local);
+                bool hasLocal = PhysicsShape.TryGetLocal(fixture, out var local);
 
                 if (hasLocal)
                 {
@@ -626,9 +628,9 @@ public class PhysicsWorld : GameComponent
     private bool LandsOn(PhysicsBodyComponent2D body, IPhysicsFixture fixture, int platform, Vector2 at, bool trigger = false)
     {
         if (body.PassesOneWay || body.Velocity.Y > 0.0f) return false;
-        if (!PhysicsShape.TryCreate(fixture, at, Vector2.Zero, out var shape)) return false;
+        if (!PhysicsShape.TryGetLocal(fixture, out var local)) return false;
 
-        float edge = trigger ? shape.Max.Y : shape.Min.Y;
+        float edge = at.Y + (trigger ? local.Max.Y : local.Min.Y);
         return edge >= staticGrid[platform].Max.Y - ONE_WAY_TOLERANCE;
     }
 
@@ -688,7 +690,7 @@ public class PhysicsWorld : GameComponent
     /// </summary>
     private ReadOnlySpan<int> FindStaticCandidates(IPhysicsFixture fixture, Vector2 from, Vector2 to)
     {
-        if (!PhysicsShape.TryCreate(fixture, Vector2.Zero, Vector2.Zero, out var local)) return default;
+        if (!PhysicsShape.TryGetLocal(fixture, out var local)) return default;
 
         return staticGrid.Query(Vector2.Min(from, to) + local.Min, Vector2.Max(from, to) + local.Max);
     }

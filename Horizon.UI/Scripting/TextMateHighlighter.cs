@@ -57,8 +57,31 @@ public sealed class TextMateHighlighter : ICodeHighlighter
 
     public string Name { get; }
 
+    /// <summary>TextMate tokenizes line by line and never needs the full joined document string.</summary>
+    public bool NeedsFullText => false;
+
     /// <summary>The scope the grammar is under, source.cs, source.python, text.html.markdown.</summary>
     public string ScopeName => grammar.GetScopeName();
+
+    // Incremental dirty-line cache for callers that lex by lines + version without passing an explicit CodeColouring,
+    // plus a lock-free last-line snapshot so FreshColours() avoids redundant lock(grammar) contention.
+    private int cachedVersion = -1;
+    private int firstDirtyLine = int.MaxValue;
+    private CodeColouring? cachedColouring;
+    private volatile SingleLineCache? lastSingleLine;
+
+    private sealed record SingleLineCache(string Line, int Depth, object? State, List<SyntaxSpan> Spans);
+
+    /// <summary>How many lines were actually tokenized by the grammar in the most recent read call (for diagnostics/tests).</summary>
+    internal int LastLexedLineCount { get; private set; }
+
+    /// <summary>Marks lines from <paramref name="line"/> onward as dirty for subsequent incremental reads.</summary>
+    public void MarkDirty(int line)
+    {
+        int clamped = Math.Max(0, line);
+        if (clamped < firstDirtyLine)
+            firstDirtyLine = clamped;
+    }
 
     public TextMateHighlighter(IGrammar grammar, string name)
     {
@@ -73,7 +96,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
 
         var spans = new List<SyntaxSpan>[Math.Max(1, lineCount)];
         IStateStack? state = null;
-        int depth = 0, at = 0;
+        int depth = 0, at = 0, lexed = 0;
 
         // The lock is taken a line at a time, a big file read on the pool held it for seconds and a line typed on the
         // editor's thread meanwhile waited for all of it
@@ -87,10 +110,69 @@ public sealed class TextMateHighlighter : ICodeHighlighter
                 starts[line] = new CodeLineStart(depth, state);
 
             spans[line] = ReadWhole(code.AsMemory(at, end - at), ref state, ref depth);
+            lexed++;
             at = end + 1;
         }
 
+        LastLexedLineCount = lexed;
         return spans;
+    }
+
+    public List<SyntaxSpan>[] ReadLines(string[] lines, CodeLineStart[]? starts = null, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
+    {
+        swatches?.Clear();
+        art?.Clear();
+
+        int count = Math.Max(1, lines.Length);
+        var spans = new List<SyntaxSpan>[count];
+        IStateStack? state = null;
+        int depth = 0;
+
+        for (int line = 0; line < count; line++)
+        {
+            if (starts is not null && line < starts.Length)
+                starts[line] = new CodeLineStart(depth, state);
+
+            spans[line] = ReadWhole((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth);
+        }
+
+        LastLexedLineCount = count;
+        return spans;
+    }
+
+    /// <summary>
+    /// Incrementally re-lexes <paramref name="lines"/> from the earliest dirty line using cached per-line
+    /// <see cref="IStateStack"/> entries, stopping as soon as output state converges with the cached state.
+    /// </summary>
+    public List<SyntaxSpan>[] ReadIncremental(string[] lines, int version, int dirtyLine = 0, CodeLineStart[]? starts = null)
+    {
+        int count = Math.Max(1, lines.Length);
+        CodeLineStart[] lineStarts = starts is not null && starts.Length >= count ? starts : new CodeLineStart[count];
+
+        CodeColouring? previous = cachedColouring;
+        if (previous is not null && version == cachedVersion && firstDirtyLine == int.MaxValue && previous.Lines.Length == lines.Length)
+        {
+            if (starts is not null)
+                Array.Copy(previous.Starts, 0, starts, 0, Math.Min(starts.Length, previous.Starts.Length));
+            LastLexedLineCount = 0;
+            return previous.Spans;
+        }
+
+        List<SyntaxSpan>[] result;
+        if (previous is not null && previous.Lines.Length > 0)
+        {
+            int hint = Math.Min(firstDirtyLine, Math.Max(0, dirtyLine));
+            result = ReadAgain(lines, lineStarts, previous, copyKept: false, dirtyHint: hint);
+        }
+        else
+        {
+            result = ReadLines(lines, lineStarts);
+        }
+
+        cachedColouring = new CodeColouring(lines, result, lineStarts);
+        cachedVersion = version;
+        firstDirtyLine = int.MaxValue;
+        return result;
     }
 
     public List<SyntaxSpan>[] ReadAgain(string code, string[] lines, CodeLineStart[] starts, CodeColouring last, List<HidlSwatch>? swatches = null, List<HidlArt>? art = null)
@@ -107,7 +189,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     /// state and at the depth of brackets it started in last time, everything after it is coloured the same as it was.
     /// </summary>
     /// <param name="copyKept">Whether what's kept is copied, for a highlighter that writes over the spans after (HIDL's).</param>
-    internal List<SyntaxSpan>[] ReadAgain(string[] lines, CodeLineStart[] starts, CodeColouring last, bool copyKept)
+    internal List<SyntaxSpan>[] ReadAgain(string[] lines, CodeLineStart[] starts, CodeColouring last, bool copyKept, int dirtyHint = 0)
     {
         int count = Math.Max(1, lines.Length), was = last.Lines.Length;
         var spans = new List<SyntaxSpan>[count];
@@ -118,7 +200,20 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         }
 
         // The first line that isn't what it was, and how many at the end are
-        int limit = Math.Min(lines.Length, was), first = 0;
+        int limit = Math.Min(lines.Length, was);
+        int first = Math.Clamp(dirtyHint, 0, limit);
+        // Verify prefix before dirtyHint if caller passed a hint > 0 (fast reference check on identical strings)
+        if (first > 0)
+        {
+            for (int i = 0; i < first; i++)
+            {
+                if (!ReferenceEquals(lines[i], last.Lines[i]) && !string.Equals(lines[i], last.Lines[i], StringComparison.Ordinal))
+                {
+                    first = i;
+                    break;
+                }
+            }
+        }
         while (first < limit && string.Equals(lines[first], last.Lines[first], StringComparison.Ordinal))
             first++;
         int same = 0;
@@ -129,23 +224,45 @@ public sealed class TextMateHighlighter : ICodeHighlighter
         // reuse them directly without indexing past the shrunk line array.
         if (first >= count)
         {
-            for (int line = 0; line < count; line++)
+            if (!copyKept)
             {
-                spans[line] = Kept(last.Spans[line], copyKept);
-                if (line < starts.Length)
-                    starts[line] = last.Starts[line];
+                Array.Copy(last.Spans, 0, spans, 0, count);
+                if (starts.Length > 0)
+                    Array.Copy(last.Starts, 0, starts, 0, Math.Min(count, starts.Length));
+            }
+            else
+            {
+                for (int line = 0; line < count; line++)
+                {
+                    spans[line] = Kept(last.Spans[line], true);
+                    if (line < starts.Length)
+                        starts[line] = last.Starts[line];
+                }
             }
 
+            LastLexedLineCount = 0;
             return spans;
         }
 
         // From where the first changed line started last time, or the last line again for lines added after the end
         int from = Math.Clamp(first, 0, Math.Min(was - 1, count - 1));
-        for (int line = 0; line < from; line++)
+        if (!copyKept)
         {
-            spans[line] = Kept(last.Spans[line], copyKept);
-            if (line < starts.Length)
-                starts[line] = last.Starts[line];
+            if (from > 0)
+            {
+                Array.Copy(last.Spans, 0, spans, 0, from);
+                if (starts.Length > 0)
+                    Array.Copy(last.Starts, 0, starts, 0, Math.Min(from, starts.Length));
+            }
+        }
+        else
+        {
+            for (int line = 0; line < from; line++)
+            {
+                spans[line] = Kept(last.Spans[line], true);
+                if (line < starts.Length)
+                    starts[line] = last.Starts[line];
+            }
         }
 
         ReadFrom(lines, starts, spans, from, last.Starts[from], last, lines.Length - same, copyKept);
@@ -157,6 +274,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
     {
         IStateStack? state = start.State as IStateStack;
         int depth = start.Depth, shift = lines.Length - last.Lines.Length;
+        int lexed = 0;
 
         for (int line = from; line < spans.Length; line++)
         {
@@ -166,14 +284,25 @@ public sealed class TextMateHighlighter : ICodeHighlighter
                 && old + remaining <= last.Spans.Length && old + remaining <= last.Starts.Length
                 && depth == last.Starts[old].Depth && Equals(state, last.Starts[old].State))
             {
-                for (; line < spans.Length; line++)
+                if (!copyKept)
                 {
-                    int oldLine = line - shift;
-                    spans[line] = Kept(last.Spans[oldLine], copyKept);
-                    if (line < starts.Length)
-                        starts[line] = last.Starts[oldLine];
+                    Array.Copy(last.Spans, old, spans, line, remaining);
+                    int startsCopy = Math.Min(remaining, Math.Max(0, starts.Length - line));
+                    if (startsCopy > 0)
+                        Array.Copy(last.Starts, old, starts, line, startsCopy);
+                }
+                else
+                {
+                    for (; line < spans.Length; line++)
+                    {
+                        int oldLine = line - shift;
+                        spans[line] = Kept(last.Spans[oldLine], true);
+                        if (line < starts.Length)
+                            starts[line] = last.Starts[oldLine];
+                    }
                 }
 
+                LastLexedLineCount = lexed;
                 return;
             }
 
@@ -185,13 +314,22 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             bool known = was >= 0 && was < last.Spans.Length && was < last.Lines.Length;
             spans[line] = ReadWhole((line < lines.Length ? lines[line] : string.Empty).AsMemory(), ref state, ref depth,
                 known ? last.Spans[was] : null, known ? last.Lines[was] : null);
+            lexed++;
         }
+
+        LastLexedLineCount = lexed;
     }
 
     private static List<SyntaxSpan> Kept(List<SyntaxSpan> spans, bool copy) => copy ? [.. spans] : spans;
 
     public bool TryReadLine(string line, in CodeLineStart start, out List<SyntaxSpan>? spans)
     {
+        if (lastSingleLine is { } cached && ReferenceEquals(cached.Line, line) && cached.Depth == start.Depth && Equals(cached.State, start.State))
+        {
+            spans = cached.Spans;
+            return true;
+        }
+
         spans = null;
         if (line.Length > LONG_LINE)
         {
@@ -207,6 +345,7 @@ public sealed class TextMateHighlighter : ICodeHighlighter
             IStateStack? state = start.State as IStateStack;
             int depth = start.Depth;
             spans = ReadLine(line.AsMemory(), ref state, ref depth);
+            lastSingleLine = new SingleLineCache(line, start.Depth, start.State, spans);
             return true;
         }
         finally { Monitor.Exit(grammar); }

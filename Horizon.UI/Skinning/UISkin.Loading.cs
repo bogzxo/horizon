@@ -46,11 +46,19 @@ public sealed partial class UISkin
         return properties;
     }
 
+    // Per-thread count of theme .hor files evaluated via HIDLRuntime, for parallel-safe unit tests verifying lazy loading
+    [ThreadStatic]
+    private static int themeFilesEvaluated;
+    internal static int ThemeFilesEvaluated => themeFilesEvaluated;
+
     /// <summary>
     /// Helper method to run a .hor file and take the object it declares under a name.
     /// </summary>
     private static ObjectValue Evaluate(string path, string name)
     {
+        if (name == "theme")
+            themeFilesEvaluated++;
+
         HIDLRuntime runtime = new HIDLRuntime().ReadingContent();
         var (success, message) = runtime.Evaluate(ContentFiles.ReadAllText(path));
         if (!success)
@@ -165,6 +173,109 @@ public sealed partial class UISkin
 
         properties["theme"] = new StringValue(found.Name);
         return found;
+    }
+
+    /// <summary>
+    /// Lists all theme names for a skin and lazily evaluates ONLY the requested <paramref name="theme"/> (plus its
+    /// <c>base</c> chain, if any) instead of constructing a <see cref="HIDLRuntime"/> for every unused theme file.
+    /// </summary>
+    private static (string[] ThemeNames, UITheme? Worn) ReadAndApplyThemeLazy(string directory, Dictionary<string, IRuntimeValue> properties, string? theme)
+    {
+        var names = new List<string>();
+        var loaded = new Dictionary<string, UITheme>(StringComparer.Ordinal);
+        var folderFiles = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (properties.Remove("themes", out var listed))
+        {
+            if (listed is not ObjectValue inline)
+                throw new Exception("themes has to be an object, a theme under every name.");
+
+            foreach (var (name, value) in inline.Properties)
+            {
+                UITheme parsed = UITheme.Read(name, value, $"themes.{name}");
+                loaded[name] = parsed;
+                names.Add(name);
+            }
+        }
+
+        string folder = Path.Combine(directory, UITheme.FOLDER);
+        if (ContentFiles.DirectoryExists(folder))
+        {
+            foreach (string file in ContentFiles.GetFiles(folder, "*.hor").Order(StringComparer.OrdinalIgnoreCase))
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                if (loaded.ContainsKey(name))
+                    throw new Exception($"the theme '{name}' is both in the skin file and in {UITheme.FOLDER}/{name}.hor, it can only be one of them.");
+
+                folderFiles[name] = file;
+                names.Add(name);
+            }
+        }
+
+        string? usual = properties.TryGetValue("theme", out var usualValue) ? UIScript.ToText(usualValue, "theme") : null;
+        if (usual is not null)
+        {
+            int at = names.IndexOf(usual);
+            if (at > 0)
+            {
+                names.RemoveAt(at);
+                names.Insert(0, usual);
+            }
+        }
+
+        string? wanted = theme ?? usual;
+        if (wanted is null)
+            return ([.. names], null);
+
+        UITheme? LoadOne(string name)
+        {
+            if (loaded.TryGetValue(name, out UITheme? existing))
+                return existing;
+            if (!folderFiles.TryGetValue(name, out string? file))
+                return null;
+
+            UITheme parsed = UITheme.Read(name, Evaluate(file, "theme"), $"{UITheme.FOLDER}/{name}.hor");
+            loaded[name] = parsed;
+            return parsed;
+        }
+
+        UITheme? found = LoadOne(wanted);
+        if (found is null)
+        {
+            if (theme is not null || names.Count > 0)
+                throw new Exception($"The skin has no theme called '{wanted}'. It has: {string.Join(", ", names)}.");
+
+            // A skin with no themes of its own that names the layer of its art it draws with, that name is its one theme
+            found = UITheme.Read(wanted, new ObjectValue([]), "theme");
+        }
+
+        var chain = new List<UITheme>();
+        for (UITheme? at = found; at is not null;)
+        {
+            if (chain.Contains(at))
+                throw new Exception($"the theme '{found.Name}' is based on itself, round through {string.Join(", ", chain.Select(link => link.Name))}.");
+            chain.Add(at);
+            if (at.Base is not { } baseName)
+                break;
+            at = LoadOne(baseName)
+                ?? throw new Exception($"the theme '{at.Name}' is based on '{baseName}', which the skin hasn't got.");
+        }
+
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            foreach (string key in chain[i].Changes.Keys)
+            {
+                foreach (string derived in UIPalette.DerivedFrom(key))
+                {
+                    if (!chain[i].Changes.ContainsKey(derived)) properties.Remove(derived);
+                }
+            }
+
+            Merge(properties, chain[i].Changes);
+        }
+
+        properties["theme"] = new StringValue(found.Name);
+        return ([.. names], found);
     }
 
     /// <summary>
@@ -410,8 +521,7 @@ public sealed partial class UISkin
     public static UIPalette PaletteOf(string directory, string file, string? theme = null)
     {
         var properties = ReadProperties(directory, file, 0);
-        List<UITheme> themes = ReadThemes(directory, properties);
-        ApplyTheme(properties, themes, theme);
+        ReadAndApplyThemeLazy(directory, properties, theme);
 
         var palette = new UIPalette();
         ReadPalette(properties, palette);

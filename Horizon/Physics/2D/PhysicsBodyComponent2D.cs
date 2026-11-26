@@ -8,6 +8,7 @@ namespace Horizon.Physics;
 
 public class PhysicsBodyComponent2D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.UpdateState;
     public PhysicsBodySimulationType SimulationType { get; init; }
     public List<IPhysicsFixture> KinematicFixtures { get; init; } = [];
     public List<IPhysicsFixture> DynamicFixtures { get; init; } = [];

@@ -104,7 +104,10 @@ public sealed class PostContext
     public void Draw()
     {
         if (Into is not null)
+        {
             Into.Bind();
+            GraphicsDevice.Current.DiscardBoundTarget();
+        }
         else
             Output();
 
@@ -113,6 +116,14 @@ public sealed class PostContext
 
     /// <summary>Draws over the whole of a target of the effect's own, with whatever technique is bound.</summary>
     public void Draw(PostTarget target)
+    {
+        target.Bind();
+        GraphicsDevice.Current.DiscardBoundTarget();
+        Processor.DrawScreen();
+    }
+
+    /// <summary>Draws over a target of the effect's own while preserving its previous contents (e.g. for additive blending).</summary>
+    internal void DrawPreserving(PostTarget target)
     {
         target.Bind();
         Processor.DrawScreen();

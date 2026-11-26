@@ -1,21 +1,44 @@
 ﻿using System.Numerics;
 
+using Horizon.Physics.Simulation;
+
 namespace Horizon.Physics.Fixtures;
 
 public class RectanglePhysicsFixture(Vector2 position, Vector2 size, string tag="") : IPhysicsFixture
 {
     public string Tag { get; init; } = tag;
     public bool IsTouching { get; set; }
-    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new();
+    public HashSet<IPhysicsFixture> ActiveContacts { get; } = new(4);
     public Vector3? DebugColour { get; set; }
     public bool OneWay { get; init; }
     public PhysicsFixtureShape Shape { get; init; } = PhysicsFixtureShape.Rectangle;
 
-    // Can be moved and resized at any time, for a box that follows something (what of a fighter can be hit right now)
-    public PhysicsRectangle Bounds { get; set; } = new(position, size);
+    private PhysicsRectangle _bounds = new(position, size);
+    private PhysicsShape _localShape = new()
+    {
+        Min = position,
+        Max = position + size
+    };
 
-    public Vector2 Position => Bounds.Position;
-    public Vector2 Size => Bounds.Size;
+    // Can be moved and resized at any time, for a box that follows something (what of a fighter can be hit right now)
+    public PhysicsRectangle Bounds
+    {
+        get => _bounds;
+        set
+        {
+            _bounds = value;
+            _localShape = new PhysicsShape
+            {
+                Min = value.Position,
+                Max = value.Position + value.Size
+            };
+        }
+    }
+
+    internal ref readonly PhysicsShape LocalShape => ref _localShape;
+
+    public Vector2 Position => _bounds.Position;
+    public Vector2 Size => _bounds.Size;
 
     public bool TestIntersection(in IPhysicsFixture other, Vector2 positionOffset, Vector2 otherPositionOffset)
     {

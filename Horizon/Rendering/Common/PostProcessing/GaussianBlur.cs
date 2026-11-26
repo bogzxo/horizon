@@ -124,6 +124,7 @@ internal sealed class GaussianBlur : IDisposable
             source.Bind(0);
             result.Bind();
             if (clipped) ApplyLevelScissor(device, sourceSize, result.Size, region);
+            else device.DiscardBoundTarget();
             ScreenTriangle.Draw();
 
             // A big blur is done as a few smaller ones on top of each other, which comes to the same thing without the gaps
@@ -140,11 +141,13 @@ internal sealed class GaussianBlur : IDisposable
                 result.Texture.Bind(0);
                 blur.SetUniform(UNIFORM_STEP, in sideways);
                 other.Bind();
+                if (!clipped) device.DiscardBoundTarget();
                 ScreenTriangle.Draw();
 
                 other.Texture.Bind(0);
                 blur.SetUniform(UNIFORM_STEP, in upwards);
                 result.Bind();
+                if (!clipped) device.DiscardBoundTarget();
                 ScreenTriangle.Draw();
             }
 
@@ -178,6 +181,7 @@ internal sealed class GaussianBlur : IDisposable
         downsample.SetUniform(UNIFORM_TEXEL, in texel);
         small.Bind();
         if (clipped) ApplyLevelScissor(device, sourceSize, small.Size, region);
+        else device.DiscardBoundTarget();
         ScreenTriangle.Draw();
 
         // Halved again while the blur is still big at the size it's at. A 4K screen's blur is two or three times the pixels of
@@ -193,6 +197,7 @@ internal sealed class GaussianBlur : IDisposable
             at.Texture.Bind(0);
             next.Bind();
             if (clipped) ApplyLevelScissor(device, sourceSize, next.Size, region);
+            else device.DiscardBoundTarget();
             ScreenTriangle.Draw();
             at = next;
             factor *= 2.0f;
@@ -215,11 +220,13 @@ internal sealed class GaussianBlur : IDisposable
             at.Texture.Bind(0);
             blur.SetUniform(UNIFORM_STEP, in sideways);
             other.Bind();
+            if (!clipped) device.DiscardBoundTarget();
             ScreenTriangle.Draw();
 
             other.Texture.Bind(0);
             blur.SetUniform(UNIFORM_STEP, in upwards);
             at.Bind();
+            if (!clipped) device.DiscardBoundTarget();
             ScreenTriangle.Draw();
         }
 
@@ -232,6 +239,7 @@ internal sealed class GaussianBlur : IDisposable
             at.Texture.Bind(0);
             up.Bind();
             if (clipped) ApplyLevelScissor(device, sourceSize, up.Size, region);
+            else device.DiscardBoundTarget();
             ScreenTriangle.Draw();
             at = up;
         }
@@ -239,6 +247,7 @@ internal sealed class GaussianBlur : IDisposable
         small.Texture.Bind(0);
         result.Bind();
         if (clipped) ApplyLevelScissor(device, sourceSize, result.Size, region);
+        else device.DiscardBoundTarget();
         ScreenTriangle.Draw();
 
         copy.Unbind();

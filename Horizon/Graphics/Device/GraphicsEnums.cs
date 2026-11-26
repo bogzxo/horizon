@@ -126,6 +126,9 @@ public enum PixelFormat
     /// <summary>Four halves, for pictures that are blended into themselves frame after frame.</summary>
     Rgba16F,
 
+    /// <summary>Packed 11-11-10 unsigned float RGB (4 bytes), for HDR colour without alpha (bloom).</summary>
+    R11G11B10F,
+
     /// <summary>Four floats, for data rather than colour.</summary>
     Rgba32F,
 
@@ -184,7 +187,9 @@ public enum BlendFactor
     SrcAlpha,
     OneMinusSrcAlpha,
     DstAlpha,
-    OneMinusDstAlpha
+    OneMinusDstAlpha,
+    Src1Color,
+    OneMinusSrc1Color
 }
 
 /// <summary>Where an attachment of a render target sits, which is also which output of a fragment shader it takes.</summary>

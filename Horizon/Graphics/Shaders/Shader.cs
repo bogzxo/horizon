@@ -23,6 +23,7 @@ public sealed class Shader : GpuResource
     private readonly GraphicsDevice? device;
 
     internal readonly List<Stage> Modules = [];
+    internal Pipeline ComputePipeline;
 
     /// <summary>Whether this is a compute program, which is dispatched rather than drawn with.</summary>
     public bool IsCompute { get; }

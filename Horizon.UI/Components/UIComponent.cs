@@ -733,6 +733,23 @@ public abstract partial class UIComponent
     /// </summary>
     protected virtual long PaintVersion => -1;
 
+    /// <summary>Tries to reuse a previously recorded sub-slice for this component under <paramref name="version"/> and <paramref name="bounds"/>.</summary>
+    protected bool TryReuseSlice(UIDrawList list, UIRect bounds, long version, out int context)
+    {
+        context = list.PaintContext(bounds);
+        return PaintId != 0.0f && list.TryReuse(-PaintId, version, context);
+    }
+
+    /// <summary>Starts recording a component sub-slice after <see cref="TryReuseSlice"/> returns false.</summary>
+    protected static void BeginSliceRecord(UIDrawList list) => list.BeginRecord();
+
+    /// <summary>Ends a sub-slice recording started by <see cref="BeginSliceRecord"/>.</summary>
+    protected void EndSliceRecord(UIDrawList list, long version, int context)
+    {
+        if (PaintId != 0.0f)
+            list.EndRecord(-PaintId, version, context, this);
+    }
+
     /// <summary>
     /// Whether its layout is on its way somewhere (sliding in or out, folding), which moves it and what's round it about
     /// a little every tick, see <see cref="UIDrawList.LayoutMoves"/>.

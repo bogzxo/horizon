@@ -12,6 +12,7 @@ namespace Horizon.Core.Components;
 /// </summary>
 public class TransformComponent2D : GameComponent
 {
+    public override ComponentCapabilities Capabilities => ComponentCapabilities.None;
     private Vector2 pos;
 
     // In degrees
